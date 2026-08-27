@@ -1,0 +1,36 @@
+/**
+ * RSEND — docs/contracts/db/erd.dbml v4.1 에서 생성했습니다.
+ *
+ * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
+ * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
+ */
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+
+@Entity({ name: 'rsend' })
+export class Rsend {
+  @PrimaryGeneratedColumn({ type: 'bigint' })
+  id: number;
+
+  @Column({ type: 'bigint' })
+  studentId: number;
+
+  @Column({ type: 'date' })
+  onDate: string;
+
+  /** 학생 단위로 묶어 보낸 리포트들 */
+  @Column({ type: 'jsonb' })
+  repIds: Record<string, unknown>;
+
+  @Column({ type: 'varchar', length: 10 })
+  channel: string;
+
+  /** 발송 원문 스냅샷 */
+  @Column({ type: 'text' })
+  body: string;
+
+  @Column({ type: 'timestamptz', default: () => "now()" })
+  sentAt: Date;
+
+  @Column({ type: 'bigint' })
+  sentBy: number;
+}

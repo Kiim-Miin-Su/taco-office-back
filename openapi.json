@@ -1,0 +1,245 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "HealthController_health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "살아 있는지",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "operationId": "AuthController_login",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "로그인 — Access 는 본문, Refresh 는 httpOnly 쿠키",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "operationId": "AuthController_refresh",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "재발급 — 쿠키만 보고 판단한다",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "AuthController_logout",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "로그아웃 — 쿠키를 지운다",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "AuthController_me",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "내 정보 — **권한 플래그를 서버가 내려준다** (D-R39)",
+        "tags": [
+          "auth"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "TACO ERP API",
+    "description": "티엔아카데미 학원 운영 백오피스 — 개발 명세서 v2 기준",
+    "version": "0.1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "LoginDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "kim@tnacademy.kr"
+          },
+          "password": {
+            "type": "string",
+            "example": "********"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "MeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "manager",
+              "admin",
+              "ceo"
+            ]
+          },
+          "title": {
+            "type": "object",
+            "nullable": true,
+            "description": "직함 — 권한과 무관"
+          },
+          "canAdminPage": {
+            "type": "boolean",
+            "description": "관리자 백오피스 진입"
+          },
+          "canCrudAll": {
+            "type": "boolean",
+            "description": "전 항목 CRUD"
+          },
+          "canSeeProfit": {
+            "type": "boolean",
+            "description": "지출 · 총수입 — 대표 전용"
+          },
+          "canCrudAttendance": {
+            "type": "boolean",
+            "description": "오늘·이전 스케줄 출결 (D-R35)"
+          },
+          "canMoney": {
+            "type": "boolean"
+          },
+          "canWage": {
+            "type": "boolean"
+          },
+          "canApprove": {
+            "type": "boolean"
+          },
+          "canHide": {
+            "type": "boolean"
+          },
+          "canGpaPack": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role",
+          "title",
+          "canAdminPage",
+          "canCrudAll",
+          "canSeeProfit",
+          "canCrudAttendance",
+          "canMoney",
+          "canWage",
+          "canApprove",
+          "canHide",
+          "canGpaPack"
+        ]
+      },
+      "LoginResultDto": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "description": "Access 토큰 (15분). Refresh 는 httpOnly 쿠키로 나갑니다"
+          },
+          "user": {
+            "$ref": "#/components/schemas/MeDto"
+          }
+        },
+        "required": [
+          "accessToken",
+          "user"
+        ]
+      },
+      "RefreshResultDto": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accessToken"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,977 @@
+// ============================================================================
+// TACO ERP — 통합 ERD
+// version : 4.1  (2026-08-27) — 대표 결정 11건 반영 (decisions/DECISIONS-2026-08-27.md)
+// canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
+//           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
+//           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
+// engine  : Neon Postgres · NestJS + TypeORM
+// ----------------------------------------------------------------------------
+// v2.2 → v3.0  — 개발 명세서 어휘로 전면 재편
+//   원칙: 명세서의 전역 배열 이름을 테이블 이름으로 **그대로** 쓴다.
+//         이름을 바꾸면 마이그레이션과 대조가 둘 다 어려워진다 (명세서 §82).
+//
+//   버린 표 → 흡수처
+//     class · session          → SER + EXC      (반복 규칙 원본 + 그날 예외)
+//     class_report             → REP + AUTOREP
+//     material(+change_request)→ LIB · ISSUE · VERS · HIST · GPAPACK
+//     deposit                  → PAY
+//     billing_invoice          → INV
+//     audit_log                → LOG
+//     change_request           → CHREQ
+//     corporate_card_request   → EXPENSE 에 승인 흐름을 얹음
+//     instructor               → STAFF (역할 4종 = teacher · manager · admin · ceo — D-R39 확정)
+//
+//   v4.0 → v4.1 — 2026-08-27 대표 결정 반영
+//     N-1 정산 조건    → **작성 기준.** REP.state 를 정산 판정에 쓰지 않는다 (D-R7)
+//     N-2 리포트 필드  → **5칸 고정.** REP.body 는 다섯 키만 (D-R40)
+//     N-3 강사 역할    → **role_t 에 존치.** teacher · manager · admin · ceo 4종 (D-R39)
+//     N-4 회계 권한    → **지출·총수입만 대표.** 나머지는 매니저 이상 (D-R39)
+//     N-5 양식 매핑    → **양식은 하나.** KIND.rep_form 을 쓰지 않는다 (D-R40)
+//     N-6 두 제품 연계 → **합치지 않는다.** 명세서대로 새 프로젝트 (D-R38)
+//     N-11 권한 저장   → **저장하지 않는다.** role 에서 3줄로 파생 (D-R39)
+//     D-13 지각 차감   → **1시간↑ 5,000 · 4시간↑ 10,000** (D-R32)
+//     D-14 출결 권한   → **매니저 이상만 CRUD** (D-R35)
+//     N-7 보관 정책                            ← 삭제 규칙
+// ============================================================================
+
+Project taco_erp {
+  database_type: 'PostgreSQL'
+  Note: '''
+  관리자 백오피스(구현 완료 · 탭 10 · 화면 63) + 강사 백오피스(구현 완료 · 화면 7).
+  두 제품이 줌 계정 · 강의실 · 학생을 공유한다. 리포트와 정산은 시점만 다르고 같은 데이터를 본다.
+
+  불변식
+    D-1  일정(SER)이 사실이고 나머지는 파생이다.
+    D-2  occ(date) = SER 반복 규칙 + EXC. 그날 목록을 만드는 유일한 경로.
+    D-3  현황판·대표 보고는 저장하지 않고 매번 계산한다 (서버에서는 집계 API).
+    D-4  KIND.rep=true 인 종류만 리포트 대상이다.
+    D-5  권한은 role 4종에서 3줄로 파생한다 (D-R39). 컨설팅 공개 범위(CONS.share)만
+         독립된 두 번째 층이다 — 권한이 있어도 비공개 컨설팅은 지정된 사람만 본다.
+  '''
+}
+
+// ─────────────────────────────────────────────────────────────── enums
+
+Enum role_t        { teacher  manager  admin  ceo }
+// D-R39 확정 — 역할은 4종이다.
+//   teacher 강사   자기 수업 조회 · 리포트 작성 · 당일 출결 최초 체크만
+//   manager 매니저 ↑ 여기부터 관리자 페이지가 열리고 전 항목 CRUD
+//   admin   관리자 매니저와 같은 권한
+//   ceo     대표   + 지출 · 총수입
+// 명세서 v2 의 head(교수실장) · adm(상담실장) · coord(코디네이터)는 조직상의 직함이며,
+// 권한상으로는 전부 manager 와 같다. 직함은 STAFF.title 에 문자열로 둔다.
+
+Enum kind_grp_t    { lesson  intake  meeting }
+Enum class_mode_t  { offline  online }
+Enum rep_state_t   { na  plan  none  draft  wait  ok  rej }
+// na   리포트 대상 아님 (KIND.rep=false)
+// plan 아직 수업 전
+// none 미작성 · draft 임시저장 · wait 승인 요청 · ok 승인 · rej 반려
+// ⚠️ **정산 판정에 쓰지 않는다** (D-R7). 정산 조건은 「작성했는가」 하나이므로
+//    state 는 승인 흐름의 표시일 뿐이고, 급여는 REP 행의 존재만 본다.
+
+Enum guide_state_t { draft  ready  sent  read }
+Enum inv_state_t   { draft  sent  unpaid  partial  paid  void }
+// D-R37 — 입금 명세서. draft 작성중 · sent 발송 · unpaid 미납 · partial 일부 · paid 완납 · void 취소
+// 되돌리기는 없다. 잘못 만들었으면 void 후 새로 만든다.
+Enum cons_share_t  { all  money_only  picked  private }
+Enum cpl_area_t    { lesson  intake  book  schedule  teacher }
+Enum sug_cat_t     { lesson  pay  schedule  etc }
+Enum sug_state_t   { open  reviewing  done }
+Enum todo_src_t    { meeting  complaint  consulting  plan  manual }
+
+// ─────────────────────────────────────────────────────────────── 상수 코드표
+// 명세서 §18 — 관리자 화면에서 추가·색 지정·리포트 대상 여부를 관리한다.
+// 자유 문자열이 아니라 표다. 색이 시간표·범례·현황판에서 함께 쓰이기 때문.
+
+Table KIND {
+  key         varchar(16) [pk, note: 'class · mock · gpa · study · consult · diagx · consulting · meeting']
+  name        varchar(30) [not null]
+  color       char(7)     [not null]
+  cap         smallint    [not null, note: '정원']
+  grp         kind_grp_t  [not null, note: '묶음 분류']
+  rep         boolean     [not null, default: false, note: 'true 인 종류만 리포트 대상 (D-4)']
+  rep_form    varchar(16) [note: '⚠️ 쓰지 않는다 — 양식은 5칸 하나뿐 (D-R40). 컬럼만 남겨 둔다']
+  sort        smallint
+}
+
+Table SUB {
+  key         varchar(20) [pk, note: 'map_read · sat_math · writing … 21종']
+  name        varchar(40) [not null]
+  color       char(7)     [not null]
+  active      boolean     [not null, default: true]
+  sort        smallint
+}
+
+// ─────────────────────────────────────────────────────────────── 사람
+
+Table STAFF {
+  id          bigserial   [pk]
+  name        varchar(40) [not null]
+  email       varchar(120)[not null, unique]
+  phone       varchar(20)
+  role        role_t      [not null, note: 'D-R39 — 권한의 유일한 출처']
+  title       varchar(20) [note: '직함 표시용 — 교수실장 · 상담실장 · 코디네이터. 권한과 무관']
+  tz          varchar(40) [not null, default: 'Asia/Seoul', note: '관리자 화면은 KST 고정 · 개인 화면에만 적용 (§17)']
+
+  // v2 §76 의 권한 5플래그. **평소에는 전부 NULL 이고 role 에서 파생한다** (D-R39).
+  // 사람별 예외가 생기는 날에만 값을 넣어 파생 결과를 덮어쓴다.
+  can_money    boolean [note: '지출 · 총수입 — NULL 이면 role==ceo']
+  can_wage     boolean [note: '강사 시급 · 시수 기준 — NULL 이면 role!=teacher']
+  can_approve  boolean [note: '보고 · 기획 · 지출 결재 — NULL 이면 role!=teacher']
+  can_hide     boolean [note: '내역 비공개 · 비공개 컨설팅 열람 — NULL 이면 role!=teacher']
+  can_gpa_pack boolean [note: '자료 요청 접수 — NULL 이면 role!=teacher']
+
+  hired_on    date        [note: '불가 시간 2주 회차의 기산점']
+  active      boolean     [not null, default: true]
+  created_at  timestamptz [not null, default: `now()`]
+
+  Note: '''
+  명세서 시드 16명. 대표 3 · 교수실장 1 · 상담실장 1 · 코디 3 + 강사.
+  실측 가능/잠김 — 대표 14/0 · 교수실장 2/12 · 상담실장 0/14 · 코디네이터 0/14 (D-R28).
+  ⚠️ 이 실측은 v2 화면의 **표시**이고, 판정은 D-R39 3줄이다.
+     canAdminPage = role != teacher · canCrudAll = role != teacher · canSeeProfit = role == ceo
+  대표 전용 12가지 중 **지출 · 총수입만** 실제로 대표 전용이고, 나머지는 매니저 이상이 본다.
+  '''
+}
+
+Table STU {
+  id          bigserial   [pk]
+  name        varchar(40) [not null]
+  grade       varchar(10)
+  school      varchar(60)
+  target_exam varchar(40)
+  started_on  date
+  guidance    varchar(20) [note: '지도 강도']
+  lang        varchar(20) [note: '수업 언어']
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 19명. 코디네이터와 공유. 포인트·청구는 강사에게 노출하지 않는다.'
+}
+
+Table LEAD {
+  id          bigserial   [pk]
+  student_id  bigint      [ref: > STU.id, note: '등록되면 채워진다']
+  name        varchar(40) [not null]
+  school      varchar(60)
+  owner_id    bigint      [ref: > STAFF.id]
+  stage       varchar(16) [not null, note: '1차 · 2차대기 · 2차 · 보류 · 등록 · 실패']
+  stop_at     varchar(16) [note: '실패 시 중단 지점']
+  reason      text
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 18건. 어느 단계에서 멈췄는지로 분류한다 (§24).'
+}
+
+Table ENR {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  kind_key    varchar(16) [not null, ref: > KIND.key]
+  sub_key     varchar(20) [ref: > SUB.key]
+  sessions    smallint    [note: '회차']
+  started_on  date
+  ended_on    date
+  Note: '시드 16건. 청구서(INV) 자동 생성의 근거.'
+}
+
+Table TZG {
+  id          bigserial   [pk]
+  name        varchar(40) [not null]
+  tz          varchar(40) [not null]
+}
+
+// ─────────────────────────────────────────────────────────────── 자원
+
+Table ROOM {
+  id          bigserial   [pk]
+  branch      varchar(20) [not null, note: '강남 · 송도 · 제주']
+  name        varchar(40) [not null]
+  capacity    smallint
+  active      boolean     [not null, default: true]
+  indexes { (branch, name) [unique] }
+}
+
+Table ZACC {
+  id             bigserial   [pk]
+  label          varchar(20) [not null, unique]
+  login_email    varchar(120)[not null]
+  login_secret   bytea       [not null, note: 'AES-256 · 평문 금지 · 키는 별도 저장소']
+  join_url       text        [not null, note: '학생용 참가 링크 — 로그인 정보와 절대 같은 자리에 두지 않는다']
+  meeting_id     varchar(30)
+  meeting_pw_enc bytea
+  active         boolean     [not null, default: true]
+  Note: '시드 6개. 계정 하나 = 회의 하나. 온라인 수업 100건 중 98건 배정 (§21).'
+}
+
+Table ZASSIGN {
+  id          bigserial   [pk]
+  ser_id      bigint      [ref: > SER.id]
+  exc_id      bigint      [ref: > EXC.id]
+  zacc_id     bigint      [not null, ref: > ZACC.id]
+  fixed       boolean     [not null, default: true, note: '고정 배정 vs 변동']
+  Note: '같은 시간에 한 계정이 두 수업에 배정되면 겹침으로 표시 (D-R3).'
+}
+
+Table ZLOG {
+  id          bigserial   [pk]
+  zacc_id     bigint      [not null, ref: > ZACC.id]
+  actor_id    bigint      [not null, ref: > STAFF.id]
+  action      varchar(20) [not null, note: 'view_secret | rotate | assign']
+  at          timestamptz [not null, default: `now()`]
+  Note: '복호화 열람은 반드시 남긴다.'
+}
+
+// ─────────────────────────────────────────────────────────────── 일정
+
+Table SER {
+  id            bigserial   [pk]
+  kind_key      varchar(16) [not null, ref: > KIND.key]
+  sub_key       varchar(20) [ref: > SUB.key]
+  teacher_id    bigint      [ref: > STAFF.id]
+  room_id       bigint      [ref: > ROOM.id]
+  mode          class_mode_t[not null]
+  start_min     smallint    [not null, note: '0~1439 분 단위 정수']
+  end_min       smallint    [not null]
+  rrule         varchar(80) [not null, note: '반복 규칙 — 요일·주기·기간']
+  from_date     date        [not null]
+  to_date       date
+  title         varchar(80)
+  created_at    timestamptz [not null, default: `now()`]
+
+  indexes { (from_date, to_date) (teacher_id) (room_id) }
+  Note: '''
+  일정 **원본**. 시드 35건. 정기 수업이 대부분이라 회차마다 행을 만들지 않는다.
+  그날 목록은 occ(date) = SER 반복 규칙 + EXC 로 만든다 (D-2).
+  겹치면 저장이 막힌다 (D-R1).
+  '''
+}
+
+Table SER_STU {
+  ser_id      bigint [not null, ref: > SER.id]
+  student_id  bigint [not null, ref: > STU.id]
+  indexes { (ser_id, student_id) [pk] }
+  Note: '그룹 수업의 참여 학생. 인원이 늘면 1인 단가가 내려가고 총액은 오른다 (D-R10).'
+}
+
+Table EXC {
+  id          bigserial   [pk]
+  ser_id      bigint      [not null, ref: > SER.id]
+  on_date     date        [not null, note: '원래 날짜']
+  canceled    boolean     [not null, default: false, note: '휴강']
+  new_date    date        [note: '옮긴 경우']
+  start_min   smallint
+  end_min     smallint
+  teacher_id  bigint      [ref: > STAFF.id, note: '강사 교체']
+  room_id     bigint      [ref: > ROOM.id]
+  reason      text
+  by_id       bigint      [ref: > STAFF.id]
+  at          timestamptz [not null, default: `now()`]
+
+  indexes { (ser_id, on_date) [unique] }
+  Note: '''
+  그날만 다른 것. 시드 7건 (강사 교체 실측 시 7→19).
+  강사를 바꾸면 EXC + GUIDE + PNOTI + ISSUE 가 동시에 움직인다.
+  그날 명단은 occRaw() 가 EXC_STU_OUT 을 걸러 만든다 (D-R21).
+  '''
+}
+
+Table EXC_STU_OUT {
+  exc_id      bigint [not null, ref: > EXC.id]
+  student_id  bigint [not null, ref: > STU.id]
+  indexes { (exc_id, student_id) [pk] }
+  Note: '''
+  v2 §79·§80 — 「이 회차만 빼기」. 소스의 EXC[id|date].stuOut 이다.
+  「아주 빼기」는 여기가 아니라 SER_STU 에서 지운다 (D-R21).
+  학생에 「향후」 범위를 줄지는 결정 안건 N-15.
+  '''
+}
+
+Table UNAV {
+  id          bigserial   [pk]
+  staff_id    bigint      [not null, ref: > STAFF.id]
+  cycle       smallint    [note: '입사일 기준 N번째 2주 회차 (v26)']
+  dow         smallint    [not null, note: '0=일 … 6=토']
+  start_min   smallint    [not null]
+  end_min     smallint    [not null]
+  reason      text        [not null, note: 'v26 — 필수. 관리자가 조정 가능성을 판단한다']
+  created_at  timestamptz [not null, default: `now()`]
+
+  indexes { (staff_id, cycle, dow) }
+  Note: '''
+  명세서는 UNAV 를 읽어 겹침만 본다. **등록 규칙은 v26 에서 가져와 얹었다** —
+  2주 회차 · 회차 시작 1주 전 마감 · 사유 필수.
+  1주 안에 생긴 사정은 시스템 밖(강사 단톡방)으로 안내한다.
+  '''
+}
+
+Table CHREQ {
+  id          bigserial   [pk]
+  ser_id      bigint      [ref: > SER.id]
+  on_date     date
+  req_type    varchar(12) [not null, note: 'time | teacher | room | off']
+  payload     jsonb       [not null]
+  reason      text        [not null]
+  state       varchar(12) [not null, default: 'open', note: 'open | applied | denied']
+  by_id       bigint      [not null, ref: > STAFF.id]
+  resolved_by bigint      [ref: > STAFF.id]
+  resolved_at timestamptz
+  apply_all   boolean     [not null, default: false, note: '정기 수업이면 이후 전체 적용']
+  created_at  timestamptz [not null, default: `now()`]
+
+  Note: '겹치면 누구와 겹치는지 표시하고 저장을 막는다. 반영 시 EXC 생성 + LOG (D-R2).'
+}
+
+// ─────────────────────────────────────────────────────────────── 리포트
+
+Table REP {
+  id           bigserial    [pk]
+  ser_id       bigint       [not null, ref: > SER.id]
+  on_date      date         [not null]
+  student_id   bigint       [not null, ref: > STU.id]
+  teacher_id   bigint       [ref: > STAFF.id]
+  kind_key     varchar(16)  [ref: > KIND.key]
+  lang         varchar(2)   [not null, default: 'ko']
+  body         jsonb        [not null, note: '5칸 고정 (D-R40) — {progress, understanding, attitude, homework, note}']
+  state        rep_state_t  [not null, default: 'none']
+  written_at   timestamptz
+  submitted_at timestamptz
+  reviewed_at  timestamptz
+  reviewer_id  bigint       [ref: > STAFF.id]
+  reject_reason text        [note: 'state=rej 일 때 필수 (D-R13)']
+  created_at   timestamptz  [not null, default: `now()`]
+
+  indexes { (ser_id, on_date) [unique] (state, submitted_at) (teacher_id, on_date) }
+  Note: '''
+  시드 57건 · 지난 2주 55/66건 작성.
+  KIND.rep=true 인 종류만 대상 (D-4). repState() 가 na/plan 이면 대상 제외.
+  강사료 계산의 근거 — **작성했으면 인정한다** (D-R7). state 는 승인 흐름의 표시일 뿐이다.
+  학부모 발송 전문은 5칸 고정 (D-R15) — 저장 형태와의 매핑도 N-2.
+  '''
+}
+
+Table AUTOREP {
+  id          bigserial   [pk]
+  ser_id      bigint      [not null, ref: > SER.id]
+  on_date     date        [not null]
+  body        jsonb       [not null]
+  created_at  timestamptz [not null, default: `now()`]
+  indexes { (ser_id, on_date) [unique] }
+  Note: '자동 생성 리포트. 시드 11건. 자습 등 강사가 쓰지 않는 종류.'
+}
+
+Table REP_STU {
+  rep_id      bigint [not null, ref: > REP.id]
+  student_id  bigint [not null, ref: > STU.id]
+  comment     text   [note: '그룹 리포트 학생별 코멘트 — v26 40자 이상']
+  deliver     boolean [not null, default: true]
+  indexes { (rep_id, student_id) [pk] }
+}
+
+Table RSEND {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  on_date     date        [not null]
+  rep_ids     jsonb       [not null, note: '학생 단위로 묶어 보낸 리포트들']
+  channel     varchar(10) [not null]
+  body        text        [not null, note: '발송 원문 스냅샷']
+  sent_at     timestamptz [not null, default: `now()`]
+  sent_by     bigint      [not null, ref: > STAFF.id]
+  Note: '안 쓴 리포트가 있는 학생은 보낼 수 없다 (D-R8).'
+}
+
+Table WREP {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  week_of     date        [not null]
+  body        jsonb
+  indexes { (student_id, week_of) [unique] }
+  Note: '주간 리포트. 코디네이터(TN Learning) 산출물과 대응.'
+}
+
+// ─────────────────────────────────────────────────────────────── 안내 · 교재
+
+Table GUIDE {
+  id          bigserial     [pk]
+  ser_id      bigint        [ref: > SER.id]
+  student_id  bigint        [not null, ref: > STU.id]
+  teacher_id  bigint        [ref: > STAFF.id]
+  reason      varchar(12)   [not null, note: 'new(첫 수업) | teacher_change']
+  state       guide_state_t [not null, default: 'draft']
+  body        text
+  due_on      date
+  created_at  timestamptz   [not null, default: `now()`]
+  Note: '''
+  한 번 보내는 것. 첫 수업이거나 강사가 바뀐 학생만 대상 (D-R5).
+  수업 상세에서 "작성" 하면 학생·학년·강사·과목·형태·같은반·교재가 자동 배정된다.
+  '''
+}
+
+Table PNOTI {
+  id          bigserial   [pk]
+  ser_id      bigint      [ref: > SER.id]
+  on_date     date
+  student_id  bigint      [not null, ref: > STU.id]
+  channel     varchar(10) [not null]
+  body        text        [not null]
+  sent_at     timestamptz
+  Note: '학부모 안내. 온라인 수업은 매번 줌 안내를 보낸다 (D-R5).'
+}
+
+Table GTPL {
+  id          bigserial   [pk]
+  name        varchar(40) [not null]
+  body        text        [not null]
+  Note: '안내 문구 템플릿. 시드 5건.'
+}
+
+Table LIB {
+  id          bigserial   [pk]
+  code        varchar(30) [not null, unique]
+  title       varchar(120)[not null]
+  sub_key     varchar(20) [ref: > SUB.key]
+  level       varchar(20)
+  grade       varchar(10)
+  pages       smallint
+  se_te       varchar(4)  [note: 'SE 학생용 · TE 교사용']
+  Note: '교재. 시드 14건. 카드에 코드·쪽수·배부 횟수·판·SE/TE 표시.'
+}
+
+Table VERS {
+  id          bigserial   [pk]
+  lib_id      bigint      [not null, ref: > LIB.id]
+  edition     varchar(20) [not null]
+  file_url    text
+  from_date   date
+  Note: '교재 판. 시드 2건.'
+}
+
+Table ISSUE {
+  id          bigserial   [pk]
+  lib_id      bigint      [not null, ref: > LIB.id]
+  vers_id     bigint      [ref: > VERS.id]
+  student_id  bigint      [not null, ref: > STU.id]
+  issued_on   date        [not null]
+  returned_on date
+  Note: '교재 배부. 시드 5건. 학생마다 어디까지 갔는지 트래킹 보드에 표시.'
+}
+
+Table HIST {
+  id          bigserial   [pk]
+  entity      varchar(12) [not null, note: 'book | guide']
+  ref_id      bigint      [not null]
+  action      varchar(20) [not null]
+  by_id       bigint      [ref: > STAFF.id]
+  at          timestamptz [not null, default: `now()`]
+  Note: '교재·안내 이력. 시드 18건.'
+}
+
+Table GPAPACK {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  pack_type   varchar(12) [not null, note: 'exam(시험 대비) | self(자습) — 두 가지만 받는다']
+  detail      text
+  state       varchar(12) [not null, default: 'open']
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '자료 요청. 시드 2건.'
+}
+
+// ─────────────────────────────────────────────────────────────── 회계
+
+Table RATE {
+  id          bigserial   [pk]
+  kind_key    varchar(16) [not null, ref: > KIND.key]
+  sub_key     varchar(20) [ref: > SUB.key]
+  unit_price  int         [not null]
+  from_date   date        [not null]
+  Note: '프로그램별 단가. 수정하면 전체 재계산 (§54).'
+}
+
+Table STURATE {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  kind_key    varchar(16) [ref: > KIND.key]
+  unit_price  int         [not null]
+  from_date   date        [not null]
+  Note: '학생별 단가 예외.'
+}
+
+Table WAGE {
+  id          bigserial   [pk]
+  staff_id    bigint      [not null, ref: > STAFF.id]
+  rate        int         [not null, note: '기본 시급(원/시간)']
+  from_date   date        [not null, note: '이 날짜의 수업부터 적용 — 소급 없음 (D8 확정)']
+  reason      text
+  approved_by bigint      [ref: > STAFF.id]
+  created_at  timestamptz [not null, default: `now()`]
+
+  indexes { (staff_id, from_date) [unique] }
+  Note: '''
+  명세서의 WAGE(강사별 시급)에 **v26 의 이력 개념을 얹었다**.
+  기준은 수업일이지 정산월이 아니다 — 월중에 바뀌면 그 달 안에서 두 단가가 섞인다.
+    SELECT rate FROM WAGE WHERE staff_id=$1 AND from_date<=$class_date
+     ORDER BY from_date DESC LIMIT 1;
+  '''
+}
+
+Table INV {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  enr_id      bigint      [ref: > ENR.id, note: '수강 내역에서 자동 생성 가능']
+  year_month  varchar(7)  [not null]
+  inv_type    varchar(16) [not null, note: '청구 종류 6종 — 종류마다 결제 수단이 제한된다']
+  title       varchar(80) [not null]
+  amount      int         [not null, note: '들어와야 할 금액. 회계 화면에서 placeholder 로 쓰인다']
+  detail      jsonb
+  state       inv_state_t [not null, default: 'draft']
+  issued_on   date
+  due_on      date
+  sent_at     timestamptz
+  created_by  bigint      [ref: > STAFF.id]
+
+  paid_amount int         [not null, default: 0, note: 'state=partial 일 때 지금까지 받은 합 (D-R37)']
+  paid_at     timestamptz
+  proof_url   text        [note: '입금 증빙 — Vercel Blob (D-R42)']
+  memo        varchar(500)
+
+  indexes { (student_id, year_month) (state, due_on) }
+  Note: '''
+  시드 6건 ₩9,720,000. aging() 이 기한 경과일수로 미수를 분류한다.
+
+  **입금 명세서** (D-R37) — 「~학생이 ~과목을 몇 번 수강했으니 총 얼마」.
+  줄(INV_LINE)은 서버가 occ() 로 세어 초안을 만들고, 매니저 이상이 확정해 저장한다.
+  상태 전이는 unpaid → partial → paid 와 → void 뿐이며 되돌리기가 없다.
+  같은 명세서를 두 사람이 동시에 완납 처리하는 경합은 SELECT … FOR UPDATE 로 막는다.
+  '''
+}
+
+Table INV_LINE {
+  id          bigserial   [pk]
+  inv_id      bigint      [not null, ref: > INV.id]
+  sub_key     varchar(16) [ref: > SUB.key, note: '과목']
+  label       varchar(80) [not null, note: '표시용 — "고2 수학"']
+  count       int         [not null, note: '수강 횟수 — occ() 로 센 취소 아닌 회차 수. 사람이 세지 않는다']
+  unit_price  int         [not null]
+  amount      int         [not null, note: 'count × unit_price — 저장 시점 스냅샷']
+  seq         smallint    [not null, default: 0]
+
+  indexes { (inv_id, seq) }
+  Note: '''
+  D-R37. 「몇 번 수강했는가」를 프론트가 세면 EXC(예외)를 빠뜨린다 — 서버가 센다.
+  단가가 나중에 바뀌어도 이미 낸 명세서는 흔들리지 않도록 amount 를 스냅샷으로 굳힌다.
+  '''
+}
+
+Table PAY {
+  id          bigserial   [pk]
+  inv_id      bigint      [ref: > INV.id, note: 'NULL 이면 매니저가 직접 넣은 건 (A-D1)']
+  student_id  bigint      [ref: > STU.id]
+  amount      int         [note: '실제 입금액. NULL = 아직 아무도 확인하지 않음']
+  paid_on     date
+  method      varchar(16)
+  reason      text        [note: '청구액과 다를 때 필수']
+  entered_by  bigint      [ref: > STAFF.id]
+  entered_at  timestamptz
+  confirmed_by bigint     [ref: > STAFF.id, note: '확정 — 매니저 이상 (D-R39 · D-R37)']
+  confirmed_at timestamptz
+
+  indexes { (inv_id) (paid_on) }
+  Note: '''
+  시드 14건. **기대값(INV.amount)은 placeholder 로만 보여 주고 실측값(amount)을 사람이 넣는다.**
+  미리 채워 두면 확인하지 않고 그대로 저장한다 — amount NULL 이 "아직 확인 안 함"을 뜻한다.
+  넣는 것도 확정하는 것도 **매니저 이상**이다 (D-R39). 강사는 이 화면을 볼 수 없다.
+  '''
+}
+
+Table PAYOUT {
+  id          bigserial   [pk]
+  staff_id    bigint      [not null, ref: > STAFF.id]
+  year_month  varchar(7)  [not null]
+  hours       numeric(6,2)[not null, note: '취소·휴강 제외 (D-R11)']
+  gross       int         [not null]
+  late_rep_cut int        [not null, default: 0, note: '리포트 지각 차감 — 1시간↑ 5,000 · 4시간↑ 10,000 (D-R32)']
+  late_cls_cut int        [not null, default: 0, note: '수업 지각 차감(분 단위)']
+  income_tax  int         [not null, default: 0, note: '소득세 3% · 원 단위 절사 (D-15)']
+  local_tax   int         [not null, default: 0, note: '지방소득세 = 소득세 10% · 원 단위 절사']
+  net         int         [not null]
+  state       varchar(12) [not null, default: 'draft', note: 'draft | confirmed | paid']
+  confirmed_by bigint     [ref: > STAFF.id]
+  confirmed_at timestamptz
+
+  indexes { (staff_id, year_month) [unique] }
+  Note: '''
+  시드 3건 · 13명 ₩4,836,692.
+  wageSheet(강사, 년월) 이 리포트 기준으로 시수를 집계한다 — **작성했으면 인정** (D-R7).
+  반려·재승인으로는 깎이지 않는다. 깎이는 것은 지각 차감(late_rep_cut)뿐이다.
+  본인만 조회. 다른 강사의 시급·정산은 어떤 화면에서도 보이지 않는다.
+  3.3% 를 한 번에 곱하지 않는다 — 신고가 두 항목으로 나뉘므로 계산도 나뉜다.
+  '''
+}
+
+Table PAYOUT_LINE {
+  id          bigserial   [pk]
+  payout_id   bigint      [not null, ref: > PAYOUT.id]
+  ser_id      bigint      [ref: > SER.id]
+  on_date     date
+  kind_key    varchar(16) [ref: > KIND.key]
+  hours       numeric(4,2)[not null]
+  unit_rate   int         [not null, note: '수업일 기준 시급 스냅샷 — 이력이 정정돼도 안 흔들린다']
+  amount      int         [not null]
+  cut         int         [not null, default: 0]
+}
+
+Table EXPENSE {
+  id          bigserial   [pk]
+  spend_on    date        [not null]
+  category    varchar(30) [not null, note: '임대료 · 부대비용 · 도서교재비 · 소모품비 · 접대비 · 지급수수료 (A-D5)']
+  merchant    varchar(80)
+  purpose     text
+  requested_amount int    [note: '법인카드 — 직원이 올린 금액. placeholder 로 쓰인다']
+  amount      int         [note: '확정 금액. 승인자가 넣는다. NULL = 미심사']
+  reason      text        [note: '신청액과 다를 때 필수']
+  receipt_url text        [note: '없으면 승인 불가']
+  requester_id bigint     [ref: > STAFF.id]
+  state       varchar(12) [not null, default: 'submitted', note: 'submitted | approved | rejected']
+  reviewer_id bigint      [ref: > STAFF.id]
+  reviewed_at timestamptz
+  created_at  timestamptz [not null, default: `now()`]
+
+  indexes { (state, created_at) (spend_on) }
+  Note: '''
+  명세서의 EXPENSE(지출)에 **법인카드 승인 흐름을 얹었다** — 별도 표를 만들지 않는다.
+  requester_id = reviewer_id 는 차단 (본인 신청 자기 승인 금지).
+  amount > requested_amount 는 차단 (증액은 재신청 — A-D3).
+  '''
+}
+
+// ─────────────────────────────────────────────────────────────── 운영
+
+Table CONS {
+  id          bigserial    [pk]
+  cons_type   varchar(20)  [not null, note: '종류 10종']
+  stage       varchar(12)  [not null, note: 'contract | running | done']
+  contract_step smallint   [note: '계약 5단계 — 계약서 → 피드백 → 학부모 전달 → 서명본 → 수납']
+  amount      int
+  sessions    smallint
+  end_on      date
+  owner_id    bigint       [ref: > STAFF.id]
+  share       cons_share_t [not null, default: 'all', note: 'csCan() 목록 필터 · csCanFull() 내용 접근']
+  created_at  timestamptz  [not null, default: `now()`]
+  Note: '시드 2건. 공개 범위는 role 권한과 **독립된 두 번째 층** (D-5 · D-R39).'
+}
+
+Table CONS_STU  { cons_id bigint [ref: > CONS.id]  student_id bigint [ref: > STU.id]  indexes { (cons_id, student_id) [pk] } }
+Table CONS_PICK { cons_id bigint [ref: > CONS.id]  staff_id   bigint [ref: > STAFF.id] indexes { (cons_id, staff_id) [pk] } Note: 'share=picked 일 때 볼 수 있는 사람' }
+
+Table CONS_SESS {
+  id          bigserial   [pk]
+  cons_id     bigint      [not null, ref: > CONS.id]
+  seq         smallint    [not null]
+  on_date     date
+  who         text
+  what        text
+  why         text
+  how         text
+  ser_id      bigint      [ref: > SER.id, note: '회차 기록 시 스케줄이 생긴다']
+  Note: '회차별 육하원칙 기록. 실측: 기록하면 SER 35→36 · TODO 5→6.'
+}
+
+Table CPL {
+  id          bigserial   [pk]
+  area        cpl_area_t  [not null]
+  student_id  bigint      [ref: > STU.id]
+  stage       varchar(12) [not null, note: 'open | acting | done']
+  body        text        [not null]
+  action      text
+  result      text
+  teacher_changed boolean [not null, default: false]
+  owner_id    bigint      [ref: > STAFF.id]
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 3건. 접수 → 대응 → 결과.'
+}
+
+Table PLAN {
+  id          bigserial   [pk]
+  title       varchar(120)[not null]
+  stage       varchar(12) [not null, note: 'draft | review | rework | ok | done']
+  goal        text
+  tasks       jsonb
+  research    text
+  ask         text        [note: '결정 요청']
+  due_on      date
+  owner_id    bigint      [ref: > STAFF.id]
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 3건. 대표 결재 대기 수가 일일 보고의 판정 기준.'
+}
+
+Table MKT {
+  id          bigserial   [pk]
+  channel     varchar(20) [not null, note: '채널 7종']
+  item        varchar(20) [not null, note: '항목 7종']
+  url         text
+  result      jsonb
+  on_date     date
+  Note: '시드 4건.'
+}
+
+Table MFB {
+  id          bigserial   [pk]
+  mkt_id      bigint      [ref: > MKT.id]
+  by_id       bigint      [not null, ref: > STAFF.id]
+  body        text        [not null]
+  at          timestamptz [not null, default: `now()`]
+  Note: '대표 피드백 — 코멘트하면 관리자 전원에게 알림.'
+}
+
+Table MTREC {
+  id          bigserial   [pk]
+  mt_type     varchar(12) [not null, note: '기획 · 컨설팅 · 마케팅 · 개발 · 일반 5종']
+  title       varchar(120)
+  on_date     date
+  pre_files   jsonb
+  minutes     text        [note: '속기록']
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 1건. 속기록 → 할 일 → 알림으로 퍼진다.'
+}
+
+Table MTATTD { mt_id bigint [ref: > MTREC.id]  staff_id bigint [ref: > STAFF.id]  confirmed boolean  indexes { (mt_id, staff_id) [pk] } }
+
+Table TODO {
+  id          bigserial   [pk]
+  title       varchar(160)[not null]
+  from_id     bigint      [ref: > STAFF.id, note: '준 사람']
+  to_id       bigint      [ref: > STAFF.id, note: '받은 사람']
+  due_on      date
+  done        boolean     [not null, default: false]
+  src         todo_src_t  [not null, default: 'manual']
+  mt_id       bigint      [ref: > MTREC.id]
+  cpl_id      bigint      [ref: > CPL.id]
+  cons_id     bigint      [ref: > CONS.id]
+  plan_id     bigint      [ref: > PLAN.id]
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 4건. 출처 필드로 원본을 되짚을 수 있다.'
+}
+
+Table REQ {
+  id          bigserial   [pk]
+  staff_id    bigint      [not null, ref: > STAFF.id, note: '강사가 올린다']
+  req_type    varchar(16) [not null]
+  payload     jsonb
+  state       varchar(12) [not null, default: 'open']
+  resolved_by bigint      [ref: > STAFF.id]
+  reject_reason text      [note: '반려 시 필수 (D-R13)']
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 6건. 승인 대기함에 모인다. 승인 결과는 LOG + NOTI.'
+}
+
+Table NOTI {
+  id          bigserial   [pk]
+  to_id       bigint      [not null, ref: > STAFF.id]
+  from_id     bigint      [ref: > STAFF.id]
+  body        text        [not null]
+  link        varchar(80)
+  read_at     timestamptz
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '시드 5건. 인앱 구현 완료 · 카카오/알림톡 실발송은 아직 없음 (D9).'
+}
+
+Table LOG {
+  id          bigserial   [pk]
+  actor_id    bigint      [not null, ref: > STAFF.id]
+  entity      varchar(20) [not null]
+  entity_id   bigint      [not null]
+  action      varchar(20) [not null]
+  before      jsonb
+  after       jsonb
+  at          timestamptz [not null, default: `now()`]
+  indexes { (entity, entity_id, at) }
+  Note: '시드 4건.'
+}
+
+Table RPT {
+  id          bigserial   [pk]
+  rpt_type    varchar(8)  [not null, note: 'day | week | month (v2 — 3주기)']
+  on_date     date        [not null, note: 'day=그날 · week=그 주 월요일 · month=YYYY-MM-01 로 정규화 (D-R23)']
+  memo        jsonb       [not null, note: '영역별 한 줄. 하나도 안 적으면 제출 불가 (D-R14)']
+  state       varchar(8)  [not null, default: 'draft', note: 'draft | sent | ok | rej']
+  sent_at     timestamptz
+  reviewed_at timestamptz
+  reject_reason text
+  indexes { (rpt_type, on_date) [unique] }
+  Note: '''
+  시드 1건. 내용은 저장하지 않고 각 엔티티에서 실시간 집계한다 (D-3 · D-R24).
+  rpGather(kind,d1,d2) 가 전부 계산하고 여기에는 st/memo/sign 만 남는다.
+  6개 영역 순서 고정 (D-R25) — 회계(INV·PAY) → 마케팅(MKT·MFB) → 운영(PLAN·TODO·SER)
+             → 컨설팅(CONS) → 컴플레인(CPL) → 수업(SER+clChk). 스케줄 변동은 제외.
+  월간은 손익(매출−강사료−지출)과 상담 퍼널(stopAt)이 더 붙는다.
+  (rpt_type, on_date) unique 로 같은 달 보고서 중복 생성을 막는다 (D-R23).
+  '''
+}
+
+Table PDFLOG {
+  id          bigserial   [pk]
+  kind        varchar(16) [not null]
+  ref_id      bigint
+  file_url    text
+  at          timestamptz [not null, default: `now()`]
+}
+
+// ─────────────────────────────────────────────────────────────── 강사 전용 (v26)
+
+Table SUGGESTION {
+  id          bigserial   [pk]
+  staff_id    bigint      [not null, ref: > STAFF.id]
+  category    sug_cat_t   [not null, note: '수업 · 시급 · 스케줄 · 기타 (D-11 확정)']
+  body        text        [not null]
+  state       sug_state_t [not null, default: 'open', note: '접수됨 · 확인 중 · 답변 완료 (D-12)']
+  reply       text
+  reply_by    bigint      [ref: > STAFF.id]
+  reply_at    timestamptz
+  created_at  timestamptz [not null, default: `now()`]
+
+  indexes { (staff_id, created_at) }
+  Note: '''
+  강사 백오피스 전용. 관리자 명세서에 없다 — v26 이 정본.
+  월 3회 제한. 시급·정산 문의는 관리자만 확인하며 다른 강사에게 공개되지 않는다.
+  '''
+}
+
+Table NOTE {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  ser_id      bigint      [ref: > SER.id]
+  author_id   bigint      [not null, ref: > STAFF.id]
+  body        text        [not null]
+  created_at  timestamptz [not null, default: `now()`]
+  indexes { (student_id, created_at) }
+  Note: '특이사항(인수인계). 학부모에게 전달되지 않는다 — 관리자만 본다.'
+}
+
+Table DIAG {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  ser_id      bigint      [ref: > SER.id]
+  level_summary text      [not null]
+  strengths   text
+  weaknesses  text
+  curriculum  text
+  created_by  bigint      [not null, ref: > STAFF.id]
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '진단 리포트. 수업 안내 화면에 요약이 뜬다. 코디네이터와 공유.'
+}
+
+// ─────────────────────────────────────────────────────────── GPA (v2 §14)
+// 명세서 엔티티 37종 목록에 없다. SER(kind='gpa') 에 얹을지 표로 뺄지는 N-13.
+// 아래는 「표로 뺀다」 안. 확정 전까지 마이그레이션에 넣지 않는다.
+
+Table GPASVC {
+  key         varchar(8)  [pk, note: 'hw · prj · quiz · test · self']
+  name        varchar(30) [not null]
+  point       smallint    [not null, note: '1 · 2 · 2 · 4 · 6']
+  color       char(7)
+  sort        smallint
+  Note: 'GPA 서비스 5종. 회차마다 이 포인트가 배정량에서 깎인다 (D-R29).'
+}
+
+Table GPA_CYCLE {
+  id          bigserial [pk]
+  no          smallint  [not null, note: '3차 사이클 …']
+  from_date   date      [not null]
+  to_date     date      [not null, note: '4주']
+  closed      boolean   [not null, default: false]
+  indexes { (from_date, to_date) }
+  Note: '4주 사이클. 이월 없음 — 닫히면 잔여 포인트는 소멸한다 (D-R29).'
+}
+
+Table GPA_ALLOC {
+  id          bigserial [pk]
+  cycle_id    bigint    [not null, ref: > GPA_CYCLE.id]
+  student_id  bigint    [not null, ref: > STU.id]
+  coord_id    bigint    [ref: > STAFF.id, note: '담당 코디네이터']
+  points      smallint  [not null, note: '이 사이클 배정량']
+  indexes { (cycle_id, student_id) [unique] }
+  Note: '학생별 배정. gpaByStudent() = 배정 − 사용 − 대기.'
+}
+
+Table GPA_USE {
+  id          bigserial   [pk]
+  cycle_id    bigint      [not null, ref: > GPA_CYCLE.id]
+  student_id  bigint      [not null, ref: > STU.id]
+  ser_id      bigint      [ref: > SER.id, note: "kind='gpa' 회차"]
+  svc_key     varchar(8)  [not null, ref: > GPASVC.key]
+  points      smallint    [not null, note: 'GPASVC.point 스냅샷']
+  on_date     date        [not null]
+  start_min   smallint
+  coord_id    bigint      [ref: > STAFF.id]
+  note_url    text        [note: '기록지']
+  state       varchar(8)  [not null, default: 'wait', note: 'wait | ok — 대기는 타임라인에 점선']
+  indexes { (cycle_id, student_id, on_date) }
+  Note: '''
+  회차별 소비. ptOf() 가 읽고 gpTimeline() 이 날짜·시간순으로 잔여 막대를 그린다.
+  배정을 넘기면 붉게 표시하고 추가 결제 또는 다음 사이클 조정을 안내한다.
+  학부모 비공개 — 내부 자료로만 쓴다 (D-R30).
+  '''
+}
+
+// ============================================================================
+// 아직 표를 만들지 않은 것 — docs/decisions/PLANNING-REQUIRED.md
+//   N-13 GPA 저장 위치 → 위 GPA_* 4표를 채택할지 SER 에 얹을지
+//   N-14 이름을 키로 쓰는 5곳(ISSUE.stu/.ins · GUIDE.stu/.ins · INV.stu · SER.ins/.stu)
+//        을 언제 id 참조로 바꾸나 — 서버에서 동명이인·개명에 깨진다
+//   N-15 학생 「이 회차만 빼기」에 「향후」 범위를 줄 것인가 → EXC_STU_OUT 에 to_date
+//   A-D5 계정과목 코드표 → EXPENSE.category 를 표로 승격할지
+//
+//   (닫힘) N-1 N-2 N-3 N-4 N-5 N-6 N-11 D-13 D-14 → 2026-08-27 대표 결정. 위 v4.1 항목 참조.
+//
+// v3.0 → v4.0 (2026-08-27 · 명세서 v2)
+//   + EXC_STU_OUT           「이 회차만 빼기」 (D-R21)
+//   + GPASVC · GPA_CYCLE · GPA_ALLOC · GPA_USE   (N-13 확정 전까지 잠정)
+//   ~ RPT.rpt_type          day | week → day | week | month, (type,date) unique (D-R23)
+//   ~ STAFF                 권한 5플래그 (N-11 확정 전까지 주석으로만)
+//
+// v4.0 → v4.1 (2026-08-27 대표 결정)
+//   ~ role_t                ceo·head·adm·coord·teacher → teacher·manager·admin·ceo (D-R39)
+//   + STAFF.title           직함 표시용 (권한과 분리)
+//   ~ STAFF 권한 5컬럼      not null default → nullable (평소 NULL = role 파생) (D-R39)
+//   - STAFF.money           삭제 — can_money 와 중복
+//   ~ inv_state_t           + unpaid · partial (D-R37)
+//   + INV.paid_amount · paid_at · proof_url · memo                     (D-R37)
+//   + INV_LINE              입금 명세서 줄 — 과목 · 횟수 · 단가 · 금액  (D-R37)
+//   ~ PAYOUT.late_rep_cut   단계 확정 — 1시간↑ 5,000 · 4시간↑ 10,000   (D-R32)
+//   ~ REP.state             정산 판정에서 제외 — 「작성했는가」만 본다  (D-R7)
+//
+// ============================================================================
+// 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
+// ----------------------------------------------------------------------------
+// 원자성은 세 층으로 막는다 (contracts/STACK.md §1.2). 여기 적은 것이 ③ 마지막 방어선이다.
+//
+//   ── 겹침 금지 — 애플리케이션이 아니라 DB 가 거부한다 (D-R43)
+//   CREATE EXTENSION IF NOT EXISTS btree_gist;
+//
+//   ALTER TABLE ser ADD CONSTRAINT ser_room_no_overlap
+//     EXCLUDE USING gist (room_id WITH =, tstzrange(start_at, end_at) WITH &&)
+//     WHERE (canceled = false AND room_id IS NOT NULL);
+//
+//   ALTER TABLE ser ADD CONSTRAINT ser_teacher_no_overlap
+//     EXCLUDE USING gist (teacher_id WITH =, tstzrange(start_at, end_at) WITH &&)
+//     WHERE (canceled = false);
+//
+//   ALTER TABLE zassign ADD CONSTRAINT zoom_no_overlap
+//     EXCLUDE USING gist (zacc_id WITH =, tstzrange(start_at, end_at) WITH &&);
+//
+//   ⚠️ 반복 규칙(SER)은 기간이 열려 있으므로, 위 제약은 **전개된 회차 테이블**에 건다.
+//      전개는 occ() 와 같은 규칙으로 만든 물리 테이블(SER_OCC)을 쓰거나,
+//      SER 저장 시점에 겹침을 계산해 넣는다 — 어느 쪽이든 판정은 DB 가 한다.
+//      guardResource() 는 사용자에게 미리 알려 주기 위한 **안내**일 뿐이다.
+//
+//   ── 중복 금지 — 재시도·더블클릭이 두 줄을 만들지 않게
+//   ALTER TABLE rpt ADD CONSTRAINT rpt_type_date_uniq UNIQUE (rpt_type, on_date);
+//   ALTER TABLE rep ADD CONSTRAINT rep_ser_date_uniq  UNIQUE (ser_id, on_date);
+//   ALTER TABLE exc ADD CONSTRAINT exc_ser_date_uniq  UNIQUE (ser_id, on_date);
+//   ALTER TABLE payout ADD CONSTRAINT payout_staff_month_uniq UNIQUE (staff_id, year_month);
+//
+//   ── 금액이 음수가 되지 않게
+//   ALTER TABLE inv ADD CONSTRAINT inv_paid_le_amount
+//     CHECK (paid_amount >= 0 AND paid_amount <= amount);
+//   ALTER TABLE payout ADD CONSTRAINT payout_net_nonneg CHECK (net >= 0);
+//
+//   ── 상태 되돌리기 금지는 제약이 아니라 서비스에서 막는다
+//      unpaid → partial → paid, 그리고 → void. 그 외 전이는 409.
+// ============================================================================
