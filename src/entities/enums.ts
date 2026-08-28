@@ -1,5 +1,5 @@
 /**
- * DB enum — docs/contracts/db/erd.dbml v4.1 에서 생성했습니다.
+ * DB enum — docs/contracts/db/erd.dbml v4.3 에서 생성했습니다.
  * 손으로 고치지 마세요. dbml 을 고치고 `npm run entities:gen` 을 다시 도세요.
  */
 

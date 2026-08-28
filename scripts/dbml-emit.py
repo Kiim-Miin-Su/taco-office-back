@@ -1,7 +1,16 @@
 import io, json, os, re
 
 T = json.load(io.open('/tmp/tables.json', encoding='utf-8'))
-OUT = '/home/claude/out/app/taco_office_back/src/entities'
+
+# 버전은 erd 에서 읽는다 — 예전에는 'v4.1' 이 박혀 있어 v4.3 을 읽고도 v4.1 이라고 적었다 (TBO-25).
+import re as _re
+_src = io.open('/tmp/erd.dbml', encoding='utf-8').read()
+_m = _re.search(r'version\s*:\s*([\d.]+)', _src)
+VER = 'v' + (_m.group(1) if _m else '?')
+# 출력 경로는 이 스크립트 위치에서 뽑는다 — 예전에는 만든 사람의 컴퓨터 경로가 박혀 있어
+# 다른 데서 돌리면 엉뚱한 곳에 쓰거나 권한 오류로 죽었다 (TBO-25 에서 발견).
+OUT = os.environ.get('ENTITIES_OUT') or os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'entities'))
 os.makedirs(OUT, exist_ok=True)
 
 def camel(s):
@@ -48,7 +57,7 @@ for t in T:
 
 # ── enums 파일
 lines = ["/**",
- " * DB enum — docs/contracts/db/erd.dbml v4.1 에서 생성했습니다.",
+ f" * DB enum — docs/contracts/db/erd.dbml {VER} 에서 생성했습니다.",
  " * 손으로 고치지 마세요. dbml 을 고치고 `npm run entities:gen` 을 다시 도세요.",
  " */", ""]
 for name, ts in sorted(enum_consts.items()):
@@ -77,7 +86,7 @@ for t in T:
 
     L = []
     L.append('/**')
-    L.append(f' * {table} — docs/contracts/db/erd.dbml v4.1 에서 생성했습니다.')
+    L.append(f' * {table} — docs/contracts/db/erd.dbml {VER} 에서 생성했습니다.')
     L.append(' *')
     L.append(' * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).')
     L.append(' * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.')
@@ -111,7 +120,7 @@ for t in T:
     io.open(os.path.join(OUT, file_of(t)), 'w', encoding='utf-8').write('\n'.join(L))
     index.append((cls, file_of(t)[:-3]))
 
-ix = ["/** 엔티티 색인 — dbml v4.1 에서 생성했습니다. 손으로 고치지 마세요. */", "export * from './enums';"]
+ix = [f"/** 엔티티 색인 — dbml {VER} 에서 생성했습니다. 손으로 고치지 마세요. */", "export * from './enums';"]
 for cls, f in sorted(index):
     ix.append(f"export * from './{f}';")
 ix.append('')

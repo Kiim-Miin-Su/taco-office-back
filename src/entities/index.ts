@@ -1,4 +1,4 @@
-/** 엔티티 색인 — dbml v4.1 에서 생성했습니다. 손으로 고치지 마세요. */
+/** 엔티티 색인 — dbml v4.3 에서 생성했습니다. 손으로 고치지 마세요. */
 export * from './enums';
 export * from './autorep.entity';
 export * from './chreq.entity';
@@ -43,6 +43,7 @@ export * from './room.entity';
 export * from './rpt.entity';
 export * from './rsend.entity';
 export * from './ser.entity';
+export * from './ser-occ.entity';
 export * from './ser-stu.entity';
 export * from './staff.entity';
 export * from './stu.entity';
@@ -103,6 +104,7 @@ import {
   Rpt,
   Rsend,
   Ser,
+  SerOcc,
   SerStu,
   Staff,
   Stu,
@@ -165,6 +167,7 @@ export const ENTITIES = [
   Rpt,
   Rsend,
   Ser,
+  SerOcc,
   SerStu,
   Staff,
   Stu,

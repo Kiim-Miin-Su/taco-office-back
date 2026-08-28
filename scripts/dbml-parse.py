@@ -46,6 +46,8 @@ TYPE_MAP = [
     (r'^jsonb$',           ('jsonb',       'Record<string, unknown>', None)),
     (r'^date$',            ('date',        'string', None)),
     (r'^timestamptz$',     ('timestamptz', 'Date',   None)),
+    (r'^tstzrange$',       ('tstzrange',   'string', None)),
+    (r'^bytea$',           ('bytea',       'Buffer', None)),
     (r'^numeric\((\d+),(\d+)\)$', ('numeric', 'string', 'numeric')),
     (r'^varchar\((\d+)\)$',('varchar',     'string', 'len')),
     (r'^char\((\d+)\)$',   ('char',        'string', 'len')),
@@ -53,7 +55,9 @@ TYPE_MAP = [
 
 # 줄바꿈을 삼키지 않도록 [ \t] 만 쓴다. \s 를 쓰면 앞 컬럼 매치가 다음 줄의 들여쓰기까지
 # 먹어 버려서 그 다음 컬럼이 통째로 사라진다 (STAFF.role 이 실제로 그렇게 빠졌다).
-COL_RE = re.compile(r'(?<![\w.])(\w+)[ \t]+(bigserial|serial|bigint|int|smallint|boolean|text|jsonb|date|timestamptz|numeric\(\d+,\d+\)|varchar\(\d+\)|char\(\d+\)|\w+_t)[ \t]*(\[[^\]]*\])?')
+COL_RE = re.compile(r'(?<![\w.])(\w+)[ \t]+(bigserial|serial|bigint|int|smallint|boolean|text|jsonb|date|timestamptz|numeric\(\d+,\d+\)|varchar\(\d+\)|char\(\d+\)|tstzrange|bytea|\w+_t)[ \t]*(\[[^\]]*\])?')
+
+DROPPED = []
 
 def parse_cols(body):
     """한 줄짜리 표(CONS_STU 등)도 있으므로 줄 단위가 아니라 본문 전체에서 찾는다."""
@@ -65,6 +69,18 @@ def parse_cols(body):
     for m in COL_RE.finditer(b):
         c = parse_col_m(m)
         if c: out.append(c)
+
+    # COL_RE 는 타입 allowlist 다. 목록에 없는 타입은 **조용히 사라진다** —
+    # SER_OCC.span(tstzrange) 이 실제로 그렇게 빠져 있었다 (TBO-25 에서 발견).
+    # 그래서 컬럼처럼 생겼는데 못 잡은 줄을 찾아 알린다.
+    got = {c['name'] for c in out}
+    # 줄 전체가 「이름 타입 [속성]」 꼴인 것만 컬럼 후보로 본다.
+    # Note 안의 한국어 산문이 걸리지 않도록 ASCII 로 못 박고 줄 끝까지 고정한다.
+    CAND = re.compile(r'^([a-z_][a-z0-9_]*)[ \t]+([a-z][a-z0-9_]*(?:\(\d+(?:,\d+)?\))?)[ \t]*(\[[^\]]*\])?[ \t]*$')
+    for line in b.split('\n'):
+        mm = CAND.match(line.strip())
+        if mm and mm.group(1) not in got and mm.group(1) != 'indexes':
+            DROPPED.append((mm.group(1), mm.group(2)))
     return out
 
 def parse_col_m(m):
@@ -118,4 +134,10 @@ for name, body in tables:
 
 json.dump(out_tables, io.open('/tmp/tables.json','w',encoding='utf-8'), ensure_ascii=False, indent=1)
 print('표', len(out_tables), '· 컬럼', sum(len(t['cols']) for t in out_tables))
+if DROPPED:
+    import sys
+    print('\n⛔ 타입을 몰라서 버린 컬럼이 있습니다 — 생성물이 erd 와 어긋납니다:')
+    for n, t in DROPPED: print(f'   {n} : {t}')
+    print('   dbml-parse.py 의 COL_RE 와 TYPE_MAP 에 타입을 추가하세요.')
+    sys.exit(1)
 print('제외:', sorted(SKIP))

@@ -1,6 +1,6 @@
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.1  (2026-08-27) — 대표 결정 11건 반영 (decisions/DECISIONS-2026-08-27.md)
+// version : 4.3  (2026-08-28) — SER_OCC 표 본문 추가 · 부록 A 를 실제 마이그레이션과 일치시킴
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -113,6 +113,11 @@ Table STAFF {
   role        role_t      [not null, note: 'D-R39 — 권한의 유일한 출처']
   title       varchar(20) [note: '직함 표시용 — 교수실장 · 상담실장 · 코디네이터. 권한과 무관']
   tz          varchar(40) [not null, default: 'Asia/Seoul', note: '관리자 화면은 KST 고정 · 개인 화면에만 적용 (§17)']
+
+  // ── 인증 (D-R41 · TBO-22). 명세서 v2 는 localStorage 라 비밀번호 자리가 없었다.
+  password_hash  varchar(72)  [note: 'bcrypt. 길이 60 이지만 알고리즘이 바뀔 자리를 둔다']
+  last_login_at  timestamptz
+  phone_verified boolean      [not null, default: false, note: 'SENS 인증 완료 여부 (TBO-15)']
 
   // v2 §76 의 권한 5플래그. **평소에는 전부 NULL 이고 role 에서 파생한다** (D-R39).
   // 사람별 예외가 생기는 날에만 값을 넣어 파생 결과를 덮어쓴다.
@@ -910,6 +915,28 @@ Table GPA_USE {
   '''
 }
 
+Table SER_OCC {
+  id          bigserial [pk]
+  ser_id      bigint    [not null, ref: > SER.id]
+  on_date     date      [not null]
+  teacher_id  bigint    [ref: > STAFF.id]
+  room_id     bigint    [ref: > ROOM.id]
+  zacc_id     bigint    [ref: > ZACC.id]
+  canceled    boolean   [not null, default: false]
+  span        tstzrange [not null]
+
+  indexes {
+    (ser_id, on_date) [unique, name: 'ser_occ_ser_date_uniq']
+  }
+
+  Note: '''
+  전개된 회차. 반복 규칙(SER)은 기간이 열려 있어 겹침 제약을 걸 대상이 없으므로,
+  occ() 와 같은 규칙으로 회차를 펼쳐 이 표에 넣고 **여기에** EXCLUDE 를 건다 (D-R43 · 부록 A).
+  span 은 tstzrange(start_at, end_at) 이고, canceled=true 인 회차는 제약에서 빠진다.
+  강의실 · 강사 · 줌 세 제약이 전부 이 표에 붙는다 — 최종 방어선이 여기다.
+  '''
+}
+
 // ============================================================================
 // 아직 표를 만들지 않은 것 — docs/decisions/PLANNING-REQUIRED.md
 //   N-13 GPA 저장 위치 → 위 GPA_* 4표를 채택할지 SER 에 얹을지
@@ -937,6 +964,17 @@ Table GPA_USE {
 //   ~ PAYOUT.late_rep_cut   단계 확정 — 1시간↑ 5,000 · 4시간↑ 10,000   (D-R32)
 //   ~ REP.state             정산 판정에서 제외 — 「작성했는가」만 본다  (D-R7)
 //
+// v4.1 → v4.2 (2026-08-27 · TBO-22 첫 구현)
+//   + STAFF.password_hash · last_login_at · phone_verified   인증 (D-R41)
+//   + SER_OCC               전개된 회차 — EXCLUDE 제약을 걸 대상 (D-R43 · 부록 A)
+//
+// v4.2 → v4.3 (2026-08-28 · TBO-25 검수)
+//   ! SER_OCC              v4.2 변경 이력에는 적혀 있었으나 **표 본문이 없었다.**
+//                          마이그레이션은 만들고 있었으므로 erd 에서 엔티티를 다시 생성하면
+//                          사라질 자리였다 → 본문 추가 (표 62 → 63)
+//   ~ 부록 A EXCLUDE       ser · zassign 에 거는 계획이었으나 실제로는 세 제약 모두
+//                          ser_occ 에 걸었다 — 실물과 일치시킴
+//
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
 // ----------------------------------------------------------------------------
@@ -945,21 +983,24 @@ Table GPA_USE {
 //   ── 겹침 금지 — 애플리케이션이 아니라 DB 가 거부한다 (D-R43)
 //   CREATE EXTENSION IF NOT EXISTS btree_gist;
 //
-//   ALTER TABLE ser ADD CONSTRAINT ser_room_no_overlap
-//     EXCLUDE USING gist (room_id WITH =, tstzrange(start_at, end_at) WITH &&)
+//   ── 세 제약 모두 SER_OCC 에 건다 (TBO-22 에서 실제로 이렇게 만들었다)
+//      반복 규칙(SER)은 기간이 열려 있어 걸 대상이 없다. 그래서 회차를 펼쳐 넣고 거기에 건다.
+//
+//   ALTER TABLE ser_occ ADD CONSTRAINT ser_occ_room_no_overlap
+//     EXCLUDE USING gist (room_id WITH =, span WITH &&)
 //     WHERE (canceled = false AND room_id IS NOT NULL);
 //
-//   ALTER TABLE ser ADD CONSTRAINT ser_teacher_no_overlap
-//     EXCLUDE USING gist (teacher_id WITH =, tstzrange(start_at, end_at) WITH &&)
-//     WHERE (canceled = false);
+//   ALTER TABLE ser_occ ADD CONSTRAINT ser_occ_teacher_no_overlap
+//     EXCLUDE USING gist (teacher_id WITH =, span WITH &&)
+//     WHERE (canceled = false AND teacher_id IS NOT NULL);
 //
-//   ALTER TABLE zassign ADD CONSTRAINT zoom_no_overlap
-//     EXCLUDE USING gist (zacc_id WITH =, tstzrange(start_at, end_at) WITH &&);
+//   ALTER TABLE ser_occ ADD CONSTRAINT ser_occ_zoom_no_overlap
+//     EXCLUDE USING gist (zacc_id WITH =, span WITH &&)
+//     WHERE (canceled = false AND zacc_id IS NOT NULL);
 //
-//   ⚠️ 반복 규칙(SER)은 기간이 열려 있으므로, 위 제약은 **전개된 회차 테이블**에 건다.
-//      전개는 occ() 와 같은 규칙으로 만든 물리 테이블(SER_OCC)을 쓰거나,
-//      SER 저장 시점에 겹침을 계산해 넣는다 — 어느 쪽이든 판정은 DB 가 한다.
-//      guardResource() 는 사용자에게 미리 알려 주기 위한 **안내**일 뿐이다.
+//   CREATE UNIQUE INDEX ser_occ_ser_date_uniq ON ser_occ (ser_id, on_date);
+//
+//      guardResource() 는 사용자에게 미리 알려 주기 위한 **안내**일 뿐이다 — 판정은 DB 가 한다.
 //
 //   ── 중복 금지 — 재시도·더블클릭이 두 줄을 만들지 않게
 //   ALTER TABLE rpt ADD CONSTRAINT rpt_type_date_uniq UNIQUE (rpt_type, on_date);
