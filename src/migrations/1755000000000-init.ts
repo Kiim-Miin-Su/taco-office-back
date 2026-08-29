@@ -124,8 +124,12 @@ export class Init1755000000000 implements MigrationInterface {
       id bigserial NOT NULL,
       label varchar(20) NOT NULL UNIQUE,
       login_email varchar(120) NOT NULL,
+      -- 줌 로그인 비밀과 회의 비밀번호는 평문으로 두지 않는다 (AES-256 · 키는 별도 저장소).
+      -- erd v4.3 에 있었는데 여기에 빠져 있었다 — 시드가 걸려서 드러났다 (TBO-26).
+      login_secret bytea NOT NULL,
       join_url text NOT NULL,
       meeting_id varchar(30),
+      meeting_pw_enc bytea,
       active boolean NOT NULL DEFAULT true,
       PRIMARY KEY (id)
     )`);
@@ -216,7 +220,8 @@ export class Init1755000000000 implements MigrationInterface {
       id bigserial NOT NULL,
       ser_id bigint NOT NULL,
       on_date date NOT NULL,
-      student_id bigint NOT NULL,
+      -- 학생은 여기 없다. 리포트는 수업 하나에 하나이고 학생은 rep_stu 가 갖는다.
+      -- (ser_id, on_date) 유니크와 student_id NOT NULL 은 그룹 수업에서 함께 성립할 수 없다 (TBO-26).
       teacher_id bigint,
       kind_key varchar(16),
       lang varchar(2) NOT NULL DEFAULT 'ko',
@@ -268,7 +273,7 @@ export class Init1755000000000 implements MigrationInterface {
       ser_id bigint,
       student_id bigint NOT NULL,
       teacher_id bigint,
-      reason varchar(12) NOT NULL,
+      reason varchar(20) NOT NULL,
       state guide_state_t NOT NULL DEFAULT 'draft',
       body text,
       due_on date,

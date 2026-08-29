@@ -1,5 +1,5 @@
 /**
- * GUIDE — docs/contracts/db/erd.dbml v4.3 에서 생성했습니다.
+ * GUIDE — docs/contracts/db/erd.dbml v4.5 에서 생성했습니다.
  *
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
@@ -21,8 +21,8 @@ export class Guide {
   @Column({ type: 'bigint', nullable: true })
   teacherId: number | null;
 
-  /** new(첫 수업) | teacher_change */
-  @Column({ type: 'varchar', length: 12 })
+  /** new(첫 수업) | teacher_change — 14자라 varchar(12) 에 안 들어갔다 (TBO-26) */
+  @Column({ type: 'varchar', length: 20 })
   reason: string;
 
   @Column({ type: 'enum', enum: GUIDE_STATE_T_VALUES, default: 'draft' })

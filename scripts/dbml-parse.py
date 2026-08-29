@@ -55,7 +55,7 @@ TYPE_MAP = [
 
 # 줄바꿈을 삼키지 않도록 [ \t] 만 쓴다. \s 를 쓰면 앞 컬럼 매치가 다음 줄의 들여쓰기까지
 # 먹어 버려서 그 다음 컬럼이 통째로 사라진다 (STAFF.role 이 실제로 그렇게 빠졌다).
-COL_RE = re.compile(r'(?<![\w.])(\w+)[ \t]+(bigserial|serial|bigint|int|smallint|boolean|text|jsonb|date|timestamptz|numeric\(\d+,\d+\)|varchar\(\d+\)|char\(\d+\)|tstzrange|bytea|\w+_t)[ \t]*(\[[^\]]*\])?')
+COL_RE = re.compile(r'(?<![\w.])([a-z_][a-z0-9_]*)[ \t]+(bigserial|serial|bigint|int|smallint|boolean|text|jsonb|date|timestamptz|numeric\(\d+,\d+\)|varchar\(\d+\)|char\(\d+\)|tstzrange|bytea|\w+_t)[ \t]*(\[[^\]]*\])?')
 
 DROPPED = []
 
@@ -63,6 +63,7 @@ def parse_cols(body):
     """한 줄짜리 표(CONS_STU 등)도 있으므로 줄 단위가 아니라 본문 전체에서 찾는다."""
     # indexes { … } 와 Note 는 컬럼이 아니다 — 먼저 지운다
     b = re.sub(r'indexes\s*\{[^}]*\}', ' ', body)
+    b = re.sub(r"Note:\s*'''.*?'''", ' ', b, flags=re.S)   # 여러 줄 Note 가 먼저다
     b = re.sub(r"Note:\s*'[^']*'", ' ', b)
     b = re.sub(r'^\s*//.*$', ' ', b, flags=re.M)
     out = []

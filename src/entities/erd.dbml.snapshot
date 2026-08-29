@@ -1,6 +1,6 @@
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.3  (2026-08-28) — SER_OCC 표 본문 추가 · 부록 A 를 실제 마이그레이션과 일치시킴
+// version : 4.5  (2026-08-29) — REP.student_id 제거 · ZACC 암호 컬럼 · GUIDE.reason 폭 교정
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -330,7 +330,6 @@ Table REP {
   id           bigserial    [pk]
   ser_id       bigint       [not null, ref: > SER.id]
   on_date      date         [not null]
-  student_id   bigint       [not null, ref: > STU.id]
   teacher_id   bigint       [ref: > STAFF.id]
   kind_key     varchar(16)  [ref: > KIND.key]
   lang         varchar(2)   [not null, default: 'ko']
@@ -345,6 +344,12 @@ Table REP {
 
   indexes { (ser_id, on_date) [unique] (state, submitted_at) (teacher_id, on_date) }
   Note: '''
+  **리포트는 수업 하나에 하나다** — (ser_id, on_date) 가 유니크인 이유다.
+  학생은 REP_STU 에 붙는다. 그룹 수업이면 한 리포트에 학생이 여럿이고,
+  학부모에게 나가는 PNG 만 **학생 수만큼** 만든다 (CONTRACTS §10.5 · D-R40).
+  v4.3 까지 student_id 가 not null 로 남아 있어 유니크 제약과 정면으로 부딪쳤다 —
+  그룹 수업 시드를 넣다가 드러났다 (TBO-26).
+
   시드 57건 · 지난 2주 55/66건 작성.
   KIND.rep=true 인 종류만 대상 (D-4). repState() 가 na/plan 이면 대상 제외.
   강사료 계산의 근거 — **작성했으면 인정한다** (D-R7). state 는 승인 흐름의 표시일 뿐이다.
@@ -398,13 +403,14 @@ Table GUIDE {
   ser_id      bigint        [ref: > SER.id]
   student_id  bigint        [not null, ref: > STU.id]
   teacher_id  bigint        [ref: > STAFF.id]
-  reason      varchar(12)   [not null, note: 'new(첫 수업) | teacher_change']
+  reason      varchar(20)   [not null, note: 'new(첫 수업) | teacher_change — 14자라 varchar(12) 에 안 들어갔다 (TBO-26)']
   state       guide_state_t [not null, default: 'draft']
   body        text
   due_on      date
   created_at  timestamptz   [not null, default: `now()`]
   Note: '''
-  한 번 보내는 것. 첫 수업이거나 강사가 바뀐 학생만 대상 (D-R5).
+  **한 번 보내는 것**만 여기 있다. 첫 수업이거나 강사가 바뀐 학생만 대상 (D-R5).
+  온라인 줌 링크처럼 **매번 나가는 것은 PNOTI** 다 (§43 「한 번 / 매번」 구분).
   수업 상세에서 "작성" 하면 학생·학년·강사·과목·형태·같은반·교재가 자동 배정된다.
   '''
 }
@@ -974,6 +980,15 @@ Table SER_OCC {
 //                          사라질 자리였다 → 본문 추가 (표 62 → 63)
 //   ~ 부록 A EXCLUDE       ser · zassign 에 거는 계획이었으나 실제로는 세 제약 모두
 //                          ser_occ 에 걸었다 — 실물과 일치시킴
+//
+// v4.3 → v4.4 (2026-08-29 · TBO-26 시드)
+//   - REP.student_id       삭제. (ser_id, on_date) 유니크와 모순이었다 —
+//                          그룹 수업이면 한 회차에 학생이 여럿이라 넣을 수가 없다.
+//                          학생은 REP_STU 가 갖는다 (CONTRACTS §10.5 의 ReportUpsertDto 도
+//                          sessionId 만 받는다). 그룹 시드를 넣다가 제약이 걸려 드러났다.
+//   ! ZACC.login_secret · meeting_pw_enc  erd 에 있는데 마이그레이션에 없었다 → 추가
+//   ~ GUIDE.reason         varchar(12) → varchar(20). note 에 적어 둔 'teacher_change' 가
+//                          14자라 자기 문서의 값이 자기 컬럼에 안 들어갔다.
 //
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)

@@ -1,4 +1,4 @@
-/** 엔티티 색인 — dbml v4.3 에서 생성했습니다. 손으로 고치지 마세요. */
+/** 엔티티 색인 — dbml v4.5 에서 생성했습니다. 손으로 고치지 마세요. */
 export * from './enums';
 export * from './autorep.entity';
 export * from './chreq.entity';
