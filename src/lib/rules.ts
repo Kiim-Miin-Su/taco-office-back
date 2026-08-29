@@ -61,10 +61,109 @@ export function isPast(s: SessionLike, today: IsoDate, nowMin: Minutes): boolean
 /** 「썼다」로 인정하는 상태 — 제출한 순간부터다 */
 export const REPORT_WRITTEN: ReportState[] = ['submitted', 'approved', 'rejected'];
 
+/* ── 표와 규칙이 낱말이 다르다 ───────────────────────────────────────
+   `rep_state_t` 는 v2 어휘(wait · ok · rej)를 쓰고, 이 규칙 파일은 프로토타입에서
+   옮겨 온 어휘(submitted · approved · rejected)를 쓴다. 둘 다 정본이라 어느 한쪽을
+   버릴 수 없다 — 대신 **옮기는 자리를 한 곳으로 묶는다.**
+
+   ⚠️ 이게 없던 동안 `REPORT_WRITTEN.includes(dbState)` 는 **항상 false** 였다.
+      DB 값과 겹치는 문자열이 하나도 없었기 때문이다. 그래서 캘린더는 모든 수업을
+      「안 씀」으로 칠했고, 정산도 0건이 됐다. 문자열을 직접 비교하면 이렇게 조용히 어긋난다. */
+
+/** `rep_state_t`(DB) → `ReportState`(규칙) */
+export const REP_STATE_FROM_DB = {
+  na: 'na', plan: 'plan', none: 'none', draft: 'draft',
+  wait: 'submitted', ok: 'approved', rej: 'rejected',
+} as const satisfies Record<string, ReportState>;
+
+export type RepStateDb = keyof typeof REP_STATE_FROM_DB;
+
+/** DB 에서 읽은 값을 규칙이 쓰는 이름으로. 모르는 값이면 'na' 로 둔다. */
+export function reportStateFromDb(v: string | null | undefined): ReportState {
+  return (REP_STATE_FROM_DB as Record<string, ReportState>)[v ?? ''] ?? 'na';
+}
+
+/** DB 값 그대로 「썼는가」를 묻는다 — 서비스는 이것만 부른다. */
+export const isWrittenDbState = (v: string | null | undefined): boolean =>
+  REPORT_WRITTEN.includes(reportStateFromDb(v));
+
+/** SQL 에서 쓰는 「썼다」 목록 — 위 표에서 뽑는다. 쿼리에 낱말을 손으로 적지 않는다. */
+export const REPORT_WRITTEN_DB: RepStateDb[] = (Object.keys(REP_STATE_FROM_DB) as RepStateDb[])
+  .filter((k) => REPORT_WRITTEN.includes(REP_STATE_FROM_DB[k]));
+
+/**
+ * 「써야 하는데 아직 안 쓴」 상태.
+ * `na`(리포트 대상 아님) · `plan`(예정) 은 밀린 것이 아니다 — 셋을 섞으면 독촉이 엉뚱한 사람에게 간다.
+ */
+export const REPORT_PENDING_DB: RepStateDb[] = ['none', 'draft'];
+
+/**
+ * 안내(GUIDE) 에서 「아직 안 보냄」.
+ * `guide_state_t = draft | ready | sent | read` — 보낸 것은 sent 부터다.
+ */
+export const GUIDE_PENDING_DB = ['draft', 'ready'] as const;
+
 export const hasReport = (s: SessionLike): boolean =>
   !!s.report && REPORT_WRITTEN.includes(s.report);
 
 export const countsForSettlement = (s: SessionLike): boolean => !isCanceled(s) && hasReport(s);
+
+/* ══ 컨설팅 공개 범위 — 권한의 **두 번째 층** ═══════════════════════════
+   DEV-SPEC §4.4. 역할 파생 권한(D-R39)과 **서로 독립**이다.
+   권한이 있어도 비공개 건은 지정된 사람만 본다. 그래서 둘 다 통과해야 보인다.
+
+   | 범위                 | 제3자   | 지정된 사람 | 담당·열람권 |
+   |---------------------|--------|-----------|-----------|
+   | all        전체 공개  | 전체    | —         | 전체       |
+   | money_only 수납만 공개 | 금액만  | —         | 전체       |
+   | picked     지정 공개  | 숨김    | 전체       | 전체       |
+   | private    전체 비공개 | 숨김    | —         | 전체       |                        */
+
+export const CONS_SHARES = ['all', 'money_only', 'picked', 'private'] as const;
+export type ConsShare = (typeof CONS_SHARES)[number];
+
+export interface ConsViewer {
+  /** 이 건의 담당자인가 */
+  isOwner: boolean;
+  /** CONS_PICK 에 지정됐는가 */
+  isPicked: boolean;
+  /** §76 canHide — 비공개 컨설팅 열람 */
+  canHide: boolean;
+  /** D-R39 canSeeProfit — 금액. 공개 범위와 **독립된 층**이다 */
+  canSeeProfit: boolean;
+}
+
+/** 담당이거나 열람권이 있는 사람 — 표의 「담당·열람권」 칸 */
+const isInsider = (v: ConsViewer): boolean => v.isOwner || v.canHide;
+
+/** 목록에 이 건이 보이는가 */
+export function csCan(share: ConsShare, v: ConsViewer): boolean {
+  switch (share) {
+    case 'all':
+    case 'money_only':
+      return true; // 수납만 공개는 목록에는 남고 내용이 잠긴다
+    case 'picked':
+      return isInsider(v) || v.isPicked;
+    case 'private':
+      return isInsider(v);
+  }
+}
+
+/** 내용(회차 기록 등)까지 열리는가 */
+export function csCanFull(share: ConsShare, v: ConsViewer): boolean {
+  if (!csCan(share, v)) return false;
+  if (share === 'all') return true;
+  if (share === 'picked') return isInsider(v) || v.isPicked;
+  return isInsider(v); // money_only · private
+}
+
+/**
+ * 금액이 보이는가 — **두 층을 모두** 통과해야 한다.
+ * 공개 범위가 열려 있어도 D-R39 를 통과 못 하면 못 보고, 그 반대도 마찬가지다.
+ */
+export function csCanAmount(share: ConsShare, v: ConsViewer): boolean {
+  return csCan(share, v) && v.canSeeProfit;
+}
 
 /* ══ 리포트 기한 ═════════════════════════════════════════════════════
    차단이 아니라 **독촉**이다. 늦어도 쓸 수 있고, 쓰면 정산에 들어간다 (D-R7).

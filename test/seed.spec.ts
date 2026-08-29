@@ -10,6 +10,12 @@
  * DATABASE_URL 이 없으면 건너뛴다.
  */
 import { DataSource } from 'typeorm';
+import {
+  REPORT_WRITTEN_DB, REP_STATE_FROM_DB, reportStateFromDb,
+} from '../src/lib/rules';
+
+/** 규칙이 아는 상태 이름 전부 — 옮긴 값이 여기 없으면 규칙이 못 읽는다. */
+const REPORT_STATES = ['na', 'plan', 'none', 'draft', 'submitted', 'approved', 'rejected'];
 
 const URL = process.env.DATABASE_URL;
 const d = URL ? describe : describe.skip;
@@ -78,9 +84,60 @@ d('시드 — 화면이 보는 값이 맞는가', () => {
     expect(Number(r.n)).toBe(0);
   });
 
+  /**
+   * 시드의 절반은 SEED_TODAY 기준(회차·리포트)이고 절반은 적어 둔 날짜(학생·등록·상담)였다.
+   * 시간이 지나면 둘이 벌어져서 **「이번 달 등록 0건」** 같은 화면이 나온다 —
+   * 상담은 10건 들어왔는데 등록은 0인, 고장 난 것처럼 보이는 대시보드다.
+   * base.ts 의 rel() 이 그 차이를 민다. 여기서 실제로 밀렸는지 본다.
+   */
+  it('데모 데이터가 오늘을 따라온다 — 이번 달 등록이 있다', async () => {
+    const r = await one(
+      `SELECT count(*)::text AS n FROM enr WHERE started_on >= date_trunc('month', current_date)`,
+    );
+    expect(Number(r.n)).toBeGreaterThan(0);
+  });
+
+  it('데모 데이터가 오늘을 따라온다 — 최근 30일에 들어온 상담이 있다', async () => {
+    const r = await one(
+      `SELECT count(*)::text AS n FROM lead WHERE created_at >= now() - interval '30 days'`,
+    );
+    expect(Number(r.n)).toBeGreaterThan(0);
+  });
+
   it('코드표가 명세서 수와 같다 — 종류 8 · 과목 21', async () => {
     expect(Number((await one(`SELECT count(*)::text AS n FROM kind`)).n)).toBe(8);
     expect(Number((await one(`SELECT count(*)::text AS n FROM sub`)).n)).toBe(21);
+  });
+
+  /**
+   * 표와 규칙이 **다른 낱말**을 쓰고 있었다.
+   *   rep_state_t = na · plan · none · draft · wait · ok · rej
+   *   REPORT_WRITTEN = submitted · approved · rejected
+   * 겹치는 값이 **하나도 없어서** `written` 이 항상 false 였다 —
+   * 캘린더는 모든 수업을 「안 씀」으로 칠했고 정산은 0건이 됐다.
+   * 낱말이 또 갈라지면 여기서 걸린다.
+   */
+  it('DB 상태값이 규칙 어휘로 빠짐없이 옮겨진다', async () => {
+    const rows = (await ds.query(
+      `SELECT e.enumlabel AS v FROM pg_type t JOIN pg_enum e ON e.enumtypid = t.oid
+        WHERE t.typname = 'rep_state_t'`,
+    )) as Array<{ v: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+
+    // 표에 있는 값은 전부 옮길 자리가 있어야 한다
+    rows.forEach(({ v }) => expect(Object.keys(REP_STATE_FROM_DB)).toContain(v));
+    // 옮긴 결과가 규칙이 아는 이름이어야 한다
+    rows.forEach(({ v }) => expect(REPORT_STATES).toContain(reportStateFromDb(v)));
+    // 「썼다」가 실제 DB 값과 하나 이상 겹쳐야 한다 — 0이면 조용히 다 안 쓴 게 된다
+    expect(REPORT_WRITTEN_DB.length).toBeGreaterThan(0);
+    REPORT_WRITTEN_DB.forEach((v) => expect(rows.map((r) => r.v)).toContain(v));
+  });
+
+  it('시드에 「썼다」로 셀 리포트가 실제로 있다', async () => {
+    const r = await one(
+      `SELECT count(*)::text AS n FROM rep WHERE state = ANY($1)`, [REPORT_WRITTEN_DB],
+    );
+    expect(Number(r.n)).toBeGreaterThan(0);
   });
 
   it('안 쓴 리포트가 실제로 있다 — §47 독촉 화면이 빈 채로 나오지 않게', async () => {

@@ -95,11 +95,17 @@ export function buildReports(occs: OccSeed[], langOf: (id: number) => string): R
  * 온라인 줌 링크처럼 매번 나가는 것은 PNOTI 다 (§43 「한 번 / 매번」).
  */
 export const GUIDES = [
-  { serId: 1,  studentId: 1,  teacherId: 6,  reason: 'new',            state: 'read',  dueOn: addD(SEED_TODAY, -20) },
-  { serId: 1,  studentId: 14, teacherId: 6,  reason: 'new',            state: 'read',  dueOn: addD(SEED_TODAY, -18) },
-  { serId: 9,  studentId: 10, teacherId: 12, reason: 'teacher_change', state: 'sent',  dueOn: addD(SEED_TODAY, -4) },
-  { serId: 5,  studentId: 19, teacherId: 9,  reason: 'new',            state: 'draft', dueOn: addD(SEED_TODAY, 1) },
-  { serId: 11, studentId: 11, teacherId: 14, reason: 'teacher_change', state: 'ready', dueOn: addD(SEED_TODAY, 1) },
+  // body 가 비어 있으면 화면의 「내용」 칸이 전부 「—」 로 나온다 — 있으나 마나 한 칸이 된다.
+  { serId: 1,  studentId: 1,  teacherId: 6,  reason: 'new',            state: 'read',  dueOn: addD(SEED_TODAY, -20),
+    body: '첫 수업 안내 — 교재는 당일 배부하고, 준비물은 필기구만 있으면 됩니다.' },
+  { serId: 1,  studentId: 14, teacherId: 6,  reason: 'new',            state: 'read',  dueOn: addD(SEED_TODAY, -18),
+    body: '첫 수업 안내 — 강의실은 2층 A입니다. 10분 전까지 와 주세요.' },
+  { serId: 9,  studentId: 10, teacherId: 12, reason: 'teacher_change', state: 'sent',  dueOn: addD(SEED_TODAY, -4),
+    body: '담당 선생님이 이번 주부터 바뀝니다. 진도와 교재는 그대로 이어집니다.' },
+  { serId: 5,  studentId: 19, teacherId: 9,  reason: 'new',            state: 'draft', dueOn: addD(SEED_TODAY, 1),
+    body: '첫 수업 안내 — 초안입니다. 시간과 강의실 확인 후 보냅니다.' },
+  { serId: 11, studentId: 11, teacherId: 14, reason: 'teacher_change', state: 'ready', dueOn: addD(SEED_TODAY, 1),
+    body: '담당 선생님 변경 안내 — 학부모님께 오늘 중 발송 예정입니다.' },
 ];
 
 /** 매번 보내는 것 — 온라인 수업 줌 링크 (§43 · PNOTI) */

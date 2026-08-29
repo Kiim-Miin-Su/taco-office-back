@@ -6,12 +6,12 @@
  */
 import type { DataSource, QueryRunner } from 'typeorm';
 import bcrypt from 'bcrypt';
-import { KINDS, SUBS, ROOMS, ZACCS, STAFF, WAGES, RATES, TZGS, SEED_TODAY } from './base';
+import { KINDS, SUBS, ROOMS, ZACCS, STAFF, WAGES, RATES, TZGS, SEED_TODAY, rel } from './base';
 import { STUDENTS, ENROLLMENTS, LEADS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
-import { REQS, CHREQS, NOTIS, CONSULTINGS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS } from './ops';
+import { REQS, CHREQS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS } from './ops';
 
 /** 시드가 건드리는 표 — 지울 때도 이 순서의 역순을 쓴다 */
 export const SEEDED_TABLES = [
@@ -20,7 +20,7 @@ export const SEEDED_TABLES = [
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout',
-  'req', 'chreq', 'noti', 'cons', 'cons_stu', 'cons_sess',
+  'req', 'chreq', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess',
   'mkt', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
 ] as const;
 
@@ -87,9 +87,9 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('sturate', STURATES.map((r) => ({ student_id: r.studentId, kind_key: r.kindKey, unit_price: r.unitPrice, from_date: r.fromDate })));
 
     // ── 사람
-    await add('stu', STUDENTS.map((s) => ({ id: s.id, name: s.name, grade: s.grade, school: s.school, target_exam: s.targetExam, started_on: s.startedOn, lang: s.lang })));
-    await add('enr', ENROLLMENTS.map((e) => ({ student_id: e.studentId, kind_key: e.kindKey, sub_key: e.subKey, sessions: e.sessions, started_on: e.startedOn })));
-    await add('lead', LEADS.map((l) => ({ id: l.id, student_id: l.studentId, name: l.name, school: l.school, owner_id: l.ownerId, stage: l.stage, stop_at: (l as { stopAt?: string }).stopAt ?? null, reason: (l as { reason?: string }).reason ?? null, created_at: `${l.createdAt}T00:00:00Z` })));
+    await add('stu', STUDENTS.map((s) => ({ id: s.id, name: s.name, grade: s.grade, school: s.school, target_exam: s.targetExam, started_on: rel(s.startedOn), lang: s.lang })));
+    await add('enr', ENROLLMENTS.map((e) => ({ student_id: e.studentId, kind_key: e.kindKey, sub_key: e.subKey, sessions: e.sessions, started_on: rel(e.startedOn) })));
+    await add('lead', LEADS.map((l) => ({ id: l.id, student_id: l.studentId, name: l.name, school: l.school, owner_id: l.ownerId, stage: l.stage, stop_at: (l as { stopAt?: string }).stopAt ?? null, reason: (l as { reason?: string }).reason ?? null, created_at: `${rel(l.createdAt)}T00:00:00Z` })));
 
     // ── 일정
     await add('ser', SERS.map((s) => ({ id: s.id, kind_key: s.kindKey, sub_key: s.subKey, teacher_id: s.teacherId, room_id: s.roomId, mode: s.mode, start_min: s.startMin, end_min: s.endMin, rrule: `FREQ=WEEKLY;BYDAY=${s.days.join(',')}`, from_date: SEED_TODAY, title: s.title ?? null })));
@@ -143,7 +143,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       const id = idBy.get(keyOf(r.serId, r.onDate));
       return id ? r.students.map((sid) => ({ rep_id: id, student_id: sid, deliver: true })) : [];
     }));
-    await add('guide', GUIDES.map((g) => ({ ser_id: g.serId, student_id: g.studentId, teacher_id: g.teacherId, reason: g.reason, state: g.state, due_on: g.dueOn })));
+    await add('guide', GUIDES.map((g) => ({ ser_id: g.serId, student_id: g.studentId, teacher_id: g.teacherId, reason: g.reason, state: g.state, body: g.body, due_on: g.dueOn })));
     await add('pnoti', PNOTIS.map((p) => ({ ser_id: p.serId, on_date: p.onDate, student_id: p.studentId, channel: p.channel, body: p.body, sent_at: p.sentAt ? `${p.sentAt}T09:00:00Z` : null })));
     await add('lib', LIBS.map((l) => ({ id: l.id, code: l.code, title: l.title, sub_key: l.subKey, level: l.level, pages: l.pages, se_te: l.seTe })));
     await add('issue', ISSUES.map((i) => ({ lib_id: i.libId, student_id: i.studentId, issued_on: i.issuedOn })));
@@ -161,6 +161,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('noti', NOTIS.map((n) => ({ to_id: n.toId, from_id: n.fromId, body: n.body, link: n.link, read_at: (n as { readAt?: string }).readAt ? `${(n as { readAt?: string }).readAt}T00:00:00Z` : null, created_at: `${n.createdAt}T00:00:00Z` })));
     await add('cons', CONSULTINGS.map((c) => ({ id: c.id, cons_type: c.consType, stage: c.stage, contract_step: c.contractStep, amount: c.amount, sessions: c.sessions, end_on: c.endOn, owner_id: c.ownerId, share: c.share })));
     await add('cons_stu', CONSULTINGS.flatMap((c) => c.students.map((s) => ({ cons_id: c.id, student_id: s }))));
+    await add('cons_pick', CONS_PICKS.map((p) => ({ cons_id: p.consId, staff_id: p.staffId })));
     await add('cons_sess', CONS_SESSIONS.map((s) => ({ cons_id: s.consId, seq: s.seq, on_date: s.onDate, who: s.who, what: s.what, why: s.why, how: s.how })));
     await add('mkt', MKTS.map((m) => ({ channel: m.channel, item: m.item, url: m.url, result: JSON.stringify(m.result), on_date: m.onDate })));
     await add('plan', PLANS.map((p) => ({ id: p.id, title: p.title, stage: p.stage, goal: p.goal, research: p.research, ask: p.ask, due_on: p.dueOn, owner_id: p.ownerId })));

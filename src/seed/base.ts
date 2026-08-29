@@ -15,6 +15,33 @@ function todayKst(): string {
 }
 export const SEED_TODAY = process.env.SEED_TODAY ?? todayKst();
 
+/* ══ 날짜가 오늘을 따라오게 한다 ═════════════════════════════════════
+   회차·리포트는 SEED_TODAY 기준으로 만들어지는데, 학생·등록·상담은 **절대 날짜**로
+   적혀 있었다. 그래서 시간이 지나면 둘이 벌어진다 —
+   실제로 「이번 달 등록 0건」이 나왔다. 상담은 10건 들어왔는데 등록은 0인 화면이다.
+
+   고치는 방법은 둘 중 하나다: 날짜를 전부 상대값으로 다시 적거나,
+   **적을 때 기준으로 삼은 날**을 밝히고 그만큼 통째로 미는 것.
+   뒤쪽을 택한다 — 리터럴이 읽히는 채로 남고, 미는 자리는 한 곳이다. */
+
+/** 이 시드의 날짜들을 적을 때 기준으로 삼은 날 */
+export const AUTHORED_ON = '2026-08-29';
+
+export function addDays(iso: string, n: number): string {
+  return new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86400000).toISOString().slice(0, 10);
+}
+export function daysBetween(from: string, to: string): number {
+  return Math.round(
+    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) / 86400000,
+  );
+}
+
+/** AUTHORED_ON → SEED_TODAY 만큼의 차이. 오늘 시드를 돌리면 0 이다. */
+export const SEED_SHIFT = daysBetween(AUTHORED_ON, SEED_TODAY);
+
+/** 적어 둔 날짜를 오늘 기준으로 민다. 하루 차이도 없이 그대로 재현된다. */
+export const rel = (iso: string): string => (SEED_SHIFT === 0 ? iso : addDays(iso, SEED_SHIFT));
+
 /** 수업 종류 8종 — 명세서 v2 §85 */
 export const KINDS = [
   { key: 'class',      name: '정규 수업',   color: '#4A5461', cap: 4, grp: 'lesson',  rep: true,  repForm: 'dev',    sort: 1 },

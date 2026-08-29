@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
-import { REPORT_WRITTEN, type ReportState } from '../../lib/rules';
+import { isWrittenDbState } from '../../lib/rules';
+import type { RepStateT } from '../../entities/enums';
 import type { OccurrenceDto } from './schedule.dto';
 
 export interface OccQuery {
@@ -80,7 +81,9 @@ export class ScheduleService {
     )) as Row[];
 
     return rows.map((r) => {
-      const repState = (r.rep_state ?? 'na') as ReportState;
+      // 내려보내는 값은 **DB 어휘 그대로**다 (DTO 가 그렇게 적혀 있고 화면이 그걸 읽는다).
+      // 규칙 어휘로 옮기는 것은 판정할 때뿐이다 — 옮기는 자리는 rules.ts 한 곳이다.
+      const repState = (r.rep_state ?? 'na') as RepStateT;
       return {
         serId: Number(r.ser_id),
         date: r.on_date,
@@ -99,7 +102,7 @@ export class ScheduleService {
         hasException: r.has_exception,
         repState,
         // 판정은 rules.ts 한 곳에서만 한다 — 화면도 서버도 여기서 나온 값을 읽기만 한다
-        written: REPORT_WRITTEN.includes(repState),
+        written: isWrittenDbState(r.rep_state),
         students: (r.students ?? []).map((s) => ({
           id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce),
         })),

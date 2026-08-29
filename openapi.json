@@ -323,6 +323,154 @@
           "ops"
         ]
       }
+    },
+    "/consulting": {
+      "get": {
+        "operationId": "ConsultingController_all",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingListDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 — 건 · 학생 · 회차 기록 (§29 · §30)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/board": {
+      "get": {
+        "operationId": "BoardController_range",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-24",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-30",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 현황판 — 교재·안내·줌·리포트 4마크를 매번 계산한다 (§34 · D-R4)",
+        "tags": [
+          "board"
+        ]
+      }
+    },
+    "/books": {
+      "get": {
+        "operationId": "BooksController_all",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BooksDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "교재 — 코드 · 과목 · 쪽수 · SE/TE (§36)",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/guides": {
+      "get": {
+        "operationId": "GuidesController_all",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuidesDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 안내 — 한 번만(GUIDE) · 회차마다(PNOTI) (§41 · §42)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
+    "/exec": {
+      "get": {
+        "operationId": "ExecController_range",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-31",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "대표 보고 — 집계는 저장하지 않는다 (§69 · D-R4 · D-R39)",
+        "tags": [
+          "exec"
+        ]
+      }
     }
   },
   "info": {
@@ -1618,6 +1766,616 @@
           "marketing",
           "suggestions",
           "canSeeAmounts"
+        ]
+      },
+      "ConsultingSessionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "seq": {
+            "type": "number",
+            "description": "몇 번째 회차"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "who": {
+            "type": "string",
+            "nullable": true
+          },
+          "what": {
+            "type": "string",
+            "nullable": true
+          },
+          "why": {
+            "type": "string",
+            "nullable": true
+          },
+          "how": {
+            "type": "string",
+            "nullable": true
+          },
+          "serId": {
+            "type": "number",
+            "nullable": true,
+            "description": "연결된 수업이 있으면 그 SER"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "onDate"
+        ]
+      },
+      "ConsultingDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "consType": {
+            "type": "string",
+            "enum": [
+              "admissions",
+              "essay",
+              "roadmap"
+            ],
+            "description": "종류 10종 중 시드에 있는 것"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "contract",
+              "running",
+              "done"
+            ],
+            "description": "계약 → 진행 → 종료"
+          },
+          "contractStep": {
+            "type": "number",
+            "nullable": true,
+            "description": "계약 5단계 — 계약서 → 피드백 → 학부모 전달 → 서명본 → 수납"
+          },
+          "studentNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true
+          },
+          "endOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true,
+            "description": "대표가 아니면 null"
+          },
+          "share": {
+            "type": "string",
+            "enum": [
+              "all",
+              "money_only",
+              "picked",
+              "private"
+            ],
+            "description": "전체 공개 · 수납만 공개 · 지정 공개 · 전체 비공개"
+          },
+          "canOpen": {
+            "type": "boolean",
+            "description": "내용(회차 기록)을 열 수 있는가 — csCanFull()"
+          },
+          "sessionsLog": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingSessionDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "consType",
+          "stage",
+          "studentNames",
+          "createdAt",
+          "share",
+          "canOpen",
+          "sessionsLog"
+        ]
+      },
+      "ConsultingListDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingDto"
+            }
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "금액을 볼 수 있는가 (D-R39)"
+          }
+        },
+        "required": [
+          "items",
+          "canSeeAmounts"
+        ]
+      },
+      "CheckMarkDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "book",
+              "guide",
+              "zoom",
+              "report"
+            ]
+          },
+          "done": {
+            "type": "boolean",
+            "description": "지금 이 순간의 판정"
+          },
+          "na": {
+            "type": "boolean",
+            "description": "해당 없음이면 판정하지 않는다 — 오프라인 수업의 줌 같은 것"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true,
+            "description": "왜 이렇게 판정했는지 한 줄"
+          }
+        },
+        "required": [
+          "key",
+          "done",
+          "na"
+        ]
+      },
+      "BoardRowDto": {
+        "type": "object",
+        "properties": {
+          "occId": {
+            "type": "number"
+          },
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "startAt": {
+            "type": "string",
+            "description": "HH:MM"
+          },
+          "endAt": {
+            "type": "string",
+            "description": "HH:MM"
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "roomName": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ]
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "kindName": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "canceled": {
+            "type": "boolean"
+          },
+          "marks": {
+            "description": "교재 · 안내 · 줌 · 리포트",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckMarkDto"
+            }
+          },
+          "missing": {
+            "type": "number",
+            "description": "판정 대상 중 덜 된 개수. 0이면 다 됐다"
+          }
+        },
+        "required": [
+          "occId",
+          "serId",
+          "onDate",
+          "startAt",
+          "endAt",
+          "mode",
+          "kindKey",
+          "studentNames",
+          "canceled",
+          "marks",
+          "missing"
+        ]
+      },
+      "BoardDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardRowDto"
+            }
+          },
+          "missingCount": {
+            "type": "number",
+            "description": "덜 된 수업 수 — 화면 위 배지"
+          },
+          "computedAt": {
+            "type": "string",
+            "description": "저장하지 않는다는 사실을 화면이 그대로 적을 수 있게 (D-R4)"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "rows",
+          "missingCount",
+          "computedAt"
+        ]
+      },
+      "BookDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "교재 코드 — 카드에 그대로 보인다"
+          },
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "subName": {
+            "type": "string",
+            "nullable": true
+          },
+          "level": {
+            "type": "string",
+            "nullable": true
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "pages": {
+            "type": "number",
+            "nullable": true
+          },
+          "seTe": {
+            "type": "string",
+            "nullable": true,
+            "description": "SE 학생용 · TE 교사용"
+          }
+        },
+        "required": [
+          "code",
+          "id",
+          "title"
+        ]
+      },
+      "BooksDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookDto"
+            }
+          },
+          "bySub": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "과목별 권수 — 필터 칩에 쓴다"
+          }
+        },
+        "required": [
+          "items",
+          "bySub"
+        ]
+      },
+      "GuideDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string",
+            "description": "new(첫 수업) | teacher_change(강사 교체)"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "ready",
+              "sent",
+              "read"
+            ],
+            "description": "draft·ready 가 아직 안 보낸 것"
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "serTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "body": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "기한이 지난 날 수. 0이면 안 지남"
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "state",
+          "createdAt",
+          "overdueDays"
+        ]
+      },
+      "PerLessonNoticeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "sms",
+              "kakao",
+              "email",
+              "app"
+            ]
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "serTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "body": {
+            "type": "string"
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "아직 안 보냈으면 null"
+          }
+        },
+        "required": [
+          "id",
+          "onDate",
+          "channel",
+          "body"
+        ]
+      },
+      "GuidesDto": {
+        "type": "object",
+        "properties": {
+          "guides": {
+            "description": "한 번만 나가는 안내",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideDto"
+            }
+          },
+          "perLesson": {
+            "description": "회차마다 나가는 안내",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PerLessonNoticeDto"
+            }
+          },
+          "todoCount": {
+            "type": "number",
+            "description": "아직 안 보낸 안내 수"
+          },
+          "scopedTeacherId": {
+            "type": "number",
+            "nullable": true,
+            "description": "강사면 자기 것만 본다 — 그 강사 id"
+          }
+        },
+        "required": [
+          "guides",
+          "perLesson",
+          "todoCount"
+        ]
+      },
+      "ExecStatDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number",
+            "nullable": true,
+            "description": "볼 권한이 없으면 null (D-R39)"
+          },
+          "unit": {
+            "type": "string",
+            "nullable": true
+          },
+          "money": {
+            "type": "boolean",
+            "description": "금액이라 권한을 타는 칸인가"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "money"
+        ]
+      },
+      "ExecReportDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "rptType": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ]
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ],
+            "description": "rep_state_t 를 그대로 쓴다"
+          },
+          "memo": {
+            "type": "string",
+            "description": "D-R14 — 한 줄이라도 적어야 제출된다. jsonb 의 note 를 꺼내 문자열로 내린다"
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "reviewedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejectReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "D-R13 — 반려(rej)하면 사유가 반드시 있다"
+          }
+        },
+        "required": [
+          "id",
+          "rptType",
+          "onDate",
+          "state",
+          "memo"
+        ]
+      },
+      "ExecDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "stats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecStatDto"
+            }
+          },
+          "reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecReportDto"
+            }
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "금액을 볼 수 있는가 (D-R39)"
+          },
+          "computedAt": {
+            "type": "string",
+            "description": "저장하지 않는다 — 이 시각에 센 값이다 (D-R4)"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "stats",
+          "reports",
+          "canSeeAmounts",
+          "computedAt"
         ]
       }
     }

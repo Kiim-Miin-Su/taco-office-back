@@ -37,8 +37,14 @@ export const CONSULTINGS = [
   { id: 1, consType: 'admissions', stage: 'running', contractStep: 5, amount: 8400000, sessions: 13, endOn: '2027-01-31', ownerId: 3, share: 'money_only', students: [5] },
   { id: 2, consType: 'essay',      stage: 'running', contractStep: 5, amount: 3600000, sessions: 8,  endOn: '2026-12-20', ownerId: 6, share: 'money_only', students: [6] },
   { id: 3, consType: 'roadmap',    stage: 'contract', contractStep: 1, amount: 2800000, sessions: 6, endOn: '2027-02-28', ownerId: 3, share: 'money_only', students: [3] },
-  { id: 4, consType: 'admissions', stage: 'contract', contractStep: 3, amount: 7200000, sessions: 12, endOn: '2027-01-31', ownerId: 2, share: 'money_only', students: [1] },
-  { id: 5, consType: 'admissions', stage: 'done',    contractStep: 5, amount: 8400000, sessions: 13, endOn: '2026-08-15', ownerId: 6, share: 'money_only', students: [8] },
+  // 공개 범위를 섞어 둔다 — 전부 money_only 면 두 번째 권한 층(csCan)이 한 번도 안 돈다.
+  { id: 4, consType: 'admissions', stage: 'contract', contractStep: 3, amount: 7200000, sessions: 12, endOn: '2027-01-31', ownerId: 2, share: 'picked',  students: [1] },
+  { id: 5, consType: 'admissions', stage: 'done',    contractStep: 5, amount: 8400000, sessions: 13, endOn: '2026-08-15', ownerId: 6, share: 'private', students: [8] },
+];
+
+/** share='picked' 일 때 볼 수 있는 사람 (CONS_PICK) */
+export const CONS_PICKS = [
+  { consId: 4, staffId: 3 },
 ];
 
 export const CONS_SESSIONS = [

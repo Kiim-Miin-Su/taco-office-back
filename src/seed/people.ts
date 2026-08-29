@@ -49,6 +49,10 @@ export const ENROLLMENTS = [
   { studentId: 17, kindKey: 'class', subKey: 'sat-read', sessions: 10, startedOn: '2025-11-03' },
   { studentId: 18, kindKey: 'class', subKey: 'sat-math', sessions: 10, startedOn: '2025-08-18' },
   { studentId: 19, kindKey: 'class', subKey: 'map-math', sessions: 6, startedOn: '2026-07-13' },
+  // 이번 달 등록 — 화면의 「등록」 칸이 늘 0 이면 아무도 그 칸을 안 본다.
+  // 기존 학생이 과목을 하나 더 여는 경우로 둔다 (학생 수는 그대로 19명).
+  { studentId: 9,  kindKey: 'class', subKey: 'sat-read', sessions: 8, startedOn: '2026-08-11' },
+  { studentId: 15, kindKey: 'study', subKey: 'study-room', sessions: 20, startedOn: '2026-08-24' },
 ];
 
 /**

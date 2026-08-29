@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Rep } from '../../entities';
-import { LATE_REPORT_TIERS, REPORT_WRITTEN, tierFor, type ReportState } from '../../lib/rules';
+import {
+  LATE_REPORT_TIERS, REPORT_PENDING_DB, isWrittenDbState, tierFor,
+} from '../../lib/rules';
 import type { ReportRowDto, UnwrittenDto } from './reports.dto';
 
 interface Row {
@@ -38,8 +40,10 @@ export class ReportsService {
   private toRow(r: Row, now: Date): ReportRowDto {
     const end = r.end_min_utc ? new Date(r.end_min_utc) : null;
     const minutesSinceEnd = end ? Math.floor((now.getTime() - end.getTime()) / 60000) : -1;
-    const state = r.state as ReportState;
-    const written = REPORT_WRITTEN.includes(state);
+    // state 는 **DB 어휘 그대로** 내려간다 (DTO 의 enum 이 그것이다).
+    // 「썼는가」 판정만 규칙 어휘로 옮겨서 한다 — 옮기는 자리는 rules.ts 한 곳이다.
+    const state = r.state;
+    const written = isWrittenDbState(r.state);
     // 이미 쓴 것은 더 깎이지 않는다. 안 쓴 채로 지난 시간만 본다 (D-R32).
     const penalty = written || minutesSinceEnd < 0 ? 0 : tierFor(minutesSinceEnd).amount;
     return {
@@ -69,7 +73,9 @@ export class ReportsService {
    */
   async unwritten(teacherId?: number): Promise<UnwrittenDto> {
     const p: unknown[] = [];
-    const c = [`r.state = 'none'`, `upper(o.span) < now()`];
+    // 「써야 하는데 아직 안 쓴」 것만. na(대상 아님)·plan(예정) 은 밀린 게 아니다 — rules.ts 가 정한다.
+    p.push(REPORT_PENDING_DB);
+    const c = [`r.state = ANY($${p.length})`, `upper(o.span) < now()`];
     if (teacherId) { p.push(teacherId); c.push(`r.teacher_id = $${p.length}`); }
     const rows = (await this.reps.query(ReportsService.sql(c.join(' AND ')), p)) as Row[];
     const now = new Date();

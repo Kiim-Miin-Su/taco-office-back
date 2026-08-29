@@ -16,6 +16,11 @@ import { ScheduleModule } from './modules/schedule/schedule.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { OpsModule } from './modules/ops/ops.module';
+import { ConsultingModule } from './modules/consulting/consulting.module';
+import { BoardModule } from './modules/board/board.module';
+import { BooksModule } from './modules/books/books.module';
+import { GuidesModule } from './modules/guides/guides.module';
+import { ExecModule } from './modules/exec/exec.module';
 
 @Module({
   imports: [
@@ -44,6 +49,12 @@ import { OpsModule } from './modules/ops/ops.module';
     ReportsModule,
     AccountingModule,
     OpsModule,
+    // 탭 04 · 05 · 06 · 07 · 11 — 내비게이션에 있는데 문이 없던 자리들
+    ConsultingModule,
+    BoardModule,
+    BooksModule,
+    GuidesModule,
+    ExecModule,
   ],
   controllers: [HealthController],
   providers: [
