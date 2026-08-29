@@ -193,6 +193,114 @@
           "schedule"
         ]
       }
+    },
+    "/reports": {
+      "get": {
+        "operationId": "ReportsController_list",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportListDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "리포트 목록",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/unwritten": {
+      "get": {
+        "operationId": "ReportsController_unwritten",
+        "parameters": [
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnwrittenDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§47 안 쓴 리포트 — 강사별 밀린 건수와 예상 차감",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/accounting": {
+      "get": {
+        "operationId": "AccountingController_all",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountingDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회계 — 청구서 · 입금 · 정산. 금액은 대표만 값이 채워진다",
+        "tags": [
+          "accounting"
+        ]
+      }
     }
   },
   "info": {
@@ -675,6 +783,447 @@
           "from",
           "to",
           "items"
+        ]
+      },
+      "ReportStudentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "ReportRowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "serId": {
+            "type": "number"
+          },
+          "date": {
+            "type": "string",
+            "example": "2026-08-27"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ]
+          },
+          "written": {
+            "type": "boolean",
+            "description": "썼는가 — 정산 조건 (D-R7)"
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportStudentDto"
+            }
+          },
+          "minutesSinceEnd": {
+            "type": "number",
+            "description": "수업이 끝난 뒤 지난 분. 음수면 아직 안 끝났다"
+          },
+          "penalty": {
+            "type": "number",
+            "description": "지금 확정하면 깎이는 금액 (D-R32)"
+          }
+        },
+        "required": [
+          "id",
+          "serId",
+          "date",
+          "startMin",
+          "kindKey",
+          "state",
+          "written",
+          "students",
+          "minutesSinceEnd",
+          "penalty"
+        ]
+      },
+      "ReportListDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportRowDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "UnwrittenByTeacherDto": {
+        "type": "object",
+        "properties": {
+          "teacherId": {
+            "type": "number"
+          },
+          "teacherName": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          },
+          "oldestDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "가장 오래된 것"
+          },
+          "over1h": {
+            "type": "number",
+            "description": "1시간 넘긴 건수"
+          },
+          "over4h": {
+            "type": "number",
+            "description": "4시간 넘긴 건수"
+          },
+          "penalty": {
+            "type": "number",
+            "description": "예상 차감 합계"
+          }
+        },
+        "required": [
+          "teacherId",
+          "teacherName",
+          "count",
+          "over1h",
+          "over4h",
+          "penalty"
+        ]
+      },
+      "UnwrittenDto": {
+        "type": "object",
+        "properties": {
+          "byTeacher": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnwrittenByTeacherDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "penaltyTotal": {
+            "type": "number"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportRowDto"
+            }
+          }
+        },
+        "required": [
+          "byTeacher",
+          "total",
+          "penaltyTotal",
+          "items"
+        ]
+      },
+      "MoneySummaryDto": {
+        "type": "object",
+        "properties": {
+          "invoiceCount": {
+            "type": "number"
+          },
+          "billed": {
+            "type": "number",
+            "nullable": true
+          },
+          "collected": {
+            "type": "number",
+            "nullable": true
+          },
+          "outstanding": {
+            "type": "number",
+            "nullable": true
+          },
+          "overdueCount": {
+            "type": "number"
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "금액을 볼 수 있는가 (D-R39 canSeeProfit)"
+          }
+        },
+        "required": [
+          "invoiceCount",
+          "billed",
+          "collected",
+          "outstanding",
+          "overdueCount",
+          "canSeeAmounts"
+        ]
+      },
+      "InvoiceLineDto": {
+        "type": "object",
+        "properties": {
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          },
+          "unitPrice": {
+            "type": "number"
+          },
+          "amount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "label",
+          "count",
+          "unitPrice",
+          "amount"
+        ]
+      },
+      "InvoiceDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "yearMonth": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true,
+            "description": "금액 — canSeeProfit 이 아니면 null 로 내려간다 (D-R39)"
+          },
+          "paidAmount": {
+            "type": "number",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "sent",
+              "unpaid",
+              "partial",
+              "paid",
+              "void"
+            ]
+          },
+          "issuedOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "paidAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "예정일이 지났는데 안 들어온 날 수. 0이면 연체 아님"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceLineDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "studentName",
+          "yearMonth",
+          "title",
+          "amount",
+          "paidAmount",
+          "state",
+          "overdueDays",
+          "lines"
+        ]
+      },
+      "PaymentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "paidOn": {
+            "type": "string"
+          },
+          "studentId": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "method": {
+            "type": "string",
+            "nullable": true
+          },
+          "invId": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "paidOn",
+          "amount"
+        ]
+      },
+      "PayoutDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "staffId": {
+            "type": "number"
+          },
+          "staffName": {
+            "type": "string"
+          },
+          "yearMonth": {
+            "type": "string"
+          },
+          "hours": {
+            "type": "string"
+          },
+          "gross": {
+            "type": "number",
+            "nullable": true
+          },
+          "lateRepCut": {
+            "type": "number",
+            "nullable": true,
+            "description": "리포트 지연 차감 (D-R32)"
+          },
+          "incomeTax": {
+            "type": "number",
+            "nullable": true
+          },
+          "localTax": {
+            "type": "number",
+            "nullable": true
+          },
+          "net": {
+            "type": "number",
+            "nullable": true
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "staffId",
+          "staffName",
+          "yearMonth",
+          "hours",
+          "gross",
+          "lateRepCut",
+          "incomeTax",
+          "localTax",
+          "net",
+          "state"
+        ]
+      },
+      "AccountingDto": {
+        "type": "object",
+        "properties": {
+          "summary": {
+            "$ref": "#/components/schemas/MoneySummaryDto"
+          },
+          "invoices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceDto"
+            }
+          },
+          "payments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaymentDto"
+            }
+          },
+          "payouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutDto"
+            }
+          }
+        },
+        "required": [
+          "summary",
+          "invoices",
+          "payments",
+          "payouts"
         ]
       }
     }

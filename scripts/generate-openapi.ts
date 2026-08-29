@@ -18,6 +18,29 @@ async function main() {
   const app = await NestFactory.create(AppModule, { logger: false });
   await app.init();
   const doc = buildOpenApi(app);
+
+  /**
+   * 타입이 안 붙은 속성을 잡는다.
+   *
+   * `@ApiProperty()` 만 적고 `number | null` 같은 유니온을 쓰면 스웨거가 **빈 스키마**를 내보내고,
+   * 프론트 생성 타입이 `Record<string, never>` 가 되어 화면에서 컴파일이 깨진다.
+   * 두 번 겪었으므로 여기서 막는다 — 계약이 비어 있는 채로 나가지 않게.
+   */
+  const bare: string[] = [];
+  const schemas = (doc.components?.schemas ?? {}) as Record<string, { properties?: Record<string, object> }>;
+  for (const [name, schema] of Object.entries(schemas)) {
+    for (const [prop, spec] of Object.entries(schema.properties ?? {})) {
+      const keys = Object.keys(spec ?? {}).filter((k) => k !== 'description' && k !== 'nullable');
+      if (keys.length === 0) bare.push(`${name}.${prop}`);
+    }
+  }
+  if (bare.length) {
+    console.error('타입이 비어 있는 속성이 있습니다 — @ApiProperty({ type: …, nullable: true }) 를 적어 주세요:');
+    for (const b of bare) console.error(`  ${b}`);
+    await app.close();
+    process.exit(1);
+  }
+
   const next = JSON.stringify(doc, null, 2) + '\n';
   await app.close();
 

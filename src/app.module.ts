@@ -13,6 +13,8 @@ import { ApiErrorFilter } from './common/filters/api-error.filter';
 import { HealthController } from './health.controller';
 import { MetaModule } from './modules/meta/meta.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
+import { ReportsModule } from './modules/reports/reports.module';
+import { AccountingModule } from './modules/accounting/accounting.module';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { ScheduleModule } from './modules/schedule/schedule.module';
     // 화면이 읽는 것 — 코드표와 스케줄부터
     MetaModule,
     ScheduleModule,
+    ReportsModule,
+    AccountingModule,
   ],
   controllers: [HealthController],
   providers: [
