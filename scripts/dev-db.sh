@@ -7,14 +7,42 @@
 #   ./scripts/dev-db.sh up      띄우고 마이그레이션 + 시드까지
 #   ./scripts/dev-db.sh reset   시드만 다시
 #   ./scripts/dev-db.sh stop
+#   ./scripts/dev-db.sh doctor  이 컴퓨터에서 돌 수 있는 상태인지만 확인
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
-ARCH="linux-$(node -p "process.arch === 'arm64' ? 'arm64' : 'x64'")"
-BIN="$ROOT/node_modules/@embedded-postgres/$ARCH/native/bin"
+
+# 플랫폼은 **지금 이 컴퓨터**에서 읽는다. 여기를 고정하면 다른 OS 에서 통째로 깨진다.
+PKG="${EPG_PKG:-$(node -p '
+const p = { darwin: "darwin", win32: "windows" }[process.platform] || "linux";
+const c = { arm64: "arm64", x64: "x64", arm: "arm", ia32: "ia32", ppc64: "ppc64" }[process.arch] || process.arch;
+p + "-" + c;')}"
+BIN="$ROOT/node_modules/@embedded-postgres/$PKG/native/bin"
 DATA="${PGDATA_DIR:-$HOME/pgdata}"; PORT="${PGPORT:-55432}"
 export LD_LIBRARY_PATH="$BIN/../lib:${LD_LIBRARY_PATH:-}"
+export DYLD_LIBRARY_PATH="$BIN/../lib:${DYLD_LIBRARY_PATH:-}"
 export DATABASE_URL="postgresql://taco:taco@localhost:$PORT/taco_dev"
 export ROOT PORT
+
+# node_modules 가 **다른 OS 것**이면 여기서 잡는다.
+# ELF 를 macOS 에서 실행하면 "cannot execute binary file" 만 나오고 원인이 안 보인다.
+preflight() {
+  local other
+  if [ ! -x "$BIN/initdb" ] || ! "$BIN/initdb" --version >/dev/null 2>&1; then
+    other="$(ls -d "$ROOT"/node_modules/@embedded-postgres/*/native/bin 2>/dev/null | head -1 || true)"
+    echo "✗ 이 컴퓨터($PKG)용 postgres 바이너리가 없다." >&2
+    echo "  찾은 곳: $BIN" >&2
+    [ -n "$other" ] && echo "  대신 깔린 것: $(echo "$other" | sed 's#.*@embedded-postgres/##; s#/native/bin##') — 다른 OS 용이다." >&2
+    echo "" >&2
+    echo "  node_modules 를 이 컴퓨터에서 다시 깔면 된다:" >&2
+    echo "    rm -rf node_modules && npm install" >&2
+    exit 1
+  fi
+  if ! node -e 'require("bcrypt")' >/dev/null 2>&1; then
+    echo "✗ bcrypt 가 이 컴퓨터에서 안 열린다 — 네이티브 모듈이라 OS 마다 다시 깔아야 한다." >&2
+    echo "    rm -rf node_modules && npm install" >&2
+    exit 1
+  fi
+}
 
 q() { DB="${DB:-postgres}" node -e '
 const {Client}=require(process.env.ROOT+"/node_modules/pg");
@@ -24,12 +52,13 @@ if(r.rows.length)console.log(r.rows.map(x=>Object.values(x).join("  ")).join("\n
 .catch(e=>{console.error(e.message);process.exit(1);});' "$1"; }
 
 start() {
+  preflight
   [ -f "$DATA/PG_VERSION" ] || { mkdir -p "$DATA"; echo taco > /tmp/pgpw; "$BIN/initdb" -D "$DATA" -U taco --pwfile=/tmp/pgpw -E UTF8 >/dev/null; }
   "$BIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$DATA/server.log" -w start >/dev/null 2>&1 || true
   for _ in $(seq 1 25); do q "select 1" >/dev/null 2>&1 && break; sleep 0.4; done
   q "select 1" >/dev/null || { tail -5 "$DATA/server.log"; exit 1; }
   if ! q "select 1 from pg_database where datname='taco_dev'" | grep -q 1; then q "create database taco_dev" >/dev/null; fi
-  echo "postgres up — port $PORT · db taco_dev"
+  echo "postgres up — port $PORT · db taco_dev · $PKG"
 }
 
 case "${1:-up}" in
@@ -42,4 +71,5 @@ case "${1:-up}" in
   start) start ;;
   stop)  "$BIN/pg_ctl" -D "$DATA" -m fast stop >/dev/null 2>&1 || true; echo stopped ;;
   q)     shift; start >/dev/null; DB=taco_dev q "$1" ;;
+  doctor) preflight; echo "✓ $PKG · postgres $("$BIN/initdb" --version | awk '{print $NF}') · bcrypt ok" ;;
 esac
