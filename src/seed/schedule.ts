@@ -69,6 +69,34 @@ export interface OccSeed {
   students: number[];
 }
 
+/**
+ * 예외를 회차에 **덮어씌운다.**
+ *
+ * 예외를 표에만 넣고 회차에 반영하지 않으면, 화면은 규칙의 강사·시간을 그대로 보여 준다.
+ * 「강사 교체」를 승인했는데 시간표에는 원래 강사가 남아 있는 상태가 된다 — 실제로 그랬다.
+ */
+export function applyExceptions(occs: OccSeed[], exc: ResolvedExc[]): OccSeed[] {
+  const by = new Map(exc.map((e) => [`${e.serId}|${e.onDate}`, e]));
+  return occs.map((o) => {
+    const e = by.get(`${o.serId}|${o.onDate}`);
+    if (!e) return o;
+    return {
+      ...o,
+      canceled: e.canceled || o.canceled,
+      teacherId: e.teacherId ?? o.teacherId,
+      startMin: e.startMin ?? o.startMin,
+      endMin: e.endMin ?? o.endMin,
+    };
+  });
+}
+
+/** 그날만 빠지는 학생 (D-R21) — 「아주 빼기」는 SER_STU 에서 지운다 */
+export const STU_OUT: Array<{ serId: number; nth: number; studentId: number }> = [
+  { serId: 5,  nth: 2, studentId: 12 },
+  { serId: 10, nth: 1, studentId: 15 },
+  { serId: 3,  nth: 3, studentId: 18 },
+];
+
 /** 규칙을 날짜로 펼친다. 손으로 적은 회차 목록을 두지 않는다. */
 export function expand(): OccSeed[] {
   const out: OccSeed[] = [];

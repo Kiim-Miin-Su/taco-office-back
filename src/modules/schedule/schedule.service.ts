@@ -21,7 +21,7 @@ interface Row {
   room_id: string | null; room_name: string | null;
   zacc_id: string | null; mode: string; canceled: boolean;
   has_exception: boolean; rep_state: string | null;
-  students: Array<{ id: number; name: string; grade: string | null }> | null;
+  students: Array<{ id: number; name: string; grade: string | null; droppedOnce: boolean }> | null;
 }
 
 @Injectable()
@@ -45,14 +45,26 @@ export class ScheduleService {
     }
 
     const rows = (await this.occ.query(
+      // 시각은 **회차(span)** 에서 뽑는다. 규칙(ser)에서 뽑으면 「이번만 시간 옮김」 예외가
+      // 화면에 반영되지 않는다 — 예외를 승인해 놓고 시간표는 원래 시각을 보여 주게 된다.
       `SELECT o.ser_id, to_char(o.on_date, 'YYYY-MM-DD') AS on_date,
-              s.start_min, s.end_min, s.kind_key, s.sub_key, s.title, s.mode,
+              (EXTRACT(HOUR FROM lower(o.span) AT TIME ZONE 'Asia/Seoul') * 60
+               + EXTRACT(MINUTE FROM lower(o.span) AT TIME ZONE 'Asia/Seoul'))::int AS start_min,
+              (EXTRACT(HOUR FROM upper(o.span) AT TIME ZONE 'Asia/Seoul') * 60
+               + EXTRACT(MINUTE FROM upper(o.span) AT TIME ZONE 'Asia/Seoul'))::int AS end_min,
+              s.kind_key, s.sub_key, s.title, s.mode,
               o.teacher_id, t.name AS teacher_name,
               o.room_id, rm.name AS room_name, o.zacc_id, o.canceled,
               (e.id IS NOT NULL) AS has_exception,
               r.state AS rep_state,
               COALESCE((
-                SELECT json_agg(json_build_object('id', st.id, 'name', st.name, 'grade', st.grade) ORDER BY st.id)
+                SELECT json_agg(json_build_object(
+                         'id', st.id, 'name', st.name, 'grade', st.grade,
+                         -- 그날만 빠진 학생은 지우지 않고 표시만 한다 (D-R21)
+                         'droppedOnce', EXISTS (
+                           SELECT 1 FROM exc_stu_out xo
+                            WHERE xo.exc_id = e.id AND xo.student_id = st.id)
+                       ) ORDER BY st.id)
                 FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
                 WHERE ss.ser_id = o.ser_id
               ), '[]'::json) AS students
@@ -89,7 +101,7 @@ export class ScheduleService {
         // 판정은 rules.ts 한 곳에서만 한다 — 화면도 서버도 여기서 나온 값을 읽기만 한다
         written: REPORT_WRITTEN.includes(repState),
         students: (r.students ?? []).map((s) => ({
-          id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: false,
+          id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce),
         })),
       };
     });

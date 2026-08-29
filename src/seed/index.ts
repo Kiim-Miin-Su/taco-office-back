@@ -8,7 +8,7 @@ import type { DataSource, QueryRunner } from 'typeorm';
 import bcrypt from 'bcrypt';
 import { KINDS, SUBS, ROOMS, ZACCS, STAFF, WAGES, RATES, TZGS, SEED_TODAY } from './base';
 import { STUDENTS, ENROLLMENTS, LEADS } from './people';
-import { SERS, UNAVS, expand, resolveExceptions } from './schedule';
+import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
 import { REQS, CHREQS, NOTIS, CONSULTINGS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS } from './ops';
@@ -17,7 +17,7 @@ import { REQS, CHREQS, NOTIS, CONSULTINGS, CONS_SESSIONS, MKTS, PLANS, MEETINGS,
 export const SEEDED_TABLES = [
   'kind', 'sub', 'room', 'zacc', 'tzg', 'staff', 'wage', 'rate', 'sturate',
   'stu', 'enr', 'lead',
-  'ser', 'ser_stu', 'ser_occ', 'exc', 'unav',
+  'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout',
   'req', 'chreq', 'noti', 'cons', 'cons_stu', 'cons_sess',
@@ -95,16 +95,39 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('ser', SERS.map((s) => ({ id: s.id, kind_key: s.kindKey, sub_key: s.subKey, teacher_id: s.teacherId, room_id: s.roomId, mode: s.mode, start_min: s.startMin, end_min: s.endMin, rrule: `FREQ=WEEKLY;BYDAY=${s.days.join(',')}`, from_date: SEED_TODAY, title: s.title ?? null })));
     await add('ser_stu', SERS.flatMap((s) => s.students.map((st) => ({ ser_id: s.id, student_id: st }))));
 
-    const occs = expand();
+    const raw = expand();
     // 예외는 「그 규칙이 실제로 만드는 회차」 위에만 올릴 수 있다.
     // 요일이 안 맞는 날짜를 적어 두면 조용히 아무 데도 안 붙는다 — 그래서 여기서 풀어 준다.
-    const exceptions = resolveExceptions(occs);
+    const exceptions = resolveExceptions(raw);
+    // 예외를 회차에 덮어씌운 뒤에 저장한다. 안 그러면 화면이 규칙의 강사·시간을 보여 준다.
+    const occs = applyExceptions(raw, exceptions);
     const cancelKeys = new Set(exceptions.filter((e) => e.canceled).map((e) => `${e.serId}|${e.onDate}`));
-    await add('ser_occ', occs.map((o) => {
-      const canceled = cancelKeys.has(`${o.serId}|${o.onDate}`);
-      return { ser_id: o.serId, on_date: o.onDate, teacher_id: o.teacherId, room_id: o.roomId, zacc_id: o.zaccId, canceled, span: span(o.onDate, o.startMin, o.endMin) };
-    }));
+    await add('ser_occ', occs.map((o) => ({
+      ser_id: o.serId, on_date: o.onDate, teacher_id: o.teacherId, room_id: o.roomId,
+      zacc_id: o.zaccId, canceled: o.canceled, span: span(o.onDate, o.startMin, o.endMin),
+    })));
     await add('exc', exceptions.map((e) => ({ ser_id: e.serId, on_date: e.onDate, canceled: e.canceled, start_min: num((e as { startMin?: number }).startMin), end_min: num((e as { endMin?: number }).endMin), teacher_id: num((e as { teacherId?: number }).teacherId), reason: e.reason, by_id: e.byId, at: `${e.onDate}T00:00:00Z` })));
+    // 그날만 빠진 학생 — 예외 id 가 필요하므로 exc 를 넣은 뒤에 붙인다
+    const excRows = (await q.query("SELECT id, ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date FROM exc")) as Array<{ id: string; ser_id: string; on_date: string }>;
+    const excId = new Map(excRows.map((r) => [`${r.ser_id}|${r.on_date}`, Number(r.id)]));
+    const outRows: Array<Record<string, unknown>> = [];
+    for (const so of STU_OUT) {
+      const mine = occs.filter((x) => x.serId === so.serId && x.onDate < SEED_TODAY);
+      const hit = mine[mine.length - so.nth];
+      if (!hit) continue;
+      let id = excId.get(`${so.serId}|${hit.onDate}`);
+      if (!id) {
+        const ins = (await q.query(
+          'INSERT INTO exc (ser_id, on_date, canceled, reason, by_id, at) VALUES ($1,$2,false,$3,$4,$5) RETURNING id',
+          [so.serId, hit.onDate, '이 회차만 빠짐', 4, `${hit.onDate}T00:00:00Z`],
+        )) as Array<{ id: string }>;
+        id = Number(ins[0].id);
+        excId.set(`${so.serId}|${hit.onDate}`, id);
+      }
+      outRows.push({ exc_id: id, student_id: so.studentId });
+    }
+    await add('exc_stu_out', outRows);
+
     await add('unav', UNAVS.map((u) => ({ staff_id: u.staffId, cycle: u.cycle, dow: u.dow, start_min: u.startMin, end_min: u.endMin, reason: u.reason })));
 
     // ── 리포트 · 안내 · 교재

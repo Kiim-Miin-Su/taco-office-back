@@ -2,7 +2,18 @@
  * 기준 정보 — 사람보다 먼저 있어야 하는 것들.
  * 코드표(KIND·SUB)는 명세서 v2 §85·§86 의 값을 그대로 쓴다. 색은 프론트 tokens.css 와 같은 값이다.
  */
-export const SEED_TODAY = '2026-08-28';
+/**
+ * 시드의 기준일.
+ *
+ * 고정 상수로 두면 시간이 지나면서 데이터가 과거로 밀려 「오늘 수업이 없습니다」가 된다.
+ * 그래서 기본은 **오늘(KST)** 이고, 재현이 필요할 때만 SEED_TODAY 로 못 박는다.
+ *   SEED_TODAY=2026-08-28 npm run seed -- --reset
+ */
+function todayKst(): string {
+  const now = new Date();
+  return new Date(now.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+export const SEED_TODAY = process.env.SEED_TODAY ?? todayKst();
 
 /** 수업 종류 8종 — 명세서 v2 §85 */
 export const KINDS = [
