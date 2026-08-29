@@ -12,10 +12,14 @@
  *   ③ 중복  EXCLUDE · UNIQUE 제약    — 재시도·더블클릭
  *
  * DATABASE_URL 이 없으면 건너뛴다 — CI 에서 DB 없이도 나머지 테스트는 돌아야 한다.
+ *
+ * ⚠ 이 파일은 **표를 비운다.** 그래서 개발 DB 가 아니라 스크래치 DB(`*_test`) 에서만 돈다.
+ *   개발 DB 에 돌리면 시드가 통째로 사라지고 화면이 텅 빈 채로 뜬다 (test/db.ts 주석 참고).
  */
 import { DataSource } from 'typeorm';
+import { TEST_URL, DEV_URL, assertScratch, dbNameOf } from './db';
 
-const URL = process.env.DATABASE_URL;
+const URL = DEV_URL ? assertScratch(TEST_URL) : undefined;
 const d = URL ? describe : describe.skip;
 
 jest.setTimeout(30_000);
@@ -33,6 +37,11 @@ d('동시성 — DB 가 마지막에 막는다 (D-R43)', () => {
   });
 
   beforeEach(async () => {
+    // 안전벨트를 매번 다시 맨다 — 커넥션이 바뀌었을 수도 있다.
+    const [{ current_database: now }] = (await ds.query('SELECT current_database()')) as Array<{
+      current_database: string;
+    }>;
+    if (now !== dbNameOf(URL!)) throw new Error(`엉뚱한 DB 에 붙어 있다: '${now}'`);
     await ds.query('TRUNCATE ser_occ, inv, inv_line, rep RESTART IDENTITY CASCADE');
   });
 
@@ -150,10 +159,13 @@ d('동시성 — DB 가 마지막에 막는다 (D-R43)', () => {
 
   /* ══ ③ 중복 — 같은 회차에 리포트 두 장 ════════════════════════════ */
   describe('같은 회차에 리포트가 두 장 생기지 않는다', () => {
+    // 리포트는 **회차당 한 장**이다 — 학생은 rep_stu 로 붙는다 (CONTRACTS §10.5 · erd v4.4).
+    // 예전에는 여기에 student_id 를 넣었는데, 그 컬럼은 그룹 수업에서
+    // UNIQUE(ser_id, on_date) 와 정면으로 부딪혀 스키마에서 빠졌다.
     const writeReport = () =>
       ds.query(
-        `INSERT INTO rep (ser_id, on_date, student_id, teacher_id, kind_key, lang, body, state)
-         VALUES (1, '2026-09-01', 1, 11, 'class', 'ko', '{}'::jsonb, 'draft')`,
+        `INSERT INTO rep (ser_id, on_date, teacher_id, kind_key, lang, body, state)
+         VALUES (1, '2026-09-01', 11, 'class', 'ko', '{}'::jsonb, 'draft')`,
       );
 
     it('더블클릭·재시도로도 한 장만 남는다', async () => {

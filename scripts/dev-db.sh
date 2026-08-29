@@ -8,6 +8,7 @@
 #   ./scripts/dev-db.sh reset   시드만 다시
 #   ./scripts/dev-db.sh stop
 #   ./scripts/dev-db.sh doctor  이 컴퓨터에서 돌 수 있는 상태인지만 확인
+#   ./scripts/dev-db.sh urls    개발 · 테스트 DB 주소를 찍는다
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 
@@ -21,6 +22,9 @@ DATA="${PGDATA_DIR:-$HOME/pgdata}"; PORT="${PGPORT:-55432}"
 export LD_LIBRARY_PATH="$BIN/../lib:${LD_LIBRARY_PATH:-}"
 export DYLD_LIBRARY_PATH="$BIN/../lib:${DYLD_LIBRARY_PATH:-}"
 export DATABASE_URL="postgresql://taco:taco@localhost:$PORT/taco_dev"
+# 표를 비우는 테스트(concurrency.spec)는 개발 DB 가 아니라 여기서 돈다.
+# 같은 DB 를 쓰면 npm test 한 번에 시드가 사라진다 — test/db.ts 참고.
+export TEST_DATABASE_URL="postgresql://taco:taco@localhost:$PORT/taco_dev_test"
 export ROOT PORT
 
 # node_modules 가 **다른 OS 것**이면 여기서 잡는다.
@@ -53,18 +57,25 @@ if(r.rows.length)console.log(r.rows.map(x=>Object.values(x).join("  ")).join("\n
 
 start() {
   preflight
-  [ -f "$DATA/PG_VERSION" ] || { mkdir -p "$DATA"; echo taco > /tmp/pgpw; "$BIN/initdb" -D "$DATA" -U taco --pwfile=/tmp/pgpw -E UTF8 >/dev/null; }
+  # 비밀번호 파일은 mktemp 로 만든다 — /tmp/pgpw 로 고정하면 남의 것이 남아 있을 때 막힌다.
+  [ -f "$DATA/PG_VERSION" ] || {
+    mkdir -p "$DATA"; PW="$(mktemp)"; echo taco > "$PW"
+    "$BIN/initdb" -D "$DATA" -U taco --pwfile="$PW" -E UTF8 >/dev/null; rm -f "$PW"
+  }
   "$BIN/pg_ctl" -D "$DATA" -o "-p $PORT -k /tmp" -l "$DATA/server.log" -w start >/dev/null 2>&1 || true
   for _ in $(seq 1 25); do q "select 1" >/dev/null 2>&1 && break; sleep 0.4; done
   q "select 1" >/dev/null || { tail -5 "$DATA/server.log"; exit 1; }
-  if ! q "select 1 from pg_database where datname='taco_dev'" | grep -q 1; then q "create database taco_dev" >/dev/null; fi
-  echo "postgres up — port $PORT · db taco_dev · $PKG"
+  for db in taco_dev taco_dev_test; do
+    if ! q "select 1 from pg_database where datname='$db'" | grep -q 1; then q "create database $db" >/dev/null; fi
+  done
+  echo "postgres up — port $PORT · db taco_dev + taco_dev_test · $PKG"
 }
 
 case "${1:-up}" in
   up)
     start
-    echo "── 마이그레이션"; npm run --silent migration:run 2>&1 | grep -E "migrations|Migration|error|Error" | tail -3
+    echo "── 마이그레이션 (개발)"; npm run --silent migration:run 2>&1 | grep -E "migrations|Migration|error|Error" | tail -3
+    echo "── 마이그레이션 (테스트)"; DATABASE_URL="$TEST_DATABASE_URL" npm run --silent migration:run 2>&1 | grep -E "migrations|Migration|error|Error" | tail -3
     echo "── 시드";        npx --yes ts-node -P tsconfig.json scripts/seed.ts --reset 2>&1 | tail -14
     ;;
   reset) start; npx --yes ts-node -P tsconfig.json scripts/seed.ts --reset 2>&1 | tail -14 ;;
@@ -72,4 +83,5 @@ case "${1:-up}" in
   stop)  "$BIN/pg_ctl" -D "$DATA" -m fast stop >/dev/null 2>&1 || true; echo stopped ;;
   q)     shift; start >/dev/null; DB=taco_dev q "$1" ;;
   doctor) preflight; echo "✓ $PKG · postgres $("$BIN/initdb" --version | awk '{print $NF}') · bcrypt ok" ;;
+  urls)  echo "DATABASE_URL=$DATABASE_URL"; echo "TEST_DATABASE_URL=$TEST_DATABASE_URL" ;;
 esac
