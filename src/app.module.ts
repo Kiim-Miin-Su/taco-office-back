@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { ScheduleModule } from '@nestjs/schedule';
+// 이름이 우리 ScheduleModule(수업 스케줄)과 겹친다 — 쓰임대로 부른다
+import { ScheduleModule as CronModule } from '@nestjs/schedule';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import * as Joi from 'joi';
 import { dataSourceOptions } from './data-source';
@@ -10,6 +11,8 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
 import { PermGuard } from './common/perm';
 import { ApiErrorFilter } from './common/filters/api-error.filter';
 import { HealthController } from './health.controller';
+import { MetaModule } from './modules/meta/meta.module';
+import { ScheduleModule } from './modules/schedule/schedule.module';
 
 @Module({
   imports: [
@@ -30,8 +33,11 @@ import { HealthController } from './health.controller';
     }),
     TypeOrmModule.forRoot(dataSourceOptions),
     // 정기 작업 (D-R41) — 리포트 독촉 · 지각 차감 확정 · 정산 마감
-    ScheduleModule.forRoot(),
+    CronModule.forRoot(),
     AuthModule,
+    // 화면이 읽는 것 — 코드표와 스케줄부터
+    MetaModule,
+    ScheduleModule,
   ],
   controllers: [HealthController],
   providers: [

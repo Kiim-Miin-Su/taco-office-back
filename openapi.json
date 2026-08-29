@@ -106,6 +106,93 @@
           "auth"
         ]
       }
+    },
+    "/meta": {
+      "get": {
+        "operationId": "MetaController_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetaDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "코드표 — 수업 종류 · 과목 · 강의실 · 줌 · 구성원 · 학생",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/schedule/occurrences": {
+      "get": {
+        "operationId": "ScheduleController_list",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-24",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-30",
+              "type": "string"
+            }
+          },
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "studentId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "roomId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OccurrenceListDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회차 목록 — 일간·주간·월간·학생별·선생님별이 모두 이것을 쓴다",
+        "tags": [
+          "schedule"
+        ]
+      }
     }
   },
   "info": {
@@ -238,6 +325,356 @@
         },
         "required": [
           "accessToken"
+        ]
+      },
+      "KindDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string",
+            "description": "토큰과 같은 값 — 화면은 이 색을 쓰기만 한다"
+          },
+          "cap": {
+            "type": "number"
+          },
+          "grp": {
+            "type": "string",
+            "enum": [
+              "lesson",
+              "intake",
+              "meeting"
+            ]
+          },
+          "rep": {
+            "type": "boolean",
+            "description": "리포트 대상인가 (D-4)"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "color",
+          "cap",
+          "grp",
+          "rep"
+        ]
+      },
+      "SubDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "color"
+        ]
+      },
+      "RoomDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "capacity": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "branch",
+          "name"
+        ]
+      },
+      "ZaccDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string"
+          },
+          "meetingId": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ]
+      },
+      "StaffBriefDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "manager",
+              "admin",
+              "ceo"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "표시용 직함 — 권한과 무관하다 (D-R39)"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "role"
+        ]
+      },
+      "StudentBriefDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "school": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "MetaDto": {
+        "type": "object",
+        "properties": {
+          "kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KindDto"
+            }
+          },
+          "subs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubDto"
+            }
+          },
+          "rooms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoomDto"
+            }
+          },
+          "zaccs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZaccDto"
+            }
+          },
+          "staff": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffBriefDto"
+            }
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentBriefDto"
+            }
+          }
+        },
+        "required": [
+          "kinds",
+          "subs",
+          "rooms",
+          "zaccs",
+          "staff",
+          "students"
+        ]
+      },
+      "OccStudentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "droppedOnce": {
+            "type": "boolean",
+            "description": "그날만 빠진 학생인가 (D-R21)"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "droppedOnce"
+        ]
+      },
+      "OccurrenceDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "description": "반복 규칙 id"
+          },
+          "date": {
+            "type": "string",
+            "example": "2026-08-28"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "자정부터 분"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true
+          },
+          "roomName": {
+            "type": "string",
+            "nullable": true
+          },
+          "zaccId": {
+            "type": "number",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ]
+          },
+          "canceled": {
+            "type": "boolean"
+          },
+          "hasException": {
+            "type": "boolean",
+            "description": "이 회차에 예외가 붙었는가"
+          },
+          "repState": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ],
+            "description": "리포트 상태. 캘린더 블록 색이 이 값에서 나온다 (D-R7 · V26 §2.3)"
+          },
+          "written": {
+            "type": "boolean",
+            "description": "리포트를 썼는가 — 정산에 들어가는 조건 하나 (D-R7)"
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OccStudentDto"
+            }
+          }
+        },
+        "required": [
+          "serId",
+          "date",
+          "startMin",
+          "endMin",
+          "kindKey",
+          "mode",
+          "canceled",
+          "hasException",
+          "repState",
+          "written",
+          "students"
+        ]
+      },
+      "OccurrenceListDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "example": "2026-08-24"
+          },
+          "to": {
+            "type": "string",
+            "example": "2026-08-30"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OccurrenceDto"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "items"
         ]
       }
     }
