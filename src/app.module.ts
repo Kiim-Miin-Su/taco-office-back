@@ -15,6 +15,7 @@ import { MetaModule } from './modules/meta/meta.module';
 import { ScheduleModule } from './modules/schedule/schedule.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
+import { OpsModule } from './modules/ops/ops.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { AccountingModule } from './modules/accounting/accounting.module';
     ScheduleModule,
     ReportsModule,
     AccountingModule,
+    OpsModule,
   ],
   controllers: [HealthController],
   providers: [

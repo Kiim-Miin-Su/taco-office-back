@@ -301,6 +301,28 @@
           "accounting"
         ]
       }
+    },
+    "/ops": {
+      "get": {
+        "operationId": "OpsController_all",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "운영 — 상담 · 컴플레인 · 할 일 · 기획 · 회의 · 마케팅 · 건의",
+        "tags": [
+          "ops"
+        ]
+      }
     }
   },
   "info": {
@@ -1224,6 +1246,378 @@
           "invoices",
           "payments",
           "payouts"
+        ]
+      },
+      "LeadDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "school": {
+            "type": "string",
+            "nullable": true
+          },
+          "stage": {
+            "type": "string",
+            "description": "first | wait2nd | second | hold | enrolled | failed"
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "stopAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "실패한 경우 어디서 멈췄나 (§24)"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "ageDays": {
+            "type": "number",
+            "description": "접수한 지 며칠"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "stage",
+          "createdAt",
+          "ageDays"
+        ]
+      },
+      "ComplaintDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "area": {
+            "type": "string",
+            "enum": [
+              "lesson",
+              "intake",
+              "book",
+              "schedule",
+              "teacher"
+            ]
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "stage": {
+            "type": "string",
+            "description": "received | acting | closed"
+          },
+          "body": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "nullable": true
+          },
+          "result": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "ageDays": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "area",
+          "stage",
+          "body",
+          "createdAt",
+          "ageDays"
+        ]
+      },
+      "TodoDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "toName": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "src": {
+            "type": "string",
+            "enum": [
+              "meeting",
+              "complaint",
+              "consulting",
+              "plan",
+              "manual"
+            ]
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "기한이 지난 날 수. 0이면 안 지남"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "done",
+          "src",
+          "overdueDays"
+        ]
+      },
+      "PlanDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "description": "draft | review | rework | approved | done"
+          },
+          "goal": {
+            "type": "string",
+            "nullable": true
+          },
+          "ask": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "overdueDays": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "stage",
+          "overdueDays"
+        ]
+      },
+      "MeetingDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "mtType": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "onDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "attendees": {
+            "type": "number"
+          },
+          "confirmed": {
+            "type": "number"
+          },
+          "hasMinutes": {
+            "type": "boolean",
+            "description": "속기록을 썼는가 — 안 쓰면 회의가 끝난 것이 아니다"
+          }
+        },
+        "required": [
+          "id",
+          "mtType",
+          "attendees",
+          "confirmed",
+          "hasMinutes"
+        ]
+      },
+      "MarketingDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
+          },
+          "impressions": {
+            "type": "number",
+            "nullable": true
+          },
+          "clicks": {
+            "type": "number",
+            "nullable": true
+          },
+          "inquiries": {
+            "type": "number",
+            "nullable": true
+          },
+          "enrolled": {
+            "type": "number",
+            "nullable": true
+          },
+          "cost": {
+            "type": "number",
+            "nullable": true,
+            "description": "집행 비용 — 대표만 (D-R39)"
+          },
+          "costPerEnroll": {
+            "type": "number",
+            "nullable": true,
+            "description": "등록당 비용"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "item"
+        ]
+      },
+      "SuggestionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "staffName": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "lesson",
+              "pay",
+              "schedule",
+              "etc"
+            ]
+          },
+          "body": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "reviewing",
+              "done"
+            ]
+          },
+          "reply": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "staffName",
+          "category",
+          "body",
+          "state",
+          "createdAt"
+        ]
+      },
+      "OpsDto": {
+        "type": "object",
+        "properties": {
+          "leads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeadDto"
+            }
+          },
+          "complaints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComplaintDto"
+            }
+          },
+          "todos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TodoDto"
+            }
+          },
+          "plans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanDto"
+            }
+          },
+          "meetings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeetingDto"
+            }
+          },
+          "marketing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketingDto"
+            }
+          },
+          "suggestions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SuggestionDto"
+            }
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "집행 비용을 볼 수 있는가"
+          }
+        },
+        "required": [
+          "leads",
+          "complaints",
+          "todos",
+          "plans",
+          "meetings",
+          "marketing",
+          "suggestions",
+          "canSeeAmounts"
         ]
       }
     }
