@@ -27,11 +27,19 @@ async function main() {
    * 두 번 겪었으므로 여기서 막는다 — 계약이 비어 있는 채로 나가지 않게.
    */
   const bare: string[] = [];
-  const schemas = (doc.components?.schemas ?? {}) as Record<string, { properties?: Record<string, object> }>;
+  const schemas = (doc.components?.schemas ?? {}) as Record<string, { properties?: Record<string, Record<string, unknown>> }>;
   for (const [name, schema] of Object.entries(schemas)) {
-    for (const [prop, spec] of Object.entries(schema.properties ?? {})) {
-      const keys = Object.keys(spec ?? {}).filter((k) => k !== 'description' && k !== 'nullable');
-      if (keys.length === 0) bare.push(`${name}.${prop}`);
+    for (const [prop, raw] of Object.entries(schema.properties ?? {})) {
+      const spec = raw ?? {};
+      const keys = Object.keys(spec).filter((k) => k !== 'description' && k !== 'nullable');
+      // ① 아예 비어 있는 스키마
+      if (keys.length === 0) { bare.push(`${name}.${prop} (빈 스키마)`); continue; }
+      // ② 속이 없는 object — `string | null` 같은 유니온에 타입을 안 적으면 여기로 떨어진다.
+      //    빈 스키마가 아니라서 ①에 안 걸리고, 프론트 타입은 Record<string, never> 가 된다.
+      const isBlankObject =
+        spec.type === 'object' &&
+        !spec.properties && !spec.additionalProperties && !spec.$ref && !spec.allOf && !spec.oneOf;
+      if (isBlankObject) bare.push(`${name}.${prop} (속 없는 object — 유니온에 타입을 안 적었다)`);
     }
   }
   if (bare.length) {

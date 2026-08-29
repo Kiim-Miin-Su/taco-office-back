@@ -21,7 +21,7 @@ export class MeDto implements PermFlags {
   @ApiProperty() id!: number;
   @ApiProperty() name!: string;
   @ApiProperty({ enum: ROLES }) role!: Role;
-  @ApiProperty({ nullable: true, description: '직함 — 권한과 무관' }) title!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '직함 — 권한과 무관' }) title!: string | null;
 
   @ApiProperty({ description: '관리자 백오피스 진입' }) canAdminPage!: boolean;
   @ApiProperty({ description: '전 항목 CRUD' }) canCrudAll!: boolean;

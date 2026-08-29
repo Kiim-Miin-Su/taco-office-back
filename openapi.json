@@ -378,7 +378,7 @@
             ]
           },
           "title": {
-            "type": "object",
+            "type": "string",
             "nullable": true,
             "description": "직함 — 권한과 무관"
           },
