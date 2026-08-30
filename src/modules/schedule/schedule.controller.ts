@@ -8,7 +8,7 @@ import {
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
-import { horizon } from './project';
+import { horizon } from './schedule.project';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 

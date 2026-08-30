@@ -13,11 +13,13 @@ import { DataSource } from 'typeorm';
 import {
   REPORT_WRITTEN_DB, REP_STATE_FROM_DB, reportStateFromDb,
 } from '../src/lib/rules';
+import { DEV_URL } from './db';
 
 /** 규칙이 아는 상태 이름 전부 — 옮긴 값이 여기 없으면 규칙이 못 읽는다. */
 const REPORT_STATES = ['na', 'plan', 'none', 'draft', 'submitted', 'approved', 'rejected'];
 
-const URL = process.env.DATABASE_URL;
+// 읽는 자리를 db.ts 하나로 모은다 — 여기서 또 읽으면 .env 를 읽어 줄 사람이 없어 조용히 건너뛴다
+const URL = DEV_URL;
 const d = URL ? describe : describe.skip;
 
 jest.setTimeout(30_000);

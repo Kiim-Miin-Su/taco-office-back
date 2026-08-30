@@ -19,8 +19,8 @@ import {
   applyCreate, applyDelete, applyEdit, applyRoster, formatRule, parseRule,
   type Scope, type State,
 } from '../../lib/recurrence';
-import { loadState, persist } from './state.repo';
-import { horizon, project } from './project';
+import { loadState, persist } from './schedule.state.repo';
+import { horizon, project } from './schedule.project';
 import type {
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrencePatchDto, RosterPatchDto, WriteResultDto,
 } from './schedule.dto';

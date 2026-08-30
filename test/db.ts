@@ -15,8 +15,23 @@
  * 이름 규칙 하나로 막는 편이, 다음 사람이 URL 을 잘못 넣었을 때 조용히 지워지는 것보다 낫다.
  */
 
+/* 이 파일은 `AppModule` 을 거치지 않는 스위트(concurrency · seed)도 import 한다.
+   그쪽에는 `.env.local` 을 읽어 줄 사람이 없어서, 셸에 값을 안 넣으면
+   **조용히 전부 건너뛴다** — 테스트가 0건 도는데 초록으로 끝나는 자리다.
+   `src/data-source.ts` 와 같은 방식으로 여기서도 한 번 읽는다. 이미 있는 값은 안 덮는다. */
+import * as dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
+dotenv.config();
+
 /** 개발 DB — 시드가 들어 있다. 읽기 전용으로 쓴다. */
 export const DEV_URL = process.env.DATABASE_URL;
+
+if (!DEV_URL) {
+  console.warn(
+    '\n  ! DATABASE_URL 이 없어 **DB 를 쓰는 스위트를 전부 건너뜁니다.**\n' +
+      '    통과가 아니라 검사를 안 한 것입니다 — ./scripts/dev-db.sh up 뒤에 다시 도세요.\n',
+  );
+}
 
 /** DB 이름만 바꾼 URL 을 만든다. */
 function withDbName(url: string, name: string): string {
