@@ -10,7 +10,7 @@ import { INestApplication, ValidationPipe, Controller, Get } from '@nestjs/commo
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { Perm } from '../src/common/perm';

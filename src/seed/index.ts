@@ -5,7 +5,7 @@
  * 진짜 데이터로 바꿀 때 프론트가 한 줄도 안 바뀐다 (자동 전이).
  */
 import type { DataSource, QueryRunner } from 'typeorm';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { KINDS, SUBS, ROOMS, ZACCS, STAFF, WAGES, RATES, TZGS, SEED_TODAY, rel } from './base';
 // rrule 은 recurrence.ts 가 읽는 형식으로만 쓴다 — 형식이 둘이면 회차가 통째로 사라진다
 import { formatRule } from '../lib/recurrence';
