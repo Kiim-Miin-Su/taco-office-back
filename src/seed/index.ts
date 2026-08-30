@@ -13,7 +13,7 @@ import { STUDENTS, ENROLLMENTS, LEADS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
-import { REQS, CHREQS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS } from './ops';
+import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS } from './ops';
 
 /** 시드가 건드리는 표 — 지울 때도 이 순서의 역순을 쓴다 */
 export const SEEDED_TABLES = [
@@ -22,7 +22,7 @@ export const SEEDED_TABLES = [
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout',
-  'req', 'chreq', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess',
+  'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess',
   'mkt', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
 ] as const;
 
@@ -160,6 +160,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     // ── 운영
     await add('req', REQS.map((r) => ({ staff_id: r.staffId, req_type: r.reqType, payload: JSON.stringify(r.payload), state: r.state, resolved_by: num((r as { resolvedBy?: number }).resolvedBy), reject_reason: (r as { rejectReason?: string }).rejectReason ?? null, created_at: `${r.createdAt}T00:00:00Z` })));
     await add('chreq', CHREQS.map((c) => ({ ser_id: c.serId, on_date: c.onDate, req_type: c.reqType, payload: JSON.stringify(c.payload), reason: c.reason, state: c.state, by_id: c.byId, resolved_by: num((c as { resolvedBy?: number }).resolvedBy), apply_all: c.applyAll, created_at: `${c.createdAt}T00:00:00Z` })));
+    await add('gpapack', GPAPACKS.map((g) => ({ student_id: g.studentId, pack_type: g.packType, detail: g.detail, state: g.state, created_at: `${g.createdAt}T09:00:00Z` })));
     await add('noti', NOTIS.map((n) => ({ to_id: n.toId, from_id: n.fromId, body: n.body, link: n.link, read_at: (n as { readAt?: string }).readAt ? `${(n as { readAt?: string }).readAt}T00:00:00Z` : null, created_at: `${n.createdAt}T00:00:00Z` })));
     await add('cons', CONSULTINGS.map((c) => ({ id: c.id, cons_type: c.consType, stage: c.stage, contract_step: c.contractStep, amount: c.amount, sessions: c.sessions, end_on: c.endOn, owner_id: c.ownerId, share: c.share })));
     await add('cons_stu', CONSULTINGS.flatMap((c) => c.students.map((s) => ({ cons_id: c.id, student_id: s }))));

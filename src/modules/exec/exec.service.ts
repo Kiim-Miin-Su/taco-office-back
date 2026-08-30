@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { REPORT_PENDING_DB } from '../../lib/rules';
 import type { ExecDto, ExecStatDto } from './exec.dto';
+import { kstAt } from '../../lib/sql';
 
 type R = Record<string, unknown>;
 
@@ -78,8 +79,8 @@ export class ExecService {
       `SELECT id, rpt_type, to_char(on_date,'YYYY-MM-DD') AS on_date, state,
               -- memo 는 jsonb 다. 그대로 내려보내면 화면에 [object Object] 가 찍힌다.
               COALESCE(memo->>'note', memo::text) AS memo,
-              to_char(sent_at,'YYYY-MM-DD"T"HH24:MI:SSOF')     AS sent_at,
-              to_char(reviewed_at,'YYYY-MM-DD"T"HH24:MI:SSOF') AS reviewed_at,
+              ${kstAt(`sent_at`)}     AS sent_at,
+              ${kstAt(`reviewed_at`)} AS reviewed_at,
               reject_reason
          FROM rpt WHERE on_date BETWEEN $1::date AND $2::date
         ORDER BY on_date DESC, id DESC`,

@@ -646,6 +646,118 @@
           "exec"
         ]
       }
+    },
+    "/drawer": {
+      "get": {
+        "operationId": "DrawerController_all",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DrawerDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "서랍 여덟 칸을 한 번에 — 결재 5종 정규화 포함 (D-R26 · D-R34)",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/todos/{id}": {
+      "patch": {
+        "operationId": "DrawerController_todoDone",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoDoneDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "§15 할 일 체크 — 내가 주고받은 것만",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/notis/{id}/read": {
+      "patch": {
+        "operationId": "DrawerController_notiRead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "§16 알림 읽음",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/change-requests": {
+      "post": {
+        "operationId": "DrawerController_createChangeReq",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeReqCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeReqResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§19 변경 요청 넣기 — 겹치면 **누구와** 겹치는지 돌려주고 넣지 않는다",
+        "tags": [
+          "drawer"
+        ]
+      }
     }
   },
   "info": {
@@ -2771,6 +2883,590 @@
           "reports",
           "canSeeAmounts",
           "computedAt"
+        ]
+      },
+      "ApRowDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "rpt",
+              "plan",
+              "req",
+              "chreq",
+              "gpapack"
+            ]
+          },
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "sub": {
+            "type": "string",
+            "nullable": true
+          },
+          "byId": {
+            "type": "number",
+            "nullable": true
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true
+          },
+          "at": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "back",
+              "done"
+            ]
+          },
+          "why": {
+            "type": "string",
+            "nullable": true,
+            "description": "반려면 반드시 있다 (D-R13)"
+          },
+          "go": {
+            "type": "string",
+            "description": "누르면 갈 곳 — 오버레이에서 승인하지 않는다 (D-R27)"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "title",
+          "at",
+          "state",
+          "go"
+        ]
+      },
+      "ApFlowDto": {
+        "type": "object",
+        "properties": {
+          "back": {
+            "description": "되돌아온 것 — 맨 위 (§75)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApRowDto"
+            }
+          },
+          "waiting": {
+            "description": "기다리는 것",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApRowDto"
+            }
+          },
+          "mine": {
+            "description": "내가 올린 것",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApRowDto"
+            }
+          },
+          "count": {
+            "type": "number",
+            "description": "배지 숫자 — 손이 가야 하는 것만 센다"
+          },
+          "missingKinds": {
+            "description": "아직 표가 없어 못 세는 갈래 (N-13 대기)",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "back",
+          "waiting",
+          "mine",
+          "count",
+          "missingKinds"
+        ]
+      },
+      "DrawerTodoDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "fromName": {
+            "type": "string",
+            "nullable": true
+          },
+          "toName": {
+            "type": "string",
+            "nullable": true
+          },
+          "fromId": {
+            "type": "number",
+            "nullable": true
+          },
+          "toId": {
+            "type": "number",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "src": {
+            "type": "string",
+            "enum": [
+              "meeting",
+              "complaint",
+              "consulting",
+              "plan",
+              "manual"
+            ]
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "기한이 지난 날 수. 0이면 안 지남"
+          },
+          "go": {
+            "type": "string",
+            "nullable": true,
+            "description": "출처가 있으면 원본으로 갈 곳"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "done",
+          "src",
+          "overdueDays"
+        ]
+      },
+      "NotiDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "body": {
+            "type": "string"
+          },
+          "fromName": {
+            "type": "string",
+            "nullable": true
+          },
+          "toId": {
+            "type": "number",
+            "nullable": true
+          },
+          "link": {
+            "type": "string",
+            "nullable": true
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "at": {
+            "type": "string"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "alarm",
+              "ok",
+              "warn"
+            ],
+            "description": "표에 색 컬럼이 없어 링크로 파생한다 — lib/noti.ts 한 곳에서만"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "read",
+          "at",
+          "tone"
+        ]
+      },
+      "MemberDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "manager",
+              "admin",
+              "ceo"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "직함은 권한이 아니다 (D-R39)"
+          },
+          "tz": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "role",
+          "active"
+        ]
+      },
+      "TzGroupDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tz": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tz"
+        ]
+      },
+      "KindRowDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "cap": {
+            "type": "number",
+            "description": "정원"
+          },
+          "grp": {
+            "type": "string",
+            "enum": [
+              "lesson",
+              "intake",
+              "meeting"
+            ]
+          },
+          "rep": {
+            "type": "boolean",
+            "description": "true 인 종류만 리포트 대상 (D-R6)"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "color",
+          "cap",
+          "grp",
+          "rep"
+        ]
+      },
+      "ChangeReqDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "time",
+              "teacher",
+              "room",
+              "cancel"
+            ]
+          },
+          "serId": {
+            "type": "number",
+            "nullable": true
+          },
+          "onDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string"
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true
+          },
+          "applyAll": {
+            "type": "boolean",
+            "description": "정기 수업이면 이후 전체 적용"
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reqType",
+          "state",
+          "applyAll",
+          "at"
+        ]
+      },
+      "ZoomAccountDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string"
+          },
+          "joinUrl": {
+            "type": "string",
+            "nullable": true,
+            "description": "학생 참가 링크. 로그인 정보와 같은 화면에 두지 않는다"
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "assigned": {
+            "type": "number",
+            "description": "이 계정이 잡고 있는 회차 수"
+          },
+          "overlaps": {
+            "type": "number",
+            "description": "같은 시간에 두 수업에 배정된 건수 — 0이어야 한다"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "active",
+          "assigned",
+          "overlaps"
+        ]
+      },
+      "DrawerDto": {
+        "type": "object",
+        "properties": {
+          "approvals": {
+            "description": "§14 승인 대기함",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ApFlowDto"
+              }
+            ]
+          },
+          "todos": {
+            "description": "§15 할 일",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DrawerTodoDto"
+            }
+          },
+          "notis": {
+            "description": "§16 알림",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NotiDto"
+            }
+          },
+          "members": {
+            "description": "§17 구성원",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberDto"
+            }
+          },
+          "tzGroups": {
+            "description": "§17 시간대 그룹",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TzGroupDto"
+            }
+          },
+          "kinds": {
+            "description": "§18 수업 종류",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KindRowDto"
+            }
+          },
+          "changeReqs": {
+            "description": "§20 변경 요청",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChangeReqDto"
+            }
+          },
+          "zoomAccounts": {
+            "description": "§21 줌 계정",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoomAccountDto"
+            }
+          },
+          "tz": {
+            "type": "string",
+            "description": "관리자 화면의 모든 시각은 KST 다 (D-R12)"
+          }
+        },
+        "required": [
+          "approvals",
+          "todos",
+          "notis",
+          "members",
+          "tzGroups",
+          "kinds",
+          "changeReqs",
+          "zoomAccounts",
+          "tz"
+        ]
+      },
+      "TodoDoneDto": {
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "boolean",
+            "description": "완료로 바꿀지 여부"
+          }
+        },
+        "required": [
+          "done"
+        ]
+      },
+      "ChangeReqCreateDto": {
+        "type": "object",
+        "properties": {
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "time",
+              "teacher",
+              "room",
+              "off"
+            ]
+          },
+          "serId": {
+            "type": "number",
+            "description": "어느 수업인지"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-09-01",
+            "description": "어느 날짜인지"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "바꾸려는 내용 — 종류에 따라 startMin · endMin · teacherId · roomId · zaccId"
+          },
+          "reason": {
+            "type": "string",
+            "description": "사유는 비워 둘 수 없다 (D-R13 과 같은 이유)"
+          },
+          "applyAll": {
+            "type": "boolean",
+            "description": "정기 수업이면 이후 전체 적용 (D-R16)"
+          }
+        },
+        "required": [
+          "reqType",
+          "reason"
+        ]
+      },
+      "ConflictRowDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "with": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "room",
+              "zoom"
+            ],
+            "description": "무엇이 겹치는가"
+          },
+          "whoName": {
+            "type": "string",
+            "nullable": true,
+            "description": "누구와 겹치는가 — 이름을 보여 준다"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "startMin",
+          "endMin",
+          "with"
+        ]
+      },
+      "ChangeReqResultDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "nullable": true,
+            "description": "만들어진 요청 id. 겹쳐서 막혔으면 없다"
+          },
+          "conflicts": {
+            "description": "비어 있지 않으면 제출이 막힌 것이다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConflictRowDto"
+            }
+          }
+        },
+        "required": [
+          "conflicts"
         ]
       }
     }

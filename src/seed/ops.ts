@@ -23,6 +23,16 @@ export const CHREQS = [
   { serId: 5,  onDate: null,  reqType: 'room',      payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', state: 'rejected', byId: 9, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
 ];
 
+/**
+ * 자료 요청 — 결재 다섯 갈래의 다섯 번째 (§82 · D-R26).
+ * 표는 처음부터 있었는데 시드가 비어 있어 「표가 없다」로 오해했다.
+ * GPA **점수 저장**이 N-13 대기인 것이지 이 표가 없는 것이 아니다.
+ */
+export const GPAPACKS = [
+  { studentId: 5,  packType: 'exam', detail: 'AP Chem 기출 5개년 + 오답 정리', state: 'pending',  createdAt: D(-1) },
+  { studentId: 18, packType: 'self', detail: 'SAT Math 자습 패키지 (Level 2)', state: 'approved', createdAt: D(-8) },
+];
+
 /** 알림 — 앱 안에서만 (카카오 실발송은 출시 후) */
 export const NOTIS = [
   { toId: 6,  fromId: 3, body: '리포트 5건이 밀려 있습니다. 오늘 자정까지 써 주세요.', link: '/reports/unwritten', createdAt: D(0) },

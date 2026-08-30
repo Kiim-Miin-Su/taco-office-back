@@ -5,6 +5,7 @@ import { SerOcc } from '../../entities';
 import { isWrittenDbState } from '../../lib/rules';
 import type { RepStateT } from '../../entities/enums';
 import type { OccurrenceDto } from './schedule.dto';
+import { START_MIN, END_MIN, spanOf } from '../../lib/sql';
 
 export interface OccQuery {
   from: string;
@@ -49,10 +50,8 @@ export class ScheduleService {
       // 시각은 **회차(span)** 에서 뽑는다. 규칙(ser)에서 뽑으면 「이번만 시간 옮김」 예외가
       // 화면에 반영되지 않는다 — 예외를 승인해 놓고 시간표는 원래 시각을 보여 주게 된다.
       `SELECT o.ser_id, to_char(o.on_date, 'YYYY-MM-DD') AS on_date,
-              (EXTRACT(HOUR FROM lower(o.span) AT TIME ZONE 'Asia/Seoul') * 60
-               + EXTRACT(MINUTE FROM lower(o.span) AT TIME ZONE 'Asia/Seoul'))::int AS start_min,
-              (EXTRACT(HOUR FROM upper(o.span) AT TIME ZONE 'Asia/Seoul') * 60
-               + EXTRACT(MINUTE FROM upper(o.span) AT TIME ZONE 'Asia/Seoul'))::int AS end_min,
+              ${START_MIN} AS start_min,
+              ${END_MIN} AS end_min,
               s.kind_key, s.sub_key, s.title, s.mode,
               o.teacher_id, t.name AS teacher_name,
               o.room_id, rm.name AS room_name, o.zacc_id, o.canceled,
@@ -111,5 +110,58 @@ export class ScheduleService {
         })),
       };
     });
+  }
+
+  /**
+   * 겹침 미리보기 — **누구와 겹치는지**를 돌려준다 (§19).
+   *
+   * DB 의 EXCLUDE 가 어차피 막지만(D-R43), 409 만 던지면 화면은 「안 됩니다」밖에 못 쓴다.
+   * 사람이 시간을 고치려면 *무엇과* 겹치는지를 알아야 한다. 막는 것은 DB 가, 설명은 여기가 한다 —
+   * 여기서 통과했다고 저장을 건너뛰지 않는다. 이 사이에 남이 잡을 수 있기 때문이다.
+   */
+  async conflicts(q: {
+    onDate: string; startMin: number; endMin: number;
+    teacherId?: number | null; roomId?: number | null; zaccId?: number | null;
+    exceptSerId?: number | null;
+  }): Promise<Array<{ serId: number; onDate: string; startMin: number; endMin: number; title: string | null; with: 'teacher' | 'room' | 'zoom'; whoName: string | null }>> {
+    const who: Array<['teacher' | 'room' | 'zoom', string, number]> = [];
+    if (q.teacherId) who.push(['teacher', 'o.teacher_id', q.teacherId]);
+    if (q.roomId) who.push(['room', 'o.room_id', q.roomId]);
+    if (q.zaccId) who.push(['zoom', 'o.zacc_id', q.zaccId]);
+    if (who.length === 0) return [];
+
+    const out: Array<{ serId: number; onDate: string; startMin: number; endMin: number; title: string | null; with: 'teacher' | 'room' | 'zoom'; whoName: string | null }> = [];
+    for (const [label, col, id] of who) {
+      const rows = (await this.occ.query(
+        // 겹침의 정의는 **DB 의 EXCLUDE 와 같은 것**을 쓴다 (`span &&`).
+        // 분으로 되돌려 비교하면 자정을 넘는 회차에서 둘의 답이 갈린다.
+        `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+                ${START_MIN} AS start_min,
+                ${END_MIN} AS end_min,
+                COALESCE(s.title, k.name) AS title,
+                CASE WHEN $5 = 'teacher' THEN t.name WHEN $5 = 'room' THEN rm.name ELSE z.label END AS who_name
+           FROM ser_occ o
+           JOIN ser s ON s.id = o.ser_id
+           LEFT JOIN kind k ON k.key = s.kind_key
+           LEFT JOIN staff t ON t.id = o.teacher_id
+           LEFT JOIN room rm ON rm.id = o.room_id
+           LEFT JOIN zacc z ON z.id = o.zacc_id
+          WHERE NOT o.canceled
+            AND ${col} = $1
+            AND o.span && ${spanOf('$2', '$3', '$4')}
+            AND ($6::bigint IS NULL OR o.ser_id <> $6)
+          ORDER BY lower(o.span)`,
+        [id, q.onDate, q.startMin, q.endMin, label, q.exceptSerId ?? null],
+      )) as Array<Record<string, unknown>>;
+      for (const r of rows) {
+        out.push({
+          serId: Number(r.ser_id), onDate: String(r.on_date),
+          startMin: Number(r.start_min), endMin: Number(r.end_min),
+          title: r.title === null || r.title === undefined ? null : String(r.title),
+          with: label, whoName: r.who_name === null || r.who_name === undefined ? null : String(r.who_name),
+        });
+      }
+    }
+    return out;
   }
 }

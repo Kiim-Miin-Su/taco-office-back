@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { GUIDE_PENDING_DB } from '../../lib/rules';
 import type { GuidesDto } from './guides.dto';
+import { kstAt } from '../../lib/sql';
 
 type R = Record<string, unknown>;
 
@@ -52,7 +53,7 @@ export class GuidesService {
 
     const perLesson = (await this.q(
       `SELECT p.id, to_char(p.on_date,'YYYY-MM-DD') AS on_date, p.channel, p.body,
-              to_char(p.sent_at,'YYYY-MM-DD"T"HH24:MI:SSOF') AS sent_at,
+              ${kstAt(`p.sent_at`)} AS sent_at,
               s.name AS student_name, r.title AS ser_title
          FROM pnoti p
          LEFT JOIN stu s ON s.id = p.student_id

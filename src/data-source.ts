@@ -29,7 +29,11 @@ export const dataSourceOptions: DataSourceOptions = {
   type: 'postgres' as const,
   url: process.env.DATABASE_URL,
   entities: ENTITIES,
-  migrations: ['dist/migrations/*.js', 'src/migrations/*.ts'],
+  // 글롭을 **이 파일 옆**으로 잡는다. 두 벌(`dist/**.js` + `src/**.ts`)을 함께 적으면
+  // 컴파일본으로 뜬 서버가 `.ts` 원본까지 함께 읽어 들이다가
+  // 「typeorm does not provide an export named 'MigrationInterface'」로 죽는다 —
+  // 최신 node 가 그 `.ts` 를 ESM 으로 해석하기 때문이다. ts-node 면 src, 빌드본이면 dist 하나만 본다.
+  migrations: [`${__dirname}/migrations/*{.ts,.js}`],
   namingStrategy: new SnakeNamingStrategy(),
   synchronize: false,
   migrationsRun: false,

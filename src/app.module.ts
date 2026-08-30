@@ -21,6 +21,7 @@ import { BoardModule } from './modules/board/board.module';
 import { BooksModule } from './modules/books/books.module';
 import { GuidesModule } from './modules/guides/guides.module';
 import { ExecModule } from './modules/exec/exec.module';
+import { DrawerModule } from './modules/drawer/drawer.module';
 
 @Module({
   imports: [
@@ -55,6 +56,8 @@ import { ExecModule } from './modules/exec/exec.module';
     BooksModule,
     GuidesModule,
     ExecModule,
+    // 탭 02 — 전역 우측 서랍. 다른 탭이 여기로 링크를 건다
+    DrawerModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -15,6 +15,9 @@
     "baseUrl": "./",
     "paths": { "@/*": ["src/*"] },
     "incremental": true,
+    // 증분 캐시를 **dist 안에** 둔다. 밖에 두면 `nest build` 가 dist 를 지운 뒤
+    // tsc 가 「바뀐 게 없다」며 아무것도 내보내지 않아 `dist/main` 이 없는 채로 끝난다.
+    "tsBuildInfoFile": "./dist/.tsbuildinfo",
     "skipLibCheck": true,
     "strict": true,
     "strictNullChecks": true,
