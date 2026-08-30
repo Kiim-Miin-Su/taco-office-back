@@ -7,6 +7,8 @@
 import type { DataSource, QueryRunner } from 'typeorm';
 import bcrypt from 'bcrypt';
 import { KINDS, SUBS, ROOMS, ZACCS, STAFF, WAGES, RATES, TZGS, SEED_TODAY, rel } from './base';
+// rrule 은 recurrence.ts 가 읽는 형식으로만 쓴다 — 형식이 둘이면 회차가 통째로 사라진다
+import { formatRule } from '../lib/recurrence';
 import { STUDENTS, ENROLLMENTS, LEADS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
@@ -92,7 +94,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('lead', LEADS.map((l) => ({ id: l.id, student_id: l.studentId, name: l.name, school: l.school, owner_id: l.ownerId, stage: l.stage, stop_at: (l as { stopAt?: string }).stopAt ?? null, reason: (l as { reason?: string }).reason ?? null, created_at: `${rel(l.createdAt)}T00:00:00Z` })));
 
     // ── 일정
-    await add('ser', SERS.map((s) => ({ id: s.id, kind_key: s.kindKey, sub_key: s.subKey, teacher_id: s.teacherId, room_id: s.roomId, mode: s.mode, start_min: s.startMin, end_min: s.endMin, rrule: `FREQ=WEEKLY;BYDAY=${s.days.join(',')}`, from_date: SEED_TODAY, title: s.title ?? null })));
+    await add('ser', SERS.map((s) => ({ id: s.id, kind_key: s.kindKey, sub_key: s.subKey, teacher_id: s.teacherId, room_id: s.roomId, mode: s.mode, start_min: s.startMin, end_min: s.endMin, rrule: formatRule({ freq: 'WEEKLY', days: [...s.days], interval: 1 }), from_date: SEED_TODAY, title: s.title ?? null })));
     await add('ser_stu', SERS.flatMap((s) => s.students.map((st) => ({ ser_id: s.id, student_id: st }))));
 
     const raw = expand();

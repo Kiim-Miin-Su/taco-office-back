@@ -24,7 +24,7 @@ export class Kind {
   cap: number;
 
   /** 묶음 분류 */
-  @Column({ type: 'enum', enum: KIND_GRP_T_VALUES })
+  @Column({ type: 'enum', enum: KIND_GRP_T_VALUES, enumName: 'kind_grp_t' })
   grp: 'lesson'|'intake'|'meeting';
 
   /** true 인 종류만 리포트 대상 (D-4) */

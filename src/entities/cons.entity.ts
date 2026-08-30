@@ -37,7 +37,7 @@ export class Cons {
   ownerId: number | null;
 
   /** csCan() 목록 필터 · csCanFull() 내용 접근 */
-  @Column({ type: 'enum', enum: CONS_SHARE_T_VALUES, default: 'all' })
+  @Column({ type: 'enum', enum: CONS_SHARE_T_VALUES, enumName: 'cons_share_t', default: 'all' })
   share: 'all'|'money_only'|'picked'|'private';
 
   @Column({ type: 'timestamptz', default: () => "now()" })

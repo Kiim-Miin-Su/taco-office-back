@@ -86,7 +86,10 @@ export class ScheduleService {
       const repState = (r.rep_state ?? 'na') as RepStateT;
       return {
         serId: Number(r.ser_id),
+        // 그릴 날짜와 EXC 키를 **둘 다** 내려보낸다. 옮긴 회차는 둘이 다르고,
+        // 쓰기는 원래 날짜로만 예외를 찾는다.
         date: r.on_date,
+        onDate: r.on_date,
         startMin: r.start_min,
         endMin: r.end_min,
         kindKey: r.kind_key,

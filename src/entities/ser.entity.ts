@@ -27,7 +27,7 @@ export class Ser {
   @Column({ type: 'bigint', nullable: true })
   roomId: number | null;
 
-  @Column({ type: 'enum', enum: CLASS_MODE_T_VALUES })
+  @Column({ type: 'enum', enum: CLASS_MODE_T_VALUES, enumName: 'class_mode_t' })
   mode: 'offline'|'online';
 
   /** 0~1439 분 단위 정수 */

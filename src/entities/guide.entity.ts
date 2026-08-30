@@ -25,7 +25,7 @@ export class Guide {
   @Column({ type: 'varchar', length: 20 })
   reason: string;
 
-  @Column({ type: 'enum', enum: GUIDE_STATE_T_VALUES, default: 'draft' })
+  @Column({ type: 'enum', enum: GUIDE_STATE_T_VALUES, enumName: 'guide_state_t', default: 'draft' })
   state: 'draft'|'ready'|'sent'|'read';
 
   @Column({ type: 'text', nullable: true })

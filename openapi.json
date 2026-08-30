@@ -194,6 +194,181 @@
         ]
       }
     },
+    "/schedule/horizon": {
+      "get": {
+        "operationId": "ScheduleController_bounds",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HorizonDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "펼쳐 둔 기간 — 화면이 「비었다」와 「아직 안 펼쳤다」를 구분한다",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/schedule": {
+      "post": {
+        "operationId": "ScheduleController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OccurrenceCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 만들기 — 겹치면 DB 가 409 로 막는다 (D-R43)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/schedule/{serId}": {
+      "patch": {
+        "operationId": "ScheduleController_patch",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OccurrencePatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 고치기 — scope 로 이번만·향후·모두를 가른다 (D-R16)",
+        "tags": [
+          "schedule"
+        ]
+      },
+      "delete": {
+        "operationId": "ScheduleController_remove",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OccurrenceDeleteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 취소·휴강 — 참조가 있으면 지우지 않고 기간을 마감한다",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/schedule/{serId}/roster": {
+      "patch": {
+        "operationId": "ScheduleController_roster",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RosterPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/reports": {
       "get": {
         "operationId": "ReportsController_list",
@@ -839,7 +1014,13 @@
           },
           "date": {
             "type": "string",
-            "example": "2026-08-28"
+            "example": "2026-08-28",
+            "description": "화면에 그려질 날짜"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-08-28",
+            "description": "규칙상 원래 날짜 — **EXC 의 키**다. 쓰기(PATCH·DELETE)는 이 값으로 회차를 찾는다"
           },
           "startMin": {
             "type": "number",
@@ -920,6 +1101,7 @@
         "required": [
           "serId",
           "date",
+          "onDate",
           "startMin",
           "endMin",
           "kindKey",
@@ -953,6 +1135,219 @@
           "from",
           "to",
           "items"
+        ]
+      },
+      "HorizonDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "description": "펼쳐 둔 기간의 시작"
+          },
+          "to": {
+            "type": "string",
+            "description": "펼쳐 둔 기간의 끝"
+          },
+          "clamped": {
+            "type": "boolean",
+            "description": "요청 범위가 이 밖으로 나갔는가 — 화면이 「비었다」와 「아직 안 펼쳤다」를 구분한다"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "clamped"
+        ]
+      },
+      "OccurrenceCreateDto": {
+        "type": "object",
+        "properties": {
+          "kindKey": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ]
+          },
+          "fromDate": {
+            "type": "string",
+            "description": "첫 회차 날짜"
+          },
+          "toDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "없으면 열린 반복"
+          },
+          "rrule": {
+            "type": "string",
+            "description": "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n] — formatRule() 이 정한 형식만 받는다"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentIds": {
+            "description": "정식 명단",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "kindKey",
+          "mode",
+          "fromDate",
+          "rrule",
+          "startMin",
+          "endMin"
+        ]
+      },
+      "WriteResultDto": {
+        "type": "object",
+        "properties": {
+          "effScope": {
+            "type": "string",
+            "description": "실제로 적용된 범위 — 「향후」가 「모두」로 강등되면 여기서 드러난다 (D-R17)"
+          },
+          "log": {
+            "description": "사람이 읽는 변경 기록. 화면이 그대로 보여 준다",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "projected": {
+            "type": "number",
+            "description": "다시 펼친 회차 수"
+          },
+          "serIds": {
+            "description": "영향받은 규칙 — 화면은 이 범위만 다시 읽으면 된다",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "effScope",
+          "log",
+          "projected",
+          "serIds"
+        ]
+      },
+      "OccurrencePatchDto": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "this",
+              "future",
+              "all"
+            ],
+            "description": "이번만 · 향후 · 모두 (D-R16). 첫 회차의 future 는 all 로 강등된다 (D-R17)"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "규칙상 원래 날짜 — EXC 의 키다. 옮긴 회차도 이 값으로 찾는다"
+          },
+          "startMin": {
+            "type": "number",
+            "nullable": true,
+            "description": "0~1439"
+          },
+          "endMin": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true
+          },
+          "date": {
+            "type": "string",
+            "nullable": true,
+            "description": "다른 날로 옮길 때만"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "scope",
+          "onDate"
+        ]
+      },
+      "OccurrenceDeleteDto": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "this",
+              "future",
+              "all"
+            ]
+          },
+          "onDate": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "onDate"
+        ]
+      },
+      "RosterPatchDto": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "add",
+              "dropOnce",
+              "undoOnce",
+              "dropAll"
+            ]
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "studentId": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "op",
+          "onDate",
+          "studentId"
         ]
       },
       "ReportStudentDto": {

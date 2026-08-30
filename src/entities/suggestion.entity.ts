@@ -17,14 +17,14 @@ export class Suggestion {
   staffId: number;
 
   /** 수업 · 시급 · 스케줄 · 기타 (D-11 확정) */
-  @Column({ type: 'enum', enum: SUG_CAT_T_VALUES })
+  @Column({ type: 'enum', enum: SUG_CAT_T_VALUES, enumName: 'sug_cat_t' })
   category: 'lesson'|'pay'|'schedule'|'etc';
 
   @Column({ type: 'text' })
   body: string;
 
   /** 접수됨 · 확인 중 · 답변 완료 (D-12) */
-  @Column({ type: 'enum', enum: SUG_STATE_T_VALUES, default: 'open' })
+  @Column({ type: 'enum', enum: SUG_STATE_T_VALUES, enumName: 'sug_state_t', default: 'open' })
   state: 'open'|'reviewing'|'done';
 
   @Column({ type: 'text', nullable: true })

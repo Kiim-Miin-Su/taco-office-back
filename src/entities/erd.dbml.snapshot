@@ -235,7 +235,7 @@ Table SER {
   mode          class_mode_t[not null]
   start_min     smallint    [not null, note: '0~1439 분 단위 정수']
   end_min       smallint    [not null]
-  rrule         varchar(80) [not null, note: '반복 규칙 — 요일·주기·기간']
+  rrule         varchar(80) [not null, note: '반복 규칙. 형식은 lib/recurrence.ts 의 formatRule() 이 정한다 — ONCE | DAILY[/n] | WEEKLY:MO,WE[/n]. 다른 형식으로 넣으면 parseRule 이 days:[] 를 내고 회차가 통째로 사라진다']
   from_date     date        [not null]
   to_date       date
   title         varchar(80)

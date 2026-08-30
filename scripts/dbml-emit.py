@@ -21,8 +21,11 @@ def file_of(t): return t['table'].lower().replace('_', '-') + '.entity.ts'
 def col_decorator(c, table, is_pk=False):
     o = []
     if c['pg'] == 'enum':
+        # enumName 을 반드시 적는다. 없으면 TypeORM 이 DB 의 이름 있는 타입(role_t 등)과
+        # 컬럼을 묶지 못하고 제 이름으로 만든 enum 을 가정한다 — 마이그레이션과 조용히 어긋난다.
         o.append(f"type: 'enum'")
         o.append(f"enum: {c['args'][0].upper()}_VALUES")
+        o.append(f"enumName: '{c['args'][0]}'")
     elif c['kind'] == 'len':
         o.append(f"type: '{c['pg']}'"); o.append(f"length: {c['args'][0]}")
     elif c['kind'] == 'numeric':

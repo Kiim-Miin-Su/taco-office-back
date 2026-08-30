@@ -34,7 +34,7 @@ export class Rep {
   @Column({ type: 'jsonb' })
   body: Record<string, unknown>;
 
-  @Column({ type: 'enum', enum: REP_STATE_T_VALUES, default: 'none' })
+  @Column({ type: 'enum', enum: REP_STATE_T_VALUES, enumName: 'rep_state_t', default: 'none' })
   state: 'na'|'plan'|'none'|'draft'|'wait'|'ok'|'rej';
 
   @Column({ type: 'timestamptz', nullable: true })

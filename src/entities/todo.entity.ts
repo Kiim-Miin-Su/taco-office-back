@@ -29,7 +29,7 @@ export class Todo {
   @Column({ type: 'boolean', default: false })
   done: boolean;
 
-  @Column({ type: 'enum', enum: TODO_SRC_T_VALUES, default: 'manual' })
+  @Column({ type: 'enum', enum: TODO_SRC_T_VALUES, enumName: 'todo_src_t', default: 'manual' })
   src: 'meeting'|'complaint'|'consulting'|'plan'|'manual';
 
   @Column({ type: 'bigint', nullable: true })

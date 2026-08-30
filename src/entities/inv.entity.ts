@@ -38,7 +38,7 @@ export class Inv {
   @Column({ type: 'jsonb', nullable: true })
   detail: Record<string, unknown> | null;
 
-  @Column({ type: 'enum', enum: INV_STATE_T_VALUES, default: 'draft' })
+  @Column({ type: 'enum', enum: INV_STATE_T_VALUES, enumName: 'inv_state_t', default: 'draft' })
   state: 'draft'|'sent'|'unpaid'|'partial'|'paid'|'void';
 
   @Column({ type: 'date', nullable: true })

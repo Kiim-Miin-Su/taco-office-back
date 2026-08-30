@@ -20,7 +20,8 @@
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/data-source.ts",
     "seed": "ts-node -P tsconfig.json scripts/seed.ts",
     "db": "./scripts/dev-db.sh",
-    "db:doctor": "./scripts/dev-db.sh doctor"
+    "db:doctor": "./scripts/dev-db.sh doctor",
+    "schema:check": "ts-node -P tsconfig.json scripts/schema-check.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

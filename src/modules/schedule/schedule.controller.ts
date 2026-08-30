@@ -1,16 +1,24 @@
-import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { OccurrenceListDto } from './schedule.dto';
+import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import {
+  HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
+  OccurrencePatchDto, RosterPatchDto, WriteResultDto,
+} from './schedule.dto';
 import { ScheduleService } from './schedule.service';
+import { ScheduleWriteService } from './schedule.write.service';
+import { horizon } from './project';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 @ApiTags('schedule')
 @Controller('schedule')
 export class ScheduleController {
-  constructor(private readonly svc: ScheduleService) {}
+  constructor(
+    private readonly svc: ScheduleService,
+    private readonly write: ScheduleWriteService,
+  ) {}
 
   @Get('occurrences')
   @ApiOperation({ summary: '회차 목록 — 일간·주간·월간·학생별·선생님별이 모두 이것을 쓴다' })
@@ -48,5 +56,56 @@ export class ScheduleController {
       roomId: roomId ? Number(roomId) : undefined,
     });
     return { from, to, items };
+  }
+
+  /* ══ 쓰기 — 자원 + scope 한 형태로만 받는다 (D-R16 · D-R21) ═══════════
+     동작마다 엔드포인트를 만들면 같은 3범위 판정이 여러 곳에 흩어진다.       */
+
+  @Get('horizon')
+  @ApiOperation({ summary: '펼쳐 둔 기간 — 화면이 「비었다」와 「아직 안 펼쳤다」를 구분한다' })
+  @ApiOkResponse({ type: HorizonDto })
+  bounds(): HorizonDto {
+    return { ...horizon(), clamped: false };
+  }
+
+  @Post()
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '수업 만들기 — 겹치면 DB 가 409 로 막는다 (D-R43)' })
+  @ApiOkResponse({ type: WriteResultDto })
+  create(@Body() dto: OccurrenceCreateDto): Promise<WriteResultDto> {
+    return this.write.create(dto);
+  }
+
+  @Patch(':serId')
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '수업 고치기 — scope 로 이번만·향후·모두를 가른다 (D-R16)' })
+  @ApiOkResponse({ type: WriteResultDto })
+  patch(
+    @Param('serId', ParseIntPipe) serId: number,
+    @Body() dto: OccurrencePatchDto,
+  ): Promise<WriteResultDto> {
+    return this.write.patch(serId, dto);
+  }
+
+  @Delete(':serId')
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '수업 취소·휴강 — 참조가 있으면 지우지 않고 기간을 마감한다' })
+  @ApiOkResponse({ type: WriteResultDto })
+  remove(
+    @Param('serId', ParseIntPipe) serId: number,
+    @Body() dto: OccurrenceDeleteDto,
+  ): Promise<WriteResultDto> {
+    return this.write.remove(serId, dto);
+  }
+
+  @Patch(':serId/roster')
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)' })
+  @ApiOkResponse({ type: WriteResultDto })
+  roster(
+    @Param('serId', ParseIntPipe) serId: number,
+    @Body() dto: RosterPatchDto,
+  ): Promise<WriteResultDto> {
+    return this.write.roster(serId, dto);
   }
 }

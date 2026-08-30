@@ -12,7 +12,7 @@ export class Cpl {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
 
-  @Column({ type: 'enum', enum: CPL_AREA_T_VALUES })
+  @Column({ type: 'enum', enum: CPL_AREA_T_VALUES, enumName: 'cpl_area_t' })
   area: 'lesson'|'intake'|'book'|'schedule'|'teacher';
 
   @Column({ type: 'bigint', nullable: true })
