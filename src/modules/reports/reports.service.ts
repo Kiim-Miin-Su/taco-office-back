@@ -6,6 +6,7 @@ import {
   LATE_REPORT_TIERS, REPORT_PENDING_DB, isWrittenDbState, tierFor,
 } from '../../lib/rules';
 import type { ReportRowDto, UnwrittenDto } from './reports.dto';
+import { START_MIN } from '../../lib/sql';
 
 interface Row {
   id: string; ser_id: string; on_date: string; start_min: number; end_min_utc: string;
@@ -20,8 +21,7 @@ export class ReportsService {
 
   private static sql(where: string): string {
     return `SELECT r.id, r.ser_id, to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
-                   (EXTRACT(HOUR FROM lower(o.span) AT TIME ZONE 'Asia/Seoul') * 60
-                    + EXTRACT(MINUTE FROM lower(o.span) AT TIME ZONE 'Asia/Seoul'))::int AS start_min,
+                   ${START_MIN} AS start_min,
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    r.kind_key, s.sub_key, r.teacher_id, t.name AS teacher_name, r.state,
                    COALESCE((

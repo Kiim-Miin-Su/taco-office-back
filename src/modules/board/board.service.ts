@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { GUIDE_PENDING_DB, REPORT_WRITTEN_DB } from '../../lib/rules';
 import type { BoardDto, CheckMarkDto } from './board.dto';
+import { hhmmOf } from '../../lib/sql';
 
 type R = Record<string, unknown>;
 
@@ -25,14 +26,22 @@ export class BoardService {
   async range(from: string, to: string, teacherId?: number): Promise<BoardDto> {
     const rows = await this.q(
       `SELECT o.id AS occ_id, o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, o.canceled,
-              to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS start_at,
-              to_char(upper(o.span) AT TIME ZONE 'Asia/Seoul', 'HH24:MI') AS end_at,
+              ${hhmmOf('lower(o.span)')} AS start_at,
+              ${hhmmOf('upper(o.span)')} AS end_at,
               s.mode, s.kind_key, k.name AS kind_name,
               t.name AS teacher_name, rm.name AS room_name,
               o.zacc_id,
+              /* 그날 빠진 학생은 명단에서 뺀다 (D-R21).
+                 스케줄 화면은 exc_stu_out 을 보고 droppedOnce 를 매기는데 여기만 안 보고 있었다 —
+                 같은 날 같은 수업의 명단이 두 화면에서 달랐고, 빠진 학생의 교재까지 세고 있었다. */
               COALESCE((SELECT array_agg(st.name ORDER BY st.name)
                           FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
-                         WHERE ss.ser_id = o.ser_id), '{}') AS student_names,
+                         WHERE ss.ser_id = o.ser_id
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM exc e
+                                   JOIN exc_stu_out eo ON eo.exc_id = e.id
+                                  WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date
+                                    AND eo.student_id = ss.student_id)), '{}') AS student_names,
               /* 교재 — 이 수업 학생 중 배부받은 사람이 하나라도 있는가 */
               EXISTS (SELECT 1 FROM issue i
                        WHERE i.returned_on IS NULL

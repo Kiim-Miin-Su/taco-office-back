@@ -15,7 +15,7 @@ export class AccountingController {
   @ApiOperation({ summary: '회계 — 청구서 · 입금 · 정산. 금액은 대표만 값이 채워진다' })
   @ApiOkResponse({ type: AccountingDto })
   async all(@CurrentUser() user: RequestUser): Promise<AccountingDto> {
-    const canSee = isRole(user.role) && hasPerm(user.role, 'canSeeProfit', user.perms);
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.all(canSee);
   }
 }

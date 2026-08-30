@@ -10,6 +10,7 @@ import 'reflect-metadata';
 import * as dotenv from 'dotenv';
 import ds from '../src/data-source';
 import { runSeed, SEEDED_TABLES } from '../src/seed';
+import { assertWritableTarget } from '../src/lib/target';
 
 dotenv.config({ path: '.env.local' });
 dotenv.config();
@@ -17,11 +18,11 @@ dotenv.config();
 const RESET = process.argv.includes('--reset');
 
 function guard(): void {
-  const url = process.env.DATABASE_URL ?? '';
-  if (!url) throw new Error('DATABASE_URL 이 없습니다.');
-  if (/prod|production/i.test(url)) {
-    throw new Error('운영 DB 로 보입니다. 시드는 개발·시연용입니다 — 거부합니다.');
-  }
+  // 판정은 lib/target.ts 한 곳에서만 한다.
+  // 예전 안전벨트는 연결 문자열에 'prod' 가 있는지만 봤는데, Neon 주소에는 그 글자가 없다 —
+  // 즉 운영 DB 를 통째로 지우는 시드가 그냥 돌았을 것이다.
+  const t = assertWritableTarget(process.env.DATABASE_URL, '시드');
+  console.log(`대상: ${t.label}`);
 }
 
 async function main(): Promise<void> {

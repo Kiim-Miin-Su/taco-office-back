@@ -129,8 +129,8 @@ export interface ConsViewer {
   isPicked: boolean;
   /** §76 canHide — 비공개 컨설팅 열람 */
   canHide: boolean;
-  /** D-R39 canSeeProfit — 금액. 공개 범위와 **독립된 층**이다 */
-  canSeeProfit: boolean;
+  /** D-R39 canMoney — 금액. 공개 범위와 **독립된 층**이다 (사람별 예외까지 반영된 결론) */
+  canMoney: boolean;
 }
 
 /** 담당이거나 열람권이 있는 사람 — 표의 「담당·열람권」 칸 */
@@ -162,7 +162,7 @@ export function csCanFull(share: ConsShare, v: ConsViewer): boolean {
  * 공개 범위가 열려 있어도 D-R39 를 통과 못 하면 못 보고, 그 반대도 마찬가지다.
  */
 export function csCanAmount(share: ConsShare, v: ConsViewer): boolean {
-  return csCan(share, v) && v.canSeeProfit;
+  return csCan(share, v) && v.canMoney;
 }
 
 /* ══ 리포트 기한 ═════════════════════════════════════════════════════

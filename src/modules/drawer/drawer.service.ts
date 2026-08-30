@@ -17,16 +17,11 @@ import {
 } from '../../lib/approval';
 import { notiTone } from '../../lib/noti';
 import { START_MIN, END_MIN, kstAt } from '../../lib/sql';
+import { KST, overdueDays } from '../../lib/kst';
 import type { DrawerDto } from './drawer.dto';
 
 type R = Record<string, unknown>;
 
-const todayKst = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
-const overdue = (due?: string | null) => {
-  if (!due) return 0;
-  const d = (new Date(`${todayKst()}T00:00:00Z`).getTime() - new Date(`${due}T00:00:00Z`).getTime()) / 86400000;
-  return d > 0 ? Math.floor(d) : 0;
-};
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
@@ -45,7 +40,11 @@ export class DrawerService {
     for (const r of await this.q(
       `SELECT r.id, r.rpt_type, to_char(r.on_date,'YYYY-MM-DD') AS on_date, r.state, r.reject_reason,
               ${kstAt(`COALESCE(r.sent_at, r.on_date::timestamptz)`)} AS at
-         FROM rpt r WHERE r.state <> 'na'`,
+         FROM rpt r
+        -- 아직 안 낸 초안은 아무도 기다리지 않는다.
+        -- 한동안 <> 'na' 였는데 rpt 에 'na' 라는 낱말이 없어서 이 줄이 **아무 일도 안 했다** —
+        -- 초안이 승인 대기함에 떠서 배지 숫자를 올리고 있었다.
+        WHERE r.state <> 'draft'`,
     )) {
       rows.push({
         kind: 'rpt', id: Number(r.id),
@@ -135,7 +134,7 @@ export class DrawerService {
       fromId: num(r.from_id), toId: num(r.to_id),
       fromName: str(r.from_name), toName: str(r.to_name),
       dueOn: str(r.due_on), done: r.done === true, src: String(r.src),
-      overdueDays: r.done === true ? 0 : overdue(str(r.due_on)),
+      overdueDays: r.done === true ? 0 : overdueDays(str(r.due_on)),
       // 출처가 있으면 원본으로 돌아갈 수 있다 (§15 규칙)
       go: r.mt_id || r.cpl_id ? '/ops' : r.cons_id ? '/consulting' : r.plan_id ? '/ops' : null,
     }));
@@ -175,7 +174,9 @@ export class DrawerService {
               c.reason, c.state, c.apply_all, s.name AS by_name,
               ${kstAt(`c.created_at`)} AS at
          FROM chreq c LEFT JOIN staff s ON s.id = c.by_id
+        WHERE $2::boolean OR c.by_id = $1
         ORDER BY c.created_at DESC`,
+      [viewerId, canSeeAll],
     )).map((r) => ({
       id: Number(r.id), reqType: String(r.req_type), serId: num(r.ser_id),
       onDate: str(r.on_date), reason: str(r.reason), state: String(r.state),
@@ -198,7 +199,7 @@ export class DrawerService {
 
     return {
       approvals, todos, notis, members, tzGroups, kinds, changeReqs, zoomAccounts,
-      tz: 'Asia/Seoul',
+      tz: KST,
     };
   }
 

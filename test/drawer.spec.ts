@@ -208,7 +208,7 @@ d('우측 서랍 — §14~§21', () => {
   it('§19 사유 없는 변경 요청은 받지 않는다', async () => {
     await request(app.getHttpServer())
       .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
-      .send({ reqType: 'time', reason: '   ' }).expect(400);
+      .send({ reqType: 'time_move', reason: '   ' }).expect(400);
   });
 
   it('§19 겹치면 넣지 않고 **누구와** 겹치는지 돌려준다', async () => {
@@ -237,7 +237,7 @@ d('우측 서랍 — §14~§21', () => {
     const res = await request(app.getHttpServer())
       .post('/drawer/change-requests').set('Authorization', auth(MANAGER))
       .send({
-        reqType: 'time', serId: Number(o.ser_id), onDate: o.on_date,
+        reqType: 'time_move', serId: Number(o.ser_id), onDate: o.on_date,
         payload: { startMin: other.start_min, endMin: other.end_min },
         reason: '겹침 확인',
       }).expect(201);
@@ -252,7 +252,7 @@ d('우측 서랍 — §14~§21', () => {
   it('§19 안 겹치면 요청이 들어간다 — 승인은 여기서 하지 않는다 (D-R27)', async () => {
     const res = await request(app.getHttpServer())
       .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
-      .send({ reqType: 'off', reason: '개인 사정' }).expect(201);
+      .send({ reqType: 'cancel', reason: '개인 사정' }).expect(201);
     expect(res.body.conflicts).toHaveLength(0);
     expect(typeof res.body.id).toBe('number');
 
@@ -284,9 +284,15 @@ d('결재 낱말 — DB 와 정규화 표가 같은 말을 하는가', () => {
   });
   afterAll(async () => { await app2?.close(); });
 
+  /**
+   * TBO-29 에서 이 목록에 **EXPENSE 를 빠뜨렸다.** 그 표는 낱말이 세 벌이었고
+   * (`submitted` 기본값 · `confirmed` 시드 · `'confirmed'` 질의)
+   * 새로 올린 지출이 대표 보고의 손익에서 조용히 빠지고 있었다.
+   * **표를 하나 더 만들 때 이 배열에 줄을 추가하는 것이 그 표의 안전벨트다.**
+   */
   const COLS: Array<[string, string]> = [
     ['req', 'state'], ['chreq', 'state'], ['plan', 'stage'],
-    ['rpt', 'state'], ['gpapack', 'state'],
+    ['rpt', 'state'], ['gpapack', 'state'], ['expense', 'state'],
   ];
 
   it.each(COLS)('%s.%s 의 낱말이 전부 표에 있다', async (table, col) => {
@@ -300,9 +306,9 @@ d('결재 낱말 — DB 와 정규화 표가 같은 말을 하는가', () => {
   it('기본값으로 태어나는 행도 읽을 수 있는 낱말을 갖는다', async () => {
     const rows = (await ds2.query(
       `SELECT table_name, column_default FROM information_schema.columns
-        WHERE table_name IN ('req','chreq','gpapack') AND column_name = 'state'`,
+        WHERE table_name IN ('req','chreq','gpapack','expense') AND column_name = 'state'`,
     )) as Array<{ table_name: string; column_default: string }>;
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     rows.forEach((r) => {
       const word = /'([^']+)'/.exec(r.column_default)?.[1];
       expect(isKnownApWord(word)).toBe(true);

@@ -59,7 +59,7 @@ export class ExecService {
       // 확정된 지출만 센다 — 아직 결재 중인 건(requested_amount)은 나간 돈이 아니다.
       expense = await this.one(
         `SELECT COALESCE(sum(amount),0)::text n FROM expense
-          WHERE state = 'confirmed' AND spend_on BETWEEN $1::date AND $2::date`, [from, to]);
+          WHERE state = 'approved' AND spend_on BETWEEN $1::date AND $2::date`, [from, to]);
     }
 
     const stats: ExecStatDto[] = [

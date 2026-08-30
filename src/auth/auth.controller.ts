@@ -6,16 +6,9 @@ import { LoginDto, LoginResultDto, MeDto, RefreshResultDto } from './dto/auth.dt
 import { Public } from './public.decorator';
 import { CurrentUser } from './current-user.decorator';
 import type { RequestUser } from '../common/perm';
+// 쿠키 속성은 auth/cookie.ts 한 곳에서만 만든다 — 여기서 다시 적으면 도메인이 갈린다
+import { REFRESH_COOKIE, cookieOptions, clearOptions } from './cookie';
 
-/** Refresh 는 자바스크립트가 읽지 못하는 쿠키에 둔다 — XSS 로 새어 나가지 않게 */
-const COOKIE = 'taco_rt';
-const cookieOpts = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
-  path: '/',
-  maxAge: 14 * 24 * 60 * 60 * 1000,
-};
 
 @ApiTags('auth')
 @Controller('auth')
@@ -31,7 +24,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<LoginResultDto> {
     const { accessToken, refreshToken, user } = await this.auth.login(dto.email, dto.password);
-    res.cookie(COOKIE, refreshToken, cookieOpts);
+    res.cookie(REFRESH_COOKIE, refreshToken, cookieOptions());
     return { accessToken, user };
   }
 
@@ -40,14 +33,14 @@ export class AuthController {
   @ApiOperation({ summary: '재발급 — 쿠키만 보고 판단한다' })
   @ApiOkResponse({ type: RefreshResultDto })
   async refresh(@Req() req: Request): Promise<RefreshResultDto> {
-    return this.auth.refresh(String(req.cookies?.[COOKIE] ?? ''));
+    return this.auth.refresh(String(req.cookies?.[REFRESH_COOKIE] ?? ''));
   }
 
   @Public()
   @Post('logout')
   @ApiOperation({ summary: '로그아웃 — 쿠키를 지운다' })
   logout(@Res({ passthrough: true }) res: Response): void {
-    res.clearCookie(COOKIE, { ...cookieOpts, maxAge: undefined });
+    res.clearCookie(REFRESH_COOKIE, clearOptions());
     res.status(204);
   }
 

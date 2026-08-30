@@ -37,9 +37,27 @@ export const dataSourceOptions: DataSourceOptions = {
   namingStrategy: new SnakeNamingStrategy(),
   synchronize: false,
   migrationsRun: false,
-  // Vercel 서버리스는 인스턴스가 늘었다 줄었다 하므로 커넥션을 적게 쥔다
-  extra: { max: 5 },
-  ssl: process.env.DATABASE_URL?.includes('neon.tech') ? { rejectUnauthorized: false } : false,
+  /**
+   * 커넥션 수 — **서버리스에서는 1 이 기본이다.**
+   *
+   * 람다 인스턴스 하나가 동시에 처리하는 요청은 하나뿐이라 풀을 크게 쥘 이유가 없다.
+   * 그런데 인스턴스는 트래픽에 따라 수십 개로 늘어나므로, 인스턴스마다 5개씩 쥐면
+   * Neon 의 커넥션 한도를 **인스턴스 수 × 5** 로 밀어붙이게 된다.
+   * 상시 서버로 옮기는 날에는 `DB_POOL_MAX` 로 올린다.
+   */
+  extra: {
+    max: Number(process.env.DB_POOL_MAX ?? (process.env.VERCEL ? 1 : 5)),
+    // 웜 인스턴스가 오래 잡고 있던 커넥션이 서버 쪽에서 이미 끊겼을 수 있다
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+  },
+  /**
+   * SSL — Neon 은 필수다. 호스트 이름으로 짐작하지 않고 **연결 문자열이 말하는 대로** 따른다.
+   * `neon.tech` 만 보고 판단하면 커스텀 도메인이나 다른 관리형 Postgres 에서 조용히 평문이 된다.
+   */
+  ssl: /sslmode=require|sslmode=verify|neon\.tech/.test(process.env.DATABASE_URL ?? '')
+    ? { rejectUnauthorized: false }
+    : false,
   logging: (process.env.LOG_LEVEL === 'debug'
     ? ['error', 'warn', 'migration']
     : ['error', 'migration']) as LogLevel[],

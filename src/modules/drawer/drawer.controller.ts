@@ -86,7 +86,7 @@ export class DrawerController {
       throw new BadRequestException({ code: 'REASON_REQUIRED', message: '사유를 적어야 제출됩니다' });
     }
 
-    // 시간·강사·강의실을 바꾸는 요청만 겹침을 본다. 휴강은 자리를 비우는 쪽이라 겹칠 수 없다.
+    // 시간·강사·강의실을 바꾸는 요청만 겹침을 본다. 취소는 자리를 비우는 쪽이라 겹칠 수 없다.
     const conflicts = await this.previewConflicts(dto);
     if (conflicts.length > 0) return { id: null, conflicts };
 
@@ -96,7 +96,7 @@ export class DrawerController {
 
   /** 요청서에 안 적힌 값은 원본 회차에서 가져와 채운다 — 「강사만 바꾸는」 요청도 시각이 필요하다 */
   private async previewConflicts(dto: ChangeReqCreateDto) {
-    if (dto.reqType === 'off' || !dto.serId || !dto.onDate) return [];
+    if (dto.reqType === 'cancel' || !dto.serId || !dto.onDate) return [];
     const base = await this.svc.occOf(dto.serId, dto.onDate);
     if (!base) return [];
 

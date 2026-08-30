@@ -1,24 +1,16 @@
-import 'reflect-metadata';
-import { ClassSerializerInterceptor, ValidationPipe } from '@nestjs/common';
-import { NestFactory, Reflector } from '@nestjs/core';
-import cookieParser from 'cookie-parser';
-import { AppModule } from './app.module';
-import { buildOpenApi } from './openapi';
+/**
+ * 로컬 개발 서버. **조립은 하지 않는다** — `app.factory.ts` 가 한다.
+ *
+ * Vercel 은 이 파일을 부르지 않는다 (`api/index.js` → `dist/serverless.js`).
+ * 그래서 여기 있는 것은 「포트를 연다」 하나뿐이어야 한다.
+ */
+import { Logger } from '@nestjs/common';
+import { createApp } from './app.factory';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  app.setGlobalPrefix('api/v1');
-  app.use(cookieParser());
-  app.enableCors({ origin: process.env.CORS_ORIGIN?.split(','), credentials: true });
-  app.useGlobalPipes(
-    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
-  );
-  // 금액 필드는 403 을 던지지 않고 **응답에서 뺀다** (CONTRACTS.md §10.2).
-  // 목록 조회가 권한마다 갈라지지 않게 하려는 것이다.
-  app.useGlobalInterceptors(new ClassSerializerInterceptor(app.get(Reflector)));
-
-  buildOpenApi(app);
-
-  await app.listen(process.env.PORT ?? 3001);
+  const app = await createApp();
+  const port = Number(process.env.PORT ?? 3001);
+  await app.listen(port);
+  Logger.log(`http://localhost:${port}/api/v1 (문서 /api/docs)`, 'Bootstrap');
 }
 void bootstrap();

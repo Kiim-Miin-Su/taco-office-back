@@ -11,6 +11,7 @@
  */
 import type { QueryRunner } from 'typeorm';
 import { addD, occ, ruleHits, type IsoDate, type State } from '../../lib/recurrence';
+import { todayKst } from '../../lib/kst';
 
 /**
  * 펼쳐 두는 기간.
@@ -22,8 +23,8 @@ import { addD, occ, ruleHits, type IsoDate, type State } from '../../lib/recurre
 export const HORIZON_BACK = 90;
 export const HORIZON_AHEAD = 180;
 
-export const todayKst = (): IsoDate =>
-  new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+// 「오늘」은 lib/kst.ts 가 갖는다 — 자정 언저리에서 화면마다 답이 갈리지 않게
+export { todayKst };
 
 export function horizon(): { from: IsoDate; to: IsoDate } {
   const t = todayKst();

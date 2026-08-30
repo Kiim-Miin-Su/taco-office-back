@@ -47,6 +47,14 @@ export const REQ_TYPE_LABEL: Record<string, string> = {
   room: '강의실 변경', off: '휴강', cancel: '취소',
 };
 
+/**
+ * CHREQ 가 실제로 받는 종류. **DB 에 있는 낱말이 기준**이다 —
+ * 한동안 읽기 DTO 는 `time`, 쓰기 검증은 `off` 를 적어 두었는데 표에는 `time_move` 와 `cancel` 이
+ * 들어 있었다. 그래서 시간 이동 요청은 400 으로 튕기고, 휴강은 `off` 와 `cancel` 두 낱말로 쌓였다.
+ */
+export const CHREQ_TYPES = ['time_move', 'teacher', 'room', 'cancel'] as const;
+export type ChreqType = (typeof CHREQ_TYPES)[number];
+
 export const GPAPACK_TYPE_LABEL: Record<string, string> = {
   exam: '시험 대비', self: '자습',
 };
@@ -99,10 +107,18 @@ export interface ApFlow {
 export const AP_STATE_WORDS: Record<ApState, readonly string[]> = {
   // 되돌아온 것 — PLAN.stage 의 rework 가 여기 붙는다
   back: ['rejected', 'rej', 'rework', 'denied', 'no', 'back'],
-  // 끝난 것 — RPT 의 sent 는 「나갔다」이므로 끝난 것이다
-  done: ['approved', 'ok', 'sent', 'done', 'closed', 'applied'],
-  // 기다리는 것 — 기본값이기도 하다
-  waiting: ['pending', 'review', 'submitted', 'wait', 'open', 'draft'],
+  // 끝난 것
+  done: ['approved', 'ok', 'done', 'closed', 'applied'],
+  /**
+   * 기다리는 것 — 기본값이기도 하다.
+   *
+   * ⚠ `sent` 가 여기 있는 것이 중요하다. TBO-29 에서 「나갔으니 끝난 것」이라 보고
+   * `done` 에 넣었는데 **틀렸다.** RPT 에서 `sent` 는 「대표께 올렸고 검토를 기다린다」는 뜻이다
+   * (`erd.dbml` RPT: `draft | sent | ok | rej` · `reviewed_at` 이 그 뒤에 찍힌다).
+   * 그래서 제출된 대표 보고 4건이 승인 대기함에서 통째로 빠져 있었다 — D-R34 가 말하는
+   * 「전건이 뜬다」의 정반대다. 안내(GUIDE)의 `sent` 는 발송 완료지만, 그 표는 결재를 돌지 않는다.
+   */
+  waiting: ['pending', 'review', 'submitted', 'sent', 'wait', 'open', 'draft'],
 };
 
 /**

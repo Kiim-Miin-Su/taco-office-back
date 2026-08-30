@@ -44,16 +44,27 @@ export const canSeeProfit = (r: Role): boolean => r === 'ceo';
    명세서 v2 §76 은 플래그 5개로 그린다. 그 이름을 그대로 두되 **판정은
    위 세 줄에서 다시 파생**한다. 저장하지 않는다 (D-R39 · N-11 닫힘).   */
 
+/**
+ * ⚠️ **금액을 가리는 판정은 `canMoney` 로 한다** — `canSeeProfit` 이 아니다.
+ *
+ * 둘의 기본값은 같지만(`role === 'ceo'`) 사람별 예외는 `STAFF.can_money` 컬럼으로만 들어온다.
+ * 컨트롤러가 `canSeeProfit` 을 물어보면 그 컬럼이 **읽히지 않는다** —
+ * 관리자가 「이 매니저에게 지출을 열어 준다」고 켜 놓아도 화면은 그대로 잠겨 있고,
+ * 아무 오류도 안 난다. 실제로 네 컨트롤러가 전부 그랬다.
+ *
+ * `canSeeProfit` 은 **역할에서 파생된 원본**이고, `canMoney` 는 **예외까지 반영된 결론**이다.
+ * 화면과 서버가 물어봐야 하는 것은 언제나 결론 쪽이다.
+ */
 export interface PermFlags {
   /** 관리자 페이지 진입 */
   canAdminPage: boolean;
   /** 전 항목 CRUD */
   canCrudAll: boolean;
-  /** 지출 · 총수입 */
+  /** 지출 · 총수입 — **역할에서 나온 원본.** 가리는 판정에는 `canMoney` 를 쓴다 */
   canSeeProfit: boolean;
   /** 오늘·이전 스케줄의 출결 (D-R35) — canCrudAll 과 같다 */
   canCrudAttendance: boolean;
-  /** v2 §76 이름 — 지출·총수입 */
+  /** ★ 금액을 볼 수 있는가 — **사람별 예외(STAFF.can_money)까지 반영된 결론** */
   canMoney: boolean;
   /** v2 §76 이름 — 강사 시급 · 시수 기준 */
   canWage: boolean;

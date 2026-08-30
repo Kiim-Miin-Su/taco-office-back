@@ -22,12 +22,16 @@ describe('toApState — 표마다 다른 낱말을 셋으로', () => {
     ['rej', 'rejected', 'no', 'rework', 'back', 'REJ', 'denied'].forEach((v) =>
       expect(toApState(v)).toBe('back'));
   });
-  it('끝난 계열은 done — 나간 보고(sent)도 끝난 것이다', () => {
-    ['ok', 'approved', 'done', 'closed', 'applied', 'sent'].forEach((v) =>
+  it('끝난 계열은 done', () => {
+    ['ok', 'approved', 'done', 'closed', 'applied'].forEach((v) =>
       expect(toApState(v)).toBe('done'));
   });
+  it('★ RPT 의 sent 는 「올렸고 기다린다」다 — 끝난 것이 아니다', () => {
+    // 한 번 done 으로 넣었다가 제출된 대표 보고 4건이 승인 대기함에서 통째로 사라졌다
+    expect(toApState('sent')).toBe('waiting');
+  });
   it('기다리는 계열도 표에 적혀 있다 — 기본값에 기대지 않는다', () => {
-    ['pending', 'review', 'submitted', 'draft'].forEach((v) => {
+    ['pending', 'review', 'submitted', 'sent', 'draft'].forEach((v) => {
       expect(toApState(v)).toBe('waiting');
       expect(isKnownApWord(v)).toBe(true);
     });

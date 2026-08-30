@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Inv } from '../../entities';
+import { todayKst } from '../../lib/kst';
 import type { AccountingDto, InvoiceDto, PaymentDto, PayoutDto } from './accounting.dto';
 
 const daysBetween = (a: string, b: string) =>
@@ -17,7 +18,7 @@ export class AccountingService {
    */
   async all(canSeeAmounts: boolean): Promise<AccountingDto> {
     const money = (v: unknown): number | null => (canSeeAmounts ? Number(v ?? 0) : null);
-    const today = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const today = todayKst();
 
     const invRows = (await this.inv.query(
       `SELECT i.id, i.student_id, s.name AS student_name, s.grade, i.year_month, i.title,

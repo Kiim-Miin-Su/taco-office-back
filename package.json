@@ -21,7 +21,9 @@
     "seed": "ts-node -P tsconfig.json scripts/seed.ts",
     "db": "./scripts/dev-db.sh",
     "db:doctor": "./scripts/dev-db.sh doctor",
-    "schema:check": "ts-node -P tsconfig.json scripts/schema-check.ts"
+    "schema:check": "ts-node -P tsconfig.json scripts/schema-check.ts",
+    "migration:deploy": "ts-node -P tsconfig.json scripts/deploy-check.ts --run",
+    "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
@@ -48,7 +50,6 @@
     "typeorm-naming-strategies": "^4.1.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.17.0",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
     "@types/bcrypt": "^5.0.2",
@@ -67,32 +68,5 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.18.0"
-  },
-  "depCheck": {
-    "runtime": {
-      "@nestjs/platform-express": "NestFactory 가 기본 어댑터로 이름을 보고 찾는다",
-      "pg": "TypeORM 이 드라이버를 문자열(type:\"postgres\")로 찾는다",
-      "passport": "@nestjs/passport 의 peer — 직접 import 하지 않는다",
-      "rxjs": "Nest 의 peer — 데코레이터와 인터셉터가 내부에서 쓴다",
-      "class-transformer": "ValidationPipe({transform:true}) 가 내부에서 쓴다",
-      "reflect-metadata": "main.ts · data-source.ts 에서 부작용 import"
-    },
-    "tooling": {
-      "@nestjs/cli": "nest build · nest start",
-      "typescript": "tsc",
-      "ts-node": "migration · seed · openapi 생성",
-      "jest": "npm test",
-      "ts-jest": "jest 트랜스폼",
-      "eslint": "npm run lint",
-      "prettier": "포맷",
-      "embedded-postgres": "scripts/dev-db.sh — 이 컴퓨터에 Postgres 가 없어도 진짜 엔진을 띄운다",
-      "@types/bcrypt": "타입만",
-      "@types/cookie-parser": "타입만",
-      "@types/express": "타입만",
-      "@types/jest": "타입만",
-      "@types/node": "타입만",
-      "@types/passport-jwt": "타입만",
-      "@types/supertest": "타입만"
-    }
   }
 }

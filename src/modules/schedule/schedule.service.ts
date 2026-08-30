@@ -75,7 +75,10 @@ export class ScheduleService {
          LEFT JOIN exc e   ON e.ser_id = o.ser_id AND e.on_date = o.on_date
          LEFT JOIN rep r   ON r.ser_id = o.ser_id AND r.on_date = o.on_date
         WHERE ${cond.join(' AND ')}
-        ORDER BY o.on_date, s.start_min, o.ser_id`,
+        -- **회차의 시각**으로 정렬한다. 규칙(ser.start_min)으로 정렬하면
+        -- 「이번만 시간 옮김」한 수업이 옮기기 전 자리에 그려진다 — 시각은 span 에서 뽑아 놓고
+        -- 순서만 규칙을 보던 자리였다.
+        ORDER BY o.on_date, lower(o.span), o.ser_id`,
       params,
     )) as Row[];
 

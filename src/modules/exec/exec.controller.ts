@@ -29,6 +29,6 @@ export class ExecController {
     if (from > to) {
       throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
     }
-    return this.svc.range(from, to, isRole(user.role) && hasPerm(user.role, 'canSeeProfit', user.perms));
+    return this.svc.range(from, to, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms));
   }
 }

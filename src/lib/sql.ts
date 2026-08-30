@@ -6,8 +6,9 @@
  * 실제로 그렇게 새어 `+00` 이 내려가던 자리가 아홉 군데였다.
  */
 
-/** 하나뿐인 시간대 (D-R12) */
-export const KST = 'Asia/Seoul';
+// 시간대 상수는 lib/kst.ts 가 갖는다. 여기서 다시 적으면 두 벌이 된다.
+export { KST } from './kst';
+import { KST } from './kst';
 
 /** KST 자정부터의 분 — `minOf('lower(o.span)')` */
 export const minOf = (expr: string): string =>
@@ -32,6 +33,10 @@ export const kstAt = (expr: string): string =>
  * 겹침 판정 구간 — **DB 의 EXCLUDE 와 같은 연산자**(`span &&`)를 쓴다.
  * 분으로 되돌려 비교하면 자정을 넘는 회차에서 둘의 답이 갈린다.
  */
+/** `HH24:MI` — 현황판처럼 시각을 글자로 바로 쓰는 곳 */
+export const hhmmOf = (expr: string): string =>
+  `to_char(${expr} AT TIME ZONE '${KST}', 'HH24:MI')`;
+
 export const spanOf = (date: string, from: string, to: string): string =>
   `tstzrange(`
   + `(${date}::date + make_interval(mins => ${from})) AT TIME ZONE '${KST}',`

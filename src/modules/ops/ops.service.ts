@@ -2,11 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
+import { overdueDays as daysSince, todayKst } from '../../lib/kst';
 import type { OpsDto } from './ops.dto';
 
-const todayKst = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
-const daysSince = (d?: string | null) =>
-  d ? Math.max(0, Math.floor((new Date(`${todayKst()}T00:00:00Z`).getTime() - new Date(`${d}T00:00:00Z`).getTime()) / 86400000)) : 0;
 
 type R = Record<string, unknown>;
 

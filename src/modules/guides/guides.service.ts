@@ -5,15 +5,10 @@ import { Lead } from '../../entities';
 import { GUIDE_PENDING_DB } from '../../lib/rules';
 import type { GuidesDto } from './guides.dto';
 import { kstAt } from '../../lib/sql';
+import { overdueDays as overdue } from '../../lib/kst';
 
 type R = Record<string, unknown>;
 
-const todayKst = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
-const overdue = (due?: string | null) => {
-  if (!due) return 0;
-  const d = (new Date(`${todayKst()}T00:00:00Z`).getTime() - new Date(`${due}T00:00:00Z`).getTime()) / 86400000;
-  return d > 0 ? Math.floor(d) : 0;
-};
 
 @Injectable()
 export class GuidesService {

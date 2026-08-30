@@ -48,10 +48,10 @@ export const PAYMENTS = [
 
 /** 나간 돈(§56) — 증빙 없는 한 건은 대기로 남는다 */
 export const EXPENSES = [
-  { spendOn: addD(SEED_TODAY, -23), category: 'rent',  merchant: '강남 임대',  purpose: '2층 강의실 8월 임대료', amount: 1400000, state: 'confirmed', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://tax/2026-08-2f' },
-  { spendOn: addD(SEED_TODAY, -23), category: 'rent',  merchant: '강남 임대',  purpose: '3층 컨설팅룸 8월 임대료', amount: 800000, state: 'confirmed', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://tax/2026-08-3f' },
-  { spendOn: addD(SEED_TODAY, -16), category: 'book',  merchant: '교재유통',  purpose: 'AP Chemistry 4th 20권 매입', amount: 480000, state: 'confirmed', requesterId: 4, reviewerId: 1, receiptUrl: 'seed://receipt/book-0812' },
-  { spendOn: addD(SEED_TODAY, -27), category: 'misc',  merchant: 'Zoom',     purpose: 'Zoom Pro 6석 (월)', amount: 168000, state: 'confirmed', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://receipt/zoom-08' },
+  { spendOn: addD(SEED_TODAY, -23), category: 'rent',  merchant: '강남 임대',  purpose: '2층 강의실 8월 임대료', amount: 1400000, state: 'approved', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://tax/2026-08-2f' },
+  { spendOn: addD(SEED_TODAY, -23), category: 'rent',  merchant: '강남 임대',  purpose: '3층 컨설팅룸 8월 임대료', amount: 800000, state: 'approved', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://tax/2026-08-3f' },
+  { spendOn: addD(SEED_TODAY, -16), category: 'book',  merchant: '교재유통',  purpose: 'AP Chemistry 4th 20권 매입', amount: 480000, state: 'approved', requesterId: 4, reviewerId: 1, receiptUrl: 'seed://receipt/book-0812' },
+  { spendOn: addD(SEED_TODAY, -27), category: 'misc',  merchant: 'Zoom',     purpose: 'Zoom Pro 6석 (월)', amount: 168000, state: 'approved', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://receipt/zoom-08' },
   { spendOn: addD(SEED_TODAY, -1),  category: 'misc',  merchant: '오피스디포', purpose: '프린터 토너 · 소모품', requestedAmount: 92000, amount: null, state: 'pending', requesterId: 4, reviewerId: null, receiptUrl: null },
 ];
 
@@ -60,9 +60,9 @@ export const EXPENSES = [
  * 차감은 수업 종료 시각 기준 분 단위 (D-R32). 여기 값은 지난달 확정분이다.
  */
 export const PAYOUTS = [
-  { staffId: 6,  yearMonth: PREV, hours: '48.0', gross: 2016000, lateRepCut: 25000, incomeTax: 59730, localTax: 5973, net: 1925297, state: 'confirmed', confirmedBy: 2 },
-  { staffId: 7,  yearMonth: PREV, hours: '42.0', gross: 1680000, lateRepCut: 15000, incomeTax: 49950, localTax: 4995, net: 1610055, state: 'confirmed', confirmedBy: 2 },
-  { staffId: 8,  yearMonth: PREV, hours: '36.0', gross: 1368000, lateRepCut: 10000, incomeTax: 40740, localTax: 4074, net: 1313186, state: 'confirmed', confirmedBy: 2 },
+  { staffId: 6,  yearMonth: PREV, hours: '48.0', gross: 2016000, lateRepCut: 25000, incomeTax: 59730, localTax: 5973, net: 1925297, state: 'approved', confirmedBy: 2 },
+  { staffId: 7,  yearMonth: PREV, hours: '42.0', gross: 1680000, lateRepCut: 15000, incomeTax: 49950, localTax: 4995, net: 1610055, state: 'approved', confirmedBy: 2 },
+  { staffId: 8,  yearMonth: PREV, hours: '36.0', gross: 1368000, lateRepCut: 10000, incomeTax: 40740, localTax: 4074, net: 1313186, state: 'approved', confirmedBy: 2 },
   { staffId: 9,  yearMonth: PREV, hours: '31.5', gross: 1197000, lateRepCut: 0,     incomeTax: 35910, localTax: 3591, net: 1157499, state: 'draft',     confirmedBy: null },
   { staffId: 10, yearMonth: PREV, hours: '27.0', gross: 972000,  lateRepCut: 5000,  incomeTax: 29010, localTax: 2901, net: 935089,  state: 'draft',     confirmedBy: null },
   { staffId: 12, yearMonth: PREV, hours: '22.5', gross: 787500,  lateRepCut: 0,     incomeTax: 23625, localTax: 2362, net: 761513,  state: 'draft',     confirmedBy: null },

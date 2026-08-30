@@ -24,7 +24,7 @@ export class ConsultingService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
-  async all(viewerId: number, canSeeProfit: boolean, canHide: boolean): Promise<ConsultingListDto> {
+  async all(viewerId: number, canMoney: boolean, canHide: boolean): Promise<ConsultingListDto> {
     const rows = await this.q(
       `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
               to_char(c.end_on,'YYYY-MM-DD')      AS end_on,
@@ -63,7 +63,7 @@ export class ConsultingService {
           isOwner: Number(r.owner_id) === viewerId,
           isPicked: r.is_picked === true,
           canHide,
-          canSeeProfit,
+          canMoney,
         };
         if (!csCan(share, v)) return null; // 목록에서 아예 뺀다 — 「있다」는 사실도 안 흘린다
 
@@ -90,6 +90,6 @@ export class ConsultingService {
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
-    return { items, canSeeAmounts: canSeeProfit };
+    return { items, canSeeAmounts: canMoney };
   }
 }

@@ -8,7 +8,12 @@ export class ExecReportDto {
   @ApiProperty() id!: number;
   @ApiProperty({ enum: ['day', 'week', 'month'] }) rptType!: string;
   @ApiProperty() onDate!: string;
-  @ApiProperty({ enum: ['na', 'plan', 'none', 'draft', 'wait', 'ok', 'rej'], description: 'rep_state_t 를 그대로 쓴다' }) state!: string;
+  @ApiProperty({
+    enum: ['draft', 'sent', 'ok', 'rej'],
+    description: '**RPT(대표 보고)의 낱말**이다. 수업 리포트(REP)의 rep_state_t 와 다르다 — 한동안 그것을 적어 두어 '
+      + '실제로 내려가는 sent 가 목록에 없었다',
+  })
+  state!: string;
   @ApiProperty({ description: 'D-R14 — 한 줄이라도 적어야 제출된다. jsonb 의 note 를 꺼내 문자열로 내린다' }) memo!: string;
   @ApiPropertyOptional(S) sentAt?: string | null;
   @ApiPropertyOptional(S) reviewedAt?: string | null;

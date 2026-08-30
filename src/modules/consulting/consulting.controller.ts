@@ -18,7 +18,7 @@ export class ConsultingController {
     if (!isRole(user.role)) return { items: [], canSeeAmounts: false };
     return this.svc.all(
       user.id,
-      hasPerm(user.role, 'canSeeProfit', user.perms),
+      hasPerm(user.role, 'canMoney', user.perms),
       hasPerm(user.role, 'canHide', user.perms), // §76 — 비공개 컨설팅 열람
     );
   }

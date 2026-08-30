@@ -1,4 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+// 요청 종류의 낱말은 lib/approval.ts 한 곳에서만 나온다 —
+// 여기서 다시 적었다가 DB(time_move)·읽기 DTO(time)·쓰기 검증(off)이 세 벌로 갈렸다
+import { CHREQ_TYPES, REQ_TYPE_LABEL } from '../../lib/approval';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
 
 const S = { type: String, nullable: true } as const;
@@ -88,7 +91,7 @@ export class KindRowDto {
 /** §20 변경 요청 이력 */
 export class ChangeReqDto {
   @ApiProperty() id!: number;
-  @ApiProperty({ enum: ['time', 'teacher', 'room', 'cancel'] }) reqType!: string;
+  @ApiProperty({ enum: Object.keys(REQ_TYPE_LABEL) }) reqType!: string;
   @ApiPropertyOptional(N) serId?: number | null;
   @ApiPropertyOptional(S) onDate?: string | null;
   @ApiPropertyOptional(S) reason?: string | null;
@@ -134,9 +137,9 @@ export class TodoDoneDto {
 
 /** §19 변경 요청 넣기 */
 export class ChangeReqCreateDto {
-  @ApiProperty({ enum: ['time', 'teacher', 'room', 'off'] })
-  @IsIn(['time', 'teacher', 'room', 'off'])
-  reqType!: 'time' | 'teacher' | 'room' | 'off';
+  @ApiProperty({ enum: CHREQ_TYPES, description: '수업을 바꿔 달라는 요청의 종류' })
+  @IsIn(CHREQ_TYPES)
+  reqType!: (typeof CHREQ_TYPES)[number];
 
   @ApiPropertyOptional({ description: '어느 수업인지' })
   @IsOptional() @IsInt() @Min(1)

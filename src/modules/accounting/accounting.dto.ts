@@ -15,7 +15,7 @@ export class InvoiceDto {
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
   @ApiProperty() yearMonth!: string;
   @ApiProperty() title!: string;
-  @ApiProperty({ type: Number, nullable: true, description: '금액 — canSeeProfit 이 아니면 null 로 내려간다 (D-R39)' }) amount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '금액 — canMoney 가 아니면 null 로 내려간다 (D-R39)' }) amount!: number | null;
   @ApiProperty({ type: Number, nullable: true }) paidAmount!: number | null;
   @ApiProperty({ enum: ['draft', 'sent', 'unpaid', 'partial', 'paid', 'void'] }) state!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) issuedOn?: string | null;
@@ -55,7 +55,7 @@ export class MoneySummaryDto {
   @ApiProperty({ type: Number, nullable: true }) collected!: number | null;
   @ApiProperty({ type: Number, nullable: true }) outstanding!: number | null;
   @ApiProperty() overdueCount!: number;
-  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39 canSeeProfit)' }) canSeeAmounts!: boolean;
+  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39 · 사람별 예외까지 반영된 canMoney)' }) canSeeAmounts!: boolean;
 }
 
 export class AccountingDto {

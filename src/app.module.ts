@@ -38,6 +38,21 @@ import { DrawerModule } from './modules/drawer/drawer.module';
         PORT: Joi.number().default(3001),
         CORS_ORIGIN: Joi.string().default('http://localhost:3000'),
         LOG_LEVEL: Joi.string().valid('debug', 'info', 'warn', 'error').default('info'),
+        NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
+        /**
+         * 운영에서 **필수**다. 없으면 프런트와 API 가 다른 사이트일 때
+         * 리프레시 쿠키가 실리지 않아 15분 뒤 조용히 로그아웃된다.
+         * 값의 형태까지는 `auth/cookie.ts` 의 `assertCookieConfig()` 가 본다 —
+         * 여기서는 「있는가」만 본다. Joi 는 CORS_ORIGIN 과 대조할 수 없기 때문이다.
+         */
+        COOKIE_DOMAIN: Joi.string().allow('').optional(),
+        /**
+         * 도메인 없이 `*.vercel.app` 두 개로 먼저 띄울 때만 'true'.
+         * 값의 조합이 말이 되는지는 `auth/cookie.ts` 가 본다 — Joi 는 CORS_ORIGIN 과 대조할 수 없다.
+         */
+        COOKIE_CROSS_SITE: Joi.string().valid('true', 'false').default('false'),
+        ENABLE_DOCS: Joi.string().valid('true', 'false').default('false'),
+        DB_POOL_MAX: Joi.number().optional(),
       }).unknown(true),
     }),
     TypeOrmModule.forRoot(dataSourceOptions),
