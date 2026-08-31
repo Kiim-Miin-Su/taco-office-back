@@ -248,6 +248,38 @@
         ]
       }
     },
+    "/schedule/paste": {
+      "post": {
+        "operationId": "ScheduleController_paste",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OccurrencePasteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회차 1~50건 복제 — 결과는 새 SER, EXC는 따라오지 않는다 (D-R19)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule/{serId}": {
       "patch": {
         "operationId": "ScheduleController_patch",
@@ -1372,6 +1404,75 @@
           "log",
           "projected",
           "serIds"
+        ]
+      },
+      "OccurrenceRefDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "date": {
+            "type": "string",
+            "description": "화면에 보이던 날짜. 이동 EXC를 찾고 상대 날짜 간격을 보존한다"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "규칙상 원래 날짜 — EXC 키"
+          }
+        },
+        "required": [
+          "serId",
+          "date",
+          "onDate"
+        ]
+      },
+      "OccurrencePasteDto": {
+        "type": "object",
+        "properties": {
+          "sources": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OccurrenceRefDto"
+            }
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "this",
+              "future",
+              "all"
+            ]
+          },
+          "targetDate": {
+            "type": "string"
+          },
+          "targetStartMin": {
+            "type": "number",
+            "description": "붙여넣기 기준 시각 — 자정부터 분"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true,
+            "description": "대상 강사 축이면 덮어쓴다"
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true,
+            "description": "대상 강의실 축이면 덮어쓴다"
+          },
+          "cut": {
+            "type": "boolean",
+            "default": false,
+            "description": "true면 붙여넣기 성공과 같은 트랜잭션에서 원본 회차를 취소한다"
+          }
+        },
+        "required": [
+          "sources",
+          "scope",
+          "targetDate",
+          "targetStartMin"
         ]
       },
       "OccurrencePatchDto": {

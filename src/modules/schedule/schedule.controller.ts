@@ -4,7 +4,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
-  OccurrencePatchDto, RosterPatchDto, WriteResultDto,
+  OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, WriteResultDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
@@ -74,6 +74,14 @@ export class ScheduleController {
   @ApiOkResponse({ type: WriteResultDto })
   create(@Body() dto: OccurrenceCreateDto): Promise<WriteResultDto> {
     return this.write.create(dto);
+  }
+
+  @Post('paste')
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '회차 1~50건 복제 — 결과는 새 SER, EXC는 따라오지 않는다 (D-R19)' })
+  @ApiOkResponse({ type: WriteResultDto })
+  paste(@Body() dto: OccurrencePasteDto): Promise<WriteResultDto> {
+    return this.write.paste(dto);
   }
 
   @Patch(':serId')

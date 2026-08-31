@@ -185,6 +185,19 @@ const base = (): State => ({
     ok(made[1].startMin === 780, '시간 간격도 유지된다', made[1].startMin);
   });
 
+  it('8-b. 옮겨 온 EXC도 화면 날짜 기준 간격을 쓰고 자정 넘김을 저장 전에 막는다', () => {
+    const s = R.applyEdit(base(), {
+      serId: 1, onDate: '2026-08-19', scope: 'this', patch: { date: '2026-08-20', __onDate: '2026-08-19' },
+    });
+    const moved = must(R.occ('2026-08-20', s).find((o) => o.serId === 1), '옮겨 온 회차');
+    const other = must(R.occ('2026-08-24', s).find((o) => o.serId === 1), '다음 회차');
+    const items = R.copyMany(s, [moved, other]);
+    ok(items[0].date === '2026-08-20' && items[0].onDate === '2026-08-19', '표시 날짜와 EXC 키를 둘 다 보존한다');
+    ok(items[1].offsetDays === 4, '상대 날짜는 화면에서 보인 날짜 기준이다', items[1].offsetDays);
+    ok(R.pasteIssue(items, '2026-09-01', 1410)?.includes('자정'), '두 번째 일정이 자정을 넘으면 거절한다');
+    ok(R.pasteIssue([items[0], items[0]], '2026-09-01', 600)?.includes('두 번'), '중복 원본을 거절한다');
+  });
+
 
 /* ── 9. 묻는가 / 안 묻는가 (D-R16) ────────────────────────────────────── */
   it('9. 확인창을 띄우는 조건', () => {

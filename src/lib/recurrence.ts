@@ -31,6 +31,8 @@
 export const RESET_MODE = 'changed-fields' as const; // N-8
 export const PRECHECK_DAYS = 90; // N-9
 export const PASTE_COPIES_STUDENTS = true; // N-10
+/** 한 번의 붙여넣기로 만들 수 있는 SER 상한 — DTO와 순수 방어함수가 같이 쓴다. */
+export const PASTE_MAX = 50;
 
 /* ── 타입 ─────────────────────────────────────────────────────────────── */
 
@@ -144,6 +146,8 @@ export interface Applied extends State {
 
 export interface CopyItem {
   serId: number;
+  /** 화면에 보이던 날짜. 옮겨 온 EXC면 onDate와 다르며 상대 간격은 이것을 기준으로 한다. */
+  date: IsoDate;
   onDate: IsoDate;
   startMin: Minutes;
   endMin: Minutes;
@@ -536,6 +540,7 @@ export function copyPayload(state: State, occurrence: Occurrence): CopyItem {
   if (!ser) throw new Error('SER not found: ' + occurrence.serId);
   return {
     serId: ser.id,
+    date: occurrence.date,
     onDate: occurrence.onDate,
     startMin: occurrence.startMin,
     endMin: occurrence.endMin,
@@ -560,13 +565,60 @@ export function copyMany(state: State, occurrences: Occurrence[]): CopyItem[] {
   const items = occurrences.map((o) => copyPayload(state, o));
   if (!items.length) return items;
   const base = items.reduce((a, b) =>
-    a.onDate < b.onDate || (a.onDate === b.onDate && a.startMin <= b.startMin) ? a : b,
+    a.date < b.date || (a.date === b.date && a.startMin <= b.startMin) ? a : b,
   );
   items.forEach((it) => {
-    it.offsetDays = diffD(it.onDate, base.onDate);
+    it.offsetDays = diffD(it.date, base.date);
     it.offsetMinutes = it.startMin - base.startMin;
   });
   return items;
+}
+
+export interface PasteSlot {
+  date: IsoDate;
+  startMin: Minutes;
+  endMin: Minutes;
+}
+
+/** 화면 프리뷰와 저장이 공유해야 하는 붙여넣기 위치 계산. */
+export function pasteSlots(
+  items: CopyItem[],
+  targetDate: IsoDate,
+  targetMin?: Minutes | null,
+): PasteSlot[] {
+  const baseMin = targetMin ?? items[0]?.startMin ?? 0;
+  return items.map((it) => {
+    const startMin = baseMin + (it.offsetMinutes || 0);
+    return {
+      date: addD(targetDate, it.offsetDays || 0),
+      startMin,
+      endMin: startMin + (it.endMin - it.startMin),
+    };
+  });
+}
+
+/**
+ * DB에 손대기 전 거르는 붙여넣기 방어함수. DTO 크기 검증과 별개로 순수 엔진도 스스로 안전해야 한다.
+ * null이면 저장 가능, 문자열이면 사람이 고칠 수 있는 이유다.
+ */
+export function pasteIssue(items: CopyItem[], targetDate: IsoDate, targetMin?: Minutes | null): string | null {
+  if (!items.length) return '복사할 회차가 없습니다';
+  if (items.length > PASTE_MAX) return `한 번에 ${PASTE_MAX}건까지만 붙여넣을 수 있습니다`;
+  const refs = new Set<string>();
+  for (const item of items) {
+    const key = `${item.serId}|${item.onDate}`;
+    if (refs.has(key)) return '같은 원본 회차가 두 번 들어 있습니다';
+    refs.add(key);
+  }
+  const slots = pasteSlots(items, targetDate, targetMin);
+  for (const slot of slots) {
+    const duration = slot.endMin - slot.startMin;
+    if (duration < 10 || duration > 480) return '수업 길이는 10~480분이어야 합니다';
+    if (slot.startMin < 0 || slot.startMin >= 1440 || slot.endMin > 1440) {
+      return `${slot.date} 일정이 자정을 넘습니다`;
+    }
+  }
+  return null;
 }
 
 export function applyPaste(
@@ -585,11 +637,12 @@ export function applyPaste(
   const genId = mkGen(S, nextId);
   const log: string[] = [];
   const list = Array.isArray(items) ? items : [items];
+  const issue = pasteIssue(list, targetDate, targetMin);
+  if (issue) throw new Error(issue);
+  const slots = pasteSlots(list, targetDate, targetMin);
 
-  list.forEach((it) => {
-    const date = addD(targetDate, it.offsetDays || 0);
-    const start = (targetMin != null ? targetMin : it.startMin) + (it.offsetMinutes || 0);
-    const dur = it.endMin - it.startMin;
+  list.forEach((it, index) => {
+    const { date, startMin: start, endMin: end } = slots[index];
     const eff: Scope = scope || 'this';
     const ser: Ser = {
       id: genId(),
@@ -597,10 +650,10 @@ export function applyPaste(
       sub: it.sub,
       mode: it.mode,
       title: it.title,
-      teacherId: patch && patch.teacherId != null ? patch.teacherId : it.teacherId,
+      teacherId: patch && patch.teacherId !== undefined ? (patch.teacherId ?? null) : it.teacherId,
       roomId: patch && patch.roomId !== undefined ? (patch.roomId ?? null) : it.roomId,
       startMin: start,
-      endMin: start + dur,
+      endMin: end,
       rrule: 'ONCE',
       fromDate: date,
       toDate: date,
@@ -611,7 +664,7 @@ export function applyPaste(
       ser.toDate = it.toDate && it.toDate > date ? it.toDate : null;
       shiftRuleTo(ser, date);
     } else if (eff === 'all') {
-      const delta = diffD(date, it.onDate);
+      const delta = diffD(date, it.date);
       ser.rrule = it.rrule;
       ser.fromDate = addD(it.fromDate, delta);
       ser.toDate = it.toDate ? addD(it.toDate, delta) : null;

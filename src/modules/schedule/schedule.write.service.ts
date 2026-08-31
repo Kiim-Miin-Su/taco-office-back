@@ -16,13 +16,15 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
-  applyCreate, applyDelete, applyEdit, applyRoster, formatRule, parseRule,
+  applyCreate, applyDelete, applyEdit, applyPaste, applyRoster, copyMany, formatRule, occ,
+  parseRule, pasteIssue,
   type Scope, type State,
 } from '../../lib/recurrence';
 import { loadState, persist } from './schedule.state.repo';
 import { horizon, project } from './schedule.project';
 import type {
-  OccurrenceCreateDto, OccurrenceDeleteDto, OccurrencePatchDto, RosterPatchDto, WriteResultDto,
+  OccurrenceCreateDto, OccurrenceDeleteDto, OccurrencePasteDto, OccurrencePatchDto,
+  RosterPatchDto, WriteResultDto,
 } from './schedule.dto';
 
 @Injectable()
@@ -85,6 +87,60 @@ export class ScheduleWriteService {
         },
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
+    });
+  }
+
+  /**
+   * Ctrl+드래그와 C/X/V의 단일 저장 경로. 클라이언트가 보낸 표시용 내용을 믿지 않고
+   * 원본 참조를 occ()로 다시 풀어 copyMany() → applyPaste() 순서로만 새 SER를 만든다.
+   */
+  async paste(dto: OccurrencePasteDto): Promise<WriteResultDto> {
+    const sourceIds = [...new Set(dto.sources.map((s) => s.serId))];
+    return this.tx(sourceIds, (before) => {
+      const seen = new Set<string>();
+      const sources = dto.sources.map((ref) => {
+        const key = `${ref.serId}|${ref.onDate}`;
+        if (seen.has(key)) {
+          throw new BadRequestException({ code: 'BAD_PASTE', message: '같은 원본 회차가 두 번 들어 있습니다' });
+        }
+        seen.add(key);
+        const source = occ(ref.date, before).find((o) => o.serId === ref.serId && o.onDate === ref.onDate);
+        if (!source) {
+          throw new NotFoundException({
+            code: 'SOURCE_NOT_FOUND',
+            message: `복사 원본 ${ref.serId} (${ref.onDate}) 회차를 찾을 수 없습니다`,
+          });
+        }
+        return source;
+      });
+
+      const copied = copyMany(before, sources);
+      const issue = pasteIssue(copied, dto.targetDate, dto.targetStartMin);
+      if (issue) throw new BadRequestException({ code: 'BAD_PASTE', message: issue });
+
+      let current = before;
+      const log: string[] = [];
+      if (dto.cut) {
+        for (const source of sources) {
+          const deleted = applyDelete(current, {
+            serId: source.serId, onDate: source.onDate, scope: 'this',
+          });
+          current = deleted;
+          log.push(...deleted.__log);
+        }
+      }
+
+      const pasted = applyPaste(current, {
+        items: copied,
+        targetDate: dto.targetDate,
+        targetMin: dto.targetStartMin,
+        patch: {
+          teacherId: dto.teacherId === undefined ? undefined : dto.teacherId,
+          roomId: dto.roomId === undefined ? undefined : dto.roomId,
+        },
+        scope: dto.scope as Scope,
+      });
+      return { after: pasted, log: [...log, ...pasted.__log], effScope: pasted.__effScope };
     });
   }
 

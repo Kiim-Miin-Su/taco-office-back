@@ -167,6 +167,75 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(rooms.map((x) => Number(x.room_id))).toEqual([2]);
   });
 
+  it('붙여넣기 — 원본 참조만 받아 새 SER와 명단을 만들고 EXC는 복제하지 않는다', async () => {
+    const { id, from } = await makeSer();
+    await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, teacherId: T2 }).expect(200);
+
+    const target = plus(from, 1);
+    const r = await api('post', '/schedule/paste')
+      .send({
+        sources: [{ serId: id, date: from, onDate: from }],
+        scope: 'this', targetDate: target, targetStartMin: 840,
+      })
+      .expect(201);
+    const copiedId = (r.body.serIds as number[]).find((x) => x !== id)!;
+    made.push(copiedId);
+
+    const copied = (await q<{ rrule: string; from_date: string; start_min: number; teacher_id: string }>(
+      `SELECT rrule, from_date::text, start_min, teacher_id::text FROM ser WHERE id=$1`, [copiedId],
+    ))[0];
+    expect(copied).toMatchObject({ rrule: 'ONCE', from_date: target, start_min: 840 });
+    // 화면에서 복사한 유효 강사값은 새 SER에 굳히되, EXC 행 자체는 따라오지 않는다.
+    expect(Number(copied.teacher_id)).toBe(T2);
+    const stus = await q<{ n: string }>(`SELECT count(*)::text n FROM ser_stu WHERE ser_id=$1`, [copiedId]);
+    expect(Number(stus[0].n)).toBe(2);
+    const excs = await q<{ n: string }>(`SELECT count(*)::text n FROM exc WHERE ser_id=$1`, [copiedId]);
+    expect(Number(excs[0].n)).toBe(0);
+  });
+
+  it('잘라내기 붙여넣기는 원본 this 취소와 새 SER 생성을 한 트랜잭션에 넣는다', async () => {
+    const { id, from } = await makeSer({ startMin: 720, endMin: 780 });
+    const target = plus(from, 1);
+    const r = await api('post', '/schedule/paste')
+      .send({
+        sources: [{ serId: id, date: from, onDate: from }],
+        scope: 'this', targetDate: target, targetStartMin: 900, cut: true,
+      })
+      .expect(201);
+    (r.body.serIds as number[]).forEach((x) => { if (!made.includes(x)) made.push(x); });
+
+    const original = await q<{ canceled: boolean }>(
+      `SELECT canceled FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date`, [id, from],
+    );
+    expect(original[0]?.canceled).toBe(true);
+    const created = await q<{ n: string }>(
+      `SELECT count(*)::text n FROM ser WHERE id <> $1 AND from_date=$2::date AND start_min=900`, [id, target],
+    );
+    expect(Number(created[0].n)).toBeGreaterThan(0);
+  });
+
+  it('붙여넣기 방어 — 없는 회차와 자정을 넘는 배치는 저장하지 않는다', async () => {
+    const { id, from } = await makeSer({ startMin: 720, endMin: 780 });
+    await api('post', '/schedule/paste')
+      .send({
+        sources: [{ serId: id, date: plus(from, 1), onDate: from }],
+        scope: 'this', targetDate: plus(from, 1), targetStartMin: 900,
+      })
+      .expect(404);
+
+    const before = await q<{ n: string }>(`SELECT count(*)::text n FROM ser`);
+    const bad = await api('post', '/schedule/paste')
+      .send({
+        sources: [{ serId: id, date: from, onDate: from }],
+        scope: 'this', targetDate: plus(from, 1), targetStartMin: 1420,
+      })
+      .expect(400);
+    expect(bad.body.code).toBe('BAD_PASTE');
+    const after = await q<{ n: string }>(`SELECT count(*)::text n FROM ser`);
+    expect(after[0].n).toBe(before[0].n);
+  });
+
   it('겹치면 DB 가 막는다 — 409 이고 절반만 저장되지 않는다 (D-R43)', async () => {
     const { from } = await makeSer();
     const beforeSers = await q<{ n: string }>(`SELECT count(*)::text n FROM ser`);

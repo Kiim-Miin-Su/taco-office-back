@@ -62,7 +62,12 @@ export class OccurrenceListDto {
    저장은 **자원 + scope** 한 형태로만 받는다. 엔드포인트를 동작마다 만들면
    같은 3범위 판정이 여러 곳에 흩어진다 (D-R16 · D-R21).                     */
 
-import { IsArray, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString,
+  Matches, Max, Min, ValidateNested,
+} from 'class-validator';
+import { PASTE_MAX } from '../../lib/recurrence';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -134,6 +139,38 @@ export class OccurrenceCreateDto {
 
   @ApiPropertyOptional({ type: [Number], description: '정식 명단' })
   @IsOptional() @IsArray() studentIds?: number[];
+}
+
+/** 붙여넣기 원본은 식별자만 받는다. 원본 내용은 트랜잭션 안에서 occ()로 다시 읽는다. */
+export class OccurrenceRefDto {
+  @ApiProperty() @IsInt() @Min(1) serId!: number;
+  @ApiProperty({ description: '화면에 보이던 날짜. 이동 EXC를 찾고 상대 날짜 간격을 보존한다' })
+  @Matches(ISO) date!: string;
+  @ApiProperty({ description: '규칙상 원래 날짜 — EXC 키' }) @Matches(ISO) onDate!: string;
+}
+
+/** Ctrl+드래그와 Ctrl/⌘+C/X/V가 공유하는 일괄 복제 계약 (D-R19). */
+export class OccurrencePasteDto {
+  @ApiProperty({ type: [OccurrenceRefDto], maxItems: PASTE_MAX })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(PASTE_MAX)
+  @ValidateNested({ each: true }) @Type(() => OccurrenceRefDto)
+  sources!: OccurrenceRefDto[];
+
+  @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
+  scope!: 'this' | 'future' | 'all';
+
+  @ApiProperty() @Matches(ISO) targetDate!: string;
+  @ApiProperty({ description: '붙여넣기 기준 시각 — 자정부터 분' })
+  @IsInt() @Min(0) @Max(1439) targetStartMin!: number;
+
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '대상 강사 축이면 덮어쓴다' })
+  @IsOptional() @IsInt() teacherId?: number | null;
+
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '대상 강의실 축이면 덮어쓴다' })
+  @IsOptional() @IsInt() roomId?: number | null;
+
+  @ApiPropertyOptional({ default: false, description: 'true면 붙여넣기 성공과 같은 트랜잭션에서 원본 회차를 취소한다' })
+  @IsOptional() @IsBoolean() cut?: boolean;
 }
 
 export class OccurrenceDeleteDto {
