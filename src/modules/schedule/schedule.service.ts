@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
 import { isWrittenDbState } from '../../lib/rules';
+import { isRecurring, type Ser } from '../../lib/recurrence';
 import type { RepStateT } from '../../entities/enums';
 import type { OccurrenceDto } from './schedule.dto';
 import { START_MIN, END_MIN, spanOf } from '../../lib/sql';
@@ -19,6 +20,7 @@ export interface OccQuery {
 interface Row {
   ser_id: string; on_date: string; start_min: number; end_min: number;
   kind_key: string; sub_key: string | null; title: string | null;
+  rrule: string; ser_from: string; ser_to: string | null;
   teacher_id: string | null; teacher_name: string | null;
   room_id: string | null; room_name: string | null;
   zacc_id: string | null; mode: string; canceled: boolean;
@@ -53,6 +55,8 @@ export class ScheduleService {
               ${START_MIN} AS start_min,
               ${END_MIN} AS end_min,
               s.kind_key, s.sub_key, s.title, s.mode,
+              s.rrule, to_char(s.from_date, 'YYYY-MM-DD') AS ser_from,
+              to_char(s.to_date, 'YYYY-MM-DD') AS ser_to,
               o.teacher_id, t.name AS teacher_name,
               o.room_id, rm.name AS room_name, o.zacc_id, o.canceled,
               (e.id IS NOT NULL) AS has_exception,
@@ -105,6 +109,12 @@ export class ScheduleService {
         mode: r.mode,
         canceled: r.canceled,
         hasException: r.has_exception,
+        // 「물어야 하는가」는 규칙이 정한다 — 화면은 이 값만 본다 (§5A.0). 남은 회차는
+        // **이 회차의 날짜부터** 센다: 마지막 한 회만 남은 반복은 단발처럼 바로 저장한다.
+        recurring: isRecurring(
+          { rrule: r.rrule, fromDate: r.ser_from, toDate: r.ser_to } as Ser,
+          r.on_date,
+        ),
         repState,
         // 판정은 rules.ts 한 곳에서만 한다 — 화면도 서버도 여기서 나온 값을 읽기만 한다
         written: isWrittenDbState(r.rep_state),

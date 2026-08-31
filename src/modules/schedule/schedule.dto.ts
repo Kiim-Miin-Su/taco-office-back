@@ -35,6 +35,12 @@ export class OccurrenceDto {
   @ApiProperty({ description: '이 회차에 예외가 붙었는가' }) hasException!: boolean;
 
   @ApiProperty({
+    description:
+      '편집할 때 범위를 물어야 하는가 — rrule≠ONCE 이고 남은 회차≥2 (CALENDAR §5A.0). 판정은 서버 한 곳이다',
+  })
+  recurring!: boolean;
+
+  @ApiProperty({
     enum: ['na', 'plan', 'none', 'draft', 'wait', 'ok', 'rej'],
     description: '리포트 상태. 캘린더 블록 색이 이 값에서 나온다 (D-R7 · V26 §2.3)',
   })

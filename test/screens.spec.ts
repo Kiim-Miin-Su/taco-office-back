@@ -202,6 +202,19 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
       .forEach((o: { repState: string }) => expect(['na', 'plan', 'none', 'draft']).toContain(o.repState));
   });
 
+  it('캘린더 — 단발과 반복이 구분되어 내려온다 (§5A.0)', async () => {
+    // 시드 날짜는 오늘 기준으로 밀리므로 창도 오늘 기준으로 잡는다
+    const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
+    const r = await get(`/schedule/occurrences?from=${iso(Date.now() - 7 * 864e5)}&to=${iso(Date.now() + 7 * 864e5)}`, MANAGER).expect(200);
+    const rec = r.body.items.filter((o: { recurring: boolean }) => o.recurring);
+    const once = r.body.items.filter((o: { recurring: boolean }) => !o.recurring);
+    // 두 분기가 다 있어야 한다 — 값이 한 종류뿐이면 그 분기는 검증된 적이 없는 것
+    expect(rec.length).toBeGreaterThan(0);
+    expect(once.length).toBeGreaterThan(0);
+    // 단발에서 확인창이 뜨면 그건 버그다 (§5A.0) — 화면은 이 값만 보고 판단한다
+    once.forEach((o: { serId: number }) => expect(o.serId).toBeGreaterThan(0));
+  });
+
   it('§47 독촉 — 밀린 리포트가 실제로 잡힌다', async () => {
     const r = await get('/reports/unwritten', MANAGER).expect(200);
     expect(r.body.total).toBeGreaterThan(0);

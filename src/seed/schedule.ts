@@ -21,6 +21,8 @@ export interface SerSeed {
   days: number[];
   students: number[];
   title?: string;
+  /** 단발(ONCE) — 이 날짜 하루뿐. days 는 비워 둔다 */
+  onceOn?: string;
 }
 
 const hm = (h: number, m = 0) => h * 60 + m;
@@ -49,6 +51,8 @@ export const SERS: SerSeed[] = [
   { id: 20, kindKey: 'mock',  subKey: 'mock-sat', teacherId: 7,  roomId: 1, zaccId: null, mode: 'offline', startMin: hm(9), endMin: hm(12), days: [6], students: [2, 13, 17, 18], title: '모의 SAT 정기' },
   { id: 21, kindKey: 'meeting', subKey: 'mt-pg',  teacherId: 2,  roomId: 4, zaccId: null, mode: 'offline', startMin: hm(10), endMin: hm(11), days: [1], students: [], title: '주간 운영 회의' },
   { id: 22, kindKey: 'diagx', subKey: 'diag',     teacherId: 5,  roomId: 3, zaccId: null, mode: 'offline', startMin: hm(11), endMin: hm(12), days: [6], students: [], title: '진단 평가 (신규)' },
+  // 단발이 하나는 있어야 recurring=false 분기가 시드에서 돈다 — 값이 한 종류뿐이면 검증된 적 없는 것
+  { id: 23, kindKey: 'mock',  subKey: 'mock-sat', teacherId: 5,  roomId: 3, zaccId: null, mode: 'offline', startMin: hm(15), endMin: hm(16, 30), days: [], students: [13], title: '모의 SAT 1회 특강', onceOn: addD(SEED_TODAY, 3) },
 ];
 
 /** 시드가 덮는 기간 — 오늘 기준 앞 3주 · 뒤 1주 */
@@ -103,7 +107,7 @@ export function expand(): OccSeed[] {
   for (let d = RANGE_FROM; d <= RANGE_TO; d = addD(d, 1)) {
     const dow = new Date(d + 'T00:00:00Z').getUTCDay();
     for (const s of SERS) {
-      if (!s.days.includes(dow)) continue;
+      if (s.onceOn ? s.onceOn !== d : !s.days.includes(dow)) continue;
       out.push({
         serId: s.id, onDate: d, teacherId: s.teacherId, roomId: s.roomId, zaccId: s.zaccId,
         canceled: false, startMin: s.startMin, endMin: s.endMin,
