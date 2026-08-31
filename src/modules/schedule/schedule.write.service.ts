@@ -23,7 +23,7 @@ import {
 import { loadState, persist } from './schedule.state.repo';
 import { horizon, project } from './schedule.project';
 import type {
-  OccurrenceCreateDto, OccurrenceDeleteDto, OccurrencePasteDto, OccurrencePatchDto,
+  OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto,
   RosterPatchDto, WriteResultDto,
 } from './schedule.dto';
 
@@ -115,7 +115,7 @@ export class ScheduleWriteService {
       });
 
       const copied = copyMany(before, sources);
-      const issue = pasteIssue(copied, dto.targetDate, dto.targetStartMin);
+      const issue = pasteIssue(copied, dto.targetDate, dto.targetStartMin, dto.scope as Scope);
       if (issue) throw new BadRequestException({ code: 'BAD_PASTE', message: issue });
 
       let current = before;
@@ -141,6 +141,60 @@ export class ScheduleWriteService {
         scope: dto.scope as Scope,
       });
       return { after: pasted, log: [...log, ...pasted.__log], effScope: pasted.__effScope };
+    });
+  }
+
+  /** C-7 — 여러 PATCH를 클라이언트에서 반복하지 않고 한 load/reduce/persist/project로 묶는다. */
+  async moveMany(dto: OccurrenceMoveDto): Promise<WriteResultDto> {
+    const sourceIds = [...new Set(dto.items.map((x) => x.source.serId))];
+    return this.tx(sourceIds, (before) => {
+      const refs = new Set<string>();
+      const recurringIds = new Set<number>();
+      let current = before;
+      const log: string[] = [];
+
+      for (const item of dto.items) {
+        const ref = item.source;
+        const key = `${ref.serId}|${ref.onDate}`;
+        if (refs.has(key)) {
+          throw new BadRequestException({ code: 'BAD_MOVE', message: '같은 원본 회차가 두 번 들어 있습니다' });
+        }
+        refs.add(key);
+        if (dto.scope !== 'this' && recurringIds.has(ref.serId)) {
+          throw new BadRequestException({
+            code: 'BAD_MOVE',
+            message: '같은 반복 규칙의 여러 회차에는 향후·모두 이동을 동시에 적용할 수 없습니다',
+          });
+        }
+        recurringIds.add(ref.serId);
+        const source = occ(ref.date, before).find((o) => o.serId === ref.serId && o.onDate === ref.onDate);
+        if (!source) {
+          throw new NotFoundException({
+            code: 'SOURCE_NOT_FOUND',
+            message: `이동 원본 ${ref.serId} (${ref.onDate}) 회차를 찾을 수 없습니다`,
+          });
+        }
+        const duration = item.endMin - item.startMin;
+        if (duration < 10 || duration > 480) {
+          throw new BadRequestException({ code: 'BAD_RANGE', message: '수업 길이는 10~480분이어야 합니다' });
+        }
+        const moved = applyEdit(current, {
+          serId: ref.serId,
+          onDate: ref.onDate,
+          scope: dto.scope as Scope,
+          patch: {
+            date: item.date,
+            startMin: item.startMin,
+            endMin: item.endMin,
+            teacherId: item.teacherId === undefined ? undefined : item.teacherId,
+            roomId: item.roomId === undefined ? undefined : item.roomId,
+            __onDate: ref.onDate,
+          },
+        });
+        current = moved;
+        log.push(...moved.__log);
+      }
+      return { after: current, log, effScope: dto.scope };
     });
   }
 

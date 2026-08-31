@@ -173,6 +173,34 @@ export class OccurrencePasteDto {
   @IsOptional() @IsBoolean() cut?: boolean;
 }
 
+/** 다중 이동 한 건 — 원본 참조와 바뀐 위치를 분리해 원본 식별자를 덮어쓰지 않는다. */
+export class OccurrenceMoveItemDto {
+  @ApiProperty({ type: OccurrenceRefDto })
+  @ValidateNested() @Type(() => OccurrenceRefDto)
+  source!: OccurrenceRefDto;
+
+  @ApiProperty() @Matches(ISO) date!: string;
+  @ApiProperty() @IsInt() @Min(0) @Max(1439) startMin!: number;
+  @ApiProperty() @IsInt() @Min(1) @Max(1440) endMin!: number;
+
+  @ApiPropertyOptional({ type: Number, nullable: true })
+  @IsOptional() @IsInt() teacherId?: number | null;
+
+  @ApiPropertyOptional({ type: Number, nullable: true })
+  @IsOptional() @IsInt() roomId?: number | null;
+}
+
+/** 다중 선택 드래그를 한 트랜잭션으로 저장한다 (C-7). */
+export class OccurrenceMoveDto {
+  @ApiProperty({ type: [OccurrenceMoveItemDto], maxItems: PASTE_MAX })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(PASTE_MAX)
+  @ValidateNested({ each: true }) @Type(() => OccurrenceMoveItemDto)
+  items!: OccurrenceMoveItemDto[];
+
+  @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
+  scope!: 'this' | 'future' | 'all';
+}
+
 export class OccurrenceDeleteDto {
   @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';

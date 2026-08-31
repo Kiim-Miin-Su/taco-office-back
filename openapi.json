@@ -280,6 +280,38 @@
         ]
       }
     },
+    "/schedule/move": {
+      "post": {
+        "operationId": "ScheduleController_moveMany",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OccurrenceMoveDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "다중 선택 회차 이동 — 전부 저장되거나 전부 되돌아간다 (C-7)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule/{serId}": {
       "patch": {
         "operationId": "ScheduleController_patch",
@@ -1473,6 +1505,61 @@
           "scope",
           "targetDate",
           "targetStartMin"
+        ]
+      },
+      "OccurrenceMoveItemDto": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/OccurrenceRefDto"
+          },
+          "date": {
+            "type": "string"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "source",
+          "date",
+          "startMin",
+          "endMin"
+        ]
+      },
+      "OccurrenceMoveDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OccurrenceMoveItemDto"
+            }
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "this",
+              "future",
+              "all"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "scope"
         ]
       },
       "OccurrencePatchDto": {

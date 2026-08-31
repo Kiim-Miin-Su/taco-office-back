@@ -4,7 +4,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
-  OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, WriteResultDto,
+  OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, WriteResultDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
@@ -82,6 +82,14 @@ export class ScheduleController {
   @ApiOkResponse({ type: WriteResultDto })
   paste(@Body() dto: OccurrencePasteDto): Promise<WriteResultDto> {
     return this.write.paste(dto);
+  }
+
+  @Post('move')
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '다중 선택 회차 이동 — 전부 저장되거나 전부 되돌아간다 (C-7)' })
+  @ApiOkResponse({ type: WriteResultDto })
+  moveMany(@Body() dto: OccurrenceMoveDto): Promise<WriteResultDto> {
+    return this.write.moveMany(dto);
   }
 
   @Patch(':serId')

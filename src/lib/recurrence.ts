@@ -601,14 +601,24 @@ export function pasteSlots(
  * DB에 손대기 전 거르는 붙여넣기 방어함수. DTO 크기 검증과 별개로 순수 엔진도 스스로 안전해야 한다.
  * null이면 저장 가능, 문자열이면 사람이 고칠 수 있는 이유다.
  */
-export function pasteIssue(items: CopyItem[], targetDate: IsoDate, targetMin?: Minutes | null): string | null {
+export function pasteIssue(
+  items: CopyItem[],
+  targetDate: IsoDate,
+  targetMin?: Minutes | null,
+  scope: Scope = 'this',
+): string | null {
   if (!items.length) return '복사할 회차가 없습니다';
   if (items.length > PASTE_MAX) return `한 번에 ${PASTE_MAX}건까지만 붙여넣을 수 있습니다`;
   const refs = new Set<string>();
+  const serIds = new Set<number>();
   for (const item of items) {
     const key = `${item.serId}|${item.onDate}`;
     if (refs.has(key)) return '같은 원본 회차가 두 번 들어 있습니다';
     refs.add(key);
+    if (scope !== 'this' && serIds.has(item.serId)) {
+      return '향후·모두 붙여넣기는 같은 반복 규칙에서 한 회차만 선택할 수 있습니다';
+    }
+    serIds.add(item.serId);
   }
   const slots = pasteSlots(items, targetDate, targetMin);
   for (const slot of slots) {
@@ -637,7 +647,7 @@ export function applyPaste(
   const genId = mkGen(S, nextId);
   const log: string[] = [];
   const list = Array.isArray(items) ? items : [items];
-  const issue = pasteIssue(list, targetDate, targetMin);
+  const issue = pasteIssue(list, targetDate, targetMin, scope || 'this');
   if (issue) throw new Error(issue);
   const slots = pasteSlots(list, targetDate, targetMin);
 

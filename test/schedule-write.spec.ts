@@ -31,7 +31,8 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   /** 시드와 안 부딪히게 높은 번호대를 쓴다 */
   const CEO = 921;
   const ROOM = 1;
-  const T1 = 11;
+  /** 테스트가 날짜 이동으로 시드 강사 일정과 부딪치지 않게 이 스위트 전용 staff를 쓴다. */
+  const T1 = CEO;
   const T2 = 12;
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> =>
@@ -95,7 +96,7 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       .send({
         kindKey: 'class', subKey: null, mode: 'offline',
         fromDate: from, rrule: 'WEEKLY:MO,WE',
-        startMin: 600, endMin: 660, teacherId: T1, roomId: ROOM,
+        startMin: 600, endMin: 660, teacherId: T1, roomId: null,
         title: '쓰기 테스트', studentIds: [1, 2], ...over,
       })
       .expect(201);
@@ -155,6 +156,35 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     const moved = (list.body.items as Array<{ serId: number; date: string; onDate: string }>)
       .find((x) => x.serId === id);
     expect(moved).toMatchObject({ date: movedTo, onDate: from });
+  });
+
+  it('다중 이동은 한 요청에서 상대 간격을 지키고 두 회차를 함께 옮긴다 (C-7)', async () => {
+    const a = await makeSer({ startMin: 720, endMin: 780, teacherId: null, roomId: null });
+    const b = await makeSer({ startMin: 900, endMin: 990, teacherId: null, roomId: null });
+    const target = plus(a.from, 1);
+    await api('post', '/schedule/move')
+      .send({
+        scope: 'this',
+        items: [
+          { source: { serId: a.id, date: a.from, onDate: a.from }, date: target, startMin: 735, endMin: 795 },
+          { source: { serId: b.id, date: b.from, onDate: b.from }, date: target, startMin: 915, endMin: 1005 },
+        ],
+      })
+      .expect(201);
+
+    const rows = await q<{ ser_id: string; on_date: string; start_min: number }>(
+      `SELECT ser_id::text, on_date::text,
+              (EXTRACT(HOUR FROM lower(span) AT TIME ZONE 'Asia/Seoul') * 60
+               + EXTRACT(MINUTE FROM lower(span) AT TIME ZONE 'Asia/Seoul'))::int AS start_min
+         FROM ser_occ WHERE ser_id = ANY($1) AND on_date=$2::date ORDER BY ser_id`,
+      [[a.id, b.id], a.from],
+    );
+    expect(rows.map((x) => x.start_min)).toEqual([735, 915]);
+    const exc = await q<{ n: string }>(
+      `SELECT count(*)::text n FROM exc WHERE ser_id = ANY($1) AND on_date=$2::date AND new_date=$3::date`,
+      [[a.id, b.id], a.from, target],
+    );
+    expect(Number(exc[0].n)).toBe(2);
   });
 
   it("scope='future' — 원본이 끊기고 새 규칙이 생긴다", async () => {
@@ -260,7 +290,7 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   });
 
   it('겹치면 DB 가 막는다 — 409 이고 절반만 저장되지 않는다 (D-R43)', async () => {
-    const { from } = await makeSer();
+    const { from } = await makeSer({ roomId: ROOM });
     const beforeSers = await q<{ n: string }>(`SELECT count(*)::text n FROM ser`);
 
     // 같은 방 · 같은 시간 · 같은 요일
