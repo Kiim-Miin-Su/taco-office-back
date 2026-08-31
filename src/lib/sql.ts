@@ -19,6 +19,9 @@ export const minOf = (expr: string): string =>
 export const START_MIN = minOf('lower(o.span)');
 export const END_MIN = minOf('upper(o.span)');
 
+/** KST 날짜 — 옮긴 EXC는 `on_date`와 실제 `span` 날짜가 다르므로 표시 날짜는 이것을 쓴다. */
+export const kstDateOf = (expr: string): string => `(${expr} AT TIME ZONE '${KST}')::date`;
+
 /**
  * 화면에 내려보내는 시각 — **언제나 KST 오프셋이 붙은 ISO** 다.
  *

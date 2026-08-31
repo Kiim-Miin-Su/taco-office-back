@@ -6,7 +6,7 @@ import { isWrittenDbState } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
 import type { RepStateT } from '../../entities/enums';
 import type { OccurrenceDto } from './schedule.dto';
-import { START_MIN, END_MIN, spanOf } from '../../lib/sql';
+import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
 
 export interface OccQuery {
   from: string;
@@ -18,7 +18,7 @@ export interface OccQuery {
 
 /** DB 가 돌려준 한 줄 — 컬럼 이름은 아래 SQL 과 짝이다 */
 interface Row {
-  ser_id: string; on_date: string; start_min: number; end_min: number;
+  ser_id: string; date: string; on_date: string; start_min: number; end_min: number;
   kind_key: string; sub_key: string | null; title: string | null;
   rrule: string; ser_from: string; ser_to: string | null;
   teacher_id: string | null; teacher_name: string | null;
@@ -40,7 +40,9 @@ export class ScheduleService {
    */
   async list(q: OccQuery): Promise<OccurrenceDto[]> {
     const params: unknown[] = [q.from, q.to];
-    const cond: string[] = ['o.on_date BETWEEN $1 AND $2'];
+    // 표시 범위는 EXC 키(on_date)가 아니라 실제 span 날짜로 자른다. 다른 날로 옮긴 회차가
+    // 원래 날에 남거나 새 날 조회에서 빠지면 date/onDate 두 칸을 둔 이유가 사라진다.
+    const cond: string[] = [`${kstDateOf('lower(o.span)')} BETWEEN $1::date AND $2::date`];
     if (q.teacherId) { params.push(q.teacherId); cond.push(`o.teacher_id = $${params.length}`); }
     if (q.roomId) { params.push(q.roomId); cond.push(`o.room_id = $${params.length}`); }
     if (q.studentId) {
@@ -51,7 +53,9 @@ export class ScheduleService {
     const rows = (await this.occ.query(
       // 시각은 **회차(span)** 에서 뽑는다. 규칙(ser)에서 뽑으면 「이번만 시간 옮김」 예외가
       // 화면에 반영되지 않는다 — 예외를 승인해 놓고 시간표는 원래 시각을 보여 주게 된다.
-      `SELECT o.ser_id, to_char(o.on_date, 'YYYY-MM-DD') AS on_date,
+      `SELECT o.ser_id,
+              to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS date,
+              to_char(o.on_date, 'YYYY-MM-DD') AS on_date,
               ${START_MIN} AS start_min,
               ${END_MIN} AS end_min,
               s.kind_key, s.sub_key, s.title, s.mode,
@@ -94,7 +98,7 @@ export class ScheduleService {
         serId: Number(r.ser_id),
         // 그릴 날짜와 EXC 키를 **둘 다** 내려보낸다. 옮긴 회차는 둘이 다르고,
         // 쓰기는 원래 날짜로만 예외를 찾는다.
-        date: r.on_date,
+        date: r.date,
         onDate: r.on_date,
         startMin: r.start_min,
         endMin: r.end_min,

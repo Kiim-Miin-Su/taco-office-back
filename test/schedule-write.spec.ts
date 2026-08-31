@@ -134,6 +134,29 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(rows.filter((x) => Number(x.teacher_id) === T1).length).toBeGreaterThan(0);
   });
 
+  it('다른 날로 옮긴 EXC는 date=표시 날짜, onDate=원래 키로 조회된다', async () => {
+    const { id, from } = await makeSer({ startMin: 1140, endMin: 1200, roomId: 3 });
+    const movedTo = plus(from, 1);
+    await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, date: movedTo }).expect(200);
+
+    const r = await api('post', '/schedule/paste')
+      .send({
+        sources: [{ serId: id, date: movedTo, onDate: from }],
+        scope: 'this', targetDate: plus(movedTo, 1), targetStartMin: 1200,
+      })
+      .expect(201);
+    (r.body.serIds as number[]).forEach((x) => { if (!made.includes(x)) made.push(x); });
+
+    const list = await request(app.getHttpServer())
+      .get('/schedule/occurrences')
+      .query({ from: movedTo, to: movedTo })
+      .set('Authorization', `Bearer ${token}`).expect(200);
+    const moved = (list.body.items as Array<{ serId: number; date: string; onDate: string }>)
+      .find((x) => x.serId === id);
+    expect(moved).toMatchObject({ date: movedTo, onDate: from });
+  });
+
   it("scope='future' — 원본이 끊기고 새 규칙이 생긴다", async () => {
     const { id, from } = await makeSer();
     const cut = plus(from, 14);
