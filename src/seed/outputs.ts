@@ -5,7 +5,9 @@
  * countsForSettlement · isOverdue · latePenalty 가 시드 위에서 그대로 성립한다 (D-R7 · D-R32).
  */
 import { addD, diffD } from '../lib/recurrence';
-import { SEED_TODAY } from './base';
+import { nowMinKst } from '../lib/kst';
+import { effectiveRepState } from '../lib/rules';
+import { KINDS, SEED_TODAY } from './base';
 import type { OccSeed } from './schedule';
 
 export type RepState = 'na' | 'plan' | 'none' | 'draft' | 'wait' | 'ok' | 'rej';
@@ -40,13 +42,18 @@ const BODY_EN = {
  * 지난 회차 중 이 비율만큼을 「안 씀」으로 남겨 §47 독촉 화면이 실제로 채워지게 한다.
  */
 const UNWRITTEN_EVERY = 6;
+const REPORTABLE_KIND = new Map<string, boolean>(KINDS.map(({ key, rep }) => [key, rep]));
 
-export function buildReports(occs: OccSeed[], langOf: (id: number) => string): RepSeed[] {
+export function buildReports(
+  occs: OccSeed[],
+  langOf: (id: number) => string,
+  nowMin: number = nowMinKst(),
+): RepSeed[] {
   const out: RepSeed[] = [];
   let past = 0;
   for (const o of occs) {
     if (o.canceled) continue;
-    if (o.kindKey === 'meeting' || o.kindKey === 'study') continue; // 리포트를 쓰지 않는 종류
+    if (!REPORTABLE_KIND.get(o.kindKey)) continue;                  // 종류 코드표가 단일 진실원
     if (!o.students.length) continue;                                // 학생이 없으면 리포트도 없다
     const past_ = diffD(SEED_TODAY, o.onDate); // 양수면 지난 것
     {
@@ -54,10 +61,14 @@ export function buildReports(occs: OccSeed[], langOf: (id: number) => string): R
       let writtenAt: string | null = null, submittedAt: string | null = null;
       let reviewedAt: string | null = null, reviewerId: number | null = null, rejectReason: string | null = null;
 
-      if (past_ < 0) {
-        state = 'na';                       // 아직 안 한 수업
-      } else if (past_ === 0) {
-        state = 'none';                     // 오늘 수업 — 아직 안 씀
+      if (past_ <= 0) {
+        state = effectiveRepState(
+          null,
+          { date: o.onDate, startMin: o.startMin, durationMin: o.endMin - o.startMin },
+          true,
+          SEED_TODAY,
+          nowMin,
+        );
       } else {
         past += 1;
         if (past % UNWRITTEN_EVERY === 0) {
@@ -81,7 +92,7 @@ export function buildReports(occs: OccSeed[], langOf: (id: number) => string): R
       out.push({
         serId: o.serId, onDate: o.onDate, teacherId: o.teacherId,
         kindKey: o.kindKey, lang, state,
-        body: state === 'na' || state === 'none' ? {} : (lang === 'en' ? BODY_EN : BODY_KO),
+        body: state === 'na' || state === 'plan' || state === 'none' ? {} : (lang === 'en' ? BODY_EN : BODY_KO),
         writtenAt, submittedAt, reviewedAt, reviewerId, rejectReason,
         students: [...o.students],
       });

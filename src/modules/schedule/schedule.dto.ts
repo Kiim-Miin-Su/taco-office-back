@@ -42,7 +42,8 @@ export class OccurrenceDto {
 
   @ApiProperty({
     enum: ['na', 'plan', 'none', 'draft', 'wait', 'ok', 'rej'],
-    description: '리포트 상태. 캘린더 블록 색이 이 값에서 나온다 (D-R7 · V26 §2.3)',
+    description:
+      '현재 시각 기준 유효 리포트 상태. 비대상 na · 종료 전 plan · 종료 후 none이며 캘린더 블록 색이 이 값에서 나온다 (D-R7 · V26 §2.3)',
   })
   repState!: string;
 

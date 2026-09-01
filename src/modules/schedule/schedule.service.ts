@@ -2,11 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
-import { isWrittenDbState } from '../../lib/rules';
+import { effectiveRepState, isWrittenDbState } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
-import type { RepStateT } from '../../entities/enums';
 import type { OccurrenceDto } from './schedule.dto';
 import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
+import { nowMinKst, todayKst } from '../../lib/kst';
 
 export interface OccQuery {
   from: string;
@@ -24,7 +24,7 @@ interface Row {
   teacher_id: string | null; teacher_name: string | null;
   room_id: string | null; room_name: string | null;
   zacc_id: string | null; mode: string; canceled: boolean;
-  has_exception: boolean; rep_state: string | null;
+  has_exception: boolean; reportable: boolean; rep_state: string | null;
   students: Array<{ id: number; name: string; grade: string | null; droppedOnce: boolean }> | null;
 }
 
@@ -58,7 +58,7 @@ export class ScheduleService {
               to_char(o.on_date, 'YYYY-MM-DD') AS on_date,
               ${START_MIN} AS start_min,
               ${END_MIN} AS end_min,
-              s.kind_key, s.sub_key, s.title, s.mode,
+              s.kind_key, s.sub_key, s.title, s.mode, k.rep AS reportable,
               s.rrule, to_char(s.from_date, 'YYYY-MM-DD') AS ser_from,
               to_char(s.to_date, 'YYYY-MM-DD') AS ser_to,
               o.teacher_id, t.name AS teacher_name,
@@ -78,6 +78,7 @@ export class ScheduleService {
               ), '[]'::json) AS students
          FROM ser_occ o
          JOIN ser s   ON s.id = o.ser_id
+         JOIN kind k  ON k.key = s.kind_key
          LEFT JOIN staff t ON t.id = o.teacher_id
          LEFT JOIN room rm ON rm.id = o.room_id
          LEFT JOIN exc e   ON e.ser_id = o.ser_id AND e.on_date = o.on_date
@@ -90,10 +91,18 @@ export class ScheduleService {
       params,
     )) as Row[];
 
+    const today = todayKst();
+    const nowMin = nowMinKst();
     return rows.map((r) => {
-      // 내려보내는 값은 **DB 어휘 그대로**다 (DTO 가 그렇게 적혀 있고 화면이 그걸 읽는다).
-      // 규칙 어휘로 옮기는 것은 판정할 때뿐이다 — 옮기는 자리는 rules.ts 한 곳이다.
-      const repState = (r.rep_state ?? 'na') as RepStateT;
+      // na/plan/none 은 회차 시각에서 파생한다. 오래된 잘못된 시드와 리포트 행이 없는
+      // 신규 수업도 같은 규칙을 타므로 화면마다 상태가 갈라지지 않는다.
+      const repState = effectiveRepState(
+        r.rep_state,
+        { date: r.date, startMin: r.start_min, durationMin: r.end_min - r.start_min },
+        r.reportable,
+        today,
+        nowMin,
+      );
       return {
         serId: Number(r.ser_id),
         // 그릴 날짜와 EXC 키를 **둘 다** 내려보낸다. 옮긴 회차는 둘이 다르고,
@@ -121,7 +130,7 @@ export class ScheduleService {
         ),
         repState,
         // 판정은 rules.ts 한 곳에서만 한다 — 화면도 서버도 여기서 나온 값을 읽기만 한다
-        written: isWrittenDbState(r.rep_state),
+        written: isWrittenDbState(repState),
         students: (r.students ?? []).map((s) => ({
           id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce),
         })),

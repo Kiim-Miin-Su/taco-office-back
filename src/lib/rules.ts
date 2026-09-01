@@ -78,6 +78,29 @@ export const REP_STATE_FROM_DB = {
 
 export type RepStateDb = keyof typeof REP_STATE_FROM_DB;
 
+/**
+ * 캘린더에 보여 줄 리포트 상태.
+ *
+ * `na` 는 리포트 대상이 아닌 종류에만 쓴다. 리포트 대상 회차의 미작성 상태는
+ * 종료 전 `plan`, 종료 후 `none` 이며, 시드나 오래된 행에 남은 `na`/`plan`/`none` 은
+ * 현재 시각으로 다시 판정한다. 작성이 시작된 상태는 사용자의 데이터를 보존한다.
+ */
+export function effectiveRepState(
+  stored: string | null | undefined,
+  s: Pick<SessionLike, 'date' | 'startMin' | 'durationMin'>,
+  reportable: boolean,
+  today: IsoDate,
+  nowMin: Minutes,
+): RepStateDb {
+  if (!reportable) return 'na';
+
+  if (stored === 'draft' || stored === 'wait' || stored === 'ok' || stored === 'rej') {
+    return stored;
+  }
+
+  return isPast(s, today, nowMin) ? 'none' : 'plan';
+}
+
 /** DB 에서 읽은 값을 규칙이 쓰는 이름으로. 모르는 값이면 'na' 로 둔다. */
 export function reportStateFromDb(v: string | null | undefined): ReportState {
   return (REP_STATE_FROM_DB as Record<string, ReportState>)[v ?? ''] ?? 'na';
