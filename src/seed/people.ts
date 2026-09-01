@@ -2,6 +2,8 @@
  * 학생 19명 · 등록 · 상담 18건.
  * 명세서 v2 §2 의 실측 규모(상담 18건 · 청구서 6건)를 그대로 맞춘다.
  */
+import { AUTHORED_ON } from './base';
+
 export const STUDENTS = [
   { id: 1,  name: '김민준', grade: '고2', school: '대원외고',   targetExam: 'AP',  startedOn: '2026-03-02', lang: 'ko' },
   { id: 2,  name: '박지우', grade: '고3', school: '한영외고',   targetExam: 'SAT', startedOn: '2025-09-01', lang: 'ko' },
@@ -49,10 +51,11 @@ export const ENROLLMENTS = [
   { studentId: 17, kindKey: 'class', subKey: 'sat-read', sessions: 10, startedOn: '2025-11-03' },
   { studentId: 18, kindKey: 'class', subKey: 'sat-math', sessions: 10, startedOn: '2025-08-18' },
   { studentId: 19, kindKey: 'class', subKey: 'map-math', sessions: 6, startedOn: '2026-07-13' },
-  // 이번 달 등록 — 화면의 「등록」 칸이 늘 0 이면 아무도 그 칸을 안 본다.
-  // 기존 학생이 과목을 하나 더 여는 경우로 둔다 (학생 수는 그대로 19명).
+  // 최근 등록 — 화면의 「등록」 칸이 늘 0 이면 아무도 그 칸을 안 본다.
+  // 마지막 1건은 AUTHORED_ON 에 고정한다. rel() 뒤에는 항상 SEED_TODAY 가 되어
+  // 월초·연말에도 「이번 달 등록」 계약을 지킨다 (학생 수는 그대로 19명).
   { studentId: 9,  kindKey: 'class', subKey: 'sat-read', sessions: 8, startedOn: '2026-08-11' },
-  { studentId: 15, kindKey: 'study', subKey: 'study-room', sessions: 20, startedOn: '2026-08-24' },
+  { studentId: 15, kindKey: 'study', subKey: 'study-room', sessions: 20, startedOn: AUTHORED_ON },
 ];
 
 /**
