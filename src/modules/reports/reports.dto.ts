@@ -1,4 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsInt, IsString, Matches, MaxLength, Min } from 'class-validator';
+import { REPORT_FIELDS, type ReportFieldKey } from '../../lib/rules';
+
+const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 export class ReportStudentDto {
   @ApiProperty() id!: number;
@@ -9,7 +14,8 @@ export class ReportStudentDto {
 export class ReportRowDto {
   @ApiProperty() id!: number;
   @ApiProperty() serId!: number;
-  @ApiProperty({ example: '2026-08-27' }) date!: string;
+  @ApiProperty({ example: '2026-08-27', description: '화면에 보이는 실제 회차 날짜' }) date!: string;
+  @ApiProperty({ example: '2026-08-27', description: 'REP · SER_OCC 식별자인 원래 날짜' }) onDate!: string;
   @ApiProperty() startMin!: number;
   @ApiPropertyOptional({ type: String, nullable: true }) subKey?: string | null;
   @ApiProperty() kindKey!: string;
@@ -42,4 +48,50 @@ export class UnwrittenDto {
 
 export class ReportListDto {
   @ApiProperty({ type: [ReportRowDto] }) items!: ReportRowDto[];
+}
+
+/* ══ 쓰기 계약 ════════════════════════════════════════════════════════════════
+   입력 키는 rules.ts → Swagger/OpenAPI → 프론트 생성 타입 순서로만 흐른다. */
+
+export class ReportRefDto {
+  @ApiProperty() @Type(() => Number) @IsInt() @Min(1)
+  serId!: number;
+
+  @ApiProperty({ example: '2026-08-27', description: 'REP 복합 유니크 키의 날짜' })
+  @Matches(ISO)
+  onDate!: string;
+}
+
+export class ReportBodyDto {
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  content!: string;
+
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  progress!: string;
+
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  homework!: string;
+}
+
+/** 임시저장과 제출이 같은 입력 모양을 쓴다. 단, 제출은 rules.ts 가 빈 칸을 막는다. */
+export class ReportUpsertDto extends ReportBodyDto {}
+
+export class ReportFieldDto {
+  @ApiProperty({ enum: REPORT_FIELDS.map((field) => field.key) }) key!: ReportFieldKey;
+  @ApiProperty() label!: string;
+  @ApiProperty() hint!: string;
+  @ApiProperty() min!: number;
+  @ApiProperty() max!: number;
+}
+
+export class ReportDetailDto extends ReportRowDto {
+  @ApiProperty({ type: ReportBodyDto }) body!: ReportBodyDto;
+  @ApiProperty({ type: [ReportFieldDto], description: '화면이 순서·문구·제한을 재정의하지 않고 그대로 그린다' })
+  fields!: ReportFieldDto[];
+  @ApiProperty({ description: '현재 사용자·회차·상태 기준 저장 가능 여부' }) canEdit!: boolean;
+  @ApiProperty() lang!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) writtenAt?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) submittedAt?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) reviewedAt?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) rejectReason?: string | null;
 }

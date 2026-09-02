@@ -1,5 +1,5 @@
 /**
- * REP — docs/contracts/db/erd.dbml v4.5 에서 생성했습니다.
+ * REP — docs/contracts/db/erd.dbml v4.6 에서 생성했습니다.
  *
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
@@ -30,7 +30,7 @@ export class Rep {
   @Column({ type: 'varchar', length: 2, default: 'ko' })
   lang: string;
 
-  /** 5칸 고정 (D-R40) — {progress, understanding, attitude, homework, note} */
+  /** 고정 5개 섹션 중 강사 입력 3칸 (D-R15 · D-R40) — {content, progress, homework} */
   @Column({ type: 'jsonb' })
   body: Record<string, unknown>;
 

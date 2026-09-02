@@ -153,6 +153,45 @@ describe('2-d. PENALTY_RULE — 화면에 뿌리는 표는 작은 것부터', ()
   });
 });
 
+describe('2-e. 리포트 입력·저장 계약 (D-R15 · D-R40)', () => {
+  const allowed = {
+    actorId: 7,
+    teacherId: 7,
+    canCrudAll: false,
+    reportable: true,
+    canceled: false,
+    ended: true,
+    state: 'none' as const,
+  };
+
+  it('강사 입력은 content · progress · homework 세 키뿐이다', () => {
+    expect(R.REPORT_FIELDS.map((field) => field.key)).toEqual(['content', 'progress', 'homework']);
+    expect(new Set(R.REPORT_FIELDS.map((field) => field.key)).size).toBe(3);
+  });
+
+  it('임시저장은 빈 칸을 허용하고 제출은 모두 채워야 한다', () => {
+    const body = { content: '수업 내용', progress: '  ', homework: '과제' };
+    expect(R.reportBodyIssue(body, 'draft')).toBeNull();
+    expect(R.reportBodyIssue(body, 'submit')).toBe('progress');
+    expect(R.reportBodyIssue({ ...body, progress: '수학 II 42p' }, 'submit')).toBeNull();
+  });
+
+  it('담당 강사와 전체 관리 권한만 끝난 회차를 저장한다', () => {
+    expect(R.reportWriteIssue(allowed)).toBeNull();
+    expect(R.reportWriteIssue({ ...allowed, actorId: 8 })).toBe('REPORT_FORBIDDEN');
+    expect(R.reportWriteIssue({ ...allowed, actorId: 8, canCrudAll: true })).toBeNull();
+    expect(R.reportWriteIssue({ ...allowed, ended: false })).toBe('REPORT_NOT_ENDED');
+    expect(R.reportWriteIssue({ ...allowed, canceled: true })).toBe('REPORT_CANCELED');
+    expect(R.reportWriteIssue({ ...allowed, reportable: false })).toBe('REPORT_NOT_ALLOWED');
+  });
+
+  it('제출 대기·승인 상태는 수정을 잠그고 반려 상태는 재작성할 수 있다', () => {
+    expect(R.reportWriteIssue({ ...allowed, state: 'wait' })).toBe('REPORT_LOCKED');
+    expect(R.reportWriteIssue({ ...allowed, state: 'ok' })).toBe('REPORT_LOCKED');
+    expect(R.reportWriteIssue({ ...allowed, state: 'rej' })).toBeNull();
+  });
+});
+
 describe('3. 출결 — 강사는 당일 최초 체크 1회뿐 (D-R35 · 대표 결정 6번)', () => {
   const teacher = { isTeacher: true, today: TODAY, nowMin: NOW_MIN };
   const manager = { isTeacher: false, today: TODAY, nowMin: NOW_MIN };

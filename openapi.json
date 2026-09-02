@@ -519,6 +519,149 @@
         ]
       }
     },
+    "/reports/{serId}/{onDate}": {
+      "get": {
+        "operationId": "ReportsController_detail",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "path",
+            "description": "REP 복합 유니크 키의 날짜",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDetailDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "리포트 상세 — 입력 순서·제한도 서버 계약으로 내려준다",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/{serId}/{onDate}/draft": {
+      "put": {
+        "operationId": "ReportsController_saveDraft",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "path",
+            "description": "REP 복합 유니크 키의 날짜",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportUpsertDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDetailDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "리포트 임시저장 — 빈 칸을 허용한다",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/{serId}/{onDate}/submit": {
+      "post": {
+        "operationId": "ReportsController_submit",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "path",
+            "description": "REP 복합 유니크 키의 날짜",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportUpsertDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDetailDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "리포트 제출 — 3개 입력을 모두 채워야 하며 정산 기준 시각을 최초 1회만 저장한다",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/accounting": {
       "get": {
         "operationId": "AccountingController_all",
@@ -1685,7 +1828,13 @@
           },
           "date": {
             "type": "string",
-            "example": "2026-08-27"
+            "example": "2026-08-27",
+            "description": "화면에 보이는 실제 회차 날짜"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-08-27",
+            "description": "REP · SER_OCC 식별자인 원래 날짜"
           },
           "startMin": {
             "type": "number"
@@ -1740,6 +1889,7 @@
           "id",
           "serId",
           "date",
+          "onDate",
           "startMin",
           "kindKey",
           "state",
@@ -1829,6 +1979,201 @@
           "total",
           "penaltyTotal",
           "items"
+        ]
+      },
+      "ReportBodyDto": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "progress": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "homework": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "content",
+          "progress",
+          "homework"
+        ]
+      },
+      "ReportFieldDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "content",
+              "progress",
+              "homework"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "min": {
+            "type": "number"
+          },
+          "max": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "hint",
+          "min",
+          "max"
+        ]
+      },
+      "ReportDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "serId": {
+            "type": "number"
+          },
+          "date": {
+            "type": "string",
+            "example": "2026-08-27",
+            "description": "화면에 보이는 실제 회차 날짜"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-08-27",
+            "description": "REP · SER_OCC 식별자인 원래 날짜"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ]
+          },
+          "written": {
+            "type": "boolean",
+            "description": "썼는가 — 정산 조건 (D-R7)"
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportStudentDto"
+            }
+          },
+          "minutesSinceEnd": {
+            "type": "number",
+            "description": "수업이 끝난 뒤 지난 분. 음수면 아직 안 끝났다"
+          },
+          "penalty": {
+            "type": "number",
+            "description": "지금 확정하면 깎이는 금액 (D-R32)"
+          },
+          "body": {
+            "$ref": "#/components/schemas/ReportBodyDto"
+          },
+          "fields": {
+            "description": "화면이 순서·문구·제한을 재정의하지 않고 그대로 그린다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportFieldDto"
+            }
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "현재 사용자·회차·상태 기준 저장 가능 여부"
+          },
+          "lang": {
+            "type": "string"
+          },
+          "writtenAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "submittedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "reviewedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejectReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "serId",
+          "date",
+          "onDate",
+          "startMin",
+          "kindKey",
+          "state",
+          "written",
+          "students",
+          "minutesSinceEnd",
+          "penalty",
+          "body",
+          "fields",
+          "canEdit",
+          "lang"
+        ]
+      },
+      "ReportUpsertDto": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "progress": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "homework": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "content",
+          "progress",
+          "homework"
         ]
       },
       "MoneySummaryDto": {

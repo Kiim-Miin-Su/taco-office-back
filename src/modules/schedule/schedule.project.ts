@@ -12,6 +12,7 @@
 import type { QueryRunner } from 'typeorm';
 import { addD, occ, ruleHits, type IsoDate, type State } from '../../lib/recurrence';
 import { todayKst } from '../../lib/kst';
+import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 
 /**
  * 펼쳐 두는 기간.
@@ -38,6 +39,63 @@ function at(date: IsoDate, min: number): string {
   return new Date(
     `${date}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00+09:00`,
   ).toISOString();
+}
+
+/**
+ * 리포트는 회차의 소비자다. 회차를 만든 뒤 같은 트랜잭션에서 REP·REP_STU까지 투영해야
+ * 새 수업도 종료 시점에 독촉/작성 화면으로 자연스럽게 넘어간다.
+ *
+ * 제출 전 학생 목록은 현재 명단을 따라가고, 제출한 순간부터는 발송 대상 스냅샷으로 보존한다.
+ */
+async function projectReports(q: QueryRunner, serIds: number[]): Promise<void> {
+  await q.query(
+    `INSERT INTO rep (ser_id, on_date, teacher_id, kind_key, lang, body, state)
+     SELECT o.ser_id, o.on_date, o.teacher_id, s.kind_key,
+            COALESCE((
+              SELECT st.lang
+                FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
+               WHERE ss.ser_id = o.ser_id
+               ORDER BY ss.student_id LIMIT 1
+            ), 'ko'),
+            '{}'::jsonb,
+            CASE WHEN upper(o.span) <= now() THEN 'none'::rep_state_t ELSE 'plan'::rep_state_t END
+       FROM ser_occ o
+       JOIN ser s ON s.id = o.ser_id
+       JOIN kind k ON k.key = s.kind_key
+      WHERE o.ser_id = ANY($1) AND k.rep AND NOT o.canceled
+     ON CONFLICT (ser_id, on_date) DO UPDATE SET
+       teacher_id = EXCLUDED.teacher_id,
+       kind_key = EXCLUDED.kind_key
+     WHERE rep.state = ANY($2::rep_state_t[])`,
+    [serIds, REPORT_UNWRITTEN_CANDIDATE_DB],
+  );
+
+  // 아직 제출하지 않은 리포트만 현재 명단으로 다시 만든다. wait/ok/rej는 제출 당시 대상을 보존한다.
+  await q.query(
+    `DELETE FROM rep_stu rs
+      USING rep r
+      WHERE rs.rep_id = r.id
+        AND r.ser_id = ANY($1)
+        AND r.state = ANY($2::rep_state_t[])`,
+    [serIds, REPORT_UNWRITTEN_CANDIDATE_DB],
+  );
+  await q.query(
+    `INSERT INTO rep_stu (rep_id, student_id, deliver)
+     SELECT r.id, ss.student_id, true
+       FROM rep r
+       JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
+       JOIN ser_stu ss ON ss.ser_id = r.ser_id
+       LEFT JOIN exc e ON e.ser_id = o.ser_id AND e.on_date = o.on_date
+      WHERE r.ser_id = ANY($1)
+        AND r.state = ANY($2::rep_state_t[])
+        AND NOT o.canceled
+        AND NOT EXISTS (
+          SELECT 1 FROM exc_stu_out xo
+           WHERE xo.exc_id = e.id AND xo.student_id = ss.student_id
+        )
+     ON CONFLICT (rep_id, student_id) DO NOTHING`,
+    [serIds, REPORT_UNWRITTEN_CANDIDATE_DB],
+  );
 }
 
 /**
@@ -120,5 +178,6 @@ export async function project(
        canceled = EXCLUDED.canceled, span = EXCLUDED.span`,
     vals,
   );
+  await projectReports(q, serIds);
   return rows.length;
 }

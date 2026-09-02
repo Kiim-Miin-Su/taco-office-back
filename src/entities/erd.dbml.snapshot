@@ -1,6 +1,6 @@
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.5  (2026-08-29) — REP.student_id 제거 · ZACC 암호 컬럼 · GUIDE.reason 폭 교정
+// version : 4.6  (2026-09-02) — REP.body 3입력 계약 CHECK · 신규 회차 REP/REP_STU 투영
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -23,7 +23,7 @@
 //
 //   v4.0 → v4.1 — 2026-08-27 대표 결정 반영
 //     N-1 정산 조건    → **작성 기준.** REP.state 를 정산 판정에 쓰지 않는다 (D-R7)
-//     N-2 리포트 필드  → **5칸 고정.** REP.body 는 다섯 키만 (D-R40)
+//     N-2 리포트 필드  → **5섹션 고정.** REP.body 는 자동 2섹션을 뺀 입력 3키만 (D-R15·D-R40)
 //     N-3 강사 역할    → **role_t 에 존치.** teacher · manager · admin · ceo 4종 (D-R39)
 //     N-4 회계 권한    → **지출·총수입만 대표.** 나머지는 매니저 이상 (D-R39)
 //     N-5 양식 매핑    → **양식은 하나.** KIND.rep_form 을 쓰지 않는다 (D-R40)
@@ -333,7 +333,7 @@ Table REP {
   teacher_id   bigint       [ref: > STAFF.id]
   kind_key     varchar(16)  [ref: > KIND.key]
   lang         varchar(2)   [not null, default: 'ko']
-  body         jsonb        [not null, note: '5칸 고정 (D-R40) — {progress, understanding, attitude, homework, note}']
+  body         jsonb        [not null, note: '5개 섹션 중 강사 입력 3칸 (D-R15·D-R40) — {} 또는 {content, progress, homework} 세 문자열만']
   state        rep_state_t  [not null, default: 'none']
   written_at   timestamptz
   submitted_at timestamptz
@@ -984,11 +984,15 @@ Table SER_OCC {
 // v4.3 → v4.4 (2026-08-29 · TBO-26 시드)
 //   - REP.student_id       삭제. (ser_id, on_date) 유니크와 모순이었다 —
 //                          그룹 수업이면 한 회차에 학생이 여럿이라 넣을 수가 없다.
-//                          학생은 REP_STU 가 갖는다 (CONTRACTS §10.5 의 ReportUpsertDto 도
-//                          sessionId 만 받는다). 그룹 시드를 넣다가 제약이 걸려 드러났다.
+//                          학생은 REP_STU 가 갖는다. 회차 식별자 serId + onDate는
+//                          경로에 한 번만 있다. 그룹 시드를 넣다가 제약이 걸려 드러났다.
 //   ! ZACC.login_secret · meeting_pw_enc  erd 에 있는데 마이그레이션에 없었다 → 추가
 //   ~ GUIDE.reason         varchar(12) → varchar(20). note 에 적어 둔 'teacher_change' 가
 //                          14자라 자기 문서의 값이 자기 컬럼에 안 들어갔다.
+//
+// v4.5 → v4.6 (2026-09-02 · TBO-44 계약 전수 검사)
+//   + REP.body             {} 또는 content/progress/homework 세 문자열 키만 허용하는 CHECK
+//   ~ REP · REP_STU        보고 대상 회차를 SER_OCC 투영과 같은 트랜잭션에서 생성·명단 동기화
 //
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
@@ -1027,6 +1031,11 @@ Table SER_OCC {
 //   ALTER TABLE inv ADD CONSTRAINT inv_paid_le_amount
 //     CHECK (paid_amount >= 0 AND paid_amount <= amount);
 //   ALTER TABLE payout ADD CONSTRAINT payout_net_nonneg CHECK (net >= 0);
+//
+//   ── 리포트 JSON 계약 — 1756900000000-report-body-contract.ts
+//   ALTER TABLE rep ADD CONSTRAINT rep_body_contract CHECK (
+//     body = '{}'::jsonb OR body 가 content · progress · homework 세 문자열 키만 보유
+//   );
 //
 //   ── 상태 되돌리기 금지는 제약이 아니라 서비스에서 막는다
 //      unpaid → partial → paid, 그리고 → void. 그 외 전이는 409.

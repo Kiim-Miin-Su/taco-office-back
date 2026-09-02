@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
-import { REPORT_PENDING_DB } from '../../lib/rules';
+import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import type { ExecDto, ExecStatDto } from './exec.dto';
 import { kstAt } from '../../lib/sql';
 
@@ -44,9 +44,12 @@ export class ExecService {
       this.one(
         `SELECT count(*)::text n FROM rep r
            JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
-          WHERE r.state = ANY($3) AND upper(o.span) < now()
+           JOIN ser s ON s.id = r.ser_id
+           JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
+          WHERE r.state = ANY($3::rep_state_t[]) AND upper(o.span) < now()
+            AND k.rep AND NOT o.canceled
             AND r.on_date BETWEEN $1::date AND $2::date`,
-        [from, to, REPORT_PENDING_DB],
+        [from, to, REPORT_UNWRITTEN_CANDIDATE_DB],
       ),
     ]);
 

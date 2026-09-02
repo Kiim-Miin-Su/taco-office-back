@@ -65,6 +65,8 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   const made: number[] = [];
   afterEach(async () => {
     if (!made.length) return;
+    await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [made]);
+    await q(`DELETE FROM rep WHERE ser_id = ANY($1)`, [made]);
     await q(`DELETE FROM ser_occ WHERE ser_id = ANY($1)`, [made]);
     await q(`DELETE FROM exc_stu_out WHERE exc_id IN (SELECT id FROM exc WHERE ser_id = ANY($1))`, [made]);
     await q(`DELETE FROM exc WHERE ser_id = ANY($1)`, [made]);
@@ -112,6 +114,19 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(Number(n[0].n)).toBeGreaterThan(0);
     const stu = await q<{ n: string }>(`SELECT count(*)::text n FROM ser_stu WHERE ser_id=$1`, [id]);
     expect(Number(stu[0].n)).toBe(2);
+    const rep = await q<{ reports: string; recipients: string }>(
+      `SELECT count(DISTINCT r.id)::text AS reports, count(rs.student_id)::text AS recipients
+         FROM rep r LEFT JOIN rep_stu rs ON rs.rep_id = r.id WHERE r.ser_id=$1`,
+      [id],
+    );
+    expect(Number(rep[0].reports)).toBeGreaterThan(0);
+    expect(Number(rep[0].recipients)).toBe(Number(rep[0].reports) * 2);
+  });
+
+  it('리포트 비대상 종류는 회차만 만들고 REP를 만들지 않는다', async () => {
+    const { id } = await makeSer({ kindKey: 'study', subKey: 'study-room' });
+    const rep = await q<{ n: string }>(`SELECT count(*)::text n FROM rep WHERE ser_id=$1`, [id]);
+    expect(Number(rep[0].n)).toBe(0);
   });
 
   it("scope='this' — EXC 한 줄만 생기고 규칙은 그대로다", async () => {

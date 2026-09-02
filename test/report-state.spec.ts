@@ -1,5 +1,5 @@
 import { addD } from '../src/lib/recurrence';
-import { effectiveRepState } from '../src/lib/rules';
+import { effectiveRepState, effectiveRepStateFromEnded } from '../src/lib/rules';
 import { SEED_TODAY } from '../src/seed/base';
 import { buildReports } from '../src/seed/outputs';
 import type { OccSeed } from '../src/seed/schedule';
@@ -27,6 +27,8 @@ describe('리포트 상태 — 캘린더 색상의 단일 진실원', () => {
     expect(effectiveRepState('none', session, true, SEED_TODAY, 17 * 60)).toBe('none');
     expect(effectiveRepState('wait', session, true, SEED_TODAY, 15 * 60)).toBe('wait');
     expect(effectiveRepState('plan', session, false, SEED_TODAY, 15 * 60)).toBe('na');
+    expect(effectiveRepStateFromEnded('plan', true, true)).toBe('none');
+    expect(effectiveRepStateFromEnded('none', true, false)).toBe('plan');
   });
 
   it('미래 수업은 예정(plan)이다', () => {

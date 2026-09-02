@@ -92,13 +92,25 @@ export function effectiveRepState(
   today: IsoDate,
   nowMin: Minutes,
 ): RepStateDb {
+  return effectiveRepStateFromEnded(stored, reportable, isPast(s, today, nowMin));
+}
+
+/**
+ * DB 쿼리가 이미 `upper(span) <= now()`를 계산한 경우의 같은 판정.
+ * 서비스마다 날짜/시각 계산을 다시 구현하지 않도록 위 함수와 이 함수가 한 결론을 공유한다.
+ */
+export function effectiveRepStateFromEnded(
+  stored: string | null | undefined,
+  reportable: boolean,
+  ended: boolean,
+): RepStateDb {
   if (!reportable) return 'na';
 
   if (stored === 'draft' || stored === 'wait' || stored === 'ok' || stored === 'rej') {
     return stored;
   }
 
-  return isPast(s, today, nowMin) ? 'none' : 'plan';
+  return ended ? 'none' : 'plan';
 }
 
 /** DB 에서 읽은 값을 규칙이 쓰는 이름으로. 모르는 값이면 'na' 로 둔다. */
@@ -119,6 +131,59 @@ export const REPORT_WRITTEN_DB: RepStateDb[] = (Object.keys(REP_STATE_FROM_DB) a
  * `na`(리포트 대상 아님) · `plan`(예정) 은 밀린 것이 아니다 — 셋을 섞으면 독촉이 엉뚱한 사람에게 간다.
  */
 export const REPORT_PENDING_DB: RepStateDb[] = ['none', 'draft'];
+
+/**
+ * 종료 여부를 함께 적용하기 전의 미작성 후보. `na`·`plan`도 시간이 지나면 `none`이 되므로
+ * SQL 독촉 조회는 이 목록 + `reportable` + `ended`를 함께 써야 한다.
+ */
+export const REPORT_UNWRITTEN_CANDIDATE_DB: RepStateDb[] = ['na', 'plan', ...REPORT_PENDING_DB];
+
+/* ══ 리포트 입력 계약 · 저장 방어 · 전이 규칙 ═══════════════════════════
+   D-R15 · D-R40의 「5개 섹션」은 메타데이터 2개 + 강사 입력 3개다.
+   순서 · 키 · 문구 · 길이는 이 배열에서만 정한다. DTO·프론트·DB 제약이
+   별도의 5개 입력으로 새는 것을 막는다. */
+export const REPORT_FIELDS = [
+  { key: 'content', label: '③ 수업 내용', hint: '이번 수업에서 다룬 내용', min: 1, max: 2000 },
+  { key: 'progress', label: '④ 진도', hint: '어디까지 나갔는가', min: 1, max: 2000 },
+  { key: 'homework', label: '⑤ 과제', hint: '다음 수업 전까지 할 일', min: 1, max: 2000 },
+] as const;
+
+export type ReportFieldKey = (typeof REPORT_FIELDS)[number]['key'];
+export type ReportBody = Record<ReportFieldKey, string>;
+export type ReportWriteAction = 'draft' | 'submit';
+
+export interface ReportWriteContext {
+  actorId: number;
+  teacherId: number | null;
+  canCrudAll: boolean;
+  reportable: boolean;
+  canceled: boolean;
+  ended: boolean;
+  state: RepStateDb;
+}
+
+export type ReportWriteIssue =
+  | 'REPORT_NOT_ALLOWED'
+  | 'REPORT_CANCELED'
+  | 'REPORT_NOT_ENDED'
+  | 'REPORT_FORBIDDEN'
+  | 'REPORT_LOCKED';
+
+/** 리포트를 저장할 수 없는 첫 사유. 컨트롤러·서비스에서 상태를 재판정하지 않는다. */
+export function reportWriteIssue(c: ReportWriteContext): ReportWriteIssue | null {
+  if (!c.reportable) return 'REPORT_NOT_ALLOWED';
+  if (c.canceled) return 'REPORT_CANCELED';
+  if (!c.ended) return 'REPORT_NOT_ENDED';
+  if (c.actorId !== c.teacherId && !c.canCrudAll) return 'REPORT_FORBIDDEN';
+  if (c.state === 'wait' || c.state === 'ok') return 'REPORT_LOCKED';
+  return null;
+}
+
+/** 제출은 세 칸을 모두 채워야 한다. 임시저장은 빈 문자열을 허용한다. */
+export function reportBodyIssue(body: ReportBody, action: ReportWriteAction): ReportFieldKey | null {
+  if (action === 'draft') return null;
+  return REPORT_FIELDS.find((field) => body[field.key].trim().length < field.min)?.key ?? null;
+}
 
 /**
  * 안내(GUIDE) 에서 「아직 안 보냄」.
