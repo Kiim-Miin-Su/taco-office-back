@@ -114,11 +114,11 @@ describe('apFlow — 세 묶음', () => {
     expect(f.waiting.map((r) => r.id)).toEqual([2, 1]);
   });
 
-  it('다섯 갈래가 전부 정규화된다 — 빠진 갈래가 없다 (D-R26)', () => {
+  it('공통 결재 다섯 갈래와 강사 리포트가 정규화된다 — 빠진 갈래가 없다 (D-R26·D-R34)', () => {
     const f = apFlow([], ME, true);
     // 한동안 gpapack 이 「표가 없다」로 빠져 있었는데 표는 처음부터 있었다
     expect(f.missingKinds).toEqual([]);
-    expect(AP_KINDS).toHaveLength(5);
+    expect(AP_KINDS).toEqual(['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack']);
     expect(AP_KINDS_MISSING.every((k) => (AP_KINDS as readonly string[]).includes(k))).toBe(true);
   });
 

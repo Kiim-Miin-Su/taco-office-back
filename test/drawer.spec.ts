@@ -50,7 +50,7 @@ d('우측 서랍 — §14~§21', () => {
       );
     }
 
-    // 강사가 올린 요청 3건 — **하나도 빠지지 않고** 대기함에 떠야 한다 (D-R34)
+    // 강사가 올린 요청 3건 — **하나도 빠지지 않고** 대기함에 떠야 한다
     for (const n of [1, 2, 3]) {
       const r = await ds.query(
         `INSERT INTO req (req_type, staff_id, state, payload)
@@ -140,6 +140,15 @@ d('우측 서랍 — §14~§21', () => {
       .filter((a: { kind: string }) => a.kind === 'req')
       .map((a: { id: number }) => a.id);
     REQ_IDS.forEach((id) => expect(ids).toContain(id));
+  });
+
+  it('D-R34 · 제출된 강사 리포트(REP)도 승인자 대기함에 전건 뜬다', async () => {
+    const expected = await ds.query(`SELECT id FROM rep WHERE state='wait'`);
+    const r = await get('/drawer', MANAGER).expect(200);
+    const ids = r.body.approvals.waiting
+      .filter((a: { kind: string }) => a.kind === 'rep')
+      .map((a: { id: number }) => a.id);
+    expected.forEach((row: { id: string }) => expect(ids).toContain(Number(row.id)));
   });
 
   it('배지 숫자는 되돌아온 것 + 기다리는 것과 정확히 같다', async () => {

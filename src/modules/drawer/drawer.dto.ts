@@ -6,9 +6,9 @@ import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
 
-/** §14 · §75 결재 한 줄 — 다섯 갈래가 같은 모양으로 온다 (D-R26) */
+/** §14 · §75 결재 한 줄 — 공통 5종과 강사 리포트가 같은 모양으로 온다 (D-R26 · D-R34) */
 export class ApRowDto {
-  @ApiProperty({ enum: ['rpt', 'plan', 'req', 'chreq', 'gpapack'] }) kind!: string;
+  @ApiProperty({ enum: ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack'] }) kind!: string;
   @ApiProperty() id!: number;
   @ApiProperty() title!: string;
   @ApiPropertyOptional(S) sub?: string | null;

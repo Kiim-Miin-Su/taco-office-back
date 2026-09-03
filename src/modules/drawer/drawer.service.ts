@@ -34,9 +34,30 @@ export class DrawerService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
-  /** 다섯 갈래를 읽어 한 모양으로 — GPAPACK 은 표가 없어 빠진다 (N-13) */
+  /** §75 공통 다섯 갈래와 §14 강사 리포트를 읽어 한 모양으로 만든다. */
   private async approvalRows(): Promise<ApRow[]> {
     const rows: ApRow[] = [];
+
+    // §14의 강사 리포트 전건 큐. 대표 보고(RPT)와 수업 리포트(REP)는 다른 표다.
+    for (const r of await this.q(
+      `SELECT r.id, r.ser_id, to_char(r.on_date,'YYYY-MM-DD') AS on_date, r.state,
+              r.reject_reason, r.teacher_id, s.name AS teacher_name,
+              COALESCE(string_agg(st.name, ' · ' ORDER BY st.id), '학생 없음') AS student_names,
+              ${kstAt(`COALESCE(r.reviewed_at, r.submitted_at, r.written_at, r.on_date::timestamptz)`)} AS at
+         FROM rep r
+         LEFT JOIN staff s ON s.id = r.teacher_id
+         LEFT JOIN rep_stu rs ON rs.rep_id = r.id
+         LEFT JOIN stu st ON st.id = rs.student_id
+        WHERE r.state = ANY(ARRAY['wait','ok','rej']::rep_state_t[])
+        GROUP BY r.id, s.name`,
+    )) {
+      rows.push({
+        kind: 'rep', id: Number(r.id),
+        title: `리포트 · ${String(r.student_names)} ${String(r.on_date)}`,
+        sub: null, byId: num(r.teacher_id), byName: str(r.teacher_name), at: String(r.at),
+        state: toApState(str(r.state)), why: str(r.reject_reason), go: '/reports',
+      });
+    }
 
     for (const r of await this.q(
       `SELECT r.id, r.rpt_type, to_char(r.on_date,'YYYY-MM-DD') AS on_date, r.state, r.reject_reason,

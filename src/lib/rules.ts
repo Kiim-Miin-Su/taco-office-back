@@ -151,6 +151,7 @@ export const REPORT_FIELDS = [
 export type ReportFieldKey = (typeof REPORT_FIELDS)[number]['key'];
 export type ReportBody = Record<ReportFieldKey, string>;
 export type ReportWriteAction = 'draft' | 'submit';
+export type ReportReviewDecision = 'approve' | 'reject';
 
 export interface ReportWriteContext {
   actorId: number;
@@ -183,6 +184,28 @@ export function reportWriteIssue(c: ReportWriteContext): ReportWriteIssue | null
 export function reportBodyIssue(body: ReportBody, action: ReportWriteAction): ReportFieldKey | null {
   if (action === 'draft') return null;
   return REPORT_FIELDS.find((field) => body[field.key].trim().length < field.min)?.key ?? null;
+}
+
+export interface ReportReviewContext {
+  canApprove: boolean;
+  state: RepStateDb;
+  decision: ReportReviewDecision;
+  reason?: string | null;
+}
+
+export type ReportReviewIssue =
+  | 'REPORT_REVIEW_FORBIDDEN'
+  | 'REPORT_NOT_WAITING'
+  | 'APPROVE_REASON_FORBIDDEN'
+  | 'REJECT_REASON_REQUIRED';
+
+/** 승인·반려의 유일한 전이 방어. 화면은 `canReview` 결과만 읽는다 (D-R13 · D-R34). */
+export function reportReviewIssue(c: ReportReviewContext): ReportReviewIssue | null {
+  if (!c.canApprove) return 'REPORT_REVIEW_FORBIDDEN';
+  if (c.state !== 'wait') return 'REPORT_NOT_WAITING';
+  if (c.decision === 'approve' && c.reason !== undefined) return 'APPROVE_REASON_FORBIDDEN';
+  if (c.decision === 'reject' && !c.reason?.trim()) return 'REJECT_REASON_REQUIRED';
+  return null;
 }
 
 /**

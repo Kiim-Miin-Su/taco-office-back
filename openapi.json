@@ -662,6 +662,57 @@
         ]
       }
     },
+    "/reports/{serId}/{onDate}/review": {
+      "post": {
+        "operationId": "ReportsController_review",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "path",
+            "description": "REP 복합 유니크 키의 날짜",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportReviewDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDetailDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "제출된 리포트 승인/반려 — 반려 사유 필수, 승인 여부는 정산과 독립",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/accounting": {
       "get": {
         "operationId": "AccountingController_all",
@@ -2187,6 +2238,10 @@
             "type": "boolean",
             "description": "현재 사용자·회차·상태 기준 저장 가능 여부"
           },
+          "canReview": {
+            "type": "boolean",
+            "description": "현재 사용자·상태 기준 승인/반려 가능 여부"
+          },
           "lang": {
             "type": "string"
           },
@@ -2222,6 +2277,7 @@
           "body",
           "fields",
           "canEdit",
+          "canReview",
           "lang"
         ]
       },
@@ -2245,6 +2301,26 @@
           "content",
           "progress",
           "homework"
+        ]
+      },
+      "ReportReviewDto": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "반려 시 필수 (D-R13)"
+          }
+        },
+        "required": [
+          "decision"
         ]
       },
       "MoneySummaryDto": {
@@ -3705,6 +3781,7 @@
           "kind": {
             "type": "string",
             "enum": [
+              "rep",
               "rpt",
               "plan",
               "req",

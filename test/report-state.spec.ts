@@ -1,5 +1,5 @@
 import { addD } from '../src/lib/recurrence';
-import { effectiveRepState, effectiveRepStateFromEnded } from '../src/lib/rules';
+import { effectiveRepState, effectiveRepStateFromEnded, reportReviewIssue } from '../src/lib/rules';
 import { SEED_TODAY } from '../src/seed/base';
 import { buildReports } from '../src/seed/outputs';
 import type { OccSeed } from '../src/seed/schedule';
@@ -29,6 +29,19 @@ describe('리포트 상태 — 캘린더 색상의 단일 진실원', () => {
     expect(effectiveRepState('plan', session, false, SEED_TODAY, 15 * 60)).toBe('na');
     expect(effectiveRepStateFromEnded('plan', true, true)).toBe('none');
     expect(effectiveRepStateFromEnded('none', true, false)).toBe('plan');
+  });
+
+  it('승인·반려는 wait에서만 열리고 반려 사유를 한 함수가 강제한다', () => {
+    expect(reportReviewIssue({ canApprove: false, state: 'wait', decision: 'approve' }))
+      .toBe('REPORT_REVIEW_FORBIDDEN');
+    expect(reportReviewIssue({ canApprove: true, state: 'draft', decision: 'approve' }))
+      .toBe('REPORT_NOT_WAITING');
+    expect(reportReviewIssue({ canApprove: true, state: 'wait', decision: 'reject', reason: '  ' }))
+      .toBe('REJECT_REASON_REQUIRED');
+    expect(reportReviewIssue({ canApprove: true, state: 'wait', decision: 'approve', reason: '불필요' }))
+      .toBe('APPROVE_REASON_FORBIDDEN');
+    expect(reportReviewIssue({ canApprove: true, state: 'wait', decision: 'approve' })).toBeNull();
+    expect(reportReviewIssue({ canApprove: true, state: 'wait', decision: 'reject', reason: '보완' })).toBeNull();
   });
 
   it('미래 수업은 예정(plan)이다', () => {

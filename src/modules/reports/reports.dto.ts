@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsString, Matches, MaxLength, Min } from 'class-validator';
-import { REPORT_FIELDS, type ReportFieldKey } from '../../lib/rules';
+import { IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import { REPORT_FIELDS, type ReportFieldKey, type ReportReviewDecision } from '../../lib/rules';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -76,6 +76,16 @@ export class ReportBodyDto {
 /** 임시저장과 제출이 같은 입력 모양을 쓴다. 단, 제출은 rules.ts 가 빈 칸을 막는다. */
 export class ReportUpsertDto extends ReportBodyDto {}
 
+export class ReportReviewDto {
+  @ApiProperty({ enum: ['approve', 'reject'] })
+  @IsIn(['approve', 'reject'])
+  decision!: ReportReviewDecision;
+
+  @ApiPropertyOptional({ maxLength: 2000, description: '반려 시 필수 (D-R13)' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  reason?: string;
+}
+
 export class ReportFieldDto {
   @ApiProperty({ enum: REPORT_FIELDS.map((field) => field.key) }) key!: ReportFieldKey;
   @ApiProperty() label!: string;
@@ -89,6 +99,7 @@ export class ReportDetailDto extends ReportRowDto {
   @ApiProperty({ type: [ReportFieldDto], description: '화면이 순서·문구·제한을 재정의하지 않고 그대로 그린다' })
   fields!: ReportFieldDto[];
   @ApiProperty({ description: '현재 사용자·회차·상태 기준 저장 가능 여부' }) canEdit!: boolean;
+  @ApiProperty({ description: '현재 사용자·상태 기준 승인/반려 가능 여부' }) canReview!: boolean;
   @ApiProperty() lang!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) writtenAt?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) submittedAt?: string | null;

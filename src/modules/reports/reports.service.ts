@@ -5,12 +5,12 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
   LATE_REPORT_TIERS, REPORT_FIELDS, REPORT_UNWRITTEN_CANDIDATE_DB,
-  effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue, reportWriteIssue, tierFor,
-  type RepStateDb, type ReportBody, type ReportWriteAction, type ReportWriteIssue,
+  effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue, reportReviewIssue, reportWriteIssue, tierFor,
+  type RepStateDb, type ReportBody, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
 import { START_MIN } from '../../lib/sql';
 import type {
-  ReportDetailDto, ReportRowDto, ReportUpsertDto, UnwrittenDto,
+  ReportDetailDto, ReportReviewDto, ReportRowDto, ReportUpsertDto, UnwrittenDto,
 } from './reports.dto';
 
 interface Row {
@@ -50,6 +50,13 @@ const WRITE_ERRORS: Record<ReportWriteIssue, { message: string; status: 'bad' | 
   REPORT_NOT_ENDED: { message: '수업이 끝난 뒤에 리포트를 저장할 수 있습니다', status: 'bad' },
   REPORT_FORBIDDEN: { message: '담당 강사 또는 전체 관리 권한이 필요합니다', status: 'forbidden' },
   REPORT_LOCKED: { message: '제출 대기 또는 승인된 리포트는 고칠 수 없습니다', status: 'conflict' },
+};
+
+const REVIEW_ERRORS: Record<ReportReviewIssue, { message: string; status: 'bad' | 'forbidden' | 'conflict' }> = {
+  REPORT_REVIEW_FORBIDDEN: { message: '리포트 승인 권한이 필요합니다', status: 'forbidden' },
+  REPORT_NOT_WAITING: { message: '승인 대기 중인 리포트만 검토할 수 있습니다', status: 'conflict' },
+  APPROVE_REASON_FORBIDDEN: { message: '승인할 때는 반려 사유를 보낼 수 없습니다', status: 'bad' },
+  REJECT_REASON_REQUIRED: { message: '반려 사유를 입력해야 합니다', status: 'bad' },
 };
 
 @Injectable()
@@ -144,12 +151,15 @@ export class ReportsService {
     }) === null;
   }
 
-  private toDetail(r: DetailRow, actorId: number, canCrudAll: boolean): ReportDetailDto {
+  private toDetail(r: DetailRow, actorId: number, canCrudAll: boolean, canApprove = canCrudAll): ReportDetailDto {
     return {
       ...this.toRow(r, new Date()),
       body: this.body(r.body),
       fields: REPORT_FIELDS.map((field) => ({ ...field })),
       canEdit: this.canEdit(r, actorId, canCrudAll),
+      canReview: reportReviewIssue({
+        canApprove, state: r.state, decision: 'approve',
+      }) === null,
       lang: r.lang,
       writtenAt: r.written_at,
       submittedAt: r.submitted_at,
@@ -165,6 +175,14 @@ export class ReportsService {
 
   private throwWriteIssue(issue: ReportWriteIssue): never {
     const error = WRITE_ERRORS[issue];
+    const body = { code: issue, message: error.message };
+    if (error.status === 'forbidden') throw new ForbiddenException(body);
+    if (error.status === 'conflict') throw new ConflictException(body);
+    throw new BadRequestException(body);
+  }
+
+  private throwReviewIssue(issue: ReportReviewIssue): never {
+    const error = REVIEW_ERRORS[issue];
     const body = { code: issue, message: error.message };
     if (error.status === 'forbidden') throw new ForbiddenException(body);
     if (error.status === 'conflict') throw new ConflictException(body);
@@ -225,11 +243,16 @@ export class ReportsService {
     };
   }
 
-  async detail(serId: number, onDate: string, actorId: number, canCrudAll: boolean): Promise<ReportDetailDto> {
+  async detail(
+    serId: number, onDate: string, actorId: number, canCrudAll: boolean, canApprove = canCrudAll,
+  ): Promise<ReportDetailDto> {
     const row = await this.loadDetail(this.ds, serId, onDate);
     if (!row) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
-    if (actorId !== Number(row.teacher_id) && !canCrudAll) this.throwWriteIssue('REPORT_FORBIDDEN');
-    return this.toDetail(row, actorId, canCrudAll);
+    const submittedForReview = row.state === 'wait' || row.state === 'ok' || row.state === 'rej';
+    if (actorId !== Number(row.teacher_id) && !canCrudAll && !(canApprove && submittedForReview)) {
+      this.throwWriteIssue('REPORT_FORBIDDEN');
+    }
+    return this.toDetail(row, actorId, canCrudAll, canApprove);
   }
 
   async write(
@@ -239,6 +262,7 @@ export class ReportsService {
     action: ReportWriteAction,
     actorId: number,
     canCrudAll: boolean,
+    canApprove: boolean,
   ): Promise<ReportDetailDto> {
     const q = this.ds.createQueryRunner();
     await q.connect();
@@ -280,7 +304,65 @@ export class ReportsService {
       const saved = await this.loadDetail(q, serId, onDate);
       if (!saved) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
       await q.commitTransaction();
-      return this.toDetail(saved, actorId, canCrudAll);
+      return this.toDetail(saved, actorId, canCrudAll, canApprove);
+    } catch (error) {
+      await q.rollbackTransaction();
+      throw error;
+    } finally {
+      await q.release();
+    }
+  }
+
+  async review(
+    serId: number,
+    onDate: string,
+    dto: ReportReviewDto,
+    actorId: number,
+    canCrudAll: boolean,
+    canApprove: boolean,
+  ): Promise<ReportDetailDto> {
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      const row = await this.loadDetail(q, serId, onDate, true);
+      if (!row) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
+
+      const issue = reportReviewIssue({
+        canApprove, state: row.state, decision: dto.decision, reason: dto.reason,
+      });
+      if (issue) this.throwReviewIssue(issue);
+
+      const state: RepStateDb = dto.decision === 'approve' ? 'ok' : 'rej';
+      const rejectReason = dto.decision === 'reject' ? dto.reason!.trim() : null;
+      await q.query(
+        `UPDATE rep
+            SET state = $2::rep_state_t, reviewed_at = now(), reviewer_id = $3, reject_reason = $4
+          WHERE id = $1`,
+        [row.id, state, actorId, rejectReason],
+      );
+      await q.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1, 'REP', $2, $3, $4::jsonb, $5::jsonb)`,
+        [actorId, row.id, dto.decision, JSON.stringify({ state: row.state }), JSON.stringify({ state, rejectReason })],
+      );
+      if (row.teacher_id) {
+        await q.query(
+          `INSERT INTO noti (to_id, from_id, body, link)
+           VALUES ($1, $2, $3, '/reports')`,
+          [
+            Number(row.teacher_id), actorId,
+            dto.decision === 'approve'
+              ? `${row.on_date} 리포트가 승인되었습니다.`
+              : `${row.on_date} 리포트가 반려되었습니다: ${rejectReason}`,
+          ],
+        );
+      }
+
+      const saved = await this.loadDetail(q, serId, onDate);
+      if (!saved) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
+      await q.commitTransaction();
+      return this.toDetail(saved, actorId, canCrudAll, canApprove);
     } catch (error) {
       await q.rollbackTransaction();
       throw error;

@@ -1,5 +1,5 @@
 /**
- * 결재 흐름 — 다섯 갈래를 **한 모양으로** 만든다 (D-R26 · §14 · §75).
+ * 결재 흐름 — 공통 결재 다섯 갈래와 강사 리포트를 **한 모양으로** 만든다 (D-R26 · §14 · §75).
  *
  * 승인 대기함(§14)과 결재 흐름 오버레이(§75)는 **같은 데이터를 다르게 묶어 보여 줄 뿐**이다.
  * 두 화면이 각자 정규화하면 배지 숫자와 목록이 어긋난다 — 그래서 여기 한 곳에서만 만든다.
@@ -7,13 +7,12 @@
  * 순수 함수다. 행을 읽어 오는 일은 서비스가 하고, 여기서는 모양만 바꾼다 —
  * DB 없이 테스트할 수 있어야 규칙이 굳는다.
  *
- * ⚠ `GPAPACK` 은 아직 표가 없다 (N-13 대기). 다섯 갈래 중 **넷만** 정규화한다.
- *    빠졌다는 사실을 `ApFlow.missingKinds` 로 내보내 화면이 말할 수 있게 한다 —
- *    조용히 네 갈래만 보여 주면 「자료 요청은 결재가 없나 보다」가 된다.
+ * §75의 공통 다섯 갈래(RPT·PLAN·REQ·CHREQ·GPAPACK)에 §14의 강사 리포트(REP)를 더한다.
+ * `ApFlow.missingKinds`는 저장소가 실제로 없는 종류가 생길 때만 쓴다.
  */
 
-/** 결재가 도는 다섯 갈래 (D-R26) */
-export const AP_KINDS = ['rpt', 'plan', 'req', 'chreq', 'gpapack'] as const;
+/** §75 공통 다섯 갈래 + §14 강사 리포트 (D-R26 · D-R34) */
+export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack'] as const;
 export type ApKind = (typeof AP_KINDS)[number];
 
 /**
@@ -26,6 +25,7 @@ export type ApKind = (typeof AP_KINDS)[number];
 export const AP_KINDS_MISSING: ApKind[] = [];
 
 export const AP_KIND_LABEL: Record<ApKind, string> = {
+  rep: '리포트',
   rpt: '대표 보고',
   plan: '기획',
   req: '요청',
@@ -135,7 +135,7 @@ export const isKnownApWord = (raw: string | null | undefined): boolean =>
   Object.values(AP_STATE_WORDS).some((ws) => ws.includes(String(raw ?? '').toLowerCase()));
 
 /**
- * 다섯(지금은 넷) 갈래를 한 목록으로 묶는다.
+ * 공통 결재 다섯 갈래와 강사 리포트를 한 목록으로 묶는다.
  *
  * @param viewerId  「내가 올린 것」을 가르는 기준
  * @param canApprove 승인 권한이 있는가 — 없으면 `waiting` 에 남의 건이 들어가지 않는다 (D-R39)

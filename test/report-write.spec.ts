@@ -21,6 +21,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   let teacherToken = '';
   let otherToken = '';
   let managerToken = '';
+  let reviewerToken = '';
 
   /** 동시에 두 Jest 프로세스가 돌아도 테스트 행·계정을 서로 지우지 않는다. */
   const RUN = 9_000_000 + process.pid * 10;
@@ -29,9 +30,11 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   const OTHER = RUN + 3;
   const MANAGER = RUN + 4;
   const STUDENT = RUN + 5;
+  const REVIEWER = RUN + 6;
   const TEACHER_EMAIL = `report-teacher-${RUN}@t.kr`;
   const OTHER_EMAIL = `report-other-${RUN}@t.kr`;
   const MANAGER_EMAIL = `report-manager-${RUN}@t.kr`;
+  const REVIEWER_EMAIL = `report-reviewer-${RUN}@t.kr`;
   const DATE = '2025-01-02';
   const PW = 'report-write-1234';
   const body = { content: '미분 응용 문제를 풀었습니다.', progress: '수학 II 42p까지', homework: '43~45p 풀기' };
@@ -40,12 +43,14 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     ds.query(sql, p) as Promise<T[]>;
 
   async function clean(): Promise<void> {
+    await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)`, [SER]);
     await q(`DELETE FROM rep WHERE ser_id=$1`, [SER]);
     await q(`DELETE FROM ser_occ WHERE ser_id=$1`, [SER]);
     await q(`DELETE FROM ser WHERE id=$1`, [SER]);
     await q(`DELETE FROM stu WHERE id=$1`, [STUDENT]);
-    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[TEACHER, OTHER, MANAGER]]);
+    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
   }
 
   beforeAll(async () => {
@@ -62,12 +67,14 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       [TEACHER, '리포트강사', TEACHER_EMAIL, 'teacher'],
       [OTHER, '다른강사', OTHER_EMAIL, 'teacher'],
       [MANAGER, '리포트매니저', MANAGER_EMAIL, 'manager'],
+      [REVIEWER, '리포트검토자', REVIEWER_EMAIL, 'teacher'],
     ] as const) {
       await q(
         `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,$4,$5,true)`,
         [person[0], person[1], person[2], person[3], hash],
       );
     }
+    await q(`UPDATE staff SET can_approve=true WHERE id=$1`, [REVIEWER]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1, '리포트학생', '10')`, [STUDENT]);
     await q(
       `INSERT INTO ser (id, kind_key, sub_key, teacher_id, mode, start_min, end_min, rrule, from_date, to_date, title)
@@ -96,6 +103,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     teacherToken = await login(TEACHER_EMAIL);
     otherToken = await login(OTHER_EMAIL);
     managerToken = await login(MANAGER_EMAIL);
+    reviewerToken = await login(REVIEWER_EMAIL);
   });
 
   beforeEach(async () => {
@@ -117,6 +125,8 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     .put(`/reports/${SER}/${DATE}/draft`).set('Authorization', `Bearer ${token}`).send(value);
   const submit = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
     .post(`/reports/${SER}/${DATE}/submit`).set('Authorization', `Bearer ${token}`).send(value);
+  const review = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
+    .post(`/reports/${SER}/${DATE}/review`).set('Authorization', `Bearer ${token}`).send(value);
 
   it('상세는 DB의 빈 body를 3개 입력으로 정규화하고 그 순서를 내려준다', async () => {
     const res = await get(teacherToken).expect(200);
@@ -158,9 +168,73 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     expect(firstAt).toBeTruthy();
     expect((await submit(managerToken, body).expect(409)).body.code).toBe('REPORT_LOCKED');
 
-    await q(`UPDATE rep SET state='rej', reviewed_at=now(), reject_reason='보완 필요' WHERE id=$1`, [repId]);
+    await q(
+      `UPDATE rep SET state='rej', reviewed_at=now(), reviewer_id=$2, reject_reason='보완 필요' WHERE id=$1`,
+      [repId, MANAGER],
+    );
     const again = await submit(teacherToken, { ...body, homework: '46p까지' }).expect(201);
     expect(again.body.submittedAt).toBe(firstAt);
     expect(again.body.rejectReason).toBeNull();
+  });
+
+  it('승인 권한·대기 상태·반려 사유를 막고 승인 이력을 원자적으로 남긴다', async () => {
+    await submit(teacherToken, body).expect(201);
+    expect((await review(teacherToken, { decision: 'approve' }).expect(403)).body.code)
+      .toBe('REPORT_REVIEW_FORBIDDEN');
+    expect((await review(managerToken, { decision: 'approve', reason: '불필요' }).expect(400)).body.code)
+      .toBe('APPROVE_REASON_FORBIDDEN');
+    expect((await review(managerToken, { decision: 'reject', reason: '  ' }).expect(400)).body.code)
+      .toBe('REJECT_REASON_REQUIRED');
+
+    const approved = await review(managerToken, { decision: 'approve' }).expect(201);
+    expect(approved.body).toMatchObject({ state: 'ok', canReview: false, rejectReason: null });
+    expect((await review(managerToken, { decision: 'approve' }).expect(409)).body.code)
+      .toBe('REPORT_NOT_WAITING');
+
+    const [row] = await q<{ reviewer_id: string; reviewed_at: string; reject_reason: string | null }>(
+      `SELECT reviewer_id::text, reviewed_at::text, reject_reason FROM rep WHERE id=$1`, [repId],
+    );
+    expect(Number(row.reviewer_id)).toBe(MANAGER);
+    expect(row.reviewed_at).toBeTruthy();
+    expect(row.reject_reason).toBeNull();
+    expect((await q(`SELECT 1 FROM log WHERE entity='REP' AND entity_id=$1 AND action='approve'`, [repId])))
+      .toHaveLength(1);
+    expect((await q(`SELECT 1 FROM noti WHERE to_id=$1 AND from_id=$2 AND link='/reports'`, [TEACHER, MANAGER])))
+      .toHaveLength(1);
+  });
+
+  it('canApprove 예외 권한만 있는 검토자도 전건 큐와 상세를 읽고 검토할 수 있다', async () => {
+    expect((await get(reviewerToken).expect(403)).body.code).toBe('REPORT_FORBIDDEN');
+    const ownOnly = await request(app.getHttpServer())
+      .get('/reports/unwritten').set('Authorization', `Bearer ${reviewerToken}`).expect(200);
+    expect(ownOnly.body.total).toBe(0);
+
+    await submit(teacherToken, body).expect(201);
+    const list = await request(app.getHttpServer())
+      .get('/reports').query({ state: 'wait' })
+      .set('Authorization', `Bearer ${reviewerToken}`).expect(200);
+    expect(list.body.items.some((item: { serId: number }) => item.serId === SER)).toBe(true);
+    expect((await get(reviewerToken).expect(200)).body).toMatchObject({ canEdit: false, canReview: true });
+    expect((await review(reviewerToken, { decision: 'approve' }).expect(201)).body.state).toBe('ok');
+    expect((await get(reviewerToken).expect(200)).body).toMatchObject({ state: 'ok', canReview: false });
+  });
+
+  it('반려 사유가 상세에 보이고 재제출은 최초 제출 시각을 보존한다', async () => {
+    const first = await submit(teacherToken, body).expect(201);
+    const firstAt = first.body.submittedAt as string;
+    const rejected = await review(managerToken, { decision: 'reject', reason: ' 진도를 보완해 주세요. ' }).expect(201);
+    expect(rejected.body).toMatchObject({ state: 'rej', rejectReason: '진도를 보완해 주세요.', canEdit: true });
+
+    const again = await submit(teacherToken, { ...body, progress: '수학 II 45p까지' }).expect(201);
+    expect(again.body).toMatchObject({ state: 'wait', rejectReason: null, canEdit: false });
+    expect(again.body.submittedAt).toBe(firstAt);
+  });
+
+  it('DB도 제출·검토 상태와 시각·검토자·사유의 불일치를 거절한다', async () => {
+    await expect(q(`UPDATE rep SET state='wait' WHERE id=$1`, [repId])).rejects.toThrow();
+    await expect(q(
+      `UPDATE rep SET state='rej', written_at=now(), submitted_at=now(), reject_reason='사유' WHERE id=$1`,
+      [repId],
+    )).rejects.toThrow();
   });
 });

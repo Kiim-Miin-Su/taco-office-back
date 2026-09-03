@@ -1,6 +1,6 @@
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.7  (2026-09-03) — EXC null override + CHREQ 판별 payload 계약
+// version : 4.8  (2026-09-04) — REP 승인·반려 전이 계약
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -361,6 +361,9 @@ Table REP {
   시드 57건 · 지난 2주 55/66건 작성.
   KIND.rep=true 인 종류만 대상 (D-4). repState() 가 na/plan 이면 대상 제외.
   강사료 계산의 근거 — **작성했으면 인정한다** (D-R7). state 는 승인 흐름의 표시일 뿐이다.
+  state=wait/ok/rej 는 written_at·submitted_at 이 반드시 있다. ok/rej 는 reviewed_at·reviewer_id 가
+  반드시 있고, rej 는 공백이 아닌 reject_reason, ok 는 reject_reason=NULL 이다. 그 밖의 상태에는
+  검토 컬럼이 남지 않는다 (rep_review_contract · D-R13·D-R34).
   학부모 발송 전문은 5칸 고정 (D-R15) — 저장 형태와의 매핑도 N-2.
   '''
 }
@@ -1002,6 +1005,11 @@ Table SER_OCC {
 //   + REP.body             {} 또는 content/progress/homework 세 문자열 키만 허용하는 CHECK
 //   ~ REP · REP_STU        보고 대상 회차를 SER_OCC 투영과 같은 트랜잭션에서 생성·명단 동기화
 //
+// v4.7 → v4.8 (2026-09-04 · TBO-44E-1A 리포트 검토)
+//   + REP 승인 계약        wait/ok/rej 제출 시각 필수, ok/rej 검토자·시각 필수,
+//                          rej 사유 필수, ok 사유 NULL, 그 밖의 상태는 검토 컬럼 NULL
+//   + LOG · NOTI           승인/반려 transaction 안에서 이력과 강사 알림을 함께 기록
+//
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
 // ----------------------------------------------------------------------------
@@ -1043,6 +1051,12 @@ Table SER_OCC {
 //   ── 리포트 JSON 계약 — 1756900000000-report-body-contract.ts
 //   ALTER TABLE rep ADD CONSTRAINT rep_body_contract CHECK (
 //     body = '{}'::jsonb OR body 가 content · progress · homework 세 문자열 키만 보유
+//   );
+//
+//   ── 리포트 승인·반려 계약 — 1757200000000-report-review-contract.ts
+//   ALTER TABLE rep ADD CONSTRAINT rep_review_contract CHECK (
+//     (state NOT IN ('wait','ok','rej') OR (written_at IS NOT NULL AND submitted_at IS NOT NULL))
+//     AND 승인/반려 상태에 맞는 reviewed_at · reviewer_id · reject_reason exact 조합
 //   );
 //
 //   ── 상태 되돌리기 금지는 제약이 아니라 서비스에서 막는다
