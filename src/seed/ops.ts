@@ -4,8 +4,18 @@
  */
 import { addD } from '../lib/recurrence';
 import { SEED_TODAY } from './base';
+import { expand } from './schedule';
 
 const D = (n: number) => addD(SEED_TODAY, n);
+const SCHEDULE_OCCURRENCES = expand();
+const occurrenceDate = (serId: number, side: 'past' | 'future', nth = 1) => {
+  const dates = SCHEDULE_OCCURRENCES
+    .filter((o) => o.serId === serId && (side === 'past' ? o.onDate < SEED_TODAY : o.onDate >= SEED_TODAY))
+    .map((o) => o.onDate);
+  const hit = side === 'past' ? dates[dates.length - nth] : dates[nth - 1];
+  if (!hit) throw new Error(`변경 요청 시드의 회차가 없습니다 — ser ${serId} ${side} ${nth}`);
+  return hit;
+};
 
 /** 승인 요청 — 우측 서랍 §14 승인 대기함 */
 export const REQS = [
@@ -17,10 +27,10 @@ export const REQS = [
 
 /** 변경 요청 — §19 넣기 · §20 이력 */
 export const CHREQS = [
-  { serId: 3,  onDate: D(-2), reqType: 'time_move', payload: { startMin: 1080, endMin: 1170 }, reason: '학교 시험 기간이라 1시간 미뤄 주세요', state: 'approved', byId: 7, resolvedBy: 3, applyAll: false, createdAt: D(-6) },
-  { serId: 9,  onDate: D(-4), reqType: 'teacher',   payload: { teacherId: 15 }, reason: '개인 사정으로 하루 대강 부탁드립니다', state: 'approved', byId: 12, resolvedBy: 3, applyAll: false, createdAt: D(-7) },
-  { serId: 17, onDate: D(2),  reqType: 'cancel',    payload: {}, reason: '병가', state: 'pending', byId: 10, applyAll: false, createdAt: D(-1) },
-  { serId: 5,  onDate: null,  reqType: 'room',      payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', state: 'rejected', byId: 9, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
+  { serId: 3,  onDate: occurrenceDate(3, 'past'), reqType: 'time_move', payload: { startMin: 1080, endMin: 1170 }, reason: '학교 시험 기간이라 1시간 미뤄 주세요', state: 'approved', byId: 7, resolvedBy: 3, applyAll: false, createdAt: D(-6) },
+  { serId: 9,  onDate: occurrenceDate(9, 'past'), reqType: 'teacher',   payload: { teacherId: 15 }, reason: '개인 사정으로 하루 대강 부탁드립니다', state: 'approved', byId: 12, resolvedBy: 3, applyAll: false, createdAt: D(-7) },
+  { serId: 17, onDate: occurrenceDate(17, 'future'), reqType: 'cancel', payload: {}, reason: '병가', state: 'pending', byId: 10, applyAll: false, createdAt: D(-1) },
+  { serId: 5,  onDate: occurrenceDate(5, 'past', 2), reqType: 'room', payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', state: 'rejected', byId: 9, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
 ];
 
 /**

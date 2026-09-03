@@ -108,7 +108,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       ser_id: o.serId, on_date: o.onDate, teacher_id: o.teacherId, room_id: o.roomId,
       zacc_id: o.zaccId, canceled: o.canceled, span: span(o.onDate, o.startMin, o.endMin),
     })));
-    await add('exc', exceptions.map((e) => ({ ser_id: e.serId, on_date: e.onDate, canceled: e.canceled, start_min: num((e as { startMin?: number }).startMin), end_min: num((e as { endMin?: number }).endMin), teacher_id: num((e as { teacherId?: number }).teacherId), reason: e.reason, by_id: e.byId, at: `${e.onDate}T00:00:00Z` })));
+    await add('exc', exceptions.map((e) => ({ ser_id: e.serId, on_date: e.onDate, canceled: e.canceled, start_min: num((e as { startMin?: number }).startMin), end_min: num((e as { endMin?: number }).endMin), teacher_set: (e as { teacherId?: number }).teacherId !== undefined, teacher_id: num((e as { teacherId?: number }).teacherId), room_set: false, reason: e.reason, by_id: e.byId, at: `${e.onDate}T00:00:00Z` })));
     // 그날만 빠진 학생 — 예외 id 가 필요하므로 exc 를 넣은 뒤에 붙인다
     const excRows = (await q.query("SELECT id, ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date FROM exc")) as Array<{ id: string; ser_id: string; on_date: string }>;
     const excId = new Map(excRows.map((r) => [`${r.ser_id}|${r.on_date}`, Number(r.id)]));

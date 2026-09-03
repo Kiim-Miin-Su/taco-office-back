@@ -30,6 +30,8 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   const PW = 'sched-write-1234';
   /** 시드와 안 부딪히게 높은 번호대를 쓴다 */
   const CEO = 921;
+  const ROSTER_STUDENT = 9921;
+  const ROSTER_STUDENT_NAME = '명단결과학생';
   const ROOM = 1;
   /** 테스트가 날짜 이동으로 시드 강사 일정과 부딪치지 않게 이 스위트 전용 staff를 쓴다. */
   const T1 = CEO;
@@ -51,6 +53,8 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,'ceo',$4,true)`,
       [CEO, '쓰기대표', 'sched-ceo@t.kr', await bcrypt.hash(PW, 4)],
     );
+    await q(`DELETE FROM stu WHERE id = $1`, [ROSTER_STUDENT]);
+    await q(`INSERT INTO stu (id, name, grade) VALUES ($1, $2, '10')`, [ROSTER_STUDENT, ROSTER_STUDENT_NAME]);
     const res = await request(app.getHttpServer())
       .post('/auth/login').send({ email: 'sched-ceo@t.kr', password: PW }).expect(201);
     token = res.body.accessToken as string;
@@ -58,6 +62,7 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
 
   afterAll(async () => {
     await q(`DELETE FROM staff WHERE id = $1`, [CEO]);
+    await q(`DELETE FROM stu WHERE id = $1`, [ROSTER_STUDENT]);
     await app?.close();
   });
 
@@ -148,6 +153,76 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     const that = rows.find((x) => x.on_date === from);
     expect(Number(that?.teacher_id)).toBe(T2);
     expect(rows.filter((x) => Number(x.teacher_id) === T1).length).toBeGreaterThan(0);
+  });
+
+  it('EXC 마이그레이션 호환 — 이전 서버가 FK만 쓰면 override 플래그를 보존한다', async () => {
+    const { id, from } = await makeSer();
+    await q(
+      `INSERT INTO exc (ser_id, on_date, teacher_id, reason, by_id)
+       VALUES ($1, $2::date, $3, '이전 서버 호환', $4)`,
+      [id, from, T2, CEO],
+    );
+    const [row] = await q<{ teacher_set: boolean }>(
+      `SELECT teacher_set FROM exc WHERE ser_id=$1 AND on_date=$2::date`,
+      [id, from],
+    );
+    expect(row.teacher_set).toBe(true);
+  });
+
+  it("scope='this' null — 자원 미지정을 EXC와 투영에 보존한다", async () => {
+    const { id, from } = await makeSer({ teacherId: T1, roomId: ROOM });
+    await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, teacherId: null, roomId: null })
+      .expect(200);
+
+    const exc = (await q<{
+      teacher_set: boolean; teacher_id: string | null; room_set: boolean; room_id: string | null;
+    }>(`SELECT teacher_set, teacher_id::text, room_set, room_id::text
+          FROM exc WHERE ser_id=$1 AND on_date=$2::date`, [id, from]))[0];
+    expect(exc).toEqual({ teacher_set: true, teacher_id: null, room_set: true, room_id: null });
+
+    const projected = (await q<{ teacher_id: string | null; room_id: string | null }>(
+      `SELECT teacher_id::text, room_id::text FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date`,
+      [id, from],
+    ))[0];
+    expect(projected).toEqual({ teacher_id: null, room_id: null });
+  });
+
+  it('PATCH 방어 — 빈 변경·잘못된 시간·규칙 범위의 null을 저장하지 않는다', async () => {
+    const { id, from } = await makeSer();
+    const empty = await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from }).expect(400);
+    expect(empty.body.code).toBe('EMPTY_PATCH');
+
+    const badRange = await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, startMin: 659 }).expect(400);
+    expect(badRange.body.code).toBe('BAD_RANGE');
+
+    const badNull = await api('patch', `/schedule/${id}`)
+      .send({ scope: 'all', onDate: from, startMin: null }).expect(400);
+    expect(badNull.body.code).toBe('BAD_NULL_SCOPE');
+
+    const exc = await q<{ n: string }>(`SELECT count(*)::text n FROM exc WHERE ser_id=$1`, [id]);
+    expect(Number(exc[0].n)).toBe(0);
+  });
+
+  it("scope='all' null — SER 자원을 비우고 기존 자원 EXC만 초기화한다", async () => {
+    const { id, from } = await makeSer({ teacherId: T1, roomId: ROOM });
+    await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, teacherId: null, roomId: null }).expect(200);
+    await api('patch', `/schedule/${id}`)
+      .send({ scope: 'all', onDate: from, teacherId: null, roomId: null }).expect(200);
+
+    const ser = (await q<{ teacher_id: string | null; room_id: string | null }>(
+      `SELECT teacher_id::text, room_id::text FROM ser WHERE id=$1`, [id],
+    ))[0];
+    expect(ser).toEqual({ teacher_id: null, room_id: null });
+    const exc = await q<{ n: string }>(`SELECT count(*)::text n FROM exc WHERE ser_id=$1`, [id]);
+    expect(Number(exc[0].n)).toBe(0);
+    const projected = await q<{ teacher_id: string | null; room_id: string | null }>(
+      `SELECT DISTINCT teacher_id::text, room_id::text FROM ser_occ WHERE ser_id=$1`, [id],
+    );
+    expect(projected).toEqual([{ teacher_id: null, room_id: null }]);
   });
 
   it('다른 날로 옮긴 EXC는 date=표시 날짜, onDate=원래 키로 조회된다', async () => {
@@ -323,10 +398,16 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   });
 
   it('그날만 빼기 — 명단은 그대로고 그 회차에서만 빠진다 (D-R21)', async () => {
-    const { id, from } = await makeSer();
+    const { id, from } = await makeSer({ subKey: 'ap-chem', studentIds: [1, ROSTER_STUDENT] });
     const r = await api('patch', `/schedule/${id}/roster`)
       .send({ op: 'dropOnce', onDate: from, studentId: 1 }).expect(200);
     expect(r.body.log.length).toBeGreaterThan(0);
+    expect(r.body).toMatchObject({
+      count: 1,
+      cap: 4,
+      needGuide: [ROSTER_STUDENT_NAME],
+      needBook: [ROSTER_STUDENT_NAME],
+    });
 
     const stu = await q<{ n: string }>(`SELECT count(*)::text n FROM ser_stu WHERE ser_id=$1`, [id]);
     expect(Number(stu[0].n)).toBe(2); // 정식 명단은 그대로
@@ -335,6 +416,25 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       `SELECT count(*)::text n FROM exc_stu_out o JOIN exc e ON e.id=o.exc_id
         WHERE e.ser_id=$1 AND e.on_date=$2::date AND o.student_id=1`, [id, from]);
     expect(Number(out[0].n)).toBe(1);
+  });
+
+  it('명단 방어 — 없는 학생·회차와 현재 상태에 맞지 않는 작업을 저장하지 않는다', async () => {
+    const { id, from } = await makeSer();
+
+    const missingStudent = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'add', onDate: from, studentId: 9_999_999 }).expect(404);
+    expect(missingStudent.body.code).toBe('STUDENT_NOT_FOUND');
+
+    const missingOccurrence = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'dropOnce', onDate: plus(from, 1), studentId: 1 }).expect(404);
+    expect(missingOccurrence.body.code).toBe('OCCURRENCE_NOT_FOUND');
+
+    const badOp = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'undoOnce', onDate: from, studentId: 1 }).expect(400);
+    expect(badOp.body.code).toBe('BAD_ROSTER_OP');
+
+    const stu = await q<{ n: string }>(`SELECT count(*)::text n FROM ser_stu WHERE ser_id=$1`, [id]);
+    expect(Number(stu[0].n)).toBe(2);
   });
 
   it('아주 빼기 — 정식 명단에서 사라진다', async () => {

@@ -190,6 +190,8 @@ export function reportBodyIssue(body: ReportBody, action: ReportWriteAction): Re
  * `guide_state_t = draft | ready | sent | read` — 보낸 것은 sent 부터다.
  */
 export const GUIDE_PENDING_DB = ['draft', 'ready'] as const;
+/** 안내가 실제로 발송된 상태. 명단 변경 후 후속 확인도 같은 낱말을 쓴다. */
+export const GUIDE_DONE_DB = ['sent', 'read'] as const;
 
 export const hasReport = (s: SessionLike): boolean =>
   !!s.report && REPORT_WRITTEN.includes(s.report);

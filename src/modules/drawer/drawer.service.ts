@@ -15,6 +15,7 @@ import {
   apFlow, labelOf, toApState,
   GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
+import { isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
 import { notiTone } from '../../lib/noti';
 import { START_MIN, END_MIN, kstAt } from '../../lib/sql';
 import { KST, overdueDays } from '../../lib/kst';
@@ -177,11 +178,15 @@ export class DrawerService {
         WHERE $2::boolean OR c.by_id = $1
         ORDER BY c.created_at DESC`,
       [viewerId, canSeeAll],
-    )).map((r) => ({
-      id: Number(r.id), reqType: String(r.req_type), serId: num(r.ser_id),
-      onDate: str(r.on_date), reason: str(r.reason), state: String(r.state),
-      byName: str(r.by_name), applyAll: r.apply_all === true, at: String(r.at),
-    }));
+    )).map((r) => {
+      const reqType = String(r.req_type);
+      if (!isChreqType(reqType)) throw new Error(`CHREQ.req_type 계약 밖의 값입니다: ${reqType}`);
+      return {
+        id: Number(r.id), reqType, serId: Number(r.ser_id),
+        onDate: String(r.on_date), reason: String(r.reason), state: String(r.state),
+        byName: str(r.by_name), applyAll: r.apply_all === true, at: String(r.at),
+      };
+    });
 
     // 줌 — 로그인 정보(login_secret · meeting_pw_enc)는 **SELECT 에 넣지 않는다**.
     // 학생 참가 링크와 같은 화면에 두지 않는 것이 규칙이다 (erd V9).
@@ -227,19 +232,25 @@ export class DrawerService {
   }
 
   /** §19 변경 요청 넣기 — 겹침 판정은 부르는 쪽(컨트롤러)이 스케줄에서 받아 온다 */
-  async createChangeReq(byId: number, d: {
-    reqType: string; serId?: number | null; onDate?: string | null;
-    payload?: Record<string, unknown> | null; reason: string; applyAll?: boolean;
-  }): Promise<number> {
+  async createChangeReq(byId: number, d: NormalizedChangeRequest): Promise<number> {
     const rows = await this.q<{ id: string }>(
       // 상태는 **적지 않는다** — 표의 기본값('pending')이 낱말의 출처다.
       // 여기에 낱말을 다시 적으면 기본값이 바뀌는 날 두 곳이 갈린다.
       `INSERT INTO chreq (ser_id, on_date, req_type, payload, reason, by_id, apply_all)
        VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) RETURNING id`,
-      [d.serId ?? null, d.onDate ?? null, d.reqType, JSON.stringify(d.payload ?? {}),
-       d.reason, byId, d.applyAll === true],
+      [d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, byId, d.applyAll],
     );
     return Number(rows[0].id);
+  }
+
+  /** JSONB 대상 id는 FK로 보호할 수 없으므로 허용된 표만 여기서 조회한다. */
+  async activeChangeTargetExists(kind: 'teacher' | 'room' | 'zoom', id: number): Promise<boolean> {
+    const table = { teacher: 'staff', room: 'room', zoom: 'zacc' }[kind];
+    const rows = await this.q<{ found: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM ${table} WHERE id=$1 AND active) AS found`,
+      [id],
+    );
+    return rows[0]?.found === true;
   }
 
   /** 겹침을 볼 때 필요한 회차의 시각·자원 — 요청서에 안 적힌 것은 원본에서 가져온다 */

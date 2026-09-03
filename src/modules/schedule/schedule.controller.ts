@@ -4,7 +4,8 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
-  OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, WriteResultDto,
+  OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
+  WriteResultDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
@@ -117,11 +118,11 @@ export class ScheduleController {
   @Patch(':serId/roster')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)' })
-  @ApiOkResponse({ type: WriteResultDto })
+  @ApiOkResponse({ type: RosterResultDto })
   roster(
     @Param('serId', ParseIntPipe) serId: number,
     @Body() dto: RosterPatchDto,
-  ): Promise<WriteResultDto> {
+  ): Promise<RosterResultDto> {
     return this.write.roster(serId, dto);
   }
 }

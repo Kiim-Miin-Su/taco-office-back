@@ -12,16 +12,23 @@ import {
   BadRequestException, Body, Controller, Get, NotFoundException,
   Param, ParseIntPipe, Patch, Post,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody, ApiCreatedResponse, ApiExtraModels, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ScheduleService } from '../schedule/schedule.service';
 import {
-  ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, TodoDoneDto,
+  CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, RoomChangeReqDto,
+  TeacherChangeReqDto, TimeMoveChangeReqDto, TodoDoneDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
 
 @ApiTags('drawer')
+@ApiExtraModels(
+  TimeMoveChangeReqDto, TeacherChangeReqDto, RoomChangeReqDto, ZoomChangeReqDto, CancelChangeReqDto,
+)
 @Controller('drawer')
 export class DrawerController {
   constructor(
@@ -76,40 +83,76 @@ export class DrawerController {
   @ApiOperation({
     summary: '§19 변경 요청 넣기 — 겹치면 **누구와** 겹치는지 돌려주고 넣지 않는다',
   })
-  @ApiOkResponse({ type: ChangeReqResultDto })
+  @ApiBody({
+    schema: {
+      oneOf: [
+        TimeMoveChangeReqDto, TeacherChangeReqDto, RoomChangeReqDto, ZoomChangeReqDto, CancelChangeReqDto,
+      ].map((model) => ({ $ref: getSchemaPath(model) })),
+    },
+  })
+  @ApiCreatedResponse({ type: ChangeReqResultDto })
   async createChangeReq(
     @CurrentUser() user: RequestUser,
     @Body() dto: ChangeReqCreateDto,
   ): Promise<ChangeReqResultDto> {
-    // 사유가 없으면 받지 않는다 — 뒤에서 판단할 사람이 근거 없이 판단하게 된다 (D-R13 과 같은 이유)
-    if (!dto.reason?.trim()) {
-      throw new BadRequestException({ code: 'REASON_REQUIRED', message: '사유를 적어야 제출됩니다' });
+    const normalized = normalizeChangeRequest(dto);
+    if (!normalized.ok) {
+      throw new BadRequestException(normalized.issue);
+    }
+    const change = normalized.value;
+
+    // JSONB 안의 id에는 FK를 걸 수 없으므로 저장 직전에 실제 활성 자원을 확인한다.
+    const target = change.reqType === 'teacher'
+      ? { kind: 'teacher' as const, id: change.payload.teacherId }
+      : change.reqType === 'room' && 'roomId' in change.payload
+        ? { kind: 'room' as const, id: change.payload.roomId }
+        : change.reqType === 'room' && 'zaccId' in change.payload
+          ? { kind: 'zoom' as const, id: change.payload.zaccId }
+          : null;
+    if (target && !(await this.svc.activeChangeTargetExists(target.kind, target.id))) {
+      throw new NotFoundException({ code: 'CHANGE_TARGET_NOT_FOUND', message: '바꿀 자원을 찾을 수 없습니다' });
+    }
+
+    const base = await this.svc.occOf(change.serId, change.onDate);
+    if (!base) {
+      throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '변경할 회차를 찾을 수 없습니다' });
     }
 
     // 시간·강사·강의실을 바꾸는 요청만 겹침을 본다. 취소는 자리를 비우는 쪽이라 겹칠 수 없다.
-    const conflicts = await this.previewConflicts(dto);
+    const conflicts = await this.previewConflicts(change, base);
     if (conflicts.length > 0) return { id: null, conflicts };
 
-    const id = await this.svc.createChangeReq(user.id, dto);
+    const id = await this.svc.createChangeReq(user.id, change);
     return { id, conflicts: [] };
   }
 
   /** 요청서에 안 적힌 값은 원본 회차에서 가져와 채운다 — 「강사만 바꾸는」 요청도 시각이 필요하다 */
-  private async previewConflicts(dto: ChangeReqCreateDto) {
-    if (dto.reqType === 'cancel' || !dto.serId || !dto.onDate) return [];
-    const base = await this.svc.occOf(dto.serId, dto.onDate);
-    if (!base) return [];
+  private async previewConflicts(
+    dto: NormalizedChangeRequest,
+    base: { startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null },
+  ) {
+    if (dto.reqType === 'cancel') return [];
 
-    const p = (dto.payload ?? {}) as Record<string, unknown>;
-    const n = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' && v !== '' ? Number(v) : undefined);
+    let roomId = base.roomId;
+    let zaccId = base.zaccId;
+    if (dto.reqType === 'room') {
+      if ('roomId' in dto.payload) {
+        roomId = dto.payload.roomId;
+        zaccId = null;
+      } else {
+        roomId = null;
+        zaccId = dto.payload.zaccId;
+      }
+    }
 
     return this.sched.conflicts({
       onDate: dto.onDate,
-      startMin: n(p.startMin) ?? base.startMin,
-      endMin: n(p.endMin) ?? base.endMin,
-      teacherId: n(p.teacherId) ?? base.teacherId,
-      roomId: n(p.roomId) ?? base.roomId,
-      zaccId: n(p.zaccId) ?? base.zaccId,
+      startMin: dto.reqType === 'time_move' ? dto.payload.startMin : base.startMin,
+      endMin: dto.reqType === 'time_move' ? dto.payload.endMin : base.endMin,
+      teacherId: dto.reqType === 'teacher' ? dto.payload.teacherId : base.teacherId,
+      // 물리 강의실과 Zoom 중 하나를 고르면 다른 자원은 비워지는 요청이다.
+      roomId,
+      zaccId,
       // 자기 자신과는 겹치지 않는다
       exceptSerId: dto.serId,
     });

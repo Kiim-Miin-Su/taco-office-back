@@ -1,5 +1,5 @@
 /**
- * CHREQ — docs/contracts/db/erd.dbml v4.5 에서 생성했습니다.
+ * CHREQ — docs/contracts/db/erd.dbml v4.7 에서 생성했습니다.
  *
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
@@ -11,13 +11,13 @@ export class Chreq {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
 
-  @Column({ type: 'bigint', nullable: true })
-  serId: number | null;
+  @Column({ type: 'bigint' })
+  serId: number;
 
-  @Column({ type: 'date', nullable: true })
-  onDate: string | null;
+  @Column({ type: 'date' })
+  onDate: string;
 
-  /** time | teacher | room | off */
+  /** time_move | teacher | room | cancel */
   @Column({ type: 'varchar', length: 12 })
   reqType: string;
 
@@ -27,8 +27,8 @@ export class Chreq {
   @Column({ type: 'text' })
   reason: string;
 
-  /** open | applied | denied */
-  @Column({ type: 'varchar', length: 12, default: 'open' })
+  /** pending | approved | rejected */
+  @Column({ type: 'varchar', length: 12, default: 'pending' })
   state: string;
 
   @Column({ type: 'bigint' })
@@ -40,7 +40,7 @@ export class Chreq {
   @Column({ type: 'timestamptz', nullable: true })
   resolvedAt: Date | null;
 
-  /** 정기 수업이면 이후 전체 적용 */
+  /** 선택 회차부터 이후 전체 적용 */
   @Column({ type: 'boolean', default: false })
   applyAll: boolean;
 

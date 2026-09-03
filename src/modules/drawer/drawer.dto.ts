@@ -1,8 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-// 요청 종류의 낱말은 lib/approval.ts 한 곳에서만 나온다 —
-// 여기서 다시 적었다가 DB(time_move)·읽기 DTO(time)·쓰기 검증(off)이 세 벌로 갈렸다
-import { CHREQ_TYPES, REQ_TYPE_LABEL } from '../../lib/approval';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+// 여기서 다시 적었다가 DB(time_move)·읽기 DTO(time)·쓰기 검증(off)이 세 벌로 갈렸다.
+import { CHREQ_TYPES } from '../../lib/change-request';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -91,13 +90,13 @@ export class KindRowDto {
 /** §20 변경 요청 이력 */
 export class ChangeReqDto {
   @ApiProperty() id!: number;
-  @ApiProperty({ enum: Object.keys(REQ_TYPE_LABEL) }) reqType!: string;
-  @ApiPropertyOptional(N) serId?: number | null;
-  @ApiPropertyOptional(S) onDate?: string | null;
-  @ApiPropertyOptional(S) reason?: string | null;
+  @ApiProperty({ enum: CHREQ_TYPES }) reqType!: (typeof CHREQ_TYPES)[number];
+  @ApiProperty() serId!: number;
+  @ApiProperty() onDate!: string;
+  @ApiProperty() reason!: string;
   @ApiProperty() state!: string;
   @ApiPropertyOptional(S) byName?: string | null;
-  @ApiProperty({ description: '정기 수업이면 이후 전체 적용' }) applyAll!: boolean;
+  @ApiProperty({ description: '선택 회차부터 이후 전체 적용' }) applyAll!: boolean;
   @ApiProperty() at!: string;
 }
 
@@ -135,34 +134,80 @@ export class TodoDoneDto {
   done!: boolean;
 }
 
-/** §19 변경 요청 넣기 */
-export class ChangeReqCreateDto {
+/** 종류별 Swagger 모델이 공유하는 회차 대상. 실제 검증도 ChangeReqCreateDto가 같은 필드를 쓴다. */
+export class ChangeReqTargetDto {
+  @ApiProperty({ minimum: 1, description: '변경할 수업 규칙 id' })
+  @IsInt() @Min(1)
+  serId!: number;
+
+  @ApiProperty({ example: '2026-09-01', description: '변경 기준 회차 날짜' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  onDate!: string;
+
+  @ApiProperty({ maxLength: 500, description: '판단 근거. 공백만 보낼 수 없다' })
+  // trim 뒤 길이·공백 판정은 normalizeChangeRequest() 한 곳에서 한다.
+  @IsString()
+  reason!: string;
+
+  @ApiPropertyOptional({ description: '선택 회차부터 이후 전체 적용 (D-R16)' })
+  @IsOptional() @IsBoolean()
+  applyAll?: boolean;
+}
+
+export class TimeMoveChangeReqDto extends ChangeReqTargetDto {
+  @ApiProperty({ enum: ['time_move'] }) reqType!: 'time_move';
+  @ApiProperty({ minimum: 0, maximum: 1439 }) startMin!: number;
+  @ApiProperty({ minimum: 10, maximum: 1440 }) endMin!: number;
+}
+
+export class TeacherChangeReqDto extends ChangeReqTargetDto {
+  @ApiProperty({ enum: ['teacher'] }) reqType!: 'teacher';
+  @ApiProperty({ minimum: 1 }) teacherId!: number;
+}
+
+export class RoomChangeReqDto extends ChangeReqTargetDto {
+  @ApiProperty({ enum: ['room'] }) reqType!: 'room';
+  @ApiProperty({ minimum: 1 }) roomId!: number;
+}
+
+export class ZoomChangeReqDto extends ChangeReqTargetDto {
+  @ApiProperty({ enum: ['room'], description: '온라인 수업 자원 변경도 room 요청으로 저장한다' })
+  reqType!: 'room';
+  @ApiProperty({ minimum: 1 }) zaccId!: number;
+}
+
+export class CancelChangeReqDto extends ChangeReqTargetDto {
+  @ApiProperty({ enum: ['cancel'] }) reqType!: 'cancel';
+}
+
+/**
+ * 런타임 ValidationPipe용 합집합. OpenAPI 요청 본문은 위 다섯 모델의 oneOf로 공개한다.
+ * 종류별 정확한 필드 조합은 normalizeChangeRequest()가 한 번 더 좁힌다.
+ */
+export class ChangeReqCreateDto extends ChangeReqTargetDto {
   @ApiProperty({ enum: CHREQ_TYPES, description: '수업을 바꿔 달라는 요청의 종류' })
   @IsIn(CHREQ_TYPES)
   reqType!: (typeof CHREQ_TYPES)[number];
 
-  @ApiPropertyOptional({ description: '어느 수업인지' })
+  @ApiPropertyOptional({ minimum: 0, maximum: 1439 })
+  @IsOptional() @IsInt() @Min(0) @Max(1439)
+  startMin?: number;
+
+  @ApiPropertyOptional({ minimum: 10, maximum: 1440 })
+  @IsOptional() @IsInt() @Min(10) @Max(1440)
+  endMin?: number;
+
+  @ApiPropertyOptional({ minimum: 1 })
   @IsOptional() @IsInt() @Min(1)
-  serId?: number;
+  teacherId?: number;
 
-  @ApiPropertyOptional({ example: '2026-09-01', description: '어느 날짜인지' })
-  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/)
-  onDate?: string;
+  @ApiPropertyOptional({ minimum: 1 })
+  @IsOptional() @IsInt() @Min(1)
+  roomId?: number;
 
-  @ApiPropertyOptional({
-    type: 'object', additionalProperties: true,
-    description: '바꾸려는 내용 — 종류에 따라 startMin · endMin · teacherId · roomId · zaccId',
-  })
-  @IsOptional()
-  payload?: Record<string, unknown>;
-
-  @ApiProperty({ description: '사유는 비워 둘 수 없다 (D-R13 과 같은 이유)' })
-  @IsString() @MaxLength(500)
-  reason!: string;
-
-  @ApiPropertyOptional({ description: '정기 수업이면 이후 전체 적용 (D-R16)' })
-  @IsOptional() @IsBoolean()
-  applyAll?: boolean;
+  @ApiPropertyOptional({ minimum: 1 })
+  @IsOptional() @IsInt() @Min(1)
+  zaccId?: number;
 }
 
 /** §19 겹침 미리보기 한 줄 — 막는 것은 DB, 설명은 이것 */

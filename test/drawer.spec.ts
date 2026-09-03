@@ -92,6 +92,13 @@ d('우측 서랍 — §14~§21', () => {
   const auth = (email: string) => `Bearer ${tokens.get(email)!}`;
   const get = (path: string, email: string) =>
     request(app.getHttpServer()).get(path).set('Authorization', auth(email));
+  const firstOccurrence = async () => {
+    const [row] = await ds.query(
+      `SELECT ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date
+         FROM ser_occ WHERE NOT canceled ORDER BY on_date, ser_id LIMIT 1`,
+    );
+    return { serId: Number(row.ser_id), onDate: String(row.on_date) };
+  };
 
   /* ── ① 한 번에 여덟 칸 ─────────────────────────────────────────── */
 
@@ -206,9 +213,31 @@ d('우측 서랍 — §14~§21', () => {
   });
 
   it('§19 사유 없는 변경 요청은 받지 않는다', async () => {
+    const occurrence = await firstOccurrence();
     await request(app.getHttpServer())
       .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
-      .send({ reqType: 'time_move', reason: '   ' }).expect(400);
+      .send({ ...occurrence, reqType: 'cancel', reason: '   ' }).expect(400);
+  });
+
+  it('§19 종류별 필드·대상·자원을 저장 전에 막는다', async () => {
+    const occurrence = await firstOccurrence();
+    const mixed = await request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
+      .send({ ...occurrence, reqType: 'teacher', teacherId: M, roomId: 1, reason: '혼합 필드' })
+      .expect(400);
+    expect(mixed.body.code).toBe('BAD_CHANGE_FIELDS');
+
+    const missingOccurrence = await request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
+      .send({ serId: occurrence.serId, onDate: '2099-01-01', reqType: 'cancel', reason: '없는 회차' })
+      .expect(404);
+    expect(missingOccurrence.body.code).toBe('OCCURRENCE_NOT_FOUND');
+
+    const missingTeacher = await request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
+      .send({ ...occurrence, reqType: 'teacher', teacherId: 9_999_999, reason: '없는 강사' })
+      .expect(404);
+    expect(missingTeacher.body.code).toBe('CHANGE_TARGET_NOT_FOUND');
   });
 
   it('§19 겹치면 넣지 않고 **누구와** 겹치는지 돌려준다', async () => {
@@ -238,7 +267,7 @@ d('우측 서랍 — §14~§21', () => {
       .post('/drawer/change-requests').set('Authorization', auth(MANAGER))
       .send({
         reqType: 'time_move', serId: Number(o.ser_id), onDate: o.on_date,
-        payload: { startMin: other.start_min, endMin: other.end_min },
+        startMin: other.start_min, endMin: other.end_min,
         reason: '겹침 확인',
       }).expect(201);
 
@@ -250,15 +279,28 @@ d('우측 서랍 — §14~§21', () => {
   });
 
   it('§19 안 겹치면 요청이 들어간다 — 승인은 여기서 하지 않는다 (D-R27)', async () => {
+    const occurrence = await firstOccurrence();
+    const reason = ` ${'가'.repeat(500)} `;
     const res = await request(app.getHttpServer())
       .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
-      .send({ reqType: 'cancel', reason: '개인 사정' }).expect(201);
+      .send({ ...occurrence, reqType: 'cancel', reason }).expect(201);
     expect(res.body.conflicts).toHaveLength(0);
     expect(typeof res.body.id).toBe('number');
 
     const r = await get('/drawer', MANAGER).expect(200);
     const row = r.body.changeReqs.find((c: { id: number }) => c.id === res.body.id);
     expect(row.state).toBe('pending');            // 자동 승인 없음
+    expect(row).toMatchObject(occurrence);
+    expect(row.reason).toBe('가'.repeat(500));    // 길이 판정과 저장 모두 trim 뒤 한 번만
+  });
+
+  it('§19 DB도 임의 payload를 직접 넣지 못하게 막는다', async () => {
+    const occurrence = await firstOccurrence();
+    await expect(ds.query(
+      `INSERT INTO chreq (ser_id, on_date, req_type, payload, reason, by_id)
+       VALUES ($1, $2, 'cancel', '{"teacherId": 1}'::jsonb, '잘못된 직접 입력', $3)`,
+      [occurrence.serId, occurrence.onDate, T],
+    )).rejects.toMatchObject({ constraint: 'chreq_payload_contract' });
   });
 });
 

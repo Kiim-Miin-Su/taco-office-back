@@ -93,20 +93,17 @@ export class OccurrencePatchDto {
   endMin?: number | null;
 
   @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt()
+  @IsOptional() @IsInt() @Min(1)
   teacherId?: number | null;
 
   @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt()
+  @IsOptional() @IsInt() @Min(1)
   roomId?: number | null;
 
   @ApiPropertyOptional({ type: String, nullable: true, description: '다른 날로 옮길 때만' })
   @IsOptional() @Matches(ISO)
   date?: string | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true })
-  @IsOptional() @IsString()
-  reason?: string | null;
 }
 
 export class OccurrenceCreateDto {
@@ -216,7 +213,7 @@ export class RosterPatchDto {
   op!: 'add' | 'dropOnce' | 'undoOnce' | 'dropAll';
 
   @ApiProperty() @Matches(ISO) onDate!: string;
-  @ApiProperty() @IsInt() studentId!: number;
+  @ApiProperty() @IsInt() @Min(1) studentId!: number;
 }
 
 export class WriteResultDto {
@@ -230,6 +227,21 @@ export class WriteResultDto {
 
   @ApiProperty({ type: [Number], description: '영향받은 규칙 — 화면은 이 범위만 다시 읽으면 된다' })
   serIds!: number[];
+}
+
+/** 명단 변경 직후 서버가 같은 트랜잭션 스냅숏에서 계산한 후속 작업 (D-R22). */
+export class RosterResultDto extends WriteResultDto {
+  @ApiProperty({ description: '그 회차의 변경 후 실제 인원' })
+  count!: number;
+
+  @ApiProperty({ description: 'KIND.cap — 정원' })
+  cap!: number;
+
+  @ApiProperty({ type: [String], description: '아직 발송된 수업 안내가 없는 학생' })
+  needGuide!: string[];
+
+  @ApiProperty({ type: [String], description: '해당 과목의 활성 배부 교재가 없는 학생' })
+  needBook!: string[];
 }
 
 export class HorizonDto {

@@ -43,7 +43,7 @@ export async function loadState(q: QueryRunner, serIds: number[]): Promise<State
   const excs = (await q.query(
     `SELECT e.id, e.ser_id, e.on_date::text AS on_date, e.canceled,
             e.new_date::text AS new_date, e.start_min, e.end_min,
-            e.teacher_id, e.room_id, e.reason,
+            e.teacher_set, e.teacher_id, e.room_set, e.room_id, e.reason,
             COALESCE(
               (SELECT array_agg(o.student_id ORDER BY o.student_id)
                  FROM exc_stu_out o WHERE o.exc_id = e.id), '{}') AS stu_out
@@ -75,7 +75,9 @@ export async function loadState(q: QueryRunner, serIds: number[]): Promise<State
       newDate: str(r.new_date),
       startMin: num(r.start_min),
       endMin: num(r.end_min),
+      teacherSet: r.teacher_set === true,
       teacherId: num(r.teacher_id),
+      roomSet: r.room_set === true,
       roomId: num(r.room_id),
       reason: str(r.reason),
       stuOut: ((r.stu_out as number[]) ?? []).map(Number),
@@ -172,14 +174,17 @@ export async function persist(q: QueryRunner, before: State, after: State): Prom
     const sid = real(e.serId);
     const old = beforeExc.get(`${e.serId}|${e.onDate}`);
     const row = (await q.query(
-      `INSERT INTO exc (ser_id, on_date, canceled, new_date, start_min, end_min, teacher_id, room_id, reason)
-       VALUES ($1,$2::date,$3,$4::date,$5,$6,$7,$8,$9)
+      `INSERT INTO exc (ser_id, on_date, canceled, new_date, start_min, end_min,
+                       teacher_set, teacher_id, room_set, room_id, reason)
+       VALUES ($1,$2::date,$3,$4::date,$5,$6,$7,$8,$9,$10,$11)
        ON CONFLICT (ser_id, on_date) DO UPDATE SET
          canceled=EXCLUDED.canceled, new_date=EXCLUDED.new_date,
          start_min=EXCLUDED.start_min, end_min=EXCLUDED.end_min,
-         teacher_id=EXCLUDED.teacher_id, room_id=EXCLUDED.room_id, reason=EXCLUDED.reason
+         teacher_set=EXCLUDED.teacher_set, teacher_id=EXCLUDED.teacher_id,
+         room_set=EXCLUDED.room_set, room_id=EXCLUDED.room_id, reason=EXCLUDED.reason
        RETURNING id`,
-      [sid, e.onDate, e.canceled, e.newDate, e.startMin, e.endMin, e.teacherId, e.roomId, e.reason],
+      [sid, e.onDate, e.canceled, e.newDate, e.startMin, e.endMin,
+       e.teacherSet, e.teacherId, e.roomSet, e.roomId, e.reason],
     )) as Array<{ id: string }>;
     const excId = Number(row[0].id);
 

@@ -153,8 +153,8 @@ export async function project(
       if (!e?.canceled) continue;
       rows.push([
         ser.id, d,
-        e.teacherId ?? ser.teacherId,
-        e.roomId ?? ser.roomId,
+        e.teacherSet ? e.teacherId : ser.teacherId,
+        e.roomSet ? e.roomId : ser.roomId,
         true,
         `[${at(d, e.startMin ?? ser.startMin)},${at(d, e.endMin ?? ser.endMin)})`,
       ]);

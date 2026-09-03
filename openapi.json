@@ -421,7 +421,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteResultDto"
+                  "$ref": "#/components/schemas/RosterResultDto"
                 }
               }
             }
@@ -943,13 +943,29 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ChangeReqCreateDto"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/TimeMoveChangeReqDto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TeacherChangeReqDto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RoomChangeReqDto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ZoomChangeReqDto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CancelChangeReqDto"
+                  }
+                ]
               }
             }
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "",
             "content": {
               "application/json": {
@@ -1742,10 +1758,6 @@
             "type": "string",
             "nullable": true,
             "description": "다른 날로 옮길 때만"
-          },
-          "reason": {
-            "type": "string",
-            "nullable": true
           }
         },
         "required": [
@@ -1796,6 +1808,65 @@
           "op",
           "onDate",
           "studentId"
+        ]
+      },
+      "RosterResultDto": {
+        "type": "object",
+        "properties": {
+          "effScope": {
+            "type": "string",
+            "description": "실제로 적용된 범위 — 「향후」가 「모두」로 강등되면 여기서 드러난다 (D-R17)"
+          },
+          "log": {
+            "description": "사람이 읽는 변경 기록. 화면이 그대로 보여 준다",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "projected": {
+            "type": "number",
+            "description": "다시 펼친 회차 수"
+          },
+          "serIds": {
+            "description": "영향받은 규칙 — 화면은 이 범위만 다시 읽으면 된다",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "count": {
+            "type": "number",
+            "description": "그 회차의 변경 후 실제 인원"
+          },
+          "cap": {
+            "type": "number",
+            "description": "KIND.cap — 정원"
+          },
+          "needGuide": {
+            "description": "아직 발송된 수업 안내가 없는 학생",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "needBook": {
+            "description": "해당 과목의 활성 배부 교재가 없는 학생",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "effScope",
+          "log",
+          "projected",
+          "serIds",
+          "count",
+          "cap",
+          "needGuide",
+          "needBook"
         ]
       },
       "ReportStudentDto": {
@@ -3420,6 +3491,214 @@
           "computedAt"
         ]
       },
+      "TimeMoveChangeReqDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "minimum": 1,
+            "description": "변경할 수업 규칙 id"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-09-01",
+            "description": "변경 기준 회차 날짜"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "판단 근거. 공백만 보낼 수 없다"
+          },
+          "applyAll": {
+            "type": "boolean",
+            "description": "선택 회차부터 이후 전체 적용 (D-R16)"
+          },
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "time_move"
+            ]
+          },
+          "startMin": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1439
+          },
+          "endMin": {
+            "type": "number",
+            "minimum": 10,
+            "maximum": 1440
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "reason",
+          "reqType",
+          "startMin",
+          "endMin"
+        ]
+      },
+      "TeacherChangeReqDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "minimum": 1,
+            "description": "변경할 수업 규칙 id"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-09-01",
+            "description": "변경 기준 회차 날짜"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "판단 근거. 공백만 보낼 수 없다"
+          },
+          "applyAll": {
+            "type": "boolean",
+            "description": "선택 회차부터 이후 전체 적용 (D-R16)"
+          },
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "teacher"
+            ]
+          },
+          "teacherId": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "reason",
+          "reqType",
+          "teacherId"
+        ]
+      },
+      "RoomChangeReqDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "minimum": 1,
+            "description": "변경할 수업 규칙 id"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-09-01",
+            "description": "변경 기준 회차 날짜"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "판단 근거. 공백만 보낼 수 없다"
+          },
+          "applyAll": {
+            "type": "boolean",
+            "description": "선택 회차부터 이후 전체 적용 (D-R16)"
+          },
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "room"
+            ]
+          },
+          "roomId": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "reason",
+          "reqType",
+          "roomId"
+        ]
+      },
+      "ZoomChangeReqDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "minimum": 1,
+            "description": "변경할 수업 규칙 id"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-09-01",
+            "description": "변경 기준 회차 날짜"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "판단 근거. 공백만 보낼 수 없다"
+          },
+          "applyAll": {
+            "type": "boolean",
+            "description": "선택 회차부터 이후 전체 적용 (D-R16)"
+          },
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "room"
+            ],
+            "description": "온라인 수업 자원 변경도 room 요청으로 저장한다"
+          },
+          "zaccId": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "reason",
+          "reqType",
+          "zaccId"
+        ]
+      },
+      "CancelChangeReqDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "minimum": 1,
+            "description": "변경할 수업 규칙 id"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-09-01",
+            "description": "변경 기준 회차 날짜"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "판단 근거. 공백만 보낼 수 없다"
+          },
+          "applyAll": {
+            "type": "boolean",
+            "description": "선택 회차부터 이후 전체 적용 (D-R16)"
+          },
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "cancel"
+            ]
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "reason",
+          "reqType"
+        ]
+      },
       "ApRowDto": {
         "type": "object",
         "properties": {
@@ -3738,28 +4017,20 @@
           "reqType": {
             "type": "string",
             "enum": [
-              "wage_change",
-              "unav_add",
-              "doc",
-              "time",
               "time_move",
               "teacher",
               "room",
-              "off",
               "cancel"
             ]
           },
           "serId": {
-            "type": "number",
-            "nullable": true
+            "type": "number"
           },
           "onDate": {
-            "type": "string",
-            "nullable": true
+            "type": "string"
           },
           "reason": {
-            "type": "string",
-            "nullable": true
+            "type": "string"
           },
           "state": {
             "type": "string"
@@ -3770,7 +4041,7 @@
           },
           "applyAll": {
             "type": "boolean",
-            "description": "정기 수업이면 이후 전체 적용"
+            "description": "선택 회차부터 이후 전체 적용"
           },
           "at": {
             "type": "string"
@@ -3779,6 +4050,9 @@
         "required": [
           "id",
           "reqType",
+          "serId",
+          "onDate",
+          "reason",
           "state",
           "applyAll",
           "at"
@@ -3905,47 +4179,6 @@
         },
         "required": [
           "done"
-        ]
-      },
-      "ChangeReqCreateDto": {
-        "type": "object",
-        "properties": {
-          "reqType": {
-            "type": "string",
-            "enum": [
-              "time_move",
-              "teacher",
-              "room",
-              "cancel"
-            ],
-            "description": "수업을 바꿔 달라는 요청의 종류"
-          },
-          "serId": {
-            "type": "number",
-            "description": "어느 수업인지"
-          },
-          "onDate": {
-            "type": "string",
-            "example": "2026-09-01",
-            "description": "어느 날짜인지"
-          },
-          "payload": {
-            "type": "object",
-            "additionalProperties": true,
-            "description": "바꾸려는 내용 — 종류에 따라 startMin · endMin · teacherId · roomId · zaccId"
-          },
-          "reason": {
-            "type": "string",
-            "description": "사유는 비워 둘 수 없다 (D-R13 과 같은 이유)"
-          },
-          "applyAll": {
-            "type": "boolean",
-            "description": "정기 수업이면 이후 전체 적용 (D-R16)"
-          }
-        },
-        "required": [
-          "reqType",
-          "reason"
         ]
       },
       "ConflictRowDto": {

@@ -1,6 +1,6 @@
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.6  (2026-09-02) — REP.body 3입력 계약 CHECK · 신규 회차 REP/REP_STU 투영
+// version : 4.7  (2026-09-03) — EXC null override + CHREQ 판별 payload 계약
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -264,8 +264,10 @@ Table EXC {
   new_date    date        [note: '옮긴 경우']
   start_min   smallint
   end_min     smallint
-  teacher_id  bigint      [ref: > STAFF.id, note: '강사 교체']
-  room_id     bigint      [ref: > ROOM.id]
+  teacher_set boolean     [not null, default: false, note: 'false=SER 강사 상속, true=teacher_id(null 포함) 사용']
+  teacher_id  bigint      [ref: > STAFF.id, note: 'teacher_set=true일 때 강사 교체 또는 null=미지정']
+  room_set    boolean     [not null, default: false, note: 'false=SER 강의실 상속, true=room_id(null 포함) 사용']
+  room_id     bigint      [ref: > ROOM.id, note: 'room_set=true일 때 강의실 교체 또는 null=미지정']
   reason      text
   by_id       bigint      [ref: > STAFF.id]
   at          timestamptz [not null, default: `now()`]
@@ -273,6 +275,8 @@ Table EXC {
   indexes { (ser_id, on_date) [unique] }
   Note: '''
   그날만 다른 것. 시드 7건 (강사 교체 실측 시 7→19).
+  nullable FK만으로는 상속과 명시적 미지정을 구분할 수 없어 *_set 플래그를 함께 쓴다 (TBO-44D-2).
+  CHECK: teacher_set OR teacher_id IS NULL · room_set OR room_id IS NULL.
   강사를 바꾸면 EXC + GUIDE + PNOTI + ISSUE 가 동시에 움직인다.
   그날 명단은 occRaw() 가 EXC_STU_OUT 을 걸러 만든다 (D-R21).
   '''
@@ -309,19 +313,23 @@ Table UNAV {
 
 Table CHREQ {
   id          bigserial   [pk]
-  ser_id      bigint      [ref: > SER.id]
-  on_date     date
-  req_type    varchar(12) [not null, note: 'time | teacher | room | off']
+  ser_id      bigint      [not null, ref: > SER.id]
+  on_date     date        [not null]
+  req_type    varchar(12) [not null, note: 'time_move | teacher | room | cancel']
   payload     jsonb       [not null]
   reason      text        [not null]
-  state       varchar(12) [not null, default: 'open', note: 'open | applied | denied']
+  state       varchar(12) [not null, default: 'pending', note: 'pending | approved | rejected']
   by_id       bigint      [not null, ref: > STAFF.id]
   resolved_by bigint      [ref: > STAFF.id]
   resolved_at timestamptz
-  apply_all   boolean     [not null, default: false, note: '정기 수업이면 이후 전체 적용']
+  apply_all   boolean     [not null, default: false, note: '선택 회차부터 이후 전체 적용']
   created_at  timestamptz [not null, default: `now()`]
 
-  Note: '겹치면 누구와 겹치는지 표시하고 저장을 막는다. 반영 시 EXC 생성 + LOG (D-R2).'
+  Note: '''
+  겹치면 누구와 겹치는지 표시하고 저장을 막는다. 반영 시 EXC 생성 + LOG (D-R2).
+  payload exact 모양: time_move={startMin,endMin}, teacher={teacherId},
+  room={roomId}|{zaccId}, cancel={}. API와 DB CHECK가 같은 네 종류만 허용한다.
+  '''
 }
 
 // ─────────────────────────────────────────────────────────────── 리포트

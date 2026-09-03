@@ -33,9 +33,17 @@ export class Exc {
   @Column({ type: 'smallint', nullable: true })
   endMin: number | null;
 
+  /** false면 SER 강사를 상속, true면 teacherId(null 포함)가 이 회차의 값 */
+  @Column({ type: 'boolean', default: false })
+  teacherSet: boolean;
+
   /** 강사 교체 */
   @Column({ type: 'bigint', nullable: true })
   teacherId: number | null;
+
+  /** false면 SER 강의실을 상속, true면 roomId(null 포함)가 이 회차의 값 */
+  @Column({ type: 'boolean', default: false })
+  roomSet: boolean;
 
   @Column({ type: 'bigint', nullable: true })
   roomId: number | null;

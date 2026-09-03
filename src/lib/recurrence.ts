@@ -86,7 +86,11 @@ export interface Exc {
   newDate: IsoDate | null;
   startMin: Minutes | null;
   endMin: Minutes | null;
+  /** true면 teacherId=null도 "강사 미지정" 예외다. false면 SER 값을 상속한다. */
+  teacherSet: boolean;
   teacherId: number | null;
+  /** true면 roomId=null도 "강의실 미지정" 예외다. false면 SER 값을 상속한다. */
+  roomSet: boolean;
   roomId: number | null;
   reason: string | null;
   /** 이 회차만 빠지는 학생 (D-R21) */
@@ -288,8 +292,8 @@ function mk(ser: Ser, date: IsoDate, onDate: IsoDate, e: Exc | null): Occurrence
     onDate,
     startMin: e && e.startMin != null ? e.startMin : ser.startMin,
     endMin: e && e.endMin != null ? e.endMin : ser.endMin,
-    teacherId: e && e.teacherId != null ? e.teacherId : ser.teacherId,
-    roomId: e && e.roomId != null ? e.roomId : ser.roomId,
+    teacherId: e?.teacherSet ? e.teacherId : ser.teacherId,
+    roomId: e?.roomSet ? e.roomId : ser.roomId,
     kind: ser.kind,
     sub: ser.sub,
     mode: ser.mode,
@@ -379,8 +383,26 @@ function resetTargets(
       e.serId === serId &&
       !e.canceled && // 휴강은 남긴다
       (!fromDate || e.onDate >= fromDate) &&
-      fields.some((f) => e[f] != null),
+      fields.some((f) => hasExcOverride(e, f)),
   );
+}
+
+function hasExcOverride(e: Exc, field: ExcNullableField): boolean {
+  if (field === 'teacherId') return e.teacherSet;
+  if (field === 'roomId') return e.roomSet;
+  return e[field] != null;
+}
+
+function clearExcOverride(e: Exc, field: ExcNullableField): void {
+  e[field] = null;
+  if (field === 'teacherId') e.teacherSet = false;
+  if (field === 'roomId') e.roomSet = false;
+}
+
+/** EXC 행을 남길 실제 효과. reason은 효과를 설명할 뿐 단독으로 예외를 만들지 않는다. */
+function hasExcEffect(e: Exc): boolean {
+  return e.canceled || e.newDate != null || e.startMin != null || e.endMin != null ||
+    e.teacherSet || e.roomSet || (e.stuOut && e.stuOut.length > 0);
 }
 
 /** 다이얼로그에 숫자로 보여줄 것 — "예외 3건이 초기화됩니다" */
@@ -414,13 +436,20 @@ export function applyEdit(
 
   if (eff === 'this') {
     const e = upsertExc(S, serId, onDate, genId);
-    if (patch.startMin != null) e.startMin = patch.startMin;
-    if (patch.endMin != null) e.endMin = patch.endMin;
-    if (patch.teacherId != null) e.teacherId = patch.teacherId;
-    if (patch.roomId !== undefined) e.roomId = patch.roomId;
-    if (patch.date && patch.date !== onDate) e.newDate = patch.date;
+    if (patch.startMin !== undefined) e.startMin = patch.startMin;
+    if (patch.endMin !== undefined) e.endMin = patch.endMin;
+    if (patch.teacherId !== undefined) {
+      e.teacherId = patch.teacherId;
+      e.teacherSet = true;
+    }
+    if (patch.roomId !== undefined) {
+      e.roomId = patch.roomId;
+      e.roomSet = true;
+    }
+    if (patch.date !== undefined) e.newDate = patch.date && patch.date !== onDate ? patch.date : null;
     e.canceled = false;
     log.push(`EXC upsert (${serId}, ${onDate})`);
+    S.EXC = S.EXC.filter(hasExcEffect);
     return { ...S, __log: log, __effScope: eff };
   }
 
@@ -444,20 +473,11 @@ export function applyEdit(
   resetTargets(S, target.id, patch, null).forEach((e) => {
     Object.keys(patch).forEach((k) => {
       const f = PATCH_TO_EXC[k];
-      if (f) e[f] = null;
+      if (f) clearExcOverride(e, f);
     });
     log.push(`EXC (${target.id}, ${e.onDate}) 초기화`);
   });
-  S.EXC = S.EXC.filter(
-    (e) =>
-      e.canceled ||
-      e.newDate != null ||
-      e.startMin != null ||
-      e.endMin != null ||
-      e.teacherId != null ||
-      e.roomId != null ||
-      (e.stuOut && e.stuOut.length > 0),
-  );
+  S.EXC = S.EXC.filter(hasExcEffect);
 
   return { ...S, __log: log, __effScope: eff };
 }
@@ -471,7 +491,7 @@ function applyPatchToSer(ser: Ser, patch: Patch, log: string[]): void {
     ser.endMin = patch.endMin;
     log.push(`end_min=${patch.endMin}`);
   }
-  if (patch.teacherId != null) {
+  if (patch.teacherId !== undefined) {
     ser.teacherId = patch.teacherId;
     log.push(`teacher_id=${patch.teacherId}`);
   }
@@ -580,6 +600,13 @@ export interface PasteSlot {
   endMin: Minutes;
 }
 
+/** 모든 스케줄 쓰기가 공유하는 시간 범위 계약. */
+export function lessonTimeIssue(startMin: Minutes, endMin: Minutes): string | null {
+  if (startMin < 0 || startMin >= 1440 || endMin > 1440) return '수업 시각은 같은 날 안에 있어야 합니다';
+  const duration = endMin - startMin;
+  return duration < 10 || duration > 480 ? '수업 길이는 10~480분이어야 합니다' : null;
+}
+
 /** 화면 프리뷰와 저장이 공유해야 하는 붙여넣기 위치 계산. */
 export function pasteSlots(
   items: CopyItem[],
@@ -622,11 +649,8 @@ export function pasteIssue(
   }
   const slots = pasteSlots(items, targetDate, targetMin);
   for (const slot of slots) {
-    const duration = slot.endMin - slot.startMin;
-    if (duration < 10 || duration > 480) return '수업 길이는 10~480분이어야 합니다';
-    if (slot.startMin < 0 || slot.startMin >= 1440 || slot.endMin > 1440) {
-      return `${slot.date} 일정이 자정을 넘습니다`;
-    }
+    const issue = lessonTimeIssue(slot.startMin, slot.endMin);
+    if (issue) return issue.includes('같은 날') ? `${slot.date} 일정이 자정을 넘습니다` : issue;
   }
   return null;
 }
@@ -836,16 +860,7 @@ export function applyRoster(
     });
     log.push(`SER_STU −= ${studentId}`);
   }
-  S.EXC = S.EXC.filter(
-    (e) =>
-      e.canceled ||
-      e.newDate != null ||
-      e.startMin != null ||
-      e.endMin != null ||
-      e.teacherId != null ||
-      e.roomId != null ||
-      (e.stuOut && e.stuOut.length > 0),
-  );
+  S.EXC = S.EXC.filter(hasExcEffect);
 
   return { ...S, __log: log, __effScope: op };
 }
@@ -940,7 +955,7 @@ export function precheck(
       date: day,
       startMin: patch.startMin != null ? patch.startMin : ser.startMin,
       endMin: patch.endMin != null ? patch.endMin : ser.endMin,
-      instructorId: patch.teacherId != null ? patch.teacherId : ser.teacherId,
+      instructorId: patch.teacherId !== undefined ? patch.teacherId : ser.teacherId,
       roomId: patch.roomId !== undefined ? (patch.roomId ?? null) : ser.roomId,
       mode: ser.mode,
       studentIds: (state.SER_STU || [])
@@ -993,7 +1008,9 @@ function upsertExc(S: State, serId: number, onDate: IsoDate, genId: IdGen): Exc 
       newDate: null,
       startMin: null,
       endMin: null,
+      teacherSet: false,
       teacherId: null,
+      roomSet: false,
       roomId: null,
       reason: null,
       stuOut: [],

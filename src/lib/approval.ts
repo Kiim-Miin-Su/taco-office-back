@@ -47,13 +47,8 @@ export const REQ_TYPE_LABEL: Record<string, string> = {
   room: '강의실 변경', off: '휴강', cancel: '취소',
 };
 
-/**
- * CHREQ 가 실제로 받는 종류. **DB 에 있는 낱말이 기준**이다 —
- * 한동안 읽기 DTO 는 `time`, 쓰기 검증은 `off` 를 적어 두었는데 표에는 `time_move` 와 `cancel` 이
- * 들어 있었다. 그래서 시간 이동 요청은 400 으로 튕기고, 휴강은 `off` 와 `cancel` 두 낱말로 쌓였다.
- */
-export const CHREQ_TYPES = ['time_move', 'teacher', 'room', 'cancel'] as const;
-export type ChreqType = (typeof CHREQ_TYPES)[number];
+/** 기존 import 경로는 유지하되 종류의 정본은 변경요청 도메인 파일에 둔다. */
+export { CHREQ_TYPES, type ChreqType } from './change-request';
 
 export const GPAPACK_TYPE_LABEL: Record<string, string> = {
   exam: '시험 대비', self: '자습',

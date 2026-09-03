@@ -66,6 +66,44 @@ const base = (): State => ({
     ok(o2.startMin === 600, '다른 날은 10:00 그대로다');
   });
 
+  it('2-b. null은 이번 회차의 명시적 미지정·규칙값 복귀로 보존한다', () => {
+    const cleared = R.applyEdit(base(), {
+      serId: 1, onDate: '2026-08-19', scope: 'this',
+      patch: { teacherId: null, roomId: null },
+    });
+    const e = must(cleared.EXC[0]);
+    ok(e.teacherSet && e.teacherId === null, '강사 null은 상속이 아니라 명시적 미지정');
+    ok(e.roomSet && e.roomId === null, '강의실 null은 상속이 아니라 명시적 미지정');
+    const o = must(R.occ('2026-08-19', cleared).find((x) => x.serId === 1));
+    ok(o.teacherId === null && o.roomId === null, '그날 투영에도 null이 유지된다');
+
+    const timeOnly = R.applyEdit(cleared, {
+      serId: 1, onDate: '2026-08-19', scope: 'all', patch: { startMin: 540, endMin: 600 },
+    });
+    const kept = must(timeOnly.EXC.find((x) => x.onDate === '2026-08-19'));
+    ok(kept.teacherSet && kept.roomSet, '시간만 모두 변경하면 자원 미지정 예외는 유지한다');
+
+    const teacherAll = R.applyEdit(timeOnly, {
+      serId: 1, onDate: '2026-08-19', scope: 'all', patch: { teacherId: 99 },
+    });
+    const roomOnly = must(teacherAll.EXC.find((x) => x.onDate === '2026-08-19'));
+    ok(!roomOnly.teacherSet && roomOnly.roomSet, '강사 모두 변경은 강사 예외만 초기화한다');
+    ok(must(R.occ('2026-08-19', teacherAll).find((x) => x.serId === 1)).teacherId === 99,
+      '초기화 뒤에는 새 SER 강사를 상속한다');
+
+    const moved = R.applyEdit(base(), {
+      serId: 1, onDate: '2026-08-19', scope: 'this',
+      patch: { date: '2026-08-20', startMin: 660, endMin: 720 },
+    });
+    const restored = R.applyEdit(moved, {
+      serId: 1, onDate: '2026-08-19', scope: 'this',
+      patch: { date: null, startMin: null, endMin: null },
+    });
+    ok(!restored.EXC.some((x) => x.onDate === '2026-08-19'), '시간·날짜 null 복귀 뒤 빈 EXC를 지운다');
+    const back = must(R.occ('2026-08-19', restored).find((x) => x.serId === 1));
+    ok(back.startMin === 600 && back.endMin === 660, '규칙의 원래 날짜·시간으로 돌아온다');
+  });
+
 
 /* ── 3. 「향후」 = SER 분할 (D-R17) ────────────────────────────────────── */
   it('3. 「향후」 — SER 분할', () => {
