@@ -1,18 +1,21 @@
 import {
-  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
   LATE_REPORT_TIERS, REPORT_FIELDS, REPORT_UNWRITTEN_CANDIDATE_DB,
-  canExportReport, effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue, reportPngFileName,
-  reportReviewIssue, reportWriteIssue, tierFor,
-  type RepStateDb, type ReportBody, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
+  canExportReport, decodeReportPng, effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue,
+  reportDeliveryIssue, reportPlainText, reportPngFileName, reportReviewIssue, reportWriteIssue, tierFor,
+  type RepStateDb, type ReportBody, type ReportDeliveryIssue, type ReportPngIssue,
+  type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
 import { START_MIN } from '../../lib/sql';
 import type {
-  ReportDetailDto, ReportReviewDto, ReportRowDto, ReportUpsertDto, UnwrittenDto,
+  ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportReviewDto, ReportRowDto,
+  ReportSendHistoryDto, ReportUpsertDto, UnwrittenDto,
 } from './reports.dto';
+import { REPORT_FILE_STORE, type ReportFileStore } from './report-file.store';
 
 interface Row {
   id: string;
@@ -29,7 +32,7 @@ interface Row {
   reportable: boolean;
   canceled: boolean;
   ended: boolean;
-  students: Array<{ id: number; name: string; grade: string | null }> | null;
+  students: Array<{ id: number; name: string; grade: string | null; deliver: boolean }> | null;
 }
 
 interface DetailRow extends Row {
@@ -42,8 +45,37 @@ interface DetailRow extends Row {
   reject_reason: string | null;
 }
 
+interface SendHistoryRow {
+  id: string;
+  source_send_id: string | null;
+  student_id: string;
+  student_name: string;
+  on_date: string;
+  rep_ids: unknown;
+  channel: string;
+  sent_at: string;
+  sent_by: string;
+  sent_by_name: string;
+  file_count: string;
+}
+
+interface DeliveryFile {
+  repId: number;
+  fileName: string;
+  plainText: string;
+  bytes: Buffer;
+}
+
 interface Queryer {
   query<T = unknown>(sql: string, parameters?: unknown[]): Promise<T>;
+}
+
+interface RequestSendRow {
+  id: string;
+  student_id: string;
+  on_date: string;
+  rep_ids: unknown;
+  source_send_id: string | null;
 }
 
 const WRITE_ERRORS: Record<ReportWriteIssue, { message: string; status: 'bad' | 'forbidden' | 'conflict' }> = {
@@ -61,9 +93,24 @@ const REVIEW_ERRORS: Record<ReportReviewIssue, { message: string; status: 'bad' 
   REJECT_REASON_REQUIRED: { message: '반려 사유를 입력해야 합니다', status: 'bad' },
 };
 
+const DELIVERY_ERRORS: Record<ReportDeliveryIssue | ReportPngIssue, {
+  message: string; status: 'bad' | 'forbidden' | 'conflict';
+}> = {
+  REPORT_DELIVERY_FORBIDDEN: { message: '리포트 발송은 매니저 이상만 할 수 있습니다', status: 'forbidden' },
+  REPORT_DELIVERY_EMPTY: { message: '전달할 리포트가 없습니다', status: 'bad' },
+  REPORT_DELIVERY_INCOMPLETE: { message: '안 쓴 리포트가 있어 이 학생에게 발송할 수 없습니다', status: 'conflict' },
+  REPORT_DELIVERY_NOT_APPROVED: { message: '승인되지 않은 리포트가 있어 이 학생에게 발송할 수 없습니다', status: 'conflict' },
+  REPORT_DELIVERY_FILES_MISMATCH: { message: '학생의 리포트와 PNG 파일 집합이 일치하지 않습니다', status: 'bad' },
+  REPORT_DELIVERY_PNG_FORMAT: { message: '올바른 PNG 파일이 아닙니다', status: 'bad' },
+  REPORT_DELIVERY_PNG_SIZE: { message: 'PNG 파일은 한 장당 3MB 이하여야 합니다', status: 'bad' },
+};
+
 @Injectable()
 export class ReportsService {
-  constructor(@InjectDataSource() private readonly ds: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly ds: DataSource,
+    @Inject(REPORT_FILE_STORE) private readonly files: ReportFileStore,
+  ) {}
 
   private static sql(where: string): string {
     return `SELECT r.id, r.ser_id,
@@ -76,7 +123,9 @@ export class ReportsService {
                    k.rep AS reportable, COALESCE(o.canceled, false) AS canceled,
                    COALESCE(upper(o.span) <= now(), false) AS ended,
                    COALESCE((
-                     SELECT json_agg(json_build_object('id', st.id, 'name', st.name, 'grade', st.grade) ORDER BY st.id)
+                     SELECT json_agg(json_build_object(
+                       'id', st.id, 'name', st.name, 'grade', st.grade, 'deliver', rs.deliver
+                     ) ORDER BY st.id)
                      FROM rep_stu rs JOIN stu st ON st.id = rs.student_id WHERE rs.rep_id = r.id
                    ), '[]'::json) AS students
               FROM rep r
@@ -88,7 +137,7 @@ export class ReportsService {
              ORDER BY date DESC, start_min DESC`;
   }
 
-  private static detailSql(lock: boolean): string {
+  private static detailSql(where: string, lock: boolean): string {
     return `SELECT r.id, r.ser_id,
                    to_char(COALESCE(lower(o.span) AT TIME ZONE 'Asia/Seoul', r.on_date::timestamp), 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
@@ -104,7 +153,9 @@ export class ReportsService {
                    to_char(r.reviewed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS reviewed_at,
                    r.reject_reason,
                    COALESCE((
-                     SELECT json_agg(json_build_object('id', st.id, 'name', st.name, 'grade', st.grade) ORDER BY st.id)
+                     SELECT json_agg(json_build_object(
+                       'id', st.id, 'name', st.name, 'grade', st.grade, 'deliver', rs.deliver
+                     ) ORDER BY st.id)
                      FROM rep_stu rs JOIN stu st ON st.id = rs.student_id WHERE rs.rep_id = r.id
                    ), '[]'::json) AS students
               FROM rep r
@@ -113,7 +164,8 @@ export class ReportsService {
               JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
               LEFT JOIN sub sb ON sb.key = s.sub_key
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
-             WHERE r.ser_id = $1 AND r.on_date = $2
+             WHERE ${where}
+             ORDER BY r.on_date, start_min, r.id
              ${lock ? 'FOR UPDATE OF r' : ''}`;
   }
 
@@ -129,7 +181,9 @@ export class ReportsService {
       subKey: r.sub_key, kindKey: r.kind_key,
       teacherId: r.teacher_id ? Number(r.teacher_id) : null, teacherName: r.teacher_name,
       state, written, minutesSinceEnd, penalty,
-      students: (r.students ?? []).map((s) => ({ id: Number(s.id), name: s.name, grade: s.grade })),
+      students: (r.students ?? []).map((s) => ({
+        id: Number(s.id), name: s.name, grade: s.grade, deliver: Boolean(s.deliver),
+      })),
     };
   }
 
@@ -157,6 +211,7 @@ export class ReportsService {
 
   private toDetail(r: DetailRow, actorId: number, canCrudAll: boolean, canApprove = canCrudAll): ReportDetailDto {
     const row = this.toRow(r, new Date());
+    const body = this.body(r.body);
     const canExport = canExportReport({
       actorId,
       teacherId: r.teacher_id ? Number(r.teacher_id) : null,
@@ -165,7 +220,7 @@ export class ReportsService {
     });
     return {
       ...row,
-      body: this.body(r.body),
+      body,
       fields: REPORT_FIELDS.map((field) => ({ ...field })),
       canEdit: this.canEdit(r, actorId, canCrudAll),
       canReview: reportReviewIssue({
@@ -181,7 +236,16 @@ export class ReportsService {
           subjectName: r.subject_name,
           startMin: row.startMin,
         }),
+        plainText: reportPlainText({
+          date: row.date,
+          studentName: student.name,
+          studentGrade: student.grade,
+          subjectName: r.subject_name,
+          startMin: row.startMin,
+          body,
+        }),
       })) : [],
+      canDeliver: canCrudAll,
       subjectName: r.subject_name,
       lang: r.lang,
       writtenAt: r.written_at,
@@ -192,8 +256,89 @@ export class ReportsService {
   }
 
   private async loadDetail(q: Queryer, serId: number, onDate: string, lock = false): Promise<DetailRow | null> {
-    const rows = await q.query<DetailRow[]>(ReportsService.detailSql(lock), [serId, onDate]);
+    const rows = await q.query<DetailRow[]>(
+      ReportsService.detailSql('r.ser_id = $1 AND r.on_date = $2', lock), [serId, onDate],
+    );
     return rows[0] ?? null;
+  }
+
+  private static kstYesterday(now = new Date()): string {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+    const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
+    return `${part('year')}-${part('month')}-${part('day')}`;
+  }
+
+  private async deliveryRows(q: Queryer, onDate: string, studentId?: number, lock = false): Promise<DetailRow[]> {
+    const where = studentId === undefined
+      ? `r.on_date = $1 AND EXISTS (SELECT 1 FROM rep_stu x WHERE x.rep_id = r.id AND x.deliver)`
+      : `r.on_date = $1 AND EXISTS (
+           SELECT 1 FROM rep_stu x
+            WHERE x.rep_id = r.id AND x.student_id = $2 AND x.deliver
+         )`;
+    return q.query<DetailRow[]>(ReportsService.detailSql(where, lock),
+      studentId === undefined ? [onDate] : [onDate, studentId]);
+  }
+
+  private deliveryFiles(rows: DetailRow[], dto: ReportDeliveryCreateDto, actorId: number): DeliveryFile[] {
+    const expectedRepIds = rows.map((row) => Number(row.id));
+    const issue = reportDeliveryIssue({
+      canCrudAll: true,
+      states: rows.map((row) => row.state),
+      expectedRepIds,
+      actualRepIds: dto.files.map((file) => file.repId),
+    });
+    if (issue) this.throwDeliveryIssue(issue);
+
+    const inputByRepId = new Map(dto.files.map((file) => [file.repId, file]));
+    return rows.map((row) => {
+      const repId = Number(row.id);
+      const input = inputByRepId.get(repId)!;
+      const expected = this.toDetail(row, actorId, true).exportFiles
+        .find((file) => file.studentId === dto.studentId);
+      if (!expected || expected.fileName !== input.fileName) {
+        this.throwDeliveryIssue('REPORT_DELIVERY_FILES_MISMATCH');
+      }
+      const decoded = decodeReportPng(input.pngDataUrl);
+      if (decoded.issue) this.throwDeliveryIssue(decoded.issue);
+      return { repId, fileName: expected.fileName, plainText: expected.plainText, bytes: decoded.bytes };
+    });
+  }
+
+  private static historyRow(row: SendHistoryRow): ReportSendHistoryDto {
+    const repIds = Array.isArray(row.rep_ids)
+      ? row.rep_ids.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+      : [];
+    return {
+      id: Number(row.id), sourceSendId: row.source_send_id ? Number(row.source_send_id) : null,
+      studentId: Number(row.student_id), studentName: row.student_name,
+      onDate: row.on_date, repIds, channel: row.channel, fileCount: Number(row.file_count),
+      sentAt: row.sent_at, sentBy: Number(row.sent_by), sentByName: row.sent_by_name,
+    };
+  }
+
+  private async historyItem(q: Queryer, sendId: number): Promise<ReportSendHistoryDto | null> {
+    const rows = await q.query<SendHistoryRow[]>(
+      `SELECT rs.id, rs.source_send_id, rs.student_id, st.name AS student_name,
+              to_char(rs.on_date, 'YYYY-MM-DD') AS on_date,
+              rs.rep_ids, rs.channel,
+              to_char(rs.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
+              rs.sent_by, sf.name AS sent_by_name,
+              (SELECT count(*) FROM pdflog p WHERE p.kind='report_png' AND p.ref_id=rs.id)::text AS file_count
+         FROM rsend rs JOIN stu st ON st.id=rs.student_id JOIN staff sf ON sf.id=rs.sent_by
+        WHERE rs.id=$1`,
+      [sendId],
+    );
+    return rows[0] ? ReportsService.historyRow(rows[0]) : null;
+  }
+
+  private async requireHistoryItem(q: Queryer, sendId: number): Promise<ReportSendHistoryDto> {
+    const item = await this.historyItem(q, sendId);
+    if (!item) {
+      throw new NotFoundException({ code: 'REPORT_DELIVERY_NOT_FOUND', message: '발송 이력을 찾을 수 없습니다' });
+    }
+    return item;
   }
 
   private throwWriteIssue(issue: ReportWriteIssue): never {
@@ -210,6 +355,21 @@ export class ReportsService {
     if (error.status === 'forbidden') throw new ForbiddenException(body);
     if (error.status === 'conflict') throw new ConflictException(body);
     throw new BadRequestException(body);
+  }
+
+  private throwDeliveryIssue(issue: ReportDeliveryIssue | ReportPngIssue): never {
+    const error = DELIVERY_ERRORS[issue];
+    const body = { code: issue, message: error.message };
+    if (error.status === 'forbidden') throw new ForbiddenException(body);
+    if (error.status === 'conflict') throw new ConflictException(body);
+    throw new BadRequestException(body);
+  }
+
+  private requireDeliveryPermission(canCrudAll: boolean): void {
+    const issue = reportDeliveryIssue({
+      canCrudAll, states: [], expectedRepIds: [], actualRepIds: [],
+    });
+    if (issue === 'REPORT_DELIVERY_FORBIDDEN') this.throwDeliveryIssue(issue);
   }
 
   async list(opts: { from?: string; to?: string; teacherId?: number; state?: string }): Promise<ReportRowDto[]> {
@@ -276,6 +436,258 @@ export class ReportsService {
       this.throwWriteIssue('REPORT_FORBIDDEN');
     }
     return this.toDetail(row, actorId, canCrudAll, canApprove);
+  }
+
+  /** §48·§49 — KST 하루의 전달 대상과 D-R8 차단 사유를 학생 단위로 묶는다. */
+  async deliveryQueue(onDate: string | undefined, actorId: number, canCrudAll: boolean): Promise<ReportDeliveryQueueDto> {
+    this.requireDeliveryPermission(canCrudAll);
+    const date = onDate ?? ReportsService.kstYesterday();
+    const [rows, latest] = await Promise.all([
+      this.deliveryRows(this.ds, date),
+      this.ds.query<Array<{ student_id: string; id: string; sent_at: string }>>(
+        `SELECT DISTINCT ON (student_id) student_id, id,
+                to_char(sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at
+           FROM rsend WHERE on_date=$1
+          ORDER BY student_id, sent_at DESC, id DESC`,
+        [date],
+      ),
+    ]);
+    const lastByStudent = new Map(latest.map((item) => [Number(item.student_id), item]));
+    const grouped = new Map<number, {
+      student: ReportDetailDto['students'][number];
+      entries: Array<{ detail: ReportDetailDto; state: RepStateDb }>;
+    }>();
+    for (const row of rows) {
+      const detail = this.toDetail(row, actorId, true);
+      for (const student of detail.students) {
+        if (!student.deliver) continue;
+        const group = grouped.get(student.id) ?? { student, entries: [] };
+        group.entries.push({ detail, state: row.state });
+        grouped.set(student.id, group);
+      }
+    }
+    const students = [...grouped.values()].map(({ student, entries }) => {
+      const blockedCount = entries.filter((entry) => entry.state !== 'ok').length;
+      const last = lastByStudent.get(student.id);
+      return {
+        student,
+        reports: entries.map((entry) => entry.detail),
+        canSend: blockedCount === 0 && !last,
+        blockedCount,
+        lastSendId: last ? Number(last.id) : null,
+        lastSentAt: last?.sent_at ?? null,
+      };
+    });
+    return {
+      onDate: date,
+      total: students.length,
+      remaining: students.filter((student) => student.canSend).length,
+      blocked: students.filter((student) => student.blockedCount > 0).length,
+      students,
+    };
+  }
+
+  async deliveryHistory(
+    opts: { onDate?: string; repId?: number }, canCrudAll: boolean,
+  ): Promise<ReportSendHistoryDto[]> {
+    this.requireDeliveryPermission(canCrudAll);
+    const p: unknown[] = [];
+    const where: string[] = ['1=1'];
+    if (opts.onDate) { p.push(opts.onDate); where.push(`rs.on_date=$${p.length}`); }
+    if (opts.repId) { p.push(JSON.stringify([opts.repId])); where.push(`rs.rep_ids @> $${p.length}::jsonb`); }
+    const rows = await this.ds.query<SendHistoryRow[]>(
+      `SELECT rs.id, rs.source_send_id, rs.student_id, st.name AS student_name,
+              to_char(rs.on_date, 'YYYY-MM-DD') AS on_date,
+              rs.rep_ids, rs.channel,
+              to_char(rs.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
+              rs.sent_by, sf.name AS sent_by_name,
+              (SELECT count(*) FROM pdflog x WHERE x.kind='report_png' AND x.ref_id=rs.id)::text AS file_count
+         FROM rsend rs JOIN stu st ON st.id=rs.student_id JOIN staff sf ON sf.id=rs.sent_by
+        WHERE ${where.join(' AND ')}
+        ORDER BY rs.sent_at DESC, rs.id DESC LIMIT 100`,
+      p,
+    );
+    return rows.map(ReportsService.historyRow);
+  }
+
+  private async sendForRequest(q: Queryer, requestKey: string): Promise<RequestSendRow | null> {
+    const rows = await q.query<RequestSendRow[]>(
+      `SELECT id, student_id, to_char(on_date, 'YYYY-MM-DD') AS on_date, rep_ids, source_send_id
+         FROM rsend WHERE request_key=$1`,
+      [requestKey],
+    );
+    return rows[0] ?? null;
+  }
+
+  private requestKeyConflict(): never {
+    throw new ConflictException({
+      code: 'REPORT_DELIVERY_REQUEST_KEY_REUSED',
+      message: '같은 요청 키를 다른 발송 내용에 사용할 수 없습니다',
+    });
+  }
+
+  private async idempotentDelivery(
+    q: Queryer, requestKey: string, studentId: number, onDate: string, repIds: number[],
+  ): Promise<ReportSendHistoryDto | null> {
+    const prior = await this.sendForRequest(q, requestKey);
+    if (!prior) return null;
+    const savedRepIds = Array.isArray(prior.rep_ids) ? prior.rep_ids.map(Number).sort((a, b) => a - b) : [];
+    const askedRepIds = [...repIds].sort((a, b) => a - b);
+    const sameRepIds = savedRepIds.length === askedRepIds.length
+      && savedRepIds.every((id, index) => id === askedRepIds[index]);
+    if (
+      Number(prior.student_id) !== studentId || prior.on_date !== onDate
+      || prior.source_send_id !== null || !sameRepIds
+    ) this.requestKeyConflict();
+    return this.requireHistoryItem(q, Number(prior.id));
+  }
+
+  private async idempotentResend(
+    q: Queryer, requestKey: string, sourceSendId: number,
+  ): Promise<ReportSendHistoryDto | null> {
+    const prior = await this.sendForRequest(q, requestKey);
+    if (!prior) return null;
+    if (Number(prior.source_send_id) !== sourceSendId) this.requestKeyConflict();
+    return this.requireHistoryItem(q, Number(prior.id));
+  }
+
+  /** PNG 보존과 RSEND/PDFLOG 기록. 실제 카카오·알림톡 전송은 명세서의 미구현 외부 경계다. */
+  async deliver(dto: ReportDeliveryCreateDto, actorId: number, canCrudAll: boolean): Promise<ReportSendHistoryDto> {
+    this.requireDeliveryPermission(canCrudAll);
+    const prior = await this.idempotentDelivery(
+      this.ds, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
+    );
+    if (prior) return prior;
+
+    const rows = await this.deliveryRows(this.ds, dto.onDate, dto.studentId);
+    const prepared = this.deliveryFiles(rows, dto, actorId);
+    const existing = await this.ds.query<Array<{ id: string }>>(
+      `SELECT id FROM rsend WHERE student_id=$1 AND on_date=$2 AND source_send_id IS NULL LIMIT 1`,
+      [dto.studentId, dto.onDate],
+    );
+    if (existing[0]) {
+      throw new ConflictException({ code: 'REPORT_DELIVERY_ALREADY_SENT', message: '이미 발송했습니다. 이력에서 다시 보내세요' });
+    }
+
+    const urls: string[] = [];
+    try {
+      for (const file of prepared) {
+        urls.push(await this.files.put(`reports/${dto.onDate}/${dto.studentId}/${file.fileName}`, file.bytes));
+      }
+    } catch (error) {
+      await this.files.delete(urls).catch(() => undefined);
+      throw error;
+    }
+
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    let committed = false;
+    let sendId = 0;
+    try {
+      const lockedRows = await this.deliveryRows(q, dto.onDate, dto.studentId, true);
+      const locked = this.deliveryFiles(lockedRows, dto, actorId);
+      if (locked.some((file, index) => file.fileName !== prepared[index]?.fileName)) {
+        this.throwDeliveryIssue('REPORT_DELIVERY_FILES_MISMATCH');
+      }
+      const idempotent = await this.idempotentDelivery(
+        q, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
+      );
+      if (idempotent) {
+        await q.rollbackTransaction();
+        await this.files.delete(urls).catch(() => undefined);
+        return idempotent;
+      }
+      const sent = await q.query(
+        `INSERT INTO rsend (student_id, on_date, rep_ids, channel, body, sent_by, request_key, source_send_id)
+         VALUES ($1,$2,$3::jsonb,'blob',$4,$5,$6,NULL) RETURNING id`,
+        [
+          dto.studentId, dto.onDate, JSON.stringify(locked.map((file) => file.repId)),
+          locked.map((file) => file.plainText).join('\n\n────────\n\n'), actorId, dto.requestKey,
+        ],
+      ) as Array<{ id: string }>;
+      sendId = Number(sent[0].id);
+      await q.query(
+        `INSERT INTO pdflog (kind, ref_id, file_url)
+         SELECT 'report_png', $1, value FROM unnest($2::text[]) AS value`,
+        [sendId, urls],
+      );
+      await q.commitTransaction();
+      committed = true;
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      if (!committed) await this.files.delete(urls).catch(() => undefined);
+      const e = error as { code?: string; constraint?: string };
+      if (e.code === '23505') {
+        const raced = await this.idempotentDelivery(
+          this.ds, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
+        );
+        if (raced) return raced;
+        if (e.constraint === 'rsend_student_date_first_uniq') {
+          throw new ConflictException({ code: 'REPORT_DELIVERY_ALREADY_SENT', message: '이미 발송했습니다. 이력에서 다시 보내세요' });
+        }
+      }
+      throw error;
+    } finally {
+      await q.release();
+    }
+    return this.requireHistoryItem(this.ds, sendId);
+  }
+
+  /** 이전 본문·private Blob URL을 그대로 가리키는 새 감사행을 만든다. */
+  async resend(sendId: number, requestKey: string, actorId: number, canCrudAll: boolean): Promise<ReportSendHistoryDto> {
+    this.requireDeliveryPermission(canCrudAll);
+    const prior = await this.idempotentResend(this.ds, requestKey, sendId);
+    if (prior) return prior;
+
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    let newId = 0;
+    try {
+      const sources = await q.query(
+        `SELECT id, student_id, to_char(on_date, 'YYYY-MM-DD') AS on_date, rep_ids, body
+           FROM rsend WHERE id=$1 FOR UPDATE`,
+        [sendId],
+      ) as Array<{ id: string; student_id: string; on_date: string; rep_ids: unknown; body: string }>;
+      const source = sources[0];
+      if (!source) throw new NotFoundException({ code: 'REPORT_DELIVERY_NOT_FOUND', message: '발송 이력을 찾을 수 없습니다' });
+      const blobs = await q.query(
+        `SELECT file_url FROM pdflog
+          WHERE kind='report_png' AND ref_id=$1 AND file_url IS NOT NULL ORDER BY id`,
+        [sendId],
+      ) as Array<{ file_url: string }>;
+      if (blobs.length === 0) {
+        throw new ConflictException({ code: 'REPORT_DELIVERY_FILES_MISSING', message: '재발송할 보존 파일이 없습니다' });
+      }
+      const inserted = await q.query(
+        `INSERT INTO rsend (student_id, on_date, rep_ids, channel, body, sent_by, request_key, source_send_id)
+         VALUES ($1,$2,$3::jsonb,'blob',$4,$5,$6,$7) RETURNING id`,
+        [
+          Number(source.student_id), source.on_date, JSON.stringify(source.rep_ids), source.body,
+          actorId, requestKey, Number(source.id),
+        ],
+      ) as Array<{ id: string }>;
+      newId = Number(inserted[0].id);
+      await q.query(
+        `INSERT INTO pdflog (kind, ref_id, file_url)
+         SELECT 'report_png', $1, file_url FROM pdflog
+          WHERE kind='report_png' AND ref_id=$2 AND file_url IS NOT NULL`,
+        [newId, sendId],
+      );
+      await q.commitTransaction();
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      const e = error as { code?: string };
+      if (e.code === '23505') {
+        const raced = await this.idempotentResend(this.ds, requestKey, sendId);
+        if (raced) return raced;
+      }
+      throw error;
+    } finally {
+      await q.release();
+    }
+    return this.requireHistoryItem(this.ds, newId);
   }
 
   async write(

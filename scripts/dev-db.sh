@@ -41,8 +41,8 @@ preflight() {
     echo "    rm -rf node_modules && npm install" >&2
     exit 1
   fi
-  if ! node -e 'require("bcrypt")' >/dev/null 2>&1; then
-    echo "✗ bcrypt 가 이 컴퓨터에서 안 열린다 — 네이티브 모듈이라 OS 마다 다시 깔아야 한다." >&2
+  if ! node -e 'require("bcryptjs")' >/dev/null 2>&1; then
+    echo "✗ bcryptjs 를 불러올 수 없다 — node_modules 설치 상태를 확인해야 한다." >&2
     echo "    rm -rf node_modules && npm install" >&2
     exit 1
   fi
@@ -82,6 +82,6 @@ case "${1:-up}" in
   start) start ;;
   stop)  "$BIN/pg_ctl" -D "$DATA" -m fast stop >/dev/null 2>&1 || true; echo stopped ;;
   q)     shift; start >/dev/null; DB=taco_dev q "$1" ;;
-  doctor) preflight; echo "✓ $PKG · postgres $("$BIN/initdb" --version | awk '{print $NF}') · bcrypt ok" ;;
+  doctor) preflight; echo "✓ $PKG · postgres $("$BIN/initdb" --version | awk '{print $NF}') · bcryptjs ok" ;;
   urls)  echo "DATABASE_URL=$DATABASE_URL"; echo "TEST_DATABASE_URL=$TEST_DATABASE_URL" ;;
 esac

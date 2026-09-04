@@ -19,7 +19,7 @@ export class Rsend {
 
   /** 학생 단위로 묶어 보낸 리포트들 */
   @Column({ type: 'jsonb' })
-  repIds: Record<string, unknown>;
+  repIds: number[];
 
   @Column({ type: 'varchar', length: 10 })
   channel: string;
@@ -33,4 +33,12 @@ export class Rsend {
 
   @Column({ type: 'bigint' })
   sentBy: number;
+
+  /** HTTP 재시도와 더블클릭이 발송 이력을 중복 생성하지 않게 한다. */
+  @Column({ type: 'uuid', unique: true })
+  requestKey: string;
+
+  /** null이면 최초 발송, 값이 있으면 그 RSEND 스냅샷의 재발송이다. */
+  @Column({ type: 'bigint', nullable: true })
+  sourceSendId: number | null;
 }

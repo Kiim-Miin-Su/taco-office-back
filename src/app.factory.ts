@@ -11,12 +11,20 @@ import { NestFactory, Reflector } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import type { INestApplication } from '@nestjs/common';
 import type { Express } from 'express';
+import { json, urlencoded } from 'express';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { assertCookieConfig } from './auth/cookie';
 import { buildOpenApi } from './openapi';
 
 export const API_PREFIX = 'api/v1';
+export const API_BODY_MAX_BYTES = 4 * 1024 * 1024;
+
+/** PNG data URL도 로컬·서버리스에서 같은 상한으로 읽는다. Vercel 요청 상한보다 작게 둔다. */
+export function configureApiBodyParser(app: INestApplication): void {
+  app.use(json({ limit: API_BODY_MAX_BYTES }));
+  app.use(urlencoded({ extended: true, limit: API_BODY_MAX_BYTES }));
+}
 
 /**
  * @param server 미리 만들어 둔 express 인스턴스. 서버리스에서 핸들러로 재사용한다.
@@ -29,12 +37,13 @@ export async function createApp(server?: Express): Promise<INestApplication> {
    * 호출한 쪽이 「연결 끊김」만 받는다 — 왜 안 되는지가 아무 데도 안 남는다.
    * 던지게 두면 `serverless.ts` 가 잡아서 503 과 이유를 돌려준다.
    */
-  const opts = { abortOnError: false };
+  const opts = { abortOnError: false, bodyParser: false };
   const app = server
     ? await NestFactory.create(AppModule, new ExpressAdapter(server), opts)
     : await NestFactory.create(AppModule, opts);
 
   app.setGlobalPrefix(API_PREFIX);
+  configureApiBodyParser(app);
   app.use(cookieParser());
 
   const origin = process.env.CORS_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean);

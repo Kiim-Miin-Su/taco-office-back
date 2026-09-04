@@ -197,6 +197,69 @@ export function reportPngFileName(input: ReportPngFileNameInput): string {
   return `${date}_${name}_${grade}_${subject}_${fromMin(input.startMin)}.png`;
 }
 
+export interface ReportPlainTextInput extends ReportPngFileNameInput {
+  body: ReportBody;
+}
+
+/** 클립보드와 RSEND.body가 공유하는 5섹션 문자열 정본 (D-R15). */
+export function reportPlainText(input: ReportPlainTextInput): string {
+  return [
+    `① 학생: ${input.studentName}${input.studentGrade ? ` · ${input.studentGrade}` : ''}`,
+    `② 수업: ${input.date} · ${input.subjectName ?? '과목미정'} · ${fromMin(input.startMin)}`,
+    ...REPORT_FIELDS.map((field) => `${field.label}\n${input.body[field.key] || '—'}`),
+  ].join('\n\n');
+}
+
+export const REPORT_PNG_MAX_BYTES = 3 * 1024 * 1024;
+export const REPORT_PNG_DATA_URL_MAX_CHARS = Math.ceil(REPORT_PNG_MAX_BYTES / 3) * 4 + 32;
+const PNG_PREFIX = 'data:image/png;base64,';
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+export type ReportPngIssue = 'REPORT_DELIVERY_PNG_FORMAT' | 'REPORT_DELIVERY_PNG_SIZE';
+
+/** 브라우저가 보낸 data URL을 엄격히 해석한다. MIME 문자열만 믿지 않고 PNG signature까지 본다. */
+export function decodeReportPng(dataUrl: string): { bytes: Buffer; issue: null } | { bytes: null; issue: ReportPngIssue } {
+  if (!dataUrl.startsWith(PNG_PREFIX)) return { bytes: null, issue: 'REPORT_DELIVERY_PNG_FORMAT' };
+  const encoded = dataUrl.slice(PNG_PREFIX.length);
+  if (!encoded || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+    return { bytes: null, issue: 'REPORT_DELIVERY_PNG_FORMAT' };
+  }
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.length > REPORT_PNG_MAX_BYTES) return { bytes: null, issue: 'REPORT_DELIVERY_PNG_SIZE' };
+  if (bytes.length < PNG_SIGNATURE.length || !bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    return { bytes: null, issue: 'REPORT_DELIVERY_PNG_FORMAT' };
+  }
+  return { bytes, issue: null };
+}
+
+export type ReportDeliveryIssue =
+  | 'REPORT_DELIVERY_FORBIDDEN'
+  | 'REPORT_DELIVERY_EMPTY'
+  | 'REPORT_DELIVERY_INCOMPLETE'
+  | 'REPORT_DELIVERY_NOT_APPROVED'
+  | 'REPORT_DELIVERY_FILES_MISMATCH';
+
+export interface ReportDeliveryContext {
+  canCrudAll: boolean;
+  states: RepStateDb[];
+  expectedRepIds: number[];
+  actualRepIds: number[];
+}
+
+/** 학생 한 명의 발송 가능 여부와 HTTP 파일 집합을 같은 순수 가드에서 판정한다 (D-R8). */
+export function reportDeliveryIssue(c: ReportDeliveryContext): ReportDeliveryIssue | null {
+  if (!c.canCrudAll) return 'REPORT_DELIVERY_FORBIDDEN';
+  if (c.expectedRepIds.length === 0) return 'REPORT_DELIVERY_EMPTY';
+  if (c.states.some((state) => !isWrittenDbState(state))) return 'REPORT_DELIVERY_INCOMPLETE';
+  if (c.states.some((state) => state !== 'ok')) return 'REPORT_DELIVERY_NOT_APPROVED';
+  const expected = new Set(c.expectedRepIds);
+  const actual = new Set(c.actualRepIds);
+  if (actual.size !== c.actualRepIds.length || expected.size !== actual.size) {
+    return 'REPORT_DELIVERY_FILES_MISMATCH';
+  }
+  return c.actualRepIds.some((id) => !expected.has(id)) ? 'REPORT_DELIVERY_FILES_MISMATCH' : null;
+}
+
 export interface ReportWriteContext {
   actorId: number;
   teacherId: number | null;

@@ -395,6 +395,12 @@ Table RSEND {
   body        text        [not null, note: '발송 원문 스냅샷']
   sent_at     timestamptz [not null, default: `now()`]
   sent_by     bigint      [not null, ref: > STAFF.id]
+  request_key uuid        [not null, unique, note: 'HTTP 재시도·더블클릭 idempotency key']
+  source_send_id bigint   [ref: > RSEND.id, note: 'null=최초 발송, 값=해당 스냅샷 재발송']
+  indexes {
+    (student_id, on_date) [unique, note: 'source_send_id IS NULL인 최초 발송만 partial unique']
+    (on_date, sent_at)
+  }
   Note: '안 쓴 리포트가 있는 학생은 보낼 수 없다 (D-R8).'
 }
 

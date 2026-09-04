@@ -1,10 +1,11 @@
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
-  ReportDetailDto, ReportListDto, ReportRefDto, ReportUpsertDto, UnwrittenDto,
-  ReportReviewDto,
+  ReportDeliveryCreateDto, ReportDeliveryQueryDto, ReportDeliveryQueueDto, ReportDeliveryResultDto,
+  ReportDetailDto, ReportDeliveryHistoryQueryDto, ReportListDto, ReportRefDto, ReportResendDto,
+  ReportReviewDto, ReportSendHistoryListDto, ReportSendRefDto, ReportUpsertDto, UnwrittenDto,
 } from './reports.dto';
 import { ReportsService } from './reports.service';
 
@@ -54,6 +55,47 @@ export class ReportsController {
     @Query('teacherId') teacherId?: string,
   ): Promise<UnwrittenDto> {
     return this.svc.unwritten(this.scope(user, teacherId));
+  }
+
+  @Get('deliveries')
+  @ApiOperation({ summary: '§48·§49 학생별 리포트 발송 큐 — 없으면 KST 어제' })
+  @ApiOkResponse({ type: ReportDeliveryQueueDto })
+  deliveryQueue(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ReportDeliveryQueryDto,
+  ): Promise<ReportDeliveryQueueDto> {
+    return this.svc.deliveryQueue(query.onDate, user.id, this.canCrudAll(user));
+  }
+
+  @Get('deliveries/history')
+  @ApiOperation({ summary: 'RSEND/PDFLOG 발송 이력 — 날짜 또는 리포트로 필터' })
+  @ApiOkResponse({ type: ReportSendHistoryListDto })
+  async deliveryHistory(
+    @CurrentUser() user: RequestUser,
+    @Query() query: ReportDeliveryHistoryQueryDto,
+  ): Promise<ReportSendHistoryListDto> {
+    return { items: await this.svc.deliveryHistory(query, this.canCrudAll(user)) };
+  }
+
+  @Post('deliveries')
+  @ApiOperation({ summary: '학생 1명의 승인된 리포트 PNG를 private Blob에 보존하고 발송 이력 생성' })
+  @ApiCreatedResponse({ type: ReportDeliveryResultDto })
+  async deliver(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: ReportDeliveryCreateDto,
+  ): Promise<ReportDeliveryResultDto> {
+    return { item: await this.svc.deliver(dto, user.id, this.canCrudAll(user)) };
+  }
+
+  @Post('deliveries/:sendId/resend')
+  @ApiOperation({ summary: '기존 본문·Blob을 변경 없이 재발송하고 새 감사행 생성' })
+  @ApiCreatedResponse({ type: ReportDeliveryResultDto })
+  async resend(
+    @CurrentUser() user: RequestUser,
+    @Param() ref: ReportSendRefDto,
+    @Body() dto: ReportResendDto,
+  ): Promise<ReportDeliveryResultDto> {
+    return { item: await this.svc.resend(ref.sendId, dto.requestKey, user.id, this.canCrudAll(user)) };
   }
 
   @Get(':serId/:onDate')

@@ -80,6 +80,40 @@ describe('2. 지각 차감 — 수업 종료 시각 기준 (D-R32 · 대표 결�
   });
 });
 
+describe('리포트 발송 — 본문·PNG·대상 집합 방어 (D-R8 · D-R15)', () => {
+  it('서버 필드 순서로 클립보드와 RSEND가 공유할 본문을 만든다', () => {
+    expect(R.reportPlainText({
+      date: '2026-08-27', studentName: '김민준', studentGrade: '고2',
+      subjectName: '수학', startMin: 16 * 60 + 30,
+      body: { content: '미분', progress: '42p', homework: '43p' },
+    })).toBe([
+      '① 학생: 김민준 · 고2',
+      '② 수업: 2026-08-27 · 수학 · 16:30',
+      '③ 수업 내용\n미분',
+      '④ 진도\n42p',
+      '⑤ 과제\n43p',
+    ].join('\n\n'));
+  });
+
+  it('권한·미작성·누락·중복 파일을 순서대로 막는다', () => {
+    const base = { canCrudAll: true, states: ['ok'] as R.RepStateDb[], expectedRepIds: [1, 2], actualRepIds: [1, 2] };
+    expect(R.reportDeliveryIssue({ ...base, canCrudAll: false })).toBe('REPORT_DELIVERY_FORBIDDEN');
+    expect(R.reportDeliveryIssue({ ...base, states: ['ok', 'none'] })).toBe('REPORT_DELIVERY_INCOMPLETE');
+    expect(R.reportDeliveryIssue({ ...base, states: ['wait', 'ok'] })).toBe('REPORT_DELIVERY_NOT_APPROVED');
+    expect(R.reportDeliveryIssue({ ...base, actualRepIds: [1] })).toBe('REPORT_DELIVERY_FILES_MISMATCH');
+    expect(R.reportDeliveryIssue({ ...base, actualRepIds: [1, 1] })).toBe('REPORT_DELIVERY_FILES_MISMATCH');
+    expect(R.reportDeliveryIssue(base)).toBeNull();
+  });
+
+  it('PNG MIME 문자열뿐 아니라 실제 signature와 크기를 확인한다', () => {
+    const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('body')]);
+    expect(R.decodeReportPng(`data:image/png;base64,${png.toString('base64')}`).issue).toBeNull();
+    expect(R.decodeReportPng(`data:image/png;base64,${Buffer.from('fake').toString('base64')}`).issue)
+      .toBe('REPORT_DELIVERY_PNG_FORMAT');
+    expect(R.decodeReportPng('data:text/plain;base64,ZmFrZQ==').issue).toBe('REPORT_DELIVERY_PNG_FORMAT');
+  });
+});
+
 describe('2-b. latePenalty — 실제 회차의 확정 차감액', () => {
   it('최초 제출 시각으로 잰다', () => {
     const p = R.latePenalty;

@@ -519,6 +519,151 @@
         ]
       }
     },
+    "/reports/deliveries": {
+      "get": {
+        "operationId": "ReportsController_deliveryQueue",
+        "parameters": [
+          {
+            "name": "onDate",
+            "required": false,
+            "in": "query",
+            "description": "없으면 KST 어제",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDeliveryQueueDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§48·§49 학생별 리포트 발송 큐 — 없으면 KST 어제",
+        "tags": [
+          "reports"
+        ]
+      },
+      "post": {
+        "operationId": "ReportsController_deliver",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportDeliveryCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDeliveryResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 1명의 승인된 리포트 PNG를 private Blob에 보존하고 발송 이력 생성",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/deliveries/history": {
+      "get": {
+        "operationId": "ReportsController_deliveryHistory",
+        "parameters": [
+          {
+            "name": "onDate",
+            "required": false,
+            "in": "query",
+            "description": "없으면 KST 어제",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          },
+          {
+            "name": "repId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportSendHistoryListDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "RSEND/PDFLOG 발송 이력 — 날짜 또는 리포트로 필터",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/reports/deliveries/{sendId}/resend": {
+      "post": {
+        "operationId": "ReportsController_resend",
+        "parameters": [
+          {
+            "name": "sendId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportResendDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportDeliveryResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "기존 본문·Blob을 변경 없이 재발송하고 새 감사행 생성",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/reports/{serId}/{onDate}": {
       "get": {
         "operationId": "ReportsController_detail",
@@ -1932,11 +2077,16 @@
           "grade": {
             "type": "string",
             "nullable": true
+          },
+          "deliver": {
+            "type": "boolean",
+            "description": "REP_STU.deliver — 이 학생에게 전문을 전달할지"
           }
         },
         "required": [
           "id",
-          "name"
+          "name",
+          "deliver"
         ]
       },
       "ReportRowDto": {
@@ -2166,11 +2316,16 @@
           "fileName": {
             "type": "string",
             "example": "20260827_김민준_고2_수학_16:30.png"
+          },
+          "plainText": {
+            "type": "string",
+            "description": "클립보드와 RSEND.body가 공유하는 서버 생성 5섹션 본문"
           }
         },
         "required": [
           "studentId",
-          "fileName"
+          "fileName",
+          "plainText"
         ]
       },
       "ReportDetailDto": {
@@ -2269,6 +2424,10 @@
               "$ref": "#/components/schemas/ReportExportFileDto"
             }
           },
+          "canDeliver": {
+            "type": "boolean",
+            "description": "현재 사용자가 학부모 전달 이력을 만들 수 있는지. manager 이상만 true"
+          },
           "subjectName": {
             "type": "string",
             "description": "전문·파일명에 함께 쓰는 서버 과목명"
@@ -2311,8 +2470,222 @@
           "canReview",
           "canExport",
           "exportFiles",
+          "canDeliver",
           "subjectName",
           "lang"
+        ]
+      },
+      "ReportDeliveryStudentDto": {
+        "type": "object",
+        "properties": {
+          "student": {
+            "$ref": "#/components/schemas/ReportStudentDto"
+          },
+          "reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportDetailDto"
+            }
+          },
+          "canSend": {
+            "type": "boolean",
+            "description": "미작성·미승인 0건이고 아직 최초 발송 전인 학생"
+          },
+          "blockedCount": {
+            "type": "number"
+          },
+          "lastSendId": {
+            "type": "number",
+            "nullable": true
+          },
+          "lastSentAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "student",
+          "reports",
+          "canSend",
+          "blockedCount"
+        ]
+      },
+      "ReportDeliveryQueueDto": {
+        "type": "object",
+        "properties": {
+          "onDate": {
+            "type": "string"
+          },
+          "total": {
+            "type": "number"
+          },
+          "remaining": {
+            "type": "number"
+          },
+          "blocked": {
+            "type": "number"
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportDeliveryStudentDto"
+            }
+          }
+        },
+        "required": [
+          "onDate",
+          "total",
+          "remaining",
+          "blocked",
+          "students"
+        ]
+      },
+      "ReportSendHistoryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "sourceSendId": {
+            "type": "number",
+            "nullable": true,
+            "description": "null이면 최초 발송, 값이 있으면 해당 이력의 재발송"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "repIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "blob"
+            ]
+          },
+          "fileCount": {
+            "type": "number"
+          },
+          "sentAt": {
+            "type": "string"
+          },
+          "sentBy": {
+            "type": "number"
+          },
+          "sentByName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "studentName",
+          "onDate",
+          "repIds",
+          "channel",
+          "fileCount",
+          "sentAt",
+          "sentBy",
+          "sentByName"
+        ]
+      },
+      "ReportSendHistoryListDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportSendHistoryDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ReportDeliveryFileInputDto": {
+        "type": "object",
+        "properties": {
+          "repId": {
+            "type": "number"
+          },
+          "fileName": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "pngDataUrl": {
+            "type": "string",
+            "description": "html-to-image가 만든 PNG data URL",
+            "maxLength": 4194336
+          }
+        },
+        "required": [
+          "repId",
+          "fileName",
+          "pngDataUrl"
+        ]
+      },
+      "ReportDeliveryCreateDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "재시도·더블클릭 중복 방지 키"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-08-27"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "files": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportDeliveryFileInputDto"
+            }
+          }
+        },
+        "required": [
+          "requestKey",
+          "onDate",
+          "studentId",
+          "files"
+        ]
+      },
+      "ReportDeliveryResultDto": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ReportSendHistoryDto"
+          }
+        },
+        "required": [
+          "item"
+        ]
+      },
+      "ReportResendDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "재시도·더블클릭 중복 방지 키"
+          }
+        },
+        "required": [
+          "requestKey"
         ]
       },
       "ReportUpsertDto": {
