@@ -94,12 +94,21 @@ export class ReportFieldDto {
   @ApiProperty() max!: number;
 }
 
+export class ReportExportFileDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty({ example: '20260827_김민준_고2_수학_16:30.png' }) fileName!: string;
+}
+
 export class ReportDetailDto extends ReportRowDto {
   @ApiProperty({ type: ReportBodyDto }) body!: ReportBodyDto;
   @ApiProperty({ type: [ReportFieldDto], description: '화면이 순서·문구·제한을 재정의하지 않고 그대로 그린다' })
   fields!: ReportFieldDto[];
   @ApiProperty({ description: '현재 사용자·회차·상태 기준 저장 가능 여부' }) canEdit!: boolean;
   @ApiProperty({ description: '현재 사용자·상태 기준 승인/반려 가능 여부' }) canReview!: boolean;
+  @ApiProperty({ description: '저장된 전문을 현재 사용자가 PNG·본문으로 출력할 수 있는지' }) canExport!: boolean;
+  @ApiProperty({ type: [ReportExportFileDto], description: '서버가 정한 학생별 PNG 파일명. canExport=false면 빈 배열' })
+  exportFiles!: ReportExportFileDto[];
+  @ApiProperty({ description: '전문·파일명에 함께 쓰는 서버 과목명' }) subjectName!: string;
   @ApiProperty() lang!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) writtenAt?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) submittedAt?: string | null;

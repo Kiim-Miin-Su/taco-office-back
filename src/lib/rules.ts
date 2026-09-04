@@ -153,6 +153,50 @@ export type ReportBody = Record<ReportFieldKey, string>;
 export type ReportWriteAction = 'draft' | 'submit';
 export type ReportReviewDecision = 'approve' | 'reject';
 
+export interface ReportExportContext {
+  actorId: number;
+  teacherId: number | null;
+  canCrudAll: boolean;
+  state: RepStateDb;
+}
+
+/** 저장된 리포트를 PNG로 내보낼 수 있는가. 승인 전용 타인의 읽기 권한과 섞지 않는다 (D-R33). */
+export function canExportReport(c: ReportExportContext): boolean {
+  const ownsReport = c.actorId === c.teacherId || c.canCrudAll;
+  return ownsReport && (c.state === 'draft' || c.state === 'wait' || c.state === 'ok' || c.state === 'rej');
+}
+
+export interface ReportPngFileNameInput {
+  date: IsoDate;
+  studentName: string;
+  studentGrade?: string | null;
+  subjectName?: string | null;
+  startMin: Minutes;
+}
+
+/** 파일명 조각의 구분자·파일시스템 예약 문자를 제거한다. HH:mm의 콜론은 템플릿이 별도로 소유한다. */
+function reportFilePart(value: string | null | undefined, fallback: string): string {
+  const printable = [...(value ?? '')].filter((char) => {
+    const code = char.charCodeAt(0);
+    return code >= 32 && code !== 127;
+  }).join('');
+  const safe = printable
+    .trim()
+    .replace(/[<>:"/\\|?*_]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/^-+|-+$/g, '');
+  return safe || fallback;
+}
+
+/** `<YYYYMMDD>_<학생이름>_<학생학년>_<과목명>_<HH:mm>.png`의 서버 단일 정본 (D-R33). */
+export function reportPngFileName(input: ReportPngFileNameInput): string {
+  const date = input.date.replaceAll('-', '');
+  const name = reportFilePart(input.studentName, '학생미정');
+  const grade = reportFilePart(input.studentGrade, '학년미정');
+  const subject = reportFilePart(input.subjectName, '과목미정');
+  return `${date}_${name}_${grade}_${subject}_${fromMin(input.startMin)}.png`;
+}
+
 export interface ReportWriteContext {
   actorId: number;
   teacherId: number | null;

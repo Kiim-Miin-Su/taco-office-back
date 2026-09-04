@@ -5,7 +5,8 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import {
   LATE_REPORT_TIERS, REPORT_FIELDS, REPORT_UNWRITTEN_CANDIDATE_DB,
-  effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue, reportReviewIssue, reportWriteIssue, tierFor,
+  canExportReport, effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue, reportPngFileName,
+  reportReviewIssue, reportWriteIssue, tierFor,
   type RepStateDb, type ReportBody, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
 import { START_MIN } from '../../lib/sql';
@@ -33,6 +34,7 @@ interface Row {
 
 interface DetailRow extends Row {
   body: unknown;
+  subject_name: string;
   lang: string;
   written_at: string | null;
   submitted_at: string | null;
@@ -94,7 +96,8 @@ export class ReportsService {
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
-                   r.body, r.lang, k.rep AS reportable, COALESCE(o.canceled, false) AS canceled,
+                   r.body, r.lang, COALESCE(sb.name, s.title, k.name) AS subject_name,
+                   k.rep AS reportable, COALESCE(o.canceled, false) AS canceled,
                    COALESCE(upper(o.span) <= now(), false) AS ended,
                    to_char(r.written_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS written_at,
                    to_char(r.submitted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS submitted_at,
@@ -108,6 +111,7 @@ export class ReportsService {
               JOIN ser s ON s.id = r.ser_id
               LEFT JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
               JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
+              LEFT JOIN sub sb ON sb.key = s.sub_key
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
              WHERE r.ser_id = $1 AND r.on_date = $2
              ${lock ? 'FOR UPDATE OF r' : ''}`;
@@ -152,14 +156,33 @@ export class ReportsService {
   }
 
   private toDetail(r: DetailRow, actorId: number, canCrudAll: boolean, canApprove = canCrudAll): ReportDetailDto {
+    const row = this.toRow(r, new Date());
+    const canExport = canExportReport({
+      actorId,
+      teacherId: r.teacher_id ? Number(r.teacher_id) : null,
+      canCrudAll,
+      state: r.state,
+    });
     return {
-      ...this.toRow(r, new Date()),
+      ...row,
       body: this.body(r.body),
       fields: REPORT_FIELDS.map((field) => ({ ...field })),
       canEdit: this.canEdit(r, actorId, canCrudAll),
       canReview: reportReviewIssue({
         canApprove, state: r.state, decision: 'approve',
       }) === null,
+      canExport,
+      exportFiles: canExport ? row.students.map((student) => ({
+        studentId: student.id,
+        fileName: reportPngFileName({
+          date: row.date,
+          studentName: student.name,
+          studentGrade: student.grade,
+          subjectName: r.subject_name,
+          startMin: row.startMin,
+        }),
+      })) : [],
+      subjectName: r.subject_name,
       lang: r.lang,
       writtenAt: r.written_at,
       submittedAt: r.submitted_at,

@@ -1,5 +1,7 @@
 import { addD } from '../src/lib/recurrence';
-import { effectiveRepState, effectiveRepStateFromEnded, reportReviewIssue } from '../src/lib/rules';
+import {
+  canExportReport, effectiveRepState, effectiveRepStateFromEnded, reportPngFileName, reportReviewIssue,
+} from '../src/lib/rules';
 import { SEED_TODAY } from '../src/seed/base';
 import { buildReports } from '../src/seed/outputs';
 import type { OccSeed } from '../src/seed/schedule';
@@ -42,6 +44,21 @@ describe('리포트 상태 — 캘린더 색상의 단일 진실원', () => {
       .toBe('APPROVE_REASON_FORBIDDEN');
     expect(reportReviewIssue({ canApprove: true, state: 'wait', decision: 'approve' })).toBeNull();
     expect(reportReviewIssue({ canApprove: true, state: 'wait', decision: 'reject', reason: '보완' })).toBeNull();
+  });
+
+  it('저장된 리포트 출력은 담당 강사·전체 관리자에게만 열리고 파일명은 서버 한 곳에서 만든다', () => {
+    expect(canExportReport({ actorId: 6, teacherId: 6, canCrudAll: false, state: 'draft' })).toBe(true);
+    expect(canExportReport({ actorId: 1, teacherId: 6, canCrudAll: true, state: 'ok' })).toBe(true);
+    expect(canExportReport({ actorId: 7, teacherId: 6, canCrudAll: false, state: 'wait' })).toBe(false);
+    expect(canExportReport({ actorId: 6, teacherId: 6, canCrudAll: false, state: 'none' })).toBe(false);
+
+    expect(reportPngFileName({
+      date: '2026-08-27',
+      studentName: '김_민준',
+      studentGrade: null,
+      subjectName: 'AP/Chemistry',
+      startMin: 16 * 60 + 30,
+    })).toBe('20260827_김-민준_학년미정_AP-Chemistry_16:30.png');
   });
 
   it('미래 수업은 예정(plan)이다', () => {

@@ -31,6 +31,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   const MANAGER = RUN + 4;
   const STUDENT = RUN + 5;
   const REVIEWER = RUN + 6;
+  const STUDENT2 = RUN + 7;
   const TEACHER_EMAIL = `report-teacher-${RUN}@t.kr`;
   const OTHER_EMAIL = `report-other-${RUN}@t.kr`;
   const MANAGER_EMAIL = `report-manager-${RUN}@t.kr`;
@@ -49,7 +50,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     await q(`DELETE FROM rep WHERE ser_id=$1`, [SER]);
     await q(`DELETE FROM ser_occ WHERE ser_id=$1`, [SER]);
     await q(`DELETE FROM ser WHERE id=$1`, [SER]);
-    await q(`DELETE FROM stu WHERE id=$1`, [STUDENT]);
+    await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STUDENT, STUDENT2]]);
     await q(`DELETE FROM staff WHERE id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
   }
 
@@ -75,10 +76,13 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       );
     }
     await q(`UPDATE staff SET can_approve=true WHERE id=$1`, [REVIEWER]);
-    await q(`INSERT INTO stu (id, name, grade) VALUES ($1, '리포트학생', '10')`, [STUDENT]);
+    await q(
+      `INSERT INTO stu (id, name, grade) VALUES ($1, '리포트학생', '고2'), ($2, '학년없는학생', NULL)`,
+      [STUDENT, STUDENT2],
+    );
     await q(
       `INSERT INTO ser (id, kind_key, sub_key, teacher_id, mode, start_min, end_min, rrule, from_date, to_date, title)
-       VALUES ($1, 'class', NULL, $2, 'offline', 540, 600, 'ONCE', $3, $3, '리포트 계약 테스트')`,
+       VALUES ($1, 'class', 'ap-chem', $2, 'offline', 540, 600, 'ONCE', $3, $3, '리포트 계약 테스트')`,
       [SER, TEACHER, DATE],
     );
     await q(
@@ -94,7 +98,10 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       [SER, DATE, TEACHER],
     );
     repId = Number(reps[0].id);
-    await q(`INSERT INTO rep_stu (rep_id, student_id, deliver) VALUES ($1,$2,true)`, [repId, STUDENT]);
+    await q(
+      `INSERT INTO rep_stu (rep_id, student_id, deliver) VALUES ($1,$2,true), ($1,$3,true)`,
+      [repId, STUDENT, STUDENT2],
+    );
 
     const login = async (email: string) => {
       const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PW }).expect(201);
@@ -136,6 +143,9 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       onDate: DATE,
       state: 'none',
       canEdit: true,
+      canExport: false,
+      exportFiles: [],
+      subjectName: 'AP Chemistry',
       body: { content: '', progress: '', homework: '' },
     });
     expect(res.body.fields.map((field: { key: string }) => field.key)).toEqual(['content', 'progress', 'homework']);
@@ -147,7 +157,21 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   });
 
   it('임시저장은 빈 값을 허용하고 REP.body에 세 키만 쓴다', async () => {
-    await put(teacherToken, { content: '', progress: '', homework: '' }).expect(200);
+    const saved = await put(teacherToken, { content: '', progress: '', homework: '' }).expect(200);
+    expect(saved.body).toMatchObject({
+      canExport: true,
+      subjectName: 'AP Chemistry',
+      exportFiles: [
+        {
+          studentId: STUDENT,
+          fileName: `${DATE.replaceAll('-', '')}_리포트학생_고2_AP Chemistry_09:00.png`,
+        },
+        {
+          studentId: STUDENT2,
+          fileName: `${DATE.replaceAll('-', '')}_학년없는학생_학년미정_AP Chemistry_09:00.png`,
+        },
+      ],
+    });
     const row = (await q<{ state: string; body: Record<string, string> }>(
       `SELECT state, body FROM rep WHERE id=$1`, [repId],
     ))[0];
@@ -215,6 +239,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       .set('Authorization', `Bearer ${reviewerToken}`).expect(200);
     expect(list.body.items.some((item: { serId: number }) => item.serId === SER)).toBe(true);
     expect((await get(reviewerToken).expect(200)).body).toMatchObject({ canEdit: false, canReview: true });
+    expect((await get(reviewerToken).expect(200)).body).toMatchObject({ canExport: false, exportFiles: [] });
     expect((await review(reviewerToken, { decision: 'approve' }).expect(201)).body.state).toBe('ok');
     expect((await get(reviewerToken).expect(200)).body).toMatchObject({ state: 'ok', canReview: false });
   });
