@@ -216,6 +216,95 @@
         ]
       }
     },
+    "/schedule/{serId}/{onDate}/attendance": {
+      "put": {
+        "operationId": "ScheduleController_saveAttendance",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "path",
+            "description": "SER_OCC의 원래 날짜 키",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttendanceWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttendanceMutationResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "종료 회차 출결 확정/정정 — 현재값 ATT와 append-only LOG를 함께 저장",
+        "tags": [
+          "schedule"
+        ]
+      },
+      "delete": {
+        "operationId": "ScheduleController_clearAttendance",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttendanceMutationResultDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회차 출결 현재값 초기화 — 삭제 전 값은 LOG에 보존",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule": {
       "post": {
         "operationId": "ScheduleController_create",
@@ -1512,6 +1601,54 @@
           "students"
         ]
       },
+      "AttendanceDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "canceled"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "teacher_absent",
+              "student_absent",
+              "academy",
+              "holiday",
+              "other"
+            ],
+            "nullable": true
+          },
+          "confirmedBy": {
+            "type": "number"
+          },
+          "confirmedByName": {
+            "type": "string"
+          },
+          "confirmedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "countsForPay": {
+            "type": "boolean",
+            "description": "completed=true, canceled=false. 정산 소비자가 문자열을 다시 비교하지 않는다"
+          }
+        },
+        "required": [
+          "id",
+          "result",
+          "confirmedBy",
+          "confirmedByName",
+          "confirmedAt",
+          "countsForPay"
+        ]
+      },
       "OccStudentDto": {
         "type": "object",
         "properties": {
@@ -1626,6 +1763,24 @@
             "type": "boolean",
             "description": "리포트를 썼는가 — 정산에 들어가는 조건 하나 (D-R7)"
           },
+          "attendanceMode": {
+            "type": "string",
+            "enum": [
+              "unavailable",
+              "readonly",
+              "manage"
+            ],
+            "description": "출결 동작은 이 서버 판정만 소비한다. 종료 전/관리 취소=unavailable, 강사=readonly, 관리자 이상=manage"
+          },
+          "attendance": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AttendanceDto"
+              }
+            ]
+          },
           "students": {
             "type": "array",
             "items": {
@@ -1646,6 +1801,8 @@
           "recurring",
           "repState",
           "written",
+          "attendanceMode",
+          "attendance",
           "students"
         ]
       },
@@ -1693,6 +1850,49 @@
           "from",
           "to",
           "clamped"
+        ]
+      },
+      "AttendanceWriteDto": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "canceled"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "teacher_absent",
+              "student_absent",
+              "academy",
+              "holiday",
+              "other"
+            ],
+            "nullable": true
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "AttendanceMutationResultDto": {
+        "type": "object",
+        "properties": {
+          "attendance": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AttendanceDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "attendance"
         ]
       },
       "OccurrenceCreateDto": {

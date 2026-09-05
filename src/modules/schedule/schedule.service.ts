@@ -2,7 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
-import { effectiveRepState, isWrittenDbState } from '../../lib/rules';
+import {
+  canEditAttendance, effectiveRepState, isWrittenDbState,
+  type AttendanceCancelReason, type AttendanceResult,
+} from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
 import type { OccurrenceDto } from './schedule.dto';
 import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
@@ -14,6 +17,7 @@ export interface OccQuery {
   teacherId?: number;
   studentId?: number;
   roomId?: number;
+  canCrudAttendance?: boolean;
 }
 
 /** DB 가 돌려준 한 줄 — 컬럼 이름은 아래 SQL 과 짝이다 */
@@ -25,6 +29,9 @@ interface Row {
   room_id: string | null; room_name: string | null;
   zacc_id: string | null; mode: string; canceled: boolean;
   has_exception: boolean; reportable: boolean; rep_state: string | null;
+  attendance_id: string | null; attendance_result: AttendanceResult | null;
+  attendance_reason: AttendanceCancelReason | null; attendance_confirmed_by: string | null;
+  attendance_confirmed_by_name: string | null; attendance_confirmed_at: Date | string | null;
   students: Array<{ id: number; name: string; grade: string | null; droppedOnce: boolean }> | null;
 }
 
@@ -65,6 +72,10 @@ export class ScheduleService {
               o.room_id, rm.name AS room_name, o.zacc_id, o.canceled,
               (e.id IS NOT NULL) AS has_exception,
               r.state AS rep_state,
+              a.id AS attendance_id, a.result AS attendance_result, a.reason AS attendance_reason,
+              a.confirmed_by AS attendance_confirmed_by,
+              ac.name AS attendance_confirmed_by_name,
+              a.confirmed_at AS attendance_confirmed_at,
               COALESCE((
                 SELECT json_agg(json_build_object(
                          'id', st.id, 'name', st.name, 'grade', st.grade,
@@ -83,6 +94,8 @@ export class ScheduleService {
          LEFT JOIN room rm ON rm.id = o.room_id
          LEFT JOIN exc e   ON e.ser_id = o.ser_id AND e.on_date = o.on_date
          LEFT JOIN rep r   ON r.ser_id = o.ser_id AND r.on_date = o.on_date
+         LEFT JOIN att a   ON a.ser_id = o.ser_id AND a.on_date = o.on_date
+         LEFT JOIN staff ac ON ac.id = a.confirmed_by
         WHERE ${cond.join(' AND ')}
         -- **회차의 시각**으로 정렬한다. 규칙(ser.start_min)으로 정렬하면
         -- 「이번만 시간 옮김」한 수업이 옮기기 전 자리에 그려진다 — 시각은 span 에서 뽑아 놓고
@@ -99,7 +112,7 @@ export class ScheduleService {
       const repState = effectiveRepState(
         r.rep_state,
         { date: r.date, startMin: r.start_min, durationMin: r.end_min - r.start_min },
-        r.reportable,
+        r.reportable && r.attendance_result !== 'canceled',
         today,
         nowMin,
       );
@@ -131,6 +144,19 @@ export class ScheduleService {
         repState,
         // 판정은 rules.ts 한 곳에서만 한다 — 화면도 서버도 여기서 나온 값을 읽기만 한다
         written: isWrittenDbState(repState),
+        attendanceMode: canEditAttendance(
+          { date: r.date, startMin: r.start_min, durationMin: r.end_min - r.start_min, canceled: r.canceled },
+          { canCrudAttendance: q.canCrudAttendance ?? false, today, nowMin },
+        ),
+        attendance: r.attendance_id == null ? null : {
+          id: Number(r.attendance_id),
+          result: r.attendance_result!,
+          reason: r.attendance_reason,
+          confirmedBy: Number(r.attendance_confirmed_by),
+          confirmedByName: r.attendance_confirmed_by_name!,
+          confirmedAt: new Date(r.attendance_confirmed_at!).toISOString(),
+          countsForPay: r.attendance_result === 'completed',
+        },
         students: (r.students ?? []).map((s) => ({
           id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce),
         })),

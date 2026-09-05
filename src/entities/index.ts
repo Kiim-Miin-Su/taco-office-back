@@ -1,5 +1,6 @@
-/** 엔티티 색인 — dbml v4.5 에서 생성했습니다. 손으로 고치지 마세요. */
+/** 엔티티 색인 — dbml v4.9 에서 생성했습니다. 손으로 고치지 마세요. */
 export * from './enums';
+export * from './att.entity';
 export * from './autorep.entity';
 export * from './chreq.entity';
 export * from './cons.entity';
@@ -61,6 +62,7 @@ export * from './zassign.entity';
 export * from './zlog.entity';
 
 import {
+  Att,
   Autorep,
   Chreq,
   Cons,
@@ -124,6 +126,7 @@ import {
 
 /** DataSource 에 넘길 목록. GPA 4표는 N-13 결정 대기라 빠져 있습니다. */
 export const ENTITIES = [
+  Att,
   Autorep,
   Chreq,
   Cons,

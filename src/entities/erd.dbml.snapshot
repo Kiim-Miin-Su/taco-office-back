@@ -1,6 +1,6 @@
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.8  (2026-09-04) — REP 승인·반려 전이 계약
+// version : 4.9  (2026-09-05) — ATT 회차 출결 현재값 · LOG 수정 이력 계약
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -54,7 +54,7 @@ Project taco_erp {
 
 Enum role_t        { teacher  manager  admin  ceo }
 // D-R39 확정 — 역할은 4종이다.
-//   teacher 강사   자기 수업 조회 · 리포트 작성 · 당일 출결 최초 체크만
+//   teacher 강사   자기 수업 조회 · 리포트 작성 · 출결 읽기 전용
 //   manager 매니저 ↑ 여기부터 관리자 페이지가 열리고 전 항목 CRUD
 //   admin   관리자 매니저와 같은 권한
 //   ceo     대표   + 지출 · 총수입
@@ -290,6 +290,23 @@ Table EXC_STU_OUT {
   v2 §79·§80 — 「이 회차만 빼기」. 소스의 EXC[id|date].stuOut 이다.
   「아주 빼기」는 여기가 아니라 SER_STU 에서 지운다 (D-R21).
   학생에 「향후」 범위를 줄지는 결정 안건 N-15.
+  '''
+}
+
+Table ATT {
+  id            bigserial   [pk]
+  ser_id        bigint      [not null, ref: > SER.id]
+  on_date       date        [not null, note: 'SER_OCC의 원래 날짜 키. 이동 회차도 이 값으로 찾는다']
+  result        varchar(12) [not null, note: 'completed | canceled']
+  reason        varchar(24) [note: '취소 시 teacher_absent | student_absent | academy | holiday | other 중 하나']
+  confirmed_by  bigint      [not null, ref: > STAFF.id]
+  confirmed_at  timestamptz [not null, default: `now()`]
+
+  indexes { (ser_id, on_date) [unique] (confirmed_by, confirmed_at) }
+  Note: '''
+  회차별 출결 **현재값**. 파생 표 SER_OCC는 일정 재투영 때 지워지므로 출결을 저장하지 않는다.
+  완료는 reason=NULL, 취소는 허용 사유가 필수다. 생성·정정·초기화의 모든 전후값은
+  append-only LOG(entity='ATT')에 남기며, 현재 행은 마지막 확정자·시각만 보관한다 (D-R35).
   '''
 }
 

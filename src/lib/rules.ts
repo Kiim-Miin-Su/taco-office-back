@@ -539,55 +539,36 @@ export function penaltyNow(s: SessionLike, today: IsoDate, nowMin: Minutes): Pen
    2026-08-27 대표 결정 6번:
      "오늘 및 이전 스케줄에 대한 출결 사항은 매니저 이상만 CRUD 가능"
 
-   강사에게 열어 두는 것은 **당일 최초 체크 딱 한 번**뿐이다.
-   지난 회차는 최초 체크조차 강사가 못 한다 — 매니저가 대신 찍는다.
-   화면 코드에서 역할을 직접 비교하지 않는다. 판정은 여기 한 곳이다.      */
+   종료 전·미래 회차에는 출결 사실 자체가 없고, 종료된 회차도 강사는 읽기만 한다.
+   역할 문자열 대신 서버 권한 플래그를 받는다. 판정은 API와 화면 응답이 함께 쓴다. */
 
-export type AttendanceMode = 'readonly' | 'first' | 'manage';
+export const ATTENDANCE_RESULTS = ['completed', 'canceled'] as const;
+export type AttendanceResult = (typeof ATTENDANCE_RESULTS)[number];
+export const ATTENDANCE_CANCEL_REASONS = [
+  'teacher_absent', 'student_absent', 'academy', 'holiday', 'other',
+] as const;
+export type AttendanceCancelReason = (typeof ATTENDANCE_CANCEL_REASONS)[number];
 
-export interface AttendanceCtx {
-  /** 이미 찍힌 출결 */
-  att?: { by: string; at: string; result: 'completed' | 'canceled' } | null;
-  /** 매니저가 대신 처리한 흔적 */
-  statusChanged?: { by: string; at: string } | null;
-}
+export type AttendanceMode = 'unavailable' | 'readonly' | 'manage';
 
 export function canEditAttendance(
-  s: SessionLike & AttendanceCtx,
-  opts: { isTeacher: boolean; today: IsoDate; nowMin: Minutes },
+  s: SessionLike,
+  opts: { canCrudAttendance: boolean; today: IsoDate; nowMin: Minutes },
 ): AttendanceMode {
-  const { isTeacher, today, nowMin } = opts;
-  if (!isTeacher) return 'manage'; // 매니저 이상은 언제든 정정 (canCrudAll)
-  if (isCanceled(s)) return 'readonly'; // 관리자 취소분은 손대지 않는다
-  if (!isPast(s, today, nowMin)) return 'readonly'; // 아직 안 끝났다 — 출결이 없다
-  if (s.date !== today) return 'readonly'; // ← 지난 회차는 매니저만 (D-R35)
-  if (s.att || s.statusChanged) return 'readonly'; // 이미 한 번 찍혔다
-  return 'first'; // 오늘, 지금, 딱 한 번
+  if (isCanceled(s) || !isPast(s, opts.today, opts.nowMin)) return 'unavailable';
+  return opts.canCrudAttendance ? 'manage' : 'readonly';
 }
 
-export interface FirstCheckResult {
-  ok: boolean;
-  msg: string;
-}
+export type AttendanceWriteIssue = 'ATTENDANCE_REASON_REQUIRED' | 'ATTENDANCE_REASON_FORBIDDEN';
 
-/** 강사의 최초 체크. 거절 사유가 상황마다 다르다 — "안 됩니다"로 뭉치지 않는다. */
-export function firstCheck(
-  s: SessionLike & AttendanceCtx,
-  result: 'completed' | 'canceled',
-  opts: { isTeacher: boolean; today: IsoDate; nowMin: Minutes },
-): FirstCheckResult {
-  const can = canEditAttendance(s, opts);
-  if (can === 'readonly') {
-    if (!isPast(s, opts.today, opts.nowMin))
-      return { ok: false, msg: '수업이 끝난 뒤에 체크할 수 있습니다' };
-    if (s.date !== opts.today) return { ok: false, msg: '지난 수업의 출결은 매니저가 처리합니다' };
-    return { ok: false, msg: '이미 체크된 출결입니다 — 정정은 매니저에게 요청하세요' };
-  }
-  if (can === 'manage') return { ok: false, msg: '매니저 정정 경로로 처리하세요' };
-  return {
-    ok: true,
-    msg: result === 'completed' ? '출결을 완료로 확정했습니다' : '출결을 취소로 확정했습니다',
-  };
+/** DTO의 두 필드와 DB CHECK가 공유하는 상태 관계. */
+export function attendanceWriteIssue(input: {
+  result: AttendanceResult;
+  reason?: AttendanceCancelReason | null;
+}): AttendanceWriteIssue | null {
+  if (input.result === 'canceled' && !input.reason) return 'ATTENDANCE_REASON_REQUIRED';
+  if (input.result === 'completed' && input.reason) return 'ATTENDANCE_REASON_FORBIDDEN';
+  return null;
 }
 
 /* ══ 원천징수 (D-15) ══════════════════════════════════════════════════

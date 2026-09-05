@@ -31,10 +31,19 @@ export class ExecService {
 
   async range(from: string, to: string, canSeeAmounts: boolean): Promise<ExecDto> {
     const [lessons, canceled, students, newLeads, enrolled, unwritten] = await Promise.all([
-      this.one(`SELECT count(*)::text n FROM ser_occ WHERE on_date BETWEEN $1::date AND $2::date AND NOT canceled`, [from, to]),
-      this.one(`SELECT count(*)::text n FROM ser_occ WHERE on_date BETWEEN $1::date AND $2::date AND canceled`, [from, to]),
-      this.one(`SELECT count(DISTINCT ss.student_id)::text n FROM ser_occ o JOIN ser_stu ss ON ss.ser_id = o.ser_id
-                 WHERE o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled`, [from, to]),
+      this.one(`SELECT count(*)::text n FROM ser_occ o
+                 LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
+                WHERE o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
+                  AND COALESCE(a.result,'completed') <> 'canceled'`, [from, to]),
+      this.one(`SELECT count(*)::text n FROM ser_occ o
+                 LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
+                WHERE o.on_date BETWEEN $1::date AND $2::date
+                  AND (o.canceled OR a.result='canceled')`, [from, to]),
+      this.one(`SELECT count(DISTINCT ss.student_id)::text n FROM ser_occ o
+                 JOIN ser_stu ss ON ss.ser_id = o.ser_id
+                 LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
+                WHERE o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
+                  AND COALESCE(a.result,'completed') <> 'canceled'`, [from, to]),
       this.one(`SELECT count(*)::text n FROM lead WHERE created_at::date BETWEEN $1::date AND $2::date`, [from, to]),
       // 「등록」은 상담이 들어온 날이 아니라 수강이 **시작된** 날로 센다.
       // lead.created_at 으로 세면 작년에 상담한 학생이 이번 달 등록으로 잡히지 않는다.
@@ -46,8 +55,9 @@ export class ExecService {
            JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
            JOIN ser s ON s.id = r.ser_id
            JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
+           LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
           WHERE r.state = ANY($3::rep_state_t[]) AND upper(o.span) < now()
-            AND k.rep AND NOT o.canceled
+            AND k.rep AND NOT o.canceled AND COALESCE(a.result,'completed') <> 'canceled'
             AND r.on_date BETWEEN $1::date AND $2::date`,
         [from, to, REPORT_UNWRITTEN_CANDIDATE_DB],
       ),

@@ -120,7 +120,8 @@ export class ReportsService {
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
-                   k.rep AS reportable, COALESCE(o.canceled, false) AS canceled,
+                   k.rep AS reportable,
+                   (COALESCE(o.canceled, false) OR COALESCE(a.result = 'canceled', false)) AS canceled,
                    COALESCE(upper(o.span) <= now(), false) AS ended,
                    COALESCE((
                      SELECT json_agg(json_build_object(
@@ -132,6 +133,7 @@ export class ReportsService {
               JOIN ser s ON s.id = r.ser_id
               JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
               LEFT JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
+              LEFT JOIN att a ON a.ser_id = r.ser_id AND a.on_date = r.on_date
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
              WHERE ${where}
              ORDER BY date DESC, start_min DESC`;
@@ -146,7 +148,8 @@ export class ReportsService {
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
                    r.body, r.lang, COALESCE(sb.name, s.title, k.name) AS subject_name,
-                   k.rep AS reportable, COALESCE(o.canceled, false) AS canceled,
+                   k.rep AS reportable,
+                   (COALESCE(o.canceled, false) OR COALESCE(a.result = 'canceled', false)) AS canceled,
                    COALESCE(upper(o.span) <= now(), false) AS ended,
                    to_char(r.written_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS written_at,
                    to_char(r.submitted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS submitted_at,
@@ -161,6 +164,7 @@ export class ReportsService {
               FROM rep r
               JOIN ser s ON s.id = r.ser_id
               LEFT JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
+              LEFT JOIN att a ON a.ser_id = r.ser_id AND a.on_date = r.on_date
               JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
               LEFT JOIN sub sb ON sb.key = s.sub_key
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
@@ -173,7 +177,7 @@ export class ReportsService {
   private toRow(r: Row, now: Date): ReportRowDto {
     const end = r.end_min_utc ? new Date(r.end_min_utc) : null;
     const minutesSinceEnd = end ? Math.floor((now.getTime() - end.getTime()) / 60000) : -1;
-    const state = effectiveRepStateFromEnded(r.state, r.reportable, r.ended);
+    const state = effectiveRepStateFromEnded(r.state, r.reportable && !r.canceled, r.ended);
     const written = isWrittenDbState(state);
     const penalty = written || minutesSinceEnd < 0 ? 0 : tierFor(minutesSinceEnd).amount;
     return {
@@ -272,11 +276,12 @@ export class ReportsService {
 
   private async deliveryRows(q: Queryer, onDate: string, studentId?: number, lock = false): Promise<DetailRow[]> {
     const where = studentId === undefined
-      ? `r.on_date = $1 AND EXISTS (SELECT 1 FROM rep_stu x WHERE x.rep_id = r.id AND x.deliver)`
+      ? `r.on_date = $1 AND COALESCE(a.result, 'completed') <> 'canceled'
+         AND EXISTS (SELECT 1 FROM rep_stu x WHERE x.rep_id = r.id AND x.deliver)`
       : `r.on_date = $1 AND EXISTS (
            SELECT 1 FROM rep_stu x
             WHERE x.rep_id = r.id AND x.student_id = $2 AND x.deliver
-         )`;
+         ) AND COALESCE(a.result, 'completed') <> 'canceled'`;
     return q.query<DetailRow[]>(ReportsService.detailSql(where, lock),
       studentId === undefined ? [onDate] : [onDate, studentId]);
   }
@@ -391,6 +396,7 @@ export class ReportsService {
       `r.state = ANY($${p.length}::rep_state_t[])`,
       `k.rep`,
       `NOT COALESCE(o.canceled, false)`,
+      `COALESCE(a.result, 'completed') <> 'canceled'`,
       `upper(o.span) < now()`,
     ];
     if (teacherId) { p.push(teacherId); c.push(`COALESCE(o.teacher_id, r.teacher_id) = $${p.length}`); }

@@ -1,14 +1,15 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
-  HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
+  AttendanceMutationResultDto, AttendanceWriteDto, HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
   OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
   WriteResultDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
+import { ScheduleAttendanceService } from './schedule.attendance.service';
 import { horizon } from './schedule.project';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
@@ -19,6 +20,7 @@ export class ScheduleController {
   constructor(
     private readonly svc: ScheduleService,
     private readonly write: ScheduleWriteService,
+    private readonly attendance: ScheduleAttendanceService,
   ) {}
 
   @Get('occurrences')
@@ -47,6 +49,8 @@ export class ScheduleController {
     // 강사는 자기 수업만 본다. 화면이 안 걸러도 서버가 거른다 (D-R39).
     // 역할을 직접 비교하지 않는다 — 판정은 hasPerm 한 곳에서만 한다 (eslint 가 막는다).
     const canAll = isRole(user.role) && hasPerm(user.role, 'canCrudAll', user.perms);
+    const canCrudAttendance = isRole(user.role)
+      && hasPerm(user.role, 'canCrudAttendance', user.perms);
     const forced = canAll ? undefined : user.id;
 
     const items = await this.svc.list({
@@ -55,6 +59,7 @@ export class ScheduleController {
       teacherId: forced ?? (teacherId ? Number(teacherId) : undefined),
       studentId: studentId ? Number(studentId) : undefined,
       roomId: roomId ? Number(roomId) : undefined,
+      canCrudAttendance,
     });
     return { from, to, items };
   }
@@ -67,6 +72,43 @@ export class ScheduleController {
   @ApiOkResponse({ type: HorizonDto })
   bounds(): HorizonDto {
     return { ...horizon(), clamped: false };
+  }
+
+  @Put(':serId/:onDate/attendance')
+  @Perm('canCrudAttendance')
+  @ApiOperation({ summary: '종료 회차 출결 확정/정정 — 현재값 ATT와 append-only LOG를 함께 저장' })
+  @ApiParam({ name: 'serId', type: Number })
+  @ApiParam({ name: 'onDate', example: '2026-08-27', description: 'SER_OCC의 원래 날짜 키' })
+  @ApiOkResponse({ type: AttendanceMutationResultDto })
+  saveAttendance(
+    @CurrentUser() user: RequestUser,
+    @Param('serId', ParseIntPipe) serId: number,
+    @Param('onDate') onDate: string,
+    @Body() dto: AttendanceWriteDto,
+  ): Promise<AttendanceMutationResultDto> {
+    this.assertAttendanceDate(onDate);
+    return this.attendance.save(serId, onDate, dto, user.id);
+  }
+
+  @Delete(':serId/:onDate/attendance')
+  @Perm('canCrudAttendance')
+  @ApiOperation({ summary: '회차 출결 현재값 초기화 — 삭제 전 값은 LOG에 보존' })
+  @ApiParam({ name: 'serId', type: Number })
+  @ApiParam({ name: 'onDate', example: '2026-08-27' })
+  @ApiOkResponse({ type: AttendanceMutationResultDto })
+  clearAttendance(
+    @CurrentUser() user: RequestUser,
+    @Param('serId', ParseIntPipe) serId: number,
+    @Param('onDate') onDate: string,
+  ): Promise<AttendanceMutationResultDto> {
+    this.assertAttendanceDate(onDate);
+    return this.attendance.clear(serId, onDate, user.id);
+  }
+
+  private assertAttendanceDate(onDate: string): void {
+    if (!ISO.test(onDate)) {
+      throw new BadRequestException({ code: 'BAD_DATE', message: 'onDate는 YYYY-MM-DD입니다' });
+    }
   }
 
   @Post()

@@ -26,6 +26,7 @@ export class BoardService {
   async range(from: string, to: string, teacherId?: number): Promise<BoardDto> {
     const rows = await this.q(
       `SELECT o.id AS occ_id, o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, o.canceled,
+              a.result AS attendance_result,
               ${hhmmOf('lower(o.span)')} AS start_at,
               ${hhmmOf('upper(o.span)')} AS end_at,
               s.mode, s.kind_key, k.name AS kind_name,
@@ -59,6 +60,7 @@ export class BoardService {
          LEFT JOIN kind  k  ON k.key = s.kind_key
          LEFT JOIN staff t  ON t.id = o.teacher_id
          LEFT JOIN room  rm ON rm.id = o.room_id
+         LEFT JOIN att a ON a.ser_id = o.ser_id AND a.on_date = o.on_date
         WHERE o.on_date BETWEEN $1::date AND $2::date
           AND ($3::bigint IS NULL OR o.teacher_id = $3)
         ORDER BY o.on_date, lower(o.span), o.id`,
@@ -67,7 +69,8 @@ export class BoardService {
 
     const out = rows.map((r) => {
       const online = r.mode === 'online';
-      const needsReport = r.kind_needs_report !== false;
+      const attendanceCanceled = r.attendance_result === 'canceled';
+      const needsReport = r.kind_needs_report !== false && !attendanceCanceled;
 
       const marks: CheckMarkDto[] = [
         { key: 'book', done: r.book_done === true, na: false,
@@ -90,7 +93,7 @@ export class BoardService {
         mode: String(r.mode), kindKey: String(r.kind_key),
         kindName: (r.kind_name as string) ?? null,
         studentNames: (r.student_names as string[]) ?? [],
-        canceled: r.canceled === true,
+        canceled: r.canceled === true || attendanceCanceled,
         marks,
         missing,
       };

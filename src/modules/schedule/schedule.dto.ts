@@ -3,6 +3,22 @@
  * 일간·주간·월간·학생별·선생님별이 다른 DTO 를 쓰면 색과 상태가 갈린다.
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  ATTENDANCE_CANCEL_REASONS, ATTENDANCE_RESULTS,
+  type AttendanceCancelReason, type AttendanceResult,
+} from '../../lib/rules';
+
+export class AttendanceDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: ATTENDANCE_RESULTS }) result!: AttendanceResult;
+  @ApiPropertyOptional({ enum: ATTENDANCE_CANCEL_REASONS, nullable: true })
+  reason!: AttendanceCancelReason | null;
+  @ApiProperty() confirmedBy!: number;
+  @ApiProperty() confirmedByName!: string;
+  @ApiProperty({ format: 'date-time' }) confirmedAt!: string;
+  @ApiProperty({ description: 'completed=true, canceled=false. 정산 소비자가 문자열을 다시 비교하지 않는다' })
+  countsForPay!: boolean;
+}
 
 export class OccStudentDto {
   @ApiProperty() id!: number;
@@ -50,6 +66,15 @@ export class OccurrenceDto {
   @ApiProperty({ description: '리포트를 썼는가 — 정산에 들어가는 조건 하나 (D-R7)' })
   written!: boolean;
 
+  @ApiProperty({
+    enum: ['unavailable', 'readonly', 'manage'],
+    description: '출결 동작은 이 서버 판정만 소비한다. 종료 전/관리 취소=unavailable, 강사=readonly, 관리자 이상=manage',
+  })
+  attendanceMode!: 'unavailable' | 'readonly' | 'manage';
+
+  @ApiProperty({ type: AttendanceDto, nullable: true })
+  attendance!: AttendanceDto | null;
+
   @ApiProperty({ type: [OccStudentDto] }) students!: OccStudentDto[];
 }
 
@@ -71,6 +96,22 @@ import {
 import { PASTE_MAX } from '../../lib/recurrence';
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+export class AttendanceWriteDto {
+  @ApiProperty({ enum: ATTENDANCE_RESULTS })
+  @IsIn(ATTENDANCE_RESULTS as unknown as string[])
+  result!: AttendanceResult;
+
+  @ApiPropertyOptional({ enum: ATTENDANCE_CANCEL_REASONS, nullable: true })
+  @IsOptional()
+  @IsIn(ATTENDANCE_CANCEL_REASONS as unknown as string[])
+  reason?: AttendanceCancelReason | null;
+}
+
+export class AttendanceMutationResultDto {
+  @ApiProperty({ type: AttendanceDto, nullable: true })
+  attendance!: AttendanceDto | null;
+}
 
 /** 반복 편집 범위 — 단발이면 화면이 묻지 않고 'this' 를 보낸다 */
 export const SCOPES = ['this', 'future', 'all'] as const;

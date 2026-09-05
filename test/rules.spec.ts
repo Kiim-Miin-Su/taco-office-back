@@ -4,7 +4,7 @@
  * 2026-08-27 대표 결정(docs/decisions/DECISIONS-2026-08-27.md)을 한 줄씩 검증한다.
  *   D-R7   정산 조건 = 「썼는가」 하나. 승인 여부를 보지 않는다
  *   D-R32  지각 차감 = 수업 종료 후 1시간↑ 5,000 · 4시간↑ 10,000, 그 위로 안 늘어난다
- *   D-R35  출결 = 강사는 당일 최초 체크 1회. 지난 회차는 매니저 이상만
+ *   D-R35  출결 = 오늘·이전 종료 회차는 매니저 이상만 CRUD. 강사는 읽기 전용
  *   D-15   원천징수 = 소득세 3% + 지방소득세(소득세의 10%), 각각 절사
  *   D8     시급은 수업일 기준. 변경은 그 이후 수업부터
  *
@@ -12,7 +12,7 @@
  * 여기서는 **인자로 받는다.** 서버는 요청 시각이 매번 다르므로 전역이면 테스트가 거짓말을 한다.
  */
 import * as R from '../src/lib/rules';
-import type { SessionLike, AttendanceCtx } from '../src/lib/rules';
+import type { SessionLike } from '../src/lib/rules';
 
 const ok = (cond: unknown, name: string, extra?: unknown): void => {
   if (!cond && extra !== undefined) console.error(`  ↳ ${name}:`, JSON.stringify(extra));
@@ -23,15 +23,13 @@ const TODAY = '2026-08-21';
 const NOW_MIN = 15 * 60 + 35; // 15:35
 
 /** 회차 하나 — 09:00~10:00 (60분) */
-const S = (over: Partial<SessionLike & AttendanceCtx> = {}): SessionLike & AttendanceCtx => ({
+const S = (over: Partial<SessionLike> = {}): SessionLike => ({
   date: TODAY,
   startMin: 9 * 60,
   durationMin: 60,
   canceled: false,
   report: 'none',
   submittedAt: null,
-  att: null,
-  statusChanged: null,
   ...over,
 });
 
@@ -226,63 +224,32 @@ describe('2-e. 리포트 입력·저장 계약 (D-R15 · D-R40)', () => {
   });
 });
 
-describe('3. 출결 — 강사는 당일 최초 체크 1회뿐 (D-R35 · 대표 결정 6번)', () => {
-  const teacher = { isTeacher: true, today: TODAY, nowMin: NOW_MIN };
-  const manager = { isTeacher: false, today: TODAY, nowMin: NOW_MIN };
+describe('3. 출결 권한·입력 — 관리자 이상만 종료 회차 CRUD (D-R35)', () => {
+  const teacher = { canCrudAttendance: false, today: TODAY, nowMin: NOW_MIN };
+  const manager = { canCrudAttendance: true, today: TODAY, nowMin: NOW_MIN };
   const YESTERDAY = '2026-08-20';
 
-  it('강사에게 열리는 것은 오늘 한 번뿐이다', () => {
-    ok(R.canEditAttendance(S(), teacher) === 'first', '오늘 끝난 내 수업 — 최초 체크 1회 가능');
-    ok(
-      R.canEditAttendance(S({ att: { by: '김범준', at: '', result: 'completed' } }), teacher) === 'readonly',
-      '이미 찍힌 뒤에는 강사에게 읽기 전용',
-    );
-    ok(
-      R.canEditAttendance(S({ date: YESTERDAY }), teacher) === 'readonly',
-      '⭐ 어제 수업은 강사가 최초 체크조차 못 한다 — 매니저 몫이다',
-    );
-    ok(R.canEditAttendance(S({ startMin: 16 * 60 }), teacher) === 'readonly', '아직 안 끝난 수업에는 출결이 없다');
-    ok(R.canEditAttendance(S({ canceled: true }), teacher) === 'readonly', '관리자가 취소한 수업은 손대지 않는다');
-    ok(
-      R.canEditAttendance(S({ statusChanged: { by: '이매니저', at: '' } }), teacher) === 'readonly',
-      '매니저가 먼저 찍었으면 강사는 못 만진다',
-    );
+  it('종료 회차는 관리 권한만 수정하고 강사는 읽기만 한다', () => {
+    ok(R.canEditAttendance(S(), teacher) === 'readonly', '강사는 오늘 종료 회차도 읽기 전용');
+    ok(R.canEditAttendance(S({ date: YESTERDAY }), teacher) === 'readonly', '강사는 지난 회차도 읽기 전용');
+    ok(R.canEditAttendance(S(), manager) === 'manage', '매니저는 오늘 종료 회차를 관리');
+    ok(R.canEditAttendance(S({ date: YESTERDAY }), manager) === 'manage', '매니저는 지난 회차를 관리');
   });
 
-  it('매니저 이상은 언제든 정정한다', () => {
-    ok(R.canEditAttendance(S(), manager) === 'manage', '매니저는 오늘 회차를 언제든 정정한다');
-    ok(R.canEditAttendance(S({ date: YESTERDAY }), manager) === 'manage', '매니저는 어제 회차도 정정한다');
+  it('종료 전·미래·관리 취소 회차에는 출결이 없다', () => {
+    ok(R.canEditAttendance(S({ startMin: 16 * 60 }), manager) === 'unavailable', '종료 전 회차');
+    ok(R.canEditAttendance(S({ date: '2026-08-22' }), manager) === 'unavailable', '미래 회차');
+    ok(R.canEditAttendance(S({ canceled: true }), manager) === 'unavailable', '관리 취소 회차');
+  });
+
+  it('완료에는 사유가 없고 취소에는 허용 사유가 필수다', () => {
+    ok(R.attendanceWriteIssue({ result: 'completed' }) === null, '완료 입력');
     ok(
-      R.canEditAttendance(S({ att: { by: '김범준', at: '', result: 'completed' } }), manager) === 'manage',
-      '매니저는 이미 찍힌 것도 정정한다',
+      R.attendanceWriteIssue({ result: 'completed', reason: 'academy' }) === 'ATTENDANCE_REASON_FORBIDDEN',
+      '완료 사유 금지',
     );
-    ok(R.canEditAttendance(S({ canceled: true }), manager) === 'manage', '취소분도 매니저는 다룬다');
-  });
-});
-
-describe('3-b. firstCheck — 거절 사유가 상황마다 다르다', () => {
-  const teacher = { isTeacher: true, today: TODAY, nowMin: NOW_MIN };
-
-  it('"안 됩니다"로 뭉치지 않는다', () => {
-    const r1 = R.firstCheck(S({ date: '2026-08-20' }), 'completed', teacher);
-    ok(r1.ok === false && /매니저/.test(r1.msg), '지난 수업은 매니저가 처리한다고 말해 준다', r1.msg);
-
-    const r2 = R.firstCheck(S({ startMin: 16 * 60 }), 'completed', teacher);
-    ok(r2.ok === false && /끝난 뒤/.test(r2.msg), '아직 안 끝났다고 말해 준다', r2.msg);
-
-    const r3 = R.firstCheck(S({ att: { by: '나', at: '', result: 'completed' } }), 'completed', teacher);
-    ok(r3.ok === false && /이미/.test(r3.msg), '이미 찍혔다고 말해 준다', r3.msg);
-
-    const r4 = R.firstCheck(S(), 'completed', { isTeacher: false, today: TODAY, nowMin: NOW_MIN });
-    ok(r4.ok === false && /매니저 정정/.test(r4.msg), '매니저는 정정 경로로 보낸다', r4.msg);
-  });
-
-  it('오늘 회차는 확정된다', () => {
-    const okRes = R.firstCheck(S(), 'completed', teacher);
-    ok(okRes.ok === true, '오늘 회차는 확정된다');
-    ok(/완료/.test(okRes.msg), '완료로 확정했다고 말해 준다');
-    const cancelRes = R.firstCheck(S(), 'canceled', teacher);
-    ok(cancelRes.ok === true && /취소/.test(cancelRes.msg), '취소로도 확정된다');
+    ok(R.attendanceWriteIssue({ result: 'canceled' }) === 'ATTENDANCE_REASON_REQUIRED', '취소 사유 필수');
+    ok(R.attendanceWriteIssue({ result: 'canceled', reason: 'holiday' }) === null, '취소 허용 사유');
   });
 });
 

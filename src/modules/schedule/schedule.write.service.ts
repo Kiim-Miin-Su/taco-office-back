@@ -242,9 +242,31 @@ export class ScheduleWriteService {
   }
 
   async remove(serId: number, dto: OccurrenceDeleteDto): Promise<WriteResultDto> {
-    return this.tx([serId], (before) => {
+    return this.tx([serId], async (before, q) => {
       if (!before.SER.length) throw new NotFoundException({ code: 'NOT_FOUND', message: `수업 ${serId} 이(가) 없습니다` });
-      const a = applyDelete(before, { serId, onDate: dto.onDate, scope: dto.scope as Scope });
+      // ATT를 포함한 이력 원장은 SER_OCC와 달리 재투영해 지울 수 없다. 전 회차 삭제 요청이어도
+      // 사실 참조가 하나라도 있으면 SER를 보존하고 기간만 마감해야 감사 근거가 함께 남는다.
+      const refs = await q.query(
+        `SELECT EXISTS (
+           SELECT 1 FROM att WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM rep WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM autorep WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM chreq WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM guide WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM pnoti WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM payout_line WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM cons_sess WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM note WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM diag WHERE ser_id=$1
+           UNION ALL SELECT 1 FROM zassign WHERE ser_id=$1
+         ) AS has_refs`, [serId],
+      ) as Array<{ has_refs: boolean }>;
+      const a = applyDelete(before, {
+        serId,
+        onDate: dto.onDate,
+        scope: dto.scope as Scope,
+        hasRefs: refs[0]?.has_refs === true,
+      });
       return { after: a, log: a.__log, effScope: a.__effScope };
     });
   }
