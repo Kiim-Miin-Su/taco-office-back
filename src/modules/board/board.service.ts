@@ -4,7 +4,8 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { GUIDE_PENDING_DB, REPORT_WRITTEN_DB } from '../../lib/rules';
 import type { BoardDto, CheckMarkDto } from './board.dto';
-import { hhmmOf } from '../../lib/sql';
+import { hhmmOf, kstDateOf } from '../../lib/sql';
+import { boardSummary } from './board.rules';
 
 type R = Record<string, unknown>;
 
@@ -23,14 +24,26 @@ export class BoardService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
-  async range(from: string, to: string, teacherId?: number): Promise<BoardDto> {
+  async range({
+    from,
+    to,
+    teacherId,
+    subKey,
+  }: {
+    from: string;
+    to: string;
+    teacherId?: number;
+    subKey?: string;
+  }): Promise<BoardDto> {
     const rows = await this.q(
-      `SELECT o.id AS occ_id, o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, o.canceled,
+      `SELECT o.id AS occ_id, o.ser_id,
+              to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS date,
+              to_char(o.on_date,'YYYY-MM-DD') AS on_date, o.canceled,
               a.result AS attendance_result,
               ${hhmmOf('lower(o.span)')} AS start_at,
               ${hhmmOf('upper(o.span)')} AS end_at,
-              s.mode, s.kind_key, k.name AS kind_name,
-              t.name AS teacher_name, rm.name AS room_name,
+              s.mode, s.kind_key, k.name AS kind_name, s.sub_key, sb.name AS sub_name,
+              o.teacher_id, t.name AS teacher_name, rm.name AS room_name,
               o.zacc_id,
               /* 그날 빠진 학생은 명단에서 뺀다 (D-R21).
                  스케줄 화면은 exc_stu_out 을 보고 droppedOnce 를 매기는데 여기만 안 보고 있었다 —
@@ -60,11 +73,13 @@ export class BoardService {
          LEFT JOIN kind  k  ON k.key = s.kind_key
          LEFT JOIN staff t  ON t.id = o.teacher_id
          LEFT JOIN room  rm ON rm.id = o.room_id
+         LEFT JOIN sub   sb ON sb.key = s.sub_key
          LEFT JOIN att a ON a.ser_id = o.ser_id AND a.on_date = o.on_date
-        WHERE o.on_date BETWEEN $1::date AND $2::date
+        WHERE ${kstDateOf('lower(o.span)')} BETWEEN $1::date AND $2::date
           AND ($3::bigint IS NULL OR o.teacher_id = $3)
-        ORDER BY o.on_date, lower(o.span), o.id`,
-      [from, to, teacherId ?? null, [...GUIDE_PENDING_DB], REPORT_WRITTEN_DB],
+          AND ($6::varchar IS NULL OR s.sub_key = $6)
+        ORDER BY lower(o.span), o.id`,
+      [from, to, teacherId ?? null, [...GUIDE_PENDING_DB], REPORT_WRITTEN_DB, subKey ?? null],
     );
 
     const out = rows.map((r) => {
@@ -86,12 +101,16 @@ export class BoardService {
       const missing = marks.filter((m) => !m.na && !m.done).length;
 
       return {
-        occId: Number(r.occ_id), serId: Number(r.ser_id), onDate: String(r.on_date),
+        occId: Number(r.occ_id), serId: Number(r.ser_id),
+        date: String(r.date), onDate: String(r.on_date),
         startAt: String(r.start_at), endAt: String(r.end_at),
+        teacherId: r.teacher_id === null || r.teacher_id === undefined ? null : Number(r.teacher_id),
         teacherName: (r.teacher_name as string) ?? null,
         roomName: (r.room_name as string) ?? null,
         mode: String(r.mode), kindKey: String(r.kind_key),
         kindName: (r.kind_name as string) ?? null,
+        subKey: (r.sub_key as string) ?? null,
+        subName: (r.sub_name as string) ?? null,
         studentNames: (r.student_names as string[]) ?? [],
         canceled: r.canceled === true || attendanceCanceled,
         marks,
@@ -103,6 +122,7 @@ export class BoardService {
       from, to,
       rows: out,
       missingCount: out.filter((r) => !r.canceled && r.missing > 0).length,
+      ...boardSummary(out),
       computedAt: new Date().toISOString(),
     };
   }

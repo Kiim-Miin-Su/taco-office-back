@@ -1022,7 +1022,7 @@
             "required": true,
             "in": "query",
             "schema": {
-              "example": "2026-08-24",
+              "example": "2026-08-01",
               "type": "string"
             }
           },
@@ -1031,7 +1031,27 @@
             "required": true,
             "in": "query",
             "schema": {
-              "example": "2026-08-30",
+              "example": "2026-08-31",
+              "type": "string"
+            }
+          },
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "description": "매니저 이상용 강사 필터. 강사는 본인 id로 강제한다",
+            "schema": {
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "subKey",
+            "required": false,
+            "in": "query",
+            "description": "SUB.key 과목 필터",
+            "schema": {
+              "maxLength": 20,
               "type": "string"
             }
           }
@@ -1048,7 +1068,7 @@
             }
           }
         },
-        "summary": "수업 현황판 — 교재·안내·줌·리포트 4마크를 매번 계산한다 (§34 · D-R4)",
+        "summary": "수업 현황판 — 회차·강사×요일·주차별 4마크를 매번 계산한다 (§34~§36 · D-R4)",
         "tags": [
           "board"
         ]
@@ -3755,8 +3775,13 @@
           "serId": {
             "type": "number"
           },
+          "date": {
+            "type": "string",
+            "description": "회차 span의 실제 날짜. 이동 예외 뒤 화면·집계에 사용한다"
+          },
           "onDate": {
-            "type": "string"
+            "type": "string",
+            "description": "SER_OCC/EXC 식별자인 원래 날짜"
           },
           "startAt": {
             "type": "string",
@@ -3765,6 +3790,10 @@
           "endAt": {
             "type": "string",
             "description": "HH:MM"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
           },
           "teacherName": {
             "type": "string",
@@ -3785,6 +3814,14 @@
             "type": "string"
           },
           "kindName": {
+            "type": "string",
+            "nullable": true
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "subName": {
             "type": "string",
             "nullable": true
           },
@@ -3812,6 +3849,7 @@
         "required": [
           "occId",
           "serId",
+          "date",
           "onDate",
           "startAt",
           "endAt",
@@ -3819,6 +3857,151 @@
           "kindKey",
           "studentNames",
           "canceled",
+          "marks",
+          "missing"
+        ]
+      },
+      "BoardMarkCountDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "book",
+              "guide",
+              "zoom",
+              "report"
+            ]
+          },
+          "done": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          },
+          "missing": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "done",
+          "total",
+          "missing"
+        ]
+      },
+      "BoardSummaryDto": {
+        "type": "object",
+        "properties": {
+          "lessons": {
+            "type": "number",
+            "description": "취소를 제외한 수업 수"
+          },
+          "marks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardMarkCountDto"
+            }
+          },
+          "missing": {
+            "type": "number",
+            "description": "네 축의 미완료 마크 합계"
+          },
+          "completionRate": {
+            "type": "number",
+            "description": "N/A를 뺀 완료 마크 비율, 정수 반올림"
+          }
+        },
+        "required": [
+          "lessons",
+          "marks",
+          "missing",
+          "completionRate"
+        ]
+      },
+      "BoardTeacherDayDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "회차 span의 실제 날짜. 원래 회차 키 onDate와 구분한다"
+          },
+          "lessons": {
+            "type": "number"
+          },
+          "marks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckMarkDto"
+            }
+          },
+          "missing": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "date",
+          "lessons",
+          "marks",
+          "missing"
+        ]
+      },
+      "BoardTeacherRowDto": {
+        "type": "object",
+        "properties": {
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardTeacherDayDto"
+            }
+          },
+          "missing": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "teacherName",
+          "days",
+          "missing"
+        ]
+      },
+      "BoardWeekDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "lessons": {
+            "type": "number"
+          },
+          "marks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardMarkCountDto"
+            }
+          },
+          "missing": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "label",
+          "lessons",
           "marks",
           "missing"
         ]
@@ -3842,6 +4025,21 @@
             "type": "number",
             "description": "덜 된 수업 수 — 화면 위 배지"
           },
+          "summary": {
+            "$ref": "#/components/schemas/BoardSummaryDto"
+          },
+          "teacherRows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardTeacherRowDto"
+            }
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BoardWeekDto"
+            }
+          },
           "computedAt": {
             "type": "string",
             "description": "저장하지 않는다는 사실을 화면이 그대로 적을 수 있게 (D-R4)"
@@ -3852,6 +4050,9 @@
           "to",
           "rows",
           "missingCount",
+          "summary",
+          "teacherRows",
+          "weeks",
           "computedAt"
         ]
       },

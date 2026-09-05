@@ -24,6 +24,10 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   let app: INestApplication;
   let ds: DataSource;
   const PW = 'screens-test-1234';
+  const ONCE_SER = 9_111_001;
+  const RECURRING_SER = 9_111_002;
+  const SCREEN_DATE = '2099-01-01';
+  const SCREEN_MOVED_DATE = '2099-01-03';
   const PEOPLE = [
     { id: 911, name: '강사스크린', email: 'scr-teacher@t.kr', role: 'teacher' },
     { id: 912, name: '매니저스크린', email: 'scr-manager@t.kr', role: 'manager' },
@@ -46,9 +50,31 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
         [p.id, p.name, p.email, p.role, hash],
       );
     }
+    await ds.query('DELETE FROM ser_occ WHERE ser_id = ANY($1)', [[ONCE_SER, RECURRING_SER]]);
+    await ds.query('DELETE FROM ser WHERE id = ANY($1)', [[ONCE_SER, RECURRING_SER]]);
+    await ds.query(
+      `INSERT INTO ser (id,kind_key,teacher_id,mode,start_min,end_min,rrule,from_date,to_date,title)
+       VALUES
+         ($1,'class',$3,'offline',660,720,'ONCE',$4,$4,'스크린 단발'),
+         ($2,'class',$3,'offline',540,600,'DAILY',$4,$5,'스크린 반복')`,
+      [ONCE_SER, RECURRING_SER, 912, SCREEN_DATE, '2099-01-02'],
+    );
+    await ds.query(
+      `INSERT INTO ser_occ (ser_id,on_date,teacher_id,canceled,span)
+       VALUES
+         ($1,$3,$2,false,tstzrange(($6::date + time '11:00') AT TIME ZONE 'Asia/Seoul',
+                                    ($6::date + time '12:00') AT TIME ZONE 'Asia/Seoul','[)')),
+         ($4,$3,$2,false,tstzrange(($3::date + time '09:00') AT TIME ZONE 'Asia/Seoul',
+                                    ($3::date + time '10:00') AT TIME ZONE 'Asia/Seoul','[)')),
+         ($4,$5,$2,false,tstzrange(($5::date + time '09:00') AT TIME ZONE 'Asia/Seoul',
+                                    ($5::date + time '10:00') AT TIME ZONE 'Asia/Seoul','[)'))`,
+      [ONCE_SER, 912, SCREEN_DATE, RECURRING_SER, '2099-01-02', SCREEN_MOVED_DATE],
+    );
   });
 
   afterAll(async () => {
+    await ds?.query('DELETE FROM ser_occ WHERE ser_id = ANY($1)', [[ONCE_SER, RECURRING_SER]]);
+    await ds?.query('DELETE FROM ser WHERE id = ANY($1)', [[ONCE_SER, RECURRING_SER]]);
     await ds?.query('DELETE FROM staff WHERE id BETWEEN 911 AND 913');
     await app?.close();
   });
@@ -98,13 +124,58 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   it('현황판 — 회차마다 네 마크가 온다', async () => {
     const r = await get('/board?from=2026-08-01&to=2026-09-30', MANAGER).expect(200);
     expect(r.body.rows.length).toBeGreaterThan(0);
+    expect(r.body.summary.lessons).toBeGreaterThan(0);
+    expect(r.body.summary.marks.map((m: { key: string }) => m.key)).toEqual([
+      'book',
+      'guide',
+      'zoom',
+      'report',
+    ]);
+    expect(Array.isArray(r.body.teacherRows)).toBe(true);
+    expect(r.body.weeks.length).toBeGreaterThan(0);
     const row = r.body.rows[0];
-    expect(row.marks.map((m: { key: string }) => m.key).sort()).toEqual(['book', 'guide', 'report', 'zoom']);
+    expect(row.marks.map((m: { key: string }) => m.key).sort()).toEqual([
+      'book',
+      'guide',
+      'report',
+      'zoom',
+    ]);
     // 오프라인 수업의 줌은 판정하지 않는다 — 해당 없음이다
     const offline = r.body.rows.find((x: { mode: string }) => x.mode === 'offline');
     if (offline) {
       expect(offline.marks.find((m: { key: string }) => m.key === 'zoom').na).toBe(true);
     }
+  });
+
+  it('현황판 — 매니저 필터와 조회 범위를 계약에서 방어한다', async () => {
+    const all = await get('/board?from=2026-08-01&to=2026-09-30', MANAGER).expect(200);
+    const teacherId = all.body.rows.find(
+      (row: { teacherId: number | null }) => row.teacherId,
+    )?.teacherId;
+    const subKey = all.body.rows.find((row: { subKey: string | null }) => row.subKey)?.subKey;
+    expect(teacherId).toBeTruthy();
+    expect(subKey).toBeTruthy();
+
+    const filtered = await get(
+      `/board?from=2026-08-01&to=2026-09-30&teacherId=${teacherId}&subKey=${encodeURIComponent(subKey)}`,
+      MANAGER,
+    ).expect(200);
+    filtered.body.rows.forEach((row: { teacherId: number; subKey: string }) => {
+      expect(row.teacherId).toBe(teacherId);
+      expect(row.subKey).toBe(subKey);
+    });
+
+    await get('/board?from=2026-02-30&to=2026-03-01', MANAGER).expect(400);
+    await get('/board?from=2026-08-01&to=2026-10-02', MANAGER).expect(400);
+  });
+
+  it('현황판 — 옮긴 회차는 원래 키가 아니라 실제 span 날짜에 표시한다', async () => {
+    const r = await get(`/board?from=${SCREEN_MOVED_DATE}&to=${SCREEN_MOVED_DATE}`, MANAGER).expect(
+      200,
+    );
+    const moved = r.body.rows.find((row: { serId: number }) => row.serId === ONCE_SER);
+    expect(moved).toMatchObject({ date: SCREEN_MOVED_DATE, onDate: SCREEN_DATE });
+    expect(r.body.teacherRows[0].days[0].date).toBe(SCREEN_MOVED_DATE);
   });
 
   it('대표 보고 — 숫자 칸과 제출된 보고가 온다', async () => {
@@ -151,7 +222,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     const g = await get('/guides', TEACHER).expect(200);
     expect(g.body.scopedTeacherId).toBe(911);
 
-    const b = await get('/board?from=2026-08-01&to=2026-09-30', TEACHER).expect(200);
+    const b = await get('/board?from=2026-08-01&to=2026-09-30&teacherId=912', TEACHER).expect(200);
     // 911 은 시드에 수업이 없는 사람이라 0건이어야 한다 — 남의 수업이 새어 나오면 안 된다
     expect(b.body.rows.length).toBe(0);
   });
@@ -203,9 +274,11 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   });
 
   it('캘린더 — 단발과 반복이 구분되어 내려온다 (§5A.0)', async () => {
-    // 시드 날짜는 오늘 기준으로 밀리므로 창도 오늘 기준으로 잡는다
-    const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
-    const r = await get(`/schedule/occurrences?from=${iso(Date.now() - 7 * 864e5)}&to=${iso(Date.now() + 7 * 864e5)}`, MANAGER).expect(200);
+    // 실행 날짜와 seed 시점에 영향받지 않는 전용 회차로 두 분기를 모두 고정한다.
+    const r = await get(
+      `/schedule/occurrences?from=${SCREEN_DATE}&to=${SCREEN_MOVED_DATE}`,
+      MANAGER,
+    ).expect(200);
     const rec = r.body.items.filter((o: { recurring: boolean }) => o.recurring);
     const once = r.body.items.filter((o: { recurring: boolean }) => !o.recurring);
     // 두 분기가 다 있어야 한다 — 값이 한 종류뿐이면 그 분기는 검증된 적이 없는 것
