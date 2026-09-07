@@ -74,9 +74,9 @@ export const SUBS = [
   { key: 'admissions', name: '입시 컨설팅',    color: '#955675' },
   { key: 'mt-pl',      name: '회의 · 기획',    color: '#6E6098' },
   { key: 'mt-cs',      name: '회의 · 컨설팅',  color: '#477785' },
-  { key: 'mt-mk',      name: '회의 · 마케팅',  color: '#5C7A9E' },
-  { key: 'mt-dv',      name: '회의 · 개발',    color: '#4F7F6B' },
-  { key: 'mt-pg',      name: '회의 · 일반',    color: '#7A7A8C' },
+  { key: 'mt-mk',      name: '회의 · 마케팅',  color: '#9A5B71' },
+  { key: 'mt-dv',      name: '회의 · 개발',    color: '#546FA2' },
+  { key: 'mt-pg',      name: '회의 · 일반',    color: '#856C4A' },
 ] as const;
 
 /** 강의실 — 3지점 */
