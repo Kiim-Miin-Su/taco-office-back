@@ -1007,7 +1007,7 @@
             }
           }
         },
-        "summary": "컨설팅 — 건 · 학생 · 회차 기록 (§29 · §30)",
+        "summary": "컨설팅 — 단계 보드 · 목록 · 회차 기록 (§26 · §27 · §31)",
         "tags": [
           "consulting"
         ]
@@ -3594,11 +3594,16 @@
             "type": "number"
           },
           "seq": {
-            "type": "number",
-            "description": "몇 번째 회차"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32767,
+            "description": "건별 고유 회차 순번"
           },
           "onDate": {
-            "type": "string"
+            "type": "string",
+            "nullable": true,
+            "format": "date",
+            "description": "미정이면 null"
           },
           "who": {
             "type": "string",
@@ -3636,12 +3641,8 @@
           },
           "consType": {
             "type": "string",
-            "enum": [
-              "admissions",
-              "essay",
-              "roadmap"
-            ],
-            "description": "종류 10종 중 시드에 있는 것"
+            "maxLength": 20,
+            "description": "종류 코드. 전체 10종 미확정: 시드 3종으로 제한하지 않는다."
           },
           "stage": {
             "type": "string",
@@ -3653,9 +3654,11 @@
             "description": "계약 → 진행 → 종료"
           },
           "contractStep": {
-            "type": "number",
+            "type": "integer",
             "nullable": true,
-            "description": "계약 5단계 — 계약서 → 피드백 → 학부모 전달 → 서명본 → 수납"
+            "minimum": 1,
+            "maximum": 5,
+            "description": "계약 5단계. 계약 중 미정은 null, 진행/종료는 5."
           },
           "studentNames": {
             "type": "array",
@@ -3668,8 +3671,10 @@
             "nullable": true
           },
           "sessions": {
-            "type": "number",
-            "nullable": true
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 32767
           },
           "endOn": {
             "type": "string",

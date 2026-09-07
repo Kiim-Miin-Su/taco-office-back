@@ -1,6 +1,6 @@
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.9  (2026-09-05) — ATT 회차 출결 현재값 · LOG 수정 이력 계약
+// version : 4.11 (2026-09-07) — TBO-47C 컨설팅 stage/step/session CHECK · 회차 순번 UNIQUE
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -37,8 +37,8 @@
 Project taco_erp {
   database_type: 'PostgreSQL'
   Note: '''
-  관리자 백오피스(구현 완료 · 탭 10 · 화면 63) + 강사 백오피스(구현 완료 · 화면 7).
-  두 제품이 줌 계정 · 강의실 · 학생을 공유한다. 리포트와 정산은 시점만 다르고 같은 데이터를 본다.
+  현재 제품은 관리자 백오피스 한 앱이며 teacher 역할의 읽기 화면도 같은 계약을 쓴다.
+  별도 강사 백오피스는 D-R38에 따라 합치지 않으며 이 ERD가 구현 완료를 뜻하지 않는다.
 
   불변식
     D-1  일정(SER)이 사실이고 나머지는 파생이다.
@@ -692,14 +692,18 @@ Table CONS {
   id          bigserial    [pk]
   cons_type   varchar(20)  [not null, note: '종류 10종']
   stage       varchar(12)  [not null, note: 'contract | running | done']
-  contract_step smallint   [note: '계약 5단계 — 계약서 → 피드백 → 학부모 전달 → 서명본 → 수납']
+  contract_step smallint   [note: '1~5 또는 null(계약 중 미정). running/done은 반드시 5. 계약서 → 피드백 → 학부모 전달 → 서명본 → 수납']
   amount      int
-  sessions    smallint
+  sessions    smallint     [note: '1~32767 또는 null(미정)']
   end_on      date
   owner_id    bigint       [ref: > STAFF.id]
   share       cons_share_t [not null, default: 'all', note: 'csCan() 목록 필터 · csCanFull() 내용 접근']
   created_at  timestamptz  [not null, default: `now()`]
-  Note: '시드 2건. 공개 범위는 role 권한과 **독립된 두 번째 층** (D-5 · D-R39).'
+  Note: '''
+  공개 범위는 role 권한과 독립된 두 번째 층 (D-5 · D-R39).
+  TBO-47C migration 11: cons_stage_check (contract/running/done), cons_contract_step_check (1~5),
+  cons_paid_stage_check (계약 외 step=5, NULL 차단), cons_sessions_check (>0).
+  '''
 }
 
 Table CONS_STU  { cons_id bigint [ref: > CONS.id]  student_id bigint [ref: > STU.id]  indexes { (cons_id, student_id) [pk] } }
@@ -708,13 +712,14 @@ Table CONS_PICK { cons_id bigint [ref: > CONS.id]  staff_id   bigint [ref: > STA
 Table CONS_SESS {
   id          bigserial   [pk]
   cons_id     bigint      [not null, ref: > CONS.id]
-  seq         smallint    [not null]
+  seq         smallint    [not null, note: '1~32767 · cons_sess_seq_check (>0)']
   on_date     date
   who         text
   what        text
   why         text
   how         text
   ser_id      bigint      [ref: > SER.id, note: '회차 기록 시 스케줄이 생긴다']
+  indexes { (cons_id, seq) [unique, name: 'cons_sess_cons_seq_uniq'] }
   Note: '회차별 육하원칙 기록. 실측: 기록하면 SER 35→36 · TODO 5→6.'
 }
 
@@ -1032,6 +1037,18 @@ Table SER_OCC {
 //   + REP 승인 계약        wait/ok/rej 제출 시각 필수, ok/rej 검토자·시각 필수,
 //                          rej 사유 필수, ok 사유 NULL, 그 밖의 상태는 검토 컬럼 NULL
 //   + LOG · NOTI           승인/반려 transaction 안에서 이력과 강사 알림을 함께 기록
+//
+// v4.8 → v4.9 (2026-09-05 · TBO-44F 출결)
+//   + ATT                  (ser_id,on_date) current 1행 · result/reason CHECK · confirmer FK
+//   + LOG                  출결 생성·정정·초기화 revision을 append-only 기록
+//
+// v4.9 → v4.10 (2026-09-06 · TBO-46 수업 현황판)
+//   = schema 변경 없음     §34~§36은 SER_OCC/SER/ATT/ISSUE/GUIDE/REP/ZACC read projection
+//                          `date`는 span 실제일, `on_date`는 회차 식별자로 분리해 API에서만 표현
+//
+// v4.10 → v4.11 (2026-09-07 · TBO-47C 컨설팅 조회 계약)
+//   + CONS                 stage/step/수납 이후 단계/총 회차 CHECK 4개
+//   + CONS_SESS            양수 순번 CHECK · (cons_id,seq) UNIQUE
 //
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)

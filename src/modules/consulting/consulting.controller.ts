@@ -12,7 +12,7 @@ export class ConsultingController {
 
   @Get()
   @Perm('canCrudAll')
-  @ApiOperation({ summary: '컨설팅 — 건 · 학생 · 회차 기록 (§29 · §30)' })
+  @ApiOperation({ summary: '컨설팅 — 단계 보드 · 목록 · 회차 기록 (§26 · §27 · §31)' })
   @ApiOkResponse({ type: ConsultingListDto })
   async all(@CurrentUser() user: RequestUser): Promise<ConsultingListDto> {
     if (!isRole(user.role)) return { items: [], canSeeAmounts: false };

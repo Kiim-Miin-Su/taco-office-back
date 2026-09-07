@@ -1,12 +1,14 @@
 /**
- * CONS_SESS — docs/contracts/db/erd.dbml v4.5 에서 생성했습니다.
+ * CONS_SESS — docs/contracts/db/erd.dbml v4.11 대조. TBO-47C CHECK/UNIQUE 보강.
  *
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, PrimaryGeneratedColumn, Unique } from 'typeorm';
 
 @Entity({ name: 'cons_sess' })
+@Check('cons_sess_seq_check', 'seq > 0')
+@Unique('cons_sess_cons_seq_uniq', ['consId', 'seq'])
 export class ConsSess {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
