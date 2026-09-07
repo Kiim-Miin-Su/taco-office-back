@@ -15,12 +15,15 @@ export const minOf = (expr: string): string =>
   `(EXTRACT(HOUR FROM ${expr} AT TIME ZONE '${KST}') * 60`
   + ` + EXTRACT(MINUTE FROM ${expr} AT TIME ZONE '${KST}'))::int`;
 
-/** `ser_occ` 를 `o` 로 별칭 붙였을 때의 시작·끝 분 */
-export const START_MIN = minOf('lower(o.span)');
-export const END_MIN = minOf('upper(o.span)');
-
 /** KST 날짜 — 옮긴 EXC는 `on_date`와 실제 `span` 날짜가 다르므로 표시 날짜는 이것을 쓴다. */
 export const kstDateOf = (expr: string): string => `(${expr} AT TIME ZONE '${KST}')::date`;
+
+/** `ser_occ` 를 `o` 로 별칭 붙였을 때의 시작·끝 분. 둘 다 수업 시작일의 KST 자정 기준이다. */
+export const START_MIN = minOf('lower(o.span)');
+// API가 허용하는 24:00 종료는 다음 날짜의 00:00으로 저장된다. 시각만 뽑으면 1440이 0이 되어
+// 길이가 음수가 되고 리포트·출결이 일찍 열린다. 실제 span 날짜 차이를 더해 이동 예외도 보존한다.
+export const END_MIN = `(${minOf('upper(o.span)')} + 1440 * (`
+  + `${kstDateOf('upper(o.span)')} - ${kstDateOf('lower(o.span)')}))`;
 
 /**
  * 화면에 내려보내는 시각 — **언제나 KST 오프셋이 붙은 ISO** 다.
