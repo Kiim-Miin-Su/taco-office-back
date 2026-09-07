@@ -2,9 +2,9 @@
 
 TACO ERP API — **NestJS 11 · TypeORM · Neon Postgres · Vercel**
 
-> 정본: [`docs/spec/DEV-SPEC.md`](../taco-office/docs/spec/DEV-SPEC.md) (개발 명세서 v2 · 화면 70컷)
-> 스택: [`docs/contracts/STACK.md`](../taco-office/docs/contracts/STACK.md) · 계약: [`CONTRACTS.md`](../taco-office/docs/contracts/CONTRACTS.md)
-> 스키마: [`erd.dbml`](../taco-office/docs/contracts/db/erd.dbml) **v4.2**
+> 문서 정본은 형제 저장소 [`docs/AGENT.md`](../docs/AGENT.md)와 [`DEV-SPEC.md`](../docs/spec/DEV-SPEC.md) (v2 · 실제 UI 61컷)입니다.
+> [`STACK`](../docs/contracts/STACK.md) · [`CONTRACTS`](../docs/contracts/CONTRACTS.md) · [`ERD`](../docs/contracts/db/erd.dbml)
+> 경로는 back/front/docs가 같은 부모 폴더에 있는 로컬 워크스페이스 기준입니다. 단독 clone에서는 docs 저장소도 준비합니다.
 
 **프론트와는 독립 레포다** (D-R42). 공유하는 것은 코드가 아니라 `openapi.json` 한 장이다.
 
@@ -13,14 +13,17 @@ TACO ERP API — **NestJS 11 · TypeORM · Neon Postgres · Vercel**
 ## 시작
 
 ```bash
-cp .env.local.example .env.local     # 값을 채운다
-npm install
-npm run migration:run                # 스키마를 만든다
+cp .env.local.example .env.local     # 기존 파일이 없을 때만. 로컬 DB/CORS 설정 확인
+npm ci                              # 현재 OS/CPU에서 기존 lockfile로 설치
 npm run dev                          # http://localhost:3001/api/docs
 ```
 
 `.env.local` 의 키가 하나라도 없으면 **부팅이 막힌다** (`app.module.ts` 의 Joi 스키마).
 반쯤 뜬 서버가 가장 고치기 어렵다.
+
+**기존 `.env.local`은 운영 Neon을 가리킬 수 있습니다.** migration·seed·DB 테스트 전에 대상을 확인합니다.
+전체 검증은 워크스페이스에서 `zsh docs/script/release.zsh --check --sync-contracts`를 권장합니다.
+이 경로가 임시 PostgreSQL의 개발/`_test` DB를 준비합니다. 운영 migration은 preflight·승인·readback을 별도로 거칩니다.
 
 ## 이 레포에서 지키는 것
 
@@ -38,23 +41,23 @@ npm run dev                          # http://localhost:3001/api/docs
 | | |
 |---|---|
 | `npm run dev` | 개발 서버 (`/api/docs` 에 Swagger) |
-| `npm test` | 전체 테스트. `DATABASE_URL` 이 없으면 DB 테스트는 건너뛴다 |
+| `npm test` | `.env.local`도 읽음. DB 테스트는 `DATABASE_URL`/`TEST_DATABASE_URL` 대상 확인 필수; 미설정 skip은 검증 통과가 아님 |
 | `npm run typecheck` · `npm run lint` | 타입 · 린트 |
 | `npm run migration:run` · `migration:revert` | 스키마 |
 | `npm run openapi:gen` | `openapi.json` 갱신 — **DTO 를 고쳤으면 같은 커밋에** |
 | `npm run openapi:check` | 생성물이 DTO 와 같은지 (CI) |
-| `bash scripts/entities-gen.sh` | `erd.dbml` → 엔티티 재생성 |
+| `bash scripts/entities-gen.sh` | 레거시 생성기. 현재 수기 CHECK/타입 보강을 덮을 수 있어 무차별 재생성 금지 |
 
-## 생성물 — 손으로 고치지 않는다
+## 생성물과 스키마
 
-- `src/entities/**` ← `docs/contracts/db/erd.dbml`
-- `openapi.json` ← DTO
+- `src/entities/**`는 ERD에서 시작했지만 현재 수기 제약·타입 보강을 포함한다. entity·ERD·snapshot·forward migration을 같은 청크에서 대조한다.
+- `openapi.json`은 DTO 생성물이며 손으로 고치지 않는다.
 
 ## 아직 없는 것
 
 | | 왜 |
 |---|---|
 | GPA 4표 | **N-13** 결정 대기 — 별표로 뺄지 `SER(kind='gpa')` 에 얹을지 |
-| `nestjs-pino` | **§11-A** 추천안 확인 대기 |
-| `typeorm-transactional` | **§11-B** 추천안 확인 대기. 지금은 `ds.transaction()` 을 직접 쓴다 |
-| 화면별 모듈 | 트랙 B (TBO-23~) |
+| `nestjs-pino` | **§11-A** 2026-08-31 승인 완료, 도입 잔여 |
+| `typeorm-transactional` | **§11-B** 승인 완료, 도입 잔여. 현재 QueryRunner transaction·행 lock·DB 제약 사용 |
+| 미완 업무 쓰기 | 컨설팅 항목/단계·상담·회계·운영 등. 최신 목록은 [MVP 잔여](../docs/report/MVP-REMAINING-PLAN-2026-09-04.md) |
