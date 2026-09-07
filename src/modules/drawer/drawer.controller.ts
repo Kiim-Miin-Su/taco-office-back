@@ -101,6 +101,14 @@ export class DrawerController {
     }
     const change = normalized.value;
 
+    const { canSeeAll } = this.gate(user);
+    const base = await this.svc.occOf(change.serId, change.onDate);
+    // 목록과 같은 경계: 강사는 본인 회차만 요청한다. 타인/미지정 회차는 존재도 공개하지 않는다.
+    // 자원 조회·충돌 설명보다 먼저 검사해 다른 수업의 정보가 응답에 섞이지 않게 한다.
+    if (!base || (!canSeeAll && base.teacherId !== user.id)) {
+      throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '변경할 회차를 찾을 수 없습니다' });
+    }
+
     // JSONB 안의 id에는 FK를 걸 수 없으므로 저장 직전에 실제 활성 자원을 확인한다.
     const target = change.reqType === 'teacher'
       ? { kind: 'teacher' as const, id: change.payload.teacherId }
@@ -111,11 +119,6 @@ export class DrawerController {
           : null;
     if (target && !(await this.svc.activeChangeTargetExists(target.kind, target.id))) {
       throw new NotFoundException({ code: 'CHANGE_TARGET_NOT_FOUND', message: '바꿀 자원을 찾을 수 없습니다' });
-    }
-
-    const base = await this.svc.occOf(change.serId, change.onDate);
-    if (!base) {
-      throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '변경할 회차를 찾을 수 없습니다' });
     }
 
     // 시간·강사·강의실을 바꾸는 요청만 겹침을 본다. 취소는 자리를 비우는 쪽이라 겹칠 수 없다.

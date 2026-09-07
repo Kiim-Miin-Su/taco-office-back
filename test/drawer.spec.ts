@@ -17,10 +17,79 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { isKnownApWord } from '../src/lib/approval';
+import { todayKst } from '../src/lib/kst';
+import { DrawerController } from '../src/modules/drawer/drawer.controller';
+import type { DrawerService } from '../src/modules/drawer/drawer.service';
+import type { ScheduleService } from '../src/modules/schedule/schedule.service';
+import type { ChangeReqCreateDto } from '../src/modules/drawer/drawer.dto';
 import { DEV_URL } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(40_000);
+
+describe('변경 요청 회차 소유권 — DB 독립', () => {
+  const viewer = { id: 921, name: '강사', role: 'teacher' };
+  const base = { startMin: 540, endMin: 600, teacherId: viewer.id, roomId: null, zaccId: null };
+  const occurrence = { serId: 100, onDate: '2026-09-07' };
+  const commands: ChangeReqCreateDto[] = [
+    { ...occurrence, reqType: 'cancel', reason: '휴강 요청' },
+    { ...occurrence, reqType: 'time_move', startMin: 600, endMin: 660, reason: '시간 변경' },
+    { ...occurrence, reqType: 'teacher', teacherId: 922, reason: '강사 변경' },
+  ];
+
+  function setup(teacherId: number | null = viewer.id) {
+    const svc = {
+      occOf: jest.fn().mockResolvedValue({ ...base, teacherId }),
+      activeChangeTargetExists: jest.fn().mockResolvedValue(true),
+      createChangeReq: jest.fn().mockResolvedValue(200),
+    };
+    const sched = { conflicts: jest.fn().mockResolvedValue([]) };
+    const controller = new DrawerController(
+      svc as unknown as DrawerService,
+      sched as unknown as ScheduleService,
+    );
+    return { controller, svc, sched };
+  }
+
+  it.each(commands)('타인 회차 $reqType 요청은 자원·충돌 정보 조회와 저장 전에 거절한다', async (command) => {
+    const { controller, svc, sched } = setup(999);
+    await expect(controller.createChangeReq(viewer, command)).rejects.toMatchObject({
+      response: { code: 'OCCURRENCE_NOT_FOUND' },
+    });
+    expect(svc.activeChangeTargetExists).not.toHaveBeenCalled();
+    expect(sched.conflicts).not.toHaveBeenCalled();
+    expect(svc.createChangeReq).not.toHaveBeenCalled();
+  });
+
+  it.each(commands)('본인 회차 $reqType 요청은 기존 경로로 저장한다', async (command) => {
+    const { controller, svc } = setup();
+    await expect(controller.createChangeReq(viewer, command)).resolves.toEqual({ id: 200, conflicts: [] });
+    expect(svc.createChangeReq).toHaveBeenCalledWith(viewer.id, expect.objectContaining(occurrence));
+  });
+
+  it.each(['manager', 'admin', 'ceo'])('%s는 다른 강사의 회차도 요청할 수 있다', async (role) => {
+    const { controller, svc } = setup(999);
+    await expect(controller.createChangeReq({ ...viewer, role }, commands[0])).resolves.toEqual({
+      id: 200, conflicts: [],
+    });
+    expect(svc.createChangeReq).toHaveBeenCalledTimes(1);
+  });
+
+  it('강사 미지정 회차는 강사의 본인 회차가 아니다', async () => {
+    const { controller, svc } = setup(null);
+    await expect(controller.createChangeReq(viewer, commands[0])).rejects.toMatchObject({
+      response: { code: 'OCCURRENCE_NOT_FOUND' },
+    });
+    expect(svc.createChangeReq).not.toHaveBeenCalled();
+  });
+
+  it('승인 예외 권한은 다른 강사 회차의 변경 요청 권한이 아니다', async () => {
+    const { controller, svc } = setup(999);
+    await expect(controller.createChangeReq({ ...viewer, perms: { canApprove: true } }, commands[0]))
+      .rejects.toMatchObject({ response: { code: 'OCCURRENCE_NOT_FOUND' } });
+    expect(svc.createChangeReq).not.toHaveBeenCalled();
+  });
+});
 
 d('우측 서랍 — §14~§21', () => {
   let app: INestApplication;
@@ -32,6 +101,7 @@ d('우측 서랍 — §14~§21', () => {
     { id: M, name: '매니저서랍', email: 'dw-manager@t.kr', role: 'manager' },
   ];
   const REQ_IDS: number[] = [];
+  let ownSerId: number | undefined;
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -49,6 +119,19 @@ d('우측 서랍 — §14~§21', () => {
         [p.id, p.name, p.email, p.role, hash],
       );
     }
+    // 본인 회차 성공 검증은 남의 시드 일정을 빌리지 않고 이 강사 전용 원장으로 한다.
+    const onDate = todayKst();
+    const [series] = await ds.query(
+      `INSERT INTO ser (kind_key, teacher_id, mode, start_min, end_min, rrule, from_date, to_date, title)
+       VALUES ('class', $1, 'offline', 540, 600, 'ONCE', $2, $2, '서랍 권한 검증') RETURNING id`,
+      [T, onDate],
+    );
+    ownSerId = Number(series.id);
+    await ds.query(
+      `INSERT INTO ser_occ (ser_id, on_date, teacher_id, span)
+       VALUES ($1, $2, $3, tstzrange($4::timestamptz, $5::timestamptz, '[)'))`,
+      [ownSerId, onDate, T, `${onDate}T09:00:00+09:00`, `${onDate}T10:00:00+09:00`],
+    );
 
     // 강사가 올린 요청 3건 — **하나도 빠지지 않고** 대기함에 떠야 한다
     for (const n of [1, 2, 3]) {
@@ -75,6 +158,10 @@ d('우측 서랍 — §14~§21', () => {
     await ds?.query('DELETE FROM todo WHERE id = 9210');
     if (REQ_IDS.length) await ds?.query('DELETE FROM req WHERE id = ANY($1)', [REQ_IDS]);
     await ds?.query('DELETE FROM chreq WHERE by_id IN (921, 922)');
+    if (ownSerId !== undefined) {
+      await ds?.query('DELETE FROM ser_occ WHERE ser_id = $1', [ownSerId]);
+      await ds?.query('DELETE FROM ser WHERE id = $1', [ownSerId]);
+    }
     await ds?.query('DELETE FROM staff WHERE id IN (921, 922)');
     await app?.close();
   });
@@ -95,7 +182,8 @@ d('우측 서랍 — §14~§21', () => {
   const firstOccurrence = async () => {
     const [row] = await ds.query(
       `SELECT ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date
-         FROM ser_occ WHERE NOT canceled ORDER BY on_date, ser_id LIMIT 1`,
+         FROM ser_occ WHERE ser_id = $1 AND teacher_id = $2 ORDER BY on_date LIMIT 1`,
+      [ownSerId, T],
     );
     return { serId: Number(row.ser_id), onDate: String(row.on_date) };
   };
@@ -226,6 +314,37 @@ d('우측 서랍 — §14~§21', () => {
     await request(app.getHttpServer())
       .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
       .send({ ...occurrence, reqType: 'cancel', reason: '   ' }).expect(400);
+  });
+
+  it.each([
+    { reqType: 'cancel', reason: '타인 휴강 요청' },
+    { reqType: 'time_move', startMin: 600, endMin: 660, reason: '타인 시간 변경' },
+  ])('§19 강사의 타인 회차 $reqType 요청은 404이고 원장이 늘지 않는다', async (payload) => {
+    const [other] = await ds.query(
+      `SELECT ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date FROM ser_occ
+        WHERE teacher_id IS NOT NULL AND teacher_id <> $1 AND NOT canceled
+        ORDER BY on_date, ser_id LIMIT 1`,
+      [T],
+    );
+    expect(other).toBeDefined();
+    const [{ count: before }] = await ds.query('SELECT count(*)::int AS count FROM chreq WHERE by_id = $1', [T]);
+    const res = await request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
+      .send({ serId: Number(other.ser_id), onDate: String(other.on_date), ...payload }).expect(404);
+    expect(res.body.code).toBe('OCCURRENCE_NOT_FOUND');
+    expect(res.body).not.toHaveProperty('conflicts');
+    const [{ count: after }] = await ds.query('SELECT count(*)::int AS count FROM chreq WHERE by_id = $1', [T]);
+    expect(after).toBe(before);
+  });
+
+  it('§19 매니저는 다른 강사 회차의 변경 요청을 올릴 수 있다', async () => {
+    const occurrence = await firstOccurrence();
+    const res = await request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(MANAGER))
+      .send({ ...occurrence, reqType: 'cancel', reason: '매니저 대리 요청' }).expect(201);
+    const [saved] = await ds.query('SELECT by_id, ser_id FROM chreq WHERE id = $1', [res.body.id]);
+    expect(Number(saved.by_id)).toBe(M);
+    expect(Number(saved.ser_id)).toBe(occurrence.serId);
   });
 
   it('§19 종류별 필드·대상·자원을 저장 전에 막는다', async () => {
