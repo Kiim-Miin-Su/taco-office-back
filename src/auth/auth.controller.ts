@@ -9,7 +9,6 @@ import type { RequestUser } from '../common/perm';
 // 쿠키 속성은 auth/cookie.ts 한 곳에서만 만든다 — 여기서 다시 적으면 도메인이 갈린다
 import { REFRESH_COOKIE, cookieOptions, clearOptions } from './cookie';
 
-
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
@@ -19,10 +18,7 @@ export class AuthController {
   @Post('login')
   @ApiOperation({ summary: '로그인 — Access 는 본문, Refresh 는 httpOnly 쿠키' })
   @ApiOkResponse({ type: LoginResultDto })
-  async login(
-    @Body() dto: LoginDto,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<LoginResultDto> {
+  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response): Promise<LoginResultDto> {
     const { accessToken, refreshToken, user } = await this.auth.login(dto.email, dto.password);
     res.cookie(REFRESH_COOKIE, refreshToken, cookieOptions());
     return { accessToken, user };
