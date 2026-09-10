@@ -128,6 +128,28 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     return { id, from, body: res.body };
   }
 
+  it('잘못된 반복 문법은 HTTP400이며 SER/투영을 추가하지 않는다', async () => {
+    const before = await q('SELECT (SELECT count(*) FROM ser)::int AS ser, (SELECT count(*) FROM ser_occ)::int AS occ');
+    for (const rrule of ['DAILYjunk', 'WEEKLY:MO,XX', 'DAILY/0', 'DAILY/2junk', 'WEEKLY:MO/9007199254740992']) {
+      const res = await api('post', '/schedule').send({ kindKey: 'meeting', mode: 'offline',
+        fromDate: kst(), rrule, startMin: 600, endMin: 660 });
+      if (res.status === 201) made.push(...res.body.serIds as number[]);
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('BAD_RRULE');
+      expect(await q('SELECT (SELECT count(*) FROM ser)::int AS ser, (SELECT count(*) FROM ser_occ)::int AS occ')).toEqual(before);
+    }
+  });
+
+  it.each([[' once ', 'ONCE', 1], ['daily/2', 'DAILY/2', 4], [' weekly:we, mo/1 ', 'WEEKLY:MO,WE', 3]])(
+    '정상화한 %s→%s가 DB와 첫8일 투영에 일치한다', async (rrule, canonical, count) => {
+      const from = nextMon(plus(kst(), 7));
+      const { id } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [],
+        fromDate: from, toDate: plus(from, 7), rrule });
+      expect(await q('SELECT rrule FROM ser WHERE id=$1', [id])).toEqual([{ rrule: canonical }]);
+      expect(await q('SELECT count(*)::int AS n FROM ser_occ WHERE ser_id=$1', [id])).toEqual([{ n: count }]);
+    },
+  );
+
   it.each([
     { kindKey: 'missing-kind' }, { subKey: 'missing-sub' },
     { teacherId: 99999999 }, { roomId: 99999999 }, { studentIds: [99999999] },

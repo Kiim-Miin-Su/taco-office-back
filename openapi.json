@@ -4264,7 +4264,7 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 80,
-            "description": "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n] — formatRule() 이 정한 형식만 받는다"
+            "description": "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n]. 요일 SU/MO/TU/WE/TH/FR/SA, n은 양의 안전한 십진 정수. 전체 문법 검증 후 대소문자·바깥 공백·요일 순서·간격1을 formatRule() 형식으로 정규화하며 잘못된 토큰은 BAD_RRULE400"
           },
           "startMin": {
             "type": "integer",

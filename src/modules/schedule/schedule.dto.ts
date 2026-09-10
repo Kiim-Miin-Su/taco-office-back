@@ -206,7 +206,7 @@ export class OccurrenceCreateDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '없으면 열린 반복' })
   @IsOptional() @IsCalendarDate() toDate?: string | null;
 
-  @ApiProperty({ minLength: 1, maxLength: SCHEDULE_INPUT_LIMITS.rrule, description: "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n] — formatRule() 이 정한 형식만 받는다" })
+  @ApiProperty({ minLength: 1, maxLength: SCHEDULE_INPUT_LIMITS.rrule, description: "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n]. 요일 SU/MO/TU/WE/TH/FR/SA, n은 양의 안전한 십진 정수. 전체 문법 검증 후 대소문자·바깥 공백·요일 순서·간격1을 formatRule() 형식으로 정규화하며 잘못된 토큰은 BAD_RRULE400" })
   @IsString() @MinLength(1) @MaxLength(SCHEDULE_INPUT_LIMITS.rrule) rrule!: string;
 
   @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439 }) @IsInt() @Min(0) @Max(1439) startMin!: number;

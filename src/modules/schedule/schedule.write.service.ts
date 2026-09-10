@@ -23,7 +23,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type QueryRunner } from 'typeorm';
 import {
   applyCreate, applyDelete, applyEdit, applyPaste, applyRoster, copyMany, formatRule, occ,
-  lessonTimeIssue, parseRule, pasteIssue, rosterAt, rosterScopes, ruleHits,
+  lessonTimeIssue, parseRuleInput, pasteIssue, rosterAt, rosterScopes, ruleHits,
   type Patch as OccurrencePatch, type Scope, type State,
 } from '../../lib/recurrence';
 import { GUIDE_DONE_DB } from '../../lib/rules';
@@ -81,17 +81,15 @@ export class ScheduleWriteService {
     if (dto.toDate != null && dto.toDate < dto.fromDate) {
       throw new BadRequestException({ code: 'BAD_RANGE', message: '종료일이 시작일보다 앞설 수 없습니다' });
     }
-    // 형식을 여기서 한 번 정규화한다 — 다른 형식이 들어오면 규칙이 어떤 날짜에도 안 맞는다
-    const parsed = parseRule(dto.rrule);
-    const rrule = formatRule(parsed);
-    // WEEKLY 인데 요일이 하나도 안 잡혔다 = 읽지 못한 형식이다.
-    // 그대로 두면 어떤 날짜에도 안 맞아 회차가 0개인 수업이 조용히 생긴다.
-    if (parsed.freq === 'WEEKLY' && parsed.days.length === 0) {
+    // 쓰기 문법 전체를 확인한 뒤 한 번 정규화한다. 과거 저장값용 관대한 parser에 새 입력을 맡기지 않는다.
+    const parsed = parseRuleInput(dto.rrule);
+    if (!parsed) {
       throw new BadRequestException({
         code: 'BAD_RRULE',
         message: `읽을 수 없는 반복 규칙입니다: ${dto.rrule} (ONCE | DAILY[/n] | WEEKLY:MO,WE[/n])`,
       });
     }
+    const rrule = formatRule(parsed);
     const timeIssue = lessonTimeIssue(dto.startMin, dto.endMin);
     if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
 

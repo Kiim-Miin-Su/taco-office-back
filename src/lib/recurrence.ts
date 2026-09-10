@@ -191,6 +191,8 @@ export const dow = (s: IsoDate): number => toD(s).getUTCDay();
 
 export const DOW_KO = ['일', '월', '화', '수', '목', '금', '토'];
 const DOW_KEY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+const DOW_PATTERN = `(?:${DOW_KEY.join('|')})`;
+const RRULE_INPUT = new RegExp(`^(?:ONCE|DAILY(?:/\\d+)?|WEEKLY:\\s*${DOW_PATTERN}(?:\\s*,\\s*${DOW_PATTERN})*\\s*(?:/\\d+)?)$`);
 
 /* ── 반복 규칙 ─────────────────────────────────────────────────────────
    'ONCE'                 단발
@@ -198,6 +200,7 @@ const DOW_KEY = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
    'WEEKLY:TU/2'          격주 화
    'DAILY' · 'DAILY/3'    매일 · 3일마다                                   */
 
+/** 과거 저장값 읽기 호환용 parser. 새 외부 입력은 parseRuleInput으로 먼저 검증한다. */
 export function parseRule(rrule: string | null | undefined): Rule {
   const raw = String(rrule || 'ONCE')
     .trim()
@@ -215,6 +218,16 @@ export function parseRule(rrule: string | null | undefined): Rule {
     .filter((i) => i >= 0)
     .sort((a, b) => a - b);
   return { freq: 'WEEKLY', days: days.length ? days : [], interval };
+}
+
+/** 새 쓰기 입력은 일부 토큰을 버리거나 간격을 추측하지 않는다. 해석/정렬은 기존 parser를 재사용한다. */
+export function parseRuleInput(value: unknown): Rule | null {
+  if (typeof value !== 'string') return null;
+  const raw = value.trim().toUpperCase();
+  if (!RRULE_INPUT.test(raw)) return null;
+  const interval = raw.includes('/') ? Number(raw.slice(raw.lastIndexOf('/') + 1)) : 1;
+  if (!Number.isSafeInteger(interval) || interval < 1) return null;
+  return parseRule(raw);
 }
 
 export function formatRule(rule: Rule): string {
@@ -608,6 +621,7 @@ export interface PasteSlot {
 
 /** 모든 스케줄 쓰기가 공유하는 시간 범위 계약. */
 export function lessonTimeIssue(startMin: Minutes, endMin: Minutes): string | null {
+  if (!Number.isInteger(startMin) || !Number.isInteger(endMin)) return '수업 시각은 정수 분이어야 합니다';
   if (startMin < 0 || startMin >= 1440 || endMin > 1440) return '수업 시각은 같은 날 안에 있어야 합니다';
   const duration = endMin - startMin;
   return duration < 10 || duration > 480 ? '수업 길이는 10~480분이어야 합니다' : null;
