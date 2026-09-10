@@ -119,7 +119,12 @@ describe('스케줄 OpenAPI/실제 HTTP 경계 (권한/DB 검증은 별도)', ()
   });
   afterAll(async () => { await app?.close(); });
   it('Swagger가 날짜/ID/배열/문자열의 실제 형식 제한을 노출한다', () => {
-    const schemas = buildOpenApi(app).components!.schemas!;
+    const document = buildOpenApi(app);
+    const schemas = document.components!.schemas!;
+    expect(document.paths['/schedule'].post!.responses['400']).toMatchObject({
+      description: expect.stringContaining('REFERENCE_NOT_FOUND'),
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiErrorDto' } } },
+    });
     const createSchema = schemas.OccurrenceCreateDto;
     if ('$ref' in createSchema) throw Error('missing create schema');
     expect(createSchema.properties).toMatchObject({

@@ -29,6 +29,7 @@ import {
 import { GUIDE_DONE_DB } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { loadState, persist } from './schedule.state.repo';
+import { assertScheduleReferences } from './schedule.references';
 import { horizon, project } from './schedule.project';
 import type {
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto,
@@ -54,6 +55,7 @@ export class ScheduleWriteService {
       const before = await loadState(q, serIds);
       const { after, log, effScope } = await reduce(before, q);
 
+      await assertScheduleReferences(q, after);
       const touched = await persist(q, before, after);
       // 새로 생긴 규칙은 persist 가 진짜 id 를 붙여 돌려준다. 그 id 로 다시 읽어야
       // 투영이 임시 id 가 아니라 실제 행을 편다.

@@ -5,7 +5,8 @@
  */
 
 import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiErrorDto } from '../../common/http.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
@@ -21,6 +22,7 @@ import { horizon } from './schedule.project';
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 @ApiTags('schedule')
+@ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 저장 전체를 취소하며 {code,message}로 반환한다' })
 @Controller('schedule')
 export class ScheduleController {
   constructor(

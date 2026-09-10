@@ -25,6 +25,8 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
+import { assertScheduleReferences } from '../src/modules/schedule/schedule.references';
+import { loadState } from '../src/modules/schedule/schedule.state.repo';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -125,6 +127,75 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     made.push(id);
     return { id, from, body: res.body };
   }
+
+  it.each([
+    { kindKey: 'missing-kind' }, { subKey: 'missing-sub' },
+    { teacherId: 99999999 }, { roomId: 99999999 }, { studentIds: [99999999] },
+  ])('없는 참조로 생성하지 않는다: %j', async (over) => {
+    const from = nextMon(plus(kst(), 7));
+    const before = await q('SELECT id FROM ser ORDER BY id');
+    const res = await api('post', '/schedule').send({
+      kindKey: 'class', subKey: null, mode: 'offline', fromDate: from, toDate: from,
+      rrule: 'ONCE', startMin: 600, endMin: 660, teacherId: null, roomId: null,
+      studentIds: [], ...over,
+    });
+    // 회귀가 실패해도 이번 테스트가 만든 행만 기존 cleanup으로 회수한다.
+    if (res.status === 201) made.push(...res.body.serIds as number[]);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('REFERENCE_NOT_FOUND');
+    expect(await q('SELECT id FROM ser ORDER BY id')).toEqual(before);
+  });
+
+  it.each(['this', 'future', 'all'])('없는 강사로 %s 수정 시 원본/예외가 바뀌지 않는다', async (scope) => {
+    const { id, from } = await makeSer();
+    const before = await q('SELECT * FROM ser WHERE id=$1', [id]);
+    const res = await api('patch', `/schedule/${id}`)
+      .send({ scope, onDate: plus(from, 2), teacherId: 99999999 }).expect(400);
+    expect(res.body.code).toBe('REFERENCE_NOT_FOUND');
+    expect(await q('SELECT * FROM ser WHERE id=$1', [id])).toEqual(before);
+    expect(await q('SELECT id FROM exc WHERE ser_id=$1', [id])).toEqual([]);
+  });
+
+  it('복제/잘라내기도 없는 강의실을 거절하고 원본 취소를 rollback한다', async () => {
+    const { id, from } = await makeSer();
+    const res = await api('post', '/schedule/paste').send({
+      sources: [{ serId: id, date: from, onDate: from }], scope: 'this',
+      targetDate: plus(from, 1), targetStartMin: 600, roomId: 99999999, cut: true,
+    }).expect(400);
+    expect(res.body.code).toBe('REFERENCE_NOT_FOUND');
+    expect(await q('SELECT id FROM exc WHERE ser_id=$1', [id])).toEqual([]);
+  });
+
+  it('여러 이동 중 하나라도 없는 자원을 쓰면 앞선 이동도 저장하지 않는다', async () => {
+    const { id, from } = await makeSer();
+    const res = await api('post', '/schedule/move').send({ scope: 'this', items: [
+      { source: { serId: id, date: from, onDate: from }, date: plus(from, 1), startMin: 600, endMin: 660 },
+      { source: { serId: id, date: plus(from, 2), onDate: plus(from, 2) }, date: plus(from, 3), startMin: 600, endMin: 660, roomId: 99999999 },
+    ] }).expect(400);
+    expect(res.body.code).toBe('REFERENCE_NOT_FOUND');
+    expect(await q('SELECT id FROM exc WHERE ser_id=$1', [id])).toEqual([]);
+  });
+
+  it('참조 확인부터 transaction 종료까지 부모 삭제를 잠금으로 막는다', async () => {
+    const { id } = await makeSer();
+    const writer = ds.createQueryRunner();
+    const remover = ds.createQueryRunner();
+    await writer.connect();
+    await remover.connect();
+    try {
+      await writer.startTransaction();
+      await assertScheduleReferences(writer, await loadState(writer, [id]));
+      await remover.startTransaction();
+      await remover.query("SET LOCAL lock_timeout = '100ms'");
+      await expect(remover.query('DELETE FROM staff WHERE id=$1', [T1])).rejects.toMatchObject({ code: '55P03' });
+    } finally {
+      if (remover.isTransactionActive) await remover.rollbackTransaction();
+      if (writer.isTransactionActive) await writer.rollbackTransaction();
+      await remover.release();
+      await writer.release();
+    }
+    expect(await q('SELECT id FROM staff WHERE id=$1', [T1])).toHaveLength(1);
+  });
 
   it('만들면 회차가 펼쳐진다 — ser_occ 에 실제 행이 생긴다', async () => {
     const { id, body } = await makeSer();
