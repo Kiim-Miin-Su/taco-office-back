@@ -19,17 +19,23 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { Perm } from '../src/common/perm';
+import { Perm, permsOf, type Role, type RequestUser } from '../src/common/perm';
 import { Public } from '../src/auth/public.decorator';
 import * as jwt from 'jsonwebtoken';
 import { buildOpenApi } from '../src/openapi';
 import { Staff } from '../src/entities';
 import { ApiErrorFilter } from '../src/common/filters/api-error.filter';
 import { AuthService } from '../src/auth/auth.service';
+import { CurrentUser } from '../src/auth/current-user.decorator';
 
 /** 테스트용 엔드포인트 — 가드가 실제로 무엇을 막는지 보려고 만든다 */
 @Controller('probe')
 class ProbeController {
+  @Get('identity')
+  identity(@CurrentUser() user: RequestUser) {
+    return { ...user, flags: permsOf(user.role as Role, user.perms) };
+  }
+
   @Public()
   @Get('open')
   open() {
@@ -274,6 +280,87 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
         mode === 'other secret' ? 'different-test-signature-key' : secret(),
         { expiresIn: mode === 'expired' ? -1 : '5m' });
       await call(signed).expect(401);
+    });
+  });
+
+  describe('이미 발급된 Access도 현재 STAFF로 판정한다', () => {
+    it.each(['teacher', 'ceo'] as const)('발급 후 role=%s 변경은 기존 Access의 CRUD/손익 판정에 반영된다', async (role) => {
+      const t = await token('manager@t.kr');
+      await ds.query('UPDATE staff SET role=$1 WHERE id=902', [role]);
+      try {
+        const flags = permsOf(role);
+        await request(app.getHttpServer()).get('/probe/crud').set('Authorization', `Bearer ${t}`).expect(flags.canCrudAll ? 200 : 403);
+        await request(app.getHttpServer()).get('/probe/profit').set('Authorization', `Bearer ${t}`).expect(flags.canSeeProfit ? 200 : 403);
+        const res = await request(app.getHttpServer()).get('/probe/identity').set('Authorization', `Bearer ${t}`).expect(200);
+        expect(res.body.role).toBe(role);
+        expect(res.body.flags).toEqual(flags);
+      } finally { await ds.query("UPDATE staff SET role='manager' WHERE id=902"); }
+    });
+
+    const fields = [
+      ['canMoney', 'can_money'], ['canWage', 'can_wage'], ['canApprove', 'can_approve'],
+      ['canHide', 'can_hide'], ['canGpaPack', 'can_gpa_pack'],
+    ] as const;
+    it.each(fields.flatMap(([flag, column]) => [true, false, null].map((value) => ({ flag, column, value }))))(
+      '$flag=$value는 옛 토큰 예외보다 우선한다', async ({ flag, column, value }) => {
+        // SQL identifier는 위 고정된 테스트 목록만 사용한다. 반대 예외로 토큰을 발급한 뒤 전환한다.
+        const initial = value === null ? !permsOf('manager')[flag] : !value;
+        await ds.query(`UPDATE staff SET ${column}=$1 WHERE id=902`, [initial]);
+        try {
+          const t = await token('manager@t.kr');
+          await ds.query(`UPDATE staff SET ${column}=$1 WHERE id=902`, [value]);
+          const res = await request(app.getHttpServer()).get('/probe/identity').set('Authorization', `Bearer ${t}`).expect(200);
+          const me = await request(app.getHttpServer()).get('/auth/me').set('Authorization', `Bearer ${t}`).expect(200);
+          expect(res.body.flags[flag]).toBe(value ?? permsOf('manager')[flag]);
+          expect(res.body.flags[flag]).toBe(me.body[flag]);
+        } finally { await ds.query(`UPDATE staff SET ${column}=NULL WHERE id=902`); }
+      },
+    );
+
+    it.each([true, false])('실제 /ops 비용 projection도 현재 canMoney=%s를 따른다', async (allowed) => {
+      await ds.query('UPDATE staff SET can_money=$1 WHERE id=902', [!allowed]);
+      try {
+        const t = await token('manager@t.kr');
+        await ds.query('UPDATE staff SET can_money=$1 WHERE id=902', [allowed]);
+        const res = await request(app.getHttpServer()).get('/ops').set('Authorization', `Bearer ${t}`).expect(200);
+        expect(res.body.canSeeAmounts).toBe(allowed);
+        if (!allowed) for (const item of res.body.marketing) expect(item.cost).toBeNull();
+      } finally { await ds.query('UPDATE staff SET can_money=NULL WHERE id=902'); }
+    });
+
+    it('비활성 계정의 아직 만료되지 않은 Access도 일반 보호 API에서401이다', async () => {
+      const t = await token('manager@t.kr');
+      await ds.query('UPDATE staff SET active=false WHERE id=902');
+      try {
+        await request(app.getHttpServer()).get('/probe/any').set('Authorization', `Bearer ${t}`).expect(401);
+      } finally { await ds.query('UPDATE staff SET active=true WHERE id=902'); }
+    });
+
+    it('삭제된 계정의 아직 만료되지 않은 Access는401이다', async () => {
+      const saved = await ds.getRepository(Staff).findOneByOrFail({ id: 903 });
+      const t = await token('admin@t.kr');
+      await ds.getRepository(Staff).delete(903);
+      try {
+        await request(app.getHttpServer()).get('/probe/any').set('Authorization', `Bearer ${t}`).expect(401);
+      } finally {
+        // save()의 신규 generated id 재할당을 피하고 이 테스트가 소유한 고정 fixture를 복원한다.
+        await ds.query('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES(903,$1,$2,$3,$4,true)',
+          [saved.name, saved.email, saved.role, saved.passwordHash]);
+      }
+    });
+
+    it('보호 요청은 현재 계정 조회1회이며 인증에 불필요한 비밀/연락처 필드를 읽지 않는다', async () => {
+      const t = await token('manager@t.kr');
+      const spy = jest.spyOn(ds.getRepository(Staff), 'findOne');
+      try {
+        const res = await request(app.getHttpServer()).get('/probe/identity').set('Authorization', `Bearer ${t}`).expect(200);
+        expect(spy).toHaveBeenCalledTimes(1);
+        expect(spy.mock.calls[0][0]).toMatchObject({ where: { id: 902, active: true }, select: expect.any(Array) });
+        const selected = spy.mock.calls[0][0].select;
+        expect(selected).not.toContain('passwordHash');
+        expect(selected).not.toContain('phone');
+        expect(res.body).not.toHaveProperty('passwordHash');
+      } finally { spy.mockRestore(); }
     });
   });
 

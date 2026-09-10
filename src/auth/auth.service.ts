@@ -10,9 +10,20 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import { Staff } from '../entities';
-import { permsOf, type Role } from '../common/perm';
+import { isRole, permsOf, type Role, type PermName, type RequestUser } from '../common/perm';
 import type { MeDto } from './dto/auth.dto';
-import { isJwtSubject, type JwtPayload } from './jwt.strategy';
+
+/** JWT 발급/검증 형상. role/perms는 호환용 snapshot이며 요청 권한의 권위는 현재 STAFF다. */
+export interface JwtPayload {
+  sub: number;
+  name: string;
+  role: string;
+  perms?: Partial<Record<PermName, boolean | null>> | null;
+}
+
+/** Access/Refresh가 공유한다. ORM에 누락 식별자를 전달하면 조건이 무시될 수 있다. */
+export const isJwtSubject = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 
 /** jsonwebtoken 의 expiresIn 은 '15m' 같은 문자열 리터럴 타입을 받는다 */
 type Expires = NonNullable<Parameters<JwtService['sign']>[1]>['expiresIn'];
@@ -23,6 +34,23 @@ export class AuthService {
     @InjectRepository(Staff) private readonly staff: Repository<Staff>,
     private readonly jwt: JwtService,
   ) {}
+
+  /** 권한 검수에는 비밀번호/연락처를 읽지 않는다. PK 조회로 현재 활성 계정만 허용한다. */
+  private async activeStaff(id: unknown): Promise<Staff> {
+    if (!isJwtSubject(id)) throw new UnauthorizedException('다시 로그인해 주세요');
+    const s = await this.staff.findOne({
+      where: { id, active: true },
+      select: ['id', 'name', 'title', 'role', 'canMoney', 'canWage', 'canApprove', 'canHide', 'canGpaPack'],
+    });
+    if (!s || !isRole(s.role)) throw new UnauthorizedException('다시 로그인해 주세요');
+    return s;
+  }
+
+  /** 서명된 옛 권한을 재사용하지 않는다. PermGuard와 모든 service가 같은 현재 사용자로 판정한다. */
+  async currentUser(id: number): Promise<RequestUser> {
+    const s = await this.activeStaff(id);
+    return { id: Number(s.id), name: s.name, role: s.role, perms: this.overridesOf(s) };
+  }
 
   /**
    * 사람별 권한 예외. **평소에는 전부 null** 이고 role 에서 파생한다 (D-R39).
@@ -98,16 +126,12 @@ export class AuthService {
     } catch {
       throw new UnauthorizedException('다시 로그인해 주세요');
     }
-    // undefined/null 조건을 ORM에 넘기면 첫 활성 계정으로 조회될 수 있으므로 조회 전에 거절한다.
-    if (!isJwtSubject(sub)) throw new UnauthorizedException('다시 로그인해 주세요');
-    const s = await this.staff.findOne({ where: { id: sub, active: true } });
-    if (!s) throw new UnauthorizedException('다시 로그인해 주세요');
+    const s = await this.activeStaff(sub);
     return { accessToken: this.signAccess(s) };
   }
 
   async me(id: number): Promise<MeDto> {
-    const s = await this.staff.findOne({ where: { id, active: true } });
-    if (!s) throw new UnauthorizedException('다시 로그인해 주세요');
+    const s = await this.activeStaff(id);
     return this.toMe(s);
   }
 }

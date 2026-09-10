@@ -54,7 +54,7 @@ export class AuthController {
   }
 
   @Get('me')
-  @ApiOperation({ summary: '내 정보 — **권한 플래그를 서버가 내려준다** (D-R39)' })
+  @ApiOperation({ summary: '내 정보 — **권한 플래그를 서버가 내려준다** (D-R39)', description: '현재 활성 STAFF의 역할·예외에서 파생한다. 보호 API도 요청 인증 시 같은 현재 계정을 읽으며 발급 당시 JWT 권한을 재사용하지 않는다. 비활성/삭제 계정은401. 이미 처리 중인 요청의 commit 직전 회수나 브라우저의 실시간 Me 갱신을 보장하지 않는다.' })
   @ApiOkResponse({ type: MeDto })
   @ApiUnauthorizedResponse(authUnauthorized)
   me(@CurrentUser() user: RequestUser): Promise<MeDto> {

@@ -122,11 +122,11 @@ describe('§23·§24 LEAD 응답 projection', () => {
   });
 });
 
-describe('STAFF 예외 → MeDto / Access payload 권한 snapshot (DB·서명 검증 아님)', () => {
+describe('STAFF 예외 → MeDto / Access 발급·현재 사용자 투영 (DB·서명 검증 아님)', () => {
   const noOverrides = { canMoney: null, canWage: null, canApprove: null, canHide: null, canGpaPack: null };
   type Overrides = Partial<Record<keyof typeof noOverrides, boolean | null>>;
 
-  function snapshot(role: Role, overrides: Overrides = {}) {
+  async function snapshot(role: Role, overrides: Overrides = {}) {
     const findOne = jest.fn();
     const sign = jest.fn<string, [JwtPayload]>().mockReturnValue('unit-access-token');
     const auth = new AuthService({ findOne } as unknown as Repository<Staff>, { sign } as unknown as JwtService);
@@ -135,25 +135,26 @@ describe('STAFF 예외 → MeDto / Access payload 권한 snapshot (DB·서명 �
     expect(auth.signAccess(staff)).toBe('unit-access-token');
     expect(sign).toHaveBeenCalledTimes(1);
     const payload = sign.mock.calls[0][0];
-    const user = new JwtStrategy().validate(payload);
+    findOne.mockResolvedValue(staff);
+    const user = await new JwtStrategy(auth).validate(payload);
     const expected = permsOf(role, overrides);
 
     expect(me).toEqual({ id: 17, name: '권한 검수', title: null, role, ...expected });
     expect(user).toEqual({ id: 17, name: '권한 검수', role, perms: payload.perms });
     expect(permsOf(role, user.perms)).toEqual(expected);
-    expect(findOne).not.toHaveBeenCalled();
+    expect(findOne).toHaveBeenCalledTimes(1);
     return { me, payload };
   }
 
-  it.each(ROLES)('%s 기본 STAFF는 예외를 null로 싣고 MeDto와 같은 판정을 낸다', (role) => {
-    expect(snapshot(role).payload.perms).toBeNull();
+  it.each(ROLES)('%s 기본 STAFF는 예외를 null로 싣고 MeDto와 같은 판정을 낸다', async (role) => {
+    expect((await snapshot(role)).payload.perms).toBeNull();
   });
 
   const flags = Object.keys(noOverrides) as Array<keyof typeof noOverrides>;
   it.each(flags.flatMap((field) => [true, false].map((value) => ({ field, value }))))(
-    '명시적 $field=$value 한 칸만 role 기본값을 덮으며 다른 플래그는 보존한다', ({ field, value }) => {
+    '명시적 $field=$value 한 칸만 role 기본값을 덮으며 다른 플래그는 보존한다', async ({ field, value }) => {
       // true는 전부 닫힌 강사, false는 전부 열린 대표에서 검사해 role-only 회귀를 잡는다.
-      const { me, payload } = snapshot(value ? 'teacher' : 'ceo', { [field]: value });
+      const { me, payload } = await snapshot(value ? 'teacher' : 'ceo', { [field]: value });
       expect(me[field]).toBe(value);
       expect(payload.perms).toEqual({ ...noOverrides, [field]: value });
     },
