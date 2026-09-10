@@ -1,12 +1,15 @@
-/** §23·§24 기존 LEAD 읽기 계약. DB query/인증 사용자만 대역이며 실제 DB·JWT QA는 아니다. */
+/** §23·§24 LEAD / §59 비용 읽기 계약. DB query·인증 사용자 대역이며 실제 DB·JWT 서명 QA는 아니다. */
 import { INestApplication, InternalServerErrorException } from '@nestjs/common';
 import { APP_GUARD, Reflector } from '@nestjs/core';
+import type { JwtService } from '@nestjs/jwt';
 import { Test } from '@nestjs/testing';
 import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
 import type { Repository } from 'typeorm';
-import type { Lead } from '../src/entities';
-import { PERM_KEY, PermGuard, ROLES, permsOf, type RequestUser } from '../src/common/perm';
+import { Staff, type Lead } from '../src/entities';
+import { AuthService } from '../src/auth/auth.service';
+import { JwtStrategy, type JwtPayload } from '../src/auth/jwt.strategy';
+import { PERM_KEY, PermGuard, ROLES, permsOf, type RequestUser, type Role } from '../src/common/perm';
 import { OpsController } from '../src/modules/ops/ops.controller';
 import { LeadDto, type OpsDto } from '../src/modules/ops/ops.dto';
 import { OpsService } from '../src/modules/ops/ops.service';
@@ -19,8 +22,9 @@ const row = (over: Row = {}): Row => ({
   reason: '사유', created_at: '2026-09-07', ...over,
 });
 
-function service(rows: Row[]) {
-  const query = jest.fn().mockResolvedValueOnce(rows).mockResolvedValue([]);
+function service(rows: Row[], marketingRows: Row[] = []) {
+  const query = jest.fn().mockResolvedValueOnce(rows)
+    .mockImplementation((sql: string) => Promise.resolve(/\bFROM mkt\b/.test(sql) ? marketingRows : []));
   return { svc: new OpsService({ query } as unknown as Repository<Lead>), query };
 }
 
@@ -112,6 +116,44 @@ describe('§23·§24 LEAD 응답 projection', () => {
   });
 });
 
+describe('STAFF 예외 → MeDto / Access payload 권한 snapshot (DB·서명 검증 아님)', () => {
+  const noOverrides = { canMoney: null, canWage: null, canApprove: null, canHide: null, canGpaPack: null };
+  type Overrides = Partial<Record<keyof typeof noOverrides, boolean | null>>;
+
+  function snapshot(role: Role, overrides: Overrides = {}) {
+    const findOne = jest.fn();
+    const sign = jest.fn<string, [JwtPayload]>().mockReturnValue('unit-access-token');
+    const auth = new AuthService({ findOne } as unknown as Repository<Staff>, { sign } as unknown as JwtService);
+    const staff = Object.assign(new Staff(), { id: 17, name: '권한 검수', title: null, role, ...noOverrides, ...overrides });
+    const me = auth.toMe(staff);
+    expect(auth.signAccess(staff)).toBe('unit-access-token');
+    expect(sign).toHaveBeenCalledTimes(1);
+    const payload = sign.mock.calls[0][0];
+    const user = new JwtStrategy().validate(payload);
+    const expected = permsOf(role, overrides);
+
+    expect(me).toEqual({ id: 17, name: '권한 검수', title: null, role, ...expected });
+    expect(user).toEqual({ id: 17, name: '권한 검수', role, perms: payload.perms });
+    expect(permsOf(role, user.perms)).toEqual(expected);
+    expect(findOne).not.toHaveBeenCalled();
+    return { me, payload };
+  }
+
+  it.each(ROLES)('%s 기본 STAFF는 예외를 null로 싣고 MeDto와 같은 판정을 낸다', (role) => {
+    expect(snapshot(role).payload.perms).toBeNull();
+  });
+
+  const flags = Object.keys(noOverrides) as Array<keyof typeof noOverrides>;
+  it.each(flags.flatMap((field) => [true, false].map((value) => ({ field, value }))))(
+    '명시적 $field=$value 한 칸만 role 기본값을 덮으며 다른 플래그는 보존한다', ({ field, value }) => {
+      // true는 전부 닫힌 강사, false는 전부 열린 대표에서 검사해 role-only 회귀를 잡는다.
+      const { me, payload } = snapshot(value ? 'teacher' : 'ceo', { [field]: value });
+      expect(me[field]).toBe(value);
+      expect(payload.perms).toEqual({ ...noOverrides, [field]: value });
+    },
+  );
+});
+
 describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자와 service만 대역', () => {
   let app: INestApplication;
   let openApi: ReturnType<typeof buildOpenApi>;
@@ -167,6 +209,19 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     expect(path.get?.requestBody).toBeUndefined();
   });
 
+  it('비공개 두 비용은 기존 MarketingDto의 optional nullable number이며 응답 권한은 boolean이다', () => {
+    const marketing = openApi.components?.schemas?.MarketingDto;
+    const ops = openApi.components?.schemas?.OpsDto;
+    if (!marketing || '$ref' in marketing || !ops || '$ref' in ops) throw new Error('Ops 비용 schema 누락');
+    expect(Object.keys(marketing.properties ?? {})).toHaveLength(10);
+    for (const field of ['cost', 'costPerEnroll']) {
+      expect(marketing.properties?.[field]).toMatchObject({ type: 'number', nullable: true });
+      expect(marketing.required).not.toContain(field);
+    }
+    expect(ops.properties?.canSeeAmounts).toMatchObject({ type: 'boolean' });
+    expect(ops.required).toContain('canSeeAmounts');
+  });
+
   async function checkAccess(allowed: boolean) {
     const res = await request(app.getHttpServer()).get('/ops')
       .timeout({ response: 2000, deadline: 4000 }).expect(allowed ? 200 : 403);
@@ -195,11 +250,46 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     await checkAccess(flags.canAdminPage && flags.canCrudAll);
   });
 
-  it.each([true, false])('통과한 요청의 기존 canMoney=%s override는 그대로 전달한다', async (canMoney) => {
-    user = { id: 1, name: '권한 테스트', role: 'manager', perms: { canMoney } };
-    await checkAccess(true);
-    expect(all).toHaveBeenCalledWith(canMoney);
-  });
+  it.each<[Role, boolean]>([['manager', true], ['ceo', false]])(
+    '%s의 명시적 canMoney=%s로 실제 집행 비용/등록당 비용만 투영한다', async (role, canMoney) => {
+      // null/누락 비용의 기존 ?? 0을 유지하는 특성 검사다. 미기록=무료라는 신규 정책이 아니다.
+      const samples: Array<{ result: Row | null; cost: number; enrolled: number; costPerEnroll: number | null }> = [
+        { result: { cost: 100001, enrolled: 3 }, cost: 100001, enrolled: 3, costPerEnroll: 33334 },
+        { result: { cost: 0, enrolled: 2 }, cost: 0, enrolled: 2, costPerEnroll: 0 },
+        { result: { cost: 450, enrolled: 0 }, cost: 450, enrolled: 0, costPerEnroll: null },
+        { result: { cost: null, enrolled: 2 }, cost: 0, enrolled: 2, costPerEnroll: 0 },
+        { result: { enrolled: 2 }, cost: 0, enrolled: 2, costPerEnroll: 0 },
+        { result: null, cost: 0, enrolled: 0, costPerEnroll: null },
+      ];
+      const metrics = { impressions: 0, clicks: 7, inquiries: 2 };
+      const marketingRows = samples.map((sample, index) => ({
+        id: String(index + 1), channel: 'naver', item: 'ads', url: null, private_note: 'raw 열 노출 금지',
+        result: sample.result === null ? null : { ...metrics, ...sample.result, private_cost: 999999 },
+      }));
+      const before = structuredClone(marketingRows);
+      const { svc, query } = service([row()], marketingRows);
+      all.mockImplementation((canSeeAmounts) => svc.all(canSeeAmounts));
+      user = { id: 1, name: '권한 테스트', role, perms: { canMoney } };
+
+      const res = await request(app.getHttpServer()).get('/ops')
+        .timeout({ response: 2000, deadline: 4000 }).expect(200);
+      expect(all).toHaveBeenCalledTimes(1);
+      expect(all).toHaveBeenCalledWith(canMoney);
+      expect(res.body.canSeeAmounts).toBe(canMoney);
+      expect(res.body.marketing).toEqual(samples.map((sample, index) => ({
+        id: index + 1, channel: 'naver', item: 'ads', url: null,
+        ...(sample.result === null ? { impressions: null, clicks: null, inquiries: null } : metrics),
+        enrolled: sample.enrolled,
+        cost: canMoney ? sample.cost : null,
+        costPerEnroll: canMoney ? sample.costPerEnroll : null,
+      })));
+      expect(res.body.leads).toMatchObject([{ id: 1, name: '상담 계약 테스트' }]);
+      expect(Object.keys(res.body).sort()).toEqual(Object.keys(empty).sort());
+      expect(query).toHaveBeenCalledTimes(7);
+      expect(query.mock.calls.every(([sql]) => /^SELECT\b/.test(sql))).toBe(true);
+      expect(marketingRows).toEqual(before);
+    },
+  );
 
   it('사용자가 없으면 403이며 service를 호출하지 않는다', async () => { await checkAccess(false); });
   it('알 수 없는 역할은 두 권한을 켜도 403이다', async () => {
