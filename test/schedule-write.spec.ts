@@ -86,6 +86,9 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   const made: number[] = [];
   afterEach(async () => {
     if (!made.length) return;
+    // 초기화는 ATT를 지워도 LOG를 보존하므로 이 스위트 전용 actor의 출결 이력을 정리한다.
+    await q(`DELETE FROM log WHERE entity='ATT' AND actor_id=$1`, [CEO]);
+    await q(`DELETE FROM att WHERE ser_id=ANY($1)`, [made]);
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [made]);
     await q(`DELETE FROM rep WHERE ser_id = ANY($1)`, [made]);
     await q(`DELETE FROM ser_occ WHERE ser_id = ANY($1)`, [made]);
@@ -96,7 +99,7 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     made.length = 0;
   });
 
-  const api = (m: 'post' | 'patch' | 'delete', p: string) =>
+  const api = (m: 'post' | 'patch' | 'delete' | 'put', p: string) =>
     request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${token}`)
       .timeout({ response: 5000, deadline: 10000 });
 
@@ -222,6 +225,78 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     )).toEqual([{ start_min: 610, end_min: 680 }]);
     expect(blocked).toBe(true);
   });
+
+  it.each((['past move', 'cancel', 'future move'] as const)
+    .flatMap((mode) => (['save', 'clear'] as const).map((action) => ({ mode, action }))))(
+    '재투영 중 출결 요청은 $mode/$action의 새 회차 상태로 판정한다', async ({ mode, action }) => {
+      const date = plus(kst(), -1);
+      const { id } = await makeSer({ fromDate: date, rrule: 'ONCE', startMin: 60, endMin: 120,
+        teacherId: null, studentIds: [], kindKey: 'meeting' });
+      if (action === 'clear') await api('put', `/schedule/${id}/${date}/attendance`).send({ result: 'completed' }).expect(200);
+      let release!: () => void, ready!: () => void, consumerReady!: (pid: number) => void;
+      const hold = new Promise<void>((resolve) => { release = resolve; });
+      const paused = new Promise<void>((resolve) => { ready = resolve; });
+      const started = new Promise<number>((resolve) => { consumerReady = resolve; });
+      const createRunner = ds.createQueryRunner.bind(ds);
+      let writer: ReturnType<typeof createRunner> | undefined;
+      let consumerSeen = false;
+      const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+        const runner = createRunner(...args);
+        const query = runner.query.bind(runner);
+        jest.spyOn(runner, 'query').mockImplementation(async (sql: string, parameters?: unknown[], structured?: boolean) => {
+          const run = () => structured ? query(sql, parameters, true) : query(sql, parameters);
+          const targets = parameters?.some((p: unknown) => Array.isArray(p) ? p.includes(id) : p === id);
+          if (!writer && targets && sql.includes('DELETE FROM ser_occ')) {
+            writer = runner;
+            const result = await run();
+            ready();
+            await hold;
+            return result;
+          }
+          if (writer && writer !== runner && runner.isTransactionActive && targets && !consumerSeen
+              && /FOR (NO KEY UPDATE|UPDATE OF o)/.test(sql)) {
+            consumerSeen = true;
+            const [{ pid }] = await query('SELECT pg_backend_pid() AS pid');
+            consumerReady(pid);
+          }
+          return run();
+        });
+        return runner;
+      });
+      const body = mode === 'cancel' ? { scope: 'this', onDate: date }
+        : { scope: 'this', onDate: date, startMin: 75, endMin: 135,
+          ...(mode === 'future move' ? { date: plus(kst(), 1) } : {}) };
+      const first = Promise.resolve(api(mode === 'cancel' ? 'delete' : 'patch', `/schedule/${id}`).send(body));
+      let second: typeof first | undefined;
+      try {
+        await Promise.race([paused, first.then(() => { throw new Error('투영 DELETE에 도달하지 못함'); })]);
+        second = Promise.resolve(api(action === 'save' ? 'put' : 'delete', `/schedule/${id}/${date}/attendance`)
+          .send(action === 'save' ? { result: 'completed' } : undefined));
+        const pid = await Promise.race([started, second.then(() => { throw new Error('출결 잠금에 도달하지 못함'); })]);
+        const deadline = Date.now() + 4000;
+        let blocked = false;
+        while (!blocked) {
+          [{ blocked }] = await q<{ blocked: boolean }>('SELECT cardinality(pg_blocking_pids($1)) > 0 AS blocked', [pid]);
+          if (Date.now() > deadline) throw new Error('실제 DB 잠금 관측 시간 초과');
+        }
+        release();
+        const [changed, attendance] = await Promise.all([first, second]);
+        expect(changed.status).toBe(200);
+        expect(attendance.status).toBe(mode === 'past move' ? 200 : 409);
+        if (mode === 'past move') {
+          expect(attendance.body.attendance).toEqual(action === 'save' ? expect.objectContaining({ result: 'completed' }) : null);
+          expect(await q('SELECT result FROM att WHERE ser_id=$1', [id])).toEqual(action === 'save' ? [{ result: 'completed' }] : []);
+        } else {
+          expect(attendance.body.code).toBe('ATTENDANCE_NOT_AVAILABLE');
+          expect(await q('SELECT result FROM att WHERE ser_id=$1', [id])).toEqual(action === 'save' ? [] : [{ result: 'completed' }]);
+        }
+      } finally {
+        release();
+        await Promise.allSettled([first, ...(second ? [second] : [])]);
+        spy.mockRestore();
+      }
+    },
+  );
 
   it('동시 요청은 최신 시간을 다시 검증하여 합쳐진 9분을 거절한다', async () => {
     const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });

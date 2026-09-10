@@ -728,6 +728,7 @@
     },
     "/schedule/{serId}/{onDate}/attendance": {
       "put": {
+        "description": "일정 변경과 같은 부모 SER를 먼저 잠근 뒤 최신 투영 회차의 종료/취소 여부를 검사한다. 정상 재투영은 사라진 회차로 오인하지 않는다. 종료 전 또는 취소된 회차는 ATTENDANCE_NOT_AVAILABLE409, 없는 회차는 OCCURRENCE_NOT_FOUND404이며 ATT/LOG를 저장하지 않는다.",
         "operationId": "ScheduleController_saveAttendance",
         "parameters": [
           {
@@ -805,7 +806,7 @@
             }
           },
           "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "OCCURRENCE_NOT_FOUND: 회차 없음",
             "content": {
               "application/json": {
                 "schema": {
@@ -815,7 +816,7 @@
             }
           },
           "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "ATTENDANCE_NOT_AVAILABLE: 최신 회차가 종료 전 또는 취소됨",
             "content": {
               "application/json": {
                 "schema": {
@@ -841,6 +842,7 @@
         ]
       },
       "delete": {
+        "description": "일정 변경과 같은 부모 SER를 먼저 잠근 뒤 최신 투영 회차의 종료/취소 여부를 검사한다. 정상 재투영은 사라진 회차로 오인하지 않는다. 종료 전 또는 취소된 회차는 ATTENDANCE_NOT_AVAILABLE409, 없는 회차는 OCCURRENCE_NOT_FOUND404이며 ATT/LOG를 저장하지 않는다.",
         "operationId": "ScheduleController_clearAttendance",
         "parameters": [
           {
@@ -908,7 +910,7 @@
             }
           },
           "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "OCCURRENCE_NOT_FOUND: 회차 없음. ATTENDANCE_NOT_FOUND: 초기화할 출결 없음",
             "content": {
               "application/json": {
                 "schema": {
@@ -918,7 +920,7 @@
             }
           },
           "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "ATTENDANCE_NOT_AVAILABLE: 최신 회차가 종료 전 또는 취소됨",
             "content": {
               "application/json": {
                 "schema": {

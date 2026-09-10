@@ -25,6 +25,25 @@ type Row = Record<string, unknown>;
 const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 const str = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 
+/** 부모 조회 SQL은 한 곳에 둔다. 잠금과 State 로딩이 같은 행/순서를 사용한다. */
+async function readSeries(q: QueryRunner, serIds: number[], forWrite: boolean): Promise<Row[]> {
+  if (forWrite && !q.isTransactionActive) {
+    throw new Error('일정 쓰기 상태 잠금은 활성 transaction 안에서만 사용할 수 있습니다');
+  }
+  if (!serIds.length) return [];
+  return q.query(
+    `SELECT id, kind_key, sub_key, mode, title, teacher_id, room_id, start_min, end_min,
+            rrule, from_date::text AS from_date, to_date::text AS to_date
+       FROM ser WHERE id = ANY($1) ORDER BY id${forWrite ? ' FOR NO KEY UPDATE' : ''}`,
+    [serIds],
+  ) as Promise<Row[]>;
+}
+
+/** 일정/출결은 재생성되는 SER_OCC보다 먼저 불변 부모를 잠근다. FK KEY SHARE 호환은 유지한다. */
+export function lockScheduleSeries(q: QueryRunner, serIds: number[]): Promise<Row[]> {
+  return readSeries(q, serIds, true);
+}
+
 /**
  * 이 규칙들과 그 예외를 통째로 읽어 온다.
  *
@@ -38,17 +57,8 @@ const str = (v: unknown): string | null => (v === null || v === undefined ? null
 export async function loadState(
   q: QueryRunner, serIds: number[], options: { forWrite?: boolean } = {},
 ): Promise<State> {
-  if (options.forWrite && !q.isTransactionActive) {
-    throw new Error('일정 쓰기 상태 잠금은 활성 transaction 안에서만 사용할 수 있습니다');
-  }
+  const sers = options.forWrite ? await lockScheduleSeries(q, serIds) : await readSeries(q, serIds, false);
   if (!serIds.length) return { SER: [], SER_STU: [], EXC: [] };
-
-  const sers = (await q.query(
-    `SELECT id, kind_key, sub_key, mode, title, teacher_id, room_id, start_min, end_min,
-            rrule, from_date::text AS from_date, to_date::text AS to_date
-       FROM ser WHERE id = ANY($1) ORDER BY id${options.forWrite ? ' FOR NO KEY UPDATE' : ''}`,
-    [serIds],
-  )) as Row[];
 
   const stus = (await q.query(
     `SELECT ser_id, student_id FROM ser_stu WHERE ser_id = ANY($1)`,

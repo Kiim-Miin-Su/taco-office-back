@@ -135,6 +135,16 @@ describe('스케줄 OpenAPI/실제 HTTP 경계 (권한/DB 검증은 별도)', ()
       });
     }
     const createSchema = schemas.OccurrenceCreateDto;
+    for (const operation of [
+      document.paths['/schedule/{serId}/{onDate}/attendance'].put!,
+      document.paths['/schedule/{serId}/{onDate}/attendance'].delete!,
+    ]) {
+      expect(operation.description).toContain('부모 SER');
+      expect(operation.responses['409']).toMatchObject({
+        description: expect.stringContaining('ATTENDANCE_NOT_AVAILABLE'),
+        content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiErrorDto' } } },
+      });
+    }
     if ('$ref' in createSchema) throw Error('missing create schema');
     expect(createSchema.properties).toMatchObject({
       fromDate: { type: 'string', format: 'date' }, title: { maxLength: 80 },

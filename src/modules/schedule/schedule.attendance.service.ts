@@ -13,6 +13,7 @@ import {
 import { nowMinKst, todayKst } from '../../lib/kst';
 import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
 import type { AttendanceDto, AttendanceMutationResultDto, AttendanceWriteDto } from './schedule.dto';
+import { lockScheduleSeries } from './schedule.state.repo';
 
 interface OccurrenceLockRow {
   date: string;
@@ -86,6 +87,9 @@ export class ScheduleAttendanceService {
   }
 
   private async assertManageable(q: QueryRunner, serId: number, onDate: string): Promise<void> {
+    // project는 SER_OCC를 삭제/재생성한다. 부모 대기 후 새 statement로 조회해야
+    // 삭제된 옛 행을 기다리다 잘못된404를 내지 않고 최신 종료/취소 상태를 검증한다.
+    await lockScheduleSeries(q, [serId]);
     const rows = await q.query(
       `SELECT to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS date,
               ${START_MIN} AS start_min, ${END_MIN} AS end_min, o.canceled
