@@ -183,8 +183,14 @@ d('우측 서랍 — §14~§21', () => {
   const TEACHER = 'dw-teacher@t.kr';
   const MANAGER = 'dw-manager@t.kr';
   const auth = (email: string) => `Bearer ${tokens.get(email)!}`;
+  // 간헐 404가 재발하면 단순 상태 숫자뿐 아니라 라우팅/업무 오류를 구분할 근거를 남긴다.
+  // 토큰·전체 응답·개인정보는 출력하지 않으며 실패를 재시도/무시하지 않는다.
   const get = (path: string, email: string) =>
-    request(app.getHttpServer()).get(path).set('Authorization', auth(email));
+    request(app.getHttpServer()).get(path).set('Authorization', auth(email))
+      .expect(res => {
+        expect({ path, status: res.status, code: res.body.code, message: res.body.message })
+          .toMatchObject({ path, status: 200 });
+      });
   const firstOccurrence = async () => {
     const [row] = await ds.query(
       `SELECT ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date
