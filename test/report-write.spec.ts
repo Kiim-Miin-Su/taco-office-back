@@ -16,6 +16,9 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
+import { addD } from '../src/lib/recurrence';
+import { todayKst } from '../src/lib/kst';
+import { buildOpenApi } from '../src/openapi';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -65,7 +68,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     app = mod.createNestApplication();
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
-    await app.init();
+    await app.listen(0, '127.0.0.1');
     ds = app.get(DataSource);
 
     await clean();
@@ -128,8 +131,11 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   });
 
   afterAll(async () => {
-    if (ds?.isInitialized) await clean();
-    await app?.close();
+    try {
+      if (ds?.isInitialized) await clean();
+    } finally {
+      await app?.close();
+    }
   });
 
   const get = (token: string) => request(app.getHttpServer())
@@ -140,6 +146,122 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     .post(`/reports/${SER}/${DATE}/submit`).set('Authorization', `Bearer ${token}`).send(value);
   const review = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
     .post(`/reports/${SER}/${DATE}/review`).set('Authorization', `Bearer ${token}`).send(value);
+
+  it('리포트 CRUD OpenAPI는 실제 성공 코드·상태 오류와 부모 잠금 계약을 노출한다', () => {
+    const doc = buildOpenApi(app);
+    for (const [action, method, success] of [['draft', 'put', '200'], ['submit', 'post', '201'], ['review', 'post', '201']] as const) {
+      const operation = doc.paths[`/reports/{serId}/{onDate}/${action}`][method]!;
+      expect(operation.description).toContain('부모 SER');
+      expect(operation.responses[success]).toBeDefined();
+      for (const status of ['400', '403', '404', '409']) {
+        expect(operation.responses[status]).toMatchObject({
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiErrorDto' } } },
+        });
+      }
+    }
+  });
+
+  it.each((['past move', 'future move', 'teacher change', 'attendance cancel'] as const)
+    .flatMap((mode) => (mode === 'teacher change' || mode === 'attendance cancel'
+      ? ['draft', 'submit', 'review'] as const : ['draft', 'submit'] as const)
+      .map((action) => ({ mode, action }))))(
+    '선행 일정/출결 변경 후 리포트는 최신 값을 사용한다: $mode/$action', async ({ mode, action }) => {
+      const date = addD(todayKst(), -1);
+      const api = (method: 'post' | 'put' | 'patch' | 'delete', path: string, token = managerToken) =>
+        request(app.getHttpServer())[method](path).set('Authorization', `Bearer ${token}`)
+          .timeout({ response: 5000, deadline: 10000 });
+      const created = await api('post', '/schedule').send({
+        kindKey: 'class', subKey: 'ap-chem', mode: 'offline', fromDate: date, rrule: 'ONCE',
+        startMin: 60, endMin: 120, teacherId: TEACHER, roomId: null, studentIds: [], title: 'report race',
+      }).expect(201);
+      const id = created.body.serIds[0] as number;
+      const ref = `/reports/${id}/${date}`;
+      let release!: () => void, ready!: () => void, consumerReady!: (pid: number) => void;
+      const hold = new Promise<void>((resolve) => { release = resolve; });
+      const paused = new Promise<void>((resolve) => { ready = resolve; });
+      const started = new Promise<number>((resolve) => { consumerReady = resolve; });
+      let first: Promise<request.Response> | undefined, second: Promise<request.Response> | undefined;
+      let spy: jest.SpyInstance | undefined;
+      try {
+        if (action === 'review') await api('post', `${ref}/submit`, teacherToken).send(body).expect(201);
+        const createRunner = ds.createQueryRunner.bind(ds);
+        let writer: ReturnType<typeof createRunner> | undefined;
+        let consumerSeen = false;
+        spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+          const runner = createRunner(...args);
+          const query = runner.query.bind(runner);
+          jest.spyOn(runner, 'query').mockImplementation(async (sql: string, parameters?: unknown[], structured?: boolean) => {
+            const targets = parameters?.some((p: unknown) => Array.isArray(p) ? p.includes(id) : p === id);
+            if (!writer && targets && sql.includes('FOR NO KEY UPDATE')) writer = runner;
+            // 실제 선행 쓰기를 끝낸 뒤 commit만 보류한다. 업무 SQL/결과는 mock하지 않는다.
+            if (runner === writer && sql === 'COMMIT') { ready(); await hold; }
+            if (writer && runner !== writer && runner.isTransactionActive && targets && !consumerSeen
+                && /FOR (NO KEY UPDATE|UPDATE OF r)/.test(sql)) {
+              consumerSeen = true;
+              const [{ pid }] = await query('SELECT pg_backend_pid() AS pid');
+              consumerReady(pid);
+            }
+            return structured ? query(sql, parameters, true) : query(sql, parameters);
+          });
+          return runner;
+        });
+        first = Promise.resolve(mode === 'attendance cancel'
+          ? api('put', `/schedule/${id}/${date}/attendance`).send({ result: 'canceled', reason: 'academy' })
+          : api('patch', `/schedule/${id}`).send({ scope: 'this', onDate: date,
+            ...(mode === 'teacher change' ? { teacherId: OTHER }
+              : { startMin: 75, endMin: 135, ...(mode === 'future move' ? { date: addD(todayKst(), 1) } : {}) }),
+          }));
+        await Promise.race([paused, first.then(() => { throw new Error('선행 commit에 도달하지 못함'); })]);
+        let completed = false;
+        second = Promise.resolve(api(action === 'draft' ? 'put' : 'post', `${ref}/${action}`,
+          action === 'review' ? managerToken : teacherToken)
+          .send(action === 'review' ? { decision: 'approve' } : body));
+        void second.then(() => { completed = true; }, () => { completed = true; });
+        const pid = await Promise.race([started, second.then(() => { throw new Error('리포트 잠금에 도달하지 못함'); })]);
+        let blocked = false;
+        const deadline = Date.now() + 4000;
+        while (!blocked && !completed) {
+          [{ blocked }] = await q<{ blocked: boolean }>('SELECT cardinality(pg_blocking_pids($1)) > 0 AS blocked', [pid]);
+          if (Date.now() > deadline) throw new Error('리포트 경합 관측 시간 초과');
+        }
+        release();
+        const [changed, saved] = await Promise.all([first, second]);
+        expect(changed.status).toBe(200);
+        const rejected = action !== 'review' && mode !== 'past move';
+        expect(saved.status).toBe(rejected ? mode === 'teacher change' ? 403 : 400 : action === 'draft' ? 200 : 201);
+        const rows = await q('SELECT state, body FROM rep WHERE ser_id=$1', [id]);
+        if (rejected) {
+          expect(saved.body.code).toBe(mode === 'teacher change' ? 'REPORT_FORBIDDEN'
+            : mode === 'future move' ? 'REPORT_NOT_ENDED' : 'REPORT_CANCELED');
+          expect(rows).toEqual([{ state: 'none', body: {} }]);
+        } else {
+          expect(rows).toEqual([{ state: action === 'review' ? 'ok' : action === 'submit' ? 'wait' : 'draft', body }]);
+          expect(saved.body.teacherId).toBe(mode === 'teacher change' ? OTHER : TEACHER);
+          if (mode === 'past move') expect(saved.body.startMin).toBe(75);
+          if (action === 'review') {
+            expect(await q('SELECT to_id::int FROM noti WHERE from_id=$1 AND to_id=ANY($2)',
+              [MANAGER, [TEACHER, OTHER]])).toEqual([{ to_id: mode === 'teacher change' ? OTHER : TEACHER }]);
+          }
+        }
+        expect(blocked).toBe(true);
+      } finally {
+        release();
+        await Promise.allSettled([...(first ? [first] : []), ...(second ? [second] : [])]);
+        spy?.mockRestore();
+        await q('DELETE FROM noti WHERE from_id=$1 AND to_id=ANY($2)', [MANAGER, [TEACHER, OTHER]]);
+        await q("DELETE FROM log WHERE actor_id=$1 AND entity IN ('REP','ATT')", [MANAGER]);
+        // 테스트 전용 회차만 FK 순서대로 정리한다. 제품 삭제는 REP/ATT 이력을 보존한다.
+        await q('DELETE FROM att WHERE ser_id=$1', [id]);
+        await q('DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)', [id]);
+        await q('DELETE FROM rep WHERE ser_id=$1', [id]);
+        await q('DELETE FROM ser_occ WHERE ser_id=$1', [id]);
+        await q('DELETE FROM exc_stu_out WHERE exc_id IN (SELECT id FROM exc WHERE ser_id=$1)', [id]);
+        await q('DELETE FROM exc WHERE ser_id=$1', [id]);
+        await q('DELETE FROM ser_stu WHERE ser_id=$1', [id]);
+        await q('DELETE FROM ser WHERE id=$1', [id]);
+      }
+    },
+  );
 
   it('상세는 DB의 빈 body를 3개 입력으로 정규화하고 그 순서를 내려준다', async () => {
     const res = await get(teacherToken).expect(200);

@@ -22,6 +22,7 @@ import type {
   ReportSendHistoryDto, ReportUpsertDto, UnwrittenDto,
 } from './reports.dto';
 import { REPORT_FILE_STORE, type ReportFileStore } from './report-file.store';
+import { lockScheduleSeries } from '../schedule/schedule.state.repo';
 
 interface Row {
   id: string;
@@ -715,6 +716,8 @@ export class ReportsService {
     await q.connect();
     await q.startTransaction();
     try {
+      // 일정·출결과 부모→REP 순서를 공유한다. 잠금 대기 후 별도 SELECT로 joined 상태를 읽는다.
+      await lockScheduleSeries(q, [serId]);
       const row = await this.loadDetail(q, serId, onDate, true);
       if (!row) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
 
@@ -772,6 +775,8 @@ export class ReportsService {
     await q.connect();
     await q.startTransaction();
     try {
+      // 승인 규칙은 그대로이며 최신 담당자·응답·알림 수신자를 같은 일정 snapshot에서 읽는다.
+      await lockScheduleSeries(q, [serId]);
       const row = await this.loadDetail(q, serId, onDate, true);
       if (!row) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
 
