@@ -20,7 +20,7 @@ export class ConsultingSessionDto {
 /** §26·§27 컨설팅 건 조회. §29 생성 input은 별도 청크. */
 export class ConsultingDto {
   @ApiProperty() id!: number;
-  @ApiProperty({ maxLength: 20, description: '종류 코드. 전체 10종 미확정: 시드 3종으로 제한하지 않는다.' }) consType!: string;
+  @ApiProperty({ maxLength: 20, description: '종류 코드. 원본 §29에 종류 10개가 있으며 저장 코드와의 대응은 생성 계약에서 정리한다. 조회는 기존 코드를 보존하고 시드 3종으로 제한하지 않는다.' }) consType!: string;
   @ApiProperty({ type: String, enum: CONSULTING_STAGES, description: '계약 → 진행 → 종료' }) stage!: ConsultingStage;
   @ApiPropertyOptional({ type: 'integer', nullable: true, minimum: 1, maximum: CONTRACT_STEP_MAX, description: '계약 5단계. 계약 중 미정은 null, 진행/종료는 5.' }) contractStep?: number | null;
   @ApiProperty({ type: [String] }) studentNames!: string[];
