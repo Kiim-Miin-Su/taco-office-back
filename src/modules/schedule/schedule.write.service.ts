@@ -52,7 +52,9 @@ export class ScheduleWriteService {
     await q.connect();
     await q.startTransaction();
     try {
-      const before = await loadState(q, serIds);
+      // D-R43: 같은 SER의 모든 쓰기를 최초 snapshot 전에 직렬화한다. 자식만 바꾸는
+      // 명단/회차 예외도 이 잠금을 공유하며 persist/project/commit까지 유지한다.
+      const before = await loadState(q, serIds, { forWrite: true });
       const { after, log, effScope } = await reduce(before, q);
 
       const timeIssue = scheduleTimeIssue(after);

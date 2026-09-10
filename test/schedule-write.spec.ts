@@ -27,6 +27,7 @@ import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 import { assertScheduleReferences } from '../src/modules/schedule/schedule.references';
 import { loadState } from '../src/modules/schedule/schedule.state.repo';
+import * as stateRepo from '../src/modules/schedule/schedule.state.repo';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -136,6 +137,135 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(res.status).toBe(400); expect(res.body.code).toBe('BAD_RANGE');
     expect(await q('SELECT start_min,end_min FROM ser WHERE id=$1',[id])).toEqual(before);
     expect(await q('SELECT end_min FROM exc WHERE ser_id=$1',[id])).toEqual([{end_min:630}]);
+  });
+
+  /**
+   * 실제 두 HTTP transaction을 첫 snapshot에서 교차시킨다. 수정 전에는 두 번째 요청을
+   * 먼저 commit시켜 stale overwrite를 재현하고, 수정 후에는 pg_blocking_pids로 잠금 대기를
+   * 확인한 뒤 첫 요청을 푼다. 임의 sleep이나 테스트 안의 대체 UPDATE 구현은 쓰지 않는다.
+   */
+  async function racePatches(id: number, bodies: [Record<string, unknown>, Record<string, unknown>]) {
+    let releaseFirst!: () => void;
+    let firstReady!: () => void;
+    let secondReady!: (pid: number) => void;
+    const hold = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    const paused = new Promise<void>((resolve) => { firstReady = resolve; });
+    const started = new Promise<number>((resolve) => { secondReady = resolve; });
+    const runners = new WeakSet<object>();
+    let initialReads = 0;
+    let secondRead = false;
+    const original = stateRepo.loadState;
+    const spy = jest.spyOn(stateRepo, 'loadState').mockImplementation(async (runner, ids, ...options) => {
+      if (!ids.includes(id) || runners.has(runner)) return original(runner, ids, ...options);
+      runners.add(runner);
+      const index = initialReads++;
+      const [{ pid }] = await runner.query('SELECT pg_backend_pid() AS pid') as Array<{ pid: number }>;
+      if (index === 1) secondReady(pid);
+      const state = await original(runner, ids, ...options);
+      if (index === 0) {
+        firstReady();
+        await hold;
+      } else {
+        secondRead = true;
+      }
+      return state;
+    });
+    // Promise conversion starts supertest immediately; cleanup always releases the held request.
+    const first = Promise.resolve(api('patch', `/schedule/${id}`).send(bodies[0]));
+    let second: typeof first | undefined;
+    try {
+      await Promise.race([paused, first.then(() => { throw new Error('첫 snapshot에 도달하지 못함'); })]);
+      second = Promise.resolve(api('patch', `/schedule/${id}`).send(bodies[1]));
+      const pid = await Promise.race([
+        started, second.then(() => { throw new Error('두 번째 transaction에 도달하지 못함'); }),
+      ]);
+      const deadline = Date.now() + 4000;
+      let blocked = false;
+      while (!secondRead && !blocked) {
+        const [row] = await q<{ blocked: boolean }>(
+          'SELECT cardinality(pg_blocking_pids($1)) > 0 AS blocked', [pid],
+        );
+        blocked = row.blocked;
+        if (Date.now() > deadline) throw new Error('두 번째 snapshot/DB 잠금 관측 시간 초과');
+      }
+      if (secondRead) await second; // 수정 전: 두 번째 저장 뒤 첫 stale snapshot을 재개한다.
+      releaseFirst();
+      const results = await Promise.all([first, second]);
+      return { results, blocked };
+    } finally {
+      releaseFirst();
+      await Promise.allSettled(second ? [first, second] : [first]);
+      spy.mockRestore();
+    }
+  }
+
+  it.each(['all', 'this'] as const)('동시 %s 부분 수정은 서로의 시간값을 잃지 않는다', async (scope) => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const { results, blocked } = await racePatches(id, [
+      { scope, onDate: from, startMin: 610 },
+      { scope, onDate: from, endMin: 680 },
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    const table = scope === 'all' ? 'ser' : 'exc';
+    const key = scope === 'all' ? 'id' : 'ser_id';
+    expect(await q(`SELECT start_min,end_min FROM ${table} WHERE ${key}=$1`, [id]))
+      .toEqual([{ start_min: 610, end_min: 680 }]);
+    expect(await q(
+      `SELECT extract(hour FROM lower(span) AT TIME ZONE 'Asia/Seoul')::int * 60 +
+              extract(minute FROM lower(span) AT TIME ZONE 'Asia/Seoul')::int AS start_min,
+              extract(hour FROM upper(span) AT TIME ZONE 'Asia/Seoul')::int * 60 +
+              extract(minute FROM upper(span) AT TIME ZONE 'Asia/Seoul')::int AS end_min
+         FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date`, [id, from],
+    )).toEqual([{ start_min: 610, end_min: 680 }]);
+    expect(blocked).toBe(true);
+  });
+
+  it('동시 요청은 최신 시간을 다시 검증하여 합쳐진 9분을 거절한다', async () => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const { results, blocked } = await racePatches(id, [
+      { scope: 'all', onDate: from, startMin: 621 },
+      { scope: 'all', onDate: from, endMin: 630 },
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 400]);
+    expect(results[1].body.code).toBe('BAD_RANGE');
+    expect(await q('SELECT start_min,end_min FROM ser WHERE id=$1', [id]))
+      .toEqual([{ start_min: 621, end_min: 660 }]);
+    expect(blocked).toBe(true);
+  });
+
+  it('일정 쓰기 잠금은 출결 FK의 부모 KEY SHARE와 충돌하지 않는다', async () => {
+    const { id } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const writer = ds.createQueryRunner();
+    const child = ds.createQueryRunner();
+    try {
+      await writer.connect();
+      await child.connect();
+      await writer.startTransaction();
+      await child.startTransaction();
+      await child.query("SET LOCAL lock_timeout = '250ms'");
+      await loadState(writer, [id], { forWrite: true });
+      // ATT는 SER_OCC 잠금 뒤 FK를 검사한다. 여기서 부모 KEY SHARE까지 막으면
+      // 일정의 부모→투영 잠금 순서와 역전되어 불필요한 교착을 만들 수 있다.
+      await expect(child.query('SELECT id FROM ser WHERE id=$1 FOR KEY SHARE', [id]))
+        .resolves.toHaveLength(1);
+    } finally {
+      if (child.isTransactionActive) await child.rollbackTransaction();
+      if (writer.isTransactionActive) await writer.rollbackTransaction();
+      await child.release();
+      await writer.release();
+    }
+  });
+
+  it('읽기 기본 경로는 유지하고 transaction 밖의 쓰기 잠금은 거절한다', async () => {
+    const { id } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const reader = ds.createQueryRunner();
+    try {
+      await reader.connect();
+      expect((await loadState(reader, [id])).SER.map((s) => s.id)).toEqual([id]);
+      await expect(loadState(reader, [id], { forWrite: true })).rejects.toThrow('활성 transaction');
+    } finally {
+      await reader.release();
+    }
   });
 
   it('잘못된 반복 문법은 HTTP400이며 SER/투영을 추가하지 않는다', async () => {

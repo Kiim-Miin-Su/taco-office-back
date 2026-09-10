@@ -1222,6 +1222,7 @@
     },
     "/schedule/{serId}": {
       "patch": {
+        "description": "같은 SER의 쓰기는 부모 행 잠금 획득 순서로 처리하며 최신 저장값으로 부분 변경을 검증한다. 생략한 필드는 보존하고 this의 null 시간·날짜는 원본 상속으로 되돌린다. SER/EXC 저장과 회차 투영은 한 transaction이다. 버전 충돌 검출/멱등 키 계약은 제공하지 않는다.",
         "operationId": "ScheduleController_patch",
         "parameters": [
           {

@@ -30,14 +30,23 @@ const str = (v: unknown): string | null => (v === null || v === undefined ? null
  *
  * 범위로 자르지 않는다 — 「향후」는 `to_date` 를 건드리고 「모두」는 규칙 자체를 바꾸므로,
  * 범위 밖의 예외까지 손에 들고 있어야 리듀서가 옳게 판단한다.
+ * 쓰기는 부모 SER를 id 순서로 잠근 뒤 자식을 읽는다. EXC만 수정해도 같은 부모를 잠가야
+ * 동시 snapshot의 upsert가 서로의 필드를 지우지 않는다. NO KEY UPDATE는 쓰기끼리 배타적이되
+ * ATT 등의 FK KEY SHARE는 허용해 부모→투영 / 투영→FK 잠금 역전을 피한다.
+ * 일반 조회/감사는 잠금 없이 유지한다. 직접 SQL 자식 쓰기까지 직렬화하는 제약은 아니다.
  */
-export async function loadState(q: QueryRunner, serIds: number[]): Promise<State> {
+export async function loadState(
+  q: QueryRunner, serIds: number[], options: { forWrite?: boolean } = {},
+): Promise<State> {
+  if (options.forWrite && !q.isTransactionActive) {
+    throw new Error('일정 쓰기 상태 잠금은 활성 transaction 안에서만 사용할 수 있습니다');
+  }
   if (!serIds.length) return { SER: [], SER_STU: [], EXC: [] };
 
   const sers = (await q.query(
     `SELECT id, kind_key, sub_key, mode, title, teacher_id, room_id, start_min, end_min,
             rrule, from_date::text AS from_date, to_date::text AS to_date
-       FROM ser WHERE id = ANY($1) ORDER BY id`,
+       FROM ser WHERE id = ANY($1) ORDER BY id${options.forWrite ? ' FOR NO KEY UPDATE' : ''}`,
     [serIds],
   )) as Row[];
 
