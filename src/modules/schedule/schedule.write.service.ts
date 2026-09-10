@@ -23,7 +23,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type QueryRunner } from 'typeorm';
 import {
   applyCreate, applyDelete, applyEdit, applyPaste, applyRoster, copyMany, formatRule, occ,
-  lessonTimeIssue, parseRuleInput, pasteIssue, rosterAt, rosterScopes, ruleHits,
+  lessonTimeIssue, parseRuleInput, pasteIssue, rosterAt, rosterScopes, ruleHits, scheduleTimeIssue,
   type Patch as OccurrencePatch, type Scope, type State,
 } from '../../lib/recurrence';
 import { GUIDE_DONE_DB } from '../../lib/rules';
@@ -54,6 +54,9 @@ export class ScheduleWriteService {
     try {
       const before = await loadState(q, serIds);
       const { after, log, effScope } = await reduce(before, q);
+
+      const timeIssue = scheduleTimeIssue(after);
+      if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
 
       await assertScheduleReferences(q, after);
       const touched = await persist(q, before, after);

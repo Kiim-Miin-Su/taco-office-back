@@ -627,6 +627,23 @@ export function lessonTimeIssue(startMin: Minutes, endMin: Minutes): string | nu
   return duration < 10 || duration > 480 ? '수업 길이는 10~480분이어야 합니다' : null;
 }
 
+/** reducer 최종 상태의 원본과 실제 규칙 회차를 검사한다. 투영 기간 밖 예외도 같은 상속 판정을 쓴다. */
+export function scheduleTimeIssue(state: State): string | null {
+  const sers = new Map(state.SER.map(ser => [ser.id, ser]));
+  for (const ser of state.SER) {
+    const issue = lessonTimeIssue(ser.startMin, ser.endMin);
+    if (issue) return issue;
+  }
+  for (const exc of state.EXC) {
+    const ser = sers.get(exc.serId);
+    if (!ser || !ruleHits(ser, exc.onDate)) continue;
+    // canceled도 투영에 남는다. 취소/닫힌 이력은 지우지 않는다.
+    const issue = lessonTimeIssue(exc.startMin ?? ser.startMin, exc.endMin ?? ser.endMin);
+    if (issue) return `${exc.onDate} 예외 수업: ${issue}`;
+  }
+  return null;
+}
+
 /** 화면 프리뷰와 저장이 공유해야 하는 붙여넣기 위치 계산. */
 export function pasteSlots(
   items: CopyItem[],

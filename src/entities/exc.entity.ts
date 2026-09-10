@@ -10,7 +10,7 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey, Check } from 'typeorm';
 
 @Index(['serId', 'onDate'], { unique: true })
 // D3-b2b 수동 보강: 재생성 시 migration 13 / DBML 12참조와 함께 보존한다.
@@ -18,6 +18,8 @@ import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey } from 'typeo
 @ForeignKey('staff', ['teacherId'], ['id'], { name: 'exc_teacher_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('room', ['roomId'], ['id'], { name: 'exc_room_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('staff', ['byId'], ['id'], { name: 'exc_by_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+// D3-d2 수동 CHECK metadata: migration14와 함께 보존/검증한다.
+@Check('exc_time_check', "(start_min IS NULL OR start_min BETWEEN 0 AND 1439) AND (end_min IS NULL OR end_min BETWEEN 1 AND 1440) AND (start_min IS NULL OR end_min IS NULL OR end_min - start_min BETWEEN 10 AND 480)")
 @Entity({ name: 'exc' })
 export class Exc {
   @PrimaryGeneratedColumn({ type: 'bigint' })

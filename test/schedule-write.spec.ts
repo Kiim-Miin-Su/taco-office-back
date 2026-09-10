@@ -128,6 +128,16 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     return { id, from, body: res.body };
   }
 
+  it('원본 변경 뒤 예외가 상속한 길이9분은 BAD_RANGE이며 모두 rollback한다', async () => {
+    const {id,from}=await makeSer({kindKey:'meeting',teacherId:null,studentIds:[]});
+    await api('patch',`/schedule/${id}`).send({scope:'this',onDate:from,endMin:630}).expect(200);
+    const before=await q('SELECT start_min,end_min FROM ser WHERE id=$1',[id]);
+    const res=await api('patch',`/schedule/${id}`).send({scope:'all',onDate:from,startMin:621});
+    expect(res.status).toBe(400); expect(res.body.code).toBe('BAD_RANGE');
+    expect(await q('SELECT start_min,end_min FROM ser WHERE id=$1',[id])).toEqual(before);
+    expect(await q('SELECT end_min FROM exc WHERE ser_id=$1',[id])).toEqual([{end_min:630}]);
+  });
+
   it('잘못된 반복 문법은 HTTP400이며 SER/투영을 추가하지 않는다', async () => {
     const before = await q('SELECT (SELECT count(*) FROM ser)::int AS ser, (SELECT count(*) FROM ser_occ)::int AS occ');
     for (const rrule of ['DAILYjunk', 'WEEKLY:MO,XX', 'DAILY/0', 'DAILY/2junk', 'WEEKLY:MO/9007199254740992']) {

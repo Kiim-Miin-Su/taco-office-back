@@ -22,9 +22,10 @@ import type { Response } from 'express';
  * DB 제약 위반을 여기서 사람 말로 번역한다 (D-R43) — 서비스마다 try/catch 를 두지 않는다.
  *   23P01 EXCLUDE  겹침       → 409 RESOURCE_CONFLICT
  *   23505 UNIQUE   중복       → 409 DUPLICATE
- *   23514 CHECK    범위 벗어남 → 400 INVALID_AMOUNT
+ *   23514 CHECK    범위 벗어남 → 400 INVALID_AMOUNT (일정 시간 CHECK 3개만 BAD_RANGE)
  *   23503 FK       참조 없음   → 400 REFERENCE_NOT_FOUND
  */
+const SCHEDULE_TIME_CHECKS = new Set(['ser_time_check', 'exc_time_check', 'ser_occ_time_check']);
 const PG_MAP: Record<string, { status: number; code: string; message: string }> = {
   '23P01': {
     status: HttpStatus.CONFLICT,
@@ -57,7 +58,9 @@ export class ApiErrorFilter implements ExceptionFilter {
 
     const pgCode = (err as { code?: string })?.code;
     if (pgCode && PG_MAP[pgCode]) {
-      const m = PG_MAP[pgCode]!;
+      const m = pgCode === '23514' && SCHEDULE_TIME_CHECKS.has((err as { constraint?: string }).constraint ?? '')
+        ? { status: HttpStatus.BAD_REQUEST, code: 'BAD_RANGE', message: '수업 시각은 같은 날 안의 정수 분이며 길이는 10~480분이어야 합니다' }
+        : PG_MAP[pgCode]!;
       // 어느 제약이 걸렸는지 남긴다 — "충돌났다" 만으로는 운영에서 못 고친다
       this.log.warn(`${pgCode} ${(err as { constraint?: string }).constraint ?? ''}`);
       res.status(m.status).json({ code: m.code, message: m.message });

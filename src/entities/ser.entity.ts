@@ -10,7 +10,7 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey, Check } from 'typeorm';
 import { CLASS_MODE_T_VALUES } from './enums';
 
 @Index(['fromDate', 'toDate'])
@@ -21,6 +21,8 @@ import { CLASS_MODE_T_VALUES } from './enums';
 @ForeignKey('sub', ['subKey'], ['key'], { name: 'ser_sub_key_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('staff', ['teacherId'], ['id'], { name: 'ser_teacher_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('room', ['roomId'], ['id'], { name: 'ser_room_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+// D3-d2 수동 CHECK metadata: migration14와 함께 보존/검증한다.
+@Check('ser_time_check', "start_min BETWEEN 0 AND 1439 AND end_min BETWEEN 1 AND 1440 AND end_min - start_min BETWEEN 10 AND 480")
 @Entity({ name: 'ser' })
 export class Ser {
   @PrimaryGeneratedColumn({ type: 'bigint' })
