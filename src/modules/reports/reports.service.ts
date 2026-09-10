@@ -16,7 +16,7 @@ import {
   type RepStateDb, type ReportBody, type ReportDeliveryIssue, type ReportPngIssue,
   type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
-import { START_MIN } from '../../lib/sql';
+import { END_MIN, START_MIN } from '../../lib/sql';
 import type {
   ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportReviewDto, ReportRowDto,
   ReportSendHistoryDto, ReportUpsertDto, UnwrittenDto,
@@ -29,7 +29,8 @@ interface Row {
   ser_id: string;
   date: string;
   on_date: string;
-  start_min: number;
+  start_min: number | null;
+  end_min: number | null;
   end_min_utc: string | null;
   sub_key: string | null;
   kind_key: string;
@@ -123,7 +124,7 @@ export class ReportsService {
     return `SELECT r.id, r.ser_id,
                    to_char(COALESCE(lower(o.span) AT TIME ZONE 'Asia/Seoul', r.on_date::timestamp), 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
-                   ${START_MIN} AS start_min,
+                   ${START_MIN} AS start_min, ${END_MIN} AS end_min,
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
@@ -150,7 +151,7 @@ export class ReportsService {
     return `SELECT r.id, r.ser_id,
                    to_char(COALESCE(lower(o.span) AT TIME ZONE 'Asia/Seoul', r.on_date::timestamp), 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
-                   ${START_MIN} AS start_min,
+                   ${START_MIN} AS start_min, ${END_MIN} AS end_min,
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
@@ -189,6 +190,7 @@ export class ReportsService {
     const penalty = written || minutesSinceEnd < 0 ? 0 : tierFor(minutesSinceEnd).amount;
     return {
       id: Number(r.id), serId: Number(r.ser_id), date: r.date, onDate: r.on_date, startMin: r.start_min,
+      endMin: r.end_min,
       subKey: r.sub_key, kindKey: r.kind_key,
       teacherId: r.teacher_id ? Number(r.teacher_id) : null, teacherName: r.teacher_name,
       state, written, minutesSinceEnd, penalty,
@@ -253,6 +255,7 @@ export class ReportsService {
           studentGrade: student.grade,
           subjectName: r.subject_name,
           startMin: row.startMin,
+          endMin: row.endMin,
           body,
         }),
       })) : [],

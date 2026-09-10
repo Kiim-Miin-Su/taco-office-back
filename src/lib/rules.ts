@@ -177,7 +177,7 @@ export interface ReportPngFileNameInput {
   studentName: string;
   studentGrade?: string | null;
   subjectName?: string | null;
-  startMin: Minutes;
+  startMin: Minutes | null;
 }
 
 /** 파일명 조각의 구분자·파일시스템 예약 문자를 제거한다. HH:mm의 콜론은 템플릿이 별도로 소유한다. */
@@ -200,18 +200,22 @@ export function reportPngFileName(input: ReportPngFileNameInput): string {
   const name = reportFilePart(input.studentName, '학생미정');
   const grade = reportFilePart(input.studentGrade, '학년미정');
   const subject = reportFilePart(input.subjectName, '과목미정');
-  return `${date}_${name}_${grade}_${subject}_${fromMin(input.startMin)}.png`;
+  return `${date}_${name}_${grade}_${subject}_${input.startMin === null ? '시간미정' : fromMin(input.startMin)}.png`;
 }
 
 export interface ReportPlainTextInput extends ReportPngFileNameInput {
+  endMin: Minutes | null;
   body: ReportBody;
 }
 
 /** 클립보드와 RSEND.body가 공유하는 5섹션 문자열 정본 (D-R15). */
 export function reportPlainText(input: ReportPlainTextInput): string {
+  // 삭제된 회차의 REP는 보존될 수 있다. 원래 SER 시간이나 00:00을 실제 회차 시간으로 꾸미지 않는다.
+  const time = input.startMin === null || input.endMin === null
+    ? '시간 미정' : `${fromMin(input.startMin)}–${fromMin(input.endMin)}`;
   return [
     `① 학생: ${input.studentName}${input.studentGrade ? ` · ${input.studentGrade}` : ''}`,
-    `② 수업: ${input.date} · ${input.subjectName ?? '과목미정'} · ${fromMin(input.startMin)}`,
+    `② 수업: ${input.date} · ${input.subjectName ?? '과목미정'} · ${time}`,
     ...REPORT_FIELDS.map((field) => `${field.label}\n${input.body[field.key] || '—'}`),
   ].join('\n\n');
 }

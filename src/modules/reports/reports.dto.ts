@@ -28,7 +28,12 @@ export class ReportRowDto {
   @ApiProperty() serId!: number;
   @ApiProperty({ example: '2026-08-27', description: '화면에 보이는 실제 회차 날짜' }) date!: string;
   @ApiProperty({ example: '2026-08-27', description: 'REP · SER_OCC 식별자인 원래 날짜' }) onDate!: string;
-  @ApiProperty() startMin!: number;
+  @ApiProperty({ type: 'integer', nullable: true, minimum: 0, maximum: 1439,
+    description: '실제 SER_OCC.span 시작의 KST 분. 회차 투영이 없으면 null; 쓰기 입력이 아니다.' })
+  startMin!: number | null;
+  @ApiProperty({ type: 'integer', nullable: true, minimum: 1, maximum: 1440,
+    description: '실제 SER_OCC.span 종료의 KST 분. 자정 종료는 1440, 회차 투영이 없으면 null; 쓰기 입력이 아니다.' })
+  endMin!: number | null;
   @ApiPropertyOptional({ type: String, nullable: true }) subKey?: string | null;
   @ApiProperty() kindKey!: string;
   @ApiPropertyOptional({ type: Number, nullable: true }) teacherId?: number | null;

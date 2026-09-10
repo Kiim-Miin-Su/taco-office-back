@@ -216,6 +216,8 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     );
     expect(saved).toMatchObject({ rep_ids: [rep1, rep2], channel: 'blob' });
     expect(saved.body).toContain('① 학생: 준비학생 · 고2');
+    expect(saved.body).toContain(`② 수업: ${DATE} · AP Chemistry · 09:00–10:00`);
+    expect(saved.body).toContain(`② 수업: ${DATE} · AP Chemistry · 10:00–11:00`);
     expect(saved.body).toContain('③ 수업 내용');
     expect(await q(`SELECT 1 FROM pdflog WHERE kind='report_png' AND ref_id=$1`, [first.body.item.id]))
       .toHaveLength(2);

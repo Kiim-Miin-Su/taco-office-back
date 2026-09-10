@@ -147,6 +147,48 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   const review = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
     .post(`/reports/${SER}/${DATE}/review`).set('Authorization', `Bearer ${token}`).send(value);
 
+  it.each([
+    { date: DATE, start: 540, end: 600, label: '09:00–10:00' },
+    { date: '2025-01-03', start: 1380, end: 1440, label: '23:00–24:00' },
+    { date: DATE, start: null, end: null, label: '시간 미정' },
+  ])('조회·상세·복사 시간은 실제 span을 따른다: $label', async ({ date, start, end, label }) => {
+    await put(teacherToken, body).expect(200);
+    const [original] = await q<{ span: string }>('SELECT span::text FROM ser_occ WHERE ser_id=$1 AND on_date=$2', [SER, DATE]);
+    try {
+      if (start === null) {
+        await q('DELETE FROM ser_occ WHERE ser_id=$1 AND on_date=$2', [SER, DATE]);
+      } else {
+        await q(`UPDATE ser_occ SET span=tstzrange(
+          ($3::date + $4 * interval '1 minute') AT TIME ZONE 'Asia/Seoul',
+          ($3::date + $5 * interval '1 minute') AT TIME ZONE 'Asia/Seoul','[)')
+          WHERE ser_id=$1 AND on_date=$2`, [SER, DATE, date, start, end]);
+      }
+      const result = (await get(teacherToken).expect(200)).body;
+      expect(result).toMatchObject({ date, onDate: DATE, startMin: start, endMin: end });
+      expect(result.exportFiles[0].plainText).toContain(`② 수업: ${date} · AP Chemistry · ${label}`);
+      expect(result.exportFiles[0].fileName).toBe(`${date.replaceAll('-', '')}_리포트학생_고2_AP Chemistry_${start === null ? '시간미정' : label.slice(0, 5)}.png`);
+      // 목록 필터는 현재 원래 onDate 기준이다. 실제 날짜 필터/발송 그룹 정책은 별도 감사 대상으로 남긴다.
+      const list = await request(app.getHttpServer()).get('/reports').query({ from: DATE, to: DATE })
+        .set('Authorization', `Bearer ${teacherToken}`).expect(200);
+      expect(list.body.items.find((item: { id: number }) => item.id === repId))
+        .toMatchObject({ date, onDate: DATE, startMin: start, endMin: end });
+    } finally {
+      await q(`INSERT INTO ser_occ (ser_id,on_date,teacher_id,canceled,span) VALUES ($1,$2,$3,false,$4::tstzrange)
+        ON CONFLICT (ser_id,on_date) DO UPDATE SET span=EXCLUDED.span`, [SER, DATE, TEACHER, original.span]);
+    }
+  });
+
+  it('파생 시간은 nullable 응답이며 리포트 쓰기 입력으로 허용하지 않는다', async () => {
+    const schemas = buildOpenApi(app).components!.schemas!;
+    for (const name of ['ReportRowDto', 'ReportDetailDto']) {
+      expect(schemas[name]).toMatchObject({ properties: {
+        startMin: { type: 'integer', nullable: true, minimum: 0, maximum: 1439 },
+        endMin: { type: 'integer', nullable: true, minimum: 1, maximum: 1440 },
+      } });
+    }
+    await put(teacherToken, { ...body, endMin: 600 }).expect(400);
+  });
+
   it('리포트 CRUD OpenAPI는 실제 성공 코드·상태 오류와 부모 잠금 계약을 노출한다', () => {
     const doc = buildOpenApi(app);
     for (const [action, method, success] of [['draft', 'put', '200'], ['submit', 'post', '201'], ['review', 'post', '201']] as const) {
