@@ -542,6 +542,31 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(res.body.code).toBe('BAD_RRULE');
   });
 
+  it('이력 없는 전체 삭제는 명단·회차 제외·예외를 부모보다 먼저 정리한다', async () => {
+    // class는 project가 REP를 자동 생성하므로 참조 없는 경로에는 비리포트 종류를 쓴다.
+    const { id, from } = await makeSer({ kindKey: 'meeting' });
+    const [exc] = await q<{ id: string }>(`INSERT INTO exc (ser_id,on_date) VALUES ($1,$2) RETURNING id`, [id, from]);
+    await q(`INSERT INTO exc_stu_out (exc_id,student_id) VALUES ($1,1)`, [exc.id]);
+    await api('delete', `/schedule/${id}`).send({ scope: 'all', onDate: from }).expect(200);
+    for (const table of ['ser_stu', 'exc', 'ser_occ']) {
+      expect(await q(`SELECT 1 FROM ${table} WHERE ser_id=$1`, [id])).toHaveLength(0);
+    }
+    expect(await q(`SELECT 1 FROM ser WHERE id=$1`, [id])).toHaveLength(0);
+    expect(await q(`SELECT 1 FROM exc_stu_out WHERE exc_id=$1`, [exc.id])).toHaveLength(0);
+  });
+
+  it('이력이 있는 첫 회차 전체 취소는 SER·명단·리포트를 보존하고 기간만 마감한다', async () => {
+    const { id, from } = await makeSer();
+    const reportsBefore = await q(`SELECT id FROM rep WHERE ser_id=$1 ORDER BY id`, [id]);
+    expect(reportsBefore.length).toBeGreaterThan(0);
+    await api('delete', `/schedule/${id}`).send({ scope: 'all', onDate: from }).expect(200);
+    expect(await q(`SELECT from_date::text,to_date::text FROM ser WHERE id=$1`, [id]))
+      .toEqual([{ from_date: from, to_date: plus(from, -1) }]);
+    expect(await q(`SELECT 1 FROM ser_stu WHERE ser_id=$1`, [id])).toHaveLength(2);
+    expect(await q(`SELECT id FROM rep WHERE ser_id=$1 ORDER BY id`, [id])).toEqual(reportsBefore);
+    expect(await q(`SELECT 1 FROM ser_occ WHERE ser_id=$1`, [id])).toHaveLength(0);
+  });
+
   it('취소하면 회차가 취소로 표시되고 겹침 제약에서 빠진다', async () => {
     const { id, from } = await makeSer();
     await api('delete', `/schedule/${id}`).send({ scope: 'this', onDate: from }).expect(200);

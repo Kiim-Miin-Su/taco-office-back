@@ -10,8 +10,11 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Entity, PrimaryColumn } from 'typeorm';
+import { Entity, PrimaryColumn, ForeignKey } from 'typeorm';
 
+// D3-b2b 수동 보강: 재생성 시 migration 13 / DBML 12참조와 함께 보존한다.
+@ForeignKey('ser', ['serId'], ['id'], { name: 'ser_stu_ser_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+@ForeignKey('stu', ['studentId'], ['id'], { name: 'ser_stu_student_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'ser_stu' })
 export class SerStu {
   @PrimaryColumn({ type: 'bigint' })

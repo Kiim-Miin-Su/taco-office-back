@@ -144,14 +144,6 @@ export async function persist(q: QueryRunner, before: State, after: State): Prom
       touched.add(s.id);
     }
   }
-  for (const s of before.SER) {
-    if (!afterSer.has(s.id)) {
-      await q.query(`DELETE FROM ser_occ WHERE ser_id = $1`, [s.id]);
-      await q.query(`DELETE FROM ser WHERE id = $1`, [s.id]);
-      touched.delete(s.id);
-    }
-  }
-
   const real = (id: number): number => idMap.get(id) ?? id;
 
   // ── SER_STU: 키가 (serId, studentId) 뿐이라 집합 차이로 본다
@@ -215,6 +207,16 @@ export async function persist(q: QueryRunner, before: State, after: State): Prom
     await q.query(`DELETE FROM exc_stu_out WHERE exc_id=$1`, [e.id]);
     await q.query(`DELETE FROM exc WHERE ser_id=$1 AND on_date=$2::date`, [e.serId, e.onDate]);
     touched.add(e.serId);
+  }
+
+  // 즉시 NO ACTION FK: reducer가 제거한 자식부터 정리한 뒤 부모를 지운다.
+  // 업무 삭제/이력 보존 여부는 reducer가 결정하며 이 어댑터가 CASCADE로 확대하지 않는다.
+  for (const s of before.SER) {
+    if (!afterSer.has(s.id)) {
+      await q.query(`DELETE FROM ser_occ WHERE ser_id = $1`, [s.id]);
+      await q.query(`DELETE FROM ser WHERE id = $1`, [s.id]);
+      touched.delete(s.id);
+    }
   }
 
   return [...touched];
