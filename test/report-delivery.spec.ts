@@ -16,6 +16,10 @@ import { configureApiBodyParser } from '../src/app.factory';
 import { REPORT_FILE_STORE, type ReportFileStore } from '../src/modules/reports/report-file.store';
 import { DEV_URL } from './db';
 import { ReportsService } from '../src/modules/reports/reports.service';
+import type { ReportDeliveryCreateDto } from '../src/modules/reports/reports.dto';
+import { addD } from '../src/lib/recurrence';
+import { todayKst } from '../src/lib/kst';
+import { buildOpenApi } from '../src/openapi';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -44,6 +48,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
   let rep1 = 0;
   let rep2 = 0;
   let rep3 = 0;
+  const revisions = new Map<number, string>();
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> =>
     ds.query(sql, p) as Promise<T[]>;
@@ -58,6 +63,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     files: [rep1, rep2].map((repId) => ({
       repId,
       fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chemistry_${repId === rep1 ? '09:00' : '10:00'}.png`,
+      revision: revisions.get(repId)!,
       pngDataUrl: png,
     })),
   });
@@ -148,6 +154,10 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     ).body.accessToken as string;
     managerToken = await login(MANAGER_EMAIL);
     teacherToken = await login(TEACHER_EMAIL);
+    for (const serId of [SER1, SER2]) {
+      const detail = await request(app.getHttpServer()).get(`/reports/${serId}/${DATE}`).set(auth(managerToken)).expect(200);
+      revisions.set(detail.body.id, detail.body.exportFiles.find((f: {studentId: number}) => f.studentId === STUDENT_READY).revision);
+    }
   });
 
   beforeEach(async () => {
@@ -162,6 +172,231 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
   afterAll(async () => {
     if (ds?.isInitialized) await clean();
     await app?.close();
+  });
+
+  /** 일정 API가 만드는 실제 투영을 재사용한다. 승인 상태만 테스트 fixture로 준비한다. */
+  async function recentDelivery(run: (fixture: { id: number; date: string; body: ReportDeliveryCreateDto }) => Promise<void>): Promise<void> {
+    const date = addD(todayKst(), -1);
+    const created = await request(app.getHttpServer()).post('/schedule').set(auth(managerToken)).send({
+      kindKey: 'class', subKey: 'ap-chem', teacherId: TEACHER, roomId: null, mode: 'offline',
+      fromDate: date, rrule: 'ONCE', startMin: 60, endMin: 120, studentIds: [STUDENT_READY], title: 'delivery race',
+    }).expect(201);
+    const id = created.body.serIds[0] as number;
+    try {
+      await q(`UPDATE rep SET state='ok',body=$2::jsonb,written_at=now(),submitted_at=now(),
+        reviewed_at=now(),reviewer_id=$3 WHERE ser_id=$1`,
+      [id, JSON.stringify({ content: '경합 검증', progress: '42p', homework: '43p' }), MANAGER]);
+      const queue = await request(app.getHttpServer()).get('/reports/deliveries').query({ onDate: date })
+        .set(auth(managerToken)).expect(200);
+      const target = queue.body.students.find((row: { student: { id: number } }) => row.student.id === STUDENT_READY);
+      const report = target.reports.find((row: { serId: number }) => row.serId === id);
+      const descriptor = report.exportFiles.find((row: { studentId: number }) => row.studentId === STUDENT_READY);
+      await run({ id, date, body: { requestKey: '00000000-0000-4000-8000-000000000090', onDate: date,
+        studentId: STUDENT_READY, files: [{ repId: report.id, fileName: descriptor.fileName, revision: descriptor.revision, pngDataUrl: png }] } });
+    } finally {
+      // 이 helper가 만든 규칙/학생/날짜의 테스트 행만 FK 순서대로 회수한다.
+      await q(`DELETE FROM pdflog WHERE ref_id IN (SELECT id FROM rsend WHERE student_id=$1 AND on_date=$2)`, [STUDENT_READY, date]);
+      await q('DELETE FROM rsend WHERE student_id=$1 AND on_date=$2', [STUDENT_READY, date]);
+      await q("DELETE FROM log WHERE actor_id=$1 AND entity='ATT'", [MANAGER]);
+      await q('DELETE FROM att WHERE ser_id=$1', [id]);
+      await q('DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)', [id]);
+      await q('DELETE FROM rep WHERE ser_id=$1', [id]);
+      await q('DELETE FROM ser_occ WHERE ser_id=$1', [id]);
+      await q('DELETE FROM exc_stu_out WHERE exc_id IN (SELECT id FROM exc WHERE ser_id=$1)', [id]);
+      await q('DELETE FROM exc WHERE ser_id=$1', [id]);
+      await q('DELETE FROM ser_stu WHERE ser_id=$1', [id]);
+      await q('DELETE FROM ser WHERE id=$1', [id]);
+    }
+  }
+
+  it.each(['attendance cancel', 'date move', 'end change'] as const)(
+    '선행 일정/출결 commit을 기다린 뒤 오래된 발송을 거절한다: %s', async (mode) => {
+      await recentDelivery(async ({ id, date, body }) => {
+        let ready!: () => void, release!: () => void, seen!: (pid: number) => void;
+        const paused = new Promise<void>((resolve) => { ready = resolve; });
+        const hold = new Promise<void>((resolve) => { release = resolve; });
+        const started = new Promise<number>((resolve) => { seen = resolve; });
+        const createRunner = ds.createQueryRunner.bind(ds);
+        let writer: ReturnType<typeof createRunner> | undefined, observed = false;
+        let first: Promise<request.Response> | undefined, second: Promise<request.Response> | undefined;
+        const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+          const runner = createRunner(...args), query = runner.query.bind(runner);
+          jest.spyOn(runner, 'query').mockImplementation(async (sql: string, p?: unknown[], structured?: boolean) => {
+            const target = p?.some((v) => Array.isArray(v) ? v.includes(id) : v === id);
+            if (!writer && target && sql.includes('FOR NO KEY UPDATE')) writer = runner;
+            if (runner === writer && sql === 'COMMIT') { ready(); await hold; }
+            if (writer && runner !== writer && runner.isTransactionActive && !observed
+              && /FOR (NO KEY UPDATE|UPDATE OF r)/.test(sql)) {
+              observed = true;
+              const [{ pid }] = await query('SELECT pg_backend_pid() AS pid');
+              seen(pid);
+            }
+            return structured ? query(sql, p, true) : query(sql, p);
+          });
+          return runner;
+        });
+        try {
+          first = Promise.resolve(mode === 'attendance cancel'
+            ? request(app.getHttpServer()).put(`/schedule/${id}/${date}/attendance`).set(auth(managerToken))
+              .send({ result: 'canceled', reason: 'academy' }).timeout(10000)
+            : request(app.getHttpServer()).patch(`/schedule/${id}`).set(auth(managerToken)).send({
+              scope: 'this', onDate: date, ...(mode === 'date move' ? { date: addD(date, 1) } : { endMin: 135 }),
+            }).timeout(10000));
+          await Promise.race([paused, first.then(() => { throw new Error('선행 commit에 도달하지 못함'); })]);
+          let completed = false;
+          second = Promise.resolve(request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+            .send(body).timeout(10000));
+          void second.then(() => { completed = true; }, () => { completed = true; });
+          const pid = await Promise.race([started, second.then(() => { throw new Error('발송 잠금에 도달하지 못함'); })]);
+          let blocked = false;
+          const deadline = Date.now() + 4000;
+          while (!blocked && !completed) {
+            [{ blocked }] = await q<{ blocked: boolean }>('SELECT cardinality(pg_blocking_pids($1))>0 AS blocked', [pid]);
+            if (Date.now() > deadline) throw new Error('발송 경합 관측 시간 초과');
+          }
+          release();
+          const [changed, sent] = await Promise.all([first, second]);
+          expect(changed.status).toBe(200);
+          expect(sent.status).toBe(400);
+          expect(sent.body.code).toBe(mode === 'end change' ? 'REPORT_DELIVERY_FILES_MISMATCH' : 'REPORT_DELIVERY_EMPTY');
+          expect(blocked).toBe(true);
+          expect(await q('SELECT id FROM rsend WHERE request_key=$1', [body.requestKey])).toEqual([]);
+          expect(remove).toHaveBeenCalledTimes(1);
+          expect(remove.mock.calls[0][0]).toHaveLength(1);
+        } finally {
+          release();
+          await Promise.allSettled([...(first ? [first] : []), ...(second ? [second] : [])]);
+          spy.mockRestore();
+        }
+      });
+    },
+  );
+
+  it('업로드 중 종료 시각이 바뀌면 같은 파일명이어도 이전 PNG/새 본문 혼합 저장을 막는다', async () => {
+    await recentDelivery(async ({ id, date, body }) => {
+      put.mockImplementationOnce(async () => {
+        await request(app.getHttpServer()).patch(`/schedule/${id}`).set(auth(managerToken))
+          .send({ scope: 'this', onDate: date, endMin: 135 }).expect(200);
+        return 'https://private.blob/owned-stale.png';
+      });
+      const result = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken)).send(body);
+      expect(result.status).toBe(400);
+      expect(result.body.code).toBe('REPORT_DELIVERY_FILES_MISMATCH');
+      expect(await q('SELECT id FROM rsend WHERE request_key=$1', [body.requestKey])).toEqual([]);
+      expect(remove).toHaveBeenCalledWith(['https://private.blob/owned-stale.png']);
+    });
+  });
+
+  it('화면 조회 후 종료만 바뀐 오래된 출력은 업로드 전에 거절하고 새 조회는 저장한다', async () => {
+    await recentDelivery(async ({ id, date, body }) => {
+      await request(app.getHttpServer()).patch(`/schedule/${id}`).set(auth(managerToken))
+        .send({ scope: 'this', onDate: date, endMin: 135 }).expect(200);
+      const stale = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken)).send(body);
+      expect(stale.status).toBe(400);
+      expect(stale.body.code).toBe('REPORT_DELIVERY_FILES_MISMATCH');
+      expect(put).not.toHaveBeenCalled();
+      const current = await request(app.getHttpServer()).get(`/reports/${id}/${date}`).set(auth(managerToken)).expect(200);
+      const descriptor = current.body.exportFiles[0];
+      expect(descriptor.fileName).toBe(body.files[0].fileName);
+      expect(descriptor.revision).toMatch(/^[a-f0-9]{64}$/);
+      expect(descriptor.revision).not.toBe(body.files[0].revision);
+      const saved = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+        .send({ ...body, files: [{ ...body.files[0], revision: descriptor.revision }] }).expect(201);
+      expect(await q('SELECT body FROM rsend WHERE id=$1', [saved.body.item.id])).toEqual([{ body: descriptor.plainText }]);
+    });
+  });
+
+  it.each(['connect', 'startTransaction'] as const)('업로드 후 %s 실패도 파일을 보상 삭제하고 runner를 해제한다', async (method) => {
+    const createRunner = ds.createQueryRunner.bind(ds);
+    let owned: ReturnType<typeof createRunner> | undefined;
+    const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+      const runner = createRunner(...args);
+      // 일반 조회 runner는 건드리지 않고 Blob 보존 후 전용 transaction만 실패시킨다.
+      if (put.mock.calls.length === 2 && !owned) {
+        owned = runner;
+        jest.spyOn(runner, method).mockRejectedValueOnce(new Error(`test ${method} failure`));
+        jest.spyOn(runner, 'release');
+      }
+      return runner;
+    });
+    try {
+      await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+        .send(deliveryBody('00000000-0000-4000-8000-000000000091')).expect(500);
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(remove.mock.calls[0][0]).toHaveLength(2);
+      expect(owned?.release).toHaveBeenCalled();
+      expect(await q('SELECT id FROM rsend WHERE request_key=$1', ['00000000-0000-4000-8000-000000000091'])).toEqual([]);
+    } finally {
+      // red 실행에서도 테스트가 열어 둔 연결을 남기지 않는다.
+      if (owned && !owned.isReleased) await owned.release();
+      spy.mockRestore();
+    }
+  });
+
+  it.each([true, false])('동시 최초 발송 sameKey=%s: 한 감사 묶음만 남기고 패자 파일만 지운다', async (sameKey) => {
+    let unblock!: () => void, puts = 0, finishedUploads = 0;
+    const bothUploaded = new Promise<void>((resolve) => { unblock = resolve; });
+    put.mockImplementation(async (pathname) => {
+      const url = `https://private.blob/owned-concurrent-${++puts}.png`;
+      // 각 요청의 마지막 파일에서만 만나 실제 업로드 선행/transaction 경합을 만든다.
+      if (pathname.endsWith('10:00.png')) {
+        if (++finishedUploads === 2) unblock();
+        await bothUploaded;
+      }
+      return url;
+    });
+    const firstBody = deliveryBody('00000000-0000-4000-8000-000000000092');
+    const secondBody = { ...firstBody, requestKey: sameKey ? firstBody.requestKey : '00000000-0000-4000-8000-000000000093' };
+    try {
+      const results = await Promise.all([firstBody, secondBody].map((body) =>
+        request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken)).send(body).timeout(10000)));
+      expect(results.map((r) => r.status).sort()).toEqual(sameKey ? [201, 201] : [201, 409]);
+      if (sameKey) expect(results[0].body.item.id).toBe(results[1].body.item.id);
+      else expect(results.find((r) => r.status === 409)?.body.code).toBe('REPORT_DELIVERY_ALREADY_SENT');
+      expect(await q('SELECT id FROM rsend WHERE student_id=$1 AND on_date=$2', [STUDENT_READY, DATE])).toHaveLength(1);
+      const persisted = await q<{file_url: string}>(`SELECT file_url FROM pdflog WHERE ref_id IN
+        (SELECT id FROM rsend WHERE student_id=$1 AND on_date=$2)`, [STUDENT_READY, DATE]);
+      expect(persisted).toHaveLength(2);
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(remove.mock.calls[0][0]).toHaveLength(2);
+      expect(persisted.some((row) => remove.mock.calls[0][0].includes(row.file_url))).toBe(false);
+    } finally { unblock(); }
+  });
+
+  it.each([true, false])('동시 재발송 sameKey=%s: 원본 날짜/본문/파일은 불변이다', async (sameKey) => {
+    const original = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+      .send(deliveryBody('00000000-0000-4000-8000-000000000094')).expect(201);
+    const id = original.body.item.id as number;
+    const [snapshot] = await q('SELECT on_date,body,rep_ids FROM rsend WHERE id=$1', [id]);
+    put.mockClear();
+    const keys = ['00000000-0000-4000-8000-000000000095', sameKey
+      ? '00000000-0000-4000-8000-000000000095' : '00000000-0000-4000-8000-000000000096'];
+    let ready!: () => void, arrivals = 0;
+    const bothPastFastPath = new Promise<void>((resolve) => { ready = resolve; });
+    const createRunner = ds.createQueryRunner.bind(ds);
+    const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+      const runner = createRunner(...args), query = runner.query.bind(runner);
+      jest.spyOn(runner, 'query').mockImplementation(async (sql: string, p?: unknown[], structured?: boolean) => {
+        if (sql.includes('FROM rsend WHERE id=$1 FOR UPDATE') && p?.[0] === id) {
+          if (++arrivals === 2) ready();
+          // 두 요청 모두 빠른 멱등 조회를 통과한 뒤 실제 같은 RSEND 잠금에 진입한다.
+          await bothPastFastPath;
+        }
+        return structured ? query(sql, p, true) : query(sql, p);
+      });
+      return runner;
+    });
+    const pending = keys.map((requestKey) => Promise.resolve(request(app.getHttpServer())
+      .post(`/reports/deliveries/${id}/resend`).set(auth(managerToken)).send({ requestKey }).timeout(10000).expect(201)));
+    let results: request.Response[];
+    try { results = await Promise.all(pending); expect(arrivals).toBe(2); }
+    finally { ready(); await Promise.allSettled(pending); spy.mockRestore(); }
+    const copies = await q('SELECT on_date,body,rep_ids FROM rsend WHERE source_send_id=$1', [id]);
+    expect(copies).toEqual(Array.from({ length: sameKey ? 1 : 2 }, () => snapshot));
+    expect(results[0].body.item.id === results[1].body.item.id).toBe(sameKey);
+    expect(put).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(await q('SELECT on_date,body,rep_ids FROM rsend WHERE id=$1', [id])).toEqual([snapshot]);
   });
 
   it('매니저 큐는 학생별 승인 집합을 만들고 미작성 학생을 차단한다', async () => {
@@ -181,7 +416,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
       .send({ ...base, files: [], extra: true }).expect(400);
     const missing = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
-      .send({ ...base, files: [{ repId: rep1, fileName: 'x.png', pngDataUrl: png }] }).expect(400);
+      .send({ ...base, files: [{ repId: rep1, fileName: 'x.png', revision: revisions.get(rep1), pngDataUrl: png }] }).expect(400);
     expect(missing.body.code).toBe('REPORT_DELIVERY_FILES_MISMATCH');
     const fake = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
       .send({
@@ -189,11 +424,33 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
         files: [rep1, rep2].map((repId) => ({
           repId,
           fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chemistry_${repId === rep1 ? '09:00' : '10:00'}.png`,
+          revision: revisions.get(repId),
           pngDataUrl: 'data:image/png;base64,ZmFrZQ==',
         })),
       }).expect(400);
     expect(fake.body.code).toBe('REPORT_DELIVERY_PNG_FORMAT');
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, 'invalid', '0'.repeat(64)])('누락/잘못된 출력 revision은 Blob 전에 거절한다: %s', async (revision) => {
+    const body = deliveryBody('00000000-0000-4000-8000-000000000097');
+    const result = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+      .send({ ...body, files: body.files.map((file) => ({ ...file, revision })) }).expect(400);
+    if (revision?.length === 64) expect(result.body.code).toBe('REPORT_DELIVERY_FILES_MISMATCH');
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('생성 OpenAPI는 출력 revision의 필수 입출력과 현재 재검증/보상 계약을 노출한다', () => {
+    const doc = buildOpenApi(app);
+    for (const name of ['ReportExportFileDto', 'ReportDeliveryFileInputDto']) {
+      expect(doc.components?.schemas?.[name]).toMatchObject({
+        required: expect.arrayContaining(['revision']),
+        properties: { revision: { type: 'string', pattern: '^[a-f0-9]{64}$' } },
+      });
+    }
+    const operation = doc.paths['/reports/deliveries'].post!;
+    expect(operation.description).toContain('부모 SER');
+    for (const status of ['201', '400', '403', '409']) expect(operation.responses[status]).toBeDefined();
   });
 
   it.each([
@@ -234,7 +491,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       const descriptor = target.reports[0].exportFiles.find((file: {studentId: number}) => file.studentId === STUDENT_READY);
       const sent = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
         .send({ requestKey: '00000000-0000-4000-8000-000000000082', onDate: movedDate, studentId: STUDENT_READY,
-          files: [{ repId: rep1, fileName: descriptor.fileName, pngDataUrl: png }] }).expect(201);
+          files: [{ repId: rep1, fileName: descriptor.fileName, revision: descriptor.revision, pngDataUrl: png }] }).expect(201);
       const [saved] = await q<{ on_date: string; body: string }>(
         `SELECT to_char(on_date,'YYYY-MM-DD') on_date,body FROM rsend WHERE id=$1`, [sent.body.item.id]);
       expect(saved).toEqual({ on_date: movedDate, body: descriptor.plainText });

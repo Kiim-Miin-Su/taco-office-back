@@ -8,12 +8,18 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min,
-  IsUUID, ValidateIf, ValidateNested,
+  IsUUID, Matches, ValidateIf, ValidateNested,
 } from 'class-validator';
 import {
   REP_STATE_FROM_DB, REPORT_FIELDS, REPORT_PNG_DATA_URL_MAX_CHARS, type RepStateDb, type ReportFieldKey, type ReportReviewDecision,
 } from '../../lib/rules';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
+
+const EXPORT_REVISION_PATTERN = /^[a-f0-9]{64}$/;
+const EXPORT_REVISION_SCHEMA = {
+  pattern: EXPORT_REVISION_PATTERN.source,
+  description: '서버 파일명/본문의 SHA-256 출력 버전. 조회 값을 PNG 요청에 그대로 전달하며 인증 서명은 아님',
+};
 
 export class ReportTeacherQueryDto {
   @ApiPropertyOptional({ ...ID_SCHEMA, description: '작성자 필터. 강사는 유효한 값도 본인 ID로 강제한다' })
@@ -136,6 +142,7 @@ export class ReportExportFileDto {
   @ApiProperty() studentId!: number;
   @ApiProperty({ example: '20260827_김민준_고2_수학_16:30.png' }) fileName!: string;
   @ApiProperty({ description: '클립보드와 RSEND.body가 공유하는 서버 생성 5섹션 본문' }) plainText!: string;
+  @ApiProperty(EXPORT_REVISION_SCHEMA) revision!: string;
 }
 
 export class ReportDetailDto extends ReportRowDto {
@@ -163,6 +170,9 @@ export class ReportDeliveryFileInputDto {
 
   @ApiProperty({ maxLength: 255 }) @IsString() @MaxLength(255)
   fileName!: string;
+
+  @ApiProperty(EXPORT_REVISION_SCHEMA) @IsString() @Matches(EXPORT_REVISION_PATTERN)
+  revision!: string;
 
   @ApiProperty({ description: 'html-to-image가 만든 PNG data URL', maxLength: REPORT_PNG_DATA_URL_MAX_CHARS })
   @IsString() @MaxLength(REPORT_PNG_DATA_URL_MAX_CHARS)

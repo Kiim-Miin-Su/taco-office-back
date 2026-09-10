@@ -87,7 +87,10 @@ export class ReportsController {
   }
 
   @Post('deliveries')
-  @ApiOperation({ summary: '학생 1명의 승인된 리포트 PNG를 private Blob에 보존하고 발송 이력 생성' })
+  @ApiOperation({ summary: '학생 1명의 승인된 리포트 PNG를 private Blob에 보존하고 발송 이력 생성', description: '업로드 후 부모 SER→REP 순서로 잠그고 현재 날짜/출결/승인 집합과 출력 원문을 재검증한다. 변경된 PNG/본문 혼합 저장은 거절하고 이번 요청의 업로드만 보상 삭제한다. 같은 요청 키의 완료 이력은 재사용한다.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력/PNG 형식 오류 또는 REPORT_DELIVERY_EMPTY/FILES_MISMATCH: 현재 발송 대상·출력과 달라짐. 큐를 재조회해 PNG를 다시 생성한다.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_DELIVERY_INCOMPLETE/NOT_APPROVED/ALREADY_SENT/REQUEST_KEY_REUSED: 현재 작성·승인·발송 상태나 요청 키 충돌. 큐/이력을 다시 조회한다.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_DELIVERY_FORBIDDEN: 현재 전체 관리 권한이 필요함.' })
   @ApiCreatedResponse({ type: ReportDeliveryResultDto })
   async deliver(
     @CurrentUser() user: RequestUser,
@@ -97,7 +100,7 @@ export class ReportsController {
   }
 
   @Post('deliveries/:sendId/resend')
-  @ApiOperation({ summary: '기존 본문·Blob을 변경 없이 재발송하고 새 감사행 생성' })
+  @ApiOperation({ summary: '기존 본문·Blob을 변경 없이 재발송하고 새 감사행 생성', description: '원본 RSEND 행을 잠그고 발송 당시 날짜/본문/파일 URL을 재사용한다. 동일 요청 키의 동시 재시도는 하나의 감사행, 서로 다른 키는 별도 재발송이다. 현재 수업 메타데이터로 이력을 덮어쓰지 않는다.' })
   @ApiCreatedResponse({ type: ReportDeliveryResultDto })
   async resend(
     @CurrentUser() user: RequestUser,

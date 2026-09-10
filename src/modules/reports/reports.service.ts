@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { createHash } from 'node:crypto';
 import {
   LATE_REPORT_TIERS, REPORT_FIELDS, REPORT_UNWRITTEN_CANDIDATE_DB,
   canExportReport, decodeReportPng, effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue,
@@ -243,16 +244,15 @@ export class ReportsService {
         canApprove, state: r.state, decision: 'approve',
       }) === null,
       canExport,
-      exportFiles: canExport ? row.students.map((student) => ({
-        studentId: student.id,
-        fileName: reportPngFileName({
+      exportFiles: canExport ? row.students.map((student) => {
+        const fileName = reportPngFileName({
           date: row.date,
           studentName: student.name,
           studentGrade: student.grade,
           subjectName: r.subject_name,
           startMin: row.startMin,
-        }),
-        plainText: reportPlainText({
+        });
+        const plainText = reportPlainText({
           date: row.date,
           studentName: student.name,
           studentGrade: student.grade,
@@ -260,8 +260,11 @@ export class ReportsService {
           startMin: row.startMin,
           endMin: row.endMin,
           body,
-        }),
-      })) : [],
+        });
+        // 조회·상세·발송 검증이 같은 출력 버전을 공유한다. 클라이언트는 재계산하지 않는다.
+        const revision = createHash('sha256').update(JSON.stringify([fileName, plainText])).digest('hex');
+        return { studentId: student.id, fileName, plainText, revision };
+      }) : [],
       canDeliver: canCrudAll,
       subjectName: r.subject_name,
       lang: r.lang,
@@ -315,7 +318,7 @@ export class ReportsService {
       const input = inputByRepId.get(repId)!;
       const expected = this.toDetail(row, actorId, true).exportFiles
         .find((file) => file.studentId === dto.studentId);
-      if (!expected || expected.fileName !== input.fileName) {
+      if (!expected || expected.fileName !== input.fileName || expected.revision !== input.revision) {
         this.throwDeliveryIssue('REPORT_DELIVERY_FILES_MISMATCH');
       }
       const decoded = decodeReportPng(input.pngDataUrl);
@@ -599,16 +602,14 @@ export class ReportsService {
     }
 
     const q = this.ds.createQueryRunner();
-    await q.connect();
-    await q.startTransaction();
     let committed = false;
     let sendId = 0;
     try {
-      const lockedRows = await this.deliveryRows(q, dto.onDate, dto.studentId, true);
-      const locked = this.deliveryFiles(lockedRows, dto, actorId);
-      if (locked.some((file, index) => file.fileName !== prepared[index]?.fileName)) {
-        this.throwDeliveryIssue('REPORT_DELIVERY_FILES_MISMATCH');
-      }
+      // 업로드 뒤 연결/BEGIN 실패도 아래의 Blob 보상·runner 해제 경로를 반드시 거친다.
+      await q.connect();
+      await q.startTransaction();
+      // 일정/출결/리포트 쓰기와 같은 SER→REP 순서. 잠금 뒤 별도 SELECT로 현재 투영을 읽는다.
+      await lockScheduleSeries(q, [...new Set(rows.map((row) => Number(row.ser_id)))]);
       const idempotent = await this.idempotentDelivery(
         q, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
       );
@@ -616,6 +617,13 @@ export class ReportsService {
         await q.rollbackTransaction();
         await this.files.delete(urls).catch(() => undefined);
         return idempotent;
+      }
+      const lockedRows = await this.deliveryRows(q, dto.onDate, dto.studentId, true);
+      const locked = this.deliveryFiles(lockedRows, dto, actorId);
+      // 종료 시각/본문은 파일명에 모두 포함되지 않는다. 업로드 전후 출력 원문도 같아야 한다.
+      if (locked.some((file, index) => file.repId !== prepared[index]?.repId
+        || file.fileName !== prepared[index]?.fileName || file.plainText !== prepared[index]?.plainText)) {
+        this.throwDeliveryIssue('REPORT_DELIVERY_FILES_MISMATCH');
       }
       const sent = await q.query(
         `INSERT INTO rsend (student_id, on_date, rep_ids, channel, body, sent_by, request_key, source_send_id)
