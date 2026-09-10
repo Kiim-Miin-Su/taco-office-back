@@ -5,6 +5,7 @@
  */
 
 import { lessonTimeIssue } from './recurrence';
+import { isIsoDate } from './kst';
 
 /** CHREQ.req_type과 API가 공유하는 유일한 종류 목록. */
 export const CHREQ_TYPES = ['time_move', 'teacher', 'room', 'cancel'] as const;
@@ -48,12 +49,6 @@ export type ChangeRequestNormalization =
   | { ok: true; value: NormalizedChangeRequest }
   | { ok: false; issue: ChangeRequestIssue };
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const isIsoDate = (value: unknown): value is string => {
-  if (typeof value !== 'string' || !ISO_DATE.test(value) || value.startsWith('0000-')) return false;
-  const date = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
-};
 const isPositiveInt = (value: unknown): value is number =>
   Number.isInteger(value) && (value as number) > 0;
 const isInt = (value: unknown): value is number => Number.isInteger(value);

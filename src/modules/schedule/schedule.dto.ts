@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: schedule.dto.ts — AttendanceDto, OccStudentDto, OccurrenceDto, OccurrenceListDto, AttendanceWriteDto 등 (dto)
+ * 목적: schedule.dto.ts — AttendanceDto, OccStudentDto, OccurrenceDto, OccurrenceListDto, SCHEDULE_INPUT_LIMITS 등 (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -96,12 +96,18 @@ export class OccurrenceListDto {
 
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString,
-  Matches, Max, Min, ValidateNested,
+  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsDefined, IsIn, IsInt, IsObject, IsOptional, IsString,
+  Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { PASTE_MAX } from '../../lib/recurrence';
 
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
+import { IsCalendarDate } from '../../common/validation';
+import { ISO_DATE_PATTERN } from '../../lib/kst';
+
+const DATE_SCHEMA = { type: String, format: 'date', pattern: ISO_DATE_PATTERN };
+const ID_SCHEMA = { type: 'integer' as const, minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
+/** SER varchar 길이와 대응한다. 변경 시 migration/DBML을 같은 청크에서 검증한다. */
+export const SCHEDULE_INPUT_LIMITS = { kindKey: 16, subKey: 20, rrule: 80, title: 80 } as const;
 
 export class AttendanceWriteDto {
   @ApiProperty({ enum: ATTENDANCE_RESULTS })
@@ -127,118 +133,121 @@ export class OccurrencePatchDto {
   @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';
 
-  @ApiProperty({ description: '규칙상 원래 날짜 — EXC 의 키다. 옮긴 회차도 이 값으로 찾는다' })
-  @Matches(ISO)
+  @ApiProperty({ ...DATE_SCHEMA, description: '규칙상 원래 날짜 — EXC 의 키다. 옮긴 회차도 이 값으로 찾는다' })
+  @IsCalendarDate()
   onDate!: string;
 
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '0~1439' })
+  @ApiPropertyOptional({ type: 'integer', minimum: 0, maximum: 1439, nullable: true, description: '0~1439' })
   @IsOptional() @IsInt() @Min(0) @Max(1439)
   startMin?: number | null;
 
-  @ApiPropertyOptional({ type: Number, nullable: true })
+  @ApiPropertyOptional({ type: 'integer', minimum: 0, maximum: 1440, nullable: true })
   @IsOptional() @IsInt() @Min(0) @Max(1440)
   endMin?: number | null;
 
-  @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   teacherId?: number | null;
 
-  @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt() @Min(1)
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   roomId?: number | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true, description: '다른 날로 옮길 때만' })
-  @IsOptional() @Matches(ISO)
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '다른 날로 옮길 때만' })
+  @IsOptional() @IsCalendarDate()
   date?: string | null;
 
 }
 
 export class OccurrenceCreateDto {
-  @ApiProperty() @IsString() kindKey!: string;
+  @ApiProperty({ minLength: 1, maxLength: SCHEDULE_INPUT_LIMITS.kindKey })
+  @IsString() @MinLength(1) @MaxLength(SCHEDULE_INPUT_LIMITS.kindKey) kindKey!: string;
 
-  @ApiPropertyOptional({ type: String, nullable: true })
-  @IsOptional() @IsString() subKey?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: SCHEDULE_INPUT_LIMITS.subKey })
+  @IsOptional() @IsString() @MaxLength(SCHEDULE_INPUT_LIMITS.subKey) subKey?: string | null;
 
   @ApiProperty({ enum: ['offline', 'online'] })
   @IsIn(['offline', 'online']) mode!: string;
 
-  @ApiProperty({ description: '첫 회차 날짜' }) @Matches(ISO) fromDate!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '첫 회차 날짜' }) @IsCalendarDate() fromDate!: string;
 
-  @ApiPropertyOptional({ type: String, nullable: true, description: '없으면 열린 반복' })
-  @IsOptional() @Matches(ISO) toDate?: string | null;
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '없으면 열린 반복' })
+  @IsOptional() @IsCalendarDate() toDate?: string | null;
 
-  @ApiProperty({ description: "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n] — formatRule() 이 정한 형식만 받는다" })
-  @IsString() rrule!: string;
+  @ApiProperty({ minLength: 1, maxLength: SCHEDULE_INPUT_LIMITS.rrule, description: "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n] — formatRule() 이 정한 형식만 받는다" })
+  @IsString() @MinLength(1) @MaxLength(SCHEDULE_INPUT_LIMITS.rrule) rrule!: string;
 
-  @ApiProperty() @IsInt() @Min(0) @Max(1439) startMin!: number;
-  @ApiProperty() @IsInt() @Min(0) @Max(1440) endMin!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439 }) @IsInt() @Min(0) @Max(1439) startMin!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1440 }) @IsInt() @Min(0) @Max(1440) endMin!: number;
 
-  @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt() teacherId?: number | null;
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) teacherId?: number | null;
 
-  @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt() roomId?: number | null;
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number | null;
 
-  @ApiPropertyOptional({ type: String, nullable: true })
-  @IsOptional() @IsString() title?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: SCHEDULE_INPUT_LIMITS.title })
+  @IsOptional() @IsString() @MaxLength(SCHEDULE_INPUT_LIMITS.title) title?: string | null;
 
-  @ApiPropertyOptional({ type: [Number], description: '정식 명단' })
-  @IsOptional() @IsArray() studentIds?: number[];
+  @ApiPropertyOptional({ type: 'array', items: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }, uniqueItems: true, description: '정식 명단. 생략/빈 배열 허용, null과 중복 ID는 거절' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsArray() @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  studentIds?: number[];
 }
 
 /** 붙여넣기 원본은 식별자만 받는다. 원본 내용은 트랜잭션 안에서 occ()로 다시 읽는다. */
 export class OccurrenceRefDto {
-  @ApiProperty() @IsInt() @Min(1) serId!: number;
-  @ApiProperty({ description: '화면에 보이던 날짜. 이동 EXC를 찾고 상대 날짜 간격을 보존한다' })
-  @Matches(ISO) date!: string;
-  @ApiProperty({ description: '규칙상 원래 날짜 — EXC 키' }) @Matches(ISO) onDate!: string;
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) serId!: number;
+  @ApiProperty({ ...DATE_SCHEMA, description: '화면에 보이던 날짜. 이동 EXC를 찾고 상대 날짜 간격을 보존한다' })
+  @IsCalendarDate() date!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '규칙상 원래 날짜 — EXC 키' }) @IsCalendarDate() onDate!: string;
 }
 
 /** Ctrl+드래그와 Ctrl/⌘+C/X/V가 공유하는 일괄 복제 계약 (D-R19). */
 export class OccurrencePasteDto {
-  @ApiProperty({ type: [OccurrenceRefDto], maxItems: PASTE_MAX })
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(PASTE_MAX)
+  @ApiProperty({ type: [OccurrenceRefDto], minItems: 1, maxItems: PASTE_MAX })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(PASTE_MAX) @IsObject({ each: true })
   @ValidateNested({ each: true }) @Type(() => OccurrenceRefDto)
   sources!: OccurrenceRefDto[];
 
   @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';
 
-  @ApiProperty() @Matches(ISO) targetDate!: string;
-  @ApiProperty({ description: '붙여넣기 기준 시각 — 자정부터 분' })
+  @ApiProperty(DATE_SCHEMA) @IsCalendarDate() targetDate!: string;
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439, description: '붙여넣기 기준 시각 — 자정부터 분' })
   @IsInt() @Min(0) @Max(1439) targetStartMin!: number;
 
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '대상 강사 축이면 덮어쓴다' })
-  @IsOptional() @IsInt() teacherId?: number | null;
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true, description: '대상 강사 축이면 덮어쓴다' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) teacherId?: number | null;
 
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '대상 강의실 축이면 덮어쓴다' })
-  @IsOptional() @IsInt() roomId?: number | null;
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true, description: '대상 강의실 축이면 덮어쓴다' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number | null;
 
   @ApiPropertyOptional({ default: false, description: 'true면 붙여넣기 성공과 같은 트랜잭션에서 원본 회차를 취소한다' })
-  @IsOptional() @IsBoolean() cut?: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() cut?: boolean;
 }
 
 /** 다중 이동 한 건 — 원본 참조와 바뀐 위치를 분리해 원본 식별자를 덮어쓰지 않는다. */
 export class OccurrenceMoveItemDto {
   @ApiProperty({ type: OccurrenceRefDto })
-  @ValidateNested() @Type(() => OccurrenceRefDto)
+  @IsDefined() @IsObject() @ValidateNested() @Type(() => OccurrenceRefDto)
   source!: OccurrenceRefDto;
 
-  @ApiProperty() @Matches(ISO) date!: string;
-  @ApiProperty() @IsInt() @Min(0) @Max(1439) startMin!: number;
-  @ApiProperty() @IsInt() @Min(1) @Max(1440) endMin!: number;
+  @ApiProperty(DATE_SCHEMA) @IsCalendarDate() date!: string;
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439 }) @IsInt() @Min(0) @Max(1439) startMin!: number;
+  @ApiProperty({ type: 'integer', minimum: 1, maximum: 1440 }) @IsInt() @Min(1) @Max(1440) endMin!: number;
 
-  @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt() teacherId?: number | null;
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) teacherId?: number | null;
 
-  @ApiPropertyOptional({ type: Number, nullable: true })
-  @IsOptional() @IsInt() roomId?: number | null;
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number | null;
 }
 
 /** 다중 선택 드래그를 한 트랜잭션으로 저장한다 (C-7). */
 export class OccurrenceMoveDto {
-  @ApiProperty({ type: [OccurrenceMoveItemDto], maxItems: PASTE_MAX })
-  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(PASTE_MAX)
+  @ApiProperty({ type: [OccurrenceMoveItemDto], minItems: 1, maxItems: PASTE_MAX })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(PASTE_MAX) @IsObject({ each: true })
   @ValidateNested({ each: true }) @Type(() => OccurrenceMoveItemDto)
   items!: OccurrenceMoveItemDto[];
 
@@ -250,7 +259,7 @@ export class OccurrenceDeleteDto {
   @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';
 
-  @ApiProperty() @Matches(ISO) onDate!: string;
+  @ApiProperty(DATE_SCHEMA) @IsCalendarDate() onDate!: string;
 }
 
 /** §12 수강 학생 — 넣고 빼기도 3범위다 (D-R21) */
@@ -259,8 +268,8 @@ export class RosterPatchDto {
   @IsIn(['add', 'dropOnce', 'undoOnce', 'dropAll'])
   op!: 'add' | 'dropOnce' | 'undoOnce' | 'dropAll';
 
-  @ApiProperty() @Matches(ISO) onDate!: string;
-  @ApiProperty() @IsInt() @Min(1) studentId!: number;
+  @ApiProperty(DATE_SCHEMA) @IsCalendarDate() onDate!: string;
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId!: number;
 }
 
 export class WriteResultDto {

@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: kst.ts — KST, todayKst, nowMinKst, addDays, overdueDays (util)
+ * 목적: kst.ts — KST, ISO_DATE_PATTERN, isIsoDate, todayKst, nowMinKst 등 (util)
  * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -15,6 +15,17 @@
  * 한 곳만 고치면 서랍과 운영 탭이 같은 할 일을 두고 「지났다 / 안 지났다」로 갈린다.
  */
 export const KST = 'Asia/Seoul';
+
+/** API 날짜 형식. 시간대가 붙은 시각과 날짜 전용 값을 혼용하지 않는다. */
+export const ISO_DATE_PATTERN = '^\\d{4}-\\d{2}-\\d{2}$';
+const ISO_DATE = new RegExp(ISO_DATE_PATTERN);
+
+/** PostgreSQL date로 저장할 실제 AD 날짜인지 검사한다(윤년 포함, JS 자동 보정 거절). */
+export function isIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !ISO_DATE.test(value) || value.startsWith('0000-')) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
 
 /** 자정부터 9시간 밀어 UTC 로 읽으면 그날의 KST 날짜가 된다 */
 const KST_MS = 9 * 3600 * 1000;

@@ -4205,11 +4205,14 @@
         "type": "object",
         "properties": {
           "kindKey": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16
           },
           "subKey": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "maxLength": 20
           },
           "mode": {
             "type": "string",
@@ -4220,41 +4223,59 @@
           },
           "fromDate": {
             "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "description": "첫 회차 날짜"
           },
           "toDate": {
             "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "nullable": true,
             "description": "없으면 열린 반복"
           },
           "rrule": {
             "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
             "description": "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n] — formatRule() 이 정한 형식만 받는다"
           },
           "startMin": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439
           },
           "endMin": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440
           },
           "teacherId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true
           },
           "roomId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true
           },
           "title": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "maxLength": 80
           },
           "studentIds": {
-            "description": "정식 명단",
             "type": "array",
             "items": {
-              "type": "number"
-            }
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "uniqueItems": true,
+            "description": "정식 명단. 생략/빈 배열 허용, null과 중복 ID는 거절"
           }
         },
         "required": [
@@ -4303,14 +4324,20 @@
         "type": "object",
         "properties": {
           "serId": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           },
           "date": {
             "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "description": "화면에 보이던 날짜. 이동 EXC를 찾고 상대 날짜 간격을 보존한다"
           },
           "onDate": {
             "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "description": "규칙상 원래 날짜 — EXC 키"
           }
         },
@@ -4324,6 +4351,7 @@
         "type": "object",
         "properties": {
           "sources": {
+            "minItems": 1,
             "maxItems": 50,
             "type": "array",
             "items": {
@@ -4339,19 +4367,27 @@
             ]
           },
           "targetDate": {
-            "type": "string"
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
           },
           "targetStartMin": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439,
             "description": "붙여넣기 기준 시각 — 자정부터 분"
           },
           "teacherId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true,
             "description": "대상 강사 축이면 덮어쓴다"
           },
           "roomId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true,
             "description": "대상 강의실 축이면 덮어쓴다"
           },
@@ -4375,20 +4411,30 @@
             "$ref": "#/components/schemas/OccurrenceRefDto"
           },
           "date": {
-            "type": "string"
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
           },
           "startMin": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439
           },
           "endMin": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
           },
           "teacherId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true
           },
           "roomId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true
           }
         },
@@ -4403,6 +4449,7 @@
         "type": "object",
         "properties": {
           "items": {
+            "minItems": 1,
             "maxItems": 50,
             "type": "array",
             "items": {
@@ -4437,27 +4484,39 @@
           },
           "onDate": {
             "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "description": "규칙상 원래 날짜 — EXC 의 키다. 옮긴 회차도 이 값으로 찾는다"
           },
           "startMin": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439,
             "nullable": true,
             "description": "0~1439"
           },
           "endMin": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440,
             "nullable": true
           },
           "teacherId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true
           },
           "roomId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true
           },
           "date": {
             "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "nullable": true,
             "description": "다른 날로 옮길 때만"
           }
@@ -4479,7 +4538,9 @@
             ]
           },
           "onDate": {
-            "type": "string"
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
           }
         },
         "required": [
@@ -4500,10 +4561,14 @@
             ]
           },
           "onDate": {
-            "type": "string"
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
           },
           "studentId": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           }
         },
         "required": [

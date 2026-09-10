@@ -27,6 +27,7 @@ import {
   type Patch as OccurrencePatch, type Scope, type State,
 } from '../../lib/recurrence';
 import { GUIDE_DONE_DB } from '../../lib/rules';
+import { isIsoDate } from '../../lib/kst';
 import { loadState, persist } from './schedule.state.repo';
 import { horizon, project } from './schedule.project';
 import type {
@@ -72,6 +73,12 @@ export class ScheduleWriteService {
   }
 
   async create(dto: OccurrenceCreateDto): Promise<WriteResultDto> {
+    if (!isIsoDate(dto.fromDate) || (dto.toDate != null && !isIsoDate(dto.toDate))) {
+      throw new BadRequestException({ code: 'BAD_RANGE', message: '시작일·종료일은 실제 YYYY-MM-DD 날짜여야 합니다' });
+    }
+    if (dto.toDate != null && dto.toDate < dto.fromDate) {
+      throw new BadRequestException({ code: 'BAD_RANGE', message: '종료일이 시작일보다 앞설 수 없습니다' });
+    }
     // 형식을 여기서 한 번 정규화한다 — 다른 형식이 들어오면 규칙이 어떤 날짜에도 안 맞는다
     const parsed = parseRule(dto.rrule);
     const rrule = formatRule(parsed);

@@ -4,6 +4,8 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
+import { isIsoDate } from '../../lib/kst';
+
 /** 수업 현황판의 네 판정 축. DTO·집계·화면 범례가 이 순서를 공유한다. */
 export const BOARD_MARK_KEYS = ['book', 'guide', 'zoom', 'report'] as const;
 export type BoardMarkKey = (typeof BOARD_MARK_KEYS)[number];
@@ -38,12 +40,6 @@ const DAY_MS = 86_400_000;
 
 function dateMs(iso: string): number {
   return Date.parse(`${iso}T00:00:00Z`);
-}
-
-function isIsoDate(iso: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
-  const ms = dateMs(iso);
-  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === iso;
 }
 
 /** query DTO 형식뿐 아니라 실제 날짜·순서·화면 범위도 한 곳에서 방어한다. */
