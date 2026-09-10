@@ -9,6 +9,8 @@ export class LeadDto {
   @ApiProperty() name!: string;
   @ApiPropertyOptional(S) school?: string | null;
   @ApiProperty({ description: 'first | wait2nd | second | hold | enrolled | failed' }) stage!: string;
+  @ApiPropertyOptional(N) ownerId?: number | null;
+  @ApiPropertyOptional(N) studentId?: number | null;
   @ApiPropertyOptional(S) ownerName?: string | null;
   @ApiPropertyOptional({ ...S, description: '실패한 경우 어디서 멈췄나 (§24)' }) stopAt?: string | null;
   @ApiPropertyOptional(S) reason?: string | null;

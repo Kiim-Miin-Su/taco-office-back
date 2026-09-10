@@ -3232,6 +3232,14 @@
             "type": "string",
             "description": "first | wait2nd | second | hold | enrolled | failed"
           },
+          "ownerId": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentId": {
+            "type": "number",
+            "nullable": true
+          },
           "ownerName": {
             "type": "string",
             "nullable": true

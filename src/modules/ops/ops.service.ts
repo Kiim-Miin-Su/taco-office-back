@@ -1,12 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { overdueDays as daysSince, todayKst } from '../../lib/kst';
-import type { OpsDto } from './ops.dto';
-
+import type { LeadDto, OpsDto } from './ops.dto';
 
 type R = Record<string, unknown>;
+
+/** pg bigint의 숫자 문자열만 변환한다. 연결 없음과 ID 0/정밀도 손실은 구분한다. */
+function leadId(value: unknown): number;
+function leadId(value: unknown, nullable: true): number | null;
+function leadId(value: unknown, nullable = false): number | null {
+  if (nullable && value == null) return null;
+  const id = typeof value === 'number' ? value
+    : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN;
+  if (!Number.isSafeInteger(id) || id <= 0) throw new InternalServerErrorException('상담 데이터 무결성 오류');
+  return id;
+}
 
 @Injectable()
 export class OpsService {
@@ -20,12 +30,13 @@ export class OpsService {
     const today = todayKst();
 
     const leads = (await this.q(
-      `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason,
+      `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason, l.owner_id, l.student_id,
               to_char(l.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name
          FROM lead l LEFT JOIN staff o ON o.id = l.owner_id
         ORDER BY l.created_at DESC`,
-    )).map((r) => ({
-      id: Number(r.id), name: String(r.name), school: (r.school as string) ?? null,
+    )).map((r): LeadDto => ({
+      id: leadId(r.id), name: String(r.name), school: (r.school as string) ?? null,
+      ownerId: leadId(r.owner_id, true), studentId: leadId(r.student_id, true),
       stage: String(r.stage), ownerName: (r.owner_name as string) ?? null,
       stopAt: (r.stop_at as string) ?? null, reason: (r.reason as string) ?? null,
       createdAt: String(r.created_at), ageDays: daysSince(r.created_at as string),

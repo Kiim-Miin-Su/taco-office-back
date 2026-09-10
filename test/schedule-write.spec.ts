@@ -45,7 +45,8 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     app = mod.createNestApplication();
     app.use(cookieParser());
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-    await app.init();
+    // 한 스위트 동안 같은 loopback 서버를 유지한다. 요청별 포트 재개방 경쟁을 피한다.
+    await app.listen(0, '127.0.0.1');
     ds = app.get(DataSource);
 
     await q(`DELETE FROM staff WHERE id = $1`, [CEO]);
@@ -56,14 +57,20 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     await q(`DELETE FROM stu WHERE id = $1`, [ROSTER_STUDENT]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1, $2, '10')`, [ROSTER_STUDENT, ROSTER_STUDENT_NAME]);
     const res = await request(app.getHttpServer())
-      .post('/auth/login').send({ email: 'sched-ceo@t.kr', password: PW }).expect(201);
+      .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
+      .send({ email: 'sched-ceo@t.kr', password: PW }).expect(201);
     token = res.body.accessToken as string;
   });
 
   afterAll(async () => {
-    await q(`DELETE FROM staff WHERE id = $1`, [CEO]);
-    await q(`DELETE FROM stu WHERE id = $1`, [ROSTER_STUDENT]);
-    await app?.close();
+    try {
+      if (ds?.isInitialized) {
+        await q(`DELETE FROM staff WHERE id = $1`, [CEO]);
+        await q(`DELETE FROM stu WHERE id = $1`, [ROSTER_STUDENT]);
+      }
+    } finally {
+      await app?.close();
+    }
   });
 
   /** 만들어 둔 규칙을 매번 치운다 — 겹침 제약이 다음 테스트를 막지 않게 */
@@ -81,7 +88,8 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   });
 
   const api = (m: 'post' | 'patch' | 'delete', p: string) =>
-    request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${token}`);
+    request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${token}`)
+      .timeout({ response: 5000, deadline: 10000 });
 
   /** 월·수 반복 하나를 만든다. 날짜는 오늘 기준이라 호라이즌 안에 확실히 든다. */
   const kst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
@@ -241,6 +249,7 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
 
     const list = await request(app.getHttpServer())
       .get('/schedule/occurrences')
+      .timeout({ response: 5000, deadline: 10000 })
       .query({ from: movedTo, to: movedTo })
       .set('Authorization', `Bearer ${token}`).expect(200);
     const moved = (list.body.items as Array<{ serId: number; date: string; onDate: string }>)

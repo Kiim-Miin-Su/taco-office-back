@@ -11,7 +11,7 @@ export class OpsController {
   constructor(private readonly svc: OpsService) {}
 
   @Get()
-  @Perm('canCrudAll')
+  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({ summary: '운영 — 상담 · 컴플레인 · 할 일 · 기획 · 회의 · 마케팅 · 건의' })
   @ApiOkResponse({ type: OpsDto })
   async all(@CurrentUser() user: RequestUser): Promise<OpsDto> {
