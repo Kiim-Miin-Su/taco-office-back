@@ -13,16 +13,11 @@ import {
   type AttendanceCancelReason, type AttendanceResult,
 } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
-import type { OccurrenceDto } from './schedule.dto';
+import type { OccurrenceDto, OccurrenceQueryDto } from './schedule.dto';
 import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
 
-export interface OccQuery {
-  from: string;
-  to: string;
-  teacherId?: number;
-  studentId?: number;
-  roomId?: number;
+export interface OccQuery extends OccurrenceQueryDto {
   canCrudAttendance?: boolean;
 }
 

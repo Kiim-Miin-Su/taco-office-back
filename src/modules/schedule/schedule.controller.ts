@@ -4,22 +4,20 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrorDto } from '../../common/http.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AttendanceMutationResultDto, AttendanceWriteDto, HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
   OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
-  WriteResultDto,
+  WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
 import { ScheduleAttendanceService } from './schedule.attendance.service';
 import { horizon } from './schedule.project';
-
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
 @ApiTags('schedule')
 @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 저장 전체를 취소하며 {code,message}로 반환한다' })
@@ -33,23 +31,12 @@ export class ScheduleController {
 
   @Get('occurrences')
   @ApiOperation({ summary: '회차 목록 — 일간·주간·월간·학생별·선생님별이 모두 이것을 쓴다' })
-  @ApiQuery({ name: 'from', example: '2026-08-24' })
-  @ApiQuery({ name: 'to', example: '2026-08-30' })
-  @ApiQuery({ name: 'teacherId', required: false })
-  @ApiQuery({ name: 'studentId', required: false })
-  @ApiQuery({ name: 'roomId', required: false })
   @ApiOkResponse({ type: OccurrenceListDto })
   async list(
     @CurrentUser() user: RequestUser,
-    @Query('from') from: string,
-    @Query('to') to: string,
-    @Query('teacherId') teacherId?: string,
-    @Query('studentId') studentId?: string,
-    @Query('roomId') roomId?: string,
+    @Query() query: OccurrenceQueryDto,
   ): Promise<OccurrenceListDto> {
-    if (!ISO.test(from ?? '') || !ISO.test(to ?? '')) {
-      throw new BadRequestException({ code: 'BAD_RANGE', message: 'from · to 는 YYYY-MM-DD 입니다' });
-    }
+    const { from, to, teacherId, studentId, roomId } = query;
     if (from > to) {
       throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
     }
@@ -64,9 +51,9 @@ export class ScheduleController {
     const items = await this.svc.list({
       from,
       to,
-      teacherId: forced ?? (teacherId ? Number(teacherId) : undefined),
-      studentId: studentId ? Number(studentId) : undefined,
-      roomId: roomId ? Number(roomId) : undefined,
+      teacherId: forced ?? teacherId,
+      studentId,
+      roomId,
       canCrudAttendance,
     });
     return { from, to, items };
@@ -85,38 +72,24 @@ export class ScheduleController {
   @Put(':serId/:onDate/attendance')
   @Perm('canCrudAttendance')
   @ApiOperation({ summary: '종료 회차 출결 확정/정정 — 현재값 ATT와 append-only LOG를 함께 저장' })
-  @ApiParam({ name: 'serId', type: Number })
-  @ApiParam({ name: 'onDate', example: '2026-08-27', description: 'SER_OCC의 원래 날짜 키' })
   @ApiOkResponse({ type: AttendanceMutationResultDto })
   saveAttendance(
     @CurrentUser() user: RequestUser,
-    @Param('serId', ParseIntPipe) serId: number,
-    @Param('onDate') onDate: string,
+    @Param() params: AttendanceParamsDto,
     @Body() dto: AttendanceWriteDto,
   ): Promise<AttendanceMutationResultDto> {
-    this.assertAttendanceDate(onDate);
-    return this.attendance.save(serId, onDate, dto, user.id);
+    return this.attendance.save(params.serId, params.onDate, dto, user.id);
   }
 
   @Delete(':serId/:onDate/attendance')
   @Perm('canCrudAttendance')
   @ApiOperation({ summary: '회차 출결 현재값 초기화 — 삭제 전 값은 LOG에 보존' })
-  @ApiParam({ name: 'serId', type: Number })
-  @ApiParam({ name: 'onDate', example: '2026-08-27' })
   @ApiOkResponse({ type: AttendanceMutationResultDto })
   clearAttendance(
     @CurrentUser() user: RequestUser,
-    @Param('serId', ParseIntPipe) serId: number,
-    @Param('onDate') onDate: string,
+    @Param() params: AttendanceParamsDto,
   ): Promise<AttendanceMutationResultDto> {
-    this.assertAttendanceDate(onDate);
-    return this.attendance.clear(serId, onDate, user.id);
-  }
-
-  private assertAttendanceDate(onDate: string): void {
-    if (!ISO.test(onDate)) {
-      throw new BadRequestException({ code: 'BAD_DATE', message: 'onDate는 YYYY-MM-DD입니다' });
-    }
+    return this.attendance.clear(params.serId, params.onDate, user.id);
   }
 
   @Post()
@@ -148,10 +121,10 @@ export class ScheduleController {
   @ApiOperation({ summary: '수업 고치기 — scope 로 이번만·향후·모두를 가른다 (D-R16)' })
   @ApiOkResponse({ type: WriteResultDto })
   patch(
-    @Param('serId', ParseIntPipe) serId: number,
+    @Param() params: ScheduleParamsDto,
     @Body() dto: OccurrencePatchDto,
   ): Promise<WriteResultDto> {
-    return this.write.patch(serId, dto);
+    return this.write.patch(params.serId, dto);
   }
 
   @Delete(':serId')
@@ -159,10 +132,10 @@ export class ScheduleController {
   @ApiOperation({ summary: '수업 취소·휴강 — 참조가 있으면 지우지 않고 기간을 마감한다' })
   @ApiOkResponse({ type: WriteResultDto })
   remove(
-    @Param('serId', ParseIntPipe) serId: number,
+    @Param() params: ScheduleParamsDto,
     @Body() dto: OccurrenceDeleteDto,
   ): Promise<WriteResultDto> {
-    return this.write.remove(serId, dto);
+    return this.write.remove(params.serId, dto);
   }
 
   @Patch(':serId/roster')
@@ -170,9 +143,9 @@ export class ScheduleController {
   @ApiOperation({ summary: '수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)' })
   @ApiOkResponse({ type: RosterResultDto })
   roster(
-    @Param('serId', ParseIntPipe) serId: number,
+    @Param() params: ScheduleParamsDto,
     @Body() dto: RosterPatchDto,
   ): Promise<RosterResultDto> {
-    return this.write.roster(serId, dto);
+    return this.write.roster(params.serId, dto);
   }
 }

@@ -517,6 +517,8 @@
             "required": true,
             "in": "query",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-24",
               "type": "string"
             }
@@ -526,6 +528,8 @@
             "required": true,
             "in": "query",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-30",
               "type": "string"
             }
@@ -534,8 +538,11 @@
             "name": "teacherId",
             "required": false,
             "in": "query",
+            "description": "생략하면 전체. 강사는 유효한 값이어도 서버가 본인 ID를 강제한다",
             "schema": {
-              "type": "string"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
@@ -543,7 +550,9 @@
             "required": false,
             "in": "query",
             "schema": {
-              "type": "string"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
@@ -551,7 +560,9 @@
             "required": false,
             "in": "query",
             "schema": {
-              "type": "string"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -724,7 +735,9 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
@@ -733,6 +746,8 @@
             "in": "path",
             "description": "SER_OCC의 원래 날짜 키",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -833,14 +848,19 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
             "name": "onDate",
             "required": true,
             "in": "path",
+            "description": "SER_OCC의 원래 날짜 키",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -1209,7 +1229,9 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -1308,7 +1330,9 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -1409,7 +1433,9 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],

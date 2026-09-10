@@ -101,13 +101,45 @@ import {
 } from 'class-validator';
 import { PASTE_MAX } from '../../lib/recurrence';
 
-import { IsCalendarDate } from '../../common/validation';
+import { IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { ISO_DATE_PATTERN } from '../../lib/kst';
 
 const DATE_SCHEMA = { type: String, format: 'date', pattern: ISO_DATE_PATTERN };
 const ID_SCHEMA = { type: 'integer' as const, minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 /** SER varchar 길이와 대응한다. 변경 시 migration/DBML을 같은 청크에서 검증한다. */
 export const SCHEDULE_INPUT_LIMITS = { kindKey: 16, subKey: 20, rrule: 80, title: 80 } as const;
+
+/** 조회 필터는 영속 필드가 아니다. 모든 캘린더가 같은 계약과 생성 타입을 소비한다. */
+export class OccurrenceQueryDto {
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-24' })
+  @IsCalendarDate() from!: string;
+
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-30' })
+  @IsCalendarDate() to!: string;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '생략하면 전체. 강사는 유효한 값이어도 서버가 본인 ID를 강제한다' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) teacherId?: number;
+
+  @ApiPropertyOptional(ID_SCHEMA)
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId?: number;
+
+  @ApiPropertyOptional(ID_SCHEMA)
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number;
+}
+
+/** URL의 식별자는 body와 동일한 안전 정수 범위다. 다섯 쓰기 경로가 재사용한다. */
+export class ScheduleParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) serId!: number;
+}
+
+export class AttendanceParamsDto extends ScheduleParamsDto {
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-27', description: 'SER_OCC의 원래 날짜 키' })
+  @IsCalendarDate() onDate!: string;
+}
 
 export class AttendanceWriteDto {
   @ApiProperty({ enum: ATTENDANCE_RESULTS })
