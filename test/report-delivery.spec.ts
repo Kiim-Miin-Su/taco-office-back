@@ -15,6 +15,7 @@ import { AppModule } from '../src/app.module';
 import { configureApiBodyParser } from '../src/app.factory';
 import { REPORT_FILE_STORE, type ReportFileStore } from '../src/modules/reports/report-file.store';
 import { DEV_URL } from './db';
+import { ReportsService } from '../src/modules/reports/reports.service';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -193,6 +194,62 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       }).expect(400);
     expect(fake.body.code).toBe('REPORT_DELIVERY_PNG_FORMAT');
     expect(put).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/reports/deliveries?onDate=2025-02-30', '/reports/deliveries?onDate=',
+    '/reports/deliveries/history?onDate=2025-02-30', '/reports/deliveries/history?repId=1e2',
+    '/reports/deliveries/history?repId=9007199254740992',
+  ])('발송 query 날짜와 참조를 DB 전에 검증한다: %s', async (path) => {
+    await request(app.getHttpServer()).get(path).set(auth(managerToken)).expect(400);
+  });
+
+  it.each([
+    { onDate: '2025-02-30' }, { studentId: '1e2' }, { studentId: 9007199254740992 },
+  ])('발송 body의 날짜/학생 식별자 형식을 검증한다: %j', async (change) => {
+    const deliver = jest.spyOn(app.get(ReportsService), 'deliver');
+    try {
+      await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+        .send({ ...deliveryBody('00000000-0000-4000-8000-000000000081'), ...change }).expect(400);
+      expect(deliver).not.toHaveBeenCalled();
+      expect(put).not.toHaveBeenCalled();
+    } finally { deliver.mockRestore(); }
+  });
+
+  it('옮긴 수업은 실제 날짜로 발송하고 이후 이동에도 발송 당시 날짜·본문은 보존한다', async () => {
+    const movedDate = '2025-02-04';
+    const [original] = await q<{ span: string }>('SELECT span::text FROM ser_occ WHERE ser_id=$1', [SER1]);
+    try {
+      await q(`UPDATE ser_occ SET span=tstzrange(lower(span)+interval '1 day', upper(span)+interval '1 day','[)')
+        WHERE ser_id=$1`, [SER1]);
+      const queue = await request(app.getHttpServer()).get('/reports/deliveries').query({ onDate: movedDate })
+        .set(auth(managerToken)).expect(200);
+      expect(queue.body).toMatchObject({ onDate: movedDate, total: 2, remaining: 2, blocked: 0 });
+      const target = queue.body.students.find((item: { student: { id: number } }) => item.student.id === STUDENT_READY);
+      expect(target.reports).toHaveLength(1);
+      expect(target.reports[0]).toMatchObject({ id: rep1, date: movedDate, onDate: DATE });
+      const oldQueue = await request(app.getHttpServer()).get('/reports/deliveries').query({ onDate: DATE })
+        .set(auth(managerToken)).expect(200);
+      expect(oldQueue.body.students.flatMap((item: { reports: { id: number }[] }) => item.reports).some((r: {id: number}) => r.id === rep1)).toBe(false);
+      const descriptor = target.reports[0].exportFiles.find((file: {studentId: number}) => file.studentId === STUDENT_READY);
+      const sent = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+        .send({ requestKey: '00000000-0000-4000-8000-000000000082', onDate: movedDate, studentId: STUDENT_READY,
+          files: [{ repId: rep1, fileName: descriptor.fileName, pngDataUrl: png }] }).expect(201);
+      const [saved] = await q<{ on_date: string; body: string }>(
+        `SELECT to_char(on_date,'YYYY-MM-DD') on_date,body FROM rsend WHERE id=$1`, [sent.body.item.id]);
+      expect(saved).toEqual({ on_date: movedDate, body: descriptor.plainText });
+      await q('UPDATE ser_occ SET span=$2::tstzrange WHERE ser_id=$1', [SER1, original.span]);
+      const history = await request(app.getHttpServer()).get('/reports/deliveries/history').query({ onDate: movedDate })
+        .set(auth(managerToken)).expect(200);
+      expect(history.body.items[0]).toMatchObject({ id: sent.body.item.id, onDate: movedDate });
+      const resent = await request(app.getHttpServer()).post(`/reports/deliveries/${sent.body.item.id}/resend`)
+        .set(auth(managerToken)).send({ requestKey: '00000000-0000-4000-8000-000000000083' }).expect(201);
+      const [copy] = await q<{on_date: string; body: string}>(
+        `SELECT to_char(on_date,'YYYY-MM-DD') on_date,body FROM rsend WHERE id=$1`, [resent.body.item.id]);
+      expect(copy).toEqual(saved);
+    } finally {
+      await q('UPDATE ser_occ SET span=$2::tstzrange WHERE ser_id=$1', [SER1, original.span]);
+    }
   });
 
   it('학생 1명 발송을 Blob·RSEND·PDFLOG에 한 번 기록하고 같은 key 재시도는 재사용한다', async () => {

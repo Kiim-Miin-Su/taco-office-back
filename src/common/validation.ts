@@ -6,7 +6,11 @@
 
 import { ValidateBy, type ValidationOptions } from 'class-validator';
 import { Transform } from 'class-transformer';
-import { isIsoDate } from '../lib/kst';
+import { isIsoDate, ISO_DATE_PATTERN } from '../lib/kst';
+
+/** 일정·리포트의 HTTP 날짜/식별자 형상을 Swagger와 함께 재사용한다. */
+export const DATE_SCHEMA = { type: String, format: 'date', pattern: ISO_DATE_PATTERN };
+export const ID_SCHEMA = { type: 'integer' as const, minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 
 /** @IsOptional과 함께 쓰면 명시적으로 nullable인 날짜도 같은 판정을 공유한다. */
 export function IsCalendarDate(options?: ValidationOptions): PropertyDecorator {

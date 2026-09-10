@@ -1532,13 +1532,28 @@
     },
     "/reports": {
       "get": {
+        "description": "from/to는 실제 KST 수업일 범위(양끝 포함). 회차 투영 없는 보존 이력만 원래 날짜로 표시/조회한다. 상세 참조는 각 응답의 serId/onDate를 사용한다.",
         "operationId": "ReportsController_list",
         "parameters": [
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "description": "작성자 필터. 강사는 유효한 값도 본인 ID로 강제한다",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
           {
             "name": "from",
             "required": false,
             "in": "query",
+            "description": "실제 KST 수업일 시작(포함). 없으면 하한 없음",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "type": "string"
             }
           },
@@ -1546,15 +1561,10 @@
             "name": "to",
             "required": false,
             "in": "query",
+            "description": "실제 KST 수업일 끝(포함). 없으면 상한 없음",
             "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "teacherId",
-            "required": false,
-            "in": "query",
-            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "type": "string"
             }
           },
@@ -1562,8 +1572,18 @@
             "name": "state",
             "required": false,
             "in": "query",
+            "description": "현재 회차에서 파생한 리포트 상태",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "na",
+                "plan",
+                "none",
+                "draft",
+                "wait",
+                "ok",
+                "rej"
+              ]
             }
           }
         ],
@@ -1579,7 +1599,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
             "content": {
               "application/json": {
                 "schema": {
@@ -1653,8 +1673,11 @@
             "name": "teacherId",
             "required": false,
             "in": "query",
+            "description": "작성자 필터. 강사는 유효한 값도 본인 ID로 강제한다",
             "schema": {
-              "type": "string"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -1670,7 +1693,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
             "content": {
               "application/json": {
                 "schema": {
@@ -1738,14 +1761,17 @@
     },
     "/reports/deliveries": {
       "get": {
+        "description": "onDate는 실제 KST 수업일이다. 옮긴 회차도 해당 날짜의 학생 묶음에 포함하며 상세 조회는 개별 리포트의 원래 onDate를 사용한다.",
         "operationId": "ReportsController_deliveryQueue",
         "parameters": [
           {
             "name": "onDate",
             "required": false,
             "in": "query",
-            "description": "없으면 KST 어제",
+            "description": "발송 대상 실제 KST 수업일. 큐에서 생략하면 어제, 이력에서 생략하면 전체. 이력은 발송 당시 날짜를 보존한다",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -1763,7 +1789,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
             "content": {
               "application/json": {
                 "schema": {
@@ -1853,7 +1879,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
             "content": {
               "application/json": {
                 "schema": {
@@ -1927,8 +1953,10 @@
             "name": "onDate",
             "required": false,
             "in": "query",
-            "description": "없으면 KST 어제",
+            "description": "발송 대상 실제 KST 수업일. 큐에서 생략하면 어제, 이력에서 생략하면 전체. 이력은 발송 당시 날짜를 보존한다",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -1938,7 +1966,9 @@
             "required": false,
             "in": "query",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -1954,7 +1984,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
             "content": {
               "application/json": {
                 "schema": {
@@ -2029,7 +2059,9 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -2055,7 +2087,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
             "content": {
               "application/json": {
                 "schema": {
@@ -2130,15 +2162,19 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
             "name": "onDate",
             "required": true,
             "in": "path",
-            "description": "REP 복합 유니크 키의 날짜",
+            "description": "REP 복합 유니크 키의 원래 날짜. 옮긴 실제 날짜와 다를 수 있다",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -2156,7 +2192,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
             "content": {
               "application/json": {
                 "schema": {
@@ -2232,15 +2268,19 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
             "name": "onDate",
             "required": true,
             "in": "path",
-            "description": "REP 복합 유니크 키의 날짜",
+            "description": "REP 복합 유니크 키의 원래 날짜. 옮긴 실제 날짜와 다를 수 있다",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -2344,15 +2384,19 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
             "name": "onDate",
             "required": true,
             "in": "path",
-            "description": "REP 복합 유니크 키의 날짜",
+            "description": "REP 복합 유니크 키의 원래 날짜. 옮긴 실제 날짜와 다를 수 있다",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -2456,15 +2500,19 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           },
           {
             "name": "onDate",
             "required": true,
             "in": "path",
-            "description": "REP 복합 유니크 키의 날짜",
+            "description": "REP 복합 유니크 키의 원래 날짜. 옮긴 실제 날짜와 다를 수 있다",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-27",
               "type": "string"
             }
@@ -5243,7 +5291,9 @@
         "type": "object",
         "properties": {
           "repId": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           },
           "fileName": {
             "type": "string",
@@ -5271,10 +5321,15 @@
           },
           "onDate": {
             "type": "string",
-            "example": "2026-08-27"
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-08-27",
+            "description": "발송 묶음의 실제 KST 수업일. 각 리포트의 원래 onDate와 구분한다"
           },
           "studentId": {
-            "type": "number"
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
           },
           "files": {
             "maxItems": 20,

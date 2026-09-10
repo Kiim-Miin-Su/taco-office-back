@@ -7,14 +7,35 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min,
-  IsUUID, ValidateNested,
+  ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min,
+  IsUUID, ValidateIf, ValidateNested,
 } from 'class-validator';
 import {
-  REPORT_FIELDS, REPORT_PNG_DATA_URL_MAX_CHARS, type ReportFieldKey, type ReportReviewDecision,
+  REP_STATE_FROM_DB, REPORT_FIELDS, REPORT_PNG_DATA_URL_MAX_CHARS, type RepStateDb, type ReportFieldKey, type ReportReviewDecision,
 } from '../../lib/rules';
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
+export class ReportTeacherQueryDto {
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '작성자 필터. 강사는 유효한 값도 본인 ID로 강제한다' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  teacherId?: number;
+}
+
+/** 조회일은 실제 KST 수업일, 상세/쓰기의 onDate는 원래 회차 키다. */
+export class ReportQueryDto extends ReportTeacherQueryDto {
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '실제 KST 수업일 시작(포함). 없으면 하한 없음' })
+  @ValidateIf((_object, value) => value !== undefined) @IsCalendarDate()
+  from?: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '실제 KST 수업일 끝(포함). 없으면 상한 없음' })
+  @ValidateIf((_object, value) => value !== undefined) @IsCalendarDate()
+  to?: string;
+
+  @ApiPropertyOptional({ enum: Object.keys(REP_STATE_FROM_DB), description: '현재 회차에서 파생한 리포트 상태' })
+  @ValidateIf((_object, value) => value !== undefined) @IsIn(Object.keys(REP_STATE_FROM_DB))
+  state?: RepStateDb;
+}
 
 export class ReportStudentDto {
   @ApiProperty() id!: number;
@@ -71,11 +92,11 @@ export class ReportListDto {
    입력 키는 rules.ts → Swagger/OpenAPI → 프론트 생성 타입 순서로만 흐른다. */
 
 export class ReportRefDto {
-  @ApiProperty() @Type(() => Number) @IsInt() @Min(1)
+  @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   serId!: number;
 
-  @ApiProperty({ example: '2026-08-27', description: 'REP 복합 유니크 키의 날짜' })
-  @Matches(ISO)
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-27', description: 'REP 복합 유니크 키의 원래 날짜. 옮긴 실제 날짜와 다를 수 있다' })
+  @IsCalendarDate()
   onDate!: string;
 }
 
@@ -137,7 +158,7 @@ export class ReportDetailDto extends ReportRowDto {
 }
 
 export class ReportDeliveryFileInputDto {
-  @ApiProperty() @Type(() => Number) @IsInt() @Min(1)
+  @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   repId!: number;
 
   @ApiProperty({ maxLength: 255 }) @IsString() @MaxLength(255)
@@ -153,10 +174,10 @@ export class ReportDeliveryCreateDto {
   @ApiProperty({ format: 'uuid', description: '재시도·더블클릭 중복 방지 키' }) @IsUUID()
   requestKey!: string;
 
-  @ApiProperty({ example: '2026-08-27' }) @Matches(ISO)
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-27', description: '발송 묶음의 실제 KST 수업일. 각 리포트의 원래 onDate와 구분한다' }) @IsCalendarDate()
   onDate!: string;
 
-  @ApiProperty() @Type(() => Number) @IsInt() @Min(1)
+  @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   studentId!: number;
 
   @ApiProperty({ type: [ReportDeliveryFileInputDto], maxItems: 20 })
@@ -170,13 +191,14 @@ export class ReportResendDto {
 }
 
 export class ReportDeliveryQueryDto {
-  @ApiPropertyOptional({ example: '2026-08-27', description: '없으면 KST 어제' })
-  @IsOptional() @Matches(ISO)
+  @ApiPropertyOptional({ ...DATE_SCHEMA, example: '2026-08-27', description: '발송 대상 실제 KST 수업일. 큐에서 생략하면 어제, 이력에서 생략하면 전체. 이력은 발송 당시 날짜를 보존한다' })
+  @ValidateIf((_object, value) => value !== undefined) @IsCalendarDate()
   onDate?: string;
 }
 
 export class ReportDeliveryHistoryQueryDto extends ReportDeliveryQueryDto {
-  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  @ApiPropertyOptional(ID_SCHEMA) @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   repId?: number;
 }
 
@@ -221,6 +243,6 @@ export class ReportDeliveryResultDto {
 }
 
 export class ReportSendRefDto {
-  @ApiProperty() @Type(() => Number) @IsInt() @Min(1)
+  @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   sendId!: number;
 }

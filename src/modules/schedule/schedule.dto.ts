@@ -101,11 +101,7 @@ import {
 } from 'class-validator';
 import { PASTE_MAX } from '../../lib/recurrence';
 
-import { IsCalendarDate, ToHttpInteger } from '../../common/validation';
-import { ISO_DATE_PATTERN } from '../../lib/kst';
-
-const DATE_SCHEMA = { type: String, format: 'date', pattern: ISO_DATE_PATTERN };
-const ID_SCHEMA = { type: 'integer' as const, minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 /** SER varchar 길이와 대응한다. 변경 시 migration/DBML을 같은 청크에서 검증한다. */
 export const SCHEDULE_INPUT_LIMITS = { kindKey: 16, subKey: 20, rrule: 80, title: 80 } as const;
 

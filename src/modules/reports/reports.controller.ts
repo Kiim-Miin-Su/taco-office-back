@@ -4,8 +4,8 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrorDto } from '../../common/http.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { hasPerm, isRole, type RequestUser } from '../../common/perm';
@@ -13,6 +13,7 @@ import {
   ReportDeliveryCreateDto, ReportDeliveryQueryDto, ReportDeliveryQueueDto, ReportDeliveryResultDto,
   ReportDetailDto, ReportDeliveryHistoryQueryDto, ReportListDto, ReportRefDto, ReportResendDto,
   ReportReviewDto, ReportSendHistoryListDto, ReportSendRefDto, ReportUpsertDto, UnwrittenDto,
+  ReportQueryDto, ReportTeacherQueryDto,
 } from './reports.dto';
 import { ReportsService } from './reports.service';
 
@@ -21,6 +22,7 @@ const reportWriteBadRequest = { type: ApiErrorDto, description: '입력 검증 �
 const reportMissing = { type: ApiErrorDto, description: 'REPORT_NOT_FOUND: 리포트가 없음. 최신 목록에서 다시 선택한다.' };
 
 @ApiTags('reports')
+@ApiBadRequestResponse({ type: ApiErrorDto, description: '날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다' })
 @Controller('reports')
 export class ReportsController {
   constructor(private readonly svc: ReportsService) {}
@@ -34,42 +36,38 @@ export class ReportsController {
   }
 
   /** 작성자 범위가 기본이다. 승인 예외 권한은 검토 목록에서만 전건으로 넓힌다 (D-R39). */
-  private scope(user: RequestUser, asked?: string, reviewQueue = false): number | undefined {
+  private scope(user: RequestUser, asked?: number, reviewQueue = false): number | undefined {
     const canReadAll = this.canCrudAll(user) || (reviewQueue && this.canApprove(user));
-    return canReadAll ? (asked ? Number(asked) : undefined) : user.id;
+    return canReadAll ? asked : user.id;
   }
 
   @Get()
-  @ApiOperation({ summary: '리포트 목록' })
-  @ApiQuery({ name: 'from', required: false })
-  @ApiQuery({ name: 'to', required: false })
-  @ApiQuery({ name: 'teacherId', required: false })
-  @ApiQuery({ name: 'state', required: false })
+  @ApiOperation({ summary: '리포트 목록', description: 'from/to는 실제 KST 수업일 범위(양끝 포함). 회차 투영 없는 보존 이력만 원래 날짜로 표시/조회한다. 상세 참조는 각 응답의 serId/onDate를 사용한다.' })
   @ApiOkResponse({ type: ReportListDto })
   async list(
     @CurrentUser() user: RequestUser,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-    @Query('teacherId') teacherId?: string,
-    @Query('state') state?: string,
+    @Query() query: ReportQueryDto,
   ): Promise<ReportListDto> {
+    const { from, to, teacherId, state } = query;
+    if (from && to && from > to) {
+      throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
+    }
     const reviewQueue = state === 'wait' || state === 'rej';
     return { items: await this.svc.list({ from, to, teacherId: this.scope(user, teacherId, reviewQueue), state }) };
   }
 
   @Get('unwritten')
   @ApiOperation({ summary: '§47 안 쓴 리포트 — 강사별 밀린 건수와 예상 차감' })
-  @ApiQuery({ name: 'teacherId', required: false })
   @ApiOkResponse({ type: UnwrittenDto })
   async unwritten(
     @CurrentUser() user: RequestUser,
-    @Query('teacherId') teacherId?: string,
+    @Query() query: ReportTeacherQueryDto,
   ): Promise<UnwrittenDto> {
-    return this.svc.unwritten(this.scope(user, teacherId));
+    return this.svc.unwritten(this.scope(user, query.teacherId));
   }
 
   @Get('deliveries')
-  @ApiOperation({ summary: '§48·§49 학생별 리포트 발송 큐 — 없으면 KST 어제' })
+  @ApiOperation({ summary: '§48·§49 학생별 리포트 발송 큐 — 없으면 KST 어제', description: 'onDate는 실제 KST 수업일이다. 옮긴 회차도 해당 날짜의 학생 묶음에 포함하며 상세 조회는 개별 리포트의 원래 onDate를 사용한다.' })
   @ApiOkResponse({ type: ReportDeliveryQueueDto })
   deliveryQueue(
     @CurrentUser() user: RequestUser,
@@ -111,8 +109,6 @@ export class ReportsController {
 
   @Get(':serId/:onDate')
   @ApiOperation({ summary: '리포트 상세 — 입력 순서·제한도 서버 계약으로 내려준다' })
-  @ApiParam({ name: 'serId', type: Number })
-  @ApiParam({ name: 'onDate', example: '2026-08-27' })
   @ApiOkResponse({ type: ReportDetailDto })
   detail(@CurrentUser() user: RequestUser, @Param() ref: ReportRefDto): Promise<ReportDetailDto> {
     return this.svc.detail(ref.serId, ref.onDate, user.id, this.canCrudAll(user), this.canApprove(user));
@@ -124,8 +120,6 @@ export class ReportsController {
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_FORBIDDEN: 현재 담당 강사 또는 전체 관리 권한이 필요함.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_LOCKED: 제출 대기/승인 상태는 수정할 수 없음.' })
   @ApiNotFoundResponse(reportMissing)
-  @ApiParam({ name: 'serId', type: Number })
-  @ApiParam({ name: 'onDate', example: '2026-08-27' })
   @ApiOkResponse({ type: ReportDetailDto })
   saveDraft(
     @CurrentUser() user: RequestUser,
@@ -143,8 +137,6 @@ export class ReportsController {
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_FORBIDDEN: 현재 담당 강사 또는 전체 관리 권한이 필요함.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_LOCKED: 제출 대기/승인 상태는 수정할 수 없음.' })
   @ApiNotFoundResponse(reportMissing)
-  @ApiParam({ name: 'serId', type: Number })
-  @ApiParam({ name: 'onDate', example: '2026-08-27' })
   @ApiCreatedResponse({ type: ReportDetailDto })
   submit(
     @CurrentUser() user: RequestUser,
@@ -163,8 +155,6 @@ export class ReportsController {
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_REVIEW_FORBIDDEN: 승인 권한이 필요함.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_NOT_WAITING: 현재 승인 대기 상태가 아님.' })
   @ApiNotFoundResponse(reportMissing)
-  @ApiParam({ name: 'serId', type: Number })
-  @ApiParam({ name: 'onDate', example: '2026-08-27' })
   @ApiCreatedResponse({ type: ReportDetailDto })
   review(
     @CurrentUser() user: RequestUser,

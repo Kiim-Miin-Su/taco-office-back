@@ -19,6 +19,7 @@ import { DEV_URL } from './db';
 import { addD } from '../src/lib/recurrence';
 import { todayKst } from '../src/lib/kst';
 import { buildOpenApi } from '../src/openapi';
+import { ReportsService } from '../src/modules/reports/reports.service';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -167,8 +168,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       expect(result).toMatchObject({ date, onDate: DATE, startMin: start, endMin: end });
       expect(result.exportFiles[0].plainText).toContain(`② 수업: ${date} · AP Chemistry · ${label}`);
       expect(result.exportFiles[0].fileName).toBe(`${date.replaceAll('-', '')}_리포트학생_고2_AP Chemistry_${start === null ? '시간미정' : label.slice(0, 5)}.png`);
-      // 목록 필터는 현재 원래 onDate 기준이다. 실제 날짜 필터/발송 그룹 정책은 별도 감사 대상으로 남긴다.
-      const list = await request(app.getHttpServer()).get('/reports').query({ from: DATE, to: DATE })
+      const list = await request(app.getHttpServer()).get('/reports').query({ from: date, to: date })
         .set('Authorization', `Bearer ${teacherToken}`).expect(200);
       expect(list.body.items.find((item: { id: number }) => item.id === repId))
         .toMatchObject({ date, onDate: DATE, startMin: start, endMin: end });
@@ -187,6 +187,49 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       } });
     }
     await put(teacherToken, { ...body, endMin: 600 }).expect(400);
+  });
+
+  it.each([
+    { from: '2026-02-30' }, { to: '0000-01-01' }, { from: '2026-1-01' },
+    { from: DATE, to: '2025-01-01' }, { teacherId: '0' }, { teacherId: '-1' },
+    { teacherId: '1e2' }, { teacherId: '9007199254740992' }, { teacherId: '' },
+    { teacherId: ['1', '2'] }, { state: 'approved' }, { state: '' }, { extra: 'unknown' },
+  ])('리포트 query를 DB 조회 전에 거절한다: %j', async (query) => {
+    const list = jest.spyOn(app.get(ReportsService), 'list');
+    try {
+      await request(app.getHttpServer()).get('/reports').query(query)
+        .set('Authorization', `Bearer ${managerToken}`).expect(400);
+      expect(list).not.toHaveBeenCalled();
+    } finally { list.mockRestore(); }
+  });
+
+  it.each(['/reports/unwritten?teacherId=0', '/reports/unwritten?teacherId=1e2',
+    '/reports/unwritten?extra=x', '/reports/1e2/2025-01-02', '/reports/9007199254740992/2025-01-02',
+    `/reports/${SER}/2026-02-30`])('리포트 필터·상세 참조 형식을 검증한다: %s', async (path) => {
+    await request(app.getHttpServer()).get(path).set('Authorization', `Bearer ${managerToken}`).expect(400);
+  });
+
+  it('유효한 숫자 필터도 강사의 본인 범위를 넓히지 않는다', async () => {
+    const result = await request(app.getHttpServer()).get('/reports').query({ teacherId: OTHER, state: 'none' })
+      .set('Authorization', `Bearer ${teacherToken}`).expect(200);
+    expect(result.body.items).toHaveLength(1);
+    expect(result.body.items[0]).toMatchObject({ serId: SER, teacherId: TEACHER });
+  });
+
+  it('Swagger query/path는 수기 string 대신 날짜·안전 정수·상태 enum 계약을 제공한다', () => {
+    const paths = buildOpenApi(app).paths;
+    expect(paths['/reports'].get?.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'teacherId', required: false,
+        schema: expect.objectContaining({ type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER }) }),
+      expect.objectContaining({ name: 'from', required: false, schema: expect.objectContaining({ type: 'string', format: 'date' }) }),
+      expect.objectContaining({ name: 'state', required: false, schema: expect.objectContaining({ enum: ['na', 'plan', 'none', 'draft', 'wait', 'ok', 'rej'] }) }),
+    ]));
+    expect(paths['/reports/{serId}/{onDate}'].get?.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'serId', required: true, schema: expect.objectContaining({ type: 'integer', maximum: Number.MAX_SAFE_INTEGER }) }),
+    ]));
+    for (const path of ['/reports', '/reports/unwritten', '/reports/deliveries', '/reports/deliveries/history']) {
+      expect(paths[path].get?.responses['400']).toBeDefined();
+    }
   });
 
   it('리포트 CRUD OpenAPI는 실제 성공 코드·상태 오류와 부모 잠금 계약을 노출한다', () => {

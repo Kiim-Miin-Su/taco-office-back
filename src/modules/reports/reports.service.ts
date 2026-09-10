@@ -16,9 +16,9 @@ import {
   type RepStateDb, type ReportBody, type ReportDeliveryIssue, type ReportPngIssue,
   type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
-import { END_MIN, START_MIN } from '../../lib/sql';
+import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
 import type {
-  ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportReviewDto, ReportRowDto,
+  ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportQueryDto, ReportReviewDto, ReportRowDto,
   ReportSendHistoryDto, ReportUpsertDto, UnwrittenDto,
 } from './reports.dto';
 import { REPORT_FILE_STORE, type ReportFileStore } from './report-file.store';
@@ -86,6 +86,9 @@ interface RequestSendRow {
   source_send_id: string | null;
 }
 
+/** 목록·발송 묶음·표시가 같은 실제 수업일을 쓴다. 회차 없는 보존 REP만 원래 키로 대체한다. */
+const REPORT_DATE_SQL = `COALESCE(${kstDateOf('lower(o.span)')}, r.on_date)`;
+
 const WRITE_ERRORS: Record<ReportWriteIssue, { message: string; status: 'bad' | 'forbidden' | 'conflict' }> = {
   REPORT_NOT_ALLOWED: { message: '리포트 대상 수업이 아닙니다', status: 'bad' },
   REPORT_CANCELED: { message: '취소된 회차에는 리포트를 쓸 수 없습니다', status: 'bad' },
@@ -122,7 +125,7 @@ export class ReportsService {
 
   private static sql(where: string): string {
     return `SELECT r.id, r.ser_id,
-                   to_char(COALESCE(lower(o.span) AT TIME ZONE 'Asia/Seoul', r.on_date::timestamp), 'YYYY-MM-DD') AS date,
+                   to_char(${REPORT_DATE_SQL}, 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
                    ${START_MIN} AS start_min, ${END_MIN} AS end_min,
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
@@ -149,7 +152,7 @@ export class ReportsService {
 
   private static detailSql(where: string, lock: boolean): string {
     return `SELECT r.id, r.ser_id,
-                   to_char(COALESCE(lower(o.span) AT TIME ZONE 'Asia/Seoul', r.on_date::timestamp), 'YYYY-MM-DD') AS date,
+                   to_char(${REPORT_DATE_SQL}, 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
                    ${START_MIN} AS start_min, ${END_MIN} AS end_min,
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
@@ -177,7 +180,7 @@ export class ReportsService {
               LEFT JOIN sub sb ON sb.key = s.sub_key
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
              WHERE ${where}
-             ORDER BY r.on_date, start_min, r.id
+             ORDER BY date, start_min, r.id
              ${lock ? 'FOR UPDATE OF r' : ''}`;
   }
 
@@ -286,9 +289,9 @@ export class ReportsService {
 
   private async deliveryRows(q: Queryer, onDate: string, studentId?: number, lock = false): Promise<DetailRow[]> {
     const where = studentId === undefined
-      ? `r.on_date = $1 AND COALESCE(a.result, 'completed') <> 'canceled'
+      ? `${REPORT_DATE_SQL} = $1 AND COALESCE(a.result, 'completed') <> 'canceled'
          AND EXISTS (SELECT 1 FROM rep_stu x WHERE x.rep_id = r.id AND x.deliver)`
-      : `r.on_date = $1 AND EXISTS (
+      : `${REPORT_DATE_SQL} = $1 AND EXISTS (
            SELECT 1 FROM rep_stu x
             WHERE x.rep_id = r.id AND x.student_id = $2 AND x.deliver
          ) AND COALESCE(a.result, 'completed') <> 'canceled'`;
@@ -387,11 +390,11 @@ export class ReportsService {
     if (issue === 'REPORT_DELIVERY_FORBIDDEN') this.throwDeliveryIssue(issue);
   }
 
-  async list(opts: { from?: string; to?: string; teacherId?: number; state?: string }): Promise<ReportRowDto[]> {
+  async list(opts: Readonly<ReportQueryDto>): Promise<ReportRowDto[]> {
     const p: unknown[] = [];
     const c: string[] = ['1=1'];
-    if (opts.from) { p.push(opts.from); c.push(`r.on_date >= $${p.length}`); }
-    if (opts.to) { p.push(opts.to); c.push(`r.on_date <= $${p.length}`); }
+    if (opts.from) { p.push(opts.from); c.push(`${REPORT_DATE_SQL} >= $${p.length}`); }
+    if (opts.to) { p.push(opts.to); c.push(`${REPORT_DATE_SQL} <= $${p.length}`); }
     if (opts.teacherId) { p.push(opts.teacherId); c.push(`COALESCE(o.teacher_id, r.teacher_id) = $${p.length}`); }
     const rows = await this.ds.query<Row[]>(ReportsService.sql(c.join(' AND ')), p);
     const now = new Date();
