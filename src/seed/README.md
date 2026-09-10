@@ -1,3 +1,9 @@
+<!-- @file-guide
+목적: seed — 개발·시연용 DB 데이터 (document)
+책임/재사용: 이 문서의 주제만 기록하고 공통 지시는 docs/AGENT.md, 현재 작업은 docs/CLAUDE.md를 연결한다. 과거 수치를 현행 완료로 복제하지 않는다.
+검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+-->
+
 # seed — 개발·시연용 DB 데이터
 
 프론트는 API를 통해 **실제 Postgres 행**을 읽는다. 시드는 개발·시연의 시작 데이터이며,

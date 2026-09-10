@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: reports.controller.ts — ReportsController (controller)
+ * 책임/재사용: HTTP DTO/경로와 인증·Perm 메타데이터를 연결하고 기존 service에 위임한다. SQL/업무 전이를 컨트롤러에 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 import { Body, Controller, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
@@ -126,7 +132,7 @@ export class ReportsController {
   @ApiOperation({ summary: '리포트 제출 — 3개 입력을 모두 채워야 하며 정산 기준 시각을 최초 1회만 저장한다' })
   @ApiParam({ name: 'serId', type: Number })
   @ApiParam({ name: 'onDate', example: '2026-08-27' })
-  @ApiOkResponse({ type: ReportDetailDto })
+  @ApiCreatedResponse({ type: ReportDetailDto })
   submit(
     @CurrentUser() user: RequestUser,
     @Param() ref: ReportRefDto,
@@ -141,7 +147,7 @@ export class ReportsController {
   @ApiOperation({ summary: '제출된 리포트 승인/반려 — 반려 사유 필수, 승인 여부는 정산과 독립' })
   @ApiParam({ name: 'serId', type: Number })
   @ApiParam({ name: 'onDate', example: '2026-08-27' })
-  @ApiOkResponse({ type: ReportDetailDto })
+  @ApiCreatedResponse({ type: ReportDetailDto })
   review(
     @CurrentUser() user: RequestUser,
     @Param() ref: ReportRefDto,

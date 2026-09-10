@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: noti.ts — NOTI_TONES, NotiTone, notiTone (service)
+ * 책임/재사용: 기존 lib/도메인 방어·Perm 함수를 재사용한다. 쓰기는 트랜잭션/DB 제약, 읽기는 권한별 projection으로 최종 검증한다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 알림의 색 — §16 은 `alarm` · `ok` · `warn` 세 가지로 그린다.
  *

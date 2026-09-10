@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: report-write.spec.ts (test)
+ * 책임/재사용: 기존 대상 함수를 import하여 정상/거절/경계 회귀를 검증한다. 테스트 안에 제품 규칙을 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 리포트 세로 계약 — HTTP DTO → 방어 규칙 → REP.body·상태가 한 흐름인지 본다.
  * 테스트 행은 고정된 높은 id대를 쓰고 매 케이스 전에 복원한다.

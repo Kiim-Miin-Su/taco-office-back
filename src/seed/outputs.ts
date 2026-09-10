@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: outputs.ts — RepState, RepSeed, buildReports, GUIDES, PNOTIS 등 (seed)
+ * 책임/재사용: 격리 개발/테스트 자료 생성용이다. 기존 enum/키/참조 제약을 재사용하고 운영 데이터를 임의 수정하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 회차에서 파생되는 것 — 리포트 · 안내 · 교재.
  *

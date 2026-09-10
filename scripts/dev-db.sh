@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# @file-guide
+# 목적: dev-db.sh (script)
+# 책임/재사용: 검사/생성/실행 도구의 책임만 소유한다. 대상 경로와 실행 권한을 확인하고 실패를 성공으로 기록하지 않는다.
+# 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+
 # 개발용 Postgres 한 번에 — 띄우고 · 표 만들고 · 시드 넣고 · 확인한다.
 #
 # 이 컴퓨터에 Postgres 가 없어도 EXCLUDE 제약과 tstzrange 를 **진짜 엔진에서** 확인하려고 둔다.

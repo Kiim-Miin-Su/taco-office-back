@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: board.rules.ts — BOARD_MARK_KEYS, BoardMarkKey, BOARD_MAX_RANGE_DAYS, BoardMarkValue, BoardSourceRow 등 (util)
+ * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /** 수업 현황판의 네 판정 축. DTO·집계·화면 범례가 이 순서를 공유한다. */
 export const BOARD_MARK_KEYS = ['book', 'guide', 'zoom', 'report'] as const;
 export type BoardMarkKey = (typeof BOARD_MARK_KEYS)[number];

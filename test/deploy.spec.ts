@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: deploy.spec.ts (test)
+ * 책임/재사용: 기존 대상 함수를 import하여 정상/거절/경계 회귀를 검증한다. 테스트 안에 제품 규칙을 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 배포 설정 — **조용히 틀리는 것들**만 모아 못 박는다.
  *

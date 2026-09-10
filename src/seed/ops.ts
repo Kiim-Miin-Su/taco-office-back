@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: ops.ts — REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS 등 (seed)
+ * 책임/재사용: 격리 개발/테스트 자료 생성용이다. 기존 enum/키/참조 제약을 재사용하고 운영 데이터를 임의 수정하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 운영 — 할 일 · 알림 · 승인 요청 · 컨설팅 · 마케팅 · 기획 · 회의 · 컴플레인 · 보고.
  * 탭 10(§59~§67) 과 탭 11(§69~§73), 탭 02 서랍(§14~§21)이 이 데이터를 쓴다.

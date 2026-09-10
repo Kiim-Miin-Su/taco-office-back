@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: drawer.spec.ts (test)
+ * 책임/재사용: 기존 대상 함수를 import하여 정상/거절/경계 회귀를 검증한다. 테스트 안에 제품 규칙을 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 탭 02 우측 서랍 — §14~§21.
  *

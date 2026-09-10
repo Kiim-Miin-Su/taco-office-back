@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: sql.spec.ts (test)
+ * 책임/재사용: 기존 대상 함수를 import하여 정상/거절/경계 회귀를 검증한다. 테스트 안에 제품 규칙을 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * SQL 조각 — `lib/sql.ts`. 구조 검사 + 로컬 격리 DB의 읽기 전용 상수 span 회귀.
  *

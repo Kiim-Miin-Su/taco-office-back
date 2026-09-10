@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: base.ts — SEED_TODAY, AUTHORED_ON, addDays, daysBetween, SEED_SHIFT 등 (seed)
+ * 책임/재사용: 격리 개발/테스트 자료 생성용이다. 기존 enum/키/참조 제약을 재사용하고 운영 데이터를 임의 수정하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 기준 정보 — 사람보다 먼저 있어야 하는 것들.
  * 코드표(KIND·SUB)는 명세서 v2 §85·§86 의 값을 그대로 쓴다. 색은 프론트 tokens.css 와 같은 값이다.

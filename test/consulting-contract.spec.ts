@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: consulting-contract.spec.ts (test)
+ * 책임/재사용: 기존 대상 함수를 import하여 정상/거절/경계 회귀를 검증한다. 테스트 안에 제품 규칙을 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /** 실제 controller/PermGuard/OpenAPI 검사. 인증 사용자와 service는 대역이다. */
 import type { INestApplication } from '@nestjs/common';
 import { APP_GUARD, Reflector } from '@nestjs/core';

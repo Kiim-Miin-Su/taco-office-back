@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: consulting.rules.ts — CONSULTING_STAGES, ConsultingStage, CONTRACT_STEP_MAX, CONSULTING_SESSION_MAX, ConsultingRecord 등 (util)
+ * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /** §26 읽기 보드의 불변식. 상태 전이·수납 판정(csPaid)은 별도 쓰기 계약이다. */
 export const CONSULTING_STAGES = ['contract', 'running', 'done'] as const;
 export type ConsultingStage = (typeof CONSULTING_STAGES)[number];

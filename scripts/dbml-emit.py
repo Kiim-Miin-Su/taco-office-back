@@ -1,3 +1,8 @@
+# @file-guide
+# 목적: dbml-emit.py — ENTITIES (script)
+# 책임/재사용: 검사/생성/실행 도구의 책임만 소유한다. 대상 경로와 실행 권한을 확인하고 실패를 성공으로 기록하지 않는다.
+# 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+
 import io, json, os, re
 
 T = json.load(io.open('/tmp/tables.json', encoding='utf-8'))

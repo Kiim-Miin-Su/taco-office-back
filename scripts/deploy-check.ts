@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: deploy-check.ts (script)
+ * 책임/재사용: 검사/생성/실행 도구의 책임만 소유한다. 대상 경로와 실행 권한을 확인하고 실패를 성공으로 기록하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 배포 전에 **어디를 보고 있는지 눈으로 확인**하는 명령.
  *

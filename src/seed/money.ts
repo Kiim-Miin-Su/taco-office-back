@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: money.ts — INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS 등 (seed)
+ * 책임/재사용: 격리 개발/테스트 자료 생성용이다. 기존 enum/키/참조 제약을 재사용하고 운영 데이터를 임의 수정하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 회계 — 청구서 · 입금 · 지출 · 정산.
  * 금액은 대표만 본다 (D-R39 canSeeProfit). 시드는 값만 넣고 가림은 API 가 한다.

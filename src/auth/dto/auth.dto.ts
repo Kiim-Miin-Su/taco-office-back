@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: auth.dto.ts — LoginDto, MeDto, LoginResultDto, RefreshResultDto (dto)
+ * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsString, MinLength } from 'class-validator';
 import { ROLES, type PermFlags, type Role } from '../../common/perm';

@@ -1,3 +1,9 @@
+<!-- @file-guide
+목적: taco_office_back (document)
+책임/재사용: 이 문서의 주제만 기록하고 공통 지시는 docs/AGENT.md, 현재 작업은 docs/CLAUDE.md를 연결한다. 과거 수치를 현행 완료로 복제하지 않는다.
+검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+-->
+
 # taco_office_back
 
 TACO ERP API — **NestJS 11 · TypeORM · Neon Postgres · Vercel**

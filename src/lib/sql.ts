@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: sql.ts — minOf, kstDateOf, START_MIN, END_MIN, kstAt 등 (service)
+ * 책임/재사용: 기존 lib/도메인 방어·Perm 함수를 재사용한다. 쓰기는 트랜잭션/DB 제약, 읽기는 권한별 projection으로 최종 검증한다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * SQL 조각 — **여러 모듈이 같은 식을 쓴다.**
  *

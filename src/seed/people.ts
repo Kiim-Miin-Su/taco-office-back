@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: people.ts — STUDENTS, ENROLLMENTS, LEADS (seed)
+ * 책임/재사용: 격리 개발/테스트 자료 생성용이다. 기존 enum/키/참조 제약을 재사용하고 운영 데이터를 임의 수정하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 학생 19명 · 등록 · 상담 18건.
  * 명세서 v2 §2 의 실측 규모(상담 18건 · 청구서 6건)를 그대로 맞춘다.

@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: index.ts — ENTITIES (entity)
+ * 책임/재사용: DB 레코드 매핑만 소유한다. DBML·migration·생성기/수동 보강 metadata를 함께 대조하고 여기에 UI/업무 정책을 넣지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /** 엔티티 색인 — dbml v4.9 에서 생성했습니다. 손으로 고치지 마세요. */
 export * from './enums';
 export * from './att.entity';

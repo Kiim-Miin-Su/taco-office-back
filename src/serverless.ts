@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: serverless.ts — handler (config)
+ * 책임/재사용: 기존 런타임/빌드/검사 설정을 유지한다. 의존성·배포·비밀값 변경은 별도 근거와 검증 없이는 추가하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * Vercel 서버리스 진입점의 알맹이.
  *

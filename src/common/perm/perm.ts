@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: perm.ts — ROLES, Role, ROLE_LABEL, isRole, canAdminPage 등 (auth)
+ * 책임/재사용: 공용 인증/권한 경계만 소유한다. 토큰·쿠키 원문을 노출하지 않고 만료/익명/권한 회수 경계를 회귀로 검증한다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 권한 — 역할 4종에서 **세 줄로 파생**한다 (D-R39 · 대표 결정 3번).
  *

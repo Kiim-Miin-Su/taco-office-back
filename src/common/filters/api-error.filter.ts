@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: api-error.filter.ts — ApiErrorFilter (error)
+ * 책임/재사용: 공용 오류 응답 정규화 경계다. 실제 노출 필드만 DTO/OpenAPI로 문서화하고 비밀값/DB 내부 상세를 응답에 싣지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 import {
   ArgumentsHost,
   Catch,
@@ -11,7 +17,7 @@ import type { Response } from 'express';
 /**
  * 모든 에러를 **한 형태**로 내보낸다. 프론트 인터셉터가 한 군데에서만 해석하면 되도록.
  *
- *   { code, message, detail? }
+ *   { code, message } — common/http.dto.ts의 ApiErrorDto와 동일. detail은 현재 노출하지 않는다.
  *
  * DB 제약 위반을 여기서 사람 말로 번역한다 (D-R43) — 서비스마다 try/catch 를 두지 않는다.
  *   23P01 EXCLUDE  겹침       → 409 RESOURCE_CONFLICT

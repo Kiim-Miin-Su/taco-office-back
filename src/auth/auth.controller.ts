@@ -1,5 +1,11 @@
+/** @file-guide
+ * 목적: auth.controller.ts — AuthController (controller)
+ * 책임/재사용: HTTP DTO/경로와 인증·Perm 메타데이터를 연결하고 기존 service에 위임한다. SQL/업무 전이를 컨트롤러에 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiCreatedResponse, ApiNoContentResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { LoginDto, LoginResultDto, MeDto, RefreshResultDto } from './dto/auth.dto';
@@ -17,7 +23,7 @@ export class AuthController {
   @Public()
   @Post('login')
   @ApiOperation({ summary: '로그인 — Access 는 본문, Refresh 는 httpOnly 쿠키' })
-  @ApiOkResponse({ type: LoginResultDto })
+  @ApiCreatedResponse({ type: LoginResultDto })
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response): Promise<LoginResultDto> {
     const { accessToken, refreshToken, user } = await this.auth.login(dto.email, dto.password);
     res.cookie(REFRESH_COOKIE, refreshToken, cookieOptions());
@@ -27,7 +33,7 @@ export class AuthController {
   @Public()
   @Post('refresh')
   @ApiOperation({ summary: '재발급 — 쿠키만 보고 판단한다' })
-  @ApiOkResponse({ type: RefreshResultDto })
+  @ApiCreatedResponse({ type: RefreshResultDto })
   async refresh(@Req() req: Request): Promise<RefreshResultDto> {
     return this.auth.refresh(String(req.cookies?.[REFRESH_COOKIE] ?? ''));
   }
@@ -35,6 +41,7 @@ export class AuthController {
   @Public()
   @Post('logout')
   @ApiOperation({ summary: '로그아웃 — 쿠키를 지운다' })
+  @ApiNoContentResponse({ description: 'Refresh 쿠키 제거. 응답 본문 없음.' })
   logout(@Res({ passthrough: true }) res: Response): void {
     res.clearCookie(REFRESH_COOKIE, clearOptions());
     res.status(204);

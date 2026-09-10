@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: schedule.ts — SerSeed, SERS, RANGE_FROM, RANGE_TO, OccSeed 등 (seed)
+ * 책임/재사용: 격리 개발/테스트 자료 생성용이다. 기존 enum/키/참조 제약을 재사용하고 운영 데이터를 임의 수정하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 일정과 그 파생물.
  *

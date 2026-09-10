@@ -1,5 +1,11 @@
+/** @file-guide
+ * 목적: schedule.controller.ts — ScheduleController (controller)
+ * 책임/재사용: HTTP DTO/경로와 인증·Perm 메타데이터를 연결하고 기존 service에 위임한다. SQL/업무 전이를 컨트롤러에 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiParam, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
@@ -114,7 +120,7 @@ export class ScheduleController {
   @Post()
   @Perm('canCrudAll')
   @ApiOperation({ summary: '수업 만들기 — 겹치면 DB 가 409 로 막는다 (D-R43)' })
-  @ApiOkResponse({ type: WriteResultDto })
+  @ApiCreatedResponse({ type: WriteResultDto })
   create(@Body() dto: OccurrenceCreateDto): Promise<WriteResultDto> {
     return this.write.create(dto);
   }
@@ -122,7 +128,7 @@ export class ScheduleController {
   @Post('paste')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '회차 1~50건 복제 — 결과는 새 SER, EXC는 따라오지 않는다 (D-R19)' })
-  @ApiOkResponse({ type: WriteResultDto })
+  @ApiCreatedResponse({ type: WriteResultDto })
   paste(@Body() dto: OccurrencePasteDto): Promise<WriteResultDto> {
     return this.write.paste(dto);
   }
@@ -130,7 +136,7 @@ export class ScheduleController {
   @Post('move')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '다중 선택 회차 이동 — 전부 저장되거나 전부 되돌아간다 (C-7)' })
-  @ApiOkResponse({ type: WriteResultDto })
+  @ApiCreatedResponse({ type: WriteResultDto })
   moveMany(@Body() dto: OccurrenceMoveDto): Promise<WriteResultDto> {
     return this.write.moveMany(dto);
   }

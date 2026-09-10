@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: approval.ts — AP_KINDS, ApKind, AP_KINDS_MISSING, AP_KIND_LABEL, REQ_TYPE_LABEL 등 (util)
+ * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 결재 흐름 — 공통 결재 다섯 갈래와 강사 리포트를 **한 모양으로** 만든다 (D-R26 · §14 · §75).
  *

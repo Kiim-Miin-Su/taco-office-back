@@ -1,3 +1,9 @@
+/** @file-guide
+ * 목적: drawer.controller.ts — DrawerController (controller)
+ * 책임/재사용: HTTP DTO/경로와 인증·Perm 메타데이터를 연결하고 기존 service에 위임한다. SQL/업무 전이를 컨트롤러에 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 /**
  * 우측 서랍 — §14~§21.
  *
@@ -16,6 +22,7 @@ import {
   ApiBody, ApiCreatedResponse, ApiExtraModels, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
+import { OkDto } from '../../common/http.dto';
 import { hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ScheduleService } from '../schedule/schedule.service';
@@ -56,11 +63,12 @@ export class DrawerController {
 
   @Patch('todos/:id')
   @ApiOperation({ summary: '§15 할 일 체크 — 내가 주고받은 것만' })
+  @ApiOkResponse({ type: OkDto })
   async todoDone(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: TodoDoneDto,
-  ): Promise<{ ok: true }> {
+  ): Promise<OkDto> {
     const { canSeeAll } = this.gate(user);
     const hit = await this.svc.setTodoDone(id, dto.done, user.id, canSeeAll);
     // 남의 할 일이면 「없다」로 답한다 — 「있는데 권한이 없다」를 흘리지 않는다
@@ -70,10 +78,11 @@ export class DrawerController {
 
   @Patch('notis/:id/read')
   @ApiOperation({ summary: '§16 알림 읽음' })
+  @ApiOkResponse({ type: OkDto })
   async notiRead(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<OkDto> {
     const hit = await this.svc.markNotiRead(id, user.id);
     if (!hit) throw new NotFoundException({ code: 'NOT_FOUND', message: '알림을 찾을 수 없습니다' });
     return { ok: true };
