@@ -17,6 +17,10 @@ export interface JwtPayload {
   perms?: Partial<Record<PermName, boolean | null>> | null;
 }
 
+/** JWT도 외부 입력이다. Access/Refresh가 같은 숫자 STAFF 식별자 계약을 검증한다. */
+export const isJwtSubject = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor() {
@@ -30,7 +34,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   validate(payload: JwtPayload) {
     // 토큰에 담긴 역할이 우리가 아는 넷 중 하나가 아니면 통과시키지 않는다.
     // 예전 토큰(head · adm · coord)이 남아 있을 수 있다 — 조용히 흘려보내면 가드가 오판한다.
-    if (!isRole(payload.role)) throw new UnauthorizedException('다시 로그인해 주세요');
+    if (!isRole(payload.role) || !isJwtSubject(payload.sub)) throw new UnauthorizedException('다시 로그인해 주세요');
     return { id: payload.sub, name: payload.name, role: payload.role, perms: payload.perms };
   }
 }

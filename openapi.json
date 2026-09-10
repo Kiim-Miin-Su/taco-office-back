@@ -112,7 +112,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "BAD_REQUEST: 이메일·비밀번호 최소8자·추가 키 검증 실패.",
             "content": {
               "application/json": {
                 "schema": {
@@ -122,7 +122,7 @@
             }
           },
           "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "UNAUTHORIZED: 인증 정보/서명/만료/숫자 계정 식별자가 유효하지 않음. 로그인 실패는 refresh/replay하지 않는다. 보호 요청은 refresh 후에도401이면 세션을 종료한다.",
             "content": {
               "application/json": {
                 "schema": {
@@ -207,7 +207,7 @@
             }
           },
           "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "UNAUTHORIZED: 인증 정보/서명/만료/숫자 계정 식별자가 유효하지 않음. 로그인 실패는 refresh/replay하지 않는다. 보호 요청은 refresh 후에도401이면 세션을 종료한다.",
             "content": {
               "application/json": {
                 "schema": {
@@ -258,7 +258,9 @@
           }
         },
         "security": [
-          {}
+          {
+            "taco_rt": []
+          }
         ],
         "summary": "재발급 — 쿠키만 보고 판단한다",
         "tags": [
@@ -370,7 +372,7 @@
             }
           },
           "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "UNAUTHORIZED: 인증 정보/서명/만료/숫자 계정 식별자가 유효하지 않음. 로그인 실패는 refresh/replay하지 않는다. 보호 요청은 refresh 후에도401이면 세션을 종료한다.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3639,6 +3641,11 @@
         "scheme": "bearer",
         "bearerFormat": "JWT",
         "type": "http"
+      },
+      "taco_rt": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "taco_rt"
       }
     },
     "schemas": {
@@ -3678,11 +3685,13 @@
         "properties": {
           "email": {
             "type": "string",
-            "example": "kim@tnacademy.kr"
+            "example": "kim@tnacademy.kr",
+            "format": "email"
           },
           "password": {
             "type": "string",
-            "example": "********"
+            "example": "********",
+            "minLength": 8
           }
         },
         "required": [

@@ -12,7 +12,7 @@ import * as bcrypt from 'bcryptjs';
 import { Staff } from '../entities';
 import { permsOf, type Role } from '../common/perm';
 import type { MeDto } from './dto/auth.dto';
-import type { JwtPayload } from './jwt.strategy';
+import { isJwtSubject, type JwtPayload } from './jwt.strategy';
 
 /** jsonwebtoken 의 expiresIn 은 '15m' 같은 문자열 리터럴 타입을 받는다 */
 type Expires = NonNullable<Parameters<JwtService['sign']>[1]>['expiresIn'];
@@ -90,14 +90,16 @@ export class AuthService {
   }
 
   async refresh(token: string) {
-    let sub: number;
+    let sub: unknown;
     try {
-      ({ sub } = this.jwt.verify<{ sub: number }>(token, {
+      ({ sub } = this.jwt.verify<{ sub?: unknown }>(token, {
         secret: process.env.JWT_REFRESH_SECRET ?? 'dev-only-change-me-too',
       }));
     } catch {
       throw new UnauthorizedException('다시 로그인해 주세요');
     }
+    // undefined/null 조건을 ORM에 넘기면 첫 활성 계정으로 조회될 수 있으므로 조회 전에 거절한다.
+    if (!isJwtSubject(sub)) throw new UnauthorizedException('다시 로그인해 주세요');
     const s = await this.staff.findOne({ where: { id: sub, active: true } });
     if (!s) throw new UnauthorizedException('다시 로그인해 주세요');
     return { accessToken: this.signAccess(s) };

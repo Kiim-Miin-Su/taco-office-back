@@ -7,6 +7,7 @@
 import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ApiErrorDto } from './common/http.dto';
+import { REFRESH_COOKIE } from './auth/cookie';
 
 /**
  * **DTO 가 단일 출처다.** 여기서 만든 openapi.json 을 프론트가 읽어 타입을 생성한다.
@@ -18,6 +19,7 @@ export function buildOpenApi(app: INestApplication) {
     .setDescription('티엔아카데미 학원 운영 백오피스 — 개발 명세서 v2 기준')
     .setVersion('0.1.0')
     .addBearerAuth()
+    .addCookieAuth(REFRESH_COOKIE, { type: 'apiKey', in: 'cookie' }, REFRESH_COOKIE)
     .addSecurityRequirements('bearer')
     .addGlobalResponse(...[400, 401, 403, 404, 409, 500].map(status => ({
       status, type: ApiErrorDto, description: '공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.',

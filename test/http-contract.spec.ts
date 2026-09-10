@@ -93,7 +93,9 @@ describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
   it('Bearer 기본 요구와 Public 예외를 같은 decorator에서 파생한다', () => {
     const doc = buildOpenApi(app);
     expect(doc.security).toEqual([{ bearer: [] }]);
-    for (const path of ['/auth/login', '/auth/refresh', '/auth/logout']) expect(doc.paths[path].post?.security).toEqual([{}]);
+    for (const path of ['/auth/login', '/auth/logout']) expect(doc.paths[path].post?.security).toEqual([{}]);
+    expect(doc.paths['/auth/refresh'].post?.security).toEqual([{ taco_rt: [] }]);
+    expect(doc.components?.securitySchemes?.taco_rt).toMatchObject({ type: 'apiKey', in: 'cookie', name: 'taco_rt' });
     expect(doc.paths['/health'].get?.security).toEqual([{}]);
     expect(doc.paths['/auth/me'].get?.security ?? doc.security).toEqual([{ bearer: [] }]);
   });

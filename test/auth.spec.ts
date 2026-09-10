@@ -21,6 +21,11 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { Perm } from '../src/common/perm';
 import { Public } from '../src/auth/public.decorator';
+import * as jwt from 'jsonwebtoken';
+import { buildOpenApi } from '../src/openapi';
+import { Staff } from '../src/entities';
+import { ApiErrorFilter } from '../src/common/filters/api-error.filter';
+import { AuthService } from '../src/auth/auth.service';
 
 /** 테스트용 엔드포인트 — 가드가 실제로 무엇을 막는지 보려고 만든다 */
 @Controller('probe')
@@ -71,12 +76,13 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
     }).compile();
     app = mod.createNestApplication();
     app.use(cookieParser());
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    app.useGlobalFilters(new ApiErrorFilter());
     await app.init();
 
     ds = app.get(DataSource);
     const hash = await bcrypt.hash(PW, 4);
-    await ds.query('DELETE FROM staff WHERE id >= 901');
+    await ds.query('DELETE FROM staff WHERE id = ANY($1)', [PEOPLE.map((p) => p.id)]);
     for (const p of PEOPLE) {
       await ds.query(
         `INSERT INTO staff (id, name, email, role, password_hash, active)
@@ -87,7 +93,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
   });
 
   afterAll(async () => {
-    await ds?.query('DELETE FROM staff WHERE id >= 901');
+    await ds?.query('DELETE FROM staff WHERE id = ANY($1)', [PEOPLE.map((p) => p.id)]);
     await app?.close();
   });
 
@@ -102,6 +108,19 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
   const token = async (email: string) => (await login(email)).body.accessToken as string;
 
   describe('로그인', () => {
+    it.each([
+      { email: 'not-email', password: PW },
+      { email: 'ceo@t.kr', password: 'short' },
+      { email: 'ceo@t.kr', password: 12345678 },
+      { email: 'ceo@t.kr', password: PW, extra: true },
+    ])('잘못된 입력은 실제 오류 봉투400이고 로그인 서비스에 도달하지 않는다: %p', async (body) => {
+      const spy = jest.spyOn(app.get(AuthService), 'login');
+      try {
+        const res = await request(app.getHttpServer()).post('/auth/login').send(body).expect(400);
+        expect(res.body).toMatchObject({ code: 'BAD_REQUEST', message: expect.any(String) });
+        expect(spy).not.toHaveBeenCalled();
+      } finally { spy.mockRestore(); }
+    });
     it('성공하면 Access 는 본문, Refresh 는 httpOnly 쿠키로 온다', async () => {
       const res = await login('ceo@t.kr');
       expect(typeof res.body.accessToken).toBe('string');
@@ -233,5 +252,57 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
     it('쿠키가 없으면 401', async () => {
       await request(app.getHttpServer()).post('/auth/refresh').expect(401);
     });
+  });
+
+  describe.each(['access', 'refresh'] as const)('JWT 경계: %s', (kind) => {
+    const call = (signed: string) => kind === 'access'
+      ? request(app.getHttpServer()).get('/probe/any').set('Authorization', `Bearer ${signed}`)
+      : request(app.getHttpServer()).post('/auth/refresh').set('Cookie', `taco_rt=${signed}`);
+    const secret = () => process.env[kind === 'access' ? 'JWT_SECRET' : 'JWT_REFRESH_SECRET']!;
+    it.each([undefined, null, 0, -1, 1.5, '904', [], {}, Number.MAX_SAFE_INTEGER + 1])(
+      '서명돼도 잘못된 subject=%p는401이고 계정 조회 전 거절한다', async (sub) => {
+        const signed = jwt.sign({ sub, name: '최대표', role: 'ceo' }, secret(), { expiresIn: '5m' });
+        const spy = jest.spyOn(ds.getRepository(Staff), 'findOne');
+        try {
+          await call(signed).expect(401);
+          expect(spy).not.toHaveBeenCalled();
+        } finally { spy.mockRestore(); }
+      },
+    );
+    it.each(['expired', 'other secret'])('%s 토큰은401', async (mode) => {
+      const signed = jwt.sign({ sub: 904, name: '최대표', role: 'ceo' },
+        mode === 'other secret' ? 'different-test-signature-key' : secret(),
+        { expiresIn: mode === 'expired' ? -1 : '5m' });
+      await call(signed).expect(401);
+    });
+  });
+
+  it('비활성 계정의 로그인/쿠키 갱신과 me는401이다', async () => {
+    const before = await login('manager@t.kr');
+    await ds.query('UPDATE staff SET active=false WHERE id=902');
+    try {
+      await request(app.getHttpServer()).post('/auth/login').send({ email: 'manager@t.kr', password: PW }).expect(401);
+      await request(app.getHttpServer()).post('/auth/refresh').set('Cookie', before.headers['set-cookie']).expect(401);
+      await request(app.getHttpServer()).get('/auth/me').set('Authorization', `Bearer ${before.body.accessToken}`).expect(401);
+    } finally { await ds.query('UPDATE staff SET active=true WHERE id=902'); }
+  });
+
+  it('logout은 쿠키를 같은 경로로 만료시키고204/빈 본문을 반환한다', async () => {
+    const res = await request(app.getHttpServer()).post('/auth/logout').expect(204);
+    expect(res.text).toBe('');
+    const cookies = res.headers['set-cookie'] as unknown as string[];
+    expect(cookies.some((cookie) => cookie.startsWith('taco_rt=;') && cookie.includes('Path=/') && cookie.includes('HttpOnly'))).toBe(true);
+  });
+
+  it('OpenAPI 로그인 입력과401/400/204 형상이 실제 auth 소비와 일치한다', () => {
+    const doc = buildOpenApi(app);
+    expect(doc.components?.schemas?.LoginDto).toMatchObject({ properties: {
+      email: { type: 'string', format: 'email' }, password: { type: 'string', minLength: 8 },
+    } });
+    for (const [path, method] of [['/auth/login', 'post'], ['/auth/refresh', 'post'], ['/auth/me', 'get']] as const) {
+      expect(doc.paths[path][method]?.responses['401']).toBeDefined();
+    }
+    expect(doc.paths['/auth/login'].post?.responses['400']).toBeDefined();
+    expect(doc.paths['/auth/logout'].post?.responses['204']).toBeDefined();
   });
 });

@@ -9,11 +9,11 @@ import { IsEmail, IsString, MinLength } from 'class-validator';
 import { ROLES, type PermFlags, type Role } from '../../common/perm';
 
 export class LoginDto {
-  @ApiProperty({ example: 'kim@tnacademy.kr' })
+  @ApiProperty({ example: 'kim@tnacademy.kr', format: 'email' })
   @IsEmail({}, { message: '이메일 형식이 아닙니다' })
   email!: string;
 
-  @ApiProperty({ example: '********' })
+  @ApiProperty({ example: '********', minLength: 8 })
   @IsString()
   @MinLength(8, { message: '비밀번호는 8자 이상입니다' })
   password!: string;

@@ -9,5 +9,7 @@ import { ApiSecurity } from '@nestjs/swagger';
 
 export const IS_PUBLIC = 'taco:public';
 
-/** Access Bearer 예외를 guard/문서에서 공유한다. refresh는 AuthService가 쿠키를 별도로 검증한다. */
-export const Public = () => applyDecorators(SetMetadata(IS_PUBLIC, true), ApiSecurity({}));
+/** Access Bearer 예외를 공유한다. 별도 인증 수단은 문서에 명시하고 해당 handler가 검증한다. */
+export const Public = (securityScheme?: string) => applyDecorators(
+  SetMetadata(IS_PUBLIC, true), ApiSecurity(securityScheme ? { [securityScheme]: [] } : {}),
+);
