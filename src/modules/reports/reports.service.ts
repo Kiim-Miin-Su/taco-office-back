@@ -89,6 +89,8 @@ interface RequestSendRow {
 
 /** 목록·발송 묶음·표시가 같은 실제 수업일을 쓴다. 회차 없는 보존 REP만 원래 키로 대체한다. */
 const REPORT_DATE_SQL = `COALESCE(${kstDateOf('lower(o.span)')}, r.on_date)`;
+/** 일정 취소·출결 취소는 같은 판정이다. 신규 발송에서 제외하되 보존 상세/이력을 삭제하지 않는다. */
+const REPORT_CANCELED_SQL = `(COALESCE(o.canceled, false) OR COALESCE(a.result = 'canceled', false))`;
 
 const WRITE_ERRORS: Record<ReportWriteIssue, { message: string; status: 'bad' | 'forbidden' | 'conflict' }> = {
   REPORT_NOT_ALLOWED: { message: '리포트 대상 수업이 아닙니다', status: 'bad' },
@@ -133,7 +135,7 @@ export class ReportsService {
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
                    k.rep AS reportable,
-                   (COALESCE(o.canceled, false) OR COALESCE(a.result = 'canceled', false)) AS canceled,
+                   ${REPORT_CANCELED_SQL} AS canceled,
                    COALESCE(upper(o.span) <= now(), false) AS ended,
                    COALESCE((
                      SELECT json_agg(json_build_object(
@@ -161,7 +163,7 @@ export class ReportsService {
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
                    r.body, r.lang, COALESCE(sb.name, s.title, k.name) AS subject_name,
                    k.rep AS reportable,
-                   (COALESCE(o.canceled, false) OR COALESCE(a.result = 'canceled', false)) AS canceled,
+                   ${REPORT_CANCELED_SQL} AS canceled,
                    COALESCE(upper(o.span) <= now(), false) AS ended,
                    to_char(r.written_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS written_at,
                    to_char(r.submitted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS submitted_at,
@@ -291,13 +293,9 @@ export class ReportsService {
   }
 
   private async deliveryRows(q: Queryer, onDate: string, studentId?: number, lock = false): Promise<DetailRow[]> {
-    const where = studentId === undefined
-      ? `${REPORT_DATE_SQL} = $1 AND COALESCE(a.result, 'completed') <> 'canceled'
-         AND EXISTS (SELECT 1 FROM rep_stu x WHERE x.rep_id = r.id AND x.deliver)`
-      : `${REPORT_DATE_SQL} = $1 AND EXISTS (
-           SELECT 1 FROM rep_stu x
-            WHERE x.rep_id = r.id AND x.student_id = $2 AND x.deliver
-         ) AND COALESCE(a.result, 'completed') <> 'canceled'`;
+    const where = `${REPORT_DATE_SQL} = $1 AND NOT ${REPORT_CANCELED_SQL}
+      AND EXISTS (SELECT 1 FROM rep_stu x WHERE x.rep_id = r.id AND x.deliver
+        ${studentId === undefined ? '' : 'AND x.student_id = $2'})`;
     return q.query<DetailRow[]>(ReportsService.detailSql(where, lock),
       studentId === undefined ? [onDate] : [onDate, studentId]);
   }

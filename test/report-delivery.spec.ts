@@ -174,6 +174,18 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     await app?.close();
   });
 
+  /** 이 테스트가 만든 규칙만 FK 순서대로 회수한다. 유입/기존 회차가 같은 정리 절차를 쓴다. */
+  async function removeTestSeries(id: number): Promise<void> {
+    await q('DELETE FROM att WHERE ser_id=$1', [id]);
+    await q('DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)', [id]);
+    await q('DELETE FROM rep WHERE ser_id=$1', [id]);
+    await q('DELETE FROM ser_occ WHERE ser_id=$1', [id]);
+    await q('DELETE FROM exc_stu_out WHERE exc_id IN (SELECT id FROM exc WHERE ser_id=$1)', [id]);
+    await q('DELETE FROM exc WHERE ser_id=$1', [id]);
+    await q('DELETE FROM ser_stu WHERE ser_id=$1', [id]);
+    await q('DELETE FROM ser WHERE id=$1', [id]);
+  }
+
   /** 일정 API가 만드는 실제 투영을 재사용한다. 승인 상태만 테스트 fixture로 준비한다. */
   async function recentDelivery(run: (fixture: { id: number; date: string; body: ReportDeliveryCreateDto }) => Promise<void>): Promise<void> {
     const date = addD(todayKst(), -1);
@@ -198,18 +210,11 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       await q(`DELETE FROM pdflog WHERE ref_id IN (SELECT id FROM rsend WHERE student_id=$1 AND on_date=$2)`, [STUDENT_READY, date]);
       await q('DELETE FROM rsend WHERE student_id=$1 AND on_date=$2', [STUDENT_READY, date]);
       await q("DELETE FROM log WHERE actor_id=$1 AND entity='ATT'", [MANAGER]);
-      await q('DELETE FROM att WHERE ser_id=$1', [id]);
-      await q('DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)', [id]);
-      await q('DELETE FROM rep WHERE ser_id=$1', [id]);
-      await q('DELETE FROM ser_occ WHERE ser_id=$1', [id]);
-      await q('DELETE FROM exc_stu_out WHERE exc_id IN (SELECT id FROM exc WHERE ser_id=$1)', [id]);
-      await q('DELETE FROM exc WHERE ser_id=$1', [id]);
-      await q('DELETE FROM ser_stu WHERE ser_id=$1', [id]);
-      await q('DELETE FROM ser WHERE id=$1', [id]);
+      await removeTestSeries(id);
     }
   }
 
-  it.each(['attendance cancel', 'date move', 'end change'] as const)(
+  it.each(['attendance cancel', 'schedule cancel', 'date move', 'end change'] as const)(
     '선행 일정/출결 commit을 기다린 뒤 오래된 발송을 거절한다: %s', async (mode) => {
       await recentDelivery(async ({ id, date, body }) => {
         let ready!: () => void, release!: () => void, seen!: (pid: number) => void;
@@ -239,6 +244,9 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
           first = Promise.resolve(mode === 'attendance cancel'
             ? request(app.getHttpServer()).put(`/schedule/${id}/${date}/attendance`).set(auth(managerToken))
               .send({ result: 'canceled', reason: 'academy' }).timeout(10000)
+            : mode === 'schedule cancel'
+              ? request(app.getHttpServer()).delete(`/schedule/${id}`).set(auth(managerToken))
+                .send({ scope: 'this', onDate: date }).timeout(10000)
             : request(app.getHttpServer()).patch(`/schedule/${id}`).set(auth(managerToken)).send({
               scope: 'this', onDate: date, ...(mode === 'date move' ? { date: addD(date, 1) } : { endMin: 135 }),
             }).timeout(10000));
@@ -271,6 +279,90 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       });
     },
   );
+
+  describe.each(['before request', 'during upload'] as const)('준비 집합 변경: %s', (timing) => {
+    it.each(['create', 'roster', 'move'] as const)('미작성 회차 유입은 발송을 차단한다: %s', async (mode) => {
+      await recentDelivery(async ({ date, body }) => {
+        let incomingId: number | undefined;
+        const future = addD(date, 1);
+        const create = async (fromDate: string, studentIds: number[]) => {
+          const result = await request(app.getHttpServer()).post('/schedule').set(auth(managerToken)).send({
+            kindKey: 'class', subKey: 'ap-chem', teacherId: TEACHER, roomId: null, mode: 'offline',
+            fromDate, rrule: 'ONCE', startMin: 180, endMin: 240, studentIds, title: 'delivery incoming',
+          }).expect(201);
+          incomingId = result.body.serIds[0] as number;
+        };
+        const change = async () => {
+          if (mode === 'create') await create(date, [STUDENT_READY]);
+          else if (mode === 'roster') {
+            await request(app.getHttpServer()).patch(`/schedule/${incomingId}/roster`).set(auth(managerToken))
+              .send({ op: 'add', onDate: date, studentId: STUDENT_READY }).expect(200);
+          } else {
+            await request(app.getHttpServer()).patch(`/schedule/${incomingId}`).set(auth(managerToken))
+              .send({ scope: 'this', onDate: future, date }).expect(200);
+          }
+        };
+        try {
+          if (mode !== 'create') await create(mode === 'move' ? future : date, mode === 'move' ? [STUDENT_READY] : []);
+          if (timing === 'before request') await change();
+          else put.mockImplementationOnce(async () => { await change(); return 'https://private.blob/owned-incoming.png'; });
+          const result = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken)).send(body);
+          expect(result.status).toBe(409);
+          expect(result.body.code).toBe('REPORT_DELIVERY_INCOMPLETE');
+          expect(await q('SELECT id FROM rsend WHERE request_key=$1', [body.requestKey])).toEqual([]);
+          if (timing === 'before request') expect(put).not.toHaveBeenCalled();
+          else expect(remove).toHaveBeenCalledWith(['https://private.blob/owned-incoming.png']);
+          const current = await request(app.getHttpServer()).get('/reports/deliveries').query({ onDate: date })
+            .set(auth(managerToken)).expect(200);
+          const target = current.body.students.find((row: { student: { id: number } }) => row.student.id === STUDENT_READY);
+          expect(target).toMatchObject({ canSend: false, blockedCount: 1 });
+          expect(target.reports).toHaveLength(2);
+        } finally { if (incomingId !== undefined) await removeTestSeries(incomingId); }
+      });
+    });
+
+    it('일정 취소도 출결 취소처럼 신규 발송 대상에서 제외한다', async () => {
+      await recentDelivery(async ({ id, date, body }) => {
+        const cancel = () => request(app.getHttpServer()).delete(`/schedule/${id}`).set(auth(managerToken))
+          .send({ scope: 'this', onDate: date }).expect(200);
+        if (timing === 'before request') await cancel();
+        else put.mockImplementationOnce(async () => { await cancel(); return 'https://private.blob/owned-canceled.png'; });
+        const result = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken)).send(body);
+        expect(result.status).toBe(400);
+        expect(result.body.code).toBe('REPORT_DELIVERY_EMPTY');
+        expect(await q('SELECT id FROM rsend WHERE request_key=$1', [body.requestKey])).toEqual([]);
+        if (timing === 'before request') expect(put).not.toHaveBeenCalled();
+        else expect(remove).toHaveBeenCalledWith(['https://private.blob/owned-canceled.png']);
+        const current = await request(app.getHttpServer()).get('/reports/deliveries').query({ onDate: date })
+          .set(auth(managerToken)).expect(200);
+        expect(current.body.students.some((row: { student: { id: number } }) => row.student.id === STUDENT_READY)).toBe(false);
+      });
+    });
+  });
+
+  it('일정 취소 뒤에도 이미 보낸 이력/상세 출력/재발송의 원본은 보존한다', async () => {
+    await recentDelivery(async ({ id, date, body }) => {
+      const saved = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken)).send(body).expect(201);
+      const sendId = saved.body.item.id as number;
+      const [snapshot] = await q('SELECT on_date,body,rep_ids FROM rsend WHERE id=$1', [sendId]);
+      const files = await q('SELECT file_url FROM pdflog WHERE ref_id=$1', [sendId]);
+      await request(app.getHttpServer()).delete(`/schedule/${id}`).set(auth(managerToken))
+        .send({ scope: 'this', onDate: date }).expect(200);
+      const detail = await request(app.getHttpServer()).get(`/reports/${id}/${date}`).set(auth(managerToken)).expect(200);
+      expect(detail.body.canExport).toBe(true);
+      expect(detail.body.exportFiles[0].revision).toBe(body.files[0].revision);
+      const current = await request(app.getHttpServer()).get('/reports/deliveries').query({ onDate: date })
+        .set(auth(managerToken)).expect(200);
+      expect(current.body.students.some((row: { student: { id: number } }) => row.student.id === STUDENT_READY)).toBe(false);
+      put.mockClear();
+      const copy = await request(app.getHttpServer()).post(`/reports/deliveries/${sendId}/resend`).set(auth(managerToken))
+        .send({ requestKey: '00000000-0000-4000-8000-000000000098' }).expect(201);
+      expect(await q('SELECT on_date,body,rep_ids FROM rsend WHERE id=$1', [copy.body.item.id])).toEqual([snapshot]);
+      expect(await q('SELECT file_url FROM pdflog WHERE ref_id=$1', [copy.body.item.id])).toEqual(files);
+      expect(put).not.toHaveBeenCalled();
+      expect(remove).not.toHaveBeenCalled();
+    });
+  });
 
   it('업로드 중 종료 시각이 바뀌면 같은 파일명이어도 이전 PNG/새 본문 혼합 저장을 막는다', async () => {
     await recentDelivery(async ({ id, date, body }) => {

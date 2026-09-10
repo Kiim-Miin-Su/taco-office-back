@@ -67,7 +67,7 @@ export class ReportsController {
   }
 
   @Get('deliveries')
-  @ApiOperation({ summary: '§48·§49 학생별 리포트 발송 큐 — 없으면 KST 어제', description: 'onDate는 실제 KST 수업일이다. 옮긴 회차도 해당 날짜의 학생 묶음에 포함하며 상세 조회는 개별 리포트의 원래 onDate를 사용한다.' })
+  @ApiOperation({ summary: '§48·§49 학생별 리포트 발송 큐 — 없으면 KST 어제', description: 'onDate는 실제 KST 수업일이다. 옮긴 회차도 해당 날짜의 학생 묶음에 포함하며 상세 조회는 개별 리포트의 원래 onDate를 사용한다. 일정 또는 출결이 취소된 회차는 신규 발송 대상에서 제외한다. 이미 보낸 이력과 재발송 원본은 보존한다.' })
   @ApiOkResponse({ type: ReportDeliveryQueueDto })
   deliveryQueue(
     @CurrentUser() user: RequestUser,
@@ -87,7 +87,7 @@ export class ReportsController {
   }
 
   @Post('deliveries')
-  @ApiOperation({ summary: '학생 1명의 승인된 리포트 PNG를 private Blob에 보존하고 발송 이력 생성', description: '업로드 후 부모 SER→REP 순서로 잠그고 현재 날짜/출결/승인 집합과 출력 원문을 재검증한다. 변경된 PNG/본문 혼합 저장은 거절하고 이번 요청의 업로드만 보상 삭제한다. 같은 요청 키의 완료 이력은 재사용한다.' })
+  @ApiOperation({ summary: '학생 1명의 승인된 리포트 PNG를 private Blob에 보존하고 발송 이력 생성', description: '업로드 후 준비된 부모 SER→REP 순서로 잠그고 현재 날짜/일정·출결 취소/승인 집합과 출력 원문을 재검증한다. 재검증 시 새 미작성 수업이 포함되면 발송을 거절한다. 변경된 PNG/본문 혼합 저장은 거절하고 이번 요청의 업로드만 보상 삭제한다. 같은 요청 키의 완료 이력은 재사용한다.' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력/PNG 형식 오류 또는 REPORT_DELIVERY_EMPTY/FILES_MISMATCH: 현재 발송 대상·출력과 달라짐. 큐를 재조회해 PNG를 다시 생성한다.' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_DELIVERY_INCOMPLETE/NOT_APPROVED/ALREADY_SENT/REQUEST_KEY_REUSED: 현재 작성·승인·발송 상태나 요청 키 충돌. 큐/이력을 다시 조회한다.' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_DELIVERY_FORBIDDEN: 현재 전체 관리 권한이 필요함.' })
