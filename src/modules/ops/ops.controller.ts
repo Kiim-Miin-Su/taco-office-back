@@ -12,7 +12,10 @@ export class OpsController {
 
   @Get()
   @Perm('canAdminPage', 'canCrudAll')
-  @ApiOperation({ summary: '운영 — 상담 · 컴플레인 · 할 일 · 기획 · 회의 · 마케팅 · 건의' })
+  @ApiOperation({
+    summary: '운영 — 상담 · 컴플레인 · 할 일 · 기획 · 회의 · 마케팅 · 건의',
+    description: '§24 FQ는 leads의 name, school, ownerName, reason을 검색한다. 받은 목록의 클라이언트 검색/필터 전환 시 추가 GET은 0회이며 별도 검색 query 계약은 없다.',
+  })
   @ApiOkResponse({ type: OpsDto })
   async all(@CurrentUser() user: RequestUser): Promise<OpsDto> {
     return this.svc.all(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms));

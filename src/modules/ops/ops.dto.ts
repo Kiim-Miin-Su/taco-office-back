@@ -2,18 +2,19 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
+const FQ = { description: 'FQ 클라이언트 검색 대상. 원문을 보존한다.' } as const;
 
 /** §23 상담 단계 보드 · §24 중단 지점 */
 export class LeadDto {
   @ApiProperty() id!: number;
-  @ApiProperty() name!: string;
-  @ApiPropertyOptional(S) school?: string | null;
+  @ApiProperty(FQ) name!: string;
+  @ApiPropertyOptional({ ...S, ...FQ }) school?: string | null;
   @ApiProperty({ description: 'first | wait2nd | second | hold | enrolled | failed' }) stage!: string;
   @ApiPropertyOptional(N) ownerId?: number | null;
   @ApiPropertyOptional(N) studentId?: number | null;
-  @ApiPropertyOptional(S) ownerName?: string | null;
+  @ApiPropertyOptional({ ...S, ...FQ }) ownerName?: string | null;
   @ApiPropertyOptional({ ...S, description: '실패한 경우 어디서 멈췄나 (§24)' }) stopAt?: string | null;
-  @ApiPropertyOptional(S) reason?: string | null;
+  @ApiPropertyOptional({ ...S, ...FQ }) reason?: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty({ description: '접수한 지 며칠' }) ageDays!: number;
 }

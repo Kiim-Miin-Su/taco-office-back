@@ -971,6 +971,7 @@
     },
     "/ops": {
       "get": {
+        "description": "§24 FQ는 leads의 name, school, ownerName, reason을 검색한다. 받은 목록의 클라이언트 검색/필터 전환 시 추가 GET은 0회이며 별도 검색 query 계약은 없다.",
         "operationId": "OpsController_all",
         "parameters": [],
         "responses": {
@@ -3222,11 +3223,13 @@
             "type": "number"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "description": "FQ 클라이언트 검색 대상. 원문을 보존한다."
           },
           "school": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "FQ 클라이언트 검색 대상. 원문을 보존한다."
           },
           "stage": {
             "type": "string",
@@ -3242,7 +3245,8 @@
           },
           "ownerName": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "FQ 클라이언트 검색 대상. 원문을 보존한다."
           },
           "stopAt": {
             "type": "string",
@@ -3251,7 +3255,8 @@
           },
           "reason": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "FQ 클라이언트 검색 대상. 원문을 보존한다."
           },
           "createdAt": {
             "type": "string"

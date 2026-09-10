@@ -10,6 +10,7 @@ import { PERM_KEY, PermGuard, ROLES, permsOf, type RequestUser } from '../src/co
 import { OpsController } from '../src/modules/ops/ops.controller';
 import { LeadDto, type OpsDto } from '../src/modules/ops/ops.dto';
 import { OpsService } from '../src/modules/ops/ops.service';
+import { buildOpenApi } from '../src/openapi';
 
 type Row = Record<string, unknown>;
 const row = (over: Row = {}): Row => ({
@@ -44,6 +45,25 @@ describe('§23·§24 LEAD 응답 projection', () => {
       type: Number, nullable: true, required: false,
     });
   });
+
+  const searchFields = [
+    ['name', 'name'], ['school', 'school'], ['owner_name', 'ownerName'], ['reason', 'reason'],
+  ] as const;
+  const originalTexts = ['  상담 Alpha  ', '', '\t문자\n원문', '비용 · 타 학원 등록', '김서우'];
+  it.each(searchFields.flatMap(([column, field]) => originalTexts.map((value) => ({ column, field, value }))))(
+    'FQ 검색 대상 $field 원문을 trim·기본 문구·정규화 없이 보존한다: $value', async ({ column, field, value }) => {
+      const { svc } = service([row({ [column]: value })]);
+      expect((await svc.all(false)).leads[0][field]).toBe(value);
+    },
+  );
+
+  it.each(searchFields.filter(([column]) => column !== 'name').flatMap(([column, field]) =>
+    [null, undefined].map((value) => ({ column, field, value }))))(
+    'nullable FQ 대상 $field=$value를 null로 투영하며 빈 문자열과 구분한다', async ({ column, field, value }) => {
+      const { svc } = service([row({ [column]: value })]);
+      expect((await svc.all(false)).leads[0][field]).toBeNull();
+    },
+  );
 
   it.each([1, '1', '01', Number.MAX_SAFE_INTEGER, String(Number.MAX_SAFE_INTEGER)])('안전한 양의 ID %p를 숫자로 투영한다', async (id) => {
     const { svc } = service([row({ id, owner_id: id, student_id: id })]);
@@ -94,6 +114,7 @@ describe('§23·§24 LEAD 응답 projection', () => {
 
 describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자와 service만 대역', () => {
   let app: INestApplication;
+  let openApi: ReturnType<typeof buildOpenApi>;
   let user: RequestUser | undefined;
   const all = jest.fn<ReturnType<OpsService['all']>, Parameters<OpsService['all']>>();
   const empty: OpsDto = {
@@ -109,12 +130,41 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     app.use((req: Request, _res: Response, next: NextFunction) => { req.user = user; next(); });
     // 요청마다 ephemeral 포트를 닫고 다시 열지 않는다. 모든 권한 조합이 같은 서버를 검증한다.
     await app.listen(0, '127.0.0.1');
+    openApi = buildOpenApi(app);
   });
   beforeEach(() => { user = undefined; all.mockReset().mockResolvedValue(empty); });
   afterAll(async () => { await app?.close(); });
 
   it('실제 GET handler에 프론트와 동일한 두 권한이 모두 선언되어 있다', () => {
     expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype.all)).toEqual(['canAdminPage', 'canCrudAll']);
+  });
+
+  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 기존 11필드로 명시한다', () => {
+    const schema = openApi.components?.schemas?.LeadDto;
+    if (!schema || '$ref' in schema) throw new Error('LeadDto schema 누락');
+    expect(Object.keys(schema.properties ?? {})).toHaveLength(11);
+    for (const field of ['name', 'school', 'ownerName', 'reason']) {
+      expect(schema.properties?.[field]).toMatchObject({
+        type: 'string', description: expect.stringMatching(/FQ.*원문/),
+      });
+      if (field === 'name') {
+        expect(schema.required).toContain(field);
+        expect(schema.properties?.[field]).not.toMatchObject({ nullable: true });
+      } else {
+        expect(schema.properties?.[field]).toMatchObject({ nullable: true });
+        expect(schema.required).not.toContain(field);
+      }
+    }
+  });
+
+  it('실제 OpenAPI는 FQ 클라이언트 검색/추가 GET 0을 명시하고 검색 query·쓰기 endpoint를 추가하지 않는다', () => {
+    const path = openApi.paths['/ops'];
+    expect(Object.keys(openApi.paths)).toEqual(['/ops']);
+    expect(Object.keys(path)).toEqual(['get']);
+    expect(path.get?.description).toMatch(/name.*school.*ownerName.*reason/);
+    expect(path.get?.description).toMatch(/클라이언트.*추가 GET.*0/);
+    expect(path.get?.parameters ?? []).toEqual([]);
+    expect(path.get?.requestBody).toBeUndefined();
   });
 
   async function checkAccess(allowed: boolean) {
