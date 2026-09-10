@@ -40,6 +40,19 @@ import type {
 export class ScheduleWriteService {
   constructor(@InjectDataSource() private readonly ds: DataSource) {}
 
+  /** 잠금 후 원래 회차 키를 확인한다. 이동 날짜/취소 여부로 판정하면 복원 가능한 회차도 막힌다. */
+  private requireOccurrence(state: State, serId: number, onDate: string) {
+    const ser = state.SER.find((s) => s.id === serId);
+    if (!ser) throw new NotFoundException({ code: 'NOT_FOUND', message: `수업 ${serId} 이(가) 없습니다` });
+    if (!ruleHits(ser, onDate)) {
+      throw new NotFoundException({
+        code: 'OCCURRENCE_NOT_FOUND',
+        message: `${onDate} 회차가 없습니다. 최신 목록에서 수업을 다시 선택해 주세요`,
+      });
+    }
+    return ser;
+  }
+
   /** 네 단계를 한 트랜잭션으로 감싸는 자리. 모든 쓰기가 이것을 통과한다. */
   private async tx<T extends WriteResultDto = WriteResultDto>(
     serIds: number[],
@@ -221,7 +234,7 @@ export class ScheduleWriteService {
 
   async patch(serId: number, dto: OccurrencePatchDto): Promise<WriteResultDto> {
     return this.tx([serId], (before) => {
-      if (!before.SER.length) throw new NotFoundException({ code: 'NOT_FOUND', message: `수업 ${serId} 이(가) 없습니다` });
+      const ser = this.requireOccurrence(before, serId, dto.onDate);
       const patch: OccurrencePatch = { __onDate: dto.onDate };
       if (dto.startMin !== undefined) patch.startMin = dto.startMin;
       if (dto.endMin !== undefined) patch.endMin = dto.endMin;
@@ -240,7 +253,6 @@ export class ScheduleWriteService {
         });
       }
 
-      const ser = before.SER[0];
       const exc = before.EXC.find((e) => e.serId === serId && e.onDate === dto.onDate);
       const baseStart = dto.scope === 'this' ? (exc?.startMin ?? ser.startMin) : ser.startMin;
       const baseEnd = dto.scope === 'this' ? (exc?.endMin ?? ser.endMin) : ser.endMin;
@@ -261,7 +273,7 @@ export class ScheduleWriteService {
 
   async remove(serId: number, dto: OccurrenceDeleteDto): Promise<WriteResultDto> {
     return this.tx([serId], async (before, q) => {
-      if (!before.SER.length) throw new NotFoundException({ code: 'NOT_FOUND', message: `수업 ${serId} 이(가) 없습니다` });
+      this.requireOccurrence(before, serId, dto.onDate);
       // ATT를 포함한 이력 원장은 SER_OCC와 달리 재투영해 지울 수 없다. 전 회차 삭제 요청이어도
       // 사실 참조가 하나라도 있으면 SER를 보존하고 기간만 마감해야 감사 근거가 함께 남는다.
       const refs = await q.query(
@@ -292,14 +304,10 @@ export class ScheduleWriteService {
   /** §12 · §79 — 학생 넣고 빼기. 「그날만 빼기」가 D-R21 이다. */
   async roster(serId: number, dto: RosterPatchDto): Promise<RosterResultDto> {
     return this.tx<RosterResultDto>([serId], async (before, q) => {
-      if (!before.SER.length) throw new NotFoundException({ code: 'NOT_FOUND', message: `수업 ${serId} 이(가) 없습니다` });
+      this.requireOccurrence(before, serId, dto.onDate);
       const student = await q.query('SELECT id FROM stu WHERE id=$1', [dto.studentId]) as Array<{ id: string }>;
       if (!student.length) {
         throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: `학생 ${dto.studentId} 이(가) 없습니다` });
-      }
-      const ser = before.SER[0];
-      if (!ruleHits(ser, dto.onDate)) {
-        throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: `${dto.onDate} 회차가 없습니다` });
       }
       const allowed = rosterScopes(before, serId, dto.studentId, dto.onDate);
       if (!allowed.includes(dto.op)) {

@@ -125,6 +125,15 @@ describe('스케줄 OpenAPI/실제 HTTP 경계 (권한/DB 검증은 별도)', ()
       description: expect.stringContaining('REFERENCE_NOT_FOUND'),
       content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiErrorDto' } } },
     });
+    for (const operation of [
+      document.paths['/schedule/{serId}'].patch!, document.paths['/schedule/{serId}'].delete!,
+      document.paths['/schedule/{serId}/roster'].patch!,
+    ]) {
+      expect(operation.responses['404']).toMatchObject({
+        description: expect.stringContaining('OCCURRENCE_NOT_FOUND'),
+        content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiErrorDto' } } },
+      });
+    }
     const createSchema = schemas.OccurrenceCreateDto;
     if ('$ref' in createSchema) throw Error('missing create schema');
     expect(createSchema.properties).toMatchObject({

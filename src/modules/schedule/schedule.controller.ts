@@ -5,7 +5,7 @@
  */
 
 import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiBadRequestResponse, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrorDto } from '../../common/http.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
@@ -18,6 +18,11 @@ import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
 import { ScheduleAttendanceService } from './schedule.attendance.service';
 import { horizon } from './schedule.project';
+
+const missingOccurrenceResponse = {
+  type: ApiErrorDto,
+  description: 'NOT_FOUND: 수업 없음. OCCURRENCE_NOT_FOUND: 원래 onDate가 현재 규칙의 회차가 아님(분할/삭제 후 오래된 참조 포함). 저장하지 않으며 최신 목록에서 다시 선택해야 한다.',
+};
 
 @ApiTags('schedule')
 @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다' })
@@ -118,6 +123,7 @@ export class ScheduleController {
 
   @Patch(':serId')
   @Perm('canCrudAll')
+  @ApiNotFoundResponse(missingOccurrenceResponse)
   @ApiOperation({
     summary: '수업 고치기 — scope 로 이번만·향후·모두를 가른다 (D-R16)',
     description: '같은 SER의 쓰기는 부모 행 잠금 획득 순서로 처리하며 최신 저장값으로 부분 변경을 검증한다. '
@@ -134,6 +140,7 @@ export class ScheduleController {
 
   @Delete(':serId')
   @Perm('canCrudAll')
+  @ApiNotFoundResponse(missingOccurrenceResponse)
   @ApiOperation({ summary: '수업 취소·휴강 — 참조가 있으면 지우지 않고 기간을 마감한다' })
   @ApiOkResponse({ type: WriteResultDto })
   remove(
@@ -145,6 +152,9 @@ export class ScheduleController {
 
   @Patch(':serId/roster')
   @Perm('canCrudAll')
+  @ApiNotFoundResponse({ ...missingOccurrenceResponse,
+    description: `${missingOccurrenceResponse.description} STUDENT_NOT_FOUND: 학생 없음.`,
+  })
   @ApiOperation({ summary: '수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)' })
   @ApiOkResponse({ type: RosterResultDto })
   roster(

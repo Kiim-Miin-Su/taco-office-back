@@ -191,6 +191,9 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       if (secondRead) await second; // 수정 전: 두 번째 저장 뒤 첫 stale snapshot을 재개한다.
       releaseFirst();
       const results = await Promise.all([first, second]);
+      for (const result of results) {
+        for (const created of result.body.serIds ?? []) if (!made.includes(created)) made.push(created);
+      }
       return { results, blocked };
     } finally {
       releaseFirst();
@@ -266,6 +269,82 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     } finally {
       await reader.release();
     }
+  });
+
+  it.each(['this', 'future', 'all'] as const)('동시 분할 후 오래된 %s 수정은 새 규칙/유령 예외를 만들지 않는다', async (scope) => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const splitDate = plus(from, 7);
+    const { results, blocked } = await racePatches(id, [
+      { scope: 'future', onDate: splitDate, startMin: 610 },
+      { scope, onDate: splitDate, endMin: 680 },
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 404]);
+    expect(results[1].body.code).toBe('OCCURRENCE_NOT_FOUND');
+    expect(blocked).toBe(true);
+    const next = results[0].body.serIds.find((sid: number) => sid !== id) as number;
+    expect(await q('SELECT start_min,end_min,to_date::text FROM ser WHERE id=$1', [id]))
+      .toEqual([{ start_min: 600, end_min: 660, to_date: plus(splitDate, -1) }]);
+    expect(await q('SELECT start_min,end_min,from_date::text FROM ser WHERE id=$1', [next]))
+      .toEqual([{ start_min: 610, end_min: 660, from_date: splitDate }]);
+    expect(await q('SELECT id FROM exc WHERE ser_id=$1', [id])).toHaveLength(0);
+    expect(await q('SELECT ser_id FROM ser_occ WHERE ser_id=ANY($1) AND on_date=$2', [[id, next], splitDate]))
+      .toEqual([{ ser_id: String(next) }]);
+  });
+
+  it.each(['this', 'future', 'all'] as const)('%s 수정/삭제는 반복 규칙에 없는 요일을 거절한다', async (scope) => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const onDate = plus(from, 1); // 월/수 규칙의 화요일은 원래 회차 키가 아니다.
+    for (const method of ['patch', 'delete'] as const) {
+      const res = await api(method, `/schedule/${id}`).send({ scope, onDate, ...(method === 'patch' ? { endMin: 680 } : {}) });
+      for (const created of res.body.serIds ?? []) if (!made.includes(created)) made.push(created);
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('OCCURRENCE_NOT_FOUND');
+    }
+    expect(await q('SELECT end_min,to_date FROM ser WHERE id=$1', [id])).toEqual([{ end_min: 660, to_date: null }]);
+    expect(await q('SELECT id FROM exc WHERE ser_id=$1', [id])).toHaveLength(0);
+  });
+
+  it('향후 삭제로 닫힌 원래 회차는 모든 범위의 추가 삭제를 거절한다', async () => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const onDate = plus(from, 7);
+    await api('delete', `/schedule/${id}`).send({ scope: 'future', onDate }).expect(200);
+    for (const scope of ['this', 'future', 'all']) {
+      const res = await api('delete', `/schedule/${id}`).send({ scope, onDate });
+      expect(res.status).toBe(404);
+      expect(res.body.code).toBe('OCCURRENCE_NOT_FOUND');
+    }
+    expect(await q('SELECT to_date::text FROM ser WHERE id=$1', [id])).toEqual([{ to_date: plus(onDate, -1) }]);
+  });
+
+  it('취소 회차를 수정하면 복원되며 이동한 회차는 원래 onDate로 다시 수정된다', async () => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    await api('delete', `/schedule/${id}`).send({ scope: 'this', onDate: from }).expect(200);
+    await api('patch', `/schedule/${id}`).send({ scope: 'this', onDate: from, date: plus(from, 1), endMin: 680 }).expect(200);
+    await api('patch', `/schedule/${id}`).send({ scope: 'this', onDate: from, startMin: 610 }).expect(200);
+    expect(await q('SELECT on_date::text,new_date::text,canceled,start_min,end_min FROM exc WHERE ser_id=$1', [id]))
+      .toEqual([{ on_date: from, new_date: plus(from, 1), canceled: false, start_min: 610, end_min: 680 }]);
+  });
+
+  it('역순의 다중 SER 동시 이동도 둘 다 완료하고 한 요청의 전체 상태로 끝난다', async () => {
+    const a = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const b = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const item = (id: number, startMin: number) => ({
+      source: { serId: id, onDate: a.from, date: a.from }, date: a.from, startMin, endMin: startMin + 60,
+    });
+    const results = await Promise.all([
+      api('post', '/schedule/move').send({ scope: 'all', items: [item(a.id, 660), item(b.id, 780)] }),
+      api('post', '/schedule/move').send({ scope: 'all', items: [item(b.id, 840), item(a.id, 720)] }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([201, 201]);
+    const times = (await q<{ start_min: number }>('SELECT start_min FROM ser WHERE id=ANY($1) ORDER BY id', [[a.id, b.id]]))
+      .map((r) => r.start_min);
+    expect([[660, 780], [720, 840]]).toContainEqual(times);
+    const projected = await q<{ start_min: number }>(
+      `SELECT extract(hour FROM lower(span) AT TIME ZONE 'Asia/Seoul')::int*60 +
+              extract(minute FROM lower(span) AT TIME ZONE 'Asia/Seoul')::int AS start_min
+         FROM ser_occ WHERE ser_id=ANY($1) AND on_date=$2 ORDER BY ser_id`, [[a.id, b.id], a.from],
+    );
+    expect(projected.map((r) => r.start_min)).toEqual(times);
   });
 
   it('잘못된 반복 문법은 HTTP400이며 SER/투영을 추가하지 않는다', async () => {
