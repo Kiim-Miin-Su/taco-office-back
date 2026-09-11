@@ -3304,6 +3304,157 @@
         ]
       }
     },
+    "/teacher/suggestions": {
+      "get": {
+        "operationId": "TeacherController_suggestions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherSuggestionsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "건의 사항 — 내가 보낸 것 + 이달 쿼터 (덱 §33~34 · D-11·D-12)",
+        "tags": [
+          "teacher"
+        ]
+      },
+      "post": {
+        "operationId": "TeacherController_createSuggestion",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherSuggestionCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherSuggestionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "이달 한도 소진 — code SUGGESTION_QUOTA_EXCEEDED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "건의 등록 — 월 3회는 서버가 센다 (초과: SUGGESTION_QUOTA_EXCEEDED)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/exec": {
       "get": {
         "operationId": "ExecController_range",
@@ -7375,6 +7526,124 @@
           "stats",
           "lessons",
           "settlement"
+        ]
+      },
+      "TeacherSuggestionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "lesson",
+              "pay",
+              "schedule",
+              "etc"
+            ],
+            "description": "수업·시급·스케줄·기타 (D-11 확정)"
+          },
+          "body": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "reviewing",
+              "done"
+            ],
+            "description": "접수됨·확인 중·답변 완료 (D-12)"
+          },
+          "createdOn": {
+            "type": "string",
+            "description": "등록일 YYYY-MM-DD (KST)"
+          },
+          "reply": {
+            "type": "string",
+            "nullable": true
+          },
+          "replyBy": {
+            "type": "string",
+            "nullable": true,
+            "description": "답변한 관리자 이름"
+          },
+          "replyOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "답변일 YYYY-MM-DD (KST)"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "body",
+          "state",
+          "createdOn"
+        ]
+      },
+      "TeacherSuggestionsDto": {
+        "type": "object",
+        "properties": {
+          "yearMonth": {
+            "type": "string",
+            "description": "쿼터 기준 달 YYYY-MM (KST)"
+          },
+          "used": {
+            "type": "number",
+            "description": "이달 등록 수"
+          },
+          "limit": {
+            "type": "number",
+            "description": "월 한도 — 서버 상수"
+          },
+          "remaining": {
+            "type": "number",
+            "description": "남은 횟수"
+          },
+          "canPost": {
+            "type": "boolean",
+            "description": "지금 등록 가능한가 — 서버가 판정한 값만 소비한다"
+          },
+          "items": {
+            "description": "최근 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherSuggestionDto"
+            }
+          }
+        },
+        "required": [
+          "yearMonth",
+          "used",
+          "limit",
+          "remaining",
+          "canPost",
+          "items"
+        ]
+      },
+      "TeacherSuggestionCreateDto": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "lesson",
+              "pay",
+              "schedule",
+              "etc"
+            ],
+            "description": "D-11 분류 4종"
+          },
+          "body": {
+            "type": "string",
+            "description": "건의 내용 — 1~2000자"
+          }
+        },
+        "required": [
+          "category",
+          "body"
         ]
       },
       "ExecStatDto": {

@@ -4,11 +4,16 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Controller, ForbiddenException, Get, Query } from '@nestjs/common';
-import { ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, ForbiddenException, Get, Post, Query } from '@nestjs/common';
+import {
+  ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags,
+} from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import type { RequestUser } from '../../common/perm';
-import { TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto } from './teacher.dto';
+import {
+  TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
+  TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
+} from './teacher.dto';
 import { TeacherService } from './teacher.service';
 
 @ApiTags('teacher')
@@ -37,5 +42,27 @@ export class TeacherController {
   async history(@CurrentUser() user: RequestUser, @Query() query: TeacherHistoryQueryDto): Promise<TeacherHistoryDto> {
     this.assertTeacher(user);
     return this.svc.history(user.id, query.month);
+  }
+
+  @Get('suggestions')
+  @ApiOperation({ summary: '건의 사항 — 내가 보낸 것 + 이달 쿼터 (덱 §33~34 · D-11·D-12)' })
+  @ApiOkResponse({ type: TeacherSuggestionsDto })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async suggestions(@CurrentUser() user: RequestUser): Promise<TeacherSuggestionsDto> {
+    this.assertTeacher(user);
+    return this.svc.suggestions(user.id);
+  }
+
+  @Post('suggestions')
+  @ApiOperation({ summary: '건의 등록 — 월 3회는 서버가 센다 (초과: SUGGESTION_QUOTA_EXCEEDED)' })
+  @ApiCreatedResponse({ type: TeacherSuggestionDto })
+  @ApiConflictResponse({ description: '이달 한도 소진 — code SUGGESTION_QUOTA_EXCEEDED' })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async createSuggestion(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: TeacherSuggestionCreateDto,
+  ): Promise<TeacherSuggestionDto> {
+    this.assertTeacher(user);
+    return this.svc.createSuggestion(user.id, dto);
   }
 }

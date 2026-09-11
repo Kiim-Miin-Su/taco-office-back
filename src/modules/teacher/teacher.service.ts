@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ser } from '../../entities';
@@ -15,7 +15,13 @@ import {
 import { nowMinKst, todayKst } from '../../lib/kst';
 import type {
   TeacherHistoryDto, TeacherHistoryLessonDto, TeacherHomeDto, TeacherLessonDto,
+  TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
 } from './teacher.dto';
+
+/** 건의 월 한도 (V26 §7 확정 — 서버가 센다, SUGGESTION_QUOTA_EXCEEDED) */
+const SUGGESTION_MONTHLY_LIMIT = 3;
+/** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
+const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
 
 type R = Record<string, unknown>;
 
@@ -282,5 +288,92 @@ export class TeacherService {
       lessons,
       settlement,
     };
+  }
+
+  /** 이달(KST) 등록 수 — 쿼터 판정과 응답이 같은 문장을 쓴다. */
+  private async suggestionUsed(teacherId: number, today: string): Promise<number> {
+    const [row] = await this.q(
+      `SELECT COUNT(*)::int AS n FROM suggestion
+        WHERE staff_id = $1
+          AND ${KST_DATE} >= date_trunc('month', $2::date)::date
+          AND ${KST_DATE} <  (date_trunc('month', $2::date) + interval '1 month')::date`,
+      [teacherId, today],
+    );
+    return Number(row?.n ?? 0);
+  }
+
+  private suggestionRow(r: R): TeacherSuggestionDto {
+    return {
+      id: Number(r.id),
+      category: String(r.category),
+      body: String(r.body),
+      state: String(r.state),
+      createdOn: String(r.created_on),
+      reply: (r.reply as string) ?? null,
+      replyBy: (r.reply_by_name as string) ?? null,
+      replyOn: (r.reply_on as string) ?? null,
+    };
+  }
+
+  /** 건의 사항 — 내가 보낸 것 + 이달 쿼터 (덱 §33~34 · 월 3회는 서버가 센다). */
+  async suggestions(teacherId: number): Promise<TeacherSuggestionsDto> {
+    const today = todayKst();
+    const used = await this.suggestionUsed(teacherId, today);
+    const items = await this.q(
+      `SELECT g.id, g.category::text AS category, g.body, g.state::text AS state,
+              to_char((g.created_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS created_on,
+              g.reply, st.name AS reply_by_name,
+              to_char((g.reply_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS reply_on
+         FROM suggestion g
+         LEFT JOIN staff st ON st.id = g.reply_by
+        WHERE g.staff_id = $1
+        ORDER BY g.created_at DESC
+        LIMIT 100`,
+      [teacherId],
+    );
+    return {
+      yearMonth: today.slice(0, 7),
+      used,
+      limit: SUGGESTION_MONTHLY_LIMIT,
+      remaining: Math.max(0, SUGGESTION_MONTHLY_LIMIT - used),
+      canPost: used < SUGGESTION_MONTHLY_LIMIT,
+      items: items.map((r) => this.suggestionRow(r)),
+    };
+  }
+
+  /**
+   * 건의 등록 — 확정 쓰기 1호. 쿼터 판정과 삽입을 **한 문장**으로 묶어
+   * 동시 요청이 와도 한도를 넘겨 들어가지 않는다 (등록 차단: SUGGESTION_QUOTA_EXCEEDED).
+   */
+  async createSuggestion(teacherId: number, dto: TeacherSuggestionCreateDto): Promise<TeacherSuggestionDto> {
+    const today = todayKst();
+    const body = dto.body.trim();
+    if (!body) throw new ConflictException({ code: 'EMPTY_BODY', message: '내용을 적어 주세요' });
+
+    // 잠금 + 판정 + 삽입을 한 트랜잭션으로 — 동시 요청 두 개가 같은 「2/3」을 보고 둘 다 들어가는 창을 닫는다
+    const inserted = await this.anyRepo.manager.transaction(async (em) => {
+      await em.query(`SELECT pg_advisory_xact_lock(hashtext('suggestion-quota'), $1::int)`, [teacherId]);
+      return em.query(
+        `INSERT INTO suggestion (staff_id, category, body)
+         SELECT $1, $2::sug_cat_t, $3
+          WHERE (SELECT COUNT(*) FROM suggestion
+                  WHERE staff_id = $1
+                    AND ${KST_DATE} >= date_trunc('month', $4::date)::date
+                    AND ${KST_DATE} <  (date_trunc('month', $4::date) + interval '1 month')::date)
+                < ${SUGGESTION_MONTHLY_LIMIT}
+         RETURNING id, category::text AS category, body, state::text AS state,
+                   to_char((created_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS created_on,
+                   reply, NULL AS reply_by_name, NULL AS reply_on`,
+        [teacherId, dto.category, body, today],
+      ) as Promise<R[]>;
+    });
+    const row = inserted[0];
+    if (!row) {
+      throw new ConflictException({
+        code: 'SUGGESTION_QUOTA_EXCEEDED',
+        message: `이번 달 건의 ${SUGGESTION_MONTHLY_LIMIT}회를 모두 사용했습니다. 다음 달에 다시 남길 수 있습니다`,
+      });
+    }
+    return this.suggestionRow(row);
   }
 }

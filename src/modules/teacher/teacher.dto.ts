@@ -5,8 +5,8 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, Matches } from 'class-validator';
-import { REP_STATE_T_VALUES } from '../../entities/enums';
+import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { REP_STATE_T_VALUES, SUG_CAT_T_VALUES, SUG_STATE_T_VALUES } from '../../entities/enums';
 
 const S = { type: String, nullable: true } as const;
 
@@ -120,6 +120,42 @@ export class TeacherSettlementDto {
   @ApiProperty({ description: '이 달 남은 예정 수업' }) remainingCount!: number;
   @ApiProperty() remainingMinutes!: number;
   @ApiProperty({ description: '남은 예정 예상 금액 (시급 기준)' }) remainingAmount!: number;
+}
+
+/* ══ 건의 사항 (강사 덱 §33~34 · D-11 분류 · D-12 상태 · 월 3회 서버 쿼터) ══ */
+
+export class TeacherSuggestionDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: [...SUG_CAT_T_VALUES], description: '수업·시급·스케줄·기타 (D-11 확정)' })
+  category!: string;
+  @ApiProperty() body!: string;
+  @ApiProperty({ enum: [...SUG_STATE_T_VALUES], description: '접수됨·확인 중·답변 완료 (D-12)' })
+  state!: string;
+  @ApiProperty({ description: '등록일 YYYY-MM-DD (KST)' }) createdOn!: string;
+  @ApiPropertyOptional(S) reply?: string | null;
+  @ApiPropertyOptional({ ...S, description: '답변한 관리자 이름' }) replyBy?: string | null;
+  @ApiPropertyOptional({ ...S, description: '답변일 YYYY-MM-DD (KST)' }) replyOn?: string | null;
+}
+
+/** GET /teacher/suggestions — 내가 보낸 건의 + 이달 쿼터. canPost 는 서버 판정 플래그다 (화면 재판정 금지). */
+export class TeacherSuggestionsDto {
+  @ApiProperty({ description: '쿼터 기준 달 YYYY-MM (KST)' }) yearMonth!: string;
+  @ApiProperty({ description: '이달 등록 수' }) used!: number;
+  @ApiProperty({ description: '월 한도 — 서버 상수' }) limit!: number;
+  @ApiProperty({ description: '남은 횟수' }) remaining!: number;
+  @ApiProperty({ description: '지금 등록 가능한가 — 서버가 판정한 값만 소비한다' }) canPost!: boolean;
+  @ApiProperty({ type: [TeacherSuggestionDto], description: '최근 순' }) items!: TeacherSuggestionDto[];
+}
+
+export class TeacherSuggestionCreateDto {
+  @ApiProperty({ enum: [...SUG_CAT_T_VALUES], description: 'D-11 분류 4종' })
+  @IsIn([...SUG_CAT_T_VALUES], { message: '분류는 수업·시급·스케줄·기타 중 하나입니다' })
+  category!: string;
+  @ApiProperty({ description: '건의 내용 — 1~2000자' })
+  @IsString()
+  @MinLength(1, { message: '내용을 적어 주세요' })
+  @MaxLength(2000, { message: '내용은 2000자 이내입니다' })
+  body!: string;
 }
 
 /** GET /teacher/history — 월 수업 기록 + 본인 정산 (덱 §29~31 · 강사 전용) */

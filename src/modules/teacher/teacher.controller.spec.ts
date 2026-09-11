@@ -16,6 +16,8 @@ describe('TeacherController — 강사 전용 표면', () => {
   const svc = {
     home: jest.fn().mockResolvedValue(dto),
     history: jest.fn().mockResolvedValue(hist),
+    suggestions: jest.fn().mockResolvedValue({ used: 0, items: [] }),
+    createSuggestion: jest.fn().mockResolvedValue({ id: 1 }),
   } as unknown as TeacherService;
   const ctrl = new TeacherController(svc);
   const user = (role: RequestUser['role'], id = 7): RequestUser => ({ id, role, perms: {} } as RequestUser);
@@ -45,5 +47,20 @@ describe('TeacherController — 강사 전용 표면', () => {
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 히스토리(정산 포함)도 403', async (role) => {
     await expect(ctrl.history(user(role), {})).rejects.toBeInstanceOf(ForbiddenException);
     expect(svc.history).not.toHaveBeenCalled();
+  });
+
+  it('건의 목록·등록은 자기 id 로 위임된다', async () => {
+    await ctrl.suggestions(user('teacher', 42));
+    expect((svc.suggestions as jest.Mock).mock.calls).toEqual([[42]]);
+    const dto2 = { category: 'lesson', body: '교재 재고 확인 부탁드립니다' };
+    await ctrl.createSuggestion(user('teacher', 42), dto2);
+    expect((svc.createSuggestion as jest.Mock).mock.calls).toEqual([[42, dto2]]);
+  });
+
+  it.each(['manager', 'admin', 'ceo'] as const)('%s 는 건의 읽기·쓰기 모두 403', async (role) => {
+    await expect(ctrl.suggestions(user(role))).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(ctrl.createSuggestion(user(role), { category: 'etc', body: 'x' })).rejects.toBeInstanceOf(ForbiddenException);
+    expect(svc.suggestions).not.toHaveBeenCalled();
+    expect(svc.createSuggestion).not.toHaveBeenCalled();
   });
 });
