@@ -5583,7 +5583,10 @@
             "type": "number"
           },
           "paidOn": {
-            "type": "string"
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "description": "입금일 — 미확인 날짜는 null이며 문자열 null이 아니다"
           },
           "studentId": {
             "type": "number",
@@ -5595,7 +5598,8 @@
           },
           "amount": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "실제 입금액. null은 미확인 또는 금액 권한 없음; summary.canSeeAmounts로 구분. 0은 확인된 0원"
           },
           "method": {
             "type": "string",

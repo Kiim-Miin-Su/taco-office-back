@@ -22,6 +22,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
+import { buildOpenApi } from '../src/openapi';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(40_000);
@@ -104,6 +105,34 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     request(app.getHttpServer()).get(path).set('Authorization', `Bearer ${tokens.get(email)!}`);
 
   /* ── ① 빈 화면이 아니다 ─────────────────────────────────────────── */
+
+  it.each([null, 0, 123400])('입금액 %s와 미확인 날짜/수단은 DB 의미 그대로 반환한다', async (amount) => {
+    const [row] = await ds.query(
+      'INSERT INTO pay(amount,paid_on,method,entered_by) VALUES($1,NULL,NULL,913) RETURNING id',
+      [amount],
+    );
+    try {
+      const ceo = await get('/accounting', CEO).expect(200);
+      expect(ceo.body.payments.find((p: { id: number }) => p.id === Number(row.id)))
+        .toMatchObject({ amount, paidOn: null, method: null });
+      const manager = await get('/accounting', MANAGER).expect(200);
+      expect(manager.body.payments.find((p: { id: number }) => p.id === Number(row.id)))
+        .toMatchObject({ amount: null, paidOn: null, method: null });
+      const [stored] = await ds.query('SELECT amount,paid_on,method FROM pay WHERE id=$1', [row.id]);
+      expect(stored).toEqual({ amount, paid_on: null, method: null });
+    } finally {
+      await ds.query('DELETE FROM pay WHERE id=$1 AND entered_by=913', [row.id]);
+    }
+  });
+
+  it('입금 날짜는 필수 nullable date이고 금액 NULL 의미는 OpenAPI에도 남는다', () => {
+    const schema = buildOpenApi(app).components?.schemas?.PaymentDto;
+    expect(schema).toMatchObject({
+      required: expect.arrayContaining(['paidOn', 'amount']),
+      properties: { paidOn: { type: 'string', nullable: true, format: 'date' },
+        amount: { nullable: true, description: expect.stringContaining('미확인') } },
+    });
+  });
 
   it('교재 — 강사도 본다. 자기 수업에 무엇을 쓰는지 알아야 한다', async () => {
     const r = await get('/books', TEACHER).expect(200);

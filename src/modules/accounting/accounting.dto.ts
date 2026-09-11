@@ -33,10 +33,10 @@ export class InvoiceDto {
 
 export class PaymentDto {
   @ApiProperty() id!: number;
-  @ApiProperty() paidOn!: string;
+  @ApiProperty({ type: String, format: 'date', nullable: true, description: '입금일 — 미확인 날짜는 null이며 문자열 null이 아니다' }) paidOn!: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) studentId?: number | null;
   @ApiPropertyOptional({ type: String, nullable: true }) studentName?: string | null;
-  @ApiProperty({ type: Number, nullable: true }) amount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '실제 입금액. null은 미확인 또는 금액 권한 없음; summary.canSeeAmounts로 구분. 0은 확인된 0원' }) amount!: number | null;
   @ApiPropertyOptional({ type: String, nullable: true }) method?: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) invId?: number | null;
 }

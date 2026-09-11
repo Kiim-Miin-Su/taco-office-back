@@ -23,7 +23,8 @@ export class AccountingService {
    *   서버가 아예 null 로 내려보낸다. 화면에서만 감추면 네트워크 탭에 그대로 보인다.
    */
   async all(canSeeAmounts: boolean): Promise<AccountingDto> {
-    const money = (v: unknown): number | null => (canSeeAmounts ? Number(v ?? 0) : null);
+    // PAY의 NULL은 아직 확인하지 않은 값이다. 권한이 있어도 0원으로 채우지 않는다.
+    const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
     const today = todayKst();
 
     const invRows = (await this.inv.query(
@@ -64,7 +65,7 @@ export class AccountingService {
         ORDER BY p.paid_on DESC, p.id DESC`,
     )) as Array<Record<string, unknown>>;
     const payments: PaymentDto[] = payRows.map((r) => ({
-      id: Number(r.id), paidOn: String(r.paid_on),
+      id: Number(r.id), paidOn: r.paid_on == null ? null : String(r.paid_on),
       studentId: r.student_id ? Number(r.student_id) : null,
       studentName: (r.student_name as string | null) ?? null,
       amount: money(r.amount), method: (r.method as string | null) ?? null,
