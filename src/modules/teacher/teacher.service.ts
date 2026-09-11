@@ -14,6 +14,7 @@ import {
 } from '../../lib/rules';
 import { nowMinKst, todayKst } from '../../lib/kst';
 import type {
+  TeacherGuideStudentDto, TeacherGuidesDto,
   TeacherHistoryDto, TeacherHistoryLessonDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
 } from './teacher.dto';
@@ -287,6 +288,119 @@ export class TeacherService {
       wageFrom: (me?.wage_from as string) ?? null,
       lessons,
       settlement,
+    };
+  }
+
+  /**
+   * 수업 안내 — 이번 주(월~일) 담당 학생과 준비 정보 (강사 덱 §10~13).
+   *
+   * 학생 스타일 영역별 평가·바 차트는 구조화 저장처가 없어 **싣지 않는다**
+   * (조사 메모 TBO-49 §6 — 결정 요청 대상). 진단은 diag 최신 1건의 텍스트 그대로.
+   */
+  async guides(teacherId: number, week?: string): Promise<TeacherGuidesDto> {
+    const anchor = week ?? todayKst();
+
+    const rows = await this.q(
+      `WITH wk AS (
+         SELECT date_trunc('week', $2::date)::date AS f,
+                date_trunc('week', $2::date)::date + 6 AS t
+       )
+       SELECT st.id AS student_id, st.name, st.grade, st.school, st.target_exam,
+              st.guidance, st.lang,
+              o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
+              (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
+              s.sub_key, s.title
+         FROM ser_occ o
+         JOIN ser s      ON s.id = o.ser_id
+         JOIN ser_stu ss ON ss.ser_id = o.ser_id
+         JOIN stu st     ON st.id = ss.student_id
+         CROSS JOIN wk
+        WHERE ${TEACHER_OF} = $1
+          AND NOT o.canceled
+          AND o.on_date BETWEEN wk.f AND wk.t
+        ORDER BY o.on_date, start_min, st.name`,
+      [teacherId, anchor],
+    );
+
+    const byStudent = new Map<number, TeacherGuideStudentDto>();
+    for (const r of rows) {
+      const id = Number(r.student_id);
+      let s = byStudent.get(id);
+      if (!s) {
+        s = {
+          studentId: id,
+          name: String(r.name),
+          grade: (r.grade as string) ?? null,
+          school: (r.school as string) ?? null,
+          targetExam: (r.target_exam as string) ?? null,
+          guidance: (r.guidance as string) ?? null,
+          lang: (r.lang as string) ?? null,
+          weekCount: 0,
+          lessons: [],
+          books: [],
+          diag: null,
+        };
+        byStudent.set(id, s);
+      }
+      s.weekCount += 1;
+      s.lessons.push({
+        onDate: String(r.on_date), startMin: Number(r.start_min), durMin: Number(r.dur_min),
+        subKey: (r.sub_key as string) ?? null, title: (r.title as string) ?? null,
+      });
+    }
+
+    const ids = [...byStudent.keys()];
+    if (ids.length > 0) {
+      const books = await this.q(
+        `SELECT i.id AS issue_id, i.student_id, l.code, l.title, l.sub_key, l.level, l.se_te,
+                to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
+                to_char(i.returned_on,'YYYY-MM-DD') AS returned_on
+           FROM issue i JOIN lib l ON l.id = i.lib_id
+          WHERE i.student_id = ANY($1)
+          ORDER BY (i.returned_on IS NOT NULL), i.issued_on DESC`,
+        [ids],
+      );
+      for (const b of books) {
+        byStudent.get(Number(b.student_id))?.books.push({
+          issueId: Number(b.issue_id), code: String(b.code), title: String(b.title),
+          subKey: (b.sub_key as string) ?? null, level: (b.level as string) ?? null,
+          seTe: String(b.se_te ?? 'SE'), issuedOn: String(b.issued_on),
+          returnedOn: (b.returned_on as string) ?? null,
+        });
+      }
+
+      const diags = await this.q(
+        `SELECT DISTINCT ON (d.student_id)
+                d.student_id, to_char(d.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS on_date,
+                d.level_summary, d.strengths, d.weaknesses
+           FROM diag d
+          WHERE d.student_id = ANY($1)
+          ORDER BY d.student_id, d.created_at DESC`,
+        [ids],
+      );
+      for (const d of diags) {
+        const s = byStudent.get(Number(d.student_id));
+        if (s) {
+          s.diag = {
+            onDate: (d.on_date as string) ?? null,
+            levelSummary: String(d.level_summary),
+            strengths: (d.strengths as string) ?? null,
+            weaknesses: (d.weaknesses as string) ?? null,
+          };
+        }
+      }
+    }
+
+    const [wk] = await this.q(
+      `SELECT to_char(date_trunc('week', $1::date)::date, 'YYYY-MM-DD') AS f,
+              to_char(date_trunc('week', $1::date)::date + 6, 'YYYY-MM-DD') AS t`,
+      [anchor],
+    );
+    return {
+      weekFrom: String(wk?.f ?? anchor),
+      weekTo: String(wk?.t ?? anchor),
+      students: [...byStudent.values()],
     };
   }
 

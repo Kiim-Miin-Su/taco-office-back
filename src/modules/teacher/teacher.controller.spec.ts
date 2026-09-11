@@ -18,6 +18,7 @@ describe('TeacherController — 강사 전용 표면', () => {
     history: jest.fn().mockResolvedValue(hist),
     suggestions: jest.fn().mockResolvedValue({ used: 0, items: [] }),
     createSuggestion: jest.fn().mockResolvedValue({ id: 1 }),
+    guides: jest.fn().mockResolvedValue({ students: [] }),
   } as unknown as TeacherService;
   const ctrl = new TeacherController(svc);
   const user = (role: RequestUser['role'], id = 7): RequestUser => ({ id, role, perms: {} } as RequestUser);
@@ -55,6 +56,17 @@ describe('TeacherController — 강사 전용 표면', () => {
     const dto2 = { category: 'lesson', body: '교재 재고 확인 부탁드립니다' };
     await ctrl.createSuggestion(user('teacher', 42), dto2);
     expect((svc.createSuggestion as jest.Mock).mock.calls).toEqual([[42, dto2]]);
+  });
+
+  it('수업 안내도 자기 id·주 인자로 위임된다', async () => {
+    await ctrl.guides(user('teacher', 42), { week: '2026-09-01' });
+    await ctrl.guides(user('teacher', 42), {});
+    expect((svc.guides as jest.Mock).mock.calls).toEqual([[42, '2026-09-01'], [42, undefined]]);
+  });
+
+  it.each(['manager', 'admin', 'ceo'] as const)('%s 는 수업 안내도 403', async (role) => {
+    await expect(ctrl.guides(user(role), {})).rejects.toBeInstanceOf(ForbiddenException);
+    expect(svc.guides).not.toHaveBeenCalled();
   });
 
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 건의 읽기·쓰기 모두 403', async (role) => {

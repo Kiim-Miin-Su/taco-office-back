@@ -158,6 +158,63 @@ export class TeacherSuggestionCreateDto {
   body!: string;
 }
 
+/* ══ 수업 안내 (강사 덱 §10~13 — 이번 주 담당 학생·교재·진단·수업 설정) ══ */
+
+export class TeacherGuideLessonDto {
+  @ApiProperty({ description: 'YYYY-MM-DD (KST)' }) onDate!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() durMin!: number;
+  @ApiPropertyOptional(S) subKey?: string | null;
+  @ApiPropertyOptional(S) title?: string | null;
+}
+
+export class TeacherGuideBookDto {
+  @ApiProperty() issueId!: number;
+  @ApiProperty() code!: string;
+  @ApiProperty() title!: string;
+  @ApiPropertyOptional(S) subKey?: string | null;
+  @ApiPropertyOptional(S) level?: string | null;
+  @ApiProperty({ description: 'SE | TE' }) seTe!: string;
+  @ApiProperty({ description: '배부일 YYYY-MM-DD' }) issuedOn!: string;
+  @ApiPropertyOptional({ ...S, description: '반환일 — null 이면 사용 중' }) returnedOn?: string | null;
+}
+
+export class TeacherGuideDiagDto {
+  @ApiPropertyOptional({ ...S, description: '응시일 YYYY-MM-DD' }) onDate?: string | null;
+  @ApiProperty() levelSummary!: string;
+  @ApiPropertyOptional(S) strengths?: string | null;
+  @ApiPropertyOptional(S) weaknesses?: string | null;
+}
+
+export class TeacherGuideStudentDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() name!: string;
+  @ApiPropertyOptional(S) grade?: string | null;
+  @ApiPropertyOptional(S) school?: string | null;
+  @ApiPropertyOptional(S) targetExam?: string | null;
+  @ApiPropertyOptional({ ...S, description: '지도 강도 — stu.guidance 원문 (미설정 null)' }) guidance?: string | null;
+  @ApiPropertyOptional({ ...S, description: '수업 언어 — stu.lang 원문 (ko·en 등)' }) lang?: string | null;
+  @ApiProperty({ description: '이번 주 내 수업 횟수 (취소 제외)' }) weekCount!: number;
+  @ApiProperty({ type: [TeacherGuideLessonDto], description: '이번 주 내 수업 회차 (시각 순)' }) lessons!: TeacherGuideLessonDto[];
+  @ApiProperty({ type: [TeacherGuideBookDto], description: '교재 — 사용 중 먼저, 반환분은 이력' }) books!: TeacherGuideBookDto[];
+  @ApiPropertyOptional({ type: TeacherGuideDiagDto, nullable: true, description: '최신 진단 — 없으면 null' })
+  diag?: TeacherGuideDiagDto | null;
+}
+
+export class TeacherGuidesQueryDto {
+  @ApiPropertyOptional({ description: '조회할 주의 아무 날짜 YYYY-MM-DD — 없으면 오늘(KST) 주' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'week는 YYYY-MM-DD 형식입니다' })
+  week?: string;
+}
+
+/** GET /teacher/guides — 이번 주 담당 학생과 수업 준비 정보 (강사 전용, 서버가 본인 수업으로 고정) */
+export class TeacherGuidesDto {
+  @ApiProperty({ description: '이번 주 월요일 YYYY-MM-DD (KST)' }) weekFrom!: string;
+  @ApiProperty({ description: '이번 주 일요일 YYYY-MM-DD (KST)' }) weekTo!: string;
+  @ApiProperty({ type: [TeacherGuideStudentDto], description: '첫 수업 시각 순' }) students!: TeacherGuideStudentDto[];
+}
+
 /** GET /teacher/history — 월 수업 기록 + 본인 정산 (덱 §29~31 · 강사 전용) */
 export class TeacherHistoryDto {
   @ApiProperty({ description: 'YYYY-MM' }) month!: string;

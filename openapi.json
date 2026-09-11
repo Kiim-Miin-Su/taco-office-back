@@ -3304,6 +3304,91 @@
         ]
       }
     },
+    "/teacher/guides": {
+      "get": {
+        "operationId": "TeacherController_guides",
+        "parameters": [
+          {
+            "name": "week",
+            "required": false,
+            "in": "query",
+            "description": "조회할 주의 아무 날짜 YYYY-MM-DD — 없으면 오늘(KST) 주",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherGuidesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 안내 — 이번 주 담당 학생·교재·진단·수업 설정 (강사 덱 §10~13)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/teacher/suggestions": {
       "get": {
         "operationId": "TeacherController_suggestions",
@@ -7526,6 +7611,193 @@
           "stats",
           "lessons",
           "settlement"
+        ]
+      },
+      "TeacherGuideLessonDto": {
+        "type": "object",
+        "properties": {
+          "onDate": {
+            "type": "string",
+            "description": "YYYY-MM-DD (KST)"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "durMin": {
+            "type": "number"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "onDate",
+          "startMin",
+          "durMin"
+        ]
+      },
+      "TeacherGuideBookDto": {
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "number"
+          },
+          "code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "level": {
+            "type": "string",
+            "nullable": true
+          },
+          "seTe": {
+            "type": "string",
+            "description": "SE | TE"
+          },
+          "issuedOn": {
+            "type": "string",
+            "description": "배부일 YYYY-MM-DD"
+          },
+          "returnedOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "반환일 — null 이면 사용 중"
+          }
+        },
+        "required": [
+          "issueId",
+          "code",
+          "title",
+          "seTe",
+          "issuedOn"
+        ]
+      },
+      "TeacherGuideDiagDto": {
+        "type": "object",
+        "properties": {
+          "onDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "응시일 YYYY-MM-DD"
+          },
+          "levelSummary": {
+            "type": "string"
+          },
+          "strengths": {
+            "type": "string",
+            "nullable": true
+          },
+          "weaknesses": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "levelSummary"
+        ]
+      },
+      "TeacherGuideStudentDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "school": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetExam": {
+            "type": "string",
+            "nullable": true
+          },
+          "guidance": {
+            "type": "string",
+            "nullable": true,
+            "description": "지도 강도 — stu.guidance 원문 (미설정 null)"
+          },
+          "lang": {
+            "type": "string",
+            "nullable": true,
+            "description": "수업 언어 — stu.lang 원문 (ko·en 등)"
+          },
+          "weekCount": {
+            "type": "number",
+            "description": "이번 주 내 수업 횟수 (취소 제외)"
+          },
+          "lessons": {
+            "description": "이번 주 내 수업 회차 (시각 순)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherGuideLessonDto"
+            }
+          },
+          "books": {
+            "description": "교재 — 사용 중 먼저, 반환분은 이력",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherGuideBookDto"
+            }
+          },
+          "diag": {
+            "nullable": true,
+            "description": "최신 진단 — 없으면 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherGuideDiagDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "studentId",
+          "name",
+          "weekCount",
+          "lessons",
+          "books"
+        ]
+      },
+      "TeacherGuidesDto": {
+        "type": "object",
+        "properties": {
+          "weekFrom": {
+            "type": "string",
+            "description": "이번 주 월요일 YYYY-MM-DD (KST)"
+          },
+          "weekTo": {
+            "type": "string",
+            "description": "이번 주 일요일 YYYY-MM-DD (KST)"
+          },
+          "students": {
+            "description": "첫 수업 시각 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherGuideStudentDto"
+            }
+          }
+        },
+        "required": [
+          "weekFrom",
+          "weekTo",
+          "students"
         ]
       },
       "TeacherSuggestionDto": {

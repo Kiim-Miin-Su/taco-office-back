@@ -11,7 +11,7 @@ import {
 import { CurrentUser } from '../../auth/current-user.decorator';
 import type { RequestUser } from '../../common/perm';
 import {
-  TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
+  TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
 } from './teacher.dto';
 import { TeacherService } from './teacher.service';
@@ -42,6 +42,15 @@ export class TeacherController {
   async history(@CurrentUser() user: RequestUser, @Query() query: TeacherHistoryQueryDto): Promise<TeacherHistoryDto> {
     this.assertTeacher(user);
     return this.svc.history(user.id, query.month);
+  }
+
+  @Get('guides')
+  @ApiOperation({ summary: '수업 안내 — 이번 주 담당 학생·교재·진단·수업 설정 (강사 덱 §10~13)' })
+  @ApiOkResponse({ type: TeacherGuidesDto })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async guides(@CurrentUser() user: RequestUser, @Query() query: TeacherGuidesQueryDto): Promise<TeacherGuidesDto> {
+    this.assertTeacher(user);
+    return this.svc.guides(user.id, query.week);
   }
 
   @Get('suggestions')
