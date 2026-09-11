@@ -100,7 +100,8 @@ export function permsOf(
     canMoney: canSeeProfit(role),
     canWage: canCrudAll(role),
     canApprove: canCrudAll(role),
-    canHide: canCrudAll(role),
+    // 27N5 채택 (2026-09-12 §4-17): 비공개 지정·열람은 **대표 전용** — §76 「비공개 컨설팅 열람 — 대표만」 원문 그대로
+    canHide: canSeeProfit(role),
     canGpaPack: canCrudAll(role),
   };
   if (!overrides) return base;

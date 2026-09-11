@@ -19,7 +19,7 @@ import { STUDENTS, ENROLLMENTS, LEADS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
-import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS } from './ops';
+import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS } from './ops';
 
 /** 시드가 건드리는 표 — 지울 때도 이 순서의 역순을 쓴다 */
 export const SEEDED_TABLES = [
@@ -28,7 +28,7 @@ export const SEEDED_TABLES = [
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout',
-  'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess',
+  'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item',
   'mkt', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
 ] as const;
 
@@ -171,6 +171,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('cons', CONSULTINGS.map((c) => ({ id: c.id, cons_type: c.consType, stage: c.stage, contract_step: c.contractStep, amount: c.amount, sessions: c.sessions, end_on: c.endOn, owner_id: c.ownerId, share: c.share })));
     await add('cons_stu', CONSULTINGS.flatMap((c) => c.students.map((s) => ({ cons_id: c.id, student_id: s }))));
     await add('cons_pick', CONS_PICKS.map((p) => ({ cons_id: p.consId, staff_id: p.staffId })));
+    await add('cons_item', CONS_ITEMS.map((x) => ({ cons_id: x.consId, seq: x.seq, label: x.label, done: x.done, done_by: x.doneBy, done_at: x.doneAt })));
     await add('cons_sess', CONS_SESSIONS.map((s) => ({ cons_id: s.consId, seq: s.seq, on_date: s.onDate, who: s.who, what: s.what, why: s.why, how: s.how })));
     await add('mkt', MKTS.map((m) => ({ channel: m.channel, item: m.item, url: m.url, result: JSON.stringify(m.result), on_date: m.onDate })));
     await add('plan', PLANS.map((p) => ({ id: p.id, title: p.title, stage: p.stage, goal: p.goal, research: p.research, ask: p.ask, due_on: p.dueOn, owner_id: p.ownerId })));

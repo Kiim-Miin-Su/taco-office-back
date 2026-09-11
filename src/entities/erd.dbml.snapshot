@@ -331,6 +331,27 @@ Table UNAV {
   '''
 }
 
+Table CONS_ITEM {
+  id         bigserial   [pk]
+  cons_id    bigint      [not null, ref: > CONS.id]
+  seq        smallint    [not null]
+  label      varchar(80) [not null]
+  required   boolean     [not null, default: false, note: '필수 지정은 종료 전이 게이트(47D-C)와 함께 확정 — 지금은 표기만']
+  done       boolean     [not null, default: false]
+  done_by    bigint      [ref: > STAFF.id]
+  done_at    timestamptz
+  source     varchar(10) [not null, default: 'template', note: "template=§29 자동 생성분 · manual=학생별 추가 (N-18-a 확정 전 쓰기 없음)"]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes { (cons_id, seq) [unique] }
+  Note: '''
+  §31 진행 항목 원장 (N-18 채택 2026-09-12 §4-17 · 47D-B). 항목과 회차 기록(CONS_SESS)은
+  원문에서 구분된다 — TODO 를 분모로 세지 않고, 진행률은 이 원장의 projection 이며
+  별도 숫자로 저장하지 않는다 (47D-A). done 이면 done_by·done_at 필수(CHECK),
+  체크/해제는 내용 열람(csCanFull) + 종료 전 건에서만 쓴다.
+  '''
+}
+
 Table CHREQ {
   id          bigserial   [pk]
   ser_id      bigint      [not null, ref: > SER.id]
@@ -1056,6 +1077,10 @@ Table SER_OCC {
 // v4.11 → v4.12 (2026-09-12 · TBO-50 C31 불가 시간 날짜 계약)
 //   + UNAV.on_date         N-20 채택(§4-17) — 날짜별 7일 전 마감의 판정 기준. NULL=legacy
 //   = 새 쓰기는 cycle 미저장(표시용 파생) · (staff_id,on_date) 인덱스 · 기존 행 자동 보정 없음
+//
+// v4.12 → v4.13 (2026-09-12 · TBO-50 C32 컨설팅 항목 원장)
+//   + CONS_ITEM            §31 항목 체크리스트 — N-18 채택. (cons_id,seq) UNIQUE ·
+//                          done↔done_by/done_at CHECK · source CHECK · 진행률은 projection
 //
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)

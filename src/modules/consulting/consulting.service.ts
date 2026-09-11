@@ -4,12 +4,12 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { csCan, csCanAmount, csCanFull, type ConsShare, type ConsViewer } from '../../lib/rules';
-import type { ConsultingListDto, ConsultingSessionDto } from './consulting.dto';
+import type { ConsItemDto, ConsItemToggleDto, ConsultingListDto, ConsultingSessionDto } from './consulting.dto';
 import { consultingRecordIssue, consultingSessionIssue, type ConsultingRecord } from './consulting.rules';
 
 type R = Record<string, unknown>;
@@ -66,6 +66,24 @@ export class ConsultingService {
          FROM cons_sess WHERE cons_id = ANY($1::bigint[]) ORDER BY cons_id, seq`,
       [fullIds],
     ) : [];
+    const itemRows = fullIds.length ? await this.q(
+      `SELECT i.id, i.cons_id, i.seq, i.label, i.required, i.done, i.source,
+              to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
+         FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
+        WHERE i.cons_id = ANY($1::bigint[]) ORDER BY i.cons_id, i.seq`,
+      [fullIds],
+    ) : [];
+    const itemsByCons = new Map<number, ConsItemDto[]>();
+    for (const r of itemRows) {
+      const k = Number(r.cons_id);
+      if (!itemsByCons.has(k)) itemsByCons.set(k, []);
+      itemsByCons.get(k)!.push({
+        id: Number(r.id), seq: Number(r.seq), label: String(r.label),
+        required: r.required === true, done: r.done === true, source: String(r.source),
+        doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
+      });
+    }
+
     const byCons = new Map<number, ConsultingSessionDto[]>();
     for (const r of logs) {
       const k = Number(r.cons_id);
@@ -103,9 +121,51 @@ export class ConsultingService {
         canOpen: full,
         // 내용이 안 열리면 회차 기록도 내려보내지 않는다 — 화면에서 감추는 건 감춘 게 아니다
         sessionsLog: full ? (byCons.get(Number(r.id)) ?? []) : [],
+        items: full ? (itemsByCons.get(Number(r.id)) ?? []) : [],
       };
     });
 
     return { items, canSeeAmounts: canMoney };
+  }
+
+  /**
+   * §31 항목 체크/해제 — 47D-B 의 유일한 쓰기. 공개 범위(csCanFull)와 종료 잠금은 서버가 판정한다.
+   * 보이지 않는 건은 404(존재 누출 금지), 내용 잠김은 403, 종료 건은 409 ITEM_LOCKED.
+   */
+  async toggleItem(viewerId: number, canHide: boolean, consId: number, itemId: number, dto: ConsItemToggleDto): Promise<ConsItemDto> {
+    const [c] = await this.q(
+      `SELECT c.id, c.stage, c.share, c.owner_id,
+              EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $2) AS is_picked
+         FROM cons c WHERE c.id = $1`, [consId, viewerId]);
+    if (!c) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
+    const share = String(c.share) as ConsShare;
+    const viewer: ConsViewer = {
+      isOwner: c.owner_id !== null && Number(c.owner_id) === viewerId,
+      isPicked: c.is_picked === true, canHide, canMoney: false,
+    };
+    if (!csCan(share, viewer)) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
+    if (!csCanFull(share, viewer)) throw new ForbiddenException('이 건의 내용은 공개 범위 밖입니다');
+    if (String(c.stage) === 'done') {
+      throw new ConflictException({ code: 'ITEM_LOCKED', message: '종료된 컨설팅의 항목은 바꿀 수 없습니다' });
+    }
+    const [exists] = await this.q(`SELECT id FROM cons_item WHERE id = $1 AND cons_id = $2`, [itemId, consId]);
+    if (!exists) throw new NotFoundException('항목을 찾을 수 없습니다');
+    // UPDATE 의 RETURNING 은 드라이버가 [rows, count] 로 감싼다 — 갱신과 조회를 분리해 모양 의존을 없앤다
+    await this.q(
+      dto.done
+        ? `UPDATE cons_item SET done = true, done_by = $3, done_at = now() WHERE id = $1 AND cons_id = $2`
+        : `UPDATE cons_item SET done = false, done_by = NULL, done_at = NULL WHERE id = $1 AND cons_id = $2`,
+      dto.done ? [itemId, consId, viewerId] : [itemId, consId],
+    );
+    const [r] = await this.q(
+      `SELECT i.id, i.seq, i.label, i.required, i.done, i.source,
+              to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
+         FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
+        WHERE i.id = $1`, [itemId]);
+    return {
+      id: Number(r.id), seq: Number(r.seq), label: String(r.label),
+      required: r.required === true, done: r.done === true, source: String(r.source),
+      doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
+    };
   }
 }

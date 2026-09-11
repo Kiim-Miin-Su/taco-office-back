@@ -98,3 +98,85 @@ d('§26 DB 제약과 migration 11', () => {
     // afterEach transaction rollback으로 기존 제약/행을 원복한다. 운영에서는 실행하지 않는다.
   });
 });
+
+d('§31 항목 원장 — 체크/해제와 잠금 (47D-B · N-18 §4-17)', () => {
+  let ds: DataSource;
+  let q: QueryRunner;
+  let consId: number;
+  let itemId: number;
+
+  const svc = () => new ConsultingService(q.manager.getRepository(Lead));
+
+  beforeAll(async () => {
+    const url = assertScratch(TEST_URL);
+    if (dataSourceOptions.type !== 'postgres') throw new Error('PostgreSQL required');
+    ds = new DataSource({ ...dataSourceOptions, url, ssl: /sslmode=require|sslmode=verify|neon\.tech/.test(url) ? { rejectUnauthorized: false } : false, logging: false });
+    await ds.initialize();
+  });
+  beforeEach(async () => {
+    q = ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    // done_by FK 대상 — 스크래치 staff 는 비어 있다. 트랜잭션 안이라 각 테스트 뒤 롤백된다.
+    await q.query(`INSERT INTO staff (id,name,email,role) VALUES (1,'검사자','it1@t.kr','manager'), (9,'담당자','it9@t.kr','manager') ON CONFLICT (id) DO NOTHING`);
+    const [c] = await q.query(`INSERT INTO cons (cons_type,stage,contract_step) VALUES ('future_type','running',5) RETURNING id`) as { id: string }[];
+    consId = Number(c.id);
+    const [i] = await q.query(`INSERT INTO cons_item (cons_id,seq,label) VALUES ($1,1,'지원서 작성') RETURNING id`, [consId]) as { id: string }[];
+    itemId = Number(i.id);
+  });
+  afterEach(async () => {
+    if (q?.isTransactionActive) await q.rollbackTransaction();
+    if (q && !q.isReleased) await q.release();
+  });
+  afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
+
+  it('체크는 처리자·처리일을 서버가 찍고, 해제는 함께 지운다', async () => {
+    const done = await svc().toggleItem(1, false, consId, itemId, { done: true });
+    expect(done).toMatchObject({ id: itemId, done: true, doneOn: expect.any(String) });
+    const [row] = await q.query(`SELECT done, done_by, done_at FROM cons_item WHERE id = $1`, [itemId]);
+    expect(row.done).toBe(true);
+    expect(Number(row.done_by)).toBe(1);
+    const undone = await svc().toggleItem(1, false, consId, itemId, { done: false });
+    expect(undone).toMatchObject({ done: false, doneBy: null, doneOn: null });
+    const [row2] = await q.query(`SELECT done, done_by, done_at FROM cons_item WHERE id = $1`, [itemId]);
+    expect(row2).toMatchObject({ done: false, done_by: null, done_at: null });
+  });
+
+  it('종료된 건은 ITEM_LOCKED 로 잠긴다', async () => {
+    await q.query(`UPDATE cons SET stage='done' WHERE id = $1`, [consId]);
+    await expect(svc().toggleItem(1, false, consId, itemId, { done: true }))
+      .rejects.toMatchObject({ response: { code: 'ITEM_LOCKED' } });
+  });
+
+  it('수납만 공개 건은 비담당에게 403 — 내용 접근이 없다', async () => {
+    await q.query(`UPDATE cons SET share='money_only', owner_id=9 WHERE id = $1`, [consId]);
+    await expect(svc().toggleItem(1, false, consId, itemId, { done: true })).rejects.toMatchObject({ status: 403 });
+    // 담당은 쓴다
+    await expect(svc().toggleItem(9, false, consId, itemId, { done: true })).resolves.toMatchObject({ done: true });
+  });
+
+  it('전체 비공개 건은 비담당에게 404 — 존재를 누출하지 않는다 (canHide=대표 전용·27N5)', async () => {
+    await q.query(`UPDATE cons SET share='private', owner_id=9 WHERE id = $1`, [consId]);
+    await expect(svc().toggleItem(1, false, consId, itemId, { done: true })).rejects.toMatchObject({ status: 404 });
+    await expect(svc().toggleItem(1, true, consId, itemId, { done: true })).resolves.toMatchObject({ done: true });
+  });
+
+  it('done 이면 처리자·처리일이 함께 있어야 한다 — CHECK 가 직접 UPDATE 도 막는다', async () => {
+    await expect(q.query(`UPDATE cons_item SET done = true WHERE id = $1`, [itemId]))
+      .rejects.toMatchObject({ message: expect.stringContaining('cons_item_done_stamp_check') });
+  });
+
+  it('(cons_id, seq) 는 유일하다', async () => {
+    await expect(q.query(`INSERT INTO cons_item (cons_id,seq,label) VALUES ($1,1,'중복')`, [consId]))
+      .rejects.toMatchObject({ message: expect.stringContaining('cons_item_cons_seq') });
+  });
+
+  it('목록 응답의 items 는 회차와 같은 공개 규칙 — 잠기면 내려가지 않는다', async () => {
+    await q.query(`UPDATE cons SET share='money_only', owner_id=9 WHERE id = $1`, [consId]);
+    const view = (await svc().all(1, false, false)).items.find((r) => r.id === consId)!;
+    expect(view.canOpen).toBe(false);
+    expect(view.items).toEqual([]);
+    const own = (await svc().all(9, false, false)).items.find((r) => r.id === consId)!;
+    expect(own.items).toEqual([expect.objectContaining({ seq: 1, label: '지원서 작성', done: false, source: 'template' })]);
+  });
+});

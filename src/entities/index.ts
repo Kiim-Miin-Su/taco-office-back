@@ -10,6 +10,7 @@ export * from './att.entity';
 export * from './autorep.entity';
 export * from './chreq.entity';
 export * from './cons.entity';
+export * from './cons-item.entity';
 export * from './cons-pick.entity';
 export * from './cons-sess.entity';
 export * from './cons-stu.entity';
@@ -72,6 +73,7 @@ import {
   Autorep,
   Chreq,
   Cons,
+  ConsItem,
   ConsPick,
   ConsSess,
   ConsStu,
@@ -136,6 +138,7 @@ export const ENTITIES = [
   Autorep,
   Chreq,
   Cons,
+  ConsItem,
   ConsPick,
   ConsSess,
   ConsStu,

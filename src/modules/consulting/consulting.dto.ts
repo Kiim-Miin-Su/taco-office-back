@@ -5,6 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean } from 'class-validator';
 import { CONS_SHARES, type ConsShare } from '../../lib/rules';
 import { CONSULTING_STAGES, CONTRACT_STEP_MAX, CONSULTING_SESSION_MAX, type ConsultingStage } from './consulting.rules';
 
@@ -21,6 +22,25 @@ export class ConsultingSessionDto {
   @ApiPropertyOptional(S) why?: string | null;
   @ApiPropertyOptional(S) how?: string | null;
   @ApiPropertyOptional({ ...N, description: '연결된 수업이 있으면 그 SER' }) serId?: number | null;
+}
+
+
+/** §31 진행 항목 한 줄 — 원장 행 그대로. 진행률은 화면이 세고 서버는 저장하지 않는다 (47D-A). */
+export class ConsItemDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: '건별 항목 순번' }) seq!: number;
+  @ApiProperty({ maxLength: 80 }) label!: string;
+  @ApiProperty({ description: '필수 지정은 종료 전이 게이트(47D-C)와 함께 확정 — 지금은 표기만' }) required!: boolean;
+  @ApiProperty() done!: boolean;
+  @ApiPropertyOptional({ ...S, description: '처리자 이름 — 미완료면 null' }) doneBy?: string | null;
+  @ApiPropertyOptional({ ...S, format: 'date', description: '처리일 — 미완료면 null' }) doneOn?: string | null;
+  @ApiProperty({ description: 'template(§29 자동 생성분) | manual(N-18-a 확정 전 쓰기 없음)' }) source!: string;
+}
+
+export class ConsItemToggleDto {
+  @ApiProperty({ description: 'true = 완료 처리(처리자·시각 서버 기록) · false = 해제' })
+  @IsBoolean()
+  done!: boolean;
 }
 
 /** §26·§27 컨설팅 건 조회. §29 생성 input은 별도 청크. */
@@ -47,6 +67,9 @@ export class ConsultingDto {
   @ApiProperty({ description: '내용(회차 기록)을 열 수 있는가 — csCanFull()' }) canOpen!: boolean;
 
   @ApiProperty({ type: [ConsultingSessionDto] }) sessionsLog!: ConsultingSessionDto[];
+
+  /** §31 진행 항목 — 회차 기록과 별개 원장 (N-18 §4-17). 내용이 잠기면 회차처럼 내려가지 않는다. */
+  @ApiProperty({ type: [ConsItemDto] }) items!: ConsItemDto[];
 }
 
 export class ConsultingListDto {

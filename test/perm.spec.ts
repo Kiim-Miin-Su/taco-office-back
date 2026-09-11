@@ -77,8 +77,10 @@ describe('명세서 v2 §76 플래그 5개도 같은 세 줄에서 나온다', (
     const p = permsOf('manager');
     expect(p.canMoney).toBe(false);
     expect(p.canSeeProfit).toBe(false);
+    // 비공개 층은 대표 전용이다 — 27N5 채택 (§4-17 · §76 원문)
+    expect(p.canHide).toBe(false);
     // 나머지는 전부 열린다 — "매니저부터 모든 항목 CRUD"
-    expect(p.canWage && p.canApprove && p.canHide && p.canGpaPack).toBe(true);
+    expect(p.canWage && p.canApprove && p.canGpaPack).toBe(true);
   });
 
   it('강사는 전부 닫혀 있다', () => {

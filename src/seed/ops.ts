@@ -73,6 +73,20 @@ export const CONS_PICKS = [
   { consId: 4, staffId: 3 },
 ];
 
+/**
+ * 컨설팅 항목 원장 (N-18 채택 §4-17 · 47D-B) — §31 원문의 국제학교 지원 기본 7항목만 시드한다.
+ * essay·roadmap 유형의 기본 항목표는 확정 전(N-18-a)이라 비워 둔다 — 화면이 그 이유를 말한다.
+ */
+export const INTL_SCHOOL_ITEMS = ['지원서 작성', '학업 성적 공증', '추천서 2부', '자기소개 에세이', '활동 증빙 자료', '여권 사본', '재학 증명서'] as const;
+export const CONS_ITEMS = [
+  // cons 1 — 진행 중: 4/7 완료 (처리자 김범준)
+  ...INTL_SCHOOL_ITEMS.map((label, i) => ({ consId: 1, seq: i + 1, label, done: i < 4, doneBy: i < 4 ? 3 : null, doneAt: i < 4 ? D(-18 + i * 4) : null })),
+  // cons 4 — 계약 중: 아직 0/7
+  ...INTL_SCHOOL_ITEMS.map((label, i) => ({ consId: 4, seq: i + 1, label, done: false, doneBy: null, doneAt: null })),
+  // cons 5 — 종료: 7/7 (종료 건 잠금 표본)
+  ...INTL_SCHOOL_ITEMS.map((label, i) => ({ consId: 5, seq: i + 1, label, done: true, doneBy: 3, doneAt: D(-40 + i * 3) })),
+];
+
 export const CONS_SESSIONS = [
   { consId: 1, seq: 8, onDate: D(-2), who: '김범준 · 오예린', what: '보충 에세이 A대 2차 첨삭 · 문단 3개 재구성', why: 'A대 마감 09-15. 남은 5회 안에 3개 대학 보충분을 끝내야 함', how: '학생이 먼저 낭독 → 문단 단위 지적 → 그 자리에서 재작성' },
   { consId: 1, seq: 7, onDate: D(-9), who: '김범준 · 오예린', what: '공통 에세이 최종 확정', why: '9월 첫 주 제출분 확정 필요', how: '3안 비교 후 1안 채택' },

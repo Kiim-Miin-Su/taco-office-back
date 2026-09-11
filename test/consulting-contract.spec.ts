@@ -53,9 +53,12 @@ describe('§26 단계 필터 조회 계약', () => {
     await request(app.getHttpServer()).get('/consulting').expect(403);
     expect(all).not.toHaveBeenCalled();
   });
-  it('기존 stage enum과 클라이언트 필터만 명시하며 새 endpoint/query/input을 만들지 않는다', () => {
+  it('조회는 GET 하나·항목 토글은 PATCH 하나 — 그 밖의 endpoint 를 만들지 않는다 (47D-B)', () => {
     const api = buildOpenApi(app);
-    expect(Object.keys(api.paths)).toEqual(['/consulting']);
+    // C5-a 의 「추가 endpoint 0」 가드는 N-18 채택(2026-09-12 §4-17)·47D-B 로 항목 토글 1개까지 확장됐다
+    expect(Object.keys(api.paths)).toEqual(['/consulting', '/consulting/{id}/items/{itemId}']);
+    const patch = api.paths['/consulting/{id}/items/{itemId}'].patch;
+    expect(patch?.description).toMatch(/진행률 숫자는 저장하지 않는다/);
     const get = api.paths['/consulting'].get;
     expect(get?.description).toMatch(/클라이언트.*추가 GET.*0/);
     expect(get?.parameters ?? []).toEqual([]);

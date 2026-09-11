@@ -19,9 +19,10 @@ const row = (over: Row = {}): Row => ({
 const log = (over: Row = {}): Row => ({ id: '11', cons_id: '1', seq: 1, on_date: null,
   who: null, what: '비공개 회차 내용', why: null, how: null, ser_id: null, ...over });
 
-function service(rows: Row[], logs: Row[] = [log()]) {
-  const query = jest.fn().mockResolvedValueOnce(rows).mockImplementation((_sql: string, [ids]: [number[]]) =>
-    Promise.resolve(logs.filter((r) => ids.includes(Number(r.cons_id)))));
+function service(rows: Row[], logs: Row[] = [log()], items: Row[] = []) {
+  // 첫 호출 = 건 목록, 이후는 SQL 로 구분 — 회차(cons_sess)와 항목(cons_item)이 같은 ANY($1) 모양을 쓴다
+  const query = jest.fn().mockResolvedValueOnce(rows).mockImplementation((sql: string, [ids]: [number[]]) =>
+    Promise.resolve((sql.includes('cons_item') ? items : logs).filter((r) => ids.includes(Number(r.cons_id)))));
   return { svc: new ConsultingService({ query } as unknown as Repository<Lead>), query };
 }
 

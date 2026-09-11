@@ -2859,6 +2859,95 @@
         ]
       }
     },
+    "/consulting/{id}/items/{itemId}": {
+      "patch": {
+        "description": "공개 범위(csCanFull)·종료 잠금은 서버가 판정한다. 진행률 숫자는 저장하지 않는다 — 원장 행만 바뀐다.",
+        "operationId": "ConsultingController_toggleItem",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "itemId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsItemToggleDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsItemDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "내용이 공개 범위 밖 (수납만 공개 등)"
+          },
+          "404": {
+            "description": "보이지 않는 건·없는 항목 — 존재를 누출하지 않는다"
+          },
+          "409": {
+            "description": "code ITEM_LOCKED — 종료된 건"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "진행 항목 체크/해제 — 47D-B 유일 쓰기 (N-18 §4-17)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
     "/board": {
       "get": {
         "operationId": "BoardController_range",
@@ -6768,6 +6857,52 @@
           "onDate"
         ]
       },
+      "ConsItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "seq": {
+            "type": "number",
+            "description": "건별 항목 순번"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "required": {
+            "type": "boolean",
+            "description": "필수 지정은 종료 전이 게이트(47D-C)와 함께 확정 — 지금은 표기만"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "doneBy": {
+            "type": "string",
+            "nullable": true,
+            "description": "처리자 이름 — 미완료면 null"
+          },
+          "doneOn": {
+            "type": "string",
+            "nullable": true,
+            "format": "date",
+            "description": "처리일 — 미완료면 null"
+          },
+          "source": {
+            "type": "string",
+            "description": "template(§29 자동 생성분) | manual(N-18-a 확정 전 쓰기 없음)"
+          }
+        },
+        "required": [
+          "id",
+          "seq",
+          "label",
+          "required",
+          "done",
+          "source"
+        ]
+      },
       "ConsultingDto": {
         "type": "object",
         "properties": {
@@ -6842,6 +6977,12 @@
             "items": {
               "$ref": "#/components/schemas/ConsultingSessionDto"
             }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsItemDto"
+            }
           }
         },
         "required": [
@@ -6852,7 +6993,8 @@
           "createdAt",
           "share",
           "canOpen",
-          "sessionsLog"
+          "sessionsLog",
+          "items"
         ]
       },
       "ConsultingListDto": {
@@ -6872,6 +7014,18 @@
         "required": [
           "items",
           "canSeeAmounts"
+        ]
+      },
+      "ConsItemToggleDto": {
+        "type": "object",
+        "properties": {
+          "done": {
+            "type": "boolean",
+            "description": "true = 완료 처리(처리자·시각 서버 기록) · false = 해제"
+          }
+        },
+        "required": [
+          "done"
         ]
       },
       "CheckMarkDto": {
