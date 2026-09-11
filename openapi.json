@@ -3219,6 +3219,91 @@
         ]
       }
     },
+    "/teacher/history": {
+      "get": {
+        "operationId": "TeacherController_history",
+        "parameters": [
+          {
+            "name": "month",
+            "required": false,
+            "in": "query",
+            "description": "YYYY-MM (KST) — 없으면 이번 달",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherHistoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용 — 다른 강사의 정산은 누구도 여기서 볼 수 없다"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 히스토리 — 월 기록 + 본인 정산 (강사 덱 §29~31 · D-R7·D-R32·D-15)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/exec": {
       "get": {
         "operationId": "ExecController_range",
@@ -7045,6 +7130,251 @@
           "week",
           "todo",
           "settings"
+        ]
+      },
+      "TeacherHistoryStatsDto": {
+        "type": "object",
+        "properties": {
+          "doneCount": {
+            "type": "number",
+            "description": "종료된 수업 (취소 제외)"
+          },
+          "doneMinutes": {
+            "type": "number"
+          },
+          "writtenCount": {
+            "type": "number",
+            "description": "리포트 제출분 — 승인 여부는 보지 않는다 (D-R7)"
+          },
+          "writtenMinutes": {
+            "type": "number"
+          },
+          "unwrittenCount": {
+            "type": "number",
+            "description": "종료 후 미작성"
+          },
+          "unwrittenMinutes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "doneCount",
+          "doneMinutes",
+          "writtenCount",
+          "writtenMinutes",
+          "unwrittenCount",
+          "unwrittenMinutes"
+        ]
+      },
+      "TeacherHistoryLessonDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "YYYY-MM-DD (KST)"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "KST 0~1439 분"
+          },
+          "durMin": {
+            "type": "number",
+            "description": "분 단위 수업 길이"
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "students": {
+            "type": "string",
+            "nullable": true,
+            "description": "수강 학생 이름 (·, 구분)"
+          },
+          "studentCount": {
+            "type": "number",
+            "description": "명단 수 — «외 N명» 표기용"
+          },
+          "repState": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ]
+          },
+          "canceled": {
+            "type": "boolean"
+          },
+          "submittedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "최초 제출 시각 (KST) YYYY-MM-DD HH:mm — 재제출은 바꾸지 않는다 (D-R7)"
+          },
+          "pay": {
+            "type": "number",
+            "nullable": true,
+            "description": "제출분 수업료 — 그 수업일 시급×시간, 정수 절사. 가산 정책 미확정으로 단일 시급 (경계 기록)"
+          },
+          "lateCut": {
+            "type": "number",
+            "nullable": true,
+            "description": "제출분 확정 지각 차감 (D-R32 — 최초 제출 기준)"
+          },
+          "penaltyIfNow": {
+            "type": "number",
+            "nullable": true,
+            "description": "종료 후 미제출분 — 지금 제출하면 붙는 차감 (D-R32)"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "startMin",
+          "durMin",
+          "kindKey",
+          "mode",
+          "studentCount",
+          "repState",
+          "canceled"
+        ]
+      },
+      "TeacherSettlementDto": {
+        "type": "object",
+        "properties": {
+          "yearMonth": {
+            "type": "string",
+            "description": "YYYY-MM"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "description": "true면 payout 저장값, false면 실시간 계산"
+          },
+          "state": {
+            "type": "string",
+            "nullable": true,
+            "description": "payout.state — 확정 행이 있을 때만"
+          },
+          "writtenMinutes": {
+            "type": "number",
+            "description": "제출 인정 시수(분)"
+          },
+          "gross": {
+            "type": "number",
+            "description": "시급×인정 시수 (정수 절사)"
+          },
+          "lateCut": {
+            "type": "number",
+            "description": "지각 차감 합 (D-R32)"
+          },
+          "incomeTax": {
+            "type": "number",
+            "description": "소득세 3% 절사 (D-15)"
+          },
+          "localTax": {
+            "type": "number",
+            "description": "지방소득세 = 소득세의 10% 절사"
+          },
+          "net": {
+            "type": "number",
+            "description": "실지급 (예정)액"
+          },
+          "unwrittenCount": {
+            "type": "number",
+            "description": "종료 후 미작성 — 지금 쓰면 들어올 몫"
+          },
+          "unwrittenMinutes": {
+            "type": "number"
+          },
+          "unwrittenAmount": {
+            "type": "number",
+            "description": "미작성분 예상 금액 (시급 기준)"
+          },
+          "remainingCount": {
+            "type": "number",
+            "description": "이 달 남은 예정 수업"
+          },
+          "remainingMinutes": {
+            "type": "number"
+          },
+          "remainingAmount": {
+            "type": "number",
+            "description": "남은 예정 예상 금액 (시급 기준)"
+          }
+        },
+        "required": [
+          "yearMonth",
+          "confirmed",
+          "writtenMinutes",
+          "gross",
+          "lateCut",
+          "incomeTax",
+          "localTax",
+          "net",
+          "unwrittenCount",
+          "unwrittenMinutes",
+          "unwrittenAmount",
+          "remainingCount",
+          "remainingMinutes",
+          "remainingAmount"
+        ]
+      },
+      "TeacherHistoryDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "description": "YYYY-MM"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/TeacherHistoryStatsDto"
+          },
+          "wageRate": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 적용 시급 — 본인만"
+          },
+          "wageFrom": {
+            "type": "string",
+            "nullable": true,
+            "description": "그 시급 적용 시작일"
+          },
+          "lessons": {
+            "description": "최근 날짜·이른 시각 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherHistoryLessonDto"
+            }
+          },
+          "settlement": {
+            "$ref": "#/components/schemas/TeacherSettlementDto"
+          }
+        },
+        "required": [
+          "month",
+          "stats",
+          "lessons",
+          "settlement"
         ]
       },
       "ExecStatDto": {

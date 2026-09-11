@@ -12,7 +12,11 @@ import type { RequestUser } from '../../common/perm';
 // DB 없는 단위 회귀 — 역할 방어와 본인 고정(위임 인자)만 본다. 집계 SQL은 격리 DB 스위트에서.
 describe('TeacherController — 강사 전용 표면', () => {
   const dto = { todayDate: '2026-09-12', today: [], upcoming: [], week: { lessons: 0, minutes: 0, unwritten: 0 }, todo: { unwrittenReports: 0, waitingApprovals: 0, openChangeRequests: 0, openStaffRequests: 0 }, settings: { name: '', timezone: 'Asia/Seoul', wageRate: null, wageFrom: null } };
-  const svc = { home: jest.fn().mockResolvedValue(dto) } as unknown as TeacherService;
+  const hist = { month: '2026-09', stats: {}, lessons: [], settlement: {} };
+  const svc = {
+    home: jest.fn().mockResolvedValue(dto),
+    history: jest.fn().mockResolvedValue(hist),
+  } as unknown as TeacherService;
   const ctrl = new TeacherController(svc);
   const user = (role: RequestUser['role'], id = 7): RequestUser => ({ id, role, perms: {} } as RequestUser);
 
@@ -26,5 +30,20 @@ describe('TeacherController — 강사 전용 표면', () => {
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 403 — 다른 강사 데이터를 조회할 경로가 없다', async (role) => {
     await expect(ctrl.home(user(role))).rejects.toBeInstanceOf(ForbiddenException);
     expect(svc.home).not.toHaveBeenCalled();
+  });
+
+  it('히스토리도 자기 id·요청 월로 위임된다', async () => {
+    await expect(ctrl.history(user('teacher', 42), { month: '2026-08' })).resolves.toBe(hist);
+    expect((svc.history as jest.Mock).mock.calls).toEqual([[42, '2026-08']]);
+  });
+
+  it('히스토리 월 생략은 undefined 로 위임 — 기본 월 판정은 서비스가 한다', async () => {
+    await ctrl.history(user('teacher', 42), {});
+    expect((svc.history as jest.Mock).mock.calls).toEqual([[42, undefined]]);
+  });
+
+  it.each(['manager', 'admin', 'ceo'] as const)('%s 는 히스토리(정산 포함)도 403', async (role) => {
+    await expect(ctrl.history(user(role), {})).rejects.toBeInstanceOf(ForbiddenException);
+    expect(svc.history).not.toHaveBeenCalled();
   });
 });
