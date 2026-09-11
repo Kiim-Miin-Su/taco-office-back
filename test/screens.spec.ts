@@ -24,6 +24,7 @@ import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 import { buildOpenApi } from '../src/openapi';
 import { ExecService } from '../src/modules/exec/exec.service';
+import { GUIDE_PENDING_DB } from '../src/lib/rules';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(40_000);
@@ -191,6 +192,22 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     expect(r.body.perLesson.length).toBeGreaterThan(0);
     // 섞이면 「지난번에 보냈으니 됐다」가 된다 (D-R5)
     expect(r.body.guides).not.toBe(r.body.perLesson);
+  });
+
+  it('안내 — 「보내야 함」은 서버 pending 플래그가 정본이다', async () => {
+    const r = await get('/guides', MANAGER).expect(200);
+    const guides: Array<{ state: string; pending: boolean; overdueDays: number }> = r.body.guides;
+    // 행마다 파생 규칙 한 곳(GUIDE_PENDING_DB)과 일치하고, 화면이 재계산할 이유를 남기지 않는다
+    for (const g of guides) {
+      expect(typeof g.pending).toBe('boolean');
+      expect(g.pending).toBe((GUIDE_PENDING_DB as readonly string[]).includes(g.state));
+      if (!g.pending) expect(g.overdueDays).toBe(0);
+    }
+    // 두 상태군이 시드에 실재해야 파생 검증이 공허하지 않다
+    expect(guides.some((g) => g.pending)).toBe(true);
+    expect(guides.some((g) => !g.pending)).toBe(true);
+    const unsent = r.body.perLesson.filter((p: { sentAt: string | null }) => !p.sentAt).length;
+    expect(r.body.todoCount).toBe(guides.filter((g) => g.pending).length + unsent);
   });
 
   it('현황판 — 회차마다 네 마크가 온다', async () => {

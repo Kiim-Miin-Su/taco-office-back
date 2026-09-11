@@ -6656,6 +6656,10 @@
             ],
             "description": "draft·ready 가 아직 안 보낸 것"
           },
+          "pending": {
+            "type": "boolean",
+            "description": "아직 안 보냄 (GUIDE_PENDING_DB 파생) — 화면은 이 값만 읽는다"
+          },
           "studentName": {
             "type": "string",
             "nullable": true
@@ -6688,6 +6692,7 @@
           "id",
           "reason",
           "state",
+          "pending",
           "createdAt",
           "overdueDays"
         ]

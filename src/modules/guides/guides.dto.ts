@@ -17,6 +17,8 @@ export class GuideDto {
   @ApiProperty() id!: number;
   @ApiProperty({ description: 'new(첫 수업) | teacher_change(강사 교체)' }) reason!: string;
   @ApiProperty({ enum: ['draft', 'ready', 'sent', 'read'], description: 'draft·ready 가 아직 안 보낸 것' }) state!: string;
+  /** 「보내야 함」의 정본 — 서버 GUIDE_PENDING_DB 파생. 화면은 상태 목록을 다시 정의하지 않는다. */
+  @ApiProperty({ description: '아직 안 보냄 (GUIDE_PENDING_DB 파생) — 화면은 이 값만 읽는다' }) pending!: boolean;
   @ApiPropertyOptional(S) studentName?: string | null;
   @ApiPropertyOptional(S) teacherName?: string | null;
   @ApiPropertyOptional(S) serTitle?: string | null;

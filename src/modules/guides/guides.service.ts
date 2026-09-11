@@ -40,17 +40,20 @@ export class GuidesService {
         WHERE ($1::bigint IS NULL OR g.teacher_id = $1)
         ORDER BY (g.state = ANY($2)) DESC, g.due_on NULLS LAST, g.id`,
       [only ? teacherId : null, [...GUIDE_PENDING_DB]],
-    )).map((r) => ({
-      id: Number(r.id), reason: String(r.reason), state: String(r.state),
-      studentName: (r.student_name as string) ?? null,
-      teacherName: (r.teacher_name as string) ?? null,
-      serTitle: (r.ser_title as string) ?? null,
-      body: (r.body as string) ?? null,
-      dueOn: (r.due_on as string) ?? null,
-      createdAt: String(r.created_at),
-      overdueDays: (GUIDE_PENDING_DB as readonly string[]).includes(String(r.state))
-        ? overdue(r.due_on as string) : 0,
-    }));
+    )).map((r) => {
+      // 「보내야 함」은 여기 한 곳에서 판정한다 — 화면·기한 계산·todoCount가 같은 값을 읽는다.
+      const pending = (GUIDE_PENDING_DB as readonly string[]).includes(String(r.state));
+      return {
+        id: Number(r.id), reason: String(r.reason), state: String(r.state), pending,
+        studentName: (r.student_name as string) ?? null,
+        teacherName: (r.teacher_name as string) ?? null,
+        serTitle: (r.ser_title as string) ?? null,
+        body: (r.body as string) ?? null,
+        dueOn: (r.due_on as string) ?? null,
+        createdAt: String(r.created_at),
+        overdueDays: pending ? overdue(r.due_on as string) : 0,
+      };
+    });
 
     const perLesson = (await this.q(
       `SELECT p.id, to_char(p.on_date,'YYYY-MM-DD') AS on_date, p.channel, p.body,
@@ -74,7 +77,7 @@ export class GuidesService {
       guides,
       perLesson,
       todoCount:
-        guides.filter((g) => (GUIDE_PENDING_DB as readonly string[]).includes(g.state)).length +
+        guides.filter((g) => g.pending).length +
         perLesson.filter((p) => !p.sentAt).length,
       scopedTeacherId: only ? teacherId! : null,
     };
