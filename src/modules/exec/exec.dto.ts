@@ -5,6 +5,18 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
+
+/** 대표 보고 집계의 실제 달력 날짜. 저장할 RPT 주기 key와 구분한다. */
+export class ExecQueryDto {
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-01', description: '집계 시작일(포함). 실제 YYYY-MM-DD 날짜' })
+  @IsCalendarDate()
+  from!: string;
+
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-31', description: '집계 종료일(포함). 시작일 이후 또는 같은 날짜' })
+  @IsCalendarDate()
+  to!: string;
+}
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;

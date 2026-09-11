@@ -23,6 +23,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 import { buildOpenApi } from '../src/openapi';
+import { ExecService } from '../src/modules/exec/exec.service';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(40_000);
@@ -105,6 +106,42 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     request(app.getHttpServer()).get(path).set('Authorization', `Bearer ${tokens.get(email)!}`);
 
   /* ── ① 빈 화면이 아니다 ─────────────────────────────────────────── */
+
+  it.each([
+    'from=2026-02-31&to=2026-03-01',
+    'from=2026-02-01&to=2026-02-29',
+    'from=0000-01-01&to=2026-03-01',
+    'from=2026-13-01&to=2027-01-01',
+    'from=2026-03-02&to=2026-03-01',
+    'to=2026-03-01',
+    'from=2026-03-01',
+    'from=2026-03-01&from=2026-03-01&to=2026-03-01',
+    'from=2026-03-01&to=2026-03-01&to=2026-03-01',
+  ])('대표 보고 잘못된 날짜는 집계 SQL 전에 400: %s', async query => {
+    const range = jest.spyOn(app.get(ExecService), 'range');
+    try {
+      const response = await get(`/exec?${query}`, CEO).expect(400);
+      expect(response.body.code).toBe(query === 'from=2026-03-02&to=2026-03-01' ? 'BAD_RANGE' : 'BAD_REQUEST');
+      expect(range).not.toHaveBeenCalled();
+    } finally { range.mockRestore(); }
+  });
+
+  it('대표 보고 윤년의 같은 날 범위는 실제 DB에서 조회하고 저장하지 않는다', async () => {
+    const [before] = await ds.query('SELECT count(*)::int n FROM rpt');
+    const result = await get('/exec?from=2024-02-29&to=2024-02-29', CEO).expect(200);
+    expect(result.body).toMatchObject({ from: '2024-02-29', to: '2024-02-29', canSeeAmounts: true });
+    expect(result.body.stats.length).toBeGreaterThan(0);
+    const [after] = await ds.query('SELECT count(*)::int n FROM rpt');
+    expect(after).toEqual(before);
+  });
+
+  it('대표 보고 from/to는 OpenAPI에서도 필수 date query다', () => {
+    const params = buildOpenApi(app).paths['/exec']?.get?.parameters;
+    expect(params).toEqual(expect.arrayContaining(['from', 'to'].map(name => expect.objectContaining({
+      name, in: 'query', required: true,
+      schema: expect.objectContaining({ type: 'string', format: 'date', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }),
+    }))));
+  });
 
   it.each([null, 0, 123400])('입금액 %s와 미확인 날짜/수단은 DB 의미 그대로 반환한다', async (amount) => {
     const [row] = await ds.query(

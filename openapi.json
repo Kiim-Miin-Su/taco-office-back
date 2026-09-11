@@ -3152,7 +3152,10 @@
             "name": "from",
             "required": true,
             "in": "query",
+            "description": "집계 시작일(포함). 실제 YYYY-MM-DD 날짜",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-01",
               "type": "string"
             }
@@ -3161,7 +3164,10 @@
             "name": "to",
             "required": true,
             "in": "query",
+            "description": "집계 종료일(포함). 시작일 이후 또는 같은 날짜",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "example": "2026-08-31",
               "type": "string"
             }
