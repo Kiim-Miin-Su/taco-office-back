@@ -107,17 +107,19 @@ export const ZACCS = [
 ];
 
 /**
- * 구성원 16명 — 대표 1 · 관리자 1 · 매니저 1 · 실장 2 · 강사 11.
+ * 구성원 16명 — 대표 1 · 관리자 1 · 매니저 3 · 강사 11.
  * 직함(title)은 표시용이고 권한은 role 에서 파생한다 (D-R39).
+ * 핵심 4인은 실조직 실명이다 (2026-09-12 확정): 대표 김민선 · 관리자 김민수 ·
+ * 매니저 김범준 · 강사 이다현. **교수실장 직함은 존재하지 않는다** — 안내 글에서도 쓰지 않는다.
  * 비밀번호는 전부 `taco1234!` — 개발용이라 같게 둔다.
  */
 export const STAFF = [
   { id: 1,  name: '김민선', email: 'ceo@tnacademy.kr',    role: 'ceo',     title: '대표',       hiredOn: '2019-03-02' },
-  { id: 2,  name: '박관리', email: 'admin@tnacademy.kr',  role: 'admin',   title: '관리자',     hiredOn: '2021-01-04' },
-  { id: 3,  name: '이수현', email: 'head@tnacademy.kr',   role: 'manager', title: '교수실장',   hiredOn: '2020-06-15' },
+  { id: 2,  name: '김민수', email: 'admin@tnacademy.kr',  role: 'admin',   title: '관리자',     hiredOn: '2021-01-04' },
+  { id: 3,  name: '김범준', email: 'head@tnacademy.kr',   role: 'manager', title: '매니저',     hiredOn: '2020-06-15' },
   { id: 4,  name: '정은채', email: 'coord@tnacademy.kr',  role: 'manager', title: '코디네이터', hiredOn: '2022-09-01' },
   { id: 5,  name: '한지호', email: 'intake@tnacademy.kr', role: 'manager', title: '상담실장',   hiredOn: '2022-03-14' },
-  { id: 6,  name: '김서영', email: 't01@tnacademy.kr',    role: 'teacher', title: null,        hiredOn: '2023-02-01' },
+  { id: 6,  name: '이다현', email: 't01@tnacademy.kr',    role: 'teacher', title: null,        hiredOn: '2023-02-01' },
   { id: 7,  name: '박도윤', email: 't02@tnacademy.kr',    role: 'teacher', title: null,        hiredOn: '2023-03-06' },
   { id: 8,  name: '윤가은', email: 't03@tnacademy.kr',    role: 'teacher', title: null,        hiredOn: '2023-08-21' },
   { id: 9,  name: '최윤호', email: 't04@tnacademy.kr',    role: 'teacher', title: null,        hiredOn: '2024-01-08' },

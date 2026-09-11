@@ -21,7 +21,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   ser_from: '2999-09-01',
   ser_to: null,
   teacher_id: '6',
-  teacher_name: '김서영',
+  teacher_name: '이다현',
   room_id: '1',
   room_name: '2층 A강의실',
   zacc_id: null,

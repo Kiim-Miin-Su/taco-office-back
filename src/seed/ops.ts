@@ -74,10 +74,10 @@ export const CONS_PICKS = [
 ];
 
 export const CONS_SESSIONS = [
-  { consId: 1, seq: 8, onDate: D(-2), who: '이수현 · 오예린', what: '보충 에세이 A대 2차 첨삭 · 문단 3개 재구성', why: 'A대 마감 09-15. 남은 5회 안에 3개 대학 보충분을 끝내야 함', how: '학생이 먼저 낭독 → 문단 단위 지적 → 그 자리에서 재작성' },
-  { consId: 1, seq: 7, onDate: D(-9), who: '이수현 · 오예린', what: '공통 에세이 최종 확정', why: '9월 첫 주 제출분 확정 필요', how: '3안 비교 후 1안 채택' },
-  { consId: 1, seq: 6, onDate: D(-16), who: '이수현 · 오예린', what: '추천서 요청 메일 발송', why: '교사 3인 회신에 2주 필요', how: '초안 작성 → 학생이 발송' },
-  { consId: 2, seq: 3, onDate: D(-5), who: '김서영 · 정하람', what: 'Body Paragraph 논거 재배치', why: '주제문과 근거 순서가 뒤집혀 있었음', how: 'MLA 형식 교정 병행' },
+  { consId: 1, seq: 8, onDate: D(-2), who: '김범준 · 오예린', what: '보충 에세이 A대 2차 첨삭 · 문단 3개 재구성', why: 'A대 마감 09-15. 남은 5회 안에 3개 대학 보충분을 끝내야 함', how: '학생이 먼저 낭독 → 문단 단위 지적 → 그 자리에서 재작성' },
+  { consId: 1, seq: 7, onDate: D(-9), who: '김범준 · 오예린', what: '공통 에세이 최종 확정', why: '9월 첫 주 제출분 확정 필요', how: '3안 비교 후 1안 채택' },
+  { consId: 1, seq: 6, onDate: D(-16), who: '김범준 · 오예린', what: '추천서 요청 메일 발송', why: '교사 3인 회신에 2주 필요', how: '초안 작성 → 학생이 발송' },
+  { consId: 2, seq: 3, onDate: D(-5), who: '이다현 · 정하람', what: 'Body Paragraph 논거 재배치', why: '주제문과 근거 순서가 뒤집혀 있었음', how: 'MLA 형식 교정 병행' },
 ];
 
 /** 마케팅 — 채널 7종 (§59) */

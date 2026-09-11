@@ -111,7 +111,7 @@ Table STAFF {
   email       varchar(120)[not null, unique]
   phone       varchar(20)
   role        role_t      [not null, note: 'D-R39 — 권한의 유일한 출처']
-  title       varchar(20) [note: '직함 표시용 — 교수실장 · 상담실장 · 코디네이터. 권한과 무관']
+  title       varchar(20) [note: '직함 표시용 — 매니저 · 상담실장 · 코디네이터. 권한과 무관 (교수실장 직함은 없음, 2026-09-12)']
   tz          varchar(40) [not null, default: 'Asia/Seoul', note: '관리자 화면은 KST 고정 · 개인 화면에만 적용 (§17)']
 
   // ── 인증 (D-R41 · TBO-22). 명세서 v2 는 localStorage 라 비밀번호 자리가 없었다.

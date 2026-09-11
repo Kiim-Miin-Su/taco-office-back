@@ -31,7 +31,7 @@ export class Staff {
   @Column({ type: 'enum', enum: ROLE_T_VALUES, enumName: 'role_t' })
   role: 'teacher'|'manager'|'admin'|'ceo';
 
-  /** 직함 표시용 — 교수실장 · 상담실장 · 코디네이터. 권한과 무관 */
+  /** 직함 표시용 — 매니저 · 상담실장 · 코디네이터. 권한과 무관 (교수실장 직함은 없음, 2026-09-12) */
   @Column({ type: 'varchar', length: 20, nullable: true })
   title: string | null;
 

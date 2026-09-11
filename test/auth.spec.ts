@@ -71,7 +71,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
   const PEOPLE = [
     { id: 901, name: '김강사', email: 'teacher@t.kr', role: 'teacher' },
     { id: 902, name: '이매니저', email: 'manager@t.kr', role: 'manager' },
-    { id: 903, name: '박관리', email: 'admin@t.kr', role: 'admin' },
+    { id: 903, name: '김민수', email: 'admin@t.kr', role: 'admin' },
     { id: 904, name: '최대표', email: 'ceo@t.kr', role: 'ceo' },
   ];
 
