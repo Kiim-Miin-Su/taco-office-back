@@ -3144,6 +3144,81 @@
         ]
       }
     },
+    "/teacher/home": {
+      "get": {
+        "operationId": "TeacherController_home",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherHomeDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용 — 다른 역할은 관리자 화면을 쓴다"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 홈 — 오늘·다가오는 수업·주간 요약·오늘 할 일·내 설정 (강사 덱 §7~9)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/exec": {
       "get": {
         "operationId": "ExecController_range",
@@ -6770,6 +6845,206 @@
           "guides",
           "perLesson",
           "todoCount"
+        ]
+      },
+      "TeacherLessonDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "YYYY-MM-DD (KST)"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "KST 0~1439 분"
+          },
+          "durMin": {
+            "type": "number",
+            "description": "분 단위 수업 길이"
+          },
+          "kindKey": {
+            "type": "string",
+            "description": "class·mock·gpa·study… (kind.key)"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "roomName": {
+            "type": "string",
+            "nullable": true,
+            "description": "대면이면 강의실 이름"
+          },
+          "roomBranch": {
+            "type": "string",
+            "nullable": true,
+            "description": "강의실 지점 (강남·송도·제주)"
+          },
+          "zaccLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "온라인이면 줌 계정 라벨"
+          },
+          "students": {
+            "type": "string",
+            "nullable": true,
+            "description": "수강 학생 이름 (·, 구분)"
+          },
+          "canceled": {
+            "type": "boolean"
+          },
+          "repState": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ],
+            "description": "리포트 상태 — rep 행이 없으면 none"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "startMin",
+          "durMin",
+          "kindKey",
+          "mode",
+          "canceled",
+          "repState"
+        ]
+      },
+      "TeacherWeekDto": {
+        "type": "object",
+        "properties": {
+          "lessons": {
+            "type": "number",
+            "description": "이번 주(월~일) 취소 제외 수업 수"
+          },
+          "minutes": {
+            "type": "number",
+            "description": "이번 주 총 시수(분)"
+          },
+          "unwritten": {
+            "type": "number",
+            "description": "이번 주 지나간 수업 중 미작성 후보 수"
+          }
+        },
+        "required": [
+          "lessons",
+          "minutes",
+          "unwritten"
+        ]
+      },
+      "TeacherTodoDto": {
+        "type": "object",
+        "properties": {
+          "unwrittenReports": {
+            "type": "number",
+            "description": "지나간 수업 중 리포트 미작성 후보 (REPORT_UNWRITTEN_CANDIDATE_DB)"
+          },
+          "waitingApprovals": {
+            "type": "number",
+            "description": "승인 대기(wait) 리포트"
+          },
+          "openChangeRequests": {
+            "type": "number",
+            "description": "진행 중(pending) 스케줄 변경 요청"
+          },
+          "openStaffRequests": {
+            "type": "number",
+            "description": "진행 중(pending) 내 요청 — 시급 변경·불가 시간 등(req)"
+          }
+        },
+        "required": [
+          "unwrittenReports",
+          "waitingApprovals",
+          "openChangeRequests",
+          "openStaffRequests"
+        ]
+      },
+      "TeacherSettingsDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA 시간대 — staff.tz"
+          },
+          "wageRate": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 적용 시급(원/시간) — 본인만 조회"
+          },
+          "wageFrom": {
+            "type": "string",
+            "nullable": true,
+            "description": "그 시급 적용 시작일"
+          }
+        },
+        "required": [
+          "name",
+          "timezone"
+        ]
+      },
+      "TeacherHomeDto": {
+        "type": "object",
+        "properties": {
+          "todayDate": {
+            "type": "string",
+            "description": "기준일 YYYY-MM-DD (KST 오늘)"
+          },
+          "today": {
+            "description": "오늘 수업 (시각 순)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherLessonDto"
+            }
+          },
+          "upcoming": {
+            "description": "내일부터 7일",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherLessonDto"
+            }
+          },
+          "week": {
+            "$ref": "#/components/schemas/TeacherWeekDto"
+          },
+          "todo": {
+            "$ref": "#/components/schemas/TeacherTodoDto"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/TeacherSettingsDto"
+          }
+        },
+        "required": [
+          "todayDate",
+          "today",
+          "upcoming",
+          "week",
+          "todo",
+          "settings"
         ]
       },
       "ExecStatDto": {
