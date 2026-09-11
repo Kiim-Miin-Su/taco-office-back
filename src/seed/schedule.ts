@@ -165,11 +165,11 @@ export function resolveExceptions(occs: OccSeed[]): ResolvedExc[] {
   });
 }
 
-/** 불가 시간 — 2주 회차 (§17 · 강사가 직접 등록) */
+/** 불가 시간 — 날짜가 판정 기준 (N-20 채택 §4-17 · 강사가 직접 등록). dow 는 삽입 때 날짜에서 파생. */
 export const UNAVS = [
-  { staffId: 6,  cycle: 1, dow: 0, startMin: hm(9), endMin: hm(18), reason: '주말 학원 강의' },
-  { staffId: 7,  cycle: 1, dow: 6, startMin: hm(14), endMin: hm(18), reason: '대학원 수업' },
-  { staffId: 8,  cycle: 1, dow: 2, startMin: hm(9), endMin: hm(13), reason: '개인 일정' },
-  { staffId: 10, cycle: 2, dow: 4, startMin: hm(9), endMin: hm(12), reason: '병원' },
-  { staffId: 12, cycle: 1, dow: 5, startMin: hm(20), endMin: hm(23), reason: '가족 행사' },
+  { staffId: 6,  onDate: addD(SEED_TODAY, 8),  startMin: hm(9),  endMin: hm(18), reason: '주말 학원 강의' },
+  { staffId: 6,  onDate: addD(SEED_TODAY, 3),  startMin: hm(18), endMin: hm(23), reason: '가족 행사 — 이미 마감된 날짜 표본' },
+  { staffId: 7,  onDate: addD(SEED_TODAY, 9),  startMin: hm(14), endMin: hm(18), reason: '대학원 수업' },
+  { staffId: 8,  onDate: addD(SEED_TODAY, 12), startMin: hm(9),  endMin: hm(13), reason: '개인 일정' },
+  { staffId: 12, onDate: addD(SEED_TODAY, 16), startMin: hm(20), endMin: hm(23), reason: '가족 행사' },
 ];

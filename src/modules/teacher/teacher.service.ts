@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { ConflictException, Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ser } from '../../entities';
@@ -12,9 +12,10 @@ import {
   REPORT_UNWRITTEN_CANDIDATE_DB, REPORT_WRITTEN_DB,
   latePenalty, minutesSinceEnd, tierFor, withholding, type SessionLike,
 } from '../../lib/rules';
-import { nowMinKst, todayKst } from '../../lib/kst';
+import { addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import type {
   TeacherGuideStudentDto, TeacherGuidesDto,
+  TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
   TeacherHistoryDto, TeacherHistoryLessonDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
 } from './teacher.dto';
@@ -23,6 +24,15 @@ import type {
 const SUGGESTION_MONTHLY_LIMIT = 3;
 /** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
 const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
+/** 불가 시간 (N-20 채택 2026-09-12 §4-17) — 등록 대상 **날짜별 7일 전 마감**. 격자 창은 원본 §15/16 의 08:00~23:00. */
+const UNAV_DEADLINE_DAYS = 7;
+const UNAV_MIN_START = 8 * 60;
+const UNAV_MAX_END = 23 * 60;
+/** 두 KST 달력일 사이 일수 (b − a) */
+const diffDays = (a: string, b: string): number =>
+  Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+/** 0=일 … 6=토 */
+const dowOf = (iso: string): number => new Date(`${iso}T00:00:00Z`).getUTCDay();
 
 type R = Record<string, unknown>;
 
@@ -489,5 +499,108 @@ export class TeacherService {
       });
     }
     return this.suggestionRow(row);
+  }
+
+  /* ══ 불가 시간 — 원본 §15/16 · N-20 채택(날짜별 7일 전 마감) ══ */
+
+  private unavBlockRow(r: R, openFromRaw: string): TeacherUnavBlockDto {
+    const onDate = String(r.on_date);
+    return {
+      id: Number(r.id), onDate, dow: dowOf(onDate),
+      startMin: Number(r.start_min), endMin: Number(r.end_min), reason: String(r.reason),
+      canDelete: onDate >= openFromRaw,
+    };
+  }
+
+  /**
+   * 2주 격자 메타 + 내 등록. 회차는 입사일 + 14k (원본 §15 — 표시/묶음용, 판정은 날짜).
+   * openFrom = max(회차 시작, 오늘+7) — 원본 캡처의 「잠김 8일 · 열림 6일」이 이 식에서 나온다.
+   */
+  async unavailable(teacherId: number, anchor?: string): Promise<TeacherUnavDto> {
+    const today = todayKst();
+    const [me] = await this.q<{ hired_on: string | null }>(
+      `SELECT hired_on::text AS hired_on FROM staff WHERE id = $1`, [teacherId]);
+    if (!me?.hired_on) {
+      throw new ConflictException({ code: 'NO_HIRED_ON', message: '입사일이 없어 2주 회차를 계산할 수 없습니다 — 관리자에게 문의해 주세요' });
+    }
+    const hiredOn = me.hired_on;
+    const at = anchor && isIsoDate(anchor) ? anchor : today;
+    const k = Math.max(0, Math.floor(diffDays(hiredOn, at) / 14));
+    const from = addDays(hiredOn, k * 14);
+    const to = addDays(from, 13);
+    const openFromRaw = addDays(today, UNAV_DEADLINE_DAYS);
+    const openFrom = openFromRaw < from ? from : openFromRaw;
+    const lockedDays = Math.min(14, Math.max(0, diffDays(from, openFrom)));
+    const rows = await this.q<R>(
+      `SELECT id, on_date::text AS on_date, start_min, end_min, reason
+         FROM unav
+        WHERE staff_id = $1 AND on_date BETWEEN $2 AND $3
+        ORDER BY on_date, start_min`, [teacherId, from, to]);
+    return {
+      cycle: { index: k + 1, from, to, hiredOn },
+      today, openFrom,
+      lockedDays, openDays: 14 - lockedDays,
+      blocks: rows.map((r) => this.unavBlockRow(r, openFromRaw)),
+    };
+  }
+
+  /**
+   * 등록 — 마감(날짜별 7일 전)과 본인 겹침을 서버가 판정한다. 겹침 판정과 삽입은
+   * advisory lock 트랜잭션의 guarded INSERT 한 문장 — 동시 등록이 같은 빈칸을 두 번 차지하지 못한다.
+   * 새 쓰기는 cycle 을 저장하지 않는다(§4-17 — 회차는 표시용 파생), dow 는 날짜에서 파생해 저장.
+   */
+  async createUnavailable(teacherId: number, dto: TeacherUnavCreateDto): Promise<TeacherUnavBlockDto> {
+    const today = todayKst();
+    if (!isIsoDate(dto.onDate)) {
+      throw new ConflictException({ code: 'INVALID_DATE', message: '실재하는 날짜가 아닙니다' });
+    }
+    if (dto.endMin <= dto.startMin) {
+      throw new ConflictException({ code: 'TIME_RANGE', message: '끝 시각은 시작 시각보다 커야 합니다' });
+    }
+    if (dto.startMin < UNAV_MIN_START || dto.endMin > UNAV_MAX_END) {
+      throw new ConflictException({ code: 'TIME_RANGE', message: '불가 시간은 08:00~23:00 안에서 등록합니다' });
+    }
+    const openFromRaw = addDays(today, UNAV_DEADLINE_DAYS);
+    if (dto.onDate < openFromRaw) {
+      throw new ConflictException({
+        code: 'UNAV_DEADLINE',
+        message: '등록은 날짜별 7일 전까지만 가능합니다. 1주 안의 사정은 강사 단톡방에 올려 주세요 — 관리자가 확인하고 직접 조정합니다',
+      });
+    }
+    const reason = dto.reason.trim();
+    if (!reason) throw new ConflictException({ code: 'EMPTY_REASON', message: '사유를 적어 주세요' });
+
+    const inserted = await this.anyRepo.manager.transaction(async (em) => {
+      await em.query(`SELECT pg_advisory_xact_lock(hashtext('unav-write'), $1::int)`, [teacherId]);
+      return em.query(
+        `INSERT INTO unav (staff_id, on_date, dow, start_min, end_min, reason)
+         SELECT $1, $2::date, $3, $4, $5, $6
+          WHERE NOT EXISTS (
+                SELECT 1 FROM unav
+                 WHERE staff_id = $1 AND on_date = $2::date AND start_min < $5 AND end_min > $4)
+         RETURNING id, on_date::text AS on_date, start_min, end_min, reason`,
+        [teacherId, dto.onDate, dowOf(dto.onDate), dto.startMin, dto.endMin, reason],
+      ) as Promise<R[]>;
+    });
+    if (inserted.length === 0) {
+      throw new ConflictException({ code: 'UNAV_OVERLAP', message: '이미 등록한 시간과 겹칩니다' });
+    }
+    return this.unavBlockRow(inserted[0], openFromRaw);
+  }
+
+  /** 삭제 — 본인 행이면서 아직 열린 날짜(오늘+7 이후)만. 마감분·legacy(날짜 미상)는 관리자 조정 대상. */
+  async deleteUnavailable(teacherId: number, id: number): Promise<{ ok: true }> {
+    const [row] = await this.q<{ id: string | number; on_date: string | null }>(
+      `SELECT id, on_date::text AS on_date FROM unav WHERE id = $1 AND staff_id = $2`, [id, teacherId]);
+    if (!row) throw new NotFoundException('등록을 찾을 수 없습니다');
+    const openFromRaw = addDays(todayKst(), UNAV_DEADLINE_DAYS);
+    if (!row.on_date || row.on_date < openFromRaw) {
+      throw new ConflictException({
+        code: 'UNAV_LOCKED',
+        message: '마감된 날짜의 등록은 여기서 지울 수 없습니다 — 관리자에게 문의해 주세요',
+      });
+    }
+    await this.q(`DELETE FROM unav WHERE id = $1 AND staff_id = $2`, [id, teacherId]);
+    return { ok: true };
   }
 }

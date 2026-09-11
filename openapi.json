@@ -3540,6 +3540,237 @@
         ]
       }
     },
+    "/teacher/unavailable": {
+      "get": {
+        "operationId": "TeacherController_unavailable",
+        "parameters": [
+          {
+            "name": "anchor",
+            "required": false,
+            "in": "query",
+            "description": "조회할 2주 회차 안의 아무 날짜 YYYY-MM-DD — 없으면 오늘(KST)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherUnavDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "불가 시간 — 2주 격자 메타 + 내 등록 (원본 §15/16 · N-20 날짜별 7일 전 마감)",
+        "tags": [
+          "teacher"
+        ]
+      },
+      "post": {
+        "operationId": "TeacherController_createUnavailable",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherUnavCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherUnavBlockDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code UNAV_DEADLINE(7일 전 마감) | UNAV_OVERLAP(본인 겹침) | TIME_RANGE | INVALID_DATE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "불가 시간 등록 — 마감·겹침은 서버가 판정 (UNAV_DEADLINE · UNAV_OVERLAP)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
+    "/teacher/unavailable/{id}": {
+      "delete": {
+        "operationId": "TeacherController_deleteUnavailable",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ ok: true }"
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code UNAV_LOCKED — 마감분·legacy 는 관리자 조정"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "불가 시간 삭제 — 열린 날짜(오늘+7 이후)의 본인 등록만 (UNAV_LOCKED)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/exec": {
       "get": {
         "operationId": "ExecController_range",
@@ -7916,6 +8147,140 @@
         "required": [
           "category",
           "body"
+        ]
+      },
+      "TeacherUnavCycleDto": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number",
+            "description": "입사일 기준 N번째 2주 (1부터) — 표시/묶음용 (§4-17)"
+          },
+          "from": {
+            "type": "string",
+            "description": "회차 시작 YYYY-MM-DD"
+          },
+          "to": {
+            "type": "string",
+            "description": "회차 끝(14일째) YYYY-MM-DD"
+          },
+          "hiredOn": {
+            "type": "string",
+            "description": "입사일 — 회차 기준점 (원본 §15)"
+          }
+        },
+        "required": [
+          "index",
+          "from",
+          "to",
+          "hiredOn"
+        ]
+      },
+      "TeacherUnavBlockDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "등록 날짜 YYYY-MM-DD (KST) — 판정 기준 (N-20)"
+          },
+          "dow": {
+            "type": "number",
+            "description": "0=일 … 6=토 — onDate 에서 파생"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "KST 분 (480=08:00)"
+          },
+          "endMin": {
+            "type": "number",
+            "description": "KST 분 (1380=23:00)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "사유 — 관리자가 조정 가능성을 판단한다 (v26 필수)"
+          },
+          "canDelete": {
+            "type": "boolean",
+            "description": "마감 전(onDate ≥ 오늘+7)이면 삭제 가능 — 서버 판정"
+          }
+        },
+        "required": [
+          "id",
+          "onDate",
+          "dow",
+          "startMin",
+          "endMin",
+          "reason",
+          "canDelete"
+        ]
+      },
+      "TeacherUnavDto": {
+        "type": "object",
+        "properties": {
+          "cycle": {
+            "$ref": "#/components/schemas/TeacherUnavCycleDto"
+          },
+          "today": {
+            "type": "string",
+            "description": "오늘 (KST)"
+          },
+          "openFrom": {
+            "type": "string",
+            "description": "등록이 열리는 첫 날짜 = max(회차 시작, 오늘+7). 회차 끝을 넘으면 이 회차 전체가 마감"
+          },
+          "lockedDays": {
+            "type": "number",
+            "description": "회차 14일 중 잠긴 날짜 수"
+          },
+          "openDays": {
+            "type": "number",
+            "description": "회차 14일 중 열린 날짜 수"
+          },
+          "blocks": {
+            "description": "회차 안 내 등록 — 날짜·시각 순. 날짜 미상(legacy) 행은 싣지 않는다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherUnavBlockDto"
+            }
+          }
+        },
+        "required": [
+          "cycle",
+          "today",
+          "openFrom",
+          "lockedDays",
+          "openDays",
+          "blocks"
+        ]
+      },
+      "TeacherUnavCreateDto": {
+        "type": "object",
+        "properties": {
+          "onDate": {
+            "type": "string",
+            "description": "등록 날짜 YYYY-MM-DD — 오늘(KST)+7일 이후만 (N-20 날짜별 마감)"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "시작 분 — 격자 08:00(480)~22:50"
+          },
+          "endMin": {
+            "type": "number",
+            "description": "끝 분 — 08:10(490)~23:00(1380), 시작보다 커야 한다"
+          },
+          "reason": {
+            "type": "string",
+            "description": "사유 1~500자 — 필수. 관리자가 조정 가능성을 판단한다 (v26)"
+          }
+        },
+        "required": [
+          "onDate",
+          "startMin",
+          "endMin",
+          "reason"
         ]
       },
       "ExecStatDto": {

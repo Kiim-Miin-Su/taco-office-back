@@ -21,9 +21,13 @@ export class Unav {
   @Column({ type: 'bigint' })
   staffId: number;
 
-  /** 입사일 기준 N번째 2주 회차 (v26) */
+  /** v26 2주 회차 흔적 — 표시/묶음용. 새 쓰기는 저장하지 않는다 (N-20 §4-17: 판정은 onDate) */
   @Column({ type: 'smallint', nullable: true })
   cycle: number | null;
+
+  /** N-20 — 등록 날짜(판정 기준). NULL 은 날짜 식별 불가 legacy 행 — 강사 화면에 싣지 않는다 */
+  @Column({ type: 'date', nullable: true })
+  onDate: string | null;
 
   /** 0=일 … 6=토 */
   @Column({ type: 'smallint' })

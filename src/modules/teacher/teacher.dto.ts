@@ -5,7 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { REP_STATE_T_VALUES, SUG_CAT_T_VALUES, SUG_STATE_T_VALUES } from '../../entities/enums';
 
 const S = { type: String, nullable: true } as const;
@@ -223,4 +223,58 @@ export class TeacherHistoryDto {
   @ApiPropertyOptional({ ...S, description: '그 시급 적용 시작일' }) wageFrom?: string | null;
   @ApiProperty({ type: [TeacherHistoryLessonDto], description: '최근 날짜·이른 시각 순' }) lessons!: TeacherHistoryLessonDto[];
   @ApiProperty({ type: TeacherSettlementDto }) settlement!: TeacherSettlementDto;
+}
+
+/* ══ 불가 시간 (강사 원본 §15/16 · N-20 채택 2026-09-12 §4-17: 날짜별 7일 전 마감) ══ */
+
+export class TeacherUnavBlockDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: '등록 날짜 YYYY-MM-DD (KST) — 판정 기준 (N-20)' }) onDate!: string;
+  @ApiProperty({ description: '0=일 … 6=토 — onDate 에서 파생' }) dow!: number;
+  @ApiProperty({ description: 'KST 분 (480=08:00)' }) startMin!: number;
+  @ApiProperty({ description: 'KST 분 (1380=23:00)' }) endMin!: number;
+  @ApiProperty({ description: '사유 — 관리자가 조정 가능성을 판단한다 (v26 필수)' }) reason!: string;
+  @ApiProperty({ description: '마감 전(onDate ≥ 오늘+7)이면 삭제 가능 — 서버 판정' }) canDelete!: boolean;
+}
+
+export class TeacherUnavCycleDto {
+  @ApiProperty({ description: '입사일 기준 N번째 2주 (1부터) — 표시/묶음용 (§4-17)' }) index!: number;
+  @ApiProperty({ description: '회차 시작 YYYY-MM-DD' }) from!: string;
+  @ApiProperty({ description: '회차 끝(14일째) YYYY-MM-DD' }) to!: string;
+  @ApiProperty({ description: '입사일 — 회차 기준점 (원본 §15)' }) hiredOn!: string;
+}
+
+export class TeacherUnavQueryDto {
+  @ApiPropertyOptional({ description: '조회할 2주 회차 안의 아무 날짜 YYYY-MM-DD — 없으면 오늘(KST)' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'anchor는 YYYY-MM-DD 형식입니다' })
+  anchor?: string;
+}
+
+export class TeacherUnavCreateDto {
+  @ApiProperty({ description: '등록 날짜 YYYY-MM-DD — 오늘(KST)+7일 이후만 (N-20 날짜별 마감)' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'onDate는 YYYY-MM-DD 형식입니다' })
+  onDate!: string;
+  @ApiProperty({ description: '시작 분 — 격자 08:00(480)~22:50' })
+  @IsInt() @Min(480) @Max(1370)
+  startMin!: number;
+  @ApiProperty({ description: '끝 분 — 08:10(490)~23:00(1380), 시작보다 커야 한다' })
+  @IsInt() @Min(490) @Max(1380)
+  endMin!: number;
+  @ApiProperty({ description: '사유 1~500자 — 필수. 관리자가 조정 가능성을 판단한다 (v26)' })
+  @IsString()
+  @MinLength(1, { message: '사유를 적어 주세요' })
+  @MaxLength(500, { message: '사유는 500자 이내입니다' })
+  reason!: string;
+}
+
+/** GET /teacher/unavailable — 2주 격자 메타 + 내 등록 (강사 전용, 서버가 본인 고정) */
+export class TeacherUnavDto {
+  @ApiProperty({ type: TeacherUnavCycleDto }) cycle!: TeacherUnavCycleDto;
+  @ApiProperty({ description: '오늘 (KST)' }) today!: string;
+  @ApiProperty({ description: '등록이 열리는 첫 날짜 = max(회차 시작, 오늘+7). 회차 끝을 넘으면 이 회차 전체가 마감' }) openFrom!: string;
+  @ApiProperty({ description: '회차 14일 중 잠긴 날짜 수' }) lockedDays!: number;
+  @ApiProperty({ description: '회차 14일 중 열린 날짜 수' }) openDays!: number;
+  @ApiProperty({ type: [TeacherUnavBlockDto], description: '회차 안 내 등록 — 날짜·시각 순. 날짜 미상(legacy) 행은 싣지 않는다' })
+  blocks!: TeacherUnavBlockDto[];
 }

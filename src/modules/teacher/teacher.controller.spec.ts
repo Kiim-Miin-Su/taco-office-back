@@ -19,6 +19,9 @@ describe('TeacherController — 강사 전용 표면', () => {
     suggestions: jest.fn().mockResolvedValue({ used: 0, items: [] }),
     createSuggestion: jest.fn().mockResolvedValue({ id: 1 }),
     guides: jest.fn().mockResolvedValue({ students: [] }),
+    unavailable: jest.fn().mockResolvedValue({ blocks: [] }),
+    createUnavailable: jest.fn().mockResolvedValue({ id: 9 }),
+    deleteUnavailable: jest.fn().mockResolvedValue({ ok: true }),
   } as unknown as TeacherService;
   const ctrl = new TeacherController(svc);
   const user = (role: RequestUser['role'], id = 7): RequestUser => ({ id, role, perms: {} } as RequestUser);
@@ -67,6 +70,25 @@ describe('TeacherController — 강사 전용 표면', () => {
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 수업 안내도 403', async (role) => {
     await expect(ctrl.guides(user(role), {})).rejects.toBeInstanceOf(ForbiddenException);
     expect(svc.guides).not.toHaveBeenCalled();
+  });
+
+  it('불가 시간 조회·등록·삭제는 자기 id 로 위임된다', async () => {
+    await ctrl.unavailable(user('teacher', 42), { anchor: '2026-10-01' });
+    expect((svc.unavailable as jest.Mock).mock.calls).toEqual([[42, '2026-10-01']]);
+    const dto3 = { onDate: '2026-10-01', startMin: 1080, endMin: 1380, reason: '가족 행사' };
+    await ctrl.createUnavailable(user('teacher', 42), dto3);
+    expect((svc.createUnavailable as jest.Mock).mock.calls).toEqual([[42, dto3]]);
+    await ctrl.deleteUnavailable(user('teacher', 42), 9);
+    expect((svc.deleteUnavailable as jest.Mock).mock.calls).toEqual([[42, 9]]);
+  });
+
+  it.each(['manager', 'admin', 'ceo'] as const)('%s 는 불가 시간 3경로 모두 403', async (role) => {
+    await expect(ctrl.unavailable(user(role), {})).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(ctrl.createUnavailable(user(role), { onDate: '2026-10-01', startMin: 480, endMin: 600, reason: 'x' })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(ctrl.deleteUnavailable(user(role), 1)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(svc.unavailable).not.toHaveBeenCalled();
+    expect(svc.createUnavailable).not.toHaveBeenCalled();
+    expect(svc.deleteUnavailable).not.toHaveBeenCalled();
   });
 
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 건의 읽기·쓰기 모두 403', async (role) => {

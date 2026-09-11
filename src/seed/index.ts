@@ -136,7 +136,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     }
     await add('exc_stu_out', outRows);
 
-    await add('unav', UNAVS.map((u) => ({ staff_id: u.staffId, cycle: u.cycle, dow: u.dow, start_min: u.startMin, end_min: u.endMin, reason: u.reason })));
+    await add('unav', UNAVS.map((u) => ({ staff_id: u.staffId, on_date: u.onDate, dow: new Date(`${u.onDate}T00:00:00Z`).getUTCDay(), start_min: u.startMin, end_min: u.endMin, reason: u.reason })));
 
     // ── 리포트 · 안내 · 교재
     const langOf = (id: number) => STUDENTS.find((s) => s.id === id)?.lang ?? 'ko';

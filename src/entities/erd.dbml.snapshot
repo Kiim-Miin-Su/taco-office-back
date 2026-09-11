@@ -313,18 +313,21 @@ Table ATT {
 Table UNAV {
   id          bigserial   [pk]
   staff_id    bigint      [not null, ref: > STAFF.id]
-  cycle       smallint    [note: '입사일 기준 N번째 2주 회차 (v26)']
-  dow         smallint    [not null, note: '0=일 … 6=토']
+  cycle       smallint    [note: 'v26 2주 회차 흔적 — 표시/묶음용. 새 쓰기는 저장하지 않는다 (N-20 §4-17)']
+  dow         smallint    [not null, note: '0=일 … 6=토 — 새 쓰기는 on_date 에서 파생해 저장']
+  on_date     date        [note: 'N-20 채택 — 등록 날짜(판정 기준). NULL 은 날짜 식별 불가 legacy 행']
   start_min   smallint    [not null]
   end_min     smallint    [not null]
   reason      text        [not null, note: 'v26 — 필수. 관리자가 조정 가능성을 판단한다']
   created_at  timestamptz [not null, default: `now()`]
 
-  indexes { (staff_id, cycle, dow) }
+  indexes { (staff_id, cycle, dow) (staff_id, on_date) }
   Note: '''
-  명세서는 UNAV 를 읽어 겹침만 본다. **등록 규칙은 v26 에서 가져와 얹었다** —
-  2주 회차 · 회차 시작 1주 전 마감 · 사유 필수.
-  1주 안에 생긴 사정은 시스템 밖(강사 단톡방)으로 안내한다.
+  명세서는 UNAV 를 읽어 겹침만 본다. 등록 규칙은 N-20 채택(2026-09-12 §4-17) —
+  **등록 대상 날짜별 7일 전 마감** · 사유 필수 · on_date 가 판정 기준이다 (원본 §15/16 캡처 우선).
+  on_date NULL 은 cycle+dow 만으로 2주 안 같은 요일을 식별하지 못하던 legacy 행 —
+  강사 화면에 싣지 않고 관리자 조정 대상으로 남긴다.
+  1주 안에 생긴 사정은 시스템 밖(강사 단톡방)으로 안내한다 (원본 §16).
   '''
 }
 
@@ -1049,6 +1052,10 @@ Table SER_OCC {
 // v4.10 → v4.11 (2026-09-07 · TBO-47C 컨설팅 조회 계약)
 //   + CONS                 stage/step/수납 이후 단계/총 회차 CHECK 4개
 //   + CONS_SESS            양수 순번 CHECK · (cons_id,seq) UNIQUE
+//
+// v4.11 → v4.12 (2026-09-12 · TBO-50 C31 불가 시간 날짜 계약)
+//   + UNAV.on_date         N-20 채택(§4-17) — 날짜별 7일 전 마감의 판정 기준. NULL=legacy
+//   = 새 쓰기는 cycle 미저장(표시용 파생) · (staff_id,on_date) 인덱스 · 기존 행 자동 보정 없음
 //
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)

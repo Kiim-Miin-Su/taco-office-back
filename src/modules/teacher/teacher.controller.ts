@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, ForbiddenException, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import {
   ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
@@ -13,6 +13,7 @@ import type { RequestUser } from '../../common/perm';
 import {
   TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
+  TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto, TeacherUnavQueryDto,
 } from './teacher.dto';
 import { TeacherService } from './teacher.service';
 
@@ -73,5 +74,40 @@ export class TeacherController {
   ): Promise<TeacherSuggestionDto> {
     this.assertTeacher(user);
     return this.svc.createSuggestion(user.id, dto);
+  }
+
+  @Get('unavailable')
+  @ApiOperation({ summary: '불가 시간 — 2주 격자 메타 + 내 등록 (원본 §15/16 · N-20 날짜별 7일 전 마감)' })
+  @ApiOkResponse({ type: TeacherUnavDto })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async unavailable(@CurrentUser() user: RequestUser, @Query() query: TeacherUnavQueryDto): Promise<TeacherUnavDto> {
+    this.assertTeacher(user);
+    return this.svc.unavailable(user.id, query.anchor);
+  }
+
+  @Post('unavailable')
+  @ApiOperation({ summary: '불가 시간 등록 — 마감·겹침은 서버가 판정 (UNAV_DEADLINE · UNAV_OVERLAP)' })
+  @ApiCreatedResponse({ type: TeacherUnavBlockDto })
+  @ApiConflictResponse({ description: 'code UNAV_DEADLINE(7일 전 마감) | UNAV_OVERLAP(본인 겹침) | TIME_RANGE | INVALID_DATE' })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async createUnavailable(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: TeacherUnavCreateDto,
+  ): Promise<TeacherUnavBlockDto> {
+    this.assertTeacher(user);
+    return this.svc.createUnavailable(user.id, dto);
+  }
+
+  @Delete('unavailable/:id')
+  @ApiOperation({ summary: '불가 시간 삭제 — 열린 날짜(오늘+7 이후)의 본인 등록만 (UNAV_LOCKED)' })
+  @ApiOkResponse({ description: '{ ok: true }' })
+  @ApiConflictResponse({ description: 'code UNAV_LOCKED — 마감분·legacy 는 관리자 조정' })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async deleteUnavailable(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<{ ok: true }> {
+    this.assertTeacher(user);
+    return this.svc.deleteUnavailable(user.id, id);
   }
 }
