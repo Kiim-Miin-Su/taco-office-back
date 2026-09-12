@@ -11,8 +11,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Inv } from '../../entities';
+import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
-import { won } from '../../lib/rules';
+import { INV_BILLABLE, INV_OPEN, won } from '../../lib/rules';
+import { sqlWordList } from '../../lib/sql';
 import { EXPENSE_CATEGORY_LABEL } from './accounting.dto';
 import type {
   AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, PaymentCreateDto, PaymentDto, PayoutDto,
@@ -34,8 +36,47 @@ const INV_SELECT = `
            FROM inv_line l WHERE l.inv_id = i.id), '[]'::json) AS lines
     FROM inv i JOIN stu s ON s.id = i.student_id`;
 
-/** 입금을 받을 수 있는 상태인가 — §53 단계 순서(①작성 ②청구서 작성 ③학부모 안내 ④입금 완료 ⑤입금 기록) */
-const BILLABLE = new Set(['sent', 'unpaid', 'partial', 'paid']);
+/**
+ * 입금을 받을 수 있는 상태인가 — §53 단계 순서(①작성 ②청구서 작성 ③학부모 안내 ④입금 완료 ⑤입금 기록).
+ * 낱말은 `lib/rules` 한 곳에서 온다 — 머리의 「보낸 청구서」와 같은 집합이어야 한다 (D-R18).
+ */
+const BILLABLE = new Set<string>(INV_BILLABLE);
+
+/**
+ * 회계 머리 여섯 칸 중 **돈 다섯 칸의 뿌리** — §52·§56 원문 (C43).
+ *
+ * 「못 받은 돈」을 화면이 빼서 만들면 두 벌이 된다. 서버가 한 번에 낸다.
+ * `$1` = 기준일(오늘, KST) — 「기한 지남」만 이 값을 쓴다.
+ */
+const MONEY_SUMMARY_SQL = `
+  SELECT
+    COALESCE(SUM(amount) FILTER (WHERE state IN (${sqlWordList(INV_BILLABLE)})), 0)::bigint AS sent,
+    COALESCE(SUM(paid_amount) FILTER (WHERE state IN (${sqlWordList(INV_BILLABLE)})), 0)::bigint AS collected,
+    COALESCE(SUM(amount - paid_amount) FILTER (
+      WHERE state IN (${sqlWordList(INV_OPEN)}) AND due_on IS NOT NULL AND due_on < $1::date), 0)::bigint AS overdue
+    FROM inv`;
+
+/**
+ * 나간 돈 — 「남은 돈 = 받은 돈 − 나간 돈」의 뒷항.
+ *
+ * 승인된 지출(§56 부대비용·법인카드)과 **확정된** 강사료 정산이다. 초안 정산·미심사 지출은
+ * 아직 나간 돈이 아니다. 강사료는 §56 원문이 「8월에 드릴 돈」이라 부르는 **실지급(net)** 을 쓴다 —
+ * 원본 표본이 그 자리에 5,096,750 − 95,000 − 165,058 = 4,836,692 를 적어 두었다.
+ *
+ * 지출은 낱말로 고른다 — `expense.state` 는 CHECK `expense_state_words` 가 지키는 세 낱말뿐이다.
+ * **정산은 낱말로 고르지 않는다.** `payout.state` 는 CHECK 가 없고 지금 세 곳이 서로 다른 낱말을
+ * 쓴다(entity 주석·화면은 `confirmed`, 시드는 `confirmed_by` 를 채운 채 `approved`). 어느 쪽이
+ * 맞는지는 원문에 없어 **내가 고를 일이 아니다**(N-27 로 올렸다). 그래서 여기서는 말 대신 사실을
+ * 본다 — **누가 확정했는가**(`confirmed_by`). 낱말 다툼이 어느 쪽으로 끝나도 이 합은 흔들리지 않는다.
+ */
+const MONEY_OUT_SQL = `
+  SELECT (
+    COALESCE((SELECT SUM(amount) FROM expense WHERE state = 'approved'), 0)
+    + COALESCE((SELECT SUM(net) FROM payout WHERE confirmed_by IS NOT NULL), 0)
+  )::bigint AS out`;
+
+/** 「손봐야 할 것」 — 대표 보고 §69 회계 배지와 **같은 판정**이다. 두 곳에서 세지 않는다 */
+const MONEY_TODO_SQL = areaCountSql('money');
 
 /** 나간 돈 한 줄 — 목록과 심사 응답이 같은 모양을 쓰도록 한 곳에 둔다 (§56) */
 const EXPENSE_SELECT = `
@@ -121,18 +162,35 @@ export class AccountingService {
     )) as Array<Record<string, unknown>>;
     const expenses: ExpenseDto[] = expRows.map((r) => this.expenseRow(r, canSeeAmounts));
 
-    const billed = invoices.reduce((a, i) => a + (i.amount ?? 0), 0);
-    const collected = invoices.reduce((a, i) => a + (i.paidAmount ?? 0), 0);
+    return { summary: await this.moneySummary(canSeeAmounts, today), invoices, payments, payouts, expenses };
+  }
+
+  /**
+   * 회계 머리 여섯 칸 — §52·§56 원문 (C43).
+   *
+   * **목록에서 다시 더하지 않는다.** 권한이 없으면 목록의 금액은 이미 null 이라, 거기서 합을 내면
+   * 대표가 아닌 사람에게는 0원이 되고 그 0원이 「진짜 0」처럼 보인다. 합은 DB 가 낸다.
+   * 가리는 일은 마지막 한 줄에서만 한다 — 서버가 아예 안 내려보낸다 (D-R39).
+   */
+  private async moneySummary(canSeeAmounts: boolean, today: string): Promise<AccountingDto['summary']> {
+    const [m] = (await this.inv.query(MONEY_SUMMARY_SQL, [today])) as Array<{
+      sent: string; collected: string; overdue: string;
+    }>;
+    const [o] = (await this.inv.query(MONEY_OUT_SQL)) as Array<{ out: string }>;
+    const [t] = (await this.inv.query(MONEY_TODO_SQL, [today])) as Array<{ n: string }>;
+
+    const sent = Number(m.sent);
+    const collected = Number(m.collected);
+    const gate = (v: number): number | null => (canSeeAmounts ? v : null);
     return {
-      summary: {
-        invoiceCount: invoices.length,
-        billed: canSeeAmounts ? billed : null,
-        collected: canSeeAmounts ? collected : null,
-        outstanding: canSeeAmounts ? billed - collected : null,
-        overdueCount: invoices.filter((i) => i.overdueDays > 0).length,
-        canSeeAmounts,
-      },
-      invoices, payments, payouts, expenses,
+      sent: gate(sent),
+      collected: gate(collected),
+      // 원문 안에서 닫히는 산술이다 — 7,214,000 − 4,377,400 = 2,836,600 (§52)
+      unpaid: gate(sent - collected),
+      overdue: gate(Number(m.overdue)),
+      net: gate(collected - Number(o.out)),
+      todo: Number(t.n),
+      canSeeAmounts,
     };
   }
 

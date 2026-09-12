@@ -281,3 +281,137 @@ d('§56 법인카드 심사 — 증액은 없다 (A-D3 · C36-b)', () => {
     expect(out).toMatchObject({ amount: null, requestedAmount: null, state: 'approved', categoryLabel: '접대비' });
   });
 });
+
+/* ── §52·§56 회계 머리 여섯 칸 — 서버가 한 곳에서 낸다 (C43) ────────────────────────
+   원문 표본 안에서 산술이 닫힌다: 7,214,000 − 4,377,400 = 2,836,600.
+   그래서 여기서 증명하는 것은 **값이 얼마인가**가 아니라 **어떤 집합에서 나왔는가**다.
+   합은 전 테이블을 보므로 이 블록은 트랜잭션 안에서 장부를 비우고 자기 표본만 넣는다
+   (끝나면 롤백한다 — 스크래치 DB 가드는 assertScratch 가 이미 걸어 두었다). */
+d('§52 회계 머리 여섯 칸 — 집합이 곧 정의다 (C43)', () => {
+  let ds: DataSource;
+  let q: QueryRunner;
+  let stuId = 0;
+
+  const svc = () => new AccountingService(q.manager.getRepository(Inv));
+  const head = async (canSeeAmounts = true) => (await svc().all(canSeeAmounts)).summary;
+
+  /** 청구서 한 장 — 기한은 오늘 기준 상대일이라 내일 실행해도 같은 답이 나온다 */
+  const inv = async (state: string, amount: number, paid: number, dueDays: number | null) => {
+    const [r] = (await q.query(
+      `INSERT INTO inv (student_id, year_month, inv_type, title, amount, paid_amount, state, due_on)
+       VALUES ($1, '2026-08', 'tuition', '머리 표본', $2, $3, $4::inv_state_t,
+               CASE WHEN $5::int IS NULL THEN NULL ELSE (now() AT TIME ZONE 'Asia/Seoul')::date + $5::int END)
+       RETURNING id`,
+      [stuId, amount, paid, state, dueDays],
+    )) as { id: string }[];
+    return Number(r.id);
+  };
+
+  beforeAll(async () => {
+    ds = scratchDataSource();
+    await ds.initialize();
+  });
+  beforeEach(async () => {
+    q = ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    await q.query(`DELETE FROM pay`);
+    await q.query(`DELETE FROM inv_line`);
+    await q.query(`DELETE FROM inv`);
+    await q.query(`DELETE FROM payout_line`);
+    await q.query(`DELETE FROM payout`);
+    await q.query(`DELETE FROM expense`);
+    const [stu] = (await q.query(`INSERT INTO stu (name, grade) VALUES ('머리 학생','G9') RETURNING id`)) as { id: string }[];
+    stuId = Number(stu.id);
+  });
+  afterEach(async () => {
+    if (q?.isTransactionActive) await q.rollbackTransaction();
+    if (q && !q.isReleased) await q.release();
+  });
+  afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
+
+  it('초안과 취소는 「보낸 청구서」가 아니다 — 아직 보내지 않았고, 취소는 청구가 아니다', async () => {
+    await inv('sent', 1_000_000, 0, 10);
+    await inv('draft', 500_000, 0, 10);
+    await inv('void', 700_000, 0, 10);
+    const h = await head();
+    expect(h.sent).toBe(1_000_000);
+    expect(h.collected).toBe(0);
+    expect(h.unpaid).toBe(1_000_000);
+  });
+
+  it('「못 받은 돈」은 화면이 빼지 않는다 — 보낸 청구서 − 받은 돈이 서버에서 닫힌다 (§52 표본과 같은 산술)', async () => {
+    await inv('paid', 4_000_000, 4_000_000, -30);
+    await inv('partial', 2_214_000, 377_400, 10);
+    await inv('unpaid', 1_000_000, 0, 10);
+    const h = await head();
+    expect(h.sent).toBe(7_214_000);
+    expect(h.collected).toBe(4_377_400);
+    expect(h.unpaid).toBe(2_836_600);
+    expect(h.sent! - h.collected!).toBe(h.unpaid);
+  });
+
+  it('「기한 지남」은 건수가 아니라 **금액**이고, 못 받은 돈의 부분집합이다', async () => {
+    await inv('unpaid', 1_170_000, 0, -3);      // 기한이 사흘 지났다
+    await inv('partial', 500_000, 200_000, -1); // 남은 30만도 기한이 지났다
+    await inv('paid', 900_000, 900_000, -10);   // 완납은 늦지 않았다
+    await inv('draft', 400_000, 0, -10);        // 보내지도 않았다
+    await inv('unpaid', 600_000, 0, 7);         // 아직 기한 전이다
+    const h = await head();
+    expect(h.overdue).toBe(1_470_000);
+    expect(h.unpaid).toBe(2_070_000);
+    expect(h.overdue!).toBeLessThanOrEqual(h.unpaid!);
+    // 같은 집합을 세는 대표 보고 회계 배지와 건수가 어긋나지 않는다 (§69)
+    expect(h.todo).toBe(2);
+  });
+
+  it('「남은 돈」은 받은 돈에서 **나간 돈**을 뺀다 — 초안 정산과 미심사 지출은 아직 나가지 않았다', async () => {
+    await inv('paid', 3_000_000, 3_000_000, -10);
+    await q.query(
+      `INSERT INTO staff (id,name,email,role) VALUES (64,'정산 강사','payout64@t.kr','teacher')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    // 확정은 **누가 확정했는가**로 가린다 — payout.state 낱말은 아직 세 곳이 다르다 (N-27)
+    await q.query(
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net, state, confirmed_by)
+       VALUES (64, '2026-08', 10.00, 1200000, 1000000, 'approved', 64),
+              (64, '2026-07', 10.00, 1200000, 900000, 'draft', NULL)`,
+    );
+    await q.query(
+      `INSERT INTO expense (spend_on, category, amount, state)
+       VALUES ('2026-08-05', 'rent', 500000, 'approved'),
+              ('2026-08-06', 'etc', 300000, 'pending')`,
+    );
+    const h = await head();
+    // 3,000,000 − (승인 지출 500,000 + 확정 정산 1,000,000) = 1,500,000
+    expect(h.net).toBe(1_500_000);
+  });
+
+  it('정산이 나간 돈에 드는 기준은 낱말이 아니라 **누가 확정했는가**다 (N-27 — payout.state 는 아직 세 곳이 다르다)', async () => {
+    await inv('paid', 5_000_000, 5_000_000, -10);
+    await q.query(
+      `INSERT INTO staff (id,name,email,role) VALUES (65,'낱말 강사','payout65@t.kr','teacher')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    // 같은 뜻을 서로 다른 낱말로 적은 두 행. 낱말로 골랐다면 한 쪽이 통째로 빠진다.
+    await q.query(
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net, state, confirmed_by)
+       VALUES (65, '2026-06', 10.00, 1000000, 700000, 'approved', 65),
+              (65, '2026-05', 10.00, 1000000, 300000, 'confirmed', 65)`,
+    );
+    expect((await head()).net).toBe(4_000_000);
+  });
+
+  it('나간 돈이 받은 돈보다 크면 「남은 돈」은 음수다 — 원문 표본이 그 모양이다', async () => {
+    await inv('paid', 100_000, 100_000, -10);
+    await q.query(`INSERT INTO expense (spend_on, category, amount, state) VALUES ('2026-08-05','rent',1000000,'approved')`);
+    expect((await head()).net).toBe(-900_000);
+  });
+
+  it('금액 권한이 없으면 다섯 칸은 null 이고 「손봐야 할 것」만 남는다 — 건수는 금액이 아니다 (D-R39)', async () => {
+    await inv('unpaid', 1_000_000, 0, -5);
+    const h = await head(false);
+    expect(h).toMatchObject({ sent: null, collected: null, unpaid: null, overdue: null, net: null, canSeeAmounts: false });
+    expect(h.todo).toBe(1);
+  });
+});

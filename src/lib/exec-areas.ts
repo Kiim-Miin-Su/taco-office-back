@@ -18,6 +18,9 @@
  * 갖고 있고, 서비스가 `BoardService` 를 불러 그 값을 그대로 쓴다 — 판정을 복사하지 않는다.
  */
 
+import { INV_OPEN } from './rules';
+import { sqlWordList } from './sql';
+
 export const EXEC_AREA_KEYS = ['money', 'mkt', 'ops', 'consulting', 'complaint', 'lesson'] as const;
 export type ExecAreaKey = (typeof EXEC_AREA_KEYS)[number];
 
@@ -43,7 +46,7 @@ export const EXEC_AREAS: readonly ExecAreaDef[] = [
     key: 'money', label: '회계', review: '납부 기한이 지난 청구서 수', go: '/accounting',
     // 기간 끝 시점에 「아직 안 들어왔는데 기한이 지난」 청구서. 완납·취소·초안은 세지 않는다.
     sql: `SELECT count(*)::text n FROM inv
-           WHERE state IN ('sent','unpaid','partial') AND due_on IS NOT NULL AND due_on < $1::date`,
+           WHERE state IN (${sqlWordList(INV_OPEN)}) AND due_on IS NOT NULL AND due_on < $1::date`,
   },
   {
     key: 'mkt', label: '마케팅', review: '없음 (정보성)', go: '/ops',
@@ -73,6 +76,18 @@ export const EXEC_AREAS: readonly ExecAreaDef[] = [
     sql: null,
   },
 ];
+
+/**
+ * 이 영역의 판정 SQL — **다른 화면이 같은 숫자를 다시 세지 않게** 여기서 꺼내 쓴다.
+ *
+ * 회계 머리의 「손봐야 할 것」(§52)이 대표 보고의 회계 배지(§69)와 같은 판정이어야 한다.
+ * 두 화면이 각자 세면 대표가 보는 두 숫자가 어긋나고 어느 쪽이 맞는지 아무도 모른다.
+ */
+export function areaCountSql(key: ExecAreaKey): string {
+  const area = EXEC_AREAS.find((a) => a.key === key);
+  if (!area || !area.sql) throw new Error(`${key} 영역은 SQL 로 세는 판정이 아닙니다`);
+  return area.sql;
+}
 
 /** 보고서 메모의 6영역 — 「담당 x/6 기재」는 이 키들이 채워졌는지로 센다 (§69 머리) */
 export function filledAreas(memo: unknown): number {

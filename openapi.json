@@ -7391,23 +7391,34 @@
       "MoneySummaryDto": {
         "type": "object",
         "properties": {
-          "invoiceCount": {
-            "type": "number"
-          },
-          "billed": {
+          "sent": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "보낸 청구서 — 초안·취소를 뺀 청구액 합"
           },
           "collected": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "받은 돈 — 같은 집합의 확정 입금 합"
           },
-          "outstanding": {
+          "unpaid": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "못 받은 돈 = 보낸 청구서 − 받은 돈"
           },
-          "overdueCount": {
-            "type": "number"
+          "overdue": {
+            "type": "number",
+            "nullable": true,
+            "description": "기한 지남 — **금액**이다. 못 받은 돈의 부분집합"
+          },
+          "net": {
+            "type": "number",
+            "nullable": true,
+            "description": "남은 돈 = 받은 돈 − 나간 돈(승인 지출 + 확정 정산). 음수가 정상이다"
+          },
+          "todo": {
+            "type": "number",
+            "description": "손봐야 할 것 — 건수라 가리지 않는다 (§69 회계 배지와 같은 판정)"
           },
           "canSeeAmounts": {
             "type": "boolean",
@@ -7415,11 +7426,12 @@
           }
         },
         "required": [
-          "invoiceCount",
-          "billed",
+          "sent",
           "collected",
-          "outstanding",
-          "overdueCount",
+          "unpaid",
+          "overdue",
+          "net",
+          "todo",
           "canSeeAmounts"
         ]
       },

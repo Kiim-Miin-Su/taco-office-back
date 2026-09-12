@@ -136,12 +136,24 @@ export class PayoutDto {
   @ApiProperty() state!: string;
 }
 
+/**
+ * 회계 머리 **여섯 칸** — §52·§56 원문 그대로다 (C43).
+ *
+ * 원본 표본: 보낸 청구서 ₩7,214,000 · 받은 돈 ₩4,377,400 · 못 받은 돈 ₩2,836,600 ·
+ * 기한 지남 ₩1,170,000 · 남은 돈 ₩-3,052,172 · 손봐야 할 것 6건.
+ * **원문 안에서 산술이 닫힌다** — 7,214,000 − 4,377,400 = 2,836,600. 그래서 「못 받은 돈」은
+ * 화면이 빼는 값이 아니라 서버가 한 곳에서 내는 값이다 (D-R18).
+ *
+ * 다섯 칸은 금액이라 권한이 없으면 **null 로 내려간다**(D-R39). 「손봐야 할 것」은 건수이므로
+ * 가리지 않는다 — 대표 보고의 회계 배지와 **같은 판정**을 쓴다(`lib/exec-areas` money).
+ */
 export class MoneySummaryDto {
-  @ApiProperty() invoiceCount!: number;
-  @ApiProperty({ type: Number, nullable: true }) billed!: number | null;
-  @ApiProperty({ type: Number, nullable: true }) collected!: number | null;
-  @ApiProperty({ type: Number, nullable: true }) outstanding!: number | null;
-  @ApiProperty() overdueCount!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '보낸 청구서 — 초안·취소를 뺀 청구액 합' }) sent!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '받은 돈 — 같은 집합의 확정 입금 합' }) collected!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '못 받은 돈 = 보낸 청구서 − 받은 돈' }) unpaid!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '기한 지남 — **금액**이다. 못 받은 돈의 부분집합' }) overdue!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '남은 돈 = 받은 돈 − 나간 돈(승인 지출 + 확정 정산). 음수가 정상이다' }) net!: number | null;
+  @ApiProperty({ description: '손봐야 할 것 — 건수라 가리지 않는다 (§69 회계 배지와 같은 판정)' }) todo!: number;
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39 · 사람별 예외까지 반영된 canMoney)' }) canSeeAmounts!: boolean;
 }
 

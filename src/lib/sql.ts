@@ -55,6 +55,14 @@ export const spanOf = (date: string, from: string, to: string): string =>
   + ` (${date}::date + make_interval(mins => ${to})) AT TIME ZONE '${KST}', '[)')`;
 
 /**
+ * SQL `IN (…)` 목록 — 낱말 집합 하나를 여러 질의가 그대로 쓰게 한다 (D-R18).
+ *
+ * 상태 칸은 enum 이라 배열 파라미터(`= ANY($1::text[])`)로 넘기면 캐스팅이 한 겹 더 붙는다.
+ * 여기서 넘어오는 것은 **코드 안의 상수 낱말**뿐이므로 목록으로 펼친다.
+ */
+export const sqlWordList = (words: readonly string[]): string => words.map((w) => `'${w}'`).join(', ');
+
+/**
  * `UPDATE`·`DELETE` 의 `RETURNING` 은 드라이버가 **`[rows, count]` 로 감싼다** (`SELECT`·`INSERT` 는 rows 그대로).
  *
  * 이걸 모르면 `rows.length > 0` 이 **언제나 참**이 된다 — 한 줄도 안 바뀌어도 배열 길이가 2 라서다.

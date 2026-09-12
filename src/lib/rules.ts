@@ -507,6 +507,16 @@ export function sinceText(min: number): string {
   return m ? `${h}시간 ${m}분` : `${h}시간`;
 }
 
+/* ══ 청구서 상태 낱말 (§52 회계 머리 · §53 단계) ═══════════════════════
+   회계 머리의 「보낸 청구서」와 대표 보고의 회계 배지는 **같은 집합**을 봐야 한다.
+   낱말을 두 곳에 적으면 한쪽만 고쳐지고 두 숫자가 조용히 어긋난다 (D-R18 · AGENT §9). */
+
+/** 「보낸 청구서」에 드는 상태 — 초안은 아직 보낸 것이 아니고, 취소는 청구가 아니다 (§53 ②~⑤) */
+export const INV_BILLABLE = ['sent', 'unpaid', 'partial', 'paid'] as const;
+
+/** 아직 안 끝난 청구서 — 「기한 지남」과 대표 보고 회계 배지가 함께 보는 집합 */
+export const INV_OPEN = ['sent', 'unpaid', 'partial'] as const;
+
 /** 서버 문구의 금액 표기 — 대표 지시(ACCOUNTING §1): 금액은 **언제나 천 단위 콤마**다. 한 벌만 둔다 */
 export const won = (n: number): string => `${n.toLocaleString('ko-KR')}원`;
 
