@@ -7,7 +7,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 // 여기서 다시 적었다가 DB(time_move)·읽기 DTO(time)·쓰기 검증(off)이 세 벌로 갈렸다.
 import { CHREQ_TYPES } from '../../lib/change-request';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+
+/** §14 처리의 두 갈래 — 낱말의 출처는 여기 하나다 */
+export const REQ_DECISIONS = ['approve', 'reject'] as const;
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -23,7 +26,45 @@ export class ApRowDto {
   @ApiProperty() at!: string;
   @ApiProperty({ enum: ['waiting', 'back', 'done'] }) state!: string;
   @ApiPropertyOptional({ ...S, description: '반려면 반드시 있다 (D-R13)' }) why?: string | null;
-  @ApiProperty({ description: '누르면 갈 곳 — 오버레이에서 승인하지 않는다 (D-R27)' }) go!: string;
+  @ApiProperty({ description: '누르면 갈 곳 — §75 결재 흐름은 여전히 이동만 한다 (D-R27)' }) go!: string;
+
+  @ApiPropertyOptional({ ...S, description: 'REQ 갈래의 요청 종류 (wage_change · tz_change …)' })
+  reqType?: string | null;
+
+  @ApiPropertyOptional({ ...S, description: '무엇을 바라는가 — 서버가 만든 문장을 그대로 그린다 (D-R18)' })
+  asked?: string | null;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    description: '이 사람이 **지금** 이 줄을 여기서 처리할 수 있는가 (§14). 화면은 이 값만 보고 단추를 그린다',
+  })
+  canAct?: boolean;
+}
+
+/**
+ * §14 승인 대기함의 처리 — 승인 또는 반려.
+ *
+ * 반려는 **사유가 필수**다 (D-R13). 사유 없는 반려는 올린 사람이 무엇을 고쳐야 할지
+ * 알 수 없어 같은 요청이 그대로 다시 올라온다.
+ */
+export class ReqReviewDto {
+  @ApiProperty({ enum: REQ_DECISIONS, description: '승인(approve) 또는 반려(reject)' })
+  @IsIn(REQ_DECISIONS)
+  decision!: (typeof REQ_DECISIONS)[number];
+
+  @ApiPropertyOptional({ ...S, description: '반려 사유 — 반려면 필수 (D-R13)' })
+  @IsOptional() @IsString() @MaxLength(500)
+  reason?: string;
+}
+
+export class ReqReviewResultDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: ['approved', 'rejected'] }) state!: string;
+  @ApiPropertyOptional({
+    ...S,
+    description: '승인이 **실제로 바꾼 것** — 「45,000원/시간 · 2026-09-12부터」처럼. 적용 대상이 없으면 null',
+  })
+  applied!: string | null;
 }
 
 export class ApFlowDto {

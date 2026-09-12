@@ -13,7 +13,7 @@ import {
   latePenalty, minutesSinceEnd, tierFor, withholding, type SessionLike,
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
-import { REQ_TYPE_LABEL, labelOf } from '../../lib/approval';
+import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
 import type {
   TeacherGuideStudentDto, TeacherGuidesDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
@@ -175,9 +175,7 @@ export class TeacherService {
     );
     const requests: TeacherSettingRequestDto[] = rows.map((r) => {
       const payload = (r.payload ?? {}) as Record<string, unknown>;
-      const asked = r.req_type === 'wage_change'
-        ? (payload.to === undefined ? null : `${Number(payload.to).toLocaleString('ko-KR')}원/시간`)
-        : ((payload.tz as string) ?? null);
+      const asked = reqAsked(String(r.req_type), payload).to;
       return {
         id: Number(r.id), reqType: String(r.req_type),
         label: labelOf(REQ_TYPE_LABEL, String(r.req_type)),
@@ -273,9 +271,7 @@ export class TeacherService {
     return {
       id: Number(r.id), reqType: String(r.req_type),
       label: labelOf(REQ_TYPE_LABEL, String(r.req_type)),
-      asked: dto.reqType === 'wage_change'
-        ? `${Number(p.to).toLocaleString('ko-KR')}원/시간`
-        : String(p.tz ?? ''),
+      asked: reqAsked(dto.reqType, p).to,
       state: String(r.state), createdOn: String(r.created_on),
       rejectReason: null,
     };

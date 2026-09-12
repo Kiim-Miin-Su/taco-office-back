@@ -53,6 +53,31 @@ export const REQ_TYPE_LABEL: Record<string, string> = {
   room: '강의실 변경', off: '휴강', cancel: '취소',
 };
 
+/**
+ * 요청이 **무엇을 바라는가** — 낱말과 단위를 만드는 자리는 여기 하나다 (D-R18).
+ *
+ * 강사 홈(§8)은 바라는 값만 보여 주고, 승인 대기함(§14)은 「지금 → 바라는 것」으로 보여 준다.
+ * 두 화면이 각자 숫자를 다듬으면 한쪽만 천 단위 쉼표가 빠지는 날이 온다.
+ */
+export function reqAsked(reqType: string, payload: unknown): { from: string | null; to: string | null } {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const won = (v: unknown) =>
+    v === null || v === undefined || v === '' ? null : `${Number(v).toLocaleString('ko-KR')}원/시간`;
+  const text = (v: unknown) => (v === null || v === undefined || v === '' ? null : String(v));
+
+  if (reqType === 'wage_change') return { from: won(p.from), to: won(p.to) };
+  if (reqType === 'tz_change') return { from: text(p.from), to: text(p.tz) };
+  // 모르는 갈래는 **지어내지 않는다** — 사유가 있으면 그것만 보여 준다
+  return { from: null, to: text(p.reason) };
+}
+
+/** §14 줄에 적는 한 문장 — 「지금 → 바라는 것」, 앞이 없으면 바라는 것만 */
+export function reqAskedLine(reqType: string, payload: unknown): string | null {
+  const { from, to } = reqAsked(reqType, payload);
+  if (!to) return from;
+  return from ? `${from} → ${to}` : to;
+}
+
 /** 기존 import 경로는 유지하되 종류의 정본은 변경요청 도메인 파일에 둔다. */
 export { CHREQ_TYPES, type ChreqType } from './change-request';
 
@@ -90,9 +115,28 @@ export interface ApRow {
   state: ApState;
   /** 반려 사유 — `state==='back'` 이면 반드시 있다 (D-R13) */
   why: string | null;
-  /** 누르면 갈 곳. 오버레이에서 승인하지 않는다 (D-R27) */
+  /** 누르면 갈 곳 — §75 결재 흐름은 여전히 이동만 한다 (D-R27) */
   go: string;
+  /** REQ 갈래의 요청 종류 — 화면이 낱말을 만들지 않는다 (D-R18) */
+  reqType?: string | null;
+  /** 무엇을 바라는가 — 「42,000원/시간 → 45,000원/시간」처럼 이미 사람이 읽는 문장이다 */
+  asked?: string | null;
+  /** 이 사람이 **지금** 이 줄을 처리할 수 있는가 — 판정은 서버가 한다 */
+  canAct?: boolean;
 }
+
+/**
+ * §14 승인 대기함에서 **여기서 바로 처리할 수 있는** 갈래.
+ *
+ * 원문 §14 는 줄마다 「반려」「승인」을 갖고 D-R13 의 절 칸에도 14 가 있다 —
+ * 반려 사유가 필수인 화면이 곧 반려하는 화면이다. D-R27 의 「이동만」은 §75
+ * 결재 흐름 오버레이의 규칙이다.
+ *
+ * 갈래마다 **승인이 무엇을 바꾸는가**가 다르고 충돌 검사도 다르다. 그래서 적용 경로가
+ * 실제로 만들어진 갈래만 여기 들어온다 — 목록에 없는 갈래는 지금처럼 그 화면으로 보낸다.
+ * 「승인 단추가 있는데 눌러도 아무 일이 없다」보다 「아직 저기서 합니다」가 정직하다.
+ */
+export const AP_ACTIONABLE_KINDS: ApKind[] = ['req'];
 
 export interface ApFlow {
   /** 되돌아온 것 → 기다리는 것 → 내가 올린 것 순 (§75) */
@@ -157,6 +201,8 @@ export function apFlow(
 
   for (const r of rows) {
     const isMine = r.byId !== null && r.byId === viewerId;
+    // 처리할 수 있는가 — 권한이 있고, 남의 것이고, 아직 기다리는 중이고, 적용 경로가 있는 갈래
+    r.canAct = canApprove && !isMine && r.state === 'waiting' && AP_ACTIONABLE_KINDS.includes(r.kind);
     // 남의 결재는 승인 권한이 있을 때만 **목록에서 아예 뺀다.**
     // 감추기만 하면 「있다」는 사실이 배지 숫자로 새어 나간다 (D-R39).
     if (!isMine && !canApprove) continue;

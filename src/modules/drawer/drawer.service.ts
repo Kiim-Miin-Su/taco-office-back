@@ -13,19 +13,19 @@
  * 결재 정규화는 `lib/approval.ts` 가 갖는다. 여기서는 행을 읽어 그 함수에 넘길 뿐이다 —
  * §14 승인 대기함과 §75 결재 흐름이 **같은 함수**를 보게 하는 것이 요점이다 (D-R26).
  */
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import {
-  apFlow, labelOf, toApState,
+  apFlow, labelOf, reqAsked, reqAskedLine, toApState,
   GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
 import { isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
 import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
-import { KST, overdueDays } from '../../lib/kst';
-import type { DrawerDto } from './drawer.dto';
+import { KST, overdueDays, todayKst } from '../../lib/kst';
+import type { DrawerDto, ReqReviewDto } from './drawer.dto';
 
 type R = Record<string, unknown>;
 
@@ -95,15 +95,19 @@ export class DrawerService {
     }
 
     for (const r of await this.q(
-      `SELECT q.id, q.req_type, q.state, q.reject_reason, q.staff_id, s.name AS by_name,
+      `SELECT q.id, q.req_type, q.payload, q.state, q.reject_reason, q.staff_id, s.name AS by_name,
               ${kstAt(`q.created_at`)} AS at
          FROM req q LEFT JOIN staff s ON s.id = q.staff_id`,
     )) {
+      const reqType = String(r.req_type);
       rows.push({
         kind: 'req', id: Number(r.id),
-        title: `${labelOf(REQ_TYPE_LABEL, String(r.req_type))} 요청`, sub: null,
+        title: `${labelOf(REQ_TYPE_LABEL, reqType)} 요청`,
+        // 「무엇을 바라는가」를 줄에 적는다 — 근거를 안 보고 누르는 승인이 되지 않도록 (§14)
+        sub: reqAskedLine(reqType, r.payload),
         byId: num(r.staff_id), byName: str(r.by_name), at: String(r.at),
         state: toApState(str(r.state)), why: str(r.reject_reason), go: '/ops',
+        reqType, asked: reqAskedLine(reqType, r.payload),
       });
     }
 
@@ -287,6 +291,128 @@ export class DrawerService {
       [viewerId],
     );
     return writtenRows(rows).length;
+  }
+
+  /**
+   * §14 승인 대기함 — **요청(REQ) 한 줄을 처리한다.**
+   *
+   * 원문 §14 는 줄마다 「반려」「승인」을 갖는다. D-R27 의 「이동만」은 §75 결재 흐름
+   * 오버레이의 규칙이고, D-R13(반려 사유 필수)의 절 칸에는 **14** 가 들어 있다 —
+   * 반려 사유가 필수인 화면이 곧 반려하는 화면이다.
+   *
+   * 여기서 중요한 것은 **승인이 실제로 무언가를 바꾼다**는 것이다. 상태만 'approved' 로
+   * 적어 두면 강사 화면의 시급은 그대로고, 아무도 그 사실을 모른 채 「승인했다」고 믿는다.
+   *
+   *   wage_change → WAGE 새 줄 (from_date = 승인일 · 소급 없음 · D8)
+   *   tz_change   → STAFF.tz
+   *   그 밖        → **적용 대상이 없다.** 상태만 닫는다 — 없는 적용을 지어내지 않는다
+   *
+   * 잠금·적용·기록이 **한 트랜잭션**이다 (D-R43 · 원칙 26). 두 사람이 같은 줄을 동시에
+   * 승인하면 뒤엣사람은 REQ_NOT_PENDING 으로 막히고 시급 줄이 두 개 생기지 않는다.
+   */
+  async reviewRequest(
+    reqId: number, viewerId: number, dto: ReqReviewDto, canWage: boolean,
+  ): Promise<{ id: number; state: string; applied: string | null }> {
+    const approving = dto.decision === 'approve';
+    const reason = dto.reason?.trim() || null;
+    // 반려 사유는 **저장 전에** 막는다 — 빈 반려를 원장에 남기면 되돌릴 길이 없다 (D-R13)
+    if (!approving && !reason) {
+      throw new BadRequestException({
+        code: 'REJECT_REASON_REQUIRED',
+        message: '반려 사유를 적어 주세요 — 사유가 없으면 올린 사람이 무엇을 고쳐야 할지 모릅니다',
+      });
+    }
+    const today = todayKst();
+
+    return this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const [req] = (await m.query(
+        `SELECT id, staff_id, req_type, payload, state FROM req WHERE id = $1 FOR UPDATE`, [reqId],
+      )) as Array<{ id: string; staff_id: string; req_type: string; payload: Record<string, unknown> | null; state: string }>;
+      if (!req) throw new NotFoundException('요청을 찾을 수 없습니다');
+      if (req.state !== 'pending') {
+        throw new ConflictException({
+          code: 'REQ_NOT_PENDING',
+          message: req.state === 'approved' ? '이미 승인된 요청입니다' : '이미 반려된 요청입니다',
+        });
+      }
+      const byId = Number(req.staff_id);
+      if (byId === viewerId) {
+        throw new ConflictException({
+          code: 'SELF_APPROVAL_FORBIDDEN',
+          message: '자기가 올린 요청은 자기가 처리할 수 없습니다',
+        });
+      }
+
+      const payload = req.payload ?? {};
+      let applied: string | null = null;
+
+      if (approving && req.req_type === 'wage_change') {
+        if (!canWage) {
+          throw new ForbiddenException({
+            code: 'WAGE_REVIEW_FORBIDDEN', message: '시급을 다룰 권한이 필요합니다',
+          });
+        }
+        const rate = Number(payload.to);
+        if (!Number.isInteger(rate) || rate <= 0) {
+          throw new ConflictException({
+            code: 'WAGE_RATE_INVALID', message: '요청에 적힌 시급을 읽을 수 없습니다 — 강사에게 다시 올려 달라고 하세요',
+          });
+        }
+        const [dup] = (await m.query(
+          `SELECT id FROM wage WHERE staff_id = $1 AND from_date = $2::date`, [byId, today],
+        )) as Array<{ id: string }>;
+        if (dup) {
+          throw new ConflictException({
+            code: 'WAGE_SAME_DAY',
+            message: '오늘 날짜로 적용된 시급이 이미 있습니다 — 지난 수업은 그때 시급 그대로여야 해서 같은 날 두 번 바꾸지 않습니다',
+          });
+        }
+        // **소급 없음** — 오늘부터의 수업에만 붙는다 (D8). 지난 정산은 흔들리지 않는다.
+        await m.query(
+          `INSERT INTO wage (staff_id, rate, from_date, reason, approved_by)
+           VALUES ($1, $2, $3::date, $4, $5)`,
+          [byId, rate, today, reason, viewerId],
+        );
+        applied = `${reqAsked(req.req_type, payload).to} · ${today}부터`;
+      }
+
+      if (approving && req.req_type === 'tz_change') {
+        const tz = String(payload.tz ?? '');
+        const [known] = (await m.query(`SELECT tz FROM tzg WHERE tz = $1`, [tz])) as Array<{ tz: string }>;
+        if (!known) {
+          throw new ConflictException({
+            code: 'TZ_UNKNOWN', message: '시간대 목록에 없는 값입니다 — 구성원·시간대에서 먼저 추가하세요',
+          });
+        }
+        await m.query(`UPDATE staff SET tz = $2 WHERE id = $1`, [byId, tz]);
+        applied = tz;
+      }
+
+      await m.query(
+        `UPDATE req SET state = $2, resolved_by = $3, reject_reason = $4 WHERE id = $1`,
+        [reqId, approving ? 'approved' : 'rejected', viewerId, approving ? null : reason],
+      );
+
+      const label = labelOf(REQ_TYPE_LABEL, req.req_type);
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1, 'req', $2, $3, $4::jsonb, $5::jsonb)`,
+        [viewerId, reqId, approving ? 'approve' : 'reject',
+          JSON.stringify({ state: 'pending' }),
+          JSON.stringify({ state: approving ? 'approved' : 'rejected', applied, reason })],
+      );
+      // 올린 사람은 결과를 알아야 한다 — 링크에서 「요청 처리」 분류가 파생된다 (§16)
+      await m.query(
+        `INSERT INTO noti (to_id, from_id, body, link) VALUES ($1, $2, $3, $4)`,
+        [byId, viewerId,
+          approving
+            ? `${label} 요청이 승인됐습니다${applied ? ` — ${applied}` : ''}`
+            : `${label} 요청이 반려됐습니다 — ${reason}`,
+          '/teacher?req'],
+      );
+
+      return { id: reqId, state: approving ? 'approved' : 'rejected', applied };
+    });
   }
 
   /** §19 변경 요청 넣기 — 겹침 판정은 부르는 쪽(컨트롤러)이 스케줄에서 받아 온다 */

@@ -23,12 +23,12 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { OkDto } from '../../common/http.dto';
-import { hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ScheduleService } from '../schedule/schedule.service';
 import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
-  NotiReadAllDto, RoomChangeReqDto,
+  NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoDoneDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
@@ -51,6 +51,7 @@ export class DrawerController {
     return {
       canApprove: role !== null && hasPerm(role, 'canApprove', user.perms),
       canSeeAll: role !== null && hasPerm(role, 'canCrudAll', user.perms),
+      canWage: role !== null && hasPerm(role, 'canWage', user.perms),
     };
   }
 
@@ -98,6 +99,25 @@ export class DrawerController {
   @ApiOkResponse({ type: NotiReadAllDto })
   async notiReadAll(@CurrentUser() user: RequestUser): Promise<NotiReadAllDto> {
     return { ok: true, marked: await this.svc.markAllNotisRead(user.id) };
+  }
+
+  @Post('requests/:id/review')
+  @Perm('canApprove')
+  @ApiOperation({
+    summary: '§14 승인 대기함 — 요청 승인·반려 (승인하면 **실제로 적용된다**)',
+    description:
+      '원문 §14 는 줄마다 반려·승인을 갖는다(D-R27 의 「이동만」은 §75 결재 흐름의 규칙이고, '
+      + 'D-R13 반려 사유 필수의 절 칸에는 14 가 있다). 승인은 시급이면 WAGE 새 줄(from_date=승인일·소급 없음·D8), '
+      + '시간대면 STAFF.tz 를 바꾼다. 그 밖의 갈래는 적용 대상이 없어 상태만 닫는다. '
+      + '잠금·적용·LOG·NOTI 가 한 트랜잭션이다.',
+  })
+  @ApiOkResponse({ type: ReqReviewResultDto })
+  async reviewRequest(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ReqReviewDto,
+  ): Promise<ReqReviewResultDto> {
+    return this.svc.reviewRequest(id, user.id, dto, this.gate(user).canWage);
   }
 
   @Post('change-requests')
