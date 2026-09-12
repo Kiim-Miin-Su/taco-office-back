@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrorDto } from '../../common/http.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
@@ -13,6 +13,7 @@ import {
   AttendanceMutationResultDto, AttendanceWriteDto, HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
   OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
   WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto,
+  LessonTrackingDto, LessonTrackingQueryDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
@@ -69,6 +70,30 @@ export class ScheduleController {
 
   /* ══ 쓰기 — 자원 + scope 한 형태로만 받는다 (D-R16 · D-R21) ═══════════
      동작마다 엔드포인트를 만들면 같은 3범위 판정이 여러 곳에 흩어진다.       */
+
+  /**
+   * §79 수강 학생 — 창을 열 때만 부른다.
+   *
+   * 회차 목록에 끼워 넣으면 한 주치 회차마다 학생별 질의가 붙는다. 창은 눌러야 열리므로
+   * 여기서 한 번 가져온다.
+   */
+  @Get('tracking')
+  @Perm('canAdminPage')
+  @ApiOperation({
+    summary: '§79 수강 학생 — 정원 · 교재 · 안내 · 30일 출결 · 미수 · 최신 리포트 3건',
+    description: '금액(단가·총액·미수)은 canMoney 인 사람에게만 값이 간다 (D-R39). 「진도 평균」은 저장할 자리가 없어 싣지 않는다 (N-31).',
+  })
+  @ApiOkResponse({ type: LessonTrackingDto })
+  @ApiNotFoundResponse({ description: '회차 없음' })
+  async tracking(
+    @CurrentUser() user: RequestUser,
+    @Query() query: LessonTrackingQueryDto,
+  ): Promise<LessonTrackingDto> {
+    const canMoney = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    const out = await this.svc.tracking(query.serId, query.onDate, canMoney);
+    if (!out) throw new NotFoundException({ code: 'SER_NOT_FOUND', message: '수업을 찾을 수 없습니다' });
+    return out;
+  }
 
   @Get('horizon')
   @ApiOperation({ summary: '펼쳐 둔 기간 — 화면이 「비었다」와 「아직 안 펼쳤다」를 구분한다' })

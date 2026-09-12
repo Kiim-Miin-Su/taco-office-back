@@ -9,11 +9,14 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
 import {
-  canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState,
+  GUIDE_DONE_DB, REPORT_WRITTEN_DB,
+  canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState, rosterPricing, tierFor,
   type AttendanceCancelReason, type AttendanceResult,
 } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
-import type { OccurrenceDto, OccurrenceQueryDto } from './schedule.dto';
+import type {
+  LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, TrackedReportDto, TrackedStudentDto,
+} from './schedule.dto';
 import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
 
@@ -39,6 +42,10 @@ interface Row {
 @Injectable()
 export class ScheduleService {
   constructor(@InjectRepository(SerOcc) private readonly occ: Repository<SerOcc>) {}
+
+  private q<T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> {
+    return this.occ.query(sql, p) as Promise<T[]>;
+  }
 
   /**
    * 회차 목록. 화면 다섯이 이 하나를 쓰고 **묶는 방법만 다르다**.
@@ -219,5 +226,180 @@ export class ScheduleService {
       }
     }
     return out;
+  }
+
+  /* ══ §79 수강 학생 — 학생 트래킹 (C55) ═════════════════════════════════ */
+
+  /**
+   * 원문 §79 의 오른쪽 칸. 학생마다 교재·안내·30일 출결·미수와 **최신 리포트 3건**을 싣는다.
+   *
+   * 회차 목록에 끼워 넣지 않는 이유: 한 주치 회차마다 학생별 질의가 붙는다.
+   * 이 창은 눌러야 열리므로 **열 때 한 번** 부른다.
+   *
+   * 「진도 평균」은 **싣지 않았다.** 원문 카드에 있지만 저장할 자리가 없고(교재 진도를 적는 칸이
+   * `issue` 에도 `lib` 에도 없다), 원문 컷의 값이 두 학생 모두 0% 라 무엇을 나눈 값인지도
+   * 말해 주지 않는다. 숫자를 지어내면 그 자리부터 거짓이 된다 — N-31 로 올렸다.
+   */
+  async tracking(
+    serId: number,
+    onDate: string,
+    canSeeAmounts: boolean,
+  ): Promise<LessonTrackingDto | null> {
+    const today = todayKst();
+
+    const [head] = (await this.q(
+      `SELECT s.id, s.kind_key, s.sub_key, k.cap,
+              COALESCE((
+                SELECT json_agg(json_build_object(
+                  'id', st.id, 'name', st.name, 'grade', st.grade,
+                  'droppedOnce', EXISTS (
+                    SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+                     WHERE e.ser_id = s.id AND e.on_date = $2::date AND xo.student_id = st.id
+                  )
+                ) ORDER BY st.name)
+                FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
+               WHERE ss.ser_id = s.id
+              ), '[]'::json) AS students
+         FROM ser s JOIN kind k ON k.key = s.kind_key
+        WHERE s.id = $1`,
+      [serId, onDate],
+    )) as Array<Record<string, unknown>>;
+    if (!head) return null;
+
+    const roster = (head.students ?? []) as Array<{
+      id: number; name: string; grade: string | null; droppedOnce: boolean;
+    }>;
+    const active = roster.filter((r) => !r.droppedOnce);
+    const ids = roster.map((r) => r.id);
+    const cap = Number(head.cap);
+    const count = active.length;
+    const canAdd = Math.max(0, cap - count);
+
+    // 가격은 명단 쓰기 응답과 **같은 함수**에서 나온다 (lib/rules.rosterPricing · §54 · D-R22)
+    const tiers = (await this.q(
+      `SELECT DISTINCT ON (heads) heads, unit_price
+         FROM rate
+        WHERE kind_key = $1 AND sub_key IS NOT DISTINCT FROM $2 AND from_date <= $3
+        ORDER BY heads, from_date DESC, id DESC`,
+      [head.kind_key, head.sub_key ?? null, onDate],
+    )) as Array<{ heads: number; unit_price: number }>;
+    const overrides = active.length ? (await this.q(
+      `SELECT DISTINCT ON (st.id) st.id, r.unit_price
+         FROM stu st
+         LEFT JOIN sturate r
+           ON r.student_id = st.id AND (r.kind_key IS NULL OR r.kind_key = $2) AND r.from_date <= $3
+        WHERE st.id = ANY($1::bigint[])
+        ORDER BY st.id, r.from_date DESC NULLS LAST, r.id DESC`,
+      [active.map((a) => a.id), head.kind_key, onDate],
+    )) as Array<{ unit_price: number | null }> : [];
+    const pricing = rosterPricing(
+      tiers.map((t) => ({ heads: Number(t.heads), unitPrice: Number(t.unit_price) })),
+      overrides.map((o) => (o.unit_price === null || o.unit_price === undefined ? null : Number(o.unit_price))),
+    );
+
+    const students: TrackedStudentDto[] = roster.map((r) => ({
+      ...r, bookCount: 0, guided: false, attendDone: 0, attendTotal: 0,
+      unpaid: canSeeAmounts ? 0 : null, reports: [],
+    }));
+
+    if (ids.length > 0) {
+      const byId = new Map(students.map((s) => [s.id, s]));
+
+      const facts = (await this.q(
+        `SELECT st.id,
+                (SELECT count(*) FROM issue i
+                  WHERE i.student_id = st.id AND i.returned_on IS NULL) AS book_count,
+                EXISTS (
+                  SELECT 1 FROM guide g
+                   WHERE g.ser_id = $2 AND g.student_id = st.id
+                     AND g.state::text = ANY($3::text[])
+                ) AS guided,
+                -- 30일 출결: **확정된 것만** 센다. 그날 빠진 회차는 분모에도 없다
+                (SELECT count(*) FROM att a
+                   JOIN ser_stu ss2 ON ss2.ser_id = a.ser_id AND ss2.student_id = st.id
+                  WHERE a.on_date > $4::date - 30 AND a.on_date <= $4::date
+                    AND NOT EXISTS (
+                      SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+                       WHERE e.ser_id = a.ser_id AND e.on_date = a.on_date AND xo.student_id = st.id
+                    )) AS att_total,
+                (SELECT count(*) FROM att a
+                   JOIN ser_stu ss2 ON ss2.ser_id = a.ser_id AND ss2.student_id = st.id
+                  WHERE a.on_date > $4::date - 30 AND a.on_date <= $4::date
+                    AND a.result = 'completed'
+                    AND NOT EXISTS (
+                      SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+                       WHERE e.ser_id = a.ser_id AND e.on_date = a.on_date AND xo.student_id = st.id
+                    )) AS att_done,
+                COALESCE((SELECT sum(i.amount - i.paid_amount) FROM inv i
+                   WHERE i.student_id = st.id AND i.state IN ('sent','unpaid','partial')), 0) AS unpaid
+           FROM stu st WHERE st.id = ANY($1::bigint[])`,
+        [ids, serId, [...GUIDE_DONE_DB], today],
+      )) as Array<Record<string, unknown>>;
+      for (const f of facts) {
+        const s = byId.get(Number(f.id));
+        if (!s) continue;
+        s.bookCount = Number(f.book_count);
+        s.guided = f.guided === true;
+        s.attendTotal = Number(f.att_total);
+        s.attendDone = Number(f.att_done);
+        // 금액은 대표만 (D-R39) — 0 원과 「가려짐」을 화면이 구분할 수 있게 0 을 null 로 바꾸지 않는다
+        s.unpaid = canSeeAmounts ? Number(f.unpaid) : null;
+      }
+
+      const reps = (await this.q(
+        `SELECT * FROM (
+           SELECT rs.student_id, r.id AS rep_id, to_char(r.on_date,'YYYY-MM-DD') AS on_date,
+                  COALESCE(sb.name, s.title, k.name) AS subject_name, t.name AS teacher_name,
+                  r.body, r.submitted_at,
+                  to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_utc,
+                  row_number() OVER (PARTITION BY rs.student_id ORDER BY r.on_date DESC, r.id DESC) AS rn
+             FROM rep r
+             JOIN rep_stu rs ON rs.rep_id = r.id
+             JOIN ser s ON s.id = r.ser_id
+             JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
+             LEFT JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
+             LEFT JOIN sub sb ON sb.key = s.sub_key
+             LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
+            WHERE rs.student_id = ANY($1::bigint[]) AND r.state::text = ANY($2::text[])
+         ) q WHERE rn <= 3 ORDER BY student_id, on_date DESC`,
+        [ids, [...REPORT_WRITTEN_DB]],
+      )) as Array<Record<string, unknown>>;
+      for (const r of reps) {
+        const s = byId.get(Number(r.student_id));
+        if (!s) continue;
+        s.reports.push(ScheduleService.toTrackedReport(r));
+      }
+    }
+
+    return {
+      serId, onDate, cap, count, canAdd,
+      // 원문 머리줄 그대로 — 화면이 cap − count 를 다시 하지 않는다 (D-R37)
+      capLabel: canAdd > 0 ? `정원 ${cap}명 · ${canAdd}명 더 넣을 수 있습니다` : `정원 ${cap}명 · 자리가 없습니다`,
+      priced: pricing !== null,
+      unitPrice: canSeeAmounts && pricing ? pricing.unitPrice : null,
+      total: canSeeAmounts && pricing ? pricing.total : null,
+      canSeeAmounts,
+      students,
+    };
+  }
+
+  /** 「정시 / 지연」은 `tierFor` 한 곳이 정한다 — 강사 화면의 차감액과 같은 판정이다 (D-R32) */
+  private static toTrackedReport(r: Record<string, unknown>): TrackedReportDto {
+    const body = (r.body ?? {}) as Record<string, unknown>;
+    const end = r.end_utc ? new Date(String(r.end_utc)) : null;
+    const submitted = r.submitted_at ? new Date(r.submitted_at as string) : null;
+    const after = end && submitted ? Math.floor((submitted.getTime() - end.getTime()) / 60000) : 0;
+    const onTime = tierFor(Math.max(0, after)).amount === 0;
+    const text = typeof body.content === 'string' ? body.content : null;
+    return {
+      repId: Number(r.rep_id),
+      onDate: String(r.on_date),
+      subjectName: (r.subject_name as string) ?? null,
+      teacherName: (r.teacher_name as string) ?? null,
+      onTime,
+      onTimeLabel: onTime ? '정시' : '지연',
+      excerpt: text,
+      homework: typeof body.homework === 'string' ? body.homework : null,
+    };
   }
 }

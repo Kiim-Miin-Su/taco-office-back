@@ -353,3 +353,80 @@ export class HorizonDto {
   @ApiProperty({ description: '요청 범위가 이 밖으로 나갔는가 — 화면이 「비었다」와 「아직 안 펼쳤다」를 구분한다' })
   clamped!: boolean;
 }
+
+/* ══ §79 수강 학생 — 학생 트래킹 (C55) ═══════════════════════════════════
+   원문 §79 는 수업 상세의 「수강 학생」 단계 오른쪽에 학생마다 카드 넉 장과
+   최신 리포트 3건을 둔다. 회차 목록(`GET /schedule/occurrences`)에 실으면
+   한 주치 회차마다 학생별 질의가 붙는다 — 창을 열 때만 따로 부른다.        */
+
+/** §79 카드의 리포트 한 줄 */
+export class TrackedReportDto {
+  @ApiProperty() repId!: number;
+  @ApiProperty({ example: '2026-08-19' }) onDate!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) subjectName?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) teacherName?: string | null;
+  /**
+   * 「정시 / 지연」 — 판정은 `lib/rules.tierFor` 한 곳이다. 제출 시각과 수업 종료 시각을
+   * 화면에서 견주면 여기 칩과 강사 화면의 차감액이 갈린다 (D-R32 · D-R39).
+   */
+  @ApiProperty({ description: '기한 안에 냈는가 — 차감 0 이면 정시' }) onTime!: boolean;
+  @ApiProperty({ description: '칩에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)' }) onTimeLabel!: string;
+  @ApiPropertyOptional({ ...{ type: String, nullable: true }, description: '본문 발췌 — 원문 카드의 두 줄' })
+  excerpt?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '숙제 줄' }) homework?: string | null;
+}
+
+/** §79 오른쪽의 학생 카드 한 장 */
+export class TrackedStudentDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
+  @ApiProperty({ description: '그날만 빠진 학생인가 (D-R21)' }) droppedOnce!: boolean;
+
+  @ApiProperty({ description: '반납하지 않은 배부 교재 수 — 원문 「교재 N」' }) bookCount!: number;
+  @ApiProperty({ description: '이 수업의 안내가 나갔는가 — 원문 「안내 됨 / 안내 없음」' }) guided!: boolean;
+
+  /** 원문 「13/13 · 30일 출결」 — 확정된 출결만 센다. 아직 확정 안 한 회차는 분모에도 없다 */
+  @ApiProperty({ description: '최근 30일 중 진행된 회차 수' }) attendDone!: number;
+  @ApiProperty({ description: '최근 30일 중 출결이 확정된 회차 수' }) attendTotal!: number;
+
+  /**
+   * 미수 — **금액이라 대표만 본다** (D-R39). 못 보는 사람에게는 서버가 `null` 을 보낸다.
+   * 0 원과 「가려짐」을 화면이 구분할 수 있도록 0 을 null 로 바꾸지 않는다.
+   */
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '미수 합계 — 볼 수 없으면 null' })
+  unpaid?: number | null;
+
+  @ApiProperty({ type: [TrackedReportDto], description: '최신 리포트 3건 — 쓴 것만' })
+  reports!: TrackedReportDto[];
+}
+
+/** `GET /schedule/tracking` — §79 수강 학생 단계의 오른쪽 칸 */
+export class LessonTrackingDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty({ example: '2026-08-21' }) onDate!: string;
+  @ApiProperty({ description: 'KIND.cap — 정원' }) cap!: number;
+  @ApiProperty({ description: '지금 인원 — 그날 빠진 학생은 빼고 센다 (D-R21)' }) count!: number;
+  @ApiProperty({ description: '몇 명 더 넣을 수 있는가 — 화면이 cap − count 를 다시 하지 않는다' })
+  canAdd!: number;
+  @ApiProperty({ description: '머리줄 문장 — 원문 「정원 4명 · 1명 더 넣을 수 있습니다」' }) capLabel!: string;
+
+  /* 가격은 명단 쓰기 응답(RosterResultDto)과 **같은 함수**에서 나온다 (lib/rules.rosterPricing · §54) */
+  @ApiProperty({ description: '인원 구간 단가표가 있는가' }) priced!: boolean;
+  @ApiPropertyOptional({ type: Number, nullable: true }) unitPrice?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true }) total?: number | null;
+  @ApiProperty({ description: '금액을 볼 수 있는가 — 단가·총액·미수가 이 값에 따라 null 이 된다' })
+  canSeeAmounts!: boolean;
+
+  @ApiProperty({ type: [TrackedStudentDto] }) students!: TrackedStudentDto[];
+}
+
+/** 창을 열 때만 부른다 */
+export class LessonTrackingQueryDto {
+  @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  serId!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: 'EXC 키와 같은 규칙상 날짜' })
+  @IsCalendarDate()
+  onDate!: string;
+}

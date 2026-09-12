@@ -647,6 +647,104 @@
         ]
       }
     },
+    "/schedule/tracking": {
+      "get": {
+        "description": "금액(단가·총액·미수)은 canMoney 인 사람에게만 값이 간다 (D-R39). 「진도 평균」은 저장할 자리가 없어 싣지 않는다 (N-31).",
+        "operationId": "ScheduleController_tracking",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "query",
+            "description": "EXC 키와 같은 규칙상 날짜",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonTrackingDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "회차 없음"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§79 수강 학생 — 정원 · 교재 · 안내 · 30일 출결 · 미수 · 최신 리포트 3건",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule/horizon": {
       "get": {
         "operationId": "ScheduleController_bounds",
@@ -8081,6 +8179,168 @@
           "from",
           "to",
           "items"
+        ]
+      },
+      "TrackedReportDto": {
+        "type": "object",
+        "properties": {
+          "repId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-08-19"
+          },
+          "subjectName": {
+            "type": "string",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "onTime": {
+            "type": "boolean",
+            "description": "기한 안에 냈는가 — 차감 0 이면 정시"
+          },
+          "onTimeLabel": {
+            "type": "string",
+            "description": "칩에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)"
+          },
+          "excerpt": {
+            "type": "string",
+            "nullable": true,
+            "description": "본문 발췌 — 원문 카드의 두 줄"
+          },
+          "homework": {
+            "type": "string",
+            "nullable": true,
+            "description": "숙제 줄"
+          }
+        },
+        "required": [
+          "repId",
+          "onDate",
+          "onTime",
+          "onTimeLabel"
+        ]
+      },
+      "TrackedStudentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "droppedOnce": {
+            "type": "boolean",
+            "description": "그날만 빠진 학생인가 (D-R21)"
+          },
+          "bookCount": {
+            "type": "number",
+            "description": "반납하지 않은 배부 교재 수 — 원문 「교재 N」"
+          },
+          "guided": {
+            "type": "boolean",
+            "description": "이 수업의 안내가 나갔는가 — 원문 「안내 됨 / 안내 없음」"
+          },
+          "attendDone": {
+            "type": "number",
+            "description": "최근 30일 중 진행된 회차 수"
+          },
+          "attendTotal": {
+            "type": "number",
+            "description": "최근 30일 중 출결이 확정된 회차 수"
+          },
+          "unpaid": {
+            "type": "number",
+            "nullable": true,
+            "description": "미수 합계 — 볼 수 없으면 null"
+          },
+          "reports": {
+            "description": "최신 리포트 3건 — 쓴 것만",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackedReportDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "droppedOnce",
+          "bookCount",
+          "guided",
+          "attendDone",
+          "attendTotal",
+          "reports"
+        ]
+      },
+      "LessonTrackingDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "example": "2026-08-21"
+          },
+          "cap": {
+            "type": "number",
+            "description": "KIND.cap — 정원"
+          },
+          "count": {
+            "type": "number",
+            "description": "지금 인원 — 그날 빠진 학생은 빼고 센다 (D-R21)"
+          },
+          "canAdd": {
+            "type": "number",
+            "description": "몇 명 더 넣을 수 있는가 — 화면이 cap − count 를 다시 하지 않는다"
+          },
+          "capLabel": {
+            "type": "string",
+            "description": "머리줄 문장 — 원문 「정원 4명 · 1명 더 넣을 수 있습니다」"
+          },
+          "priced": {
+            "type": "boolean",
+            "description": "인원 구간 단가표가 있는가"
+          },
+          "unitPrice": {
+            "type": "number",
+            "nullable": true
+          },
+          "total": {
+            "type": "number",
+            "nullable": true
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "금액을 볼 수 있는가 — 단가·총액·미수가 이 값에 따라 null 이 된다"
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackedStudentDto"
+            }
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "cap",
+          "count",
+          "canAdd",
+          "capLabel",
+          "priced",
+          "canSeeAmounts",
+          "students"
         ]
       },
       "HorizonDto": {
