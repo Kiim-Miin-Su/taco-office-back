@@ -2687,7 +2687,156 @@
             }
           }
         },
-        "summary": "회계 — 청구서 · 입금 · 정산. 금액은 대표만 값이 채워진다",
+        "summary": "회계 — 청구서 · 입금 · 정산 (D-R9 · v2 §76 — 대표 전용, 사람별 예외는 canMoney)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/payments": {
+      "post": {
+        "description": "누계·상태 전이(partial/paid)·초과 거절은 서버 한 곳에서 한다. 화면은 잔여를 placeholder 로만 쓴다.",
+        "operationId": "AccountingController_addPayment",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "누계와 전이가 반영된 청구서",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "청구서 없음"
+          },
+          "409": {
+            "description": "code OVERPAY(남은 금액 초과) | INV_NOT_BILLABLE(초안·취소)"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "입금 한 줄 등록 — 분납은 줄을 늘린다 (A-D2 · v2 §53 ⑤ 입금 기록)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/payments/{id}": {
+      "delete": {
+        "operationId": "AccountingController_removePayment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ ok: true }"
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "입금 기록 없음"
+          },
+          "409": {
+            "description": "code INV_PAID_LOCKED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "입금 줄 삭제 — 부분 납부(partial) 정정일 때만. 완납은 되돌리지 않는다",
         "tags": [
           "accounting"
         ]
@@ -6900,6 +7049,11 @@
             "type": "string",
             "nullable": true
           },
+          "remaining": {
+            "type": "number",
+            "nullable": true,
+            "description": "청구액 − 확정 누계. 다음 입금의 placeholder 다 (A-D2)"
+          },
           "overdueDays": {
             "type": "number",
             "description": "예정일이 지났는데 안 들어온 날 수. 0이면 연체 아님"
@@ -6920,6 +7074,7 @@
           "amount",
           "paidAmount",
           "state",
+          "remaining",
           "overdueDays",
           "lines"
         ]
@@ -6952,6 +7107,11 @@
           "method": {
             "type": "string",
             "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "청구액과 다를 때의 사유 · 분납 회차 메모 (A-D2)"
           },
           "invId": {
             "type": "number",
@@ -7051,6 +7211,39 @@
           "invoices",
           "payments",
           "payouts"
+        ]
+      },
+      "PaymentCreateDto": {
+        "type": "object",
+        "properties": {
+          "invId": {
+            "type": "number",
+            "description": "어느 청구서에 붙는 입금인가"
+          },
+          "amount": {
+            "type": "number",
+            "description": "이번에 들어온 금액(원). 누계가 청구액을 넘으면 OVERPAY 로 거절한다"
+          },
+          "paidOn": {
+            "type": "string",
+            "description": "입금일 YYYY-MM-DD"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "transfer",
+              "cash"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "청구액과 다를 때의 사유 — 분납 회차 메모로도 쓴다"
+          }
+        },
+        "required": [
+          "invId",
+          "amount",
+          "paidOn"
         ]
       },
       "LeadDto": {

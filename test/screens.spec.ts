@@ -153,9 +153,10 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
       const ceo = await get('/accounting', CEO).expect(200);
       expect(ceo.body.payments.find((p: { id: number }) => p.id === Number(row.id)))
         .toMatchObject({ amount, paidOn: null, method: null });
-      const manager = await get('/accounting', MANAGER).expect(200);
-      expect(manager.body.payments.find((p: { id: number }) => p.id === Number(row.id)))
-        .toMatchObject({ amount: null, paidOn: null, method: null });
+      // C36-a 교정 — 회계 탭 전체는 **대표만**이다 (D-R9 · v2 §76 전수 조사 표 · 원본 컷 머리글 「회계 〔대표·이사〕」).
+      // 종전에는 매니저에게 200 을 주고 금액만 null 로 가렸는데, 그러면 학생 이름·청구 제목·연체 사실이
+      // 그대로 나간다. 화면에서 가리는 것은 감춘 것이 아니다 (AGENT §9).
+      await get('/accounting', MANAGER).expect(403);
       const [stored] = await ds.query('SELECT amount,paid_on,method FROM pay WHERE id=$1', [row.id]);
       expect(stored).toEqual({ amount, paid_on: null, method: null });
     } finally {

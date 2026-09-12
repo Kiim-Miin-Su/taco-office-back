@@ -24,7 +24,8 @@ export const INVOICES = [
   { id: 6, studentId: 3,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 480000, state: 'draft',   issuedOn: null, dueOn: null, paidAmount: 0 },
   { id: 7, studentId: 4,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 360000, state: 'draft',   issuedOn: null, dueOn: null, paidAmount: 0 },
   { id: 8, studentId: 8,  yearMonth: PREV, invType: 'tuition', title: '2026-08 수업료', amount: 640000, state: 'unpaid',  issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 0 },
-  { id: 9, studentId: 11, yearMonth: PREV, invType: 'tuition', title: '2026-08 수업료', amount: 520000, state: 'partial', issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 200000, paidAt: addD(SEED_TODAY, -20) },
+  // 분납 표본 (A-D2) — 줄이 **두 개**다. 한 줄짜리만 있으면 누계 분기가 한 번도 안 돌아 본 적이 없게 된다
+  { id: 9, studentId: 11, yearMonth: PREV, invType: 'tuition', title: '2026-08 수업료', amount: 520000, state: 'partial', issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 320000, paidAt: null },
   { id: 10, studentId: 9, yearMonth: PREV, invType: 'tuition', title: '2026-08 수업료', amount: 560000, state: 'paid',    issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 560000, paidAt: addD(SEED_TODAY, -8) },
 ];
 
@@ -48,7 +49,8 @@ export const INV_LINES = [
 export const PAYMENTS = [
   { invId: 4,  studentId: 6,  amount: 420000, paidOn: addD(SEED_TODAY, -2), method: 'transfer', enteredBy: 2, confirmedBy: 2 },
   { invId: 5,  studentId: 7,  amount: 380000, paidOn: addD(SEED_TODAY, -1), method: 'transfer', enteredBy: 2, confirmedBy: 2 },
-  { invId: 9,  studentId: 11, amount: 200000, paidOn: addD(SEED_TODAY, -20), method: 'transfer', enteredBy: 2, confirmedBy: 2 },
+  { invId: 9,  studentId: 11, amount: 200000, paidOn: addD(SEED_TODAY, -20), method: 'transfer', enteredBy: 2, confirmedBy: 2, reason: '1회차 분납' },
+  { invId: 9,  studentId: 11, amount: 120000, paidOn: addD(SEED_TODAY, -6),  method: 'cash',     enteredBy: 2, confirmedBy: 2, reason: '2회차 분납' },
   { invId: 10, studentId: 9,  amount: 560000, paidOn: addD(SEED_TODAY, -8), method: 'cash',     enteredBy: 2, confirmedBy: 2 },
 ];
 

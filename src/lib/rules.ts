@@ -507,7 +507,8 @@ export function sinceText(min: number): string {
   return m ? `${h}시간 ${m}분` : `${h}시간`;
 }
 
-const won = (n: number): string => `${n.toLocaleString('ko-KR')}원`;
+/** 서버 문구의 금액 표기 — 대표 지시(ACCOUNTING §1): 금액은 **언제나 천 단위 콤마**다. 한 벌만 둔다 */
+export const won = (n: number): string => `${n.toLocaleString('ko-KR')}원`;
 
 /** 지금 제출하면 얼마가 깎이는지 — 리포트 화면이 실시간으로 읽는다 */
 export function penaltyNow(s: SessionLike, today: IsoDate, nowMin: Minutes): PenaltyNow {

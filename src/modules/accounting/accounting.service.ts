@@ -4,15 +4,32 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Inv } from '../../entities';
 import { todayKst } from '../../lib/kst';
-import type { AccountingDto, InvoiceDto, PaymentDto, PayoutDto } from './accounting.dto';
+import { won } from '../../lib/rules';
+import type { AccountingDto, InvoiceDto, PaymentCreateDto, PaymentDto, PayoutDto } from './accounting.dto';
 
 const daysBetween = (a: string, b: string) =>
   Math.floor((new Date(`${b}T00:00:00Z`).getTime() - new Date(`${a}T00:00:00Z`).getTime()) / 86400000);
+
+/** 한 청구서를 조회하는 SQL — 목록과 입금 쓰기 응답이 **같은 모양**을 쓰도록 한 곳에 둔다 */
+const INV_SELECT = `
+  SELECT i.id, i.student_id, s.name AS student_name, s.grade, i.year_month, i.title,
+         i.amount, i.paid_amount, i.state,
+         to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
+         to_char(i.due_on,'YYYY-MM-DD') AS due_on,
+         to_char(i.paid_at,'YYYY-MM-DD') AS paid_at,
+         COALESCE((SELECT json_agg(json_build_object(
+            'subKey', l.sub_key, 'label', l.label, 'count', l.count,
+            'unitPrice', l.unit_price, 'amount', l.amount) ORDER BY l.seq)
+           FROM inv_line l WHERE l.inv_id = i.id), '[]'::json) AS lines
+    FROM inv i JOIN stu s ON s.id = i.student_id`;
+
+/** 입금을 받을 수 있는 상태인가 — §53 단계 순서(①작성 ②청구서 작성 ③학부모 안내 ④입금 완료 ⑤입금 기록) */
+const BILLABLE = new Set(['sent', 'unpaid', 'partial', 'paid']);
 
 @Injectable()
 export class AccountingService {
@@ -22,45 +39,41 @@ export class AccountingService {
    * @param canSeeAmounts 대표만 금액을 본다 (D-R39). **가리는 일을 화면에 맡기지 않는다** —
    *   서버가 아예 null 로 내려보낸다. 화면에서만 감추면 네트워크 탭에 그대로 보인다.
    */
+  /** 목록과 쓰기 응답이 같은 모양을 쓰도록 한 행의 변환도 한 곳에 둔다 */
+  private invoiceRow(r: Record<string, unknown>, canSeeAmounts: boolean, today: string): InvoiceDto {
+    const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
+    const due = r.due_on as string | null;
+    const unpaid = r.state === 'unpaid' || r.state === 'partial' || r.state === 'sent';
+    return {
+      id: Number(r.id), studentId: Number(r.student_id), studentName: String(r.student_name),
+      grade: (r.grade as string | null) ?? null,
+      yearMonth: String(r.year_month), title: String(r.title),
+      amount: money(r.amount), paidAmount: money(r.paid_amount), state: String(r.state),
+      // 잔액도 금액이다 — 권한이 없으면 내려보내지 않는다 (빼기로 복원되면 가린 뜻이 없다)
+      remaining: canSeeAmounts ? Number(r.amount) - Number(r.paid_amount) : null,
+      issuedOn: (r.issued_on as string | null) ?? null,
+      dueOn: due, paidAt: (r.paid_at as string | null) ?? null,
+      overdueDays: unpaid && due && due < today ? daysBetween(due, today) : 0,
+      lines: canSeeAmounts
+        ? (r.lines as InvoiceDto['lines'])
+        : (r.lines as InvoiceDto['lines']).map((l) => ({ ...l, unitPrice: 0, amount: 0 })),
+    };
+  }
+
   async all(canSeeAmounts: boolean): Promise<AccountingDto> {
     // PAY의 NULL은 아직 확인하지 않은 값이다. 권한이 있어도 0원으로 채우지 않는다.
     const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
     const today = todayKst();
 
     const invRows = (await this.inv.query(
-      `SELECT i.id, i.student_id, s.name AS student_name, s.grade, i.year_month, i.title,
-              i.amount, i.paid_amount, i.state,
-              to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
-              to_char(i.due_on,'YYYY-MM-DD') AS due_on,
-              to_char(i.paid_at,'YYYY-MM-DD') AS paid_at,
-              COALESCE((SELECT json_agg(json_build_object(
-                 'subKey', l.sub_key, 'label', l.label, 'count', l.count,
-                 'unitPrice', l.unit_price, 'amount', l.amount) ORDER BY l.seq)
-                FROM inv_line l WHERE l.inv_id = i.id), '[]'::json) AS lines
-         FROM inv i JOIN stu s ON s.id = i.student_id
-        ORDER BY i.year_month DESC, i.id`,
+      `${INV_SELECT} ORDER BY i.year_month DESC, i.id`,
     )) as Array<Record<string, unknown>>;
 
-    const invoices: InvoiceDto[] = invRows.map((r) => {
-      const due = r.due_on as string | null;
-      const unpaid = r.state === 'unpaid' || r.state === 'partial' || r.state === 'sent';
-      return {
-        id: Number(r.id), studentId: Number(r.student_id), studentName: String(r.student_name),
-        grade: (r.grade as string | null) ?? null,
-        yearMonth: String(r.year_month), title: String(r.title),
-        amount: money(r.amount), paidAmount: money(r.paid_amount), state: String(r.state),
-        issuedOn: (r.issued_on as string | null) ?? null,
-        dueOn: due, paidAt: (r.paid_at as string | null) ?? null,
-        overdueDays: unpaid && due && due < today ? daysBetween(due, today) : 0,
-        lines: canSeeAmounts
-          ? (r.lines as InvoiceDto['lines'])
-          : (r.lines as InvoiceDto['lines']).map((l) => ({ ...l, unitPrice: 0, amount: 0 })),
-      };
-    });
+    const invoices: InvoiceDto[] = invRows.map((r) => this.invoiceRow(r, canSeeAmounts, today));
 
     const payRows = (await this.inv.query(
       `SELECT p.id, to_char(p.paid_on,'YYYY-MM-DD') AS paid_on, p.student_id, s.name AS student_name,
-              p.amount, p.method, p.inv_id
+              p.amount, p.method, p.reason, p.inv_id
          FROM pay p LEFT JOIN stu s ON s.id = p.student_id
         ORDER BY p.paid_on DESC, p.id DESC`,
     )) as Array<Record<string, unknown>>;
@@ -69,6 +82,7 @@ export class AccountingService {
       studentId: r.student_id ? Number(r.student_id) : null,
       studentName: (r.student_name as string | null) ?? null,
       amount: money(r.amount), method: (r.method as string | null) ?? null,
+      reason: (r.reason as string | null) ?? null,
       invId: r.inv_id ? Number(r.inv_id) : null,
     }));
 
@@ -99,5 +113,107 @@ export class AccountingService {
       },
       invoices, payments, payouts,
     };
+  }
+
+  /**
+   * 입금 한 줄 등록 — **분납은 줄을 늘린다** (A-D2). 누계·전이·초과 판정은 여기 한 곳뿐이다.
+   *
+   * 세 층으로 막는다 (원칙 26 · D-R43) — ① 트랜잭션 경계 ② `SELECT … FOR UPDATE` 로 같은 청구서 경합
+   * ③ 마지막은 DB CHECK `inv_paid_le_amount`. 애플리케이션 검사만으로 끝내지 않는다.
+   * `paid_amount` 는 화면이 더한 값이 아니라 **그 순간 PAY 줄의 합**을 다시 세어 넣는다.
+   */
+  async addPayment(userId: number, dto: PaymentCreateDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
+    const today = todayKst();
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [inv] = (await m.query(
+        `SELECT id, amount, state FROM inv WHERE id = $1 FOR UPDATE`, [dto.invId],
+      )) as Array<{ id: string; amount: number; state: string }>;
+      if (!inv) throw new NotFoundException('청구서를 찾을 수 없습니다');
+      if (!BILLABLE.has(inv.state)) {
+        throw new ConflictException({
+          code: 'INV_NOT_BILLABLE',
+          message: inv.state === 'void'
+            ? '취소된 청구서에는 입금을 붙일 수 없습니다'
+            : '아직 발행하지 않은 청구서입니다 — 청구서 작성·학부모 안내 뒤에 입금을 기록합니다',
+        });
+      }
+
+      const [sums] = (await m.query(
+        `SELECT COALESCE(SUM(amount), 0)::int AS paid FROM pay WHERE inv_id = $1`, [dto.invId],
+      )) as Array<{ paid: number }>;
+      const before = Number(sums.paid);
+      const billed = Number(inv.amount);
+      const next = before + dto.amount;
+      if (next > billed) {
+        throw new ConflictException({
+          code: 'OVERPAY',
+          message: `남은 금액은 ${won(billed - before)}입니다 — 그보다 많이 적을 수 없습니다. 초과 입금은 환불·조정으로 처리하세요`,
+        });
+      }
+
+      await m.query(
+        `INSERT INTO pay (inv_id, student_id, amount, paid_on, method, reason, entered_by, entered_at,
+                          confirmed_by, confirmed_at)
+         SELECT $1, i.student_id, $2, $3::date, $4, $5, $6, now(), $6, now() FROM inv i WHERE i.id = $1`,
+        [dto.invId, dto.amount, dto.paidOn, dto.method ?? null, dto.reason?.trim() || null, userId],
+      );
+      await m.query(
+        `UPDATE inv SET paid_amount = $2,
+                        state = CASE WHEN $2 >= amount THEN 'paid'::inv_state_t ELSE 'partial'::inv_state_t END,
+                        paid_at = CASE WHEN $2 >= amount THEN now() ELSE NULL END
+          WHERE id = $1`,
+        [dto.invId, next],
+      );
+      const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [dto.invId])) as Array<Record<string, unknown>>;
+      return this.invoiceRow(row, canSeeAmounts, today);
+    });
+  }
+
+  /**
+   * 잘못 적은 입금 줄을 지운다 — **부분 납부(partial) 인 동안만**.
+   *
+   * 완납으로 굳은 청구서는 되돌리지 않는다 (erd INV Note: 「상태 전이는 unpaid → partial → paid 와 → void 뿐이며
+   * 되돌리기가 없다」). 정정·환불은 별도 승인 경로다. 마지막 줄을 지우면 발행 사실(sent_at)이 있는 청구서는
+   * 「전달」로, 없으면 「미납」으로 돌아간다 — 발행 이력을 지우지 않는다.
+   */
+  async removePayment(payId: number): Promise<{ ok: true }> {
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [pay] = (await m.query(`SELECT id, inv_id FROM pay WHERE id = $1`, [payId])) as Array<{
+        id: string; inv_id: string | null;
+      }>;
+      if (!pay) throw new NotFoundException('입금 기록을 찾을 수 없습니다');
+      if (pay.inv_id == null) {
+        // 청구서 없는 직접 입력 건 (A-D1) — 누계를 되돌릴 청구서가 없다
+        await m.query(`DELETE FROM pay WHERE id = $1`, [payId]);
+        return { ok: true as const };
+      }
+      const invId = Number(pay.inv_id);
+      const [inv] = (await m.query(
+        `SELECT id, state, (sent_at IS NOT NULL) AS was_sent FROM inv WHERE id = $1 FOR UPDATE`, [invId],
+      )) as Array<{ id: string; state: string; was_sent: boolean }>;
+      if (inv && inv.state !== 'partial') {
+        throw new ConflictException({
+          code: 'INV_PAID_LOCKED',
+          message: inv.state === 'paid'
+            ? '완납된 청구서의 입금 줄은 지울 수 없습니다 — 정정·환불은 별도 승인으로 처리하세요'
+            : '이 청구서는 입금 줄을 고칠 수 있는 상태가 아닙니다',
+        });
+      }
+      await m.query(`DELETE FROM pay WHERE id = $1`, [payId]);
+      const [sums] = (await m.query(
+        `SELECT COALESCE(SUM(amount), 0)::int AS paid FROM pay WHERE inv_id = $1`, [invId],
+      )) as Array<{ paid: number }>;
+      const left = Number(sums.paid);
+      await m.query(
+        `UPDATE inv SET paid_amount = $2,
+                        state = CASE WHEN $2 > 0 THEN 'partial'::inv_state_t
+                                     WHEN $3 THEN 'sent'::inv_state_t
+                                     ELSE 'unpaid'::inv_state_t END,
+                        paid_at = NULL
+          WHERE id = $1`,
+        [invId, left, inv?.was_sent === true],
+      );
+      return { ok: true as const };
+    });
   }
 }

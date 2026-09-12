@@ -9,7 +9,7 @@ import {
   ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import type { RequestUser } from '../../common/perm';
+import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
   TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
@@ -22,9 +22,15 @@ import { TeacherService } from './teacher.service';
 export class TeacherController {
   constructor(private readonly svc: TeacherService) {}
 
-  /** 강사 전용 표면 — 시급·정산이 실리므로 역할·본인 고정을 서버가 한다. 관리자 미리보기는 별도 결정 뒤에. */
+  /**
+   * 강사 전용 표면 — 시급·정산이 실리므로 역할·본인 고정을 서버가 한다. 관리자 미리보기는 별도 결정 뒤에.
+   *
+   * 2026-09-12(C36-a) 교정 — 종전 `user.role !== 'teacher'` 는 **eslint no-restricted-syntax 를 어기고 있었다**
+   * (D-R39: 컨트롤러에서 role 을 직접 비교하지 않는다). 뜻은 그대로 세 줄에서 파생시킨다 —
+   * 「관리자 페이지에 들어갈 수 있는 사람」의 여집합이 강사다.
+   */
   private assertTeacher(user: RequestUser): void {
-    if (user.role !== 'teacher') throw new ForbiddenException('강사 전용 화면입니다');
+    if (!isRole(user.role) || canAdminPage(user.role)) throw new ForbiddenException('강사 전용 화면입니다');
   }
 
   @Get('home')
