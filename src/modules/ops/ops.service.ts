@@ -18,9 +18,13 @@ import {
   PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, dueLabel, planDueKindLabel, planDueState, planStageLabel,
   type PlanDueState,
 } from '../../lib/plan-words';
+import {
+  MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, mtAttendState, mtTypeLabel,
+} from '../../lib/meeting-words';
 import type {
   LeadDto, MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanReviewDto, PlanTaskDto,
+  MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
 } from './ops.dto';
 
 type R = Record<string, unknown>;
@@ -135,7 +139,10 @@ export class OpsService {
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed)::int AS confirmed
          FROM mtrec m ORDER BY m.on_date DESC NULLS LAST, m.id DESC`,
     )).map((r) => ({
-      id: Number(r.id), mtType: String(r.mt_type), title: (r.title as string) ?? null,
+      id: Number(r.id), mtType: String(r.mt_type),
+      // 낱말은 서버가 만든다 — 한동안 이 표가 「general」 「plan」을 그대로 찍고 있었다 (D-R18 · C57)
+      mtTypeLabel: mtTypeLabel(String(r.mt_type)),
+      title: (r.title as string) ?? null,
       onDate: (r.on_date as string) ?? null,
       attendees: Number(r.attendees), confirmed: Number(r.confirmed),
       hasMinutes: Boolean(r.minutes),
@@ -567,5 +574,116 @@ export class OpsService {
       );
     });
     return (await this.planDetail(id, canApprove))!;
+  }
+
+  /* ══ §66 회의 상세 (C57) ═══════════════════════════════════════════════ */
+
+  /**
+   * 참석 확인 → 사전 자료 → 속기록 → 할 일.
+   *
+   * 참석은 **세 값**이다 — 아직 답 안 함(`null`) · 참석 · 불참. `null` 을 `false` 로 접으면
+   * 「불참하겠다고 답한 사람」과 「아직 안 본 사람」이 같은 칩을 단다.
+   */
+  async meetingDetail(id: number): Promise<MeetingDetailDto | null> {
+    const today = todayKst();
+    const [m] = await this.q(
+      `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date,
+              m.pre_files, m.minutes, ${kstAt('m.minutes_at')} AS minutes_at, b.name AS minutes_by_name
+         FROM mtrec m LEFT JOIN staff b ON b.id = m.minutes_by
+        WHERE m.id = $1`,
+      [id],
+    );
+    if (!m) return null;
+
+    const attendees = (await this.q(
+      `SELECT a.staff_id, a.confirmed, s.name, s.title
+         FROM mtattd a JOIN staff s ON s.id = a.staff_id
+        WHERE a.mt_id = $1 ORDER BY s.id`,
+      [id],
+    )).map((r) => {
+      const state = mtAttendState(r.confirmed as boolean | null);
+      return {
+        staffId: leadId(r.staff_id), name: String(r.name), title: (r.title as string) ?? null,
+        state, stateLabel: MT_ATTEND_LABEL[state],
+      };
+    });
+
+    const tasks = (await this.q(
+      `SELECT t.id, t.title, t.done, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name
+         FROM todo t LEFT JOIN staff s ON s.id = t.to_id
+        WHERE t.mt_id = $1 ORDER BY t.due_on NULLS LAST, t.id`,
+      [id],
+    )).map((t): MeetingTaskDto => {
+      const due = (t.due_on as string) ?? null;
+      const done = t.done === true;
+      return {
+        id: leadId(t.id), title: String(t.title), done,
+        toName: (t.to_name as string) ?? null, dueOn: due,
+        overdueDays: !done && due && due < today ? daysSince(due) : 0,
+      };
+    });
+
+    const confirmed = attendees.filter((a) => a.state === 'in').length;
+    const files = Array.isArray(m.pre_files) ? (m.pre_files as unknown[]).map((f) => String(f)) : [];
+    const mt = String(m.mt_type);
+
+    return {
+      id: leadId(m.id), mtType: mt, mtTypeLabel: mtTypeLabel(mt),
+      title: (m.title as string) ?? null, onDate: (m.on_date as string) ?? null,
+      attendees, confirmed,
+      // 원문 「참석 0/4 확인」 — 화면이 다시 세지 않는다 (D-R37)
+      attendLabel: `참석 ${confirmed}/${attendees.length} 확인`,
+      preFiles: files,
+      minutes: (m.minutes as string) ?? null,
+      minutesAt: (m.minutes_at as string) ?? null,
+      minutesByName: (m.minutes_by_name as string) ?? null,
+      minutesTemplates: [...MINUTES_TEMPLATES],
+      minutesHint: MINUTES_HINT,
+      tasks, taskDone: tasks.filter((t) => t.done).length,
+    };
+  }
+
+  /**
+   * 속기록 저장 — **누가 언제**를 서버가 남긴다.
+   *
+   * 화면이 보낸 시각을 믿지 않는다. 시계가 틀린 기계에서 저장하면 회의록의 순서가 뒤집힌다.
+   */
+  async writeMinutes(viewerId: number, id: number, dto: MinutesWriteDto): Promise<MeetingDetailDto> {
+    const [row] = await this.q(`SELECT id FROM mtrec WHERE id = $1`, [id]);
+    if (!row) throw new NotFoundException('회의가 없습니다');
+    await this.q(
+      `UPDATE mtrec SET minutes = $2, minutes_at = now(), minutes_by = $3 WHERE id = $1`,
+      [id, dto.minutes.trim(), viewerId],
+    );
+    return (await this.meetingDetail(id))!;
+  }
+
+  /**
+   * 할 일 배정 — 원문 §66 「연동 **배정한 할 일 → TODO + 담당자 NOTI**」.
+   *
+   * 둘을 **한 트랜잭션**에서 한다. 밖에서 알림을 보내면 할 일은 안 만들어졌는데 알림만 가서
+   * 받은 사람이 자기 목록에서 그것을 찾지 못한다 (D-R43).
+   */
+  async assignMeetingTask(viewerId: number, id: number, dto: MeetingTaskCreateDto): Promise<MeetingDetailDto> {
+    const [m] = await this.q(`SELECT id, title, mt_type FROM mtrec WHERE id = $1`, [id]);
+    if (!m) throw new NotFoundException('회의가 없습니다');
+    const [to] = await this.q(`SELECT id, name FROM staff WHERE id = $1`, [dto.toId]);
+    if (!to) throw new NotFoundException('담당자가 없습니다');
+
+    const name = (m.title as string) ?? mtTypeLabel(String(m.mt_type));
+    await this.lead.manager.transaction(async (em) => {
+      await em.query(
+        `INSERT INTO todo (title, from_id, to_id, due_on, done, src, mt_id)
+         VALUES ($1, $2, $3, $4, false, 'meeting', $5)`,
+        [dto.title.trim(), viewerId, dto.toId, dto.dueOn ?? null, id],
+      );
+      if (leadId(to.id) !== viewerId) {
+        await em.query(
+          `INSERT INTO noti (to_id, from_id, body, link) VALUES ($1, $2, $3, '/ops?todo')`,
+          [dto.toId, viewerId, `회의 할 일 — ${name}`],
+        );
+      }
+    });
+    return (await this.meetingDetail(id))!;
   }
 }

@@ -5,9 +5,10 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 import { MFB_STATES } from '../../lib/marketing-words';
 import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_STAGES } from '../../lib/plan-words';
+import { MINUTES_TEMPLATES, MT_ATTEND_STATES, MT_TYPES } from '../../lib/meeting-words';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -174,7 +175,8 @@ export class PlanReviewDto {
 /** §63 회의 목록 */
 export class MeetingDto {
   @ApiProperty() id!: number;
-  @ApiProperty() mtType!: string;
+  @ApiProperty({ enum: MT_TYPES, description: '코드값 — 이름은 mtTypeLabel 을 쓴다' }) mtType!: string;
+  @ApiProperty({ description: '회의 종류 이름 — 낱말은 서버가 만든다 (D-R18 · C57)' }) mtTypeLabel!: string;
   @ApiPropertyOptional(S) title?: string | null;
   @ApiPropertyOptional(S) onDate?: string | null;
   @ApiProperty() attendees!: number;
@@ -201,6 +203,75 @@ export class MarketingDto {
   @ApiPropertyOptional(N) enrolled?: number | null;
   @ApiPropertyOptional({ ...N, description: '집행 비용 — 대표만 (D-R39)' }) cost?: number | null;
   @ApiPropertyOptional({ ...N, description: '등록당 비용' }) costPerEnroll?: number | null;
+}
+
+/* ══ §66 회의 상세 (C57) ═══════════════════════════════════════════════ */
+
+/** 참석 한 줄 — `confirmed` 는 **세 값**이다 (null = 응답 대기) */
+export class MeetingAttendeeDto {
+  @ApiProperty() staffId!: number;
+  @ApiProperty() name!: string;
+  @ApiPropertyOptional(S) title?: string | null;
+  @ApiProperty({ enum: MT_ATTEND_STATES, description: 'waiting | in | out — null 을 false 로 접지 않는다' })
+  state!: string;
+  @ApiProperty({ description: '칩에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)' }) stateLabel!: string;
+}
+
+/** ③ 할 일 — 이 회의에서 빠져나온 TODO */
+export class MeetingTaskDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() title!: string;
+  @ApiProperty() done!: boolean;
+  @ApiPropertyOptional(S) toName?: string | null;
+  @ApiPropertyOptional(S) dueOn?: string | null;
+  @ApiProperty({ description: '지난 날 수 — 끝난 할 일은 0' }) overdueDays!: number;
+}
+
+/** §66 회의 상세 — 참석 확인 → 사전 자료 → 속기록 → 할 일 배정 */
+export class MeetingDetailDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: MT_TYPES }) mtType!: string;
+  @ApiProperty() mtTypeLabel!: string;
+  @ApiPropertyOptional(S) title?: string | null;
+  @ApiPropertyOptional(S) onDate?: string | null;
+
+  @ApiProperty({ type: [MeetingAttendeeDto] }) attendees!: MeetingAttendeeDto[];
+  /** 원문 「참석 0/4 확인」 — 화면이 다시 세지 않는다 (D-R37) */
+  @ApiProperty({ description: '참석하겠다고 답한 사람 수' }) confirmed!: number;
+  @ApiProperty({ description: '참석 머리글 — 원문 「참석 N/M 확인」' }) attendLabel!: string;
+
+  @ApiProperty({ type: [String], description: '① 사전 자료 — 파일 주소' }) preFiles!: string[];
+  @ApiPropertyOptional({ ...S, description: '② 속기록 본문' }) minutes?: string | null;
+  @ApiPropertyOptional({ ...S, description: '마지막 저장 시각 (KST ISO) — 없으면 아직 저장한 적이 없다' })
+  minutesAt?: string | null;
+  @ApiPropertyOptional(S) minutesByName?: string | null;
+  /** 원문 속기록 칸 아래 단추 넷과 오른쪽 안내 — 회의마다 머리말이 제각각이 되지 않게 한다 */
+  @ApiProperty({ type: [String], enum: MINUTES_TEMPLATES }) minutesTemplates!: string[];
+  @ApiProperty() minutesHint!: string;
+
+  @ApiProperty({ type: [MeetingTaskDto], description: '③ 할 일' }) tasks!: MeetingTaskDto[];
+  @ApiProperty({ description: '끝낸 할 일 수 — 화면이 다시 세지 않는다' }) taskDone!: number;
+}
+
+/** 속기록 저장 — 누가 언제 저장했는지 서버가 남긴다 */
+export class MinutesWriteDto {
+  @ApiProperty({ description: '속기록 본문', maxLength: 8000 })
+  @IsString() @MinLength(1, { message: '속기록을 적어 주세요' }) @MaxLength(8000)
+  minutes!: string;
+}
+
+/** 할 일 배정 — 원문 §66 「연동 배정한 할 일 → TODO + 담당자 NOTI」 */
+export class MeetingTaskCreateDto {
+  @ApiProperty({ maxLength: 160 })
+  @IsString() @MinLength(1, { message: '할 일을 적어 주세요' }) @MaxLength(160)
+  title!: string;
+
+  @ApiProperty({ description: '누구에게' })
+  @IsInt() @Min(1) toId!: number;
+
+  @ApiPropertyOptional({ description: '기한 YYYY-MM-DD — 비우면 기한 없음' })
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '날짜는 YYYY-MM-DD 입니다' })
+  dueOn?: string;
 }
 
 /** §60 대표 피드백 — 글 한 줄 (코멘트 · 답변 공용) */

@@ -4068,6 +4068,281 @@
         ]
       }
     },
+    "/ops/meetings/{id}": {
+      "get": {
+        "description": "참석은 세 값이다 — 아직 답 안 함(null) · 참석 · 불참. null 을 false 로 접지 않는다.",
+        "operationId": "OpsController_meetingDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "회의 없음"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§66 회의 상세 — 참석 · 사전 자료 · 속기록 · 할 일",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/meetings/{id}/minutes": {
+      "post": {
+        "description": "화면이 보낸 시각을 믿지 않는다. 시계가 틀린 기계에서 저장하면 회의록의 순서가 뒤집힌다.",
+        "operationId": "OpsController_writeMinutes",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MinutesWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "회의 없음"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "속기록 저장 — 누가 언제 저장했는지 서버가 남긴다 (원문 §66)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/meetings/{id}/todos": {
+      "post": {
+        "description": "밖에서 알림을 보내면 할 일은 안 만들어졌는데 알림만 가서 받은 사람이 자기 목록에서 그것을 못 찾는다 (D-R43).",
+        "operationId": "OpsController_assignMeetingTask",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeetingTaskCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "회의 없음 · 담당자 없음"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "할 일 배정 — TODO 와 담당자 알림을 한 트랜잭션에서 (원문 §66 연동)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/consulting": {
       "get": {
         "description": "최종 canAdminPage와 canCrudAll이 모두 필요하다. 공개 범위로 투영된 items의 stage(contract/running/done)를 클라이언트에서 필터링하며 추가 GET은 0이다. 전체/단계 건수는 같은 items에서 파생하고 금액·상세 공개 권한을 변경하지 않는다.",
@@ -10753,7 +11028,19 @@
             "type": "number"
           },
           "mtType": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "plan",
+              "consulting",
+              "marketing",
+              "dev",
+              "general"
+            ],
+            "description": "코드값 — 이름은 mtTypeLabel 을 쓴다"
+          },
+          "mtTypeLabel": {
+            "type": "string",
+            "description": "회의 종류 이름 — 낱말은 서버가 만든다 (D-R18 · C57)"
           },
           "title": {
             "type": "string",
@@ -10777,6 +11064,7 @@
         "required": [
           "id",
           "mtType",
+          "mtTypeLabel",
           "attendees",
           "confirmed",
           "hasMinutes"
@@ -11360,6 +11648,209 @@
         },
         "required": [
           "decision"
+        ]
+      },
+      "MeetingAttendeeDto": {
+        "type": "object",
+        "properties": {
+          "staffId": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "in",
+              "out"
+            ],
+            "description": "waiting | in | out — null 을 false 로 접지 않는다"
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "칩에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)"
+          }
+        },
+        "required": [
+          "staffId",
+          "name",
+          "state",
+          "stateLabel"
+        ]
+      },
+      "MeetingTaskDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "toName": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "지난 날 수 — 끝난 할 일은 0"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "done",
+          "overdueDays"
+        ]
+      },
+      "MeetingDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "mtType": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "consulting",
+              "marketing",
+              "dev",
+              "general"
+            ]
+          },
+          "mtTypeLabel": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "onDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "attendees": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeetingAttendeeDto"
+            }
+          },
+          "confirmed": {
+            "type": "number",
+            "description": "참석하겠다고 답한 사람 수"
+          },
+          "attendLabel": {
+            "type": "string",
+            "description": "참석 머리글 — 원문 「참석 N/M 확인」"
+          },
+          "preFiles": {
+            "description": "① 사전 자료 — 파일 주소",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "minutes": {
+            "type": "string",
+            "nullable": true,
+            "description": "② 속기록 본문"
+          },
+          "minutesAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "마지막 저장 시각 (KST ISO) — 없으면 아직 저장한 적이 없다"
+          },
+          "minutesByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "minutesTemplates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "[정한 것]",
+                "[누가 무엇을]",
+                "[다음 회의까지]",
+                "[보류]"
+              ]
+            }
+          },
+          "minutesHint": {
+            "type": "string"
+          },
+          "tasks": {
+            "description": "③ 할 일",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MeetingTaskDto"
+            }
+          },
+          "taskDone": {
+            "type": "number",
+            "description": "끝낸 할 일 수 — 화면이 다시 세지 않는다"
+          }
+        },
+        "required": [
+          "id",
+          "mtType",
+          "mtTypeLabel",
+          "attendees",
+          "confirmed",
+          "attendLabel",
+          "preFiles",
+          "minutesTemplates",
+          "minutesHint",
+          "tasks",
+          "taskDone"
+        ]
+      },
+      "MinutesWriteDto": {
+        "type": "object",
+        "properties": {
+          "minutes": {
+            "type": "string",
+            "description": "속기록 본문",
+            "maxLength": 8000
+          }
+        },
+        "required": [
+          "minutes"
+        ]
+      },
+      "MeetingTaskCreateDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "toId": {
+            "type": "number",
+            "description": "누구에게"
+          },
+          "dueOn": {
+            "type": "string",
+            "description": "기한 YYYY-MM-DD — 비우면 기한 없음"
+          }
+        },
+        "required": [
+          "title",
+          "toId"
         ]
       },
       "ConsultingSessionDto": {

@@ -11,6 +11,7 @@ import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUs
 import {
   LeadDto, LeadFailDto, LeadResumeDto, MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanReviewDto,
+  MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
 
@@ -169,5 +170,53 @@ export class OpsController {
     @Body() dto: PlanReviewDto,
   ): Promise<PlanDetailDto> {
     return this.svc.reviewPlan(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
+  }
+
+  /* ══ §66 회의 상세 ═════════════════════════════════════════════════════ */
+
+  @Get('meetings/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§66 회의 상세 — 참석 · 사전 자료 · 속기록 · 할 일',
+    description: '참석은 세 값이다 — 아직 답 안 함(null) · 참석 · 불참. null 을 false 로 접지 않는다.',
+  })
+  @ApiOkResponse({ type: MeetingDetailDto })
+  @ApiNotFoundResponse({ description: '회의 없음' })
+  async meetingDetail(@Param('id', ParseIntPipe) id: number): Promise<MeetingDetailDto> {
+    const out = await this.svc.meetingDetail(id);
+    if (!out) throw new NotFoundException({ code: 'MEETING_NOT_FOUND', message: '회의를 찾을 수 없습니다' });
+    return out;
+  }
+
+  @Post('meetings/:id/minutes')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '속기록 저장 — 누가 언제 저장했는지 서버가 남긴다 (원문 §66)',
+    description: '화면이 보낸 시각을 믿지 않는다. 시계가 틀린 기계에서 저장하면 회의록의 순서가 뒤집힌다.',
+  })
+  @ApiOkResponse({ type: MeetingDetailDto })
+  @ApiNotFoundResponse({ description: '회의 없음' })
+  async writeMinutes(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MinutesWriteDto,
+  ): Promise<MeetingDetailDto> {
+    return this.svc.writeMinutes(user.id, id, dto);
+  }
+
+  @Post('meetings/:id/todos')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '할 일 배정 — TODO 와 담당자 알림을 한 트랜잭션에서 (원문 §66 연동)',
+    description: '밖에서 알림을 보내면 할 일은 안 만들어졌는데 알림만 가서 받은 사람이 자기 목록에서 그것을 못 찾는다 (D-R43).',
+  })
+  @ApiOkResponse({ type: MeetingDetailDto })
+  @ApiNotFoundResponse({ description: '회의 없음 · 담당자 없음' })
+  async assignMeetingTask(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MeetingTaskCreateDto,
+  ): Promise<MeetingDetailDto> {
+    return this.svc.assignMeetingTask(user.id, id, dto);
   }
 }

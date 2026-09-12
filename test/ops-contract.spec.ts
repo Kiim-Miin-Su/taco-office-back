@@ -194,6 +194,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     for (const handler of [
       'all', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
       'planDetail', 'decidePlanDue', 'reviewPlan',
+      'meetingDetail', 'writeMinutes', 'assignMeetingTask',
     ] as const) {
       expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
     }
@@ -231,6 +232,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       '/ops/marketing/{id}/comments', '/ops/marketing/{id}/replies', '/ops/marketing/feedback/{id}',
       // §65 기획 보고서 — 상세·기한 결재·최종 결재 (C56)
       '/ops/plans/{id}', '/ops/plans/{id}/due', '/ops/plans/{id}/review',
+      // §66 회의 상세 — 상세·속기록·할 일 배정 (C57)
+      '/ops/meetings/{id}', '/ops/meetings/{id}/minutes', '/ops/meetings/{id}/todos',
     ]);
     expect(Object.keys(path)).toEqual(['get']);
     expect(path.get?.description).toMatch(/name.*school.*ownerName.*reason/);

@@ -34,6 +34,14 @@ export class Mtrec {
   @Column({ type: 'text', nullable: true })
   minutes: string | null;
 
+  /** 속기록을 마지막으로 저장한 시각 — `createdAt`(회의 행이 생긴 시각)과 다르다 (C57) */
+  @Column({ type: 'timestamptz', nullable: true })
+  minutesAt: Date | null;
+
+  /** 속기록을 마지막으로 저장한 사람 (C57) */
+  @Column({ type: 'bigint', nullable: true })
+  minutesBy: number | null;
+
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
 }

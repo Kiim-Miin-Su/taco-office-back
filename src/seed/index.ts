@@ -196,7 +196,15 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('mfb', MFBS.map((f) => ({ id: f.id, mkt_id: f.mktId, by_id: f.byId, kind: f.kind, parent_id: f.parentId, body: f.body, at: f.at })));
     await add('plan', PLANS.map((p) => ({ id: p.id, title: p.title, stage: p.stage, goal: p.goal, research: p.research, ask: p.ask, due_on: p.dueOn, owner_id: p.ownerId })));
     await add('mtrec', MEETINGS.map((m) => ({ id: m.id, mt_type: m.mtType, title: m.title, on_date: m.onDate, minutes: m.minutes })));
-    await add('mtattd', MEETINGS.flatMap((m) => m.attendees.map((a) => ({ mt_id: m.id, staff_id: a, confirmed: m.minutes !== null }))));
+    /* 참석은 **세 값**이다 — null(아직 답 안 함) · true(참석) · false(불참).
+       한동안 시드가 `minutes !== null` 로 true/false 만 만들어서 **「응답 대기」가 데모에
+       한 번도 안 나왔다.** 원문 §66 컷은 네 명이 전부 「응답 대기」다 (C57).
+       지난 회의(속기록이 있는 것)는 답이 다 왔고, 앞으로 올 회의는 아직 답을 기다린다 —
+       한 명만 불참으로 두어 세 칩이 화면에 다 나오게 한다. */
+    await add('mtattd', MEETINGS.flatMap((m) => m.attendees.map((a, i) => ({
+      mt_id: m.id, staff_id: a,
+      confirmed: m.minutes !== null ? true : i === 0 ? false : null,
+    }))));
     await add('cpl', COMPLAINTS.map((c) => ({ area: c.area, student_id: c.studentId, stage: c.stage, body: c.body, action: (c as { action?: string }).action ?? null, result: (c as { result?: string }).result ?? null, teacher_changed: c.teacherChanged, owner_id: c.ownerId, created_at: `${c.createdAt}T00:00:00Z` })));
     await add('suggestion', SUGGESTIONS.map((s) => ({ staff_id: s.staffId, category: s.category, body: s.body, state: s.state, reply: (s as { reply?: string }).reply ?? null, reply_by: num((s as { replyBy?: number }).replyBy), reply_at: (s as { replyAt?: string }).replyAt ? `${(s as { replyAt?: string }).replyAt}T00:00:00Z` : null, created_at: `${s.createdAt}T00:00:00Z` })));
     await add('rpt', REPORTS.map((r) => ({ rpt_type: r.rptType, on_date: r.onDate, memo: JSON.stringify(r.memo), state: r.state, sent_at: (r as { sentAt?: string }).sentAt ? `${(r as { sentAt?: string }).sentAt}T00:00:00Z` : null, reviewed_at: (r as { reviewedAt?: string }).reviewedAt ? `${(r as { reviewedAt?: string }).reviewedAt}T00:00:00Z` : null })));
