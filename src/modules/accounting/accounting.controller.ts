@@ -11,7 +11,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, PaymentCreateDto } from './accounting.dto';
+import { AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, InvoiceIssueDto, PaymentCreateDto } from './accounting.dto';
 import { AccountingService } from './accounting.service';
 
 @ApiTags('accounting')
@@ -34,6 +34,25 @@ export class AccountingController {
   async all(@CurrentUser() user: RequestUser): Promise<AccountingDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.all(canSee);
+  }
+
+  @Post('invoices')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '청구서 한 장 발행 — 줄은 서버가 만든다 (§53 「+ 새 청구서 발행」)',
+    description:
+      '줄(INV_LINE)을 받지 않는다. 원문 명세가 「횟수는 서버가 occ() 로 센다 — 프론트가 세면 예외(EXC)를 '
+      + '빠뜨린다」고 적었다(D-R37). 누구의 어느 달인지만 주면 과목별 회차·단가·소계·합계를 서버가 만든다. '
+      + '되돌리기는 없다 — 잘못 냈으면 취소하고 새로 만든다(원문 규칙 줄).',
+  })
+  @ApiCreatedResponse({ type: InvoiceDto, description: '줄까지 채워진 청구서' })
+  @ApiConflictResponse({
+    description: 'code INV_DUPLICATE(같은 학생·달·종류가 이미 있음) | INV_NO_LESSONS(그 달 수업 없음) | INV_NO_RATE(단가표에 없는 과목)',
+  })
+  @ApiNotFoundResponse({ description: '학생 없음' })
+  async issueInvoice(@CurrentUser() user: RequestUser, @Body() dto: InvoiceIssueDto): Promise<InvoiceDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.issueInvoice(user.id, dto, canSee);
   }
 
   @Post('payments')

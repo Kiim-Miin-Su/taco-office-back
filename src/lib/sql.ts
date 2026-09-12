@@ -24,6 +24,14 @@ export const minOf = (expr: string): string =>
 /** KST 날짜 — 옮긴 EXC는 `on_date`와 실제 `span` 날짜가 다르므로 표시 날짜는 이것을 쓴다. */
 export const kstDateOf = (expr: string): string => `(${expr} AT TIME ZONE '${KST}')::date`;
 
+/**
+ * 그 시각이 **KST 로 몇 월인가** — `'YYYY-MM'`.
+ *
+ * 청구서가 「8월분」인지는 UTC 가 아니라 KST 로 갈린다. 8월 31일 23시 수업은 UTC 로는 9월이다.
+ * 시간대를 쿼리마다 적으면 그런 한 줄이 어딘가 하나 빠진다 (D-R12 — 시간대는 한 곳에서 정한다).
+ */
+export const kstMonthOf = (expr: string): string => `to_char(${expr} AT TIME ZONE '${KST}', 'YYYY-MM')`;
+
 /** `ser_occ` 를 `o` 로 별칭 붙였을 때의 시작·끝 분. 둘 다 수업 시작일의 KST 자정 기준이다. */
 export const START_MIN = minOf('lower(o.span)');
 // API가 허용하는 24:00 종료는 다음 날짜의 00:00으로 저장된다. 시각만 뽑으면 1440이 0이 되어

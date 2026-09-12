@@ -2873,6 +2873,85 @@
         ]
       }
     },
+    "/accounting/invoices": {
+      "post": {
+        "description": "줄(INV_LINE)을 받지 않는다. 원문 명세가 「횟수는 서버가 occ() 로 센다 — 프론트가 세면 예외(EXC)를 빠뜨린다」고 적었다(D-R37). 누구의 어느 달인지만 주면 과목별 회차·단가·소계·합계를 서버가 만든다. 되돌리기는 없다 — 잘못 냈으면 취소하고 새로 만든다(원문 규칙 줄).",
+        "operationId": "AccountingController_issueInvoice",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceIssueDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "줄까지 채워진 청구서",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "학생 없음"
+          },
+          "409": {
+            "description": "code INV_DUPLICATE(같은 학생·달·종류가 이미 있음) | INV_NO_LESSONS(그 달 수업 없음) | INV_NO_RATE(단가표에 없는 과목)"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구서 한 장 발행 — 줄은 서버가 만든다 (§53 「+ 새 청구서 발행」)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/payments": {
       "post": {
         "description": "누계·상태 전이(partial/paid)·초과 거절은 서버 한 곳에서 한다. 화면은 잔여를 placeholder 로만 쓴다.",
@@ -8873,6 +8952,41 @@
           "payouts",
           "expenses",
           "expenseTotals"
+        ]
+      },
+      "InvoiceIssueDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number",
+            "description": "누구에게"
+          },
+          "yearMonth": {
+            "type": "string",
+            "description": "어느 달 — YYYY-MM",
+            "example": "2026-08"
+          },
+          "invType": {
+            "type": "string",
+            "description": "청구 종류",
+            "enum": [
+              "tuition",
+              "consulting"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "description": "제목 — 비우면 서버가 「2026년 8월 수업료」처럼 짓는다"
+          },
+          "dueOn": {
+            "type": "string",
+            "description": "납기일 — YYYY-MM-DD"
+          }
+        },
+        "required": [
+          "studentId",
+          "yearMonth",
+          "invType"
         ]
       },
       "PaymentCreateDto": {

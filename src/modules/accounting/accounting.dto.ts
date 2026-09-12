@@ -55,6 +55,46 @@ export class InvoiceDto {
   @ApiProperty({ type: [InvoiceLineDto] }) lines!: InvoiceLineDto[];
 }
 
+/**
+ * 청구 종류 — **원본 §53 카드에 실제로 붙어 있는 배지 두 가지뿐이다.**
+ *
+ * `inv.entity.ts` 주석은 「청구 종류 6종」이라고 적어 두었는데 **원문에 그 여섯의 목록이 없다.**
+ * 여섯을 지어내면 그 목록이 곧 발명이 된다 (D-R44). 컷이 보여 준 둘만 둔다 —
+ * 「수업료 청구」·「컨설팅비 청구」. 셋째가 필요해지면 그때 원문 근거와 함께 늘린다.
+ * (DB `inv.inv_type` 은 varchar 라 CHECK 가 없다. 낱말을 굳히는 것도 목록이 확정된 뒤다.)
+ */
+export const INV_TYPES = ['tuition', 'consulting'] as const;
+export const INV_TYPE_LABEL: Record<string, string> = {
+  tuition: '수업료 청구', consulting: '컨설팅비 청구',
+};
+
+/**
+ * 청구서 한 장을 새로 낸다 (§53 「+ 새 청구서 발행」).
+ *
+ * **줄(INV_LINE)은 받지 않는다.** 원문 명세가 「횟수는 서버가 `occ()` 로 센다 —
+ * 프론트가 세면 예외(EXC)를 빠뜨린다」고 못 박았다. 화면이 센 숫자를 받으면
+ * 그 순간 횟수를 세는 자리가 둘이 된다 (D-R37 · D-R18).
+ * 누구의 어느 달인지만 주면 나머지는 서버가 만든다.
+ */
+export class InvoiceIssueDto {
+  @ApiProperty({ description: '누구에게' })
+  @IsInt() @Min(1) studentId!: number;
+
+  @ApiProperty({ description: '어느 달 — YYYY-MM', example: '2026-08' })
+  @IsString() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  yearMonth!: string;
+
+  @ApiProperty({ description: '청구 종류', enum: INV_TYPES })
+  @IsIn(INV_TYPES as unknown as string[]) invType!: string;
+
+  @ApiPropertyOptional({ description: '제목 — 비우면 서버가 「2026년 8월 수업료」처럼 짓는다' })
+  @IsOptional() @IsString() @MaxLength(80) title?: string;
+
+  @ApiPropertyOptional({ description: '납기일 — YYYY-MM-DD', type: String })
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '납기일은 YYYY-MM-DD 입니다' })
+  dueOn?: string;
+}
+
 export class PaymentDto {
   @ApiProperty() id!: number;
   @ApiProperty({ type: String, format: 'date', nullable: true, description: '입금일 — 미확인 날짜는 null이며 문자열 null이 아니다' }) paidOn!: string | null;

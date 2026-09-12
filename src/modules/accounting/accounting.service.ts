@@ -14,11 +14,11 @@ import { Inv } from '../../entities';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
-import { sqlWordList } from '../../lib/sql';
-import { EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED } from './accounting.dto';
+import { kstMonthOf, sqlWordList } from '../../lib/sql';
+import { EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED, INV_TYPE_LABEL } from './accounting.dto';
 import type {
-  AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, PaymentCreateDto, PaymentDto,
-  PayoutDto,
+  AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, InvoiceIssueDto,
+  PaymentCreateDto, PaymentDto, PayoutDto,
 } from './accounting.dto';
 
 const daysBetween = (a: string, b: string) =>
@@ -235,6 +235,115 @@ export class AccountingService {
    * ③ 마지막은 DB CHECK `inv_paid_le_amount`. 애플리케이션 검사만으로 끝내지 않는다.
    * `paid_amount` 는 화면이 더한 값이 아니라 **그 순간 PAY 줄의 합**을 다시 세어 넣는다.
    */
+  /**
+   * 청구서 한 장을 낸다 (§53 「+ 새 청구서 발행」 · C50).
+   *
+   * **횟수는 서버가 센다.** 원문 명세가 그렇게 적어 두었다 —
+   * 「INV_LINE 의 횟수는 `occ()` 가 센다 · 프론트가 세면 예외(EXC)를 빠뜨린다」(D-R37).
+   * 그래서 이 경로는 줄을 **받지 않고 만든다**: 그 달의 취소 아닌 회차를 과목별로 세고,
+   * 그날만 빠진 학생(`exc_stu_out`)은 빼고, 단가는 `rate` 에서 읽는다.
+   *
+   * 세는 자리가 하나여야 하는 이유는 단순하다 — 화면이 센 숫자를 받으면 예외가 늘 때마다
+   * 두 숫자가 갈라지고, 갈라진 쪽이 청구서에 찍혀 나간다.
+   *
+   * **되돌리기는 없다**(원문 규칙 줄). 잘못 냈으면 취소(`void`)하고 새로 만든다 —
+   * 그래서 여기서 하는 일은 INSERT 뿐이고 기존 행을 고치지 않는다.
+   *
+   * 한 학생의 한 달에 **같은 종류를 두 번** 내지 않는다. 두 장이 되면 「보낸 청구서」 합계가
+   * 두 번 더해지고 §52 머리의 등식이 깨진다.
+   */
+  async issueInvoice(userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
+    const today = todayKst();
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1`, [dto.studentId])) as Array<{
+        id: string; name: string;
+      }>;
+      if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
+
+      const dup = (await m.query(
+        `SELECT id FROM inv
+          WHERE student_id = $1 AND year_month = $2 AND inv_type = $3 AND state <> 'void'
+          LIMIT 1`,
+        [dto.studentId, dto.yearMonth, dto.invType],
+      )) as Array<{ id: string }>;
+      if (dup.length > 0) {
+        throw new ConflictException({
+          code: 'INV_DUPLICATE',
+          message: `${dto.yearMonth} ${stu.name} 학생의 ${INV_TYPE_LABEL[dto.invType] ?? dto.invType}는 이미 있습니다 — 취소하고 새로 만드세요`,
+        });
+      }
+
+      /*
+       * 과목별 회차 수 — 취소된 회차와 「그날만 빠진」 학생은 빼고 센다.
+       * 달은 회차의 **시작 시각을 KST 로 본 달**이다 (D-R12 · 시간대는 한 곳에서 정한다).
+       */
+      const lines = (await m.query(
+        `SELECT se.sub_key,
+                COALESCE(sb.name, k.name)              AS label,
+                count(*)::int                          AS n,
+                (SELECT r.unit_price FROM rate r
+                  WHERE r.kind_key = se.kind_key
+                    AND (r.sub_key IS NULL OR r.sub_key = se.sub_key)
+                    AND r.from_date <= min(o.on_date)
+                  ORDER BY r.sub_key NULLS LAST, r.from_date DESC
+                  LIMIT 1)::int                        AS unit_price
+           FROM ser_occ o
+           JOIN ser se     ON se.id = o.ser_id
+           JOIN kind k     ON k.key = se.kind_key
+           LEFT JOIN sub sb ON sb.key = se.sub_key
+           JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1
+          WHERE NOT o.canceled
+            AND ${kstMonthOf('lower(o.span)')} = $2
+            AND NOT EXISTS (
+                  SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+                   WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)
+          GROUP BY se.sub_key, sb.name, k.name, se.kind_key
+          ORDER BY 2`,
+        [dto.studentId, dto.yearMonth],
+      )) as Array<{ sub_key: string | null; label: string; n: number; unit_price: number | null }>;
+
+      if (lines.length === 0) {
+        throw new ConflictException({
+          code: 'INV_NO_LESSONS',
+          message: `${dto.yearMonth} 에 ${stu.name} 학생의 수업이 없습니다 — 청구할 것이 없습니다`,
+        });
+      }
+      const noRate = lines.filter((l) => l.unit_price == null).map((l) => l.label);
+      if (noRate.length > 0) {
+        // 단가를 0 으로 넣지 않는다 — 0 원 청구서는 조용히 틀린 청구서다
+        throw new ConflictException({
+          code: 'INV_NO_RATE',
+          message: `단가표에 없는 과목이 있습니다: ${noRate.join(' · ')} — 단가를 먼저 등록하세요`,
+        });
+      }
+
+      const total = lines.reduce((sum, l) => sum + l.n * Number(l.unit_price), 0);
+      const [ym, mm] = dto.yearMonth.split('-');
+      const title = dto.title?.trim()
+        || `${ym}년 ${Number(mm)}월 ${INV_TYPE_LABEL[dto.invType] ?? dto.invType}`;
+
+      const [made] = (await m.query(
+        `INSERT INTO inv (student_id, year_month, inv_type, title, amount, state,
+                          issued_on, due_on, created_by)
+         VALUES ($1, $2, $3, $4, $5, 'draft', $6::date, $7::date, $8)
+         RETURNING id`,
+        [dto.studentId, dto.yearMonth, dto.invType, title, total, today, dto.dueOn ?? null, userId],
+      )) as Array<{ id: string }>;
+      const invId = Number(made.id);
+
+      for (const [i, l] of lines.entries()) {
+        await m.query(
+          `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [invId, l.sub_key, l.label, l.n, l.unit_price, l.n * Number(l.unit_price), i],
+        );
+      }
+
+      const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [invId])) as Array<Record<string, unknown>>;
+      return this.invoiceRow(row, canSeeAmounts, today);
+    });
+  }
+
   async addPayment(userId: number, dto: PaymentCreateDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
     const today = todayKst();
     return this.inv.manager.transaction(async (m: EntityManager) => {
