@@ -57,6 +57,22 @@ export class ReqReviewDto {
   reason?: string;
 }
 
+/**
+ * §20 변경 요청 반영·반려 (C42).
+ *
+ * 「승인」이 아니라 **「반영」**이다 — 원문 §20 의 탭이 「확인 대기 · 반영 · 반려 · 전체」이고,
+ * 반영하면 상태만 바뀌는 것이 아니라 **시간표가 실제로 바뀐다**.
+ */
+export class ChreqReviewDto {
+  @ApiProperty({ enum: REQ_DECISIONS, description: '반영(approve) 또는 반려(reject)' })
+  @IsIn(REQ_DECISIONS)
+  decision!: (typeof REQ_DECISIONS)[number];
+
+  @ApiPropertyOptional({ ...S, description: '반려 사유 — 반려면 필수 (D-R13). 신청 사유를 덮어쓰지 않는다' })
+  @IsOptional() @IsString() @MaxLength(500)
+  reason?: string;
+}
+
 export class ReqReviewResultDto {
   @ApiProperty() id!: number;
   @ApiProperty({ enum: ['approved', 'rejected'] }) state!: string;
@@ -158,9 +174,14 @@ export class ChangeReqDto {
   @ApiProperty({ enum: CHREQ_TYPES }) reqType!: (typeof CHREQ_TYPES)[number];
   @ApiProperty() serId!: number;
   @ApiProperty() onDate!: string;
-  @ApiProperty() reason!: string;
+  @ApiProperty({ description: '올린 사람이 적은 **신청** 사유 — 반려해도 지워지지 않는다 (v4.18)' })
+  reason!: string;
+  @ApiPropertyOptional({ ...S, description: '반려 사유 (D-R13). 옛 행은 없을 수 있다' })
+  rejectReason?: string | null;
   @ApiProperty() state!: string;
   @ApiPropertyOptional(S) byName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '무엇을 바꿔 달라는가 — 「강사 → KJ」 (§20 이력 줄 · D-R18)' })
+  asked?: string | null;
   @ApiProperty({ description: '선택 회차부터 이후 전체 적용' }) applyAll!: boolean;
   @ApiProperty() at!: string;
 }

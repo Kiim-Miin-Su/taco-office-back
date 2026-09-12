@@ -15,17 +15,18 @@
  */
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, QueryRunner, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import {
   apFlow, labelOf, reqAsked, reqAskedLine, toApState,
   GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
-import { isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
+import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
 import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
-import type { DrawerDto, ReqReviewDto } from './drawer.dto';
+import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import type { ChreqReviewDto, DrawerDto, ReqReviewDto } from './drawer.dto';
 
 type R = Record<string, unknown>;
 
@@ -34,7 +35,11 @@ const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
 @Injectable()
 export class DrawerService {
-  constructor(@InjectRepository(Lead) private readonly anyRepo: Repository<Lead>) {}
+  constructor(
+    @InjectRepository(Lead) private readonly anyRepo: Repository<Lead>,
+    /** 변경 요청 반영은 **기존 일정 쓰기를 그대로 탄다** — 규칙을 두 벌 만들지 않는다 (C42) */
+    private readonly schedWrite?: ScheduleWriteService,
+  ) {}
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
@@ -112,19 +117,34 @@ export class DrawerService {
     }
 
     for (const r of await this.q(
-      `SELECT c.id, c.req_type, c.state, c.reason, c.by_id, s.name AS by_name,
+      `SELECT c.id, c.req_type, c.payload, c.state, c.reason, c.reject_reason, c.apply_all,
+              c.by_id, s.name AS by_name,
               to_char(c.on_date,'YYYY-MM-DD') AS on_date,
+              ser.title AS ser_title, t.name AS teacher_name, rm.name AS room_name, z.label AS zacc_label,
               ${kstAt(`c.created_at`)} AS at
-         FROM chreq c LEFT JOIN staff s ON s.id = c.by_id`,
+         FROM chreq c
+         LEFT JOIN staff s ON s.id = c.by_id
+         LEFT JOIN ser ON ser.id = c.ser_id
+         LEFT JOIN staff t ON t.id = (c.payload->>'teacherId')::bigint
+         LEFT JOIN room rm ON rm.id = (c.payload->>'roomId')::bigint
+         LEFT JOIN zacc z ON z.id = (c.payload->>'zaccId')::bigint`,
     )) {
+      const reqType = String(r.req_type);
+      const asked = chreqAsked(reqType, r.payload, {
+        teacherName: str(r.teacher_name), roomName: str(r.room_name), zaccLabel: str(r.zacc_label),
+      });
       rows.push({
         kind: 'chreq', id: Number(r.id),
-        title: `${labelOf(REQ_TYPE_LABEL, String(r.req_type))} 요청`,
-        sub: str(r.on_date), byId: num(r.by_id), byName: str(r.by_name), at: String(r.at),
-        // 변경 요청은 반려 사유와 신청 사유가 같은 컬럼이라, 되돌아온 것일 때만 사유로 읽는다
+        title: `${labelOf(REQ_TYPE_LABEL, reqType)} 요청`,
+        // 원문 §20 이력 줄의 모양 — 「MAP Reading 8/28 강사 → KJ (이 주만)」
+        sub: [str(r.ser_title), str(r.on_date), asked, r.apply_all === true ? '(이후 전체)' : '(이 회차만)']
+          .filter(Boolean).join(' · '),
+        byId: num(r.by_id), byName: str(r.by_name), at: String(r.at),
         state: toApState(str(r.state)),
-        why: toApState(str(r.state)) === 'back' ? str(r.reason) : null,
+        // 반려 사유는 이제 제 칸이 있다 (v4.18) — 옛 행은 신청 사유 칸에만 있어 그것으로 갈음한다
+        why: toApState(str(r.state)) === 'back' ? (str(r.reject_reason) ?? str(r.reason)) : null,
         go: '/schedule',
+        reqType, asked, applicable: chreqApplicable(reqType, r.payload),
       });
     }
 
@@ -218,9 +238,14 @@ export class DrawerService {
 
     const changeReqs = (await this.q(
       `SELECT c.id, c.req_type, c.ser_id, to_char(c.on_date,'YYYY-MM-DD') AS on_date,
-              c.reason, c.state, c.apply_all, s.name AS by_name,
+              c.reason, c.reject_reason, c.payload, c.state, c.apply_all, s.name AS by_name,
+              t.name AS teacher_name, rm.name AS room_name, z.label AS zacc_label,
               ${kstAt(`c.created_at`)} AS at
-         FROM chreq c LEFT JOIN staff s ON s.id = c.by_id
+         FROM chreq c
+         LEFT JOIN staff s ON s.id = c.by_id
+         LEFT JOIN staff t ON t.id = (c.payload->>'teacherId')::bigint
+         LEFT JOIN room rm ON rm.id = (c.payload->>'roomId')::bigint
+         LEFT JOIN zacc z ON z.id = (c.payload->>'zaccId')::bigint
         WHERE $2::boolean OR c.by_id = $1
         ORDER BY c.created_at DESC`,
       [viewerId, canSeeAll],
@@ -229,8 +254,13 @@ export class DrawerService {
       if (!isChreqType(reqType)) throw new Error(`CHREQ.req_type 계약 밖의 값입니다: ${reqType}`);
       return {
         id: Number(r.id), reqType, serId: Number(r.ser_id),
-        onDate: String(r.on_date), reason: String(r.reason), state: String(r.state),
-        byName: str(r.by_name), applyAll: r.apply_all === true, at: String(r.at),
+        onDate: String(r.on_date), reason: String(r.reason),
+        rejectReason: str(r.reject_reason), state: String(r.state),
+        byName: str(r.by_name),
+        asked: chreqAsked(reqType, r.payload, {
+          teacherName: str(r.teacher_name), roomName: str(r.room_name), zaccLabel: str(r.zacc_label),
+        }),
+        applyAll: r.apply_all === true, at: String(r.at),
       };
     });
 
@@ -413,6 +443,130 @@ export class DrawerService {
 
       return { id: reqId, state: approving ? 'approved' : 'rejected', applied };
     });
+  }
+
+  /**
+   * §20 **변경 요청 반영·반려** (C42).
+   *
+   * 원문 §20 의 안내가 이 함수의 계약이다 — 「겹치면 넣을 수 없습니다 ·
+   * **반영하면 시간표가 바뀌고 이력에 남습니다**」. 그래서 반영은 상태를 적는 일이 아니라
+   * **기존 일정 쓰기를 그대로 타는 일**이다. 규칙(3범위·겹침·참조)을 여기서 다시 쓰면
+   * `recurrence.spec.ts` 가 지키지 않는 두 번째 구현이 생긴다.
+   *
+   * 시간표를 바꾸는 것과 요청을 닫는 것은 **한 트랜잭션**이다(`inside`). 나뉘면
+   * 「시간표는 바뀌었는데 요청은 대기」가 남고 다시 누르면 두 번 반영된다. 겹쳐서
+   * EXCLUDE 가 23P01 을 던지면 요청도 함께 `pending` 으로 되돌아간다.
+   */
+  async reviewChangeRequest(
+    chreqId: number, viewerId: number, dto: ChreqReviewDto,
+  ): Promise<{ id: number; state: string; applied: string | null }> {
+    const approving = dto.decision === 'approve';
+    const reason = dto.reason?.trim() || null;
+    if (!approving && !reason) {
+      throw new BadRequestException({
+        code: 'REJECT_REASON_REQUIRED',
+        message: '반려 사유를 적어 주세요 — 사유가 없으면 올린 사람이 무엇을 고쳐야 할지 모릅니다',
+      });
+    }
+
+    const [req] = await this.q<{
+      id: string; ser_id: string; on_date: string; req_type: string;
+      payload: Record<string, unknown>; state: string; by_id: string; apply_all: boolean;
+      teacher_name: string | null; room_name: string | null; zacc_label: string | null;
+    }>(
+      `SELECT c.id, c.ser_id, to_char(c.on_date,'YYYY-MM-DD') AS on_date, c.req_type, c.payload,
+              c.state, c.by_id, c.apply_all,
+              t.name AS teacher_name, rm.name AS room_name, z.label AS zacc_label
+         FROM chreq c
+         LEFT JOIN staff t ON t.id = (c.payload->>'teacherId')::bigint
+         LEFT JOIN room rm ON rm.id = (c.payload->>'roomId')::bigint
+         LEFT JOIN zacc z ON z.id = (c.payload->>'zaccId')::bigint
+        WHERE c.id = $1`, [chreqId],
+    );
+    if (!req) throw new NotFoundException('변경 요청을 찾을 수 없습니다');
+    if (req.state !== 'pending') {
+      throw new ConflictException({
+        code: 'CHREQ_NOT_PENDING',
+        message: req.state === 'approved' ? '이미 반영된 요청입니다' : '이미 반려된 요청입니다',
+      });
+    }
+    if (Number(req.by_id) === viewerId) {
+      throw new ConflictException({
+        code: 'SELF_APPROVAL_FORBIDDEN', message: '자기가 올린 요청은 자기가 처리할 수 없습니다',
+      });
+    }
+
+    const asked = chreqAsked(req.req_type, req.payload, {
+      teacherName: req.teacher_name, roomName: req.room_name, zaccLabel: req.zacc_label,
+    });
+
+    /** 요청을 닫고 이력을 남긴다 — 반영이면 **일정 쓰기와 같은 트랜잭션 안**에서 돈다 */
+    const close = async (run: (sql: string, p: unknown[]) => Promise<unknown>) => {
+      const done = await run(
+        `UPDATE chreq SET state = $2, resolved_by = $3, resolved_at = now(), reject_reason = $4
+          WHERE id = $1 AND state = 'pending' RETURNING id`,
+        [chreqId, approving ? 'approved' : 'rejected', viewerId, approving ? null : reason],
+      );
+      // 잠깐 사이에 남이 처리했다면 **여기서 멈춘다** — 반영 중이면 트랜잭션째 되돌아간다
+      if (writtenRows(done).length === 0) {
+        throw new ConflictException({ code: 'CHREQ_NOT_PENDING', message: '이미 처리된 요청입니다' });
+      }
+      await run(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1, 'chreq', $2, $3, $4::jsonb, $5::jsonb)`,
+        [viewerId, chreqId, approving ? 'apply' : 'reject',
+          JSON.stringify({ state: 'pending' }),
+          JSON.stringify({ state: approving ? 'approved' : 'rejected', asked, reason })],
+      );
+      await run(
+        `INSERT INTO noti (to_id, from_id, body, link) VALUES ($1, $2, $3, $4)`,
+        [Number(req.by_id), viewerId,
+          approving
+            ? `변경 요청이 반영됐습니다 — ${asked ?? '시간표가 바뀌었습니다'}`
+            : `변경 요청이 반려됐습니다 — ${reason}`,
+          '/schedule'],
+      );
+    };
+
+    if (!approving) {
+      await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+        await m.query(`SELECT id FROM chreq WHERE id = $1 FOR UPDATE`, [chreqId]);
+        await close((sql, p) => m.query(sql, p));
+      });
+      return { id: chreqId, state: 'rejected', applied: null };
+    }
+
+    if (!chreqApplicable(req.req_type, req.payload)) {
+      throw new ConflictException({
+        code: 'CHREQ_NOT_APPLICABLE',
+        message: '줌 계정 배정은 아직 반영 경로가 없습니다 — 일정 화면에서 직접 배정해 주세요',
+      });
+    }
+    if (!this.schedWrite) throw new Error('ScheduleWriteService 가 주입되지 않았습니다');
+
+    const serId = Number(req.ser_id);
+    // ERD 주석 그대로 — apply_all 은 「선택 회차부터 **이후 전체**」다 (D-R16)
+    const scope = req.apply_all ? 'future' : 'this';
+    const inside = async (q: QueryRunner) => {
+      await q.query(`SELECT id FROM chreq WHERE id = $1 FOR UPDATE`, [chreqId]);
+      await close((sql, p) => q.query(sql, p));
+    };
+
+    if (req.req_type === 'cancel') {
+      await this.schedWrite.remove(serId, { scope, onDate: req.on_date }, inside);
+    } else {
+      const p = req.payload ?? {};
+      const patch: Record<string, unknown> = { scope, onDate: req.on_date };
+      if (req.req_type === 'time_move') {
+        patch.startMin = Number(p.startMin); patch.endMin = Number(p.endMin);
+      } else if (req.req_type === 'teacher') {
+        patch.teacherId = Number(p.teacherId);
+      } else {
+        patch.roomId = Number(p.roomId);
+      }
+      await this.schedWrite.patch(serId, patch as never, inside);
+    }
+    return { id: chreqId, state: 'approved', applied: asked };
   }
 
   /** §19 변경 요청 넣기 — 겹침 판정은 부르는 쪽(컨트롤러)이 스케줄에서 받아 온다 */

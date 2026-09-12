@@ -40,6 +40,10 @@ export class Chreq {
   @Column({ type: 'bigint' })
   byId: number;
 
+  /** 반려 사유 — 반려 시 필수 (D-R13). 신청 사유(reason)를 덮어쓰지 않는다 */
+  @Column({ type: 'text', nullable: true })
+  rejectReason: string | null;
+
   @Column({ type: 'bigint', nullable: true })
   resolvedBy: number | null;
 

@@ -121,6 +121,13 @@ export interface ApRow {
   reqType?: string | null;
   /** 무엇을 바라는가 — 「42,000원/시간 → 45,000원/시간」처럼 이미 사람이 읽는 문장이다 */
   asked?: string | null;
+  /**
+   * 이 **줄**이 반영 가능한가 — 갈래가 아니라 줄이다.
+   *
+   * 줌 계정 변경처럼 같은 갈래 안에서도 반영 경로가 없는 것이 있다. `false` 면
+   * 권한이 있어도 `canAct` 가 서지 않는다. 기본은 「가능」이다.
+   */
+  applicable?: boolean;
   /** 이 사람이 **지금** 이 줄을 처리할 수 있는가 — 판정은 서버가 한다 */
   canAct?: boolean;
 }
@@ -136,7 +143,7 @@ export interface ApRow {
  * 실제로 만들어진 갈래만 여기 들어온다 — 목록에 없는 갈래는 지금처럼 그 화면으로 보낸다.
  * 「승인 단추가 있는데 눌러도 아무 일이 없다」보다 「아직 저기서 합니다」가 정직하다.
  */
-export const AP_ACTIONABLE_KINDS: ApKind[] = ['req'];
+export const AP_ACTIONABLE_KINDS: ApKind[] = ['req', 'chreq'];
 
 export interface ApFlow {
   /** 되돌아온 것 → 기다리는 것 → 내가 올린 것 순 (§75) */
@@ -202,7 +209,8 @@ export function apFlow(
   for (const r of rows) {
     const isMine = r.byId !== null && r.byId === viewerId;
     // 처리할 수 있는가 — 권한이 있고, 남의 것이고, 아직 기다리는 중이고, 적용 경로가 있는 갈래
-    r.canAct = canApprove && !isMine && r.state === 'waiting' && AP_ACTIONABLE_KINDS.includes(r.kind);
+    r.canAct = canApprove && !isMine && r.state === 'waiting'
+      && AP_ACTIONABLE_KINDS.includes(r.kind) && r.applicable !== false;
     // 남의 결재는 승인 권한이 있을 때만 **목록에서 아예 뺀다.**
     // 감추기만 하면 「있다」는 사실이 배지 숫자로 새어 나간다 (D-R39).
     if (!isMine && !canApprove) continue;

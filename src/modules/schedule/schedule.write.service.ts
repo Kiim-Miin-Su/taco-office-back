@@ -232,7 +232,15 @@ export class ScheduleWriteService {
     });
   }
 
-  async patch(serId: number, dto: OccurrencePatchDto): Promise<WriteResultDto> {
+  /**
+   * @param inside 이 쓰기와 **같은 트랜잭션에서 함께 커밋할 일**.
+   *   변경 요청 반영(C42)이 쓴다 — 시간표를 바꾸는 것과 요청을 닫는 것이 나뉘면
+   *   「시간표는 바뀌었는데 요청은 아직 대기」가 생기고 다시 누르면 두 번 반영된다.
+   *   겹침으로 롤백되면 요청 상태도 함께 되돌아간다.
+   */
+  async patch(
+    serId: number, dto: OccurrencePatchDto, inside?: (q: QueryRunner) => Promise<void>,
+  ): Promise<WriteResultDto> {
     return this.tx([serId], (before) => {
       const ser = this.requireOccurrence(before, serId, dto.onDate);
       const patch: OccurrencePatch = { __onDate: dto.onDate };
@@ -268,10 +276,22 @@ export class ScheduleWriteService {
         patch,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    });
+    }, this.withInside(inside));
   }
 
-  async remove(serId: number, dto: OccurrenceDeleteDto): Promise<WriteResultDto> {
+  /** `inside` 를 `tx` 의 커밋 직전 자리(enrich)에 끼운다. 결과는 바꾸지 않는다. */
+  private withInside(inside?: (q: QueryRunner) => Promise<void>) {
+    if (!inside) return undefined;
+    return async (q: QueryRunner, _fresh: State, base: WriteResultDto): Promise<WriteResultDto> => {
+      await inside(q);
+      return base;
+    };
+  }
+
+  /** @param inside `patch` 와 같다 — 같은 트랜잭션에서 함께 커밋할 일 (C42) */
+  async remove(
+    serId: number, dto: OccurrenceDeleteDto, inside?: (q: QueryRunner) => Promise<void>,
+  ): Promise<WriteResultDto> {
     return this.tx([serId], async (before, q) => {
       this.requireOccurrence(before, serId, dto.onDate);
       // ATT를 포함한 이력 원장은 SER_OCC와 달리 재투영해 지울 수 없다. 전 회차 삭제 요청이어도
@@ -298,7 +318,7 @@ export class ScheduleWriteService {
         hasRefs: refs[0]?.has_refs === true,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    });
+    }, this.withInside(inside));
   }
 
   /** §12 · §79 — 학생 넣고 빼기. 「그날만 빼기」가 D-R21 이다. */

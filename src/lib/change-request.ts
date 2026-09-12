@@ -40,6 +40,50 @@ export type NormalizedChangeRequest = ChangeRequestTarget & (
   | { reqType: 'cancel'; payload: Record<string, never> }
 );
 
+/**
+ * 「무엇을 바꿔 달라는가」 한 문장 — 원문 §20 이력 줄의 모양이다
+ * (「MAP Reading 8/28 **강사 → KJ** (이 주만)」).
+ *
+ * 낱말과 형식을 만드는 자리는 여기 하나다 (D-R18). 이름은 부르는 쪽이 표에서 읽어 넘긴다 —
+ * 이 파일은 DB 를 모른다.
+ */
+export function chreqAsked(
+  reqType: string,
+  payload: unknown,
+  names: { teacherName?: string | null; roomName?: string | null; zaccLabel?: string | null } = {},
+): string | null {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const hhmm = (v: unknown) => {
+    const m = Number(v);
+    if (!Number.isFinite(m)) return null;
+    return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  };
+  if (reqType === 'time_move') {
+    const from = hhmm(p.startMin); const to = hhmm(p.endMin);
+    return from && to ? `${from}–${to} 로 이동` : null;
+  }
+  if (reqType === 'teacher') return `강사 → ${names.teacherName ?? `#${String(p.teacherId ?? '?')}`}`;
+  if (reqType === 'room') {
+    if (p.zaccId !== undefined) return `줌 계정 → ${names.zaccLabel ?? `#${String(p.zaccId)}`}`;
+    return `강의실 → ${names.roomName ?? `#${String(p.roomId ?? '?')}`}`;
+  }
+  if (reqType === 'cancel') return '휴강';
+  return null;
+}
+
+/**
+ * 이 요청을 **지금 반영할 수 있는가**.
+ *
+ * 줌 계정 배정(`ser_occ.zacc_id`)을 쓰는 코드가 저장소에 하나도 없다 — 경로가 없는데
+ * 승인 단추를 그리면 눌러도 아무 일이 없거나, 더 나쁘게는 「반영했다」고 적힌다.
+ * 경로가 생기는 청크에서 이 함수만 고친다.
+ */
+export function chreqApplicable(reqType: string, payload: unknown): boolean {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  if (reqType === 'room' && p.zaccId !== undefined) return false;
+  return isChreqType(reqType);
+}
+
 export interface ChangeRequestIssue {
   code: string;
   message: string;

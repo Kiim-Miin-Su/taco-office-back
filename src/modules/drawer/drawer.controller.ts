@@ -28,7 +28,7 @@ import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/
 import { ScheduleService } from '../schedule/schedule.service';
 import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
-  NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
+  ChreqReviewDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoDoneDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
@@ -118,6 +118,26 @@ export class DrawerController {
     @Body() dto: ReqReviewDto,
   ): Promise<ReqReviewResultDto> {
     return this.svc.reviewRequest(id, user.id, dto, this.gate(user).canWage);
+  }
+
+  @Post('change-requests/:id/review')
+  @Perm('canApprove')
+  @ApiOperation({
+    summary: '§20 변경 요청 **반영**·반려 — 반영하면 시간표가 실제로 바뀐다',
+    description:
+      '원문 §20 안내 그대로: 「겹치면 넣을 수 없습니다 · 반영하면 시간표가 바뀌고 이력에 남습니다」. '
+      + '반영은 기존 일정 쓰기(patch·remove)를 그대로 타므로 3범위·겹침·참조 방어가 한 벌이다. '
+      + '범위는 apply_all 이면 이후 전체, 아니면 이 회차만이다(D-R16). '
+      + '시간표 변경과 요청 종결이 한 트랜잭션이라, 겹쳐서 막히면 요청도 대기로 되돌아간다. '
+      + '줌 계정 변경은 아직 배정 경로가 없어 CHREQ_NOT_APPLICABLE 로 거절한다.',
+  })
+  @ApiOkResponse({ type: ReqReviewResultDto })
+  async reviewChangeRequest(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ChreqReviewDto,
+  ): Promise<ReqReviewResultDto> {
+    return this.svc.reviewChangeRequest(id, user.id, dto);
   }
 
   @Post('change-requests')
