@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
 import {
-  canEditAttendance, effectiveRepState, isWrittenDbState,
+  canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState,
   type AttendanceCancelReason, type AttendanceResult,
 } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
@@ -108,14 +108,16 @@ export class ScheduleService {
     const today = todayKst();
     const nowMin = nowMinKst();
     return rows.map((r) => {
+      const when = { date: r.date, startMin: r.start_min, durationMin: r.end_min - r.start_min };
+      // 「끝났는가」를 먼저 한 번 구해서 리포트 상태와 DTO 가 **같은 값**을 쓴다.
+      // 두 번 구하면 자정·수업 종료 순간에 둘이 갈린다.
+      const ended = isPast(when, today, nowMin);
       // na/plan/none 은 회차 시각에서 파생한다. 오래된 잘못된 시드와 리포트 행이 없는
       // 신규 수업도 같은 규칙을 타므로 화면마다 상태가 갈라지지 않는다.
-      const repState = effectiveRepState(
+      const repState = effectiveRepStateFromEnded(
         r.rep_state,
-        { date: r.date, startMin: r.start_min, durationMin: r.end_min - r.start_min },
         r.reportable && r.attendance_result !== 'canceled',
-        today,
-        nowMin,
+        ended,
       );
       return {
         serId: Number(r.ser_id),
@@ -143,10 +145,11 @@ export class ScheduleService {
           r.on_date,
         ),
         repState,
+        ended,
         // 판정은 rules.ts 한 곳에서만 한다 — 화면도 서버도 여기서 나온 값을 읽기만 한다
         written: isWrittenDbState(repState),
         attendanceMode: canEditAttendance(
-          { date: r.date, startMin: r.start_min, durationMin: r.end_min - r.start_min, canceled: r.canceled },
+          { ...when, canceled: r.canceled },
           { canCrudAttendance: q.canCrudAttendance ?? false, today, nowMin },
         ),
         attendance: r.attendance_id == null ? null : {

@@ -46,4 +46,28 @@ describe('ScheduleService 리포트 상태 계약', () => {
     expect(items.every(({ written }) => written === false)).toBe(true);
     expect(String(query.mock.calls[0]?.[0])).toContain('JOIN kind k');
   });
+
+  /**
+   * `ended` 는 화면의 「리포트 미제출」이 서 있는 바닥이다 (N-19 · v2 §09).
+   * 「썼다」는 **제출부터**라(rules.ts REPORT_WRITTEN) 끝난 수업의 **초안**도 미제출인데,
+   * `repState` 는 draft 가 끝난 것인지 말해 주지 않는다. 그래서 사실 하나를 따로 내려보낸다.
+   */
+  it('ended 는 끝난 회차에만 참이고 리포트 상태와 같은 판정에서 나온다', async () => {
+    const past = { date: '2000-01-01', on_date: '2000-01-01', ser_from: '2000-01-01' };
+    const query = jest.fn().mockResolvedValue([
+      row(),
+      row({ ser_id: '2', ...past }),
+      row({ ser_id: '3', ...past, rep_state: 'draft' }),
+      row({ ser_id: '4', ...past, reportable: false }),
+    ]);
+    const service = new ScheduleService({ query } as never);
+
+    const items = await service.list({ from: '2000-01-01', to: '2999-09-01' });
+
+    expect(items.map(({ ended }) => ended)).toEqual([false, true, true, true]);
+    // 같은 판정에서 나온다 — 끝나지 않았으면 plan, 끝났으면 none 이다
+    expect(items.map(({ repState }) => repState)).toEqual(['plan', 'none', 'draft', 'na']);
+    // **끝난 초안은 아직 안 쓴 것이다** — 미제출에서 빠지면 안 된다
+    expect(items.map(({ written }) => written)).toEqual([false, false, false, false]);
+  });
 });

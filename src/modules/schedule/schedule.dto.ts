@@ -69,6 +69,13 @@ export class OccurrenceDto {
   })
   repState!: string;
 
+  @ApiProperty({
+    description:
+      '이 회차가 **이미 끝났는가** — 서버 시각 기준 사실 하나. 리포트 상태(plan/none)와 같은 값에서 나온다. '
+      + '화면의 기간 집계는 이 값으로 「리포트 미제출」을 센다: 「썼다」는 제출부터라서 **끝난 수업의 초안**도 미제출이다 (N-19)',
+  })
+  ended!: boolean;
+
   @ApiProperty({ description: '리포트를 썼는가 — 정산에 들어가는 조건 하나 (D-R7)' })
   written!: boolean;
 
