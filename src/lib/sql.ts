@@ -53,3 +53,18 @@ export const spanOf = (date: string, from: string, to: string): string =>
   `tstzrange(`
   + `(${date}::date + make_interval(mins => ${from})) AT TIME ZONE '${KST}',`
   + ` (${date}::date + make_interval(mins => ${to})) AT TIME ZONE '${KST}', '[)')`;
+
+/**
+ * `UPDATE`·`DELETE` 의 `RETURNING` 은 드라이버가 **`[rows, count]` 로 감싼다** (`SELECT`·`INSERT` 는 rows 그대로).
+ *
+ * 이걸 모르면 `rows.length > 0` 이 **언제나 참**이 된다 — 한 줄도 안 바뀌어도 배열 길이가 2 라서다.
+ * 실제로 서랍의 「알림 읽음」·「할 일 체크」가 **남의 행에도 200 을 돌려주고 있었다**(바꾸지는 않았지만
+ * 「없다」로 답해야 할 자리에서 성공이라고 말했다). 컨설팅 쪽은 같은 함정을 먼저 만나 갱신과 조회를
+ * 나눠 두었다 — 여기서는 모양에 기대지 않고 **세는 함수 하나**로 막는다.
+ */
+export function writtenRows<T = unknown>(res: unknown): T[] {
+  if (Array.isArray(res) && res.length === 2 && Array.isArray(res[0]) && typeof res[1] === 'number') {
+    return res[0] as T[];
+  }
+  return (Array.isArray(res) ? res : []) as T[];
+}

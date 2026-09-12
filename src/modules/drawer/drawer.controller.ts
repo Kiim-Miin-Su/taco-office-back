@@ -16,7 +16,7 @@
  */
 import {
   BadRequestException, Body, Controller, Get, NotFoundException,
-  Param, ParseIntPipe, Patch, Post,
+  Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import {
   ApiBody, ApiCreatedResponse, ApiExtraModels, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
@@ -27,7 +27,8 @@ import { hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ScheduleService } from '../schedule/schedule.service';
 import {
-  CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, RoomChangeReqDto,
+  CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
+  NotiReadAllDto, RoomChangeReqDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoDoneDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
@@ -56,9 +57,10 @@ export class DrawerController {
   @Get()
   @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 결재 5종 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
-  all(@CurrentUser() user: RequestUser): Promise<DrawerDto> {
+  all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
     const { canApprove, canSeeAll } = this.gate(user);
-    return this.svc.all(user.id, canApprove, canSeeAll);
+    // notiWindow=all 은 **보여 주는 범위**만 넓힌다 — 지운 적이 없으므로 예전 것이 그대로 나온다 (N-7 · D-16)
+    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all');
   }
 
   @Patch('todos/:id')
@@ -86,6 +88,16 @@ export class DrawerController {
     const hit = await this.svc.markNotiRead(id, user.id);
     if (!hit) throw new NotFoundException({ code: 'NOT_FOUND', message: '알림을 찾을 수 없습니다' });
     return { ok: true };
+  }
+
+  @Patch('notis/read-all')
+  @ApiOperation({
+    summary: '§16 「전부 읽음으로 표시」 — 내게 온 안 읽은 알림 전부',
+    description: '보이는 창(30일)과 무관하게 내 것 전부를 읽음으로 바꾼다. 행을 지우지 않는다 (N-7).',
+  })
+  @ApiOkResponse({ type: NotiReadAllDto })
+  async notiReadAll(@CurrentUser() user: RequestUser): Promise<NotiReadAllDto> {
+    return { ok: true, marked: await this.svc.markAllNotisRead(user.id) };
   }
 
   @Post('change-requests')

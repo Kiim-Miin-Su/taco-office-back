@@ -4797,7 +4797,21 @@
     "/drawer": {
       "get": {
         "operationId": "DrawerController_all",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "notiWindow",
+            "required": false,
+            "in": "query",
+            "description": "기본 month(최근 30일). all 이면 보관된 전부",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "month",
+                "all"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -5063,6 +5077,89 @@
           }
         },
         "summary": "§16 알림 읽음",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/notis/read-all": {
+      "patch": {
+        "description": "보이는 창(30일)과 무관하게 내 것 전부를 읽음으로 바꾼다. 행을 지우지 않는다 (N-7).",
+        "operationId": "DrawerController_notiReadAll",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotiReadAllDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§16 「전부 읽음으로 표시」 — 내게 온 안 읽은 알림 전부",
         "tags": [
           "drawer"
         ]
@@ -10457,6 +10554,21 @@
               "warn"
             ],
             "description": "표에 색 컬럼이 없어 링크로 파생한다 — lib/noti.ts 한 곳에서만"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "report_due",
+              "report",
+              "schedule",
+              "request",
+              "etc"
+            ],
+            "description": "§16 분류 칩. 색과 같은 방식으로 링크에서 파생한다 — 표에 컬럼이 없다 (lib/noti.ts)"
+          },
+          "categoryLabel": {
+            "type": "string",
+            "description": "분류 이름 — 코드표는 서버가 소유한다 (D-R18)"
           }
         },
         "required": [
@@ -10464,7 +10576,9 @@
           "body",
           "read",
           "at",
-          "tone"
+          "tone",
+          "category",
+          "categoryLabel"
         ]
       },
       "MemberDto": {
@@ -10669,11 +10783,19 @@
             }
           },
           "notis": {
-            "description": "§16 알림",
+            "description": "§16 알림 — 기본은 최근 30일 (D-16: 조회 범위 제한이지 삭제가 아니다)",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/NotiDto"
             }
+          },
+          "notiWindowDays": {
+            "type": "number",
+            "description": "목록에 보이는 기간(일). notiWindow=all 이면 0"
+          },
+          "notiOlderCount": {
+            "type": "number",
+            "description": "창 밖에 남아 있는 알림 수 — **지운 것이 아니다** (N-7 영구 보관)"
           },
           "members": {
             "description": "§17 구성원",
@@ -10719,6 +10841,8 @@
           "approvals",
           "todos",
           "notis",
+          "notiWindowDays",
+          "notiOlderCount",
           "members",
           "tzGroups",
           "kinds",
@@ -10737,6 +10861,22 @@
         },
         "required": [
           "done"
+        ]
+      },
+      "NotiReadAllDto": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "marked": {
+            "type": "number",
+            "description": "이번에 읽음으로 바뀐 수"
+          }
+        },
+        "required": [
+          "ok",
+          "marked"
         ]
       },
       "ConflictRowDto": {

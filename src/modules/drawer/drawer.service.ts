@@ -22,8 +22,8 @@ import {
   GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
 import { isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
-import { notiTone } from '../../lib/noti';
-import { START_MIN, END_MIN, kstAt } from '../../lib/sql';
+import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
+import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
 import { KST, overdueDays } from '../../lib/kst';
 import type { DrawerDto } from './drawer.dto';
 
@@ -143,7 +143,7 @@ export class DrawerService {
     return rows;
   }
 
-  async all(viewerId: number, canApprove: boolean, canSeeAll: boolean): Promise<DrawerDto> {
+  async all(viewerId: number, canApprove: boolean, canSeeAll: boolean, notiAll = false): Promise<DrawerDto> {
     const approvals = apFlow(await this.approvalRows(), viewerId, canApprove);
 
     // 할 일 — 강사는 자기 것만 (주고받은 것). 화면이 안 걸러도 서버가 거른다 (D-R39)
@@ -167,18 +167,33 @@ export class DrawerService {
       go: r.mt_id || r.cpl_id ? '/ops' : r.cons_id ? '/consulting' : r.plan_id ? '/ops' : null,
     }));
 
+    /* §16 — 기본은 최근 30일만 **보여 준다.** 지우는 것이 아니다 (N-7 · D-16).
+       창 밖에 몇 건이 남아 있는지 함께 세어, 화면이 「없어진 것이 아니라 안 보이는 것」이라고 말할 수 있게 한다. */
+    const windowDays = notiAll ? 0 : NOTI_WINDOW_DAYS;
     const notis = (await this.q(
       `SELECT n.id, n.body, n.link, n.to_id, n.read_at, f.name AS from_name,
               ${kstAt(`n.created_at`)} AS at
          FROM noti n LEFT JOIN staff f ON f.id = n.from_id
-        WHERE $2::boolean OR n.to_id = $1
+        WHERE ($2::boolean OR n.to_id = $1)
+          AND ($3::int = 0 OR n.created_at >= now() - make_interval(days => $3::int))
         ORDER BY (n.read_at IS NULL) DESC, n.created_at DESC`,
-      [viewerId, canSeeAll],
-    )).map((r) => ({
-      id: Number(r.id), body: String(r.body), fromName: str(r.from_name),
-      toId: num(r.to_id), link: str(r.link), read: r.read_at !== null, at: String(r.at),
-      tone: notiTone(str(r.link)),
-    }));
+      [viewerId, canSeeAll, windowDays],
+    )).map((r) => {
+      const link = str(r.link);
+      const category = notiCategory(link);
+      return {
+        id: Number(r.id), body: String(r.body), fromName: str(r.from_name),
+        toId: num(r.to_id), link, read: r.read_at !== null, at: String(r.at),
+        tone: notiTone(link),
+        category, categoryLabel: NOTI_CATEGORY_LABEL[category],
+      };
+    });
+    const [older] = await this.q<{ n: string }>(
+      `SELECT count(*)::text n FROM noti n
+        WHERE ($2::boolean OR n.to_id = $1)
+          AND $3::int > 0 AND n.created_at < now() - make_interval(days => $3::int)`,
+      [viewerId, canSeeAll, windowDays],
+    );
 
     const members = (await this.q(
       `SELECT id, name, email, role::text AS role, title, tz, active FROM staff ORDER BY active DESC, id`,
@@ -230,7 +245,10 @@ export class DrawerService {
     }));
 
     return {
-      approvals, todos, notis, members, tzGroups, kinds, changeReqs, zoomAccounts,
+      approvals, todos, notis,
+      notiWindowDays: windowDays,
+      notiOlderCount: Number(older?.n ?? 0),
+      members, tzGroups, kinds, changeReqs, zoomAccounts,
       tz: KST,
     };
   }
@@ -246,7 +264,7 @@ export class DrawerService {
         RETURNING id`,
       [id, done, viewerId, canSeeAll],
     );
-    return rows.length > 0;
+    return writtenRows(rows).length > 0;
   }
 
   /** §16 알림 읽음. 남의 알림은 읽음 처리되지 않는다 — 조용히 0건이 아니라 false 로 답한다 */
@@ -255,7 +273,20 @@ export class DrawerService {
       `UPDATE noti SET read_at = COALESCE(read_at, now()) WHERE id = $1 AND to_id = $2 RETURNING id`,
       [id, viewerId],
     );
-    return rows.length > 0;
+    return writtenRows(rows).length > 0;
+  }
+
+  /**
+   * §16 「전부 읽음으로 표시」 — **내게 온 것만** 읽음으로 바꾼다.
+   * 보이는 창(30일)과 무관하게 내 안 읽은 알림 전부를 처리한다 — 화면에 안 보이는 것을
+   * 안 읽은 채로 남겨 두면 배지가 영영 안 내려간다. 지우지는 않는다 (N-7).
+   */
+  async markAllNotisRead(viewerId: number): Promise<number> {
+    const rows = await this.q(
+      `UPDATE noti SET read_at = now() WHERE to_id = $1 AND read_at IS NULL RETURNING id`,
+      [viewerId],
+    );
+    return writtenRows(rows).length;
   }
 
   /** §19 변경 요청 넣기 — 겹침 판정은 부르는 쪽(컨트롤러)이 스케줄에서 받아 온다 */

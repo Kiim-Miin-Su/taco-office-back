@@ -51,6 +51,18 @@ export class DrawerTodoDto {
 }
 
 /** §16 알림 */
+/** 서랍 조회 옵션 — 알림의 **보이는 범위**만 정한다 (D-16: 삭제가 아니다) */
+export class DrawerQueryDto {
+  @ApiPropertyOptional({ enum: ['month', 'all'], description: '기본 month(최근 30일). all 이면 보관된 전부' })
+  @IsOptional() @IsIn(['month', 'all'])
+  notiWindow?: 'month' | 'all';
+}
+
+export class NotiReadAllDto {
+  @ApiProperty() ok!: true;
+  @ApiProperty({ description: '이번에 읽음으로 바뀐 수' }) marked!: number;
+}
+
 export class NotiDto {
   @ApiProperty() id!: number;
   @ApiProperty() body!: string;
@@ -64,6 +76,12 @@ export class NotiDto {
     description: '표에 색 컬럼이 없어 링크로 파생한다 — lib/noti.ts 한 곳에서만',
   })
   tone!: string;
+  @ApiProperty({
+    enum: ['report_due', 'report', 'schedule', 'request', 'etc'],
+    description: '§16 분류 칩. 색과 같은 방식으로 링크에서 파생한다 — 표에 컬럼이 없다 (lib/noti.ts)',
+  })
+  category!: string;
+  @ApiProperty({ description: '분류 이름 — 코드표는 서버가 소유한다 (D-R18)' }) categoryLabel!: string;
 }
 
 /** §17 구성원 · 시간대 */
@@ -121,7 +139,9 @@ export class ZoomAccountDto {
 export class DrawerDto {
   @ApiProperty({ type: ApFlowDto, description: '§14 승인 대기함' }) approvals!: ApFlowDto;
   @ApiProperty({ type: [DrawerTodoDto], description: '§15 할 일' }) todos!: DrawerTodoDto[];
-  @ApiProperty({ type: [NotiDto], description: '§16 알림' }) notis!: NotiDto[];
+  @ApiProperty({ type: [NotiDto], description: '§16 알림 — 기본은 최근 30일 (D-16: 조회 범위 제한이지 삭제가 아니다)' }) notis!: NotiDto[];
+  @ApiProperty({ description: '목록에 보이는 기간(일). notiWindow=all 이면 0' }) notiWindowDays!: number;
+  @ApiProperty({ description: '창 밖에 남아 있는 알림 수 — **지운 것이 아니다** (N-7 영구 보관)' }) notiOlderCount!: number;
   @ApiProperty({ type: [MemberDto], description: '§17 구성원' }) members!: MemberDto[];
   @ApiProperty({ type: [TzGroupDto], description: '§17 시간대 그룹' }) tzGroups!: TzGroupDto[];
   @ApiProperty({ type: [KindRowDto], description: '§18 수업 종류' }) kinds!: KindRowDto[];
