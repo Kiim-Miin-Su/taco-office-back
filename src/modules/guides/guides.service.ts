@@ -4,13 +4,13 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
-import { GUIDE_PENDING_DB } from '../../lib/rules';
-import type { GuidesDto } from './guides.dto';
-import { kstAt } from '../../lib/sql';
+import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
+import type { GuideBodyDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto } from './guides.dto';
+import { kstAt, writtenRows } from '../../lib/sql';
 import { overdueDays as overdue } from '../../lib/kst';
 
 type R = Record<string, unknown>;
@@ -82,4 +82,73 @@ export class GuidesService {
       scopedTeacherId: only ? teacherId! : null,
     };
   }
+
+  /* ══ §43 머리의 「문구 관리」 — 문구 틀 (C51) ═══════════════════════════════ */
+
+  async templates(): Promise<GuideTemplateDto[]> {
+    const rows = await this.q(`SELECT id, name, body FROM gtpl ORDER BY name`);
+    return rows.map((r) => ({ id: Number(r.id), name: String(r.name), body: String(r.body) }));
+  }
+
+  /**
+   * 틀을 하나 만든다. **이름이 겹치면 막는다** — 목록에서 이름으로 고르는데
+   * 같은 이름이 둘이면 어느 것을 골랐는지 화면이 말할 수 없다.
+   */
+  async createTemplate(dto: GuideTemplateWriteDto): Promise<GuideTemplateDto> {
+    const name = dto.name.trim();
+    const dup = await this.q(`SELECT id FROM gtpl WHERE name = $1`, [name]);
+    if (dup.length > 0) {
+      throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
+    }
+    const [made] = await this.q(
+      `INSERT INTO gtpl (name, body) VALUES ($1, $2) RETURNING id, name, body`, [name, dto.body],
+    );
+    return { id: Number(made.id), name: String(made.name), body: String(made.body) };
+  }
+
+  /**
+   * 틀을 고친다. **이미 쓴 안내는 안 바뀐다** — 안내는 본문을 복사해 갖고 있다.
+   * 보낸 말이 나중에 달라지면 안 되기 때문이고, 그래서 `guide` 에 `gtpl_id` 가 없다.
+   */
+  async patchTemplate(id: number, dto: GuideTemplateWriteDto): Promise<GuideTemplateDto> {
+    const name = dto.name.trim();
+    const dup = await this.q(`SELECT id FROM gtpl WHERE name = $1 AND id <> $2`, [name, id]);
+    if (dup.length > 0) {
+      throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
+    }
+    const rows = await this.q(
+      `UPDATE gtpl SET name = $2, body = $3 WHERE id = $1 RETURNING id, name, body`, [id, name, dto.body],
+    );
+    const [row] = writtenRows<R>(rows);
+    if (!row) throw new NotFoundException('문구를 찾을 수 없습니다');
+    return { id: Number(row.id), name: String(row.name), body: String(row.body) };
+  }
+
+  /* ══ §43 「안내 작성」 (C51) ═══════════════════════════════════════════════ */
+
+  /**
+   * 안내 본문을 쓴다 — 쓰면 **보낼 준비**가 된다.
+   *
+   * 상태 낱말은 화면이 정하지 않는다(D-R18). 화면은 「썼다」만 말하고 어느 상태가 되는지는
+   * 여기가 정한다. 이미 보낸 안내는 **고치지 않는다** — 학부모가 받은 말과 장부가 갈린다.
+   * 되돌리기가 필요하면 새 안내를 만드는 것이 원문의 방식이다(§53 규칙 줄과 같은 결).
+   */
+  async writeBody(id: number, dto: GuideBodyDto): Promise<GuidesDto['guides'][number]> {
+    const [cur] = await this.q(`SELECT id, state FROM guide WHERE id = $1`, [id]);
+    if (!cur) throw new NotFoundException('안내를 찾을 수 없습니다');
+    if ((GUIDE_DONE_DB as readonly string[]).includes(String(cur.state))) {
+      throw new ConflictException({
+        code: 'GUIDE_ALREADY_SENT',
+        message: '이미 보낸 안내는 고칠 수 없습니다 — 새 안내를 만드세요',
+      });
+    }
+    await this.q(
+      `UPDATE guide SET body = $2, state = 'ready'::guide_state_t WHERE id = $1`, [id, dto.body],
+    );
+    const one = await this.all();
+    const found = one.guides.find((g) => g.id === id);
+    if (!found) throw new NotFoundException('안내를 찾을 수 없습니다');
+    return found;
+  }
+
 }

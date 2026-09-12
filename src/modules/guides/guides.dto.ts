@@ -5,6 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, MaxLength, MinLength } from 'class-validator';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -48,4 +49,36 @@ export class GuidesDto {
   @ApiProperty({ type: [PerLessonNoticeDto], description: '회차마다 나가는 안내' }) perLesson!: PerLessonNoticeDto[];
   @ApiProperty({ description: '아직 안 보낸 안내 수' }) todoCount!: number;
   @ApiPropertyOptional({ ...N, description: '강사면 자기 것만 본다 — 그 강사 id' }) scopedTeacherId?: number | null;
+}
+
+/**
+ * §43 머리의 「문구 관리」 — 안내를 쓸 때 꺼내 쓰는 **문구 틀**(GTPL).
+ *
+ * 틀은 안내와 **끊어져 있다.** 안내를 만들 때 본문을 복사해 넣고, 그 뒤로 틀을 고쳐도
+ * 이미 쓴 안내는 안 바뀐다 — 보낸 말이 나중에 달라지면 안 되기 때문이다.
+ * (`guide` 에 `gtpl_id` 가 없는 것이 그 뜻이다.)
+ */
+export class GuideTemplateDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+  @ApiProperty() body!: string;
+}
+
+export class GuideTemplateWriteDto {
+  @ApiProperty({ description: '무엇에 쓰는 틀인지 — 목록에서 이 이름으로 고른다' })
+  @IsString() @MinLength(1) @MaxLength(40) name!: string;
+
+  @ApiProperty({ description: '문구 본문' })
+  @IsString() @MinLength(1) @MaxLength(4000) body!: string;
+}
+
+/**
+ * §43 「안내 작성」 — 본문을 채우면 **보낼 준비**가 된다.
+ *
+ * 상태 낱말을 화면이 보내지 않는다. 「썼다」는 사실만 서버에 주고, 그 결과 어느 상태가 되는지는
+ * 서버가 정한다 (D-R18) — 화면이 `'ready'` 를 적어 보내면 낱말이 두 곳에 살게 된다.
+ */
+export class GuideBodyDto {
+  @ApiProperty({ description: '안내 본문' })
+  @IsString() @MinLength(1) @MaxLength(4000) body!: string;
 }

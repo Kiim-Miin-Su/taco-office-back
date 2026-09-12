@@ -21,7 +21,12 @@ const OUT = join(__dirname, '..', 'openapi.json');
 
 async function main() {
   const check = process.argv.includes('--check');
-  const app = await NestFactory.create(AppModule, { logger: false });
+  /*
+   * `abortOnError` 를 끈다. 기본값이면 **Nest 가 스스로 프로세스를 죽인다** —
+   * 던지지 않으므로 아래 catch 가 돌지 못하고, 실패가 종료 코드 1 로만 남는다.
+   * DB 가 안 떠 있을 때 정확히 그렇게 조용히 죽었다 (두 번 겪었다).
+   */
+  const app = await NestFactory.create(AppModule, { logger: false, abortOnError: false });
   await app.init();
   const doc = buildOpenApi(app);
 
@@ -71,4 +76,19 @@ async function main() {
   console.log(`openapi.json 생성 — 경로 ${Object.keys(doc.paths ?? {}).length}개`);
 }
 
-void main();
+/*
+ * **왜 죽었는지 말하게 한다.**
+ * 전에는 `void main()` 이라 실패가 조용했다 — DB 가 안 떠 있으면(AppModule 이 붙지 못한다)
+ * 아무 말 없이 종료 코드 1 만 남기고 openapi.json 은 **옛 내용 그대로** 남는다.
+ * 그걸 모르고 다음 단계(`types:gen`)로 넘어가면 프론트가 옛 계약으로 컴파일된다.
+ * 두 번 겪었다.
+ */
+main().catch((e: unknown) => {
+  const msg = (e as Error).message;
+  console.error(`\n✗ openapi.json 을 만들지 못했습니다 — ${msg}`);
+  if (/ECONNREFUSED|connect|password|database/i.test(msg)) {
+    console.error('  DB 에 못 붙었습니다. AppModule 을 띄우려면 DB 가 떠 있어야 합니다.');
+  }
+  console.error('  openapi.json 은 **고치지 않았습니다** — 옛 내용 그대로입니다.\n');
+  process.exit(1);
+});
