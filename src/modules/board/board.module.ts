@@ -14,5 +14,7 @@ import { BoardService } from './board.service';
   imports: [TypeOrmModule.forFeature([Lead])],
   controllers: [BoardController],
   providers: [BoardService],
+  // 대표 보고 6영역의 「수업」이 같은 판정을 쓴다 (ExecModule)
+  exports: [BoardService],
 })
 export class BoardModule {}

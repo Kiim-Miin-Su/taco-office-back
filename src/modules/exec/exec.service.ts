@@ -9,7 +9,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
-import type { ExecDto, ExecStatDto } from './exec.dto';
+import { EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
+import { toApState } from '../../lib/approval';
+import { BoardService } from '../board/board.service';
+import type { ExecAreaDto, ExecDto, ExecInboxDto, ExecStatDto } from './exec.dto';
 import { kstAt } from '../../lib/sql';
 
 type R = Record<string, unknown>;
@@ -24,7 +27,11 @@ type R = Record<string, unknown>;
  */
 @Injectable()
 export class ExecService {
-  constructor(@InjectRepository(Lead) private readonly anyRepo: Repository<Lead>) {}
+  constructor(
+    @InjectRepository(Lead) private readonly anyRepo: Repository<Lead>,
+    /** 수업 영역의 「덜 된 수업」은 현황판 판정을 **그대로** 쓴다 — 같은 숫자를 두 곳에서 세지 않는다 */
+    private readonly board: BoardService,
+  ) {}
 
   private async one(sql: string, p: unknown[] = []): Promise<number> {
     const r = (await this.anyRepo.query(sql, p)) as Array<{ n: string }>;
@@ -33,6 +40,77 @@ export class ExecService {
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
+  }
+
+
+  /**
+   * §69 6영역 — 살펴볼 것을 센다. 정의는 `lib/exec-areas.ts` 한 곳에 있다.
+   * 수업만 현황판(`clChk()`)의 판정을 그대로 가져온다.
+   */
+  private async areaCounts(from: string, to: string): Promise<ExecAreaDto[]> {
+    const out: ExecAreaDto[] = [];
+    for (const a of EXEC_AREAS) {
+      let count = 0;
+      if (a.key === 'lesson') {
+        count = (await this.board.range({ from, to })).missingCount;
+      } else if (a.sql) {
+        // 기준일을 안 쓰는 판정(안 끝난 컴플레인 등)에 인자를 넘기면 bind 오류가 난다
+        count = await this.one(a.sql, a.sql.includes('$1') ? [to] : []);
+      }
+      out.push({ key: a.key, label: a.label, review: a.review, count, go: a.go });
+    }
+    return out;
+  }
+
+  /** RPT 키 날짜를 사람이 읽는 기간으로 (§73 줄 제목) */
+  private static periodLabel(rptType: string, onDate: string): string {
+    const [y, m, d] = onDate.split('-').map(Number);
+    if (rptType === 'month') return `${y}년 ${m}월`;
+    if (rptType === 'week') {
+      const end = new Date(Date.UTC(y, m - 1, d + 6));
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${pad(m)}-${pad(d)} ~ ${pad(end.getUTCMonth() + 1)}-${pad(end.getUTCDate())}`;
+    }
+    const dow = '일월화수목금토'[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+    return `${String(y).slice(2)}년 ${m}월 ${d}일 ${dow}요일`;
+  }
+
+  /** RPT 키 날짜 → 그 주기가 덮는 실제 기간 */
+  private static periodRange(rptType: string, onDate: string): { from: string; to: string } {
+    const [y, m, d] = onDate.split('-').map(Number);
+    const iso = (dt: Date) => dt.toISOString().slice(0, 10);
+    if (rptType === 'month') return { from: `${onDate.slice(0, 7)}-01`, to: iso(new Date(Date.UTC(y, m, 0))) };
+    if (rptType === 'week') return { from: onDate, to: iso(new Date(Date.UTC(y, m - 1, d + 6))) };
+    return { from: onDate, to: onDate };
+  }
+
+  /**
+   * §73 결재함 — **이동만 한다** (N-12 · D-R27 · 원칙 22).
+   * 줄마다 그 기간의 살펴볼 것을 다시 센다(D-R4 — 저장하지 않는다). 최근 것부터 12줄로 끊는다.
+   */
+  private async inbox(): Promise<ExecInboxDto[]> {
+    const rows = await this.q(
+      `SELECT id, rpt_type, to_char(on_date,'YYYY-MM-DD') AS on_date, state, memo, reject_reason
+         FROM rpt ORDER BY on_date DESC, id DESC LIMIT 12`,
+    );
+    const out: ExecInboxDto[] = [];
+    for (const r of rows) {
+      const rptType = String(r.rpt_type);
+      const onDate = String(r.on_date);
+      const span = ExecService.periodRange(rptType, onDate);
+      const areas = await this.areaCounts(span.from, span.to);
+      out.push({
+        id: Number(r.id), rptType, onDate,
+        label: ExecService.periodLabel(rptType, onDate),
+        state: String(r.state),
+        apState: toApState(String(r.state)),
+        filled: filledAreas(r.memo),
+        reviewCount: areas.reduce((a, x) => a + x.count, 0),
+        rejectReason: (r.reject_reason as string) ?? null,
+        go: rptType,
+      });
+    }
+    return out;
   }
 
   async range(from: string, to: string, canSeeAmounts: boolean): Promise<ExecDto> {
@@ -112,6 +190,18 @@ export class ExecService {
       rejectReason: (r.reject_reason as string) ?? null,
     }));
 
-    return { from, to, stats, reports, canSeeAmounts, computedAt: new Date().toISOString() };
+    const areas = await this.areaCounts(from, to);
+    const inbox = await this.inbox();
+    // 이 기간의 보고가 있으면 그 기재 수를, 없으면 0 — 「담당 x/6 기재」 (§69 머리)
+    const here = inbox.find((r) => r.onDate >= from && r.onDate <= to);
+
+    return {
+      from, to, stats, reports,
+      areas,
+      reviewCount: areas.reduce((a, x) => a + x.count, 0),
+      filled: here?.filled ?? 0,
+      inbox,
+      canSeeAmounts, computedAt: new Date().toISOString(),
+    };
   }
 }

@@ -7,11 +7,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Lead } from '../../entities';
+import { BoardModule } from '../board/board.module';
 import { ExecController } from './exec.controller';
 import { ExecService } from './exec.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Lead])],
+  // 수업 영역의 「덜 된 수업」 판정을 현황판에서 그대로 쓴다 (판정 복사 금지)
+  imports: [TypeOrmModule.forFeature([Lead]), BoardModule],
   controllers: [ExecController],
   providers: [ExecService],
 })

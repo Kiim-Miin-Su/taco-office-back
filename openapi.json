@@ -9888,6 +9888,101 @@
           "memo"
         ]
       },
+      "ExecAreaDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "money · mkt · ops · consulting · complaint · lesson (대표 관심순 고정 · D-R25)"
+          },
+          "label": {
+            "type": "string"
+          },
+          "review": {
+            "type": "string",
+            "description": "무엇을 살펴볼 것으로 세는지 한 줄"
+          },
+          "count": {
+            "type": "number",
+            "description": "살펴볼 것 건수. 마케팅은 정보성이라 항상 0 이다"
+          },
+          "go": {
+            "type": "string",
+            "description": "줄을 누르면 가는 곳 — 결재 흐름은 이동만 한다 (D-R27)"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "review",
+          "count",
+          "go"
+        ]
+      },
+      "ExecInboxDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "rptType": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ]
+          },
+          "onDate": {
+            "type": "string",
+            "description": "RPT 키 날짜 (주간=월요일 · 월간=1일 · D-R23)"
+          },
+          "label": {
+            "type": "string",
+            "description": "«26년 8월 21일 금요일» · «08-17 ~ 08-23» 처럼 사람이 읽는 기간"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "sent",
+              "ok",
+              "rej"
+            ]
+          },
+          "apState": {
+            "type": "string",
+            "description": "apFlow 와 같은 세 낱말 — waiting · back · done"
+          },
+          "filled": {
+            "type": "number",
+            "description": "6영역 중 메모를 적은 수 (§69 «담당 x/6 기재»)"
+          },
+          "reviewCount": {
+            "type": "number",
+            "description": "이 기간의 살펴볼 것 합계 (§73 줄 배지)"
+          },
+          "rejectReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "go": {
+            "type": "string",
+            "description": "이 줄이 가리키는 뷰 — day | week | month"
+          }
+        },
+        "required": [
+          "id",
+          "rptType",
+          "onDate",
+          "label",
+          "state",
+          "apState",
+          "filled",
+          "reviewCount",
+          "go"
+        ]
+      },
       "ExecDto": {
         "type": "object",
         "properties": {
@@ -9909,6 +10004,28 @@
               "$ref": "#/components/schemas/ExecReportDto"
             }
           },
+          "areas": {
+            "description": "§69 6영역 — 대표 관심순 고정",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecAreaDto"
+            }
+          },
+          "reviewCount": {
+            "type": "number",
+            "description": "살펴볼 것 — 6영역 배지의 합 (§69 머리)"
+          },
+          "filled": {
+            "type": "number",
+            "description": "이 기간 보고의 «담당 x/6 기재» 중 x. 보고가 없으면 0"
+          },
+          "inbox": {
+            "description": "§73 결재함 — 이동만 (N-12)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecInboxDto"
+            }
+          },
           "canSeeAmounts": {
             "type": "boolean",
             "description": "금액을 볼 수 있는가 (D-R39)"
@@ -9923,6 +10040,10 @@
           "to",
           "stats",
           "reports",
+          "areas",
+          "reviewCount",
+          "filled",
+          "inbox",
           "canSeeAmounts",
           "computedAt"
         ]
