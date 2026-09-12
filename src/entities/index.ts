@@ -32,6 +32,7 @@ export * from './inv.entity';
 export * from './inv-line.entity';
 export * from './issue.entity';
 export * from './kind.entity';
+export * from './lead-stage-log.entity';
 export * from './lead.entity';
 export * from './lib.entity';
 export * from './log.entity';
@@ -100,6 +101,7 @@ import {
   Issue,
   Kind,
   Lead,
+  LeadStageLog,
   Lib,
   Log,
   Mfb,
@@ -169,6 +171,7 @@ export const ENTITIES = [
   Issue,
   Kind,
   Lead,
+  LeadStageLog,
   Lib,
   Log,
   Mfb,

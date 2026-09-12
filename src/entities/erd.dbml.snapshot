@@ -160,10 +160,26 @@ Table LEAD {
   school      varchar(60)
   owner_id    bigint      [ref: > STAFF.id]
   stage       varchar(16) [not null, note: '1차 · 2차대기 · 2차 · 보류 · 등록 · 실패']
+  fail_from   varchar(16) [note: 'N-25 — 실패 당시 이전 단계 명시값(전이 시 라이브 기록). 레거시 NULL=미분류 — stop_at 추정 이관 금지']
   stop_at     varchar(16) [note: '실패 시 중단 지점']
   reason      text
   created_at  timestamptz [not null, default: `now()`]
   Note: '시드 18건. 어느 단계에서 멈췄는지로 분류한다 (§24).'
+}
+
+Table LEAD_STAGE_LOG {
+  id      bigserial   [pk]
+  lead_id bigint      [not null, ref: > LEAD.id]
+  stage   varchar(16) [not null]
+  by_id   bigint      [ref: > STAFF.id]
+  at      timestamptz [not null, default: `now()`]
+
+  indexes { (lead_id, id) }
+  Note: '''
+  상담 단계 도달 기록 — append-only (N-25 채택 · v2 §24). 순서 보장은 id 단조.
+  «마지막 단계» 판정: fail_from 명시값 → 이 로그 역순(failed 제외) → 미분류.
+  이력 없는 레거시 건은 미분류로 보존한다 — 추정 이관을 하지 않는다.
+  '''
 }
 
 Table ENR {
@@ -1097,6 +1113,11 @@ Table SER_OCC {
 //   + GPASVC·GPA_CYCLE·GPA_ALLOC·GPA_USE — N-13 채택. 기존 「표로 뺀다」 안 그대로,
 //     계획 주석만 확정으로 교정 · CHECK 5종 · points 는 규정 스냅샷
 //
+// v4.15 → v4.16 (2026-09-12 · TBO-50 C35 상담 실패 이력)
+//   + LEAD.fail_from       N-25 채택 — 실패 당시 이전 단계 명시값(라이브 기록·추정 이관 금지)
+//   + LEAD_STAGE_LOG       도달 기록 append-only — 판정: 명시값 → 로그 역순 → 미분류
+//
+
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
 // ----------------------------------------------------------------------------

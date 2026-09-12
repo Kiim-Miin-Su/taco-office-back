@@ -38,6 +38,11 @@ export class Lead {
   @Column({ type: 'varchar', length: 16, nullable: true })
   stopAt: string | null;
 
+  /** N-25 채택 — 실패 당시 이전 단계 **명시값**(전이 시 서버가 라이브로 기록).
+   *  레거시 NULL 은 미분류로 보존 — stop_at 으로 추정 이관하지 않는다. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  failFrom: string | null;
+
   @Column({ type: 'text', nullable: true })
   reason: string | null;
 

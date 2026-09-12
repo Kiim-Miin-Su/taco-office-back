@@ -2776,6 +2776,182 @@
         ]
       }
     },
+    "/ops/leads/{id}/fail": {
+      "post": {
+        "description": "fail_from 은 전이 순간의 실제 단계를 서버가 기록한다 — 추정이 아니라 사실이다. 도달 기록(append-only)에 failed 를 남긴다.",
+        "operationId": "OpsController_failLead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadFailDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "상담 건 없음"
+          },
+          "409": {
+            "description": "code ALREADY_FAILED | ENROLLED_LOCKED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "상담 실패 전이 — 이전 단계를 명시값으로 보존 (v2 §24 · N-25 §4-17 · C35)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/leads/{id}/resume": {
+      "post": {
+        "description": "레거시(stop_at 만 있는) 건은 추정하지 않는다 — 미분류로 거절하고 단계 지정을 요구한다 (N-25).",
+        "operationId": "OpsController_resumeLead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadResumeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "상담 건 없음"
+          },
+          "409": {
+            "description": "code NOT_FAILED | UNCLASSIFIED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "실패 건 되살리기 — 지정값 → fail_from 명시값 → 도달 기록 역순, 없으면 UNCLASSIFIED",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/consulting": {
       "get": {
         "description": "최종 canAdminPage와 canCrudAll이 모두 필요하다. 공개 범위로 투영된 items의 stage(contract/running/done)를 클라이언트에서 필터링하며 추가 GET은 0이다. 전체/단계 건수는 같은 items에서 파생하고 금액·상세 공개 권한을 변경하지 않는다.",
@@ -6925,6 +7101,21 @@
           "ageDays": {
             "type": "number",
             "description": "접수한 지 며칠"
+          },
+          "failFrom": {
+            "type": "string",
+            "nullable": true,
+            "description": "실패 당시 이전 단계 명시값 — 전이 때 서버가 라이브 기록. 레거시 NULL"
+          },
+          "revivalStage": {
+            "type": "string",
+            "nullable": true,
+            "description": "되살릴 단계 판정 결과(failed 건만) — null 이면 미분류(단계 지정 필요)"
+          },
+          "revivalSource": {
+            "type": "string",
+            "nullable": true,
+            "description": "판정 근거 — 'explicit'(명시값) | 'log'(도달 기록) | null(미분류)"
           }
         },
         "required": [
@@ -7260,6 +7451,43 @@
           "suggestions",
           "canSeeAmounts"
         ]
+      },
+      "LeadFailDto": {
+        "type": "object",
+        "properties": {
+          "stopAt": {
+            "type": "string",
+            "enum": [
+              "before_book",
+              "before_first",
+              "after_first",
+              "after_second"
+            ],
+            "description": "중단 지점 분류 (§24 · 기존 4어휘)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "사유 — 500자 이내. 생략하면 기존 사유 유지"
+          }
+        },
+        "required": [
+          "stopAt"
+        ]
+      },
+      "LeadResumeDto": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "enum": [
+              "first",
+              "wait2nd",
+              "second",
+              "hold"
+            ],
+            "description": "되살릴 단계 지정 — 생략하면 서버 판정(명시값 → 도달 기록). 미분류인데 생략하면 409 UNCLASSIFIED"
+          }
+        }
       },
       "ConsultingSessionDto": {
         "type": "object",

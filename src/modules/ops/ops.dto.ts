@@ -5,6 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -23,6 +24,36 @@ export class LeadDto {
   @ApiPropertyOptional({ ...S, ...FQ }) reason?: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty({ description: '접수한 지 며칠' }) ageDays!: number;
+
+  /* N-25 채택 (§4-17) — 실패 이력. 판정은 서버 한 곳: fail_from 명시값 → 도달 기록 역순 → 미분류. */
+  @ApiPropertyOptional({ ...S, description: '실패 당시 이전 단계 명시값 — 전이 때 서버가 라이브 기록. 레거시 NULL' })
+  failFrom?: string | null;
+  @ApiPropertyOptional({ ...S, description: '되살릴 단계 판정 결과(failed 건만) — null 이면 미분류(단계 지정 필요)' })
+  revivalStage?: string | null;
+  @ApiPropertyOptional({ ...S, description: "판정 근거 — 'explicit'(명시값) | 'log'(도달 기록) | null(미분류)" })
+  revivalSource?: string | null;
+}
+
+const LEAD_ACTIVE_STAGES = ['first', 'wait2nd', 'second', 'hold'] as const;
+const LEAD_STOPS = ['before_book', 'before_first', 'after_first', 'after_second'] as const;
+
+export class LeadFailDto {
+  @ApiProperty({ enum: [...LEAD_STOPS], description: '중단 지점 분류 (§24 · 기존 4어휘)' })
+  @IsIn([...LEAD_STOPS], { message: '중단 지점은 기존 4분류 중 하나입니다' })
+  stopAt!: string;
+  @ApiPropertyOptional({ description: '사유 — 500자 이내. 생략하면 기존 사유 유지' })
+  @IsOptional() @IsString() @MaxLength(500)
+  reason?: string;
+}
+
+export class LeadResumeDto {
+  @ApiPropertyOptional({
+    enum: [...LEAD_ACTIVE_STAGES],
+    description: '되살릴 단계 지정 — 생략하면 서버 판정(명시값 → 도달 기록). 미분류인데 생략하면 409 UNCLASSIFIED',
+  })
+  @IsOptional()
+  @IsIn([...LEAD_ACTIVE_STAGES], { message: '되살릴 단계는 진행 4단계 중 하나입니다' })
+  to?: string;
 }
 
 /** §67 컴플레인 */

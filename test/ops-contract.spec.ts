@@ -46,8 +46,11 @@ describe('§23·§24 LEAD 응답 projection', () => {
       id: 1, name: '상담 계약 테스트', school: '학교', stage: 'failed',
       ownerId: 9, studentId: 11, ownerName: '담당', stopAt: 'after_second',
       reason: '사유', createdAt: '2026-09-07', ageDays: 3,
+      // N-25 (C35): 명시값 없는 레거시 failed 건은 로그로도 판정 안 되면 미분류 그대로 — 추정 이관 없음
+      failFrom: null, revivalStage: null, revivalSource: null,
     }]);
-    expect(query).toHaveBeenCalledTimes(7);
+    // 7 고정 목록 + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
+    expect(query).toHaveBeenCalledTimes(8);
   });
 
   it.each(['ownerId', 'studentId'])('%s는 Swagger에서 optional·nullable number다', (field) => {
@@ -184,14 +187,20 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   beforeEach(() => { user = undefined; all.mockReset().mockResolvedValue(empty); });
   afterAll(async () => { await app?.close(); });
 
-  it('실제 GET handler에 프론트와 동일한 두 권한이 모두 선언되어 있다', () => {
-    expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype.all)).toEqual(['canAdminPage', 'canCrudAll']);
+  it('실제 handler에 프론트와 동일한 두 권한이 모두 선언되어 있다 — 읽기와 실패/되살리기 쓰기 동일', () => {
+    for (const handler of ['all', 'failLead', 'resumeLead'] as const) {
+      expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
+    }
   });
 
-  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 기존 11필드로 명시한다', () => {
+  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 14필드로 명시한다 (11 + N-25 실패 이력 3)', () => {
     const schema = openApi.components?.schemas?.LeadDto;
     if (!schema || '$ref' in schema) throw new Error('LeadDto schema 누락');
-    expect(Object.keys(schema.properties ?? {})).toHaveLength(11);
+    expect(Object.keys(schema.properties ?? {})).toHaveLength(14);
+    for (const field of ['failFrom', 'revivalStage', 'revivalSource']) {
+      expect(schema.properties?.[field]).toMatchObject({ type: 'string', nullable: true });
+      expect(schema.required).not.toContain(field);
+    }
     for (const field of ['name', 'school', 'ownerName', 'reason']) {
       expect(schema.properties?.[field]).toMatchObject({
         type: 'string', description: expect.stringMatching(/FQ.*원문/),
@@ -206,14 +215,29 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     }
   });
 
-  it('실제 OpenAPI는 FQ 클라이언트 검색/추가 GET 0을 명시하고 검색 query·쓰기 endpoint를 추가하지 않는다', () => {
+  it('실제 OpenAPI는 FQ 클라이언트 검색/추가 GET 0을 명시하고 검색 query endpoint를 추가하지 않는다', () => {
     const path = openApi.paths['/ops'];
-    expect(Object.keys(openApi.paths)).toEqual(['/ops']);
+    // C5-a의 「/ops 단일 경로」 가드는 N-25 채택(2026-09-12 §4-17)·C35로 실패/되살리기 2경로까지 확장
+    // — C32 consulting-contract 갱신과 같은 선례. 검색 GET·query 계약이 늘지 않는 것은 그대로 지킨다.
+    expect(Object.keys(openApi.paths)).toEqual(['/ops', '/ops/leads/{id}/fail', '/ops/leads/{id}/resume']);
     expect(Object.keys(path)).toEqual(['get']);
     expect(path.get?.description).toMatch(/name.*school.*ownerName.*reason/);
     expect(path.get?.description).toMatch(/클라이언트.*추가 GET.*0/);
     expect(path.get?.parameters ?? []).toEqual([]);
     expect(path.get?.requestBody).toBeUndefined();
+  });
+
+  it.each([
+    ['/ops/leads/{id}/fail', 'LeadFailDto'],
+    ['/ops/leads/{id}/resume', 'LeadResumeDto'],
+  ] as const)('실패 이력 쓰기 %s는 POST 하나·경로 id·%s 본문으로만 계약한다 (N-25 · C35)', (route, dtoName) => {
+    const path = openApi.paths[route];
+    expect(Object.keys(path)).toEqual(['post']);
+    expect((path.post?.parameters ?? []).map((p) => 'name' in p && p.name)).toEqual(['id']);
+    const body = path.post?.requestBody;
+    if (!body || '$ref' in body) throw new Error(route + ' requestBody 누락');
+    expect(JSON.stringify(body.content)).toContain(`#/components/schemas/${dtoName}`);
+    expect(path.post?.responses?.['409']).toBeDefined();
   });
 
   it('비공개 두 비용은 기존 MarketingDto의 optional nullable number이며 응답 권한은 boolean이다', () => {
@@ -292,7 +316,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       })));
       expect(res.body.leads).toMatchObject([{ id: 1, name: '상담 계약 테스트' }]);
       expect(Object.keys(res.body).sort()).toEqual(Object.keys(empty).sort());
-      expect(query).toHaveBeenCalledTimes(7);
+      expect(query).toHaveBeenCalledTimes(8); // 7 목록 + N-25 도달 기록 판정 1회 (fixture 가 failed 건)
       expect(query.mock.calls.every(([sql]) => /^SELECT\b/.test(sql))).toBe(true);
       expect(marketingRows).toEqual(before);
     },
