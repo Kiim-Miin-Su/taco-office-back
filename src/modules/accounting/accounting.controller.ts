@@ -6,11 +6,12 @@
 
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
 import {
-  ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
+  ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
+  ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { AccountingDto, InvoiceDto, PaymentCreateDto } from './accounting.dto';
+import { AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, PaymentCreateDto } from './accounting.dto';
 import { AccountingService } from './accounting.service';
 
 @ApiTags('accounting')
@@ -57,5 +58,26 @@ export class AccountingController {
   @ApiNotFoundResponse({ description: '입금 기록 없음' })
   async removePayment(@Param('id', ParseIntPipe) id: number): Promise<{ ok: true }> {
     return this.svc.removePayment(id);
+  }
+
+  @Post('expenses/:id/review')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '법인카드 심사 — 승인(감액 가능·증액 금지)·반려 (A-D3 · v2 §56 법인카드)',
+    description: '신청 금액은 placeholder 일 뿐이고 확정 금액은 사람이 넣는다 (대표 지시 2026-08-25). 판정은 전부 서버.',
+  })
+  @ApiOkResponse({ type: ExpenseDto })
+  @ApiBadRequestResponse({ description: 'code AMOUNT_REASON_REQUIRED(사유·확정 금액 누락)' })
+  @ApiForbiddenResponse({ description: 'code SELF_APPROVAL_FORBIDDEN(본인 신청 자기 심사)' })
+  @ApiUnprocessableEntityResponse({ description: 'code CARD_AMOUNT_EXCEEDS_REQUEST(증액) | CARD_RECEIPT_REQUIRED(영수증 없음)' })
+  @ApiConflictResponse({ description: 'code EXPENSE_ALREADY_REVIEWED' })
+  @ApiNotFoundResponse({ description: '지출 건 없음' })
+  async reviewExpense(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ExpenseReviewDto,
+  ): Promise<ExpenseDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.reviewExpense(user.id, id, dto, canSee);
   }
 }

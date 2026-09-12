@@ -22,7 +22,10 @@ export class Expense {
   @Column({ type: 'date' })
   spendOn: string;
 
-  /** 임대료 · 부대비용 · 도서교재비 · 소모품비 · 접대비 · 지급수수료 (A-D5) */
+  /**
+   * 간이 5분류(A-D5) + 임대료 — rent | book | supply | ent | fee | etc.
+   * CHECK expense_category_code (migration 1758500000000). 라벨은 DTO 가 소유한다.
+   */
   @Column({ type: 'varchar', length: 30 })
   category: string;
 
@@ -51,8 +54,13 @@ export class Expense {
   @Column({ type: 'bigint', nullable: true })
   requesterId: number | null;
 
-  /** submitted | approved | rejected */
-  @Column({ type: 'varchar', length: 12, default: 'submitted' })
+  /**
+   * pending | approved | rejected — **DB 기본값은 `pending`** 이다
+   * (migration 1756800000000 이 낱말을 옮겼고 1758500000000 이 CHECK 로 굳혔다).
+   * 여기에 `'submitted'` 가 남아 있던 동안 새 행이 대표 보고의 지출 집계(`state='approved'`)에서
+   * 조용히 빠질 수 있었다 — 2026-09-12(C36-b) 교정.
+   */
+  @Column({ type: 'varchar', length: 12, default: 'pending' })
   state: string;
 
   @Column({ type: 'bigint', nullable: true })

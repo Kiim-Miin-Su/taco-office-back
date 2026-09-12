@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: accounting.dto.ts — InvoiceLineDto, InvoiceDto, PaymentDto, PaymentCreateDto, PayoutDto, MoneySummaryDto 등 (dto)
+ * 목적: accounting.dto.ts — InvoiceDto, PaymentDto, PaymentCreateDto, ExpenseDto, ExpenseReviewDto, PayoutDto 등 (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -9,6 +9,18 @@ import { IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'clas
 
 /** 입금 수단 — 지금 저장되는 두 가지뿐이다. 코드표 확장은 원문 근거가 생길 때 한다 (발명 금지) */
 export const PAY_METHODS = ['transfer', 'cash'] as const;
+
+/**
+ * 지출 계정과목 — **간이 5분류(A-D5) + 임대료**.
+ *
+ * A-D5 의 5분류는 「**카드 사용** 분류」이고(ACCOUNTING §6), 임대료는 §56 의 부대비용 고정비라
+ * 카드 분류에 넣을 자리가 없다. `erd.dbml` 의 기존 6낱말 주석과도 같다.
+ * 라벨은 **서버가 내려보낸다** — 화면에 코드표를 복사해 두지 않는다 (D-R18).
+ */
+export const EXPENSE_CATEGORIES = ['rent', 'book', 'supply', 'ent', 'fee', 'etc'] as const;
+export const EXPENSE_CATEGORY_LABEL: Record<string, string> = {
+  rent: '임대료', book: '도서·교재비', supply: '소모품비', ent: '접대비', fee: '지급수수료', etc: '기타',
+};
 
 export class InvoiceLineDto {
   @ApiPropertyOptional({ type: String, nullable: true }) subKey?: string | null;
@@ -73,6 +85,43 @@ export class PaymentCreateDto {
   reason?: string;
 }
 
+/** 나간 돈 한 줄 — 법인카드 신청분은 `requestedAmount` 가 채워져 있다 (§56) */
+export class ExpenseDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: '사용일 YYYY-MM-DD' }) spendOn!: string;
+  @ApiProperty({ enum: EXPENSE_CATEGORIES }) category!: string;
+  @ApiProperty({ description: '분류 이름 — 코드표는 서버가 소유한다 (D-R18)' }) categoryLabel!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) merchant?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) purpose?: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: '직원이 올린 신청 금액 — 승인 칸의 placeholder 다 (A-1)' }) requestedAmount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '확정 금액. null 은 미심사이거나 금액 권한 없음' }) amount!: number | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '신청액과 다를 때 필수 (A-3)' }) reason?: string | null;
+  @ApiProperty({ description: '영수증 없이는 승인할 수 없다 (A-4)' }) hasReceipt!: boolean;
+  @ApiPropertyOptional({ type: String, nullable: true }) requesterName?: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: '본인 신청은 본인이 승인할 수 없다 (A-5)' }) requesterId!: number | null;
+  @ApiProperty({ enum: ['pending', 'approved', 'rejected'] }) state!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) reviewerName?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) reviewedAt?: string | null;
+}
+
+/**
+ * 법인카드 심사 — **증액은 없다** (A-D3 채택: 증액 금지 · 재신청).
+ * 감액 승인은 사유가 있어야 하고, 영수증이 없으면 승인 자체가 안 된다.
+ */
+export class ExpenseReviewDto {
+  @ApiProperty({ enum: ['approve', 'reject'] })
+  @IsIn(['approve', 'reject'])
+  decision!: 'approve' | 'reject';
+
+  @ApiPropertyOptional({ description: '확정 금액. 승인일 때 필수이며 신청 금액을 넘을 수 없다 (A-D3)' })
+  @IsOptional() @IsInt() @Min(0)
+  amount?: number;
+
+  @ApiPropertyOptional({ description: '신청액과 다르거나 반려일 때 필수 (A-3)' })
+  @IsOptional() @IsString() @MaxLength(500)
+  reason?: string;
+}
+
 export class PayoutDto {
   @ApiProperty() id!: number;
   @ApiProperty() staffId!: number;
@@ -101,4 +150,5 @@ export class AccountingDto {
   @ApiProperty({ type: [InvoiceDto] }) invoices!: InvoiceDto[];
   @ApiProperty({ type: [PaymentDto] }) payments!: PaymentDto[];
   @ApiProperty({ type: [PayoutDto] }) payouts!: PayoutDto[];
+  @ApiProperty({ type: [ExpenseDto], description: '나간 돈 §56 — 부대비용·법인카드 신청분' }) expenses!: ExpenseDto[];
 }

@@ -171,3 +171,113 @@ d('경합 — 같은 청구서 동시 입금은 하나만 남는다 (C36-a)', ()
     expect(paid).toBe(60000);
   });
 });
+
+/* ── §56 법인카드 심사 — 다섯 규칙이 서버 한 곳에 있다 (A-D3 · A-D5 · C36-b) ────────── */
+d('§56 법인카드 심사 — 증액은 없다 (A-D3 · C36-b)', () => {
+  let ds: DataSource;
+  let q: QueryRunner;
+  let expId: number;
+
+  const svc = () => new AccountingService(q.manager.getRepository(Inv));
+  const row = async () =>
+    (await q.query(`SELECT state, amount, reason, reviewer_id FROM expense WHERE id = $1`, [expId]))[0] as {
+      state: string; amount: number | null; reason: string | null; reviewer_id: string | null;
+    };
+  /** 기본 신청 — 영수증 있음 · 신청자 62 · 심사자 63 */
+  const make = async (over: { receipt?: boolean; requester?: number } = {}) => {
+    const [r] = (await q.query(
+      `INSERT INTO expense (spend_on, category, merchant, purpose, requested_amount, requester_id, state, receipt_url)
+       VALUES ('2026-09-08', 'ent', '카페 서초', '학부모 간담회 다과', 145000, $1, 'pending', $2) RETURNING id`,
+      [over.requester ?? 62, over.receipt === false ? null : 'seed://receipt/ent-test'],
+    )) as { id: string }[];
+    expId = Number(r.id);
+  };
+
+  beforeAll(async () => {
+    ds = scratchDataSource();
+    await ds.initialize();
+  });
+  beforeEach(async () => {
+    q = ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    await q.query(
+      `INSERT INTO staff (id,name,email,role) VALUES (62,'신청자','req62@t.kr','manager'),(63,'심사자','rev63@t.kr','ceo')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await make();
+  });
+  afterEach(async () => {
+    if (q?.isTransactionActive) await q.rollbackTransaction();
+    if (q && !q.isReleased) await q.release();
+  });
+  afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
+
+  it('신청 금액 그대로 승인하면 사유 없이 통과하고 심사자·시각이 남는다', async () => {
+    const out = await svc().reviewExpense(63, expId, { decision: 'approve', amount: 145000 }, true);
+    expect(out).toMatchObject({ state: 'approved', amount: 145000, categoryLabel: '접대비', hasReceipt: true });
+    const after = await row();
+    expect(after.state).toBe('approved');
+    expect(Number(after.reviewer_id)).toBe(63);
+  });
+
+  it('증액은 없다 — 신청 금액보다 크면 CARD_AMOUNT_EXCEEDS_REQUEST 로 거절하고 행은 그대로다 (A-D3)', async () => {
+    await expect(svc().reviewExpense(63, expId, { decision: 'approve', amount: 145001 }, true))
+      .rejects.toMatchObject({ response: { code: 'CARD_AMOUNT_EXCEEDS_REQUEST' } });
+    expect((await row()).state).toBe('pending');
+  });
+
+  it('감액은 사유가 있어야 한다 — 없으면 AMOUNT_REASON_REQUIRED (A-3)', async () => {
+    await expect(svc().reviewExpense(63, expId, { decision: 'approve', amount: 100000 }, true))
+      .rejects.toMatchObject({ response: { code: 'AMOUNT_REASON_REQUIRED' } });
+    const ok = await svc().reviewExpense(63, expId, { decision: 'approve', amount: 100000, reason: '영수증 금액과 다름' }, true);
+    expect(ok).toMatchObject({ state: 'approved', amount: 100000, reason: '영수증 금액과 다름' });
+  });
+
+  it('영수증이 없으면 승인 자체가 안 된다 — 반려는 된다 (A-4)', async () => {
+    await make({ receipt: false });
+    await expect(svc().reviewExpense(63, expId, { decision: 'approve', amount: 145000 }, true))
+      .rejects.toMatchObject({ response: { code: 'CARD_RECEIPT_REQUIRED' } });
+    const out = await svc().reviewExpense(63, expId, { decision: 'reject', reason: '영수증 첨부 후 재신청' }, true);
+    expect(out.state).toBe('rejected');
+  });
+
+  it('본인이 올린 신청은 본인이 심사할 수 없다 (A-5)', async () => {
+    await make({ requester: 63 });
+    await expect(svc().reviewExpense(63, expId, { decision: 'approve', amount: 145000 }, true))
+      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
+    expect((await row()).state).toBe('pending');
+  });
+
+  it('이미 심사된 건은 다시 심사하지 않는다', async () => {
+    await svc().reviewExpense(63, expId, { decision: 'approve', amount: 145000 }, true);
+    await expect(svc().reviewExpense(63, expId, { decision: 'reject', reason: '취소' }, true))
+      .rejects.toMatchObject({ response: { code: 'EXPENSE_ALREADY_REVIEWED' } });
+  });
+
+  it('반려에는 사유가 필요하다', async () => {
+    await expect(svc().reviewExpense(63, expId, { decision: 'reject' }, true))
+      .rejects.toMatchObject({ response: { code: 'AMOUNT_REASON_REQUIRED' } });
+    expect((await row()).state).toBe('pending');
+  });
+
+  it('마지막 방어선은 DB 다 — 서비스를 건너뛴 증액·자기 승인·오타 분류는 CHECK 가 거부한다', async () => {
+    /* 제약 위반 하나가 트랜잭션을 끊어 놓으므로 검사마다 savepoint 로 되돌린다.
+       안 그러면 두 번째 UPDATE 부터는 25P02(aborted) 라서 **무엇이 막았는지**를 못 본다. */
+    const violates = async (sql: string, constraint: string) => {
+      await q.query('SAVEPOINT chk');
+      await expect(q.query(sql, [expId])).rejects.toMatchObject({ constraint });
+      await q.query('ROLLBACK TO SAVEPOINT chk');
+    };
+    await violates(`UPDATE expense SET amount = 999999 WHERE id = $1`, 'expense_amount_le_requested');
+    await violates(`UPDATE expense SET reviewer_id = requester_id WHERE id = $1`, 'expense_no_self_review');
+    await violates(`UPDATE expense SET category = 'coffee' WHERE id = $1`, 'expense_category_code');
+    await violates(`UPDATE expense SET state = 'submitted' WHERE id = $1`, 'expense_state_words');
+    expect((await row()).state).toBe('pending');
+  });
+
+  it('금액 권한이 없으면 신청 금액(placeholder)도 내려보내지 않는다', async () => {
+    const out = await svc().reviewExpense(63, expId, { decision: 'approve', amount: 145000 }, false);
+    expect(out).toMatchObject({ amount: null, requestedAmount: null, state: 'approved', categoryLabel: '접대비' });
+  });
+});

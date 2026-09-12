@@ -711,7 +711,7 @@ Table PAYOUT_LINE {
 Table EXPENSE {
   id          bigserial   [pk]
   spend_on    date        [not null]
-  category    varchar(30) [not null, note: '임대료 · 부대비용 · 도서교재비 · 소모품비 · 접대비 · 지급수수료 (A-D5)']
+  category    varchar(30) [not null, note: 'rent 임대료 · book 도서교재비 · supply 소모품비 · ent 접대비 · fee 지급수수료 · etc 기타 — 간이 5분류(A-D5) + 임대료. CHECK expense_category_code']
   merchant    varchar(80)
   purpose     text
   requested_amount int    [note: '법인카드 — 직원이 올린 금액. placeholder 로 쓰인다']
@@ -719,7 +719,7 @@ Table EXPENSE {
   reason      text        [note: '신청액과 다를 때 필수']
   receipt_url text        [note: '없으면 승인 불가']
   requester_id bigint     [ref: > STAFF.id]
-  state       varchar(12) [not null, default: 'submitted', note: 'submitted | approved | rejected']
+  state       varchar(12) [not null, default: 'pending', note: 'pending | approved | rejected — CHECK expense_state_words. 대표 보고는 approved 만 센다']
   reviewer_id bigint      [ref: > STAFF.id]
   reviewed_at timestamptz
   created_at  timestamptz [not null, default: `now()`]
@@ -727,8 +727,16 @@ Table EXPENSE {
   indexes { (state, created_at) (spend_on) }
   Note: '''
   명세서의 EXPENSE(지출)에 **법인카드 승인 흐름을 얹었다** — 별도 표를 만들지 않는다.
-  requester_id = reviewer_id 는 차단 (본인 신청 자기 승인 금지).
-  amount > requested_amount 는 차단 (증액은 재신청 — A-D3).
+
+  2026-09-12 (C36-b) — 여기 적혀만 있던 규칙을 **DB 가 거부하도록** 옮겼다
+  (migration 1758500000000 · A-D3·A-D5 채택). 표에는 제약이 하나도 없었고
+  실제로는 무엇이든 들어갔다.
+    expense_category_code       분류는 코드표 6개뿐 (간이 5분류 + 임대료)
+    expense_state_words         pending | approved | rejected
+    expense_amount_le_requested amount <= requested_amount — 증액은 재신청 (A-D3)
+    expense_no_self_review      reviewer_id <> requester_id — 본인 신청 자기 승인 금지
+  레거시 misc 는 etc 로 **낱말만** 옮겼다(뜻 동일 · 1756800000000 선례). 추정 이관이 아니다.
+  카드 **신청** 화면은 원본 61컷에 없어 미배선 — 이번 청크는 승인/반려뿐이다.
   '''
 }
 
@@ -1116,6 +1124,11 @@ Table SER_OCC {
 // v4.15 → v4.16 (2026-09-12 · TBO-50 C35 상담 실패 이력)
 //   + LEAD.fail_from       N-25 채택 — 실패 당시 이전 단계 명시값(라이브 기록·추정 이관 금지)
 //   + LEAD_STAGE_LOG       도달 기록 append-only — 판정: 명시값 → 로그 역순 → 미분류
+//
+// v4.16 → v4.17 (2026-09-12 · TBO-50 C36-b 법인카드 심사·지출 분류)
+//   ~ EXPENSE CHECK 4종 — 분류 코드표(A-D5 간이 5분류 + 임대료) · 상태 낱말 ·
+//     증액 금지(A-D3) · 자기 승인 금지(A-5). 컬럼 추가 0, 규칙을 주석에서 DB 로 옮겼다
+//   ~ EXPENSE.state 기본값 표기 교정 — entity 의 'submitted' 가 DB 의 'pending' 과 달랐다
 //
 
 // ============================================================================

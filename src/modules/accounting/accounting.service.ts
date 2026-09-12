@@ -4,13 +4,19 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Inv } from '../../entities';
 import { todayKst } from '../../lib/kst';
 import { won } from '../../lib/rules';
-import type { AccountingDto, InvoiceDto, PaymentCreateDto, PaymentDto, PayoutDto } from './accounting.dto';
+import { EXPENSE_CATEGORY_LABEL } from './accounting.dto';
+import type {
+  AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, PaymentCreateDto, PaymentDto, PayoutDto,
+} from './accounting.dto';
 
 const daysBetween = (a: string, b: string) =>
   Math.floor((new Date(`${b}T00:00:00Z`).getTime() - new Date(`${a}T00:00:00Z`).getTime()) / 86400000);
@@ -30,6 +36,16 @@ const INV_SELECT = `
 
 /** 입금을 받을 수 있는 상태인가 — §53 단계 순서(①작성 ②청구서 작성 ③학부모 안내 ④입금 완료 ⑤입금 기록) */
 const BILLABLE = new Set(['sent', 'unpaid', 'partial', 'paid']);
+
+/** 나간 돈 한 줄 — 목록과 심사 응답이 같은 모양을 쓰도록 한 곳에 둔다 (§56) */
+const EXPENSE_SELECT = `
+  SELECT e.id, to_char(e.spend_on,'YYYY-MM-DD') AS spend_on, e.category, e.merchant, e.purpose,
+         e.requested_amount, e.amount, e.reason, (e.receipt_url IS NOT NULL) AS has_receipt,
+         e.requester_id, rq.name AS requester_name, e.state, rv.name AS reviewer_name,
+         to_char(e.reviewed_at,'YYYY-MM-DD') AS reviewed_at
+    FROM expense e
+    LEFT JOIN staff rq ON rq.id = e.requester_id
+    LEFT JOIN staff rv ON rv.id = e.reviewer_id`;
 
 @Injectable()
 export class AccountingService {
@@ -100,6 +116,11 @@ export class AccountingService {
       state: String(r.state),
     }));
 
+    const expRows = (await this.inv.query(
+      `${EXPENSE_SELECT} ORDER BY e.state = 'pending' DESC, e.spend_on DESC, e.id DESC`,
+    )) as Array<Record<string, unknown>>;
+    const expenses: ExpenseDto[] = expRows.map((r) => this.expenseRow(r, canSeeAmounts));
+
     const billed = invoices.reduce((a, i) => a + (i.amount ?? 0), 0);
     const collected = invoices.reduce((a, i) => a + (i.paidAmount ?? 0), 0);
     return {
@@ -111,7 +132,27 @@ export class AccountingService {
         overdueCount: invoices.filter((i) => i.overdueDays > 0).length,
         canSeeAmounts,
       },
-      invoices, payments, payouts,
+      invoices, payments, payouts, expenses,
+    };
+  }
+
+  /** 나간 돈 한 행 — 신청 금액도 금액이다. 권한이 없으면 placeholder 조차 내려보내지 않는다. */
+  private expenseRow(r: Record<string, unknown>, canSeeAmounts: boolean): ExpenseDto {
+    const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
+    const category = String(r.category);
+    return {
+      id: Number(r.id), spendOn: String(r.spend_on),
+      category, categoryLabel: EXPENSE_CATEGORY_LABEL[category] ?? category,
+      merchant: (r.merchant as string | null) ?? null,
+      purpose: (r.purpose as string | null) ?? null,
+      requestedAmount: money(r.requested_amount), amount: money(r.amount),
+      reason: (r.reason as string | null) ?? null,
+      hasReceipt: r.has_receipt === true,
+      requesterId: r.requester_id == null ? null : Number(r.requester_id),
+      requesterName: (r.requester_name as string | null) ?? null,
+      state: String(r.state),
+      reviewerName: (r.reviewer_name as string | null) ?? null,
+      reviewedAt: (r.reviewed_at as string | null) ?? null,
     };
   }
 
@@ -214,6 +255,77 @@ export class AccountingService {
         [invId, left, inv?.was_sent === true],
       );
       return { ok: true as const };
+    });
+  }
+
+  /**
+   * 법인카드 심사 — **증액은 없다** (A-D3 채택: 증액 금지 · 재신청으로).
+   *
+   * 다섯 규칙이 전부 여기 한 곳에 있다 (ACCOUNTING §4.3).
+   *   A-1 승인 금액의 기본값은 비어 있다 — 신청 금액은 placeholder 로만 (화면)
+   *   A-2 승인 금액 > 신청 금액 은 차단 (A-D3)          → CARD_AMOUNT_EXCEEDS_REQUEST 422
+   *   A-3 승인 금액 ≠ 신청 금액 이면 사유 필수            → AMOUNT_REASON_REQUIRED 400
+   *   A-4 영수증 없이 승인 불가                          → CARD_RECEIPT_REQUIRED 422
+   *   A-5 본인이 올린 신청을 본인이 승인할 수 없다        → SELF_APPROVAL_FORBIDDEN 403
+   * 마지막 방어선은 마이그레이션 1758500000000 의 CHECK 넷이다 — 애플리케이션 검사로 끝내지 않는다.
+   */
+  async reviewExpense(userId: number, id: number, dto: ExpenseReviewDto, canSeeAmounts: boolean): Promise<ExpenseDto> {
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [row] = (await m.query(
+        `SELECT id, requested_amount, requester_id, state, (receipt_url IS NOT NULL) AS has_receipt
+           FROM expense WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; requested_amount: number | null; requester_id: string | null; state: string; has_receipt: boolean }>;
+      if (!row) throw new NotFoundException('지출 건을 찾을 수 없습니다');
+      if (row.state !== 'pending') {
+        throw new ConflictException({
+          code: 'EXPENSE_ALREADY_REVIEWED',
+          message: `이미 ${row.state === 'approved' ? '승인' : '반려'}된 건입니다 — 다시 심사하지 않습니다`,
+        });
+      }
+      if (row.requester_id != null && Number(row.requester_id) === userId) {
+        throw new ForbiddenException({
+          code: 'SELF_APPROVAL_FORBIDDEN',
+          message: '본인이 올린 신청은 본인이 심사할 수 없습니다 — 금액을 제안하는 사람과 확정하는 사람은 다릅니다',
+        });
+      }
+
+      const reason = dto.reason?.trim() || null;
+      if (dto.decision === 'reject') {
+        if (!reason) throw new BadRequestException({ code: 'AMOUNT_REASON_REQUIRED', message: '반려 사유를 적어 주세요' });
+        await m.query(
+          `UPDATE expense SET state = 'rejected', reason = $2, reviewer_id = $3, reviewed_at = now() WHERE id = $1`,
+          [id, reason, userId],
+        );
+      } else {
+        if (!row.has_receipt) {
+          throw new UnprocessableEntityException({
+            code: 'CARD_RECEIPT_REQUIRED', message: '영수증이 없으면 승인할 수 없습니다',
+          });
+        }
+        const requested = row.requested_amount == null ? null : Number(row.requested_amount);
+        const amount = dto.amount;
+        if (amount === undefined) {
+          throw new BadRequestException({ code: 'AMOUNT_REASON_REQUIRED', message: '확정 금액을 넣어 주세요 — 신청 금액은 안내일 뿐입니다' });
+        }
+        if (requested !== null && amount > requested) {
+          throw new UnprocessableEntityException({
+            code: 'CARD_AMOUNT_EXCEEDS_REQUEST',
+            message: `신청 금액 ${won(requested)}보다 크게 승인할 수 없습니다 — 증액은 재신청으로 처리하세요 (A-D3)`,
+          });
+        }
+        if (requested !== null && amount !== requested && !reason) {
+          throw new BadRequestException({
+            code: 'AMOUNT_REASON_REQUIRED', message: '신청 금액과 다르게 승인하려면 사유가 필요합니다',
+          });
+        }
+        await m.query(
+          `UPDATE expense SET state = 'approved', amount = $2, reason = COALESCE($3, reason),
+                              reviewer_id = $4, reviewed_at = now() WHERE id = $1`,
+          [id, amount, reason, userId],
+        );
+      }
+      const [out] = (await m.query(`${EXPENSE_SELECT} WHERE e.id = $1`, [id])) as Array<Record<string, unknown>>;
+      return this.expenseRow(out, canSeeAmounts);
     });
   }
 }

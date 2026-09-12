@@ -54,13 +54,16 @@ export const PAYMENTS = [
   { invId: 10, studentId: 9,  amount: 560000, paidOn: addD(SEED_TODAY, -8), method: 'cash',     enteredBy: 2, confirmedBy: 2 },
 ];
 
-/** 나간 돈(§56) — 증빙 없는 한 건은 대기로 남는다 */
+/** 나간 돈(§56) — 분류는 간이 5분류+임대료(A-D5). 증빙 없는 한 건은 대기로 남는다 */
 export const EXPENSES = [
   { spendOn: addD(SEED_TODAY, -23), category: 'rent',  merchant: '강남 임대',  purpose: '2층 강의실 8월 임대료', amount: 1400000, state: 'approved', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://tax/2026-08-2f' },
   { spendOn: addD(SEED_TODAY, -23), category: 'rent',  merchant: '강남 임대',  purpose: '3층 컨설팅룸 8월 임대료', amount: 800000, state: 'approved', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://tax/2026-08-3f' },
   { spendOn: addD(SEED_TODAY, -16), category: 'book',  merchant: '교재유통',  purpose: 'AP Chemistry 4th 20권 매입', amount: 480000, state: 'approved', requesterId: 4, reviewerId: 1, receiptUrl: 'seed://receipt/book-0812' },
-  { spendOn: addD(SEED_TODAY, -27), category: 'misc',  merchant: 'Zoom',     purpose: 'Zoom Pro 6석 (월)', amount: 168000, state: 'approved', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://receipt/zoom-08' },
-  { spendOn: addD(SEED_TODAY, -1),  category: 'misc',  merchant: '오피스디포', purpose: '프린터 토너 · 소모품', requestedAmount: 92000, amount: null, state: 'pending', requesterId: 4, reviewerId: null, receiptUrl: null },
+  { spendOn: addD(SEED_TODAY, -27), category: 'etc',  merchant: 'Zoom',     purpose: 'Zoom Pro 6석 (월)', amount: 168000, state: 'approved', requesterId: 2, reviewerId: 1, receiptUrl: 'seed://receipt/zoom-08' },
+  // 대기 3건 — 분기마다 한 건씩 (AGENT §9 「시드에 값이 한 종류뿐」): 영수증 없음(A-4) · 정상 승인 가능 · 대표 본인 신청(A-5)
+  { spendOn: addD(SEED_TODAY, -1),  category: 'supply', merchant: '오피스디포', purpose: '프린터 토너 · 소모품', requestedAmount: 92000, amount: null, state: 'pending', requesterId: 4, reviewerId: null, receiptUrl: null },
+  { spendOn: addD(SEED_TODAY, -4),  category: 'ent',    merchant: '카페 서초',  purpose: '학부모 간담회 다과', requestedAmount: 145000, amount: null, state: 'pending', requesterId: 4, reviewerId: null, receiptUrl: 'seed://receipt/ent-0909' },
+  { spendOn: addD(SEED_TODAY, -2),  category: 'fee',    merchant: '우체국',     purpose: '성적표 등기 발송 수수료', requestedAmount: 33000, amount: null, state: 'pending', requesterId: 1, reviewerId: null, receiptUrl: 'seed://receipt/fee-0910' },
 ];
 
 /**

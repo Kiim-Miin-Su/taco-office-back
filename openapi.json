@@ -2842,6 +2842,83 @@
         ]
       }
     },
+    "/accounting/expenses/{id}/review": {
+      "post": {
+        "description": "신청 금액은 placeholder 일 뿐이고 확정 금액은 사람이 넣는다 (대표 지시 2026-08-25). 판정은 전부 서버.",
+        "operationId": "AccountingController_reviewExpense",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExpenseReviewDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExpenseDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "code AMOUNT_REASON_REQUIRED(사유·확정 금액 누락)"
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "code SELF_APPROVAL_FORBIDDEN(본인 신청 자기 심사)"
+          },
+          "404": {
+            "description": "지출 건 없음"
+          },
+          "409": {
+            "description": "code EXPENSE_ALREADY_REVIEWED"
+          },
+          "422": {
+            "description": "code CARD_AMOUNT_EXCEEDS_REQUEST(증액) | CARD_RECEIPT_REQUIRED(영수증 없음)"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "법인카드 심사 — 승인(감액 가능·증액 금지)·반려 (A-D3 · v2 §56 법인카드)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/ops": {
       "get": {
         "description": "§24 FQ는 leads의 name, school, ownerName, reason을 검색한다. 받은 목록의 클라이언트 검색/필터 전환 시 추가 GET은 0회이며 별도 검색 query 계약은 없다.",
@@ -7181,6 +7258,96 @@
           "state"
         ]
       },
+      "ExpenseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "spendOn": {
+            "type": "string",
+            "description": "사용일 YYYY-MM-DD"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "rent",
+              "book",
+              "supply",
+              "ent",
+              "fee",
+              "etc"
+            ]
+          },
+          "categoryLabel": {
+            "type": "string",
+            "description": "분류 이름 — 코드표는 서버가 소유한다 (D-R18)"
+          },
+          "merchant": {
+            "type": "string",
+            "nullable": true
+          },
+          "purpose": {
+            "type": "string",
+            "nullable": true
+          },
+          "requestedAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "직원이 올린 신청 금액 — 승인 칸의 placeholder 다 (A-1)"
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true,
+            "description": "확정 금액. null 은 미심사이거나 금액 권한 없음"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "신청액과 다를 때 필수 (A-3)"
+          },
+          "hasReceipt": {
+            "type": "boolean",
+            "description": "영수증 없이는 승인할 수 없다 (A-4)"
+          },
+          "requesterName": {
+            "type": "string",
+            "nullable": true
+          },
+          "requesterId": {
+            "type": "number",
+            "nullable": true,
+            "description": "본인 신청은 본인이 승인할 수 없다 (A-5)"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ]
+          },
+          "reviewerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "reviewedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "spendOn",
+          "category",
+          "categoryLabel",
+          "requestedAmount",
+          "amount",
+          "hasReceipt",
+          "requesterId",
+          "state"
+        ]
+      },
       "AccountingDto": {
         "type": "object",
         "properties": {
@@ -7204,13 +7371,21 @@
             "items": {
               "$ref": "#/components/schemas/PayoutDto"
             }
+          },
+          "expenses": {
+            "description": "나간 돈 §56 — 부대비용·법인카드 신청분",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpenseDto"
+            }
           }
         },
         "required": [
           "summary",
           "invoices",
           "payments",
-          "payouts"
+          "payouts",
+          "expenses"
         ]
       },
       "PaymentCreateDto": {
@@ -7244,6 +7419,29 @@
           "invId",
           "amount",
           "paidOn"
+        ]
+      },
+      "ExpenseReviewDto": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "description": "확정 금액. 승인일 때 필수이며 신청 금액을 넘을 수 없다 (A-D3)"
+          },
+          "reason": {
+            "type": "string",
+            "description": "신청액과 다르거나 반려일 때 필수 (A-3)"
+          }
+        },
+        "required": [
+          "decision"
         ]
       },
       "LeadDto": {
