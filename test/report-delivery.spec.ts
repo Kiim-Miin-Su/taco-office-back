@@ -62,7 +62,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     requestKey, onDate: DATE, studentId: STUDENT_READY,
     files: [rep1, rep2].map((repId) => ({
       repId,
-      fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chemistry_${repId === rep1 ? '09:00' : '10:00'}.png`,
+      fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chem_${repId === rep1 ? '09:00' : '10:00'}.png`,
       revision: revisions.get(repId)!,
       pngDataUrl: png,
     })),
@@ -98,7 +98,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     );
     await q(
       `INSERT INTO sub (key,name,color,active,sort)
-       VALUES ('ap-chem','AP Chemistry','#2E6BFF',true,1) ON CONFLICT (key) DO NOTHING`,
+       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1) ON CONFLICT (key) DO NOTHING`,
     );
     await q(
       `INSERT INTO staff (id,name,email,role,password_hash,active)
@@ -515,7 +515,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
         ...base,
         files: [rep1, rep2].map((repId) => ({
           repId,
-          fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chemistry_${repId === rep1 ? '09:00' : '10:00'}.png`,
+          fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chem_${repId === rep1 ? '09:00' : '10:00'}.png`,
           revision: revisions.get(repId),
           pngDataUrl: 'data:image/png;base64,ZmFrZQ==',
         })),
@@ -622,8 +622,8 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     );
     expect(saved).toMatchObject({ rep_ids: [rep1, rep2], channel: 'blob' });
     expect(saved.body).toContain('① 학생: 준비학생 · 고2');
-    expect(saved.body).toContain(`② 수업: ${DATE} · AP Chemistry · 09:00–10:00`);
-    expect(saved.body).toContain(`② 수업: ${DATE} · AP Chemistry · 10:00–11:00`);
+    expect(saved.body).toContain(`② 수업: ${DATE} · AP Chem · 09:00–10:00`);
+    expect(saved.body).toContain(`② 수업: ${DATE} · AP Chem · 10:00–11:00`);
     expect(saved.body).toContain('③ 수업 내용');
     expect(await q(`SELECT 1 FROM pdflog WHERE kind='report_png' AND ref_id=$1`, [first.body.item.id]))
       .toHaveLength(2);

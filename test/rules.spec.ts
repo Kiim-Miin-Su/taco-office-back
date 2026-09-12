@@ -20,6 +20,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { SEEDED_TABLES } from '../src/seed';
+import { KINDS, SUBS } from '../src/seed/base';
 import * as R from '../src/lib/rules';
 import type { SessionLike } from '../src/lib/rules';
 
@@ -393,5 +394,67 @@ describe('시드 reset 범위', () => {
     const listed = new Set<string>(SEEDED_TABLES);
     const missing = [...written].filter((t) => !listed.has(t)).sort();
     expect({ missing }).toEqual({ missing: [] });
+  });
+});
+
+/**
+ * 명세서 v2 슬라이드 88·89 의 표를 **여기에 한 번 더 적어 두고** 상수와 맞춘다 (C54).
+ *
+ * 「테스트에 값을 다시 적지 않는다」가 보통의 원칙이지만, 여기서는 **원문 표 자체가 정본**이라
+ * 옮겨 적은 것이 시험 대상이다. 상수가 조용히 흘러가면(실제로 종류 여섯 · 과목 열세 개가
+ * 흘러가 있었다) 화면의 모든 이름이 원문과 달라진다.
+ */
+describe('KIND · SUB 는 명세서 v2 의 표 그대로다 (슬라이드 88 · 89 · C54)', () => {
+  /** 슬라이드 88 — 키 이름 색 정원 분류 */
+  const SOURCE_KINDS = [
+    ['class', '수업', '#4A5461', 4, 'lesson'],
+    ['mock', '모의수업', '#BC7855', 1, 'lesson'],
+    ['gpa', 'GPA', '#816BB0', 1, 'lesson'],
+    ['study', '자습', '#59988B', 12, 'lesson'],
+    ['consult', '상담', '#52969C', 3, 'intake'],
+    ['diagx', '진단고사', '#6F798A', 8, 'intake'],
+    ['consulting', '컨설팅', '#AC6287', 3, 'intake'],
+    ['meeting', '회의', '#736CAE', 10, 'meeting'],
+  ] as const;
+
+  /** 슬라이드 89 — 키 이름 (색은 이미 맞다) */
+  const SOURCE_SUB_NAMES: Record<string, string> = {
+    'map-read': 'MAP Reading', 'map-math': 'MAP Math', 'sat-read': 'SAT Reading',
+    'sat-math': 'SAT Math', writing: 'Writing', vocab: 'Vocabulary', 'ap-chem': 'AP Chem',
+    interview: 'Interview', 'read-lab': 'Reading Lab', 'study-room': '학습실',
+    'gpa-care': 'GPA 관리', 'mock-sat': '모의수업 A', 'mock-map': '모의수업 B',
+    diag: '진단고사', intake: '입학 상담', admissions: '진학 컨설팅',
+    'mt-pl': '기획 회의', 'mt-cs': '컨설팅 회의', 'mt-mk': '마케팅 회의',
+    'mt-dv': '개발 회의', 'mt-pg': '일반 회의',
+  };
+
+  /** 원문이 1 이라고 적지만 시드 행이 그 위에 있어 아직 못 내린 것 — N-30 */
+  const CAP_PENDING = new Set(['mock', 'gpa']);
+
+  it('종류 8종의 이름 · 색 · 분류가 원문 표와 같다', () => {
+    expect(KINDS.map((k) => k.key)).toEqual(SOURCE_KINDS.map((k) => k[0]));
+    for (const [key, name, color, , grp] of SOURCE_KINDS) {
+      const k = KINDS.find((x) => x.key === key)!;
+      expect({ key, name: k.name, color: k.color, grp: k.grp }).toEqual({ key, name, color, grp });
+    }
+  });
+
+  it('정원도 원문과 같다 — 아직 못 내린 둘만 예외로 적어 둔다 (N-30)', () => {
+    const drift = SOURCE_KINDS
+      .filter(([key, , , cap]) => KINDS.find((x) => x.key === key)!.cap !== cap)
+      .map(([key]) => key);
+    expect(drift.sort()).toEqual([...CAP_PENDING].sort());
+  });
+
+  it('원문 §18 서랍의 머리글이 맞는다 — 「수업 4 · 상담·진단 3 · 회의 1」', () => {
+    const n = (grp: string) => KINDS.filter((k) => k.grp === grp).length;
+    expect({ lesson: n('lesson'), intake: n('intake'), meeting: n('meeting') })
+      .toEqual({ lesson: 4, intake: 3, meeting: 1 });
+  });
+
+  it('과목 21종의 이름이 원문 표와 같다', () => {
+    expect(SUBS).toHaveLength(21);
+    const mine = Object.fromEntries(SUBS.map((s) => [s.key, s.name]));
+    expect(mine).toEqual(SOURCE_SUB_NAMES);
   });
 });
