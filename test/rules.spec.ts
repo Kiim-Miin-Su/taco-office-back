@@ -17,6 +17,9 @@
  * 원본과 달라진 점 하나 — 프로토타입은 TODAY·NOW_MIN 전역을 읽었지만
  * 여기서는 **인자로 받는다.** 서버는 요청 시각이 매번 다르므로 전역이면 테스트가 거짓말을 한다.
  */
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { SEEDED_TABLES } from '../src/seed';
 import * as R from '../src/lib/rules';
 import type { SessionLike } from '../src/lib/rules';
 
@@ -354,5 +357,41 @@ describe('N-17 명단 가격 — rosterPricing (D-R10 단조성 · §4-17 채택
   it('단가표가 없으면 null — 0 원이나 나눗셈으로 꾸미지 않는다', () => {
     expect(R.rosterPricing([], none(3))).toBeNull();
     expect(R.rosterPricing(tiers, [])).toBeNull();
+  });
+});
+
+/**
+ * `--reset` 이 **앱이 쓰는 표를 빠짐없이 비우는가**.
+ *
+ * 실제로 겪었다 — 브라우저 QA 가 만든 `vers`·`hist` 행이 `--reset` 을 넘기고 살아남아
+ * 다음 QA 가 「이미 있습니다」로 막혔다. 「깨끗한 dev DB」가 거짓이었던 것이다 (C52).
+ *
+ * 표 이름을 여기 다시 적지 않는다 — **소스에서 INSERT 대상을 긁어** 목록과 맞춘다.
+ * 새 표에 쓰기를 붙이고 목록에 안 넣으면 이 테스트가 먼저 막는다.
+ */
+describe('시드 reset 범위', () => {
+  const APP_DIRS = /[\\/]modules[\\/]/;
+
+  it('앱이 INSERT 하는 표는 전부 SEEDED_TABLES 에 있다', () => {
+    const files: string[] = [];
+    const walk = (d: string) => {
+      for (const e of readdirSync(d)) {
+        const f = join(d, e);
+        if (statSync(f).isDirectory()) walk(f);
+        else if (f.endsWith('.ts') && !f.includes('.spec.')) files.push(f);
+      }
+    };
+    walk(join(__dirname, '..', 'src'));
+
+    const written = new Set<string>();
+    for (const f of files.filter((x) => APP_DIRS.test(x))) {
+      const src = readFileSync(f, 'utf8');
+      for (const m of src.matchAll(/INSERT\s+INTO\s+"?([a-z_]+)"?/gi)) written.add(m[1].toLowerCase());
+    }
+    expect(written.size).toBeGreaterThan(5);
+
+    const listed = new Set<string>(SEEDED_TABLES);
+    const missing = [...written].filter((t) => !listed.has(t)).sort();
+    expect({ missing }).toEqual({ missing: [] });
   });
 });

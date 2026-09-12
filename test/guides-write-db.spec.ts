@@ -44,6 +44,9 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
     await q.connect();
     await q.startTransaction();
     await q.query(`DELETE FROM gtpl`);
+    await q.query(
+      `INSERT INTO staff (id,name,email,role) VALUES (71,'안내 담당','g71@t.kr','ceo') ON CONFLICT (id) DO NOTHING`,
+    );
     const [stu] = (await q.query(`INSERT INTO stu (name, grade) VALUES ('안내 학생','G7') RETURNING id`)) as Array<{ id: string }>;
     const [g] = (await q.query(
       `INSERT INTO guide (student_id, reason, state, due_on) VALUES ($1,'new','draft','2026-09-20') RETURNING id`,
@@ -85,15 +88,32 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
     const before = (await q.query(`SELECT state FROM guide WHERE id = $1`, [guideId])) as Array<{ state: string }>;
     expect(before[0].state).toBe('draft');
 
-    const out = await svc().writeBody(guideId, { body: '9월 10일 첫 수업입니다' });
+    const out = await svc().writeBody(71, guideId, { body: '9월 10일 첫 수업입니다' });
     expect(out.body).toBe('9월 10일 첫 수업입니다');
     expect(out.state).toBe('ready');
     expect(out.pending).toBe(true);   // ready 는 아직 안 보낸 것이다
+
+    // §40 「여기에 남는 것」에 「수업 안내 작성」이 있다 — 같은 트랜잭션에서 함께 남는다
+    const hist = (await q.query(
+      `SELECT action, by_id FROM hist WHERE entity = 'guide' AND ref_id = $1`, [guideId],
+    )) as Array<{ action: string; by_id: string }>;
+    expect(hist).toHaveLength(1);
+    expect(hist[0].action).toBe('guide_write');
+    expect(Number(hist[0].by_id)).toBe(71);
+  });
+
+  it('안내 쓰기가 막히면 이력도 안 남는다 — 하지도 않은 일이 장부에 찍히면 안 된다', async () => {
+    await q.query(`UPDATE guide SET state = 'sent' WHERE id = $1`, [guideId]);
+    await expect(svc().writeBody(71, guideId, { body: 'x' })).rejects.toThrow();
+    const n = Number((await q.query(
+      `SELECT count(*)::int AS n FROM hist WHERE entity = 'guide' AND ref_id = $1`, [guideId],
+    ))[0].n);
+    expect(n).toBe(0);
   });
 
   it('이미 보낸 안내는 고치지 않는다 — 학부모가 받은 말과 장부가 갈린다', async () => {
     await q.query(`UPDATE guide SET state = 'sent', body = '보낸 말' WHERE id = $1`, [guideId]);
-    await expect(svc().writeBody(guideId, { body: '슬쩍 고친 말' }))
+    await expect(svc().writeBody(71, guideId, { body: '슬쩍 고친 말' }))
       .rejects.toMatchObject({ response: { code: 'GUIDE_ALREADY_SENT' } });
     const after = (await q.query(`SELECT body FROM guide WHERE id = $1`, [guideId])) as Array<{ body: string }>;
     expect(after[0].body).toBe('보낸 말');
@@ -101,7 +121,7 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
 
   it('틀을 고쳐도 이미 쓴 안내는 안 바뀐다 — 안내는 본문을 복사해 갖는다', async () => {
     const tpl = await svc().createTemplate({ name: '틀', body: '원래 문구' });
-    await svc().writeBody(guideId, { body: tpl.body });   // 화면이 복사해 넣는다
+    await svc().writeBody(71, guideId, { body: tpl.body });   // 화면이 복사해 넣는다
     await svc().patchTemplate(tpl.id, { name: '틀', body: '바뀐 문구' });
 
     const after = (await q.query(`SELECT body FROM guide WHERE id = $1`, [guideId])) as Array<{ body: string }>;
@@ -109,6 +129,6 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
   });
 
   it('없는 안내를 쓰면 404 다', async () => {
-    await expect(svc().writeBody(99999999, { body: 'x' })).rejects.toThrow();
+    await expect(svc().writeBody(71, 99999999, { body: 'x' })).rejects.toThrow();
   });
 });

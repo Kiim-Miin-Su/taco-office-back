@@ -71,8 +71,12 @@ export class GuidesController {
   @ApiOkResponse({ type: GuideDto })
   @ApiConflictResponse({ description: 'code GUIDE_ALREADY_SENT — 이미 보낸 안내는 고치지 않는다' })
   @ApiNotFoundResponse({ description: '안내 없음' })
-  async writeBody(@Param('id', ParseIntPipe) id: number, @Body() dto: GuideBodyDto): Promise<GuideDto> {
-    return this.svc.writeBody(id, dto);
+  async writeBody(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: GuideBodyDto,
+  ): Promise<GuideDto> {
+    return this.svc.writeBody(user.id, id, dto);
   }
 
 }

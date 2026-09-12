@@ -3812,6 +3812,268 @@
         ]
       }
     },
+    "/books/history": {
+      "get": {
+        "description": "이 화면에는 쓰기가 없다. 이력은 배부·업로드·교체·안내 같은 **다른 쓰기의 부수효과**로 쌓인다 (원본 §40 「여기에 남는 것」).",
+        "operationId": "BooksController_history",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "기본 200",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BookHistoryRowDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "교재 이력 (§40)",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/books/{id}/versions": {
+      "post": {
+        "description": "파일은 POST /files 로 먼저 올리고 그 주소를 준다. 이력(교재 업로드)이 같은 트랜잭션에서 함께 남는다.",
+        "operationId": "BooksController_addVersion",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookVersionCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookVersionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "교재 없음"
+          },
+          "409": {
+            "description": "code VERS_DUPLICATE — 같은 교재에 같은 판 이름"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "새 판 올리기 (§39)",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/books/versions/{id}/use": {
+      "patch": {
+        "description": "시작일을 오늘로 당긴다. 이미 쓰고 있는 판은 다시 당기지 않는다(이력에 같은 일이 두 번 남는다).",
+        "operationId": "BooksController_useVersion",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookVersionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "판 없음"
+          },
+          "409": {
+            "description": "code VERS_ALREADY_IN_USE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "이 판을 오늘부터 쓴다 — §39 「판 버튼을 눌러 바꿉니다」",
+        "tags": [
+          "books"
+        ]
+      }
+    },
     "/guides": {
       "get": {
         "operationId": "GuidesController_all",
@@ -10401,12 +10663,42 @@
             "type": "string",
             "nullable": true,
             "description": "SE 학생용 · TE 교사용"
+          },
+          "edition": {
+            "type": "string",
+            "nullable": true,
+            "description": "지금 쓰는 판 (예: v2026.03)"
+          },
+          "latestEdition": {
+            "type": "string",
+            "nullable": true,
+            "description": "가장 나중 판"
+          },
+          "hasNewer": {
+            "type": "boolean",
+            "description": "더 나중 판이 있는가 — 판단은 서버가 한다"
+          },
+          "versId": {
+            "type": "number",
+            "nullable": true,
+            "description": "지금 쓰는 판의 id"
+          },
+          "latestVersId": {
+            "type": "number",
+            "nullable": true,
+            "description": "가장 나중 판의 id — ⇧ 가 가는 곳"
+          },
+          "hasFile": {
+            "type": "boolean",
+            "description": "지금 쓰는 판에 파일이 붙어 있는가"
           }
         },
         "required": [
           "code",
           "id",
-          "title"
+          "title",
+          "hasNewer",
+          "hasFile"
         ]
       },
       "BooksDto": {
@@ -10424,11 +10716,128 @@
               "type": "number"
             },
             "description": "과목별 권수 — 필터 칩에 쓴다"
+          },
+          "newerCount": {
+            "type": "number",
+            "description": "더 나중 판이 있는 교재 수"
+          },
+          "noFileCount": {
+            "type": "number",
+            "description": "파일 없는 교재 수"
           }
         },
         "required": [
           "items",
-          "bySub"
+          "bySub",
+          "newerCount",
+          "noFileCount"
+        ]
+      },
+      "BookHistoryRowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "book_issue",
+              "book_upload",
+              "book_swap",
+              "book_drop",
+              "guide_write",
+              "guide_send",
+              "guide_ack",
+              "teacher_req",
+              "teacher_swap"
+            ]
+          },
+          "actionLabel": {
+            "type": "string",
+            "description": "칩과 줄에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)"
+          },
+          "entity": {
+            "type": "string",
+            "description": "어느 표를 가리키는가"
+          },
+          "refId": {
+            "type": "number"
+          },
+          "subject": {
+            "type": "string",
+            "nullable": true,
+            "description": "무엇에 대한 일인가 — 읽을 때 원본 표에서 이어 붙인다"
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true
+          },
+          "at": {
+            "type": "string",
+            "description": "KST ISO"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "actionLabel",
+          "entity",
+          "refId",
+          "at"
+        ]
+      },
+      "BookVersionCreateDto": {
+        "type": "object",
+        "properties": {
+          "edition": {
+            "type": "string",
+            "description": "판 이름 — 원본 배지 모양 그대로 (예: v2026.08)",
+            "example": "v2026.08"
+          },
+          "fileUrl": {
+            "type": "string",
+            "description": "파일 주소 — POST /files 가 돌려준 것. 없으면 파일 없는 판이다"
+          },
+          "fromDate": {
+            "type": "string",
+            "description": "이 판을 언제부터 쓰는가 — 비우면 오늘부터"
+          }
+        },
+        "required": [
+          "edition"
+        ]
+      },
+      "BookVersionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "libId": {
+            "type": "number"
+          },
+          "edition": {
+            "type": "string"
+          },
+          "fileUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "fromDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "inUse": {
+            "type": "boolean",
+            "description": "지금 쓰는 판인가 — 판단은 서버가 한다"
+          }
+        },
+        "required": [
+          "id",
+          "libId",
+          "edition",
+          "inUse"
         ]
       },
       "GuideDto": {

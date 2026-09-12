@@ -21,7 +21,17 @@ import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
 import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
 
-/** 시드가 건드리는 표 — 지울 때도 이 순서의 역순을 쓴다 */
+/**
+ * `--reset` 이 비우는 표 — 넣을 때의 이 순서를 **역순으로** 지운다.
+ *
+ * 「시드가 넣는 표」보다 넓다. **앱이 쓰는 표는 시드가 안 넣어도 여기 있어야 한다** —
+ * 없으면 `--reset` 뒤에도 그 표의 행이 살아남아 「깨끗한 dev DB」가 거짓이 된다.
+ * 실제로 겪었다: 브라우저 QA 로 만든 `vers`·`hist` 행이 `--reset` 을 넘기고 남아
+ * 다음 QA 가 「이미 있습니다」로 막혔다 (C52).
+ *
+ * 새 표에 쓰기를 붙이면 여기에도 한 줄을 늘린다. 안 늘렸는지는
+ * `seed-reset-covers-writes` 회귀가 본다.
+ */
 export const SEEDED_TABLES = [
   'kind', 'sub', 'room', 'zacc', 'tzg', 'staff', 'wage', 'rate', 'sturate',
   'stu', 'enr', 'lead',
@@ -31,6 +41,10 @@ export const SEEDED_TABLES = [
   'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
   'mkt', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
+  // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
+  'gtpl', 'vers', 'hist', 'file', 'zassign',
+  // 기록만 쌓이는 표들 — 안 비우면 dev DB 에 옛 QA 흔적이 끝없이 남는다
+  'att', 'lead_stage_log', 'log', 'pdflog', 'rsend', 'zlog',
 ] as const;
 
 const PW = 'taco1234!';

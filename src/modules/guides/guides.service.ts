@@ -8,6 +8,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
+import { histSql } from '../../lib/history';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type { GuideBodyDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto } from './guides.dto';
 import { kstAt, writtenRows } from '../../lib/sql';
@@ -133,7 +134,7 @@ export class GuidesService {
    * 여기가 정한다. 이미 보낸 안내는 **고치지 않는다** — 학부모가 받은 말과 장부가 갈린다.
    * 되돌리기가 필요하면 새 안내를 만드는 것이 원문의 방식이다(§53 규칙 줄과 같은 결).
    */
-  async writeBody(id: number, dto: GuideBodyDto): Promise<GuidesDto['guides'][number]> {
+  async writeBody(userId: number, id: number, dto: GuideBodyDto): Promise<GuidesDto['guides'][number]> {
     const [cur] = await this.q(`SELECT id, state FROM guide WHERE id = $1`, [id]);
     if (!cur) throw new NotFoundException('안내를 찾을 수 없습니다');
     if ((GUIDE_DONE_DB as readonly string[]).includes(String(cur.state))) {
@@ -142,9 +143,14 @@ export class GuidesService {
         message: '이미 보낸 안내는 고칠 수 없습니다 — 새 안내를 만드세요',
       });
     }
-    await this.q(
-      `UPDATE guide SET body = $2, state = 'ready'::guide_state_t WHERE id = $1`, [id, dto.body],
-    );
+    /*
+     * 이력과 **같은 트랜잭션**에서 남긴다 (§40 「여기에 남는 것」에 「수업 안내 작성」이 있다).
+     * 밖에서 남기면 쓰기는 되돌아가고 이력만 남아 「하지도 않은 일」이 장부에 찍힌다.
+     */
+    await this.anyRepo.manager.transaction(async (m) => {
+      await m.query(`UPDATE guide SET body = $2, state = 'ready'::guide_state_t WHERE id = $1`, [id, dto.body]);
+      await m.query(histSql(), ['guide', id, 'guide_write', userId]);
+    });
     const one = await this.all();
     const found = one.guides.find((g) => g.id === id);
     if (!found) throw new NotFoundException('안내를 찾을 수 없습니다');
