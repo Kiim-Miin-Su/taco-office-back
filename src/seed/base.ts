@@ -150,8 +150,14 @@ export const WAGES: Array<{ staffId: number; rate: number; fromDate: string }> =
 /** 프로그램 단가 — 명세서 §54 수업료 계산 */
 export const RATES = [
   { kindKey: 'class',      subKey: 'ap-chem',   unitPrice: 80000, fromDate: '2026-01-01' },
+  // N-17 인원 구간 표본 — 인원↑ 단가↓·총액↑ (80k → 90k → 102k → 108k)
+  { kindKey: 'class',      subKey: 'ap-chem',   heads: 2, unitPrice: 45000, fromDate: '2026-01-01' },
+  { kindKey: 'class',      subKey: 'ap-chem',   heads: 3, unitPrice: 34000, fromDate: '2026-01-01' },
+  { kindKey: 'class',      subKey: 'ap-chem',   heads: 4, unitPrice: 27000, fromDate: '2026-01-01' },
   { kindKey: 'class',      subKey: 'sat-math',  unitPrice: 80000, fromDate: '2026-01-01' },
   { kindKey: 'class',      subKey: 'writing',   unitPrice: 60000, fromDate: '2026-01-01' },
+  { kindKey: 'class',      subKey: 'writing',   heads: 2, unitPrice: 33000, fromDate: '2026-01-01' },
+  { kindKey: 'class',      subKey: 'writing',   heads: 3, unitPrice: 24000, fromDate: '2026-01-01' },
   { kindKey: 'class',      subKey: 'map-math',  unitPrice: 60000, fromDate: '2026-01-01' },
   { kindKey: 'class',      subKey: 'map-read',  unitPrice: 60000, fromDate: '2026-01-01' },
   { kindKey: 'class',      subKey: 'sat-read',  unitPrice: 70000, fromDate: '2026-01-01' },

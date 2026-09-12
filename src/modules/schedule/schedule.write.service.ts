@@ -26,7 +26,7 @@ import {
   lessonTimeIssue, parseRuleInput, pasteIssue, rosterAt, rosterScopes, ruleHits, scheduleTimeIssue,
   type Patch as OccurrencePatch, type Scope, type State,
 } from '../../lib/recurrence';
-import { GUIDE_DONE_DB } from '../../lib/rules';
+import { rosterPricing, GUIDE_DONE_DB } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { loadState, persist } from './schedule.state.repo';
 import { assertScheduleReferences } from './schedule.references';
@@ -323,11 +323,11 @@ export class ScheduleWriteService {
     }, async (q, fresh, base) => {
       const ids = rosterAt(fresh, serId, dto.onDate);
       const meta = await q.query(
-        `SELECT k.cap
+        `SELECT k.cap, s.kind_key, s.sub_key
            FROM ser s JOIN kind k ON k.key=s.kind_key
           WHERE s.id=$1`,
         [serId],
-      ) as Array<{ cap: number }>;
+      ) as Array<{ cap: number; kind_key: string; sub_key: string | null }>;
       if (!meta.length) {
         throw new BadRequestException({ code: 'KIND_NOT_FOUND', message: '수업 종류와 정원을 찾을 수 없습니다' });
       }
@@ -351,12 +351,38 @@ export class ScheduleWriteService {
       if (rows.length !== ids.length) {
         throw new BadRequestException({ code: 'INVALID_ROSTER', message: '명단에 존재하지 않는 학생이 있습니다' });
       }
+      // N-17 (§4-17 ①): 명단 변경 직후 가격 재계산 (D-R22). 산식은 lib/rules 한 곳 — 화면은 값만 그린다.
+      const tiers = await q.query(
+        `SELECT DISTINCT ON (heads) heads, unit_price
+           FROM rate
+          WHERE kind_key = $1 AND sub_key IS NOT DISTINCT FROM $2 AND from_date <= $3
+          ORDER BY heads, from_date DESC, id DESC`,
+        [meta[0].kind_key, meta[0].sub_key, dto.onDate],
+      ) as Array<{ heads: number; unit_price: number }>;
+      const overrides = ids.length ? await q.query(
+        `SELECT DISTINCT ON (st.id) st.id, r.unit_price
+           FROM stu st
+           LEFT JOIN sturate r
+             ON r.student_id = st.id AND (r.kind_key IS NULL OR r.kind_key = $2) AND r.from_date <= $3
+          WHERE st.id = ANY($1::bigint[])
+          ORDER BY st.id, r.from_date DESC NULLS LAST, r.id DESC`,
+        [ids, meta[0].kind_key, dto.onDate],
+      ) as Array<{ id: string; unit_price: number | null }> : [];
+      const pricing = rosterPricing(
+        tiers.map((r) => ({ heads: Number(r.heads), unitPrice: Number(r.unit_price) })),
+        overrides.map((r) => (r.unit_price === null || r.unit_price === undefined ? null : Number(r.unit_price))),
+      );
       return {
         ...base,
         count: ids.length,
         cap: Number(meta[0].cap),
         needGuide: rows.filter((r) => r.need_guide).map((r) => r.name),
         needBook: rows.filter((r) => r.need_book).map((r) => r.name),
+        priced: pricing !== null,
+        unitPrice: pricing ? pricing.unitPrice : null,
+        total: pricing ? pricing.total : null,
+        tierHeads: pricing ? pricing.tierHeads : null,
+        overrideCount: pricing ? pricing.overrideCount : 0,
       };
     });
   }

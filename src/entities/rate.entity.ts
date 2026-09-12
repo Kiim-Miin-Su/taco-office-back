@@ -23,6 +23,10 @@ export class Rate {
   @Column({ type: 'varchar', length: 20, nullable: true })
   subKey: string | null;
 
+  /** N-17 채택(§4-17 ①) — 인원 구간. 적용 구간은 인원 이하의 최대 heads (기존 행 = 1인 기준) */
+  @Column({ type: 'smallint', default: 1 })
+  heads: number;
+
   @Column({ type: 'int' })
   unitPrice: number;
 

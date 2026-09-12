@@ -326,6 +326,18 @@ export class RosterResultDto extends WriteResultDto {
 
   @ApiProperty({ type: [String], description: '해당 과목의 활성 배부 교재가 없는 학생' })
   needBook!: string[];
+
+  /* N-17 채택(§4-17 ①) — 가격은 서버 한 곳(lib/rules.rosterPricing)만 계산한다 (§54 · D-R22). */
+  @ApiProperty({ description: '해당 종류·과목의 인원 구간 단가표 존재 여부 — false 면 아래 3필드는 null' })
+  priced!: boolean;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '대표 1인 단가 — 적용 구간(tierHeads)의 RATE 단가, 예외 학생 제외 기준 (N-17-a 표본)' })
+  unitPrice?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '수업당 총액 — Σ(학생별 STURATE 예외 ?? 구간 단가)' })
+  total?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '적용된 인원 구간 (변경 후 인원 이하의 최대 heads)' })
+  tierHeads?: number | null;
+  @ApiProperty({ description: '단가 예외(STURATE) 적용 학생 수' })
+  overrideCount!: number;
 }
 
 export class HorizonDto {

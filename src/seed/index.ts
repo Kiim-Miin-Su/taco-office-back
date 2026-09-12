@@ -91,7 +91,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     const hash = await bcrypt.hash(PW, 10);
     await add('staff', STAFF.map((s) => ({ id: s.id, name: s.name, email: s.email, role: s.role, title: s.title, tz: 'Asia/Seoul', password_hash: hash, phone_verified: true, hired_on: s.hiredOn, active: true })));
     await add('wage', WAGES.map((w) => ({ staff_id: w.staffId, rate: w.rate, from_date: w.fromDate, approved_by: 1 })));
-    await add('rate', RATES.map((r) => ({ kind_key: r.kindKey, sub_key: r.subKey, unit_price: r.unitPrice, from_date: r.fromDate })));
+    await add('rate', RATES.map((r) => ({ kind_key: r.kindKey, heads: (r as { heads?: number }).heads ?? 1, sub_key: r.subKey, unit_price: r.unitPrice, from_date: r.fromDate })));
     await add('sturate', STURATES.map((r) => ({ student_id: r.studentId, kind_key: r.kindKey, unit_price: r.unitPrice, from_date: r.fromDate })));
 
     // ── 사람

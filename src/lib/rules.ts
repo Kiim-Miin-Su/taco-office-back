@@ -614,3 +614,42 @@ export function rateAt(history: RateHistoryEntry[], onDate: IsoDate): number {
   }
   return hit;
 }
+
+/* ── N-17 · 수강 명단 가격 (2026-09-12 §4-17 채택 · 44D-3B) ──────────────
+   원문 §54: RATE(프로그램별 단가)·STURATE(학생별 예외), 인원↑ → 1인 단가↓·총액↑.
+   채택 ①: RATE 에 인원 구간(heads)을 두고 학생 예외를 **합산**한다.
+   D-R10 단조성: 구간 데이터가 단조(인원↑→단가↓·인원×단가↑)이면 계산도 단조다. */
+
+export interface RateTier { heads: number; unitPrice: number }
+
+export interface RosterPricing {
+  /** 대표 1인 단가 — 적용 구간(tierHeads)의 RATE 단가. 예외 학생 제외 기준 (N-17-a 표본) */
+  unitPrice: number;
+  /** 수업당 총액 — Σ(학생별 예외 ?? 구간 단가) (§54 · D-R22) */
+  total: number;
+  /** 적용된 인원 구간 (count 이하의 최대 heads) */
+  tierHeads: number;
+  /** 단가 예외(STURATE)가 적용된 학생 수 */
+  overrideCount: number;
+}
+
+/**
+ * 명단 가격 계산 — 서버 한 곳만 이 함수를 쓴다 (화면 재계산 금지).
+ * tiers 는 같은 종류·과목의 유효(최신) 구간들, overrides 는 학생 순 예외 단가(없으면 null).
+ * 단가표가 없거나 어떤 구간도 인원에 못 미치면 null — 가격을 0 이나 나눗셈으로 꾸미지 않는다.
+ */
+export function rosterPricing(tiers: RateTier[], overrides: Array<number | null>): RosterPricing | null {
+  const count = overrides.length;
+  if (count === 0) return null;
+  const applicable = tiers
+    .filter((t) => Number.isInteger(t.heads) && t.heads >= 1 && t.heads <= count)
+    .reduce<RateTier | null>((best, t) => (best === null || t.heads > best.heads ? t : best), null);
+  if (!applicable) return null;
+  const total = overrides.reduce<number>((sum, o) => sum + (o ?? applicable.unitPrice), 0);
+  return {
+    unitPrice: applicable.unitPrice,
+    total,
+    tierHeads: applicable.heads,
+    overrideCount: overrides.filter((o) => o !== null).length,
+  };
+}

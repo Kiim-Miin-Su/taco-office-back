@@ -548,9 +548,15 @@ Table RATE {
   id          bigserial   [pk]
   kind_key    varchar(16) [not null, ref: > KIND.key]
   sub_key     varchar(20) [ref: > SUB.key]
+  heads       smallint    [not null, default: 1, note: 'N-17 §4-17 ① — 인원 구간. 적용 = 인원 이하의 최대 heads. CHECK ≥ 1']
   unit_price  int         [not null]
   from_date   date        [not null]
-  Note: '프로그램별 단가. 수정하면 전체 재계산 (§54).'
+  Note: '''
+  프로그램별 단가 — 인원 구간별 (§54: 인원↑ → 1인 단가↓·총액↑). 수정하면 전체 재계산.
+  기존 행은 1인 기준으로 재해석(마이그레이션 DEFAULT 1 — 소비처 0 확인 뒤).
+  유일성은 (kind_key, COALESCE(sub_key,''), heads, from_date) 표현식 인덱스(migration).
+  수업당 총액 = Σ(학생별 STURATE 예외 ?? 적용 구간 단가) — lib/rules.rosterPricing 한 곳.
+  '''
 }
 
 Table STURATE {
@@ -1081,6 +1087,10 @@ Table SER_OCC {
 // v4.12 → v4.13 (2026-09-12 · TBO-50 C32 컨설팅 항목 원장)
 //   + CONS_ITEM            §31 항목 체크리스트 — N-18 채택. (cons_id,seq) UNIQUE ·
 //                          done↔done_by/done_at CHECK · source CHECK · 진행률은 projection
+//
+// v4.13 → v4.14 (2026-09-12 · TBO-50 C33 명단 가격 구간)
+//   + RATE.heads           N-17 채택 ① — 인원 구간(기존 행 DEFAULT 1 재해석·소비처 0 확인) ·
+//                          CHECK heads≥1 · (kind,COALESCE(sub,''),heads,from) UNIQUE 표현식 인덱스
 //
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)

@@ -325,3 +325,34 @@ describe('7. 시각은 분 정수다 (AGENT.md 원칙 17)', () => {
     ok(R.fromMin(1439) === '23:59', "1439 → '23:59'");
   });
 });
+
+describe('N-17 명단 가격 — rosterPricing (D-R10 단조성 · §4-17 채택 ①)', () => {
+  const tiers = [
+    { heads: 1, unitPrice: 80000 },
+    { heads: 2, unitPrice: 45000 },
+    { heads: 3, unitPrice: 34000 },
+    { heads: 4, unitPrice: 27000 },
+  ];
+  const none = (n: number) => Array.from({ length: n }, () => null);
+
+  it('인원이 늘면 1인 단가는 단조로 내려가고 총액은 단조로 올라간다 (§54)', () => {
+    const rows = [1, 2, 3, 4, 5].map((n) => R.rosterPricing(tiers, none(n))!);
+    rows.forEach((r) => expect(r).not.toBeNull());
+    for (let i = 1; i < rows.length; i += 1) {
+      expect(rows[i].unitPrice).toBeLessThanOrEqual(rows[i - 1].unitPrice);
+      expect(rows[i].total).toBeGreaterThan(rows[i - 1].total);
+    }
+    // 구간을 넘는 인원은 최대 구간 단가를 쓴다 — 5명 = 4인 구간 27,000 × 5
+    expect(rows[4]).toMatchObject({ tierHeads: 4, unitPrice: 27000, total: 135000 });
+  });
+
+  it('학생 예외는 합산에만 들어가고 대표 단가는 구간 값을 유지한다 (N-17-a 표본 기준)', () => {
+    const r = R.rosterPricing(tiers, [54000, null, null])!;
+    expect(r).toMatchObject({ tierHeads: 3, unitPrice: 34000, overrideCount: 1, total: 54000 + 34000 * 2 });
+  });
+
+  it('단가표가 없으면 null — 0 원이나 나눗셈으로 꾸미지 않는다', () => {
+    expect(R.rosterPricing([], none(3))).toBeNull();
+    expect(R.rosterPricing(tiers, [])).toBeNull();
+  });
+});
