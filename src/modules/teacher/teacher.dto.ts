@@ -43,12 +43,56 @@ export class TeacherTodoDto {
   @ApiProperty({ description: '진행 중(pending) 내 요청 — 시급 변경·불가 시간 등(req)' }) openStaffRequests!: number;
 }
 
+/** 올려 둔 요청 한 건 — 「관리자 승인 후 적용」을 화면이 말할 수 있게 (강사 덱 §8) */
+export class TeacherSettingRequestDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: ['wage_change', 'tz_change'] }) reqType!: string;
+  @ApiProperty({ description: '사람이 읽는 요청 이름 — 코드표는 서버가 소유한다 (D-R18)' }) label!: string;
+  @ApiPropertyOptional({ ...S, description: '무엇으로 바꿔 달라고 했는지 한 줄' }) asked?: string | null;
+  @ApiProperty({ enum: ['pending', 'approved', 'rejected'] }) state!: string;
+  @ApiProperty({ description: '올린 날 YYYY-MM-DD' }) createdOn!: string;
+  @ApiPropertyOptional({ ...S, description: '반려 사유 (D-R13)' }) rejectReason?: string | null;
+}
+
+export class TeacherTimezoneDto {
+  @ApiProperty({ description: 'IANA 이름 — staff.tz 에 그대로 들어간다' }) tz!: string;
+  @ApiProperty() name!: string;
+}
+
 export class TeacherSettingsDto {
   @ApiProperty() name!: string;
   @ApiProperty({ description: 'IANA 시간대 — staff.tz' }) timezone!: string;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '현재 적용 시급(원/시간) — 본인만 조회' })
   wageRate?: number | null;
   @ApiPropertyOptional({ ...S, description: '그 시급 적용 시작일' }) wageFrom?: string | null;
+  @ApiProperty({ type: [TeacherTimezoneDto], description: '고를 수 있는 시간대 — TZG 표가 코드표다' })
+  timezones!: TeacherTimezoneDto[];
+  @ApiProperty({ type: [TeacherSettingRequestDto], description: '최근 내 설정 요청 (새것 먼저)' })
+  requests!: TeacherSettingRequestDto[];
+  @ApiProperty({ description: '시급 변경을 지금 신청할 수 있는가 — **한 달에 한 번**이다 (강사 덱 §8 원문)' })
+  canAskWage!: boolean;
+  @ApiPropertyOptional({ ...S, description: '못 하면 언제부터 되는지 YYYY-MM-DD' }) wageAskableOn?: string | null;
+  @ApiProperty({ description: '시간대 변경을 지금 신청할 수 있는가 — 진행 중인 건이 있으면 false' })
+  canAskTz!: boolean;
+}
+
+/** 강사가 올리는 내 설정 변경 요청 — 적용은 관리자 승인 뒤다 (덱 §8) */
+export class TeacherSettingReqCreateDto {
+  @ApiProperty({ enum: ['wage_change', 'tz_change'] })
+  @IsIn(['wage_change', 'tz_change'])
+  reqType!: 'wage_change' | 'tz_change';
+
+  @ApiPropertyOptional({ description: '시급 변경일 때 바라는 시급(원/시간). 정수' })
+  @IsOptional() @IsInt() @Min(1) @Max(1_000_000)
+  rate?: number;
+
+  @ApiPropertyOptional({ description: '시간대 변경일 때 바라는 IANA 시간대 — TZG 에 있는 값만' })
+  @IsOptional() @IsString() @MaxLength(40)
+  timezone?: string;
+
+  @ApiPropertyOptional({ description: '사유 (선택)' })
+  @IsOptional() @IsString() @MaxLength(500)
+  reason?: string;
 }
 
 /** GET /teacher/home — 강사 홈 한 번에 (덱 §7~9 · 강사 전용, 서버가 본인으로 고정) */

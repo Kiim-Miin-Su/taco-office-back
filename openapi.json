@@ -4262,6 +4262,78 @@
         ]
       }
     },
+    "/teacher/requests": {
+      "post": {
+        "description": "올리기만 한다. **관리자 승인 후 적용**이며 시급은 한 달에 한 번이다 — 판정은 서버.",
+        "operationId": "TeacherController_createSettingRequest",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherSettingReqCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherSettingRequestDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "code RATE_REQUIRED | TZ_REQUIRED | TZ_UNKNOWN"
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code WAGE_REQ_MONTHLY_QUOTA | REQ_PENDING | TZ_SAME"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "내 설정 변경 요청 — 시급·시간대 (강사 덱 §8 우측 레일)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/gpa": {
       "get": {
         "description": "배정 − 사용(ok) − 대기(wait) = 잔여는 서버 한 곳이 계산한다. 학부모 비공개(D-R30) — 발송 경로에 싣지 않는다.",
@@ -8853,6 +8925,70 @@
           "openStaffRequests"
         ]
       },
+      "TeacherTimezoneDto": {
+        "type": "object",
+        "properties": {
+          "tz": {
+            "type": "string",
+            "description": "IANA 이름 — staff.tz 에 그대로 들어간다"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tz",
+          "name"
+        ]
+      },
+      "TeacherSettingRequestDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "wage_change",
+              "tz_change"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "사람이 읽는 요청 이름 — 코드표는 서버가 소유한다 (D-R18)"
+          },
+          "asked": {
+            "type": "string",
+            "nullable": true,
+            "description": "무엇으로 바꿔 달라고 했는지 한 줄"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected"
+            ]
+          },
+          "createdOn": {
+            "type": "string",
+            "description": "올린 날 YYYY-MM-DD"
+          },
+          "rejectReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "반려 사유 (D-R13)"
+          }
+        },
+        "required": [
+          "id",
+          "reqType",
+          "label",
+          "state",
+          "createdOn"
+        ]
+      },
       "TeacherSettingsDto": {
         "type": "object",
         "properties": {
@@ -8872,11 +9008,42 @@
             "type": "string",
             "nullable": true,
             "description": "그 시급 적용 시작일"
+          },
+          "timezones": {
+            "description": "고를 수 있는 시간대 — TZG 표가 코드표다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherTimezoneDto"
+            }
+          },
+          "requests": {
+            "description": "최근 내 설정 요청 (새것 먼저)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherSettingRequestDto"
+            }
+          },
+          "canAskWage": {
+            "type": "boolean",
+            "description": "시급 변경을 지금 신청할 수 있는가 — **한 달에 한 번**이다 (강사 덱 §8 원문)"
+          },
+          "wageAskableOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "못 하면 언제부터 되는지 YYYY-MM-DD"
+          },
+          "canAskTz": {
+            "type": "boolean",
+            "description": "시간대 변경을 지금 신청할 수 있는가 — 진행 중인 건이 있으면 false"
           }
         },
         "required": [
           "name",
-          "timezone"
+          "timezone",
+          "timezones",
+          "requests",
+          "canAskWage",
+          "canAskTz"
         ]
       },
       "TeacherHomeDto": {
@@ -9601,6 +9768,33 @@
           "startMin",
           "endMin",
           "reason"
+        ]
+      },
+      "TeacherSettingReqCreateDto": {
+        "type": "object",
+        "properties": {
+          "reqType": {
+            "type": "string",
+            "enum": [
+              "wage_change",
+              "tz_change"
+            ]
+          },
+          "rate": {
+            "type": "number",
+            "description": "시급 변경일 때 바라는 시급(원/시간). 정수"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "시간대 변경일 때 바라는 IANA 시간대 — TZG 에 있는 값만"
+          },
+          "reason": {
+            "type": "string",
+            "description": "사유 (선택)"
+          }
+        },
+        "required": [
+          "reqType"
         ]
       },
       "GpaCycleDto": {

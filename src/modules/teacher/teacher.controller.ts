@@ -6,12 +6,14 @@
 
 import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import {
-  ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags,
+  ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
+  ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
   TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
+  TeacherSettingReqCreateDto, TeacherSettingRequestDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto, TeacherUnavQueryDto,
 } from './teacher.dto';
@@ -115,5 +117,22 @@ export class TeacherController {
   ): Promise<{ ok: true }> {
     this.assertTeacher(user);
     return this.svc.deleteUnavailable(user.id, id);
+  }
+
+  @Post('requests')
+  @ApiOperation({
+    summary: '내 설정 변경 요청 — 시급·시간대 (강사 덱 §8 우측 레일)',
+    description: '올리기만 한다. **관리자 승인 후 적용**이며 시급은 한 달에 한 번이다 — 판정은 서버.',
+  })
+  @ApiCreatedResponse({ type: TeacherSettingRequestDto })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  @ApiBadRequestResponse({ description: 'code RATE_REQUIRED | TZ_REQUIRED | TZ_UNKNOWN' })
+  @ApiConflictResponse({ description: 'code WAGE_REQ_MONTHLY_QUOTA | REQ_PENDING | TZ_SAME' })
+  async createSettingRequest(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: TeacherSettingReqCreateDto,
+  ): Promise<TeacherSettingRequestDto> {
+    this.assertTeacher(user);
+    return this.svc.createSettingRequest(user.id, dto);
   }
 }

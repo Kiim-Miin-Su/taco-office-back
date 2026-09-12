@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ser } from '../../entities';
@@ -12,12 +12,14 @@ import {
   REPORT_UNWRITTEN_CANDIDATE_DB, REPORT_WRITTEN_DB,
   latePenalty, minutesSinceEnd, tierFor, withholding, type SessionLike,
 } from '../../lib/rules';
-import { addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
+import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
+import { REQ_TYPE_LABEL, labelOf } from '../../lib/approval';
 import type {
   TeacherGuideStudentDto, TeacherGuidesDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
   TeacherHistoryDto, TeacherHistoryLessonDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
+  TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
 } from './teacher.dto';
 
 /** 건의 월 한도 (V26 §7 확정 — 서버가 센다, SUGGESTION_QUOTA_EXCEEDED) */
@@ -143,12 +145,139 @@ export class TeacherService {
         openChangeRequests: Number(todo?.open_change_requests ?? 0),
         openStaffRequests: Number(todo?.open_staff_requests ?? 0),
       },
-      settings: {
-        name: String(me?.name ?? ''),
-        timezone: String(me?.tz ?? 'Asia/Seoul'),
-        wageRate: me?.wage_rate === null || me?.wage_rate === undefined ? null : Number(me.wage_rate),
-        wageFrom: (me?.wage_from as string) ?? null,
-      },
+      settings: await this.settings(teacherId, today, me),
+    };
+  }
+
+  /* ══ 내 설정 (강사 덱 §8 우측 레일) ═══════════════════════════════════
+     원문: 「시간대 / 기본 시급, 각각 변경 요청 버튼, **관리자 승인 후 적용**,
+     시급은 **한 달에 한 번 신청 가능**」. 적용은 관리자가 하고 강사는 올리기만 한다. */
+
+  /** 시급을 다시 신청할 수 있는 날 — 마지막 신청일 + 1개월 (원문 「한 달에 한 번」) */
+  private static wageAskableOn(lastAskedOn: string | null): string | null {
+    if (!lastAskedOn) return null;
+    const [y, m, d] = lastAskedOn.split('-').map(Number);
+    return new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
+  }
+
+  private async settings(teacherId: number, today: string, me: R | undefined): Promise<TeacherSettingsDto> {
+    const timezones = (await this.q(`SELECT tz, name FROM tzg ORDER BY id`))
+      .map((r) => ({ tz: String(r.tz), name: String(r.name) }));
+
+    const rows = await this.q(
+      `SELECT id, req_type, payload, state, reject_reason,
+              to_char(created_at AT TIME ZONE '${KST}','YYYY-MM-DD') AS created_on
+         FROM req
+        WHERE staff_id = $1 AND req_type IN ('wage_change','tz_change')
+        ORDER BY created_at DESC, id DESC
+        LIMIT 10`,
+      [teacherId],
+    );
+    const requests: TeacherSettingRequestDto[] = rows.map((r) => {
+      const payload = (r.payload ?? {}) as Record<string, unknown>;
+      const asked = r.req_type === 'wage_change'
+        ? (payload.to === undefined ? null : `${Number(payload.to).toLocaleString('ko-KR')}원/시간`)
+        : ((payload.tz as string) ?? null);
+      return {
+        id: Number(r.id), reqType: String(r.req_type),
+        label: labelOf(REQ_TYPE_LABEL, String(r.req_type)),
+        asked, state: String(r.state), createdOn: String(r.created_on),
+        rejectReason: (r.reject_reason as string) ?? null,
+      };
+    });
+
+    // 「한 달에 한 번」은 **결과와 무관하다** — 반려됐어도 한 달은 기다린다(원문 그대로).
+    const lastWage = requests.find((r) => r.reqType === 'wage_change')?.createdOn ?? null;
+    const wageAskableOn = TeacherService.wageAskableOn(lastWage);
+    const tzPending = requests.some((r) => r.reqType === 'tz_change' && r.state === 'pending');
+
+    return {
+      name: String(me?.name ?? ''),
+      timezone: String(me?.tz ?? 'Asia/Seoul'),
+      wageRate: me?.wage_rate === null || me?.wage_rate === undefined ? null : Number(me.wage_rate),
+      wageFrom: (me?.wage_from as string) ?? null,
+      timezones,
+      requests,
+      canAskWage: wageAskableOn === null || wageAskableOn <= today,
+      wageAskableOn: wageAskableOn !== null && wageAskableOn > today ? wageAskableOn : null,
+      canAskTz: !tzPending,
+    };
+  }
+
+  /**
+   * 내 설정 변경 요청을 올린다 — **적용하지 않는다.** 관리자가 승인해야 바뀐다 (덱 §8).
+   *
+   * 시급은 **한 달에 한 번**이다(원문). 승인/반려 결과와 무관하게 마지막 **신청일** 기준으로 센다 —
+   * 반려됐다고 그날 다시 올릴 수 있으면 「한 달에 한 번」이 아니다.
+   * 시간대는 진행 중인 건이 있으면 또 올리지 않는다(같은 것을 두 번 처리하게 된다).
+   */
+  async createSettingRequest(teacherId: number, dto: TeacherSettingReqCreateDto): Promise<TeacherSettingRequestDto> {
+    const today = todayKst();
+    const [me] = await this.q(`SELECT id, tz FROM staff WHERE id = $1`, [teacherId]);
+    if (!me) throw new NotFoundException('구성원을 찾을 수 없습니다');
+
+    let payload: Record<string, unknown>;
+    if (dto.reqType === 'wage_change') {
+      if (dto.rate === undefined) {
+        throw new BadRequestException({ code: 'RATE_REQUIRED', message: '바라는 시급을 넣어 주세요' });
+      }
+      const [last] = await this.q<{ created_on: string }>(
+        `SELECT to_char(created_at AT TIME ZONE '${KST}','YYYY-MM-DD') AS created_on
+           FROM req WHERE staff_id = $1 AND req_type = 'wage_change'
+          ORDER BY created_at DESC LIMIT 1`,
+        [teacherId],
+      );
+      const askableOn = TeacherService.wageAskableOn(last?.created_on ?? null);
+      if (askableOn !== null && askableOn > today) {
+        throw new ConflictException({
+          code: 'WAGE_REQ_MONTHLY_QUOTA',
+          message: `시급 변경은 한 달에 한 번 신청할 수 있습니다 — ${askableOn}부터 다시 됩니다`,
+        });
+      }
+      const [w] = await this.q<{ rate: number }>(
+        `SELECT rate FROM wage WHERE staff_id = $1 AND from_date <= $2::date ORDER BY from_date DESC LIMIT 1`,
+        [teacherId, today],
+      );
+      payload = { from: w?.rate === undefined ? null : Number(w.rate), to: dto.rate };
+    } else {
+      if (!dto.timezone) {
+        throw new BadRequestException({ code: 'TZ_REQUIRED', message: '바라는 시간대를 골라 주세요' });
+      }
+      const [tz] = await this.q(`SELECT tz FROM tzg WHERE tz = $1`, [dto.timezone]);
+      if (!tz) {
+        throw new BadRequestException({ code: 'TZ_UNKNOWN', message: '고를 수 없는 시간대입니다' });
+      }
+      if (dto.timezone === String(me.tz)) {
+        throw new ConflictException({ code: 'TZ_SAME', message: '지금 쓰고 있는 시간대입니다' });
+      }
+      const [open] = await this.q(
+        `SELECT id FROM req WHERE staff_id = $1 AND req_type = 'tz_change' AND state = 'pending' LIMIT 1`,
+        [teacherId],
+      );
+      if (open) {
+        throw new ConflictException({ code: 'REQ_PENDING', message: '이미 올린 시간대 변경 요청이 처리 중입니다' });
+      }
+      payload = { from: String(me.tz), tz: dto.timezone };
+    }
+    if (dto.reason?.trim()) payload.reason = dto.reason.trim();
+
+    // 상태는 적지 않는다 — 표의 기본값('pending')이 낱말의 출처다 (migration 1756700000000)
+    const inserted = await this.q(
+      `INSERT INTO req (staff_id, req_type, payload) VALUES ($1, $2, $3::jsonb)
+       RETURNING id, req_type, payload, state, reject_reason,
+                 to_char(created_at AT TIME ZONE '${KST}','YYYY-MM-DD') AS created_on`,
+      [teacherId, dto.reqType, JSON.stringify(payload)],
+    );
+    const r = inserted[0];
+    const p = (r.payload ?? {}) as Record<string, unknown>;
+    return {
+      id: Number(r.id), reqType: String(r.req_type),
+      label: labelOf(REQ_TYPE_LABEL, String(r.req_type)),
+      asked: dto.reqType === 'wage_change'
+        ? `${Number(p.to).toLocaleString('ko-KR')}원/시간`
+        : String(p.tz ?? ''),
+      state: String(r.state), createdOn: String(r.created_on),
+      rejectReason: null,
     };
   }
 

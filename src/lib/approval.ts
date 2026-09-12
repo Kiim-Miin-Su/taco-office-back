@@ -47,7 +47,7 @@ export const AP_KIND_LABEL: Record<ApKind, string> = {
  */
 export const REQ_TYPE_LABEL: Record<string, string> = {
   // REQ — 사람이 올리는 요청
-  wage_change: '시급 변경', unav_add: '불가 시간 추가', doc: '서류',
+  wage_change: '시급 변경', tz_change: '시간대 변경', unav_add: '불가 시간 추가', doc: '서류',
   // CHREQ — 수업을 바꿔 달라는 요청
   time: '시간 변경', time_move: '시간 이동', teacher: '강사 변경',
   room: '강의실 변경', off: '휴강', cancel: '취소',
