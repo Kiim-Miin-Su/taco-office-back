@@ -68,7 +68,7 @@ d('§24 상담 실패 이력 — 명시값·도달 기록·미분류 (N-25 채�
   it('명시값이 없으면 도달 기록 역순(failed 제외)으로 판정한다', async () => {
     await q.query(`INSERT INTO lead_stage_log (lead_id, stage) VALUES ($1,'first'), ($1,'wait2nd')`, [id]);
     await q.query(`UPDATE lead SET stage = 'failed', fail_from = NULL WHERE id = $1`, [id]);
-    const view = (await svc().all(false)).leads.find((l) => l.id === id)!;
+    const view = (await svc().all(1, false, false)).leads.find((l) => l.id === id)!;
     expect(view).toMatchObject({ revivalStage: 'wait2nd', revivalSource: 'log' });
     const back = await svc().resumeLead(51, id, {});
     expect(back.stage).toBe('wait2nd');
@@ -76,7 +76,7 @@ d('§24 상담 실패 이력 — 명시값·도달 기록·미분류 (N-25 채�
 
   it('레거시(이력 0)는 미분류 — 추정하지 않고 UNCLASSIFIED 로 거절, 단계 지정 시에만 되살린다', async () => {
     await q.query(`UPDATE lead SET stage = 'failed', fail_from = NULL, stop_at = 'after_first' WHERE id = $1`, [id]);
-    const view = (await svc().all(false)).leads.find((l) => l.id === id)!;
+    const view = (await svc().all(1, false, false)).leads.find((l) => l.id === id)!;
     // stop_at 이 있어도 fail_from 으로 추정 이관하지 않는다 (N-25)
     expect(view).toMatchObject({ failFrom: null, revivalStage: null, revivalSource: null });
     await expect(svc().resumeLead(51, id, {})).rejects.toMatchObject({ response: { code: 'UNCLASSIFIED' } });

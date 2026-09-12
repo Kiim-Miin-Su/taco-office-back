@@ -40,7 +40,7 @@ describe('§23·§24 LEAD 응답 projection', () => {
 
   it('기존 DB 연결 ID를 선택하고 raw 추가 열 없이 LeadDto만 반환한다', async () => {
     const { svc, query } = service([row({ private_note: '비공개 값', password_hash: '노출 금지' })]);
-    const result = await svc.all(false);
+    const result = await svc.all(1, false, false);
     expect(query.mock.calls[0][0]).toMatch(/SELECT[^]*l\.owner_id[^]*l\.student_id[^]*FROM lead l/);
     expect(result.leads).toEqual([{
       id: 1, name: '상담 계약 테스트', school: '학교', stage: 'failed',
@@ -50,7 +50,8 @@ describe('§23·§24 LEAD 응답 projection', () => {
       failFrom: null, revivalStage: null, revivalSource: null,
     }]);
     // 7 고정 목록 + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
-    expect(query).toHaveBeenCalledTimes(8);
+    // + §60 대표 피드백 글타래 1회 (C53)
+    expect(query).toHaveBeenCalledTimes(9);
   });
 
   it.each(['ownerId', 'studentId'])('%s는 Swagger에서 optional·nullable number다', (field) => {
@@ -66,7 +67,7 @@ describe('§23·§24 LEAD 응답 projection', () => {
   it.each(searchFields.flatMap(([column, field]) => originalTexts.map((value) => ({ column, field, value }))))(
     'FQ 검색 대상 $field 원문을 trim·기본 문구·정규화 없이 보존한다: $value', async ({ column, field, value }) => {
       const { svc } = service([row({ [column]: value })]);
-      expect((await svc.all(false)).leads[0][field]).toBe(value);
+      expect((await svc.all(1, false, false)).leads[0][field]).toBe(value);
     },
   );
 
@@ -74,20 +75,20 @@ describe('§23·§24 LEAD 응답 projection', () => {
     [null, undefined].map((value) => ({ column, field, value }))))(
     'nullable FQ 대상 $field=$value를 null로 투영하며 빈 문자열과 구분한다', async ({ column, field, value }) => {
       const { svc } = service([row({ [column]: value })]);
-      expect((await svc.all(false)).leads[0][field]).toBeNull();
+      expect((await svc.all(1, false, false)).leads[0][field]).toBeNull();
     },
   );
 
   it.each([1, '1', '01', Number.MAX_SAFE_INTEGER, String(Number.MAX_SAFE_INTEGER)])('안전한 양의 ID %p를 숫자로 투영한다', async (id) => {
     const { svc } = service([row({ id, owner_id: id, student_id: id })]);
-    expect((await svc.all(false)).leads[0]).toMatchObject({
+    expect((await svc.all(1, false, false)).leads[0]).toMatchObject({
       id: Number(id), ownerId: Number(id), studentId: Number(id),
     });
   });
 
   it.each([null, undefined])('연결 ID가 %p이면 0이 아닌 null로 유지한다', async (id) => {
     const { svc } = service([row({ owner_id: id, student_id: id })]);
-    expect((await svc.all(false)).leads[0]).toMatchObject({ id: 1, ownerId: null, studentId: null });
+    expect((await svc.all(1, false, false)).leads[0]).toMatchObject({ id: 1, ownerId: null, studentId: null });
   });
 
   const invalidIds = [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1,
@@ -95,14 +96,14 @@ describe('§23·§24 LEAD 응답 projection', () => {
   it.each(['id', 'owner_id', 'student_id'].flatMap((field) => invalidIds.map((value) => ({ field, value }))))(
     '오염/정밀도 손실 ID $field=$value를 공통 서버 오류로 막는다', async ({ field, value }) => {
       const { svc, query } = service([row({ [field]: value })]);
-      await expect(svc.all(false)).rejects.toThrow(new InternalServerErrorException('상담 데이터 무결성 오류'));
+      await expect(svc.all(1, false, false)).rejects.toThrow(new InternalServerErrorException('상담 데이터 무결성 오류'));
       expect(query).toHaveBeenCalledTimes(1);
     },
   );
 
   it.each([null, undefined])('필수 LEAD id=%p는 연결 ID와 달리 허용하지 않는다', async (id) => {
     const { svc } = service([row({ id })]);
-    await expect(svc.all(false)).rejects.toThrow(new InternalServerErrorException('상담 데이터 무결성 오류'));
+    await expect(svc.all(1, false, false)).rejects.toThrow(new InternalServerErrorException('상담 데이터 무결성 오류'));
   });
 
   it.each([
@@ -113,12 +114,12 @@ describe('§23·§24 LEAD 응답 projection', () => {
     { stage: 'failed', stop_at: 'after_second' }, { stage: 'future_stage', stop_at: 'future_stop' },
   ])('기존 단계/중단 코드를 정규화하거나 새 정책으로 막지 않는다: %p', async (over) => {
     const { svc } = service([row(over)]);
-    expect((await svc.all(false)).leads[0]).toMatchObject({ stage: over.stage, stopAt: over.stop_at });
+    expect((await svc.all(1, false, false)).leads[0]).toMatchObject({ stage: over.stage, stopAt: over.stop_at });
   });
 
   it.each([['2026-09-07', 3], ['2026-09-10', 0], ['2026-09-11', 0]])('접수일 %s와 KST 경과 %i일의 기존 의미를 유지한다', async (createdAt, ageDays) => {
     const { svc } = service([row({ created_at: createdAt, failed_at: '2026-09-09' })]);
-    const [lead] = (await svc.all(false)).leads;
+    const [lead] = (await svc.all(1, false, false)).leads;
     expect(lead).toMatchObject({ createdAt, ageDays });
     expect(lead).not.toHaveProperty('failedAt');
     expect(lead).not.toHaveProperty('failed_at');
@@ -170,7 +171,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   let user: RequestUser | undefined;
   const all = jest.fn<ReturnType<OpsService['all']>, Parameters<OpsService['all']>>();
   const empty: OpsDto = {
-    leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [], canSeeAmounts: false,
+    leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
+    feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
   };
 
   beforeAll(async () => {
@@ -188,7 +190,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   afterAll(async () => { await app?.close(); });
 
   it('실제 handler에 프론트와 동일한 두 권한이 모두 선언되어 있다 — 읽기와 실패/되살리기 쓰기 동일', () => {
-    for (const handler of ['all', 'failLead', 'resumeLead'] as const) {
+    for (const handler of ['all', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost'] as const) {
       expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
     }
   });
@@ -219,7 +221,11 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     const path = openApi.paths['/ops'];
     // C5-a의 「/ops 단일 경로」 가드는 N-25 채택(2026-09-12 §4-17)·C35로 실패/되살리기 2경로까지 확장
     // — C32 consulting-contract 갱신과 같은 선례. 검색 GET·query 계약이 늘지 않는 것은 그대로 지킨다.
-    expect(Object.keys(openApi.paths)).toEqual(['/ops', '/ops/leads/{id}/fail', '/ops/leads/{id}/resume']);
+    expect(Object.keys(openApi.paths)).toEqual([
+      '/ops', '/ops/leads/{id}/fail', '/ops/leads/{id}/resume',
+      // §60 대표 피드백 — 코멘트·답변·답 고치기 (C53). 검색 GET·query 계약은 그대로 0이다.
+      '/ops/marketing/{id}/comments', '/ops/marketing/{id}/replies', '/ops/marketing/feedback/{id}',
+    ]);
     expect(Object.keys(path)).toEqual(['get']);
     expect(path.get?.description).toMatch(/name.*school.*ownerName.*reason/);
     expect(path.get?.description).toMatch(/클라이언트.*추가 GET.*0/);
@@ -244,7 +250,15 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     const marketing = openApi.components?.schemas?.MarketingDto;
     const ops = openApi.components?.schemas?.OpsDto;
     if (!marketing || '$ref' in marketing || !ops || '$ref' in ops) throw new Error('Ops 비용 schema 누락');
-    expect(Object.keys(marketing.properties ?? {})).toHaveLength(10);
+    // 기존 10 + C53 의 6 — channelLabel · itemLabel · title · name · byId · byName
+    expect(Object.keys(marketing.properties ?? {})).toHaveLength(16);
+    // 낱말은 서버가 만든다 — 화면이 코드를 옮기지 않는다 (D-R18)
+    for (const field of ['channelLabel', 'itemLabel', 'name']) {
+      expect(marketing.properties?.[field]).toMatchObject({ type: 'string' });
+      expect(marketing.required).toContain(field);
+    }
+    expect(ops.properties?.canComment).toMatchObject({ type: 'boolean' });
+    expect(ops.properties?.feedbackNeedsFix).toMatchObject({ type: 'number' });
     for (const field of ['cost', 'costPerEnroll']) {
       expect(marketing.properties?.[field]).toMatchObject({ type: 'number', nullable: true });
       expect(marketing.required).not.toContain(field);
@@ -268,7 +282,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     user = { id: 1, name: '권한 테스트', role };
     const flags = permsOf(role);
     await checkAccess(flags.canAdminPage && flags.canCrudAll);
-    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(flags.canMoney);
+    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(1, flags.canMoney, role === 'ceo');
   });
 
   const overrides = [true, false, null, undefined] as const;
@@ -299,16 +313,19 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       }));
       const before = structuredClone(marketingRows);
       const { svc, query } = service([row()], marketingRows);
-      all.mockImplementation((canSeeAmounts) => svc.all(canSeeAmounts));
+      all.mockImplementation((viewerId, canSeeAmounts, canComment) => svc.all(viewerId, canSeeAmounts, canComment));
       user = { id: 1, name: '권한 테스트', role, perms: { canMoney } };
 
       const res = await request(app.getHttpServer()).get('/ops')
         .timeout({ response: 2000, deadline: 4000 }).expect(200);
       expect(all).toHaveBeenCalledTimes(1);
-      expect(all).toHaveBeenCalledWith(canMoney);
+      expect(all).toHaveBeenCalledWith(1, canMoney, role === 'ceo');
       expect(res.body.canSeeAmounts).toBe(canMoney);
       expect(res.body.marketing).toEqual(samples.map((sample, index) => ({
         id: index + 1, channel: 'naver', item: 'ads', url: null,
+        // 모르는 코드값은 코드값 그대로 보인다 — 비어 보이느니 낯설게 보이는 편이 낫다
+        channelLabel: '네이버', itemLabel: 'ads', name: '네이버 · ads',
+        title: null, byId: null, byName: null,
         ...(sample.result === null ? { impressions: null, clicks: null, inquiries: null } : metrics),
         enrolled: sample.enrolled,
         cost: canMoney ? sample.cost : null,
@@ -316,7 +333,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       })));
       expect(res.body.leads).toMatchObject([{ id: 1, name: '상담 계약 테스트' }]);
       expect(Object.keys(res.body).sort()).toEqual(Object.keys(empty).sort());
-      expect(query).toHaveBeenCalledTimes(8); // 7 목록 + N-25 도달 기록 판정 1회 (fixture 가 failed 건)
+      expect(query).toHaveBeenCalledTimes(9); // 7 목록 + N-25 도달 기록 1회 + §60 피드백 1회 (C53)
       expect(query.mock.calls.every(([sql]) => /^SELECT\b/.test(sql))).toBe(true);
       expect(marketingRows).toEqual(before);
     },

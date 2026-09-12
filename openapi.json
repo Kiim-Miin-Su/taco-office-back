@@ -3437,6 +3437,278 @@
         ]
       }
     },
+    "/ops/marketing/{id}/comments": {
+      "post": {
+        "description": "「대표가 코멘트를 남기면 관리자 전원에게 알림이 갑니다」. 쓸 때의 종류를 kind 로 적는다 — 쓴 사람의 지금 역할로 되짚지 않는다.",
+        "operationId": "OpsController_comment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfbCommentWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MfbThreadDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "마케팅 활동 없음"
+          },
+          "409": {
+            "description": "code CEO_ONLY"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "대표 코멘트 — 관리자 전원에게 알림 (원문 §60)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/marketing/{id}/replies": {
+      "post": {
+        "description": "「담당자 답변은 대표에게만」. 어느 코멘트에 대한 답인지 parentId 로 들고 있어야 「고쳤습니다」 판정이 한 곳에 산다.",
+        "operationId": "OpsController_reply",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfbReplyWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MfbThreadDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "코멘트 없음"
+          },
+          "409": {
+            "description": "code NOT_A_COMMENT | NOT_OWNER"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "담당자 답변 — 코멘트를 쓴 대표에게만 알림 (원문 §60)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/marketing/feedback/{id}": {
+      "patch": {
+        "operationId": "OpsController_editPost",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MfbEditDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MfbThreadDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "글 없음"
+          },
+          "409": {
+            "description": "code NOT_AUTHOR"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "답 고치기 — 자기가 쓴 글만 (원문 §60)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/consulting": {
       "get": {
         "description": "최종 canAdminPage와 canCrudAll이 모두 필요하다. 공개 범위로 투영된 items의 stage(contract/running/done)를 클라이언트에서 필터링하며 추가 GET은 0이다. 전체/단계 건수는 같은 items에서 파생하고 금액·상세 공개 권한을 변경하지 않는다.",
@@ -9901,10 +10173,38 @@
             "type": "number"
           },
           "channel": {
-            "type": "string"
+            "type": "string",
+            "description": "코드값 — 이름은 channelLabel 을 쓴다"
           },
           "item": {
-            "type": "string"
+            "type": "string",
+            "description": "코드값 — 이름은 itemLabel 을 쓴다"
+          },
+          "channelLabel": {
+            "type": "string",
+            "description": "채널 이름"
+          },
+          "itemLabel": {
+            "type": "string",
+            "description": "항목 이름"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "활동 이름 — 원문 §59·§60 카드 제목 (옛 행은 null)"
+          },
+          "name": {
+            "type": "string",
+            "description": "카드에 쓰는 이름 — title 이 없으면 채널·항목으로 부른다"
+          },
+          "byId": {
+            "type": "number",
+            "nullable": true
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true,
+            "description": "담당자 — §60 답변을 쓸 수 있는 사람"
           },
           "url": {
             "type": "string",
@@ -9940,7 +10240,118 @@
         "required": [
           "id",
           "channel",
-          "item"
+          "item",
+          "channelLabel",
+          "itemLabel",
+          "name"
+        ]
+      },
+      "MfbPostDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "comment",
+              "reply"
+            ],
+            "description": "쓸 때의 종류 — 역할로 되짚지 않는다"
+          },
+          "kindLabel": {
+            "type": "string",
+            "description": "칩에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)"
+          },
+          "body": {
+            "type": "string"
+          },
+          "byId": {
+            "type": "number"
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true
+          },
+          "at": {
+            "type": "string",
+            "description": "KST ISO"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "kindLabel",
+          "body",
+          "byId",
+          "at"
+        ]
+      },
+      "MfbThreadDto": {
+        "type": "object",
+        "properties": {
+          "mktId": {
+            "type": "number",
+            "description": "마케팅 활동 id"
+          },
+          "name": {
+            "type": "string",
+            "description": "카드 이름 — MarketingDto.name 과 같은 자리에서 나온다"
+          },
+          "channelLabel": {
+            "type": "string"
+          },
+          "itemLabel": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true,
+            "description": "담당자 — 답변을 쓸 수 있는 사람"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "needs_fix"
+            ],
+            "description": "판정은 서버가 한다"
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "칩에 쓰는 이름"
+          },
+          "at": {
+            "type": "string",
+            "description": "가장 나중 대표 코멘트의 시각 — 카드 오른쪽 위"
+          },
+          "posts": {
+            "description": "코멘트와 그 답변이 시각 순으로 섞여 있다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MfbPostDto"
+            }
+          },
+          "canReply": {
+            "type": "boolean",
+            "description": "내가 답변을 쓸 수 있는가 — 담당자이거나 담당자가 없을 때"
+          }
+        },
+        "required": [
+          "mktId",
+          "name",
+          "channelLabel",
+          "itemLabel",
+          "state",
+          "stateLabel",
+          "at",
+          "posts",
+          "canReply"
         ]
       },
       "SuggestionDto": {
@@ -10028,6 +10439,21 @@
               "$ref": "#/components/schemas/MarketingDto"
             }
           },
+          "feedback": {
+            "description": "§60 대표 피드백 — 코멘트가 달린 활동만",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MfbThreadDto"
+            }
+          },
+          "feedbackNeedsFix": {
+            "type": "number",
+            "description": "고쳐야 할 것 — 서버가 센다 (D-R37)"
+          },
+          "canComment": {
+            "type": "boolean",
+            "description": "대표 코멘트를 남길 수 있는가 — 원문 §60 「대표가 코멘트하면」 (D-R39)"
+          },
           "suggestions": {
             "type": "array",
             "items": {
@@ -10046,6 +10472,9 @@
           "plans",
           "meetings",
           "marketing",
+          "feedback",
+          "feedbackNeedsFix",
+          "canComment",
           "suggestions",
           "canSeeAmounts"
         ]
@@ -10086,6 +10515,49 @@
             "description": "되살릴 단계 지정 — 생략하면 서버 판정(명시값 → 도달 기록). 미분류인데 생략하면 409 UNCLASSIFIED"
           }
         }
+      },
+      "MfbCommentWriteDto": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "코멘트 본문",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "body"
+        ]
+      },
+      "MfbReplyWriteDto": {
+        "type": "object",
+        "properties": {
+          "parentId": {
+            "type": "number",
+            "description": "어느 코멘트에 대한 답인가"
+          },
+          "body": {
+            "type": "string",
+            "description": "답변 본문",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "parentId",
+          "body"
+        ]
+      },
+      "MfbEditDto": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "body"
+        ]
       },
       "ConsultingSessionDto": {
         "type": "object",

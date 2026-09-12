@@ -28,4 +28,12 @@ export class Mfb {
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   at: Date;
+
+  /** 쓸 때의 종류 — comment(대표 코멘트) · reply(담당자 답변). 역할로 되짚지 않는다 (C53) */
+  @Column({ type: 'varchar', length: 8, default: 'comment' })
+  kind: string;
+
+  /** 답변이 답하는 코멘트 — 코멘트면 null (C53) */
+  @Column({ type: 'bigint', nullable: true })
+  parentId: number | null;
 }

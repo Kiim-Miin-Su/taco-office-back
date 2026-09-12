@@ -142,14 +142,36 @@ export const CONS_SESSIONS = [
 ];
 
 /** 마케팅 — 채널 7종 (§59) */
-export const MKTS = [
-  { channel: 'instagram', item: 'ad',      url: 'https://ig.com/tnacademy/p/9f2', result: { impressions: 42180, clicks: 1204, inquiries: 18, booked: 12, enrolled: 6, cost: 640000 }, onDate: D(-27) },
-  { channel: 'naver',     item: 'blog',    url: 'https://blog.naver.com/tnacad',  result: { impressions: 18640, clicks: 842, inquiries: 11, booked: 8, enrolled: 4, cost: 0 }, onDate: D(-27) },
-  { channel: 'daangn',    item: 'biz',     url: 'https://daangn.com/kr/biz/tn',   result: { impressions: 9320, clicks: 410, inquiries: 7, booked: 5, enrolled: 2, cost: 180000 }, onDate: D(-27) },
-  { channel: 'kakao',     item: 'channel', url: 'https://pf.kakao.com/_tnacad',   result: { impressions: 6140, clicks: 388, inquiries: 5, booked: 3, enrolled: 1, cost: 120000 }, onDate: D(-27) },
-  { channel: 'youtube',   item: 'video',   url: 'https://youtube.com/@tnacademy', result: { impressions: 12400, clicks: 214, inquiries: 3, booked: 1, enrolled: 0, cost: 320000 }, onDate: D(-27) },
-  { channel: 'referral',  item: 'word',    url: null, result: { inquiries: 4, booked: 4, enrolled: 3, cost: 0 }, onDate: D(-27) },
-  { channel: 'flyer',     item: 'print',   url: null, result: { impressions: 3000, inquiries: 0, booked: 1, enrolled: 0, cost: 90000 }, onDate: D(-27) },
+export const MKTS: Array<{
+  id: number; channel: string; item: string; url: string | null;
+  result: Record<string, number>; onDate: string; title?: string; byId?: number;
+}> = [
+  { id: 1, channel: 'instagram', item: 'ad',      url: 'https://ig.com/tnacademy/p/9f2', result: { impressions: 42180, clicks: 1204, inquiries: 18, booked: 12, enrolled: 6, cost: 640000 }, onDate: D(-27), title: '학습실 하루 · 30초 릴스', byId: 2 },
+  { id: 2, channel: 'naver',     item: 'blog',    url: 'https://blog.naver.com/tnacad',  result: { impressions: 18640, clicks: 842, inquiries: 11, booked: 8, enrolled: 4, cost: 0 }, onDate: D(-27), title: '강남 국제학교 준비 로드맵 · 8월', byId: 2 },
+  { id: 3, channel: 'daangn',    item: 'biz',     url: 'https://daangn.com/kr/biz/tn',   result: { impressions: 9320, clicks: 410, inquiries: 7, booked: 5, enrolled: 2, cost: 180000 }, onDate: D(-27) },
+  { id: 4, channel: 'kakao',     item: 'channel', url: 'https://pf.kakao.com/_tnacad',   result: { impressions: 6140, clicks: 388, inquiries: 5, booked: 3, enrolled: 1, cost: 120000 }, onDate: D(-27) },
+  { id: 5, channel: 'youtube',   item: 'video',   url: 'https://youtube.com/@tnacademy', result: { impressions: 12400, clicks: 214, inquiries: 3, booked: 1, enrolled: 0, cost: 320000 }, onDate: D(-27) },
+  { id: 6, channel: 'referral',  item: 'word',    url: null, result: { inquiries: 4, booked: 4, enrolled: 3, cost: 0 }, onDate: D(-27) },
+  { id: 7, channel: 'flyer',     item: 'print',   url: null, result: { impressions: 3000, inquiries: 0, booked: 1, enrolled: 0, cost: 90000 }, onDate: D(-27) },
+];
+
+/**
+ * §60 대표 피드백 — 원문 카드 두 장 그대로.
+ *
+ * 위 글타래는 대표 코멘트에 담당자 답이 달려 **「고쳤습니다」**, 아래는 답이 없어
+ * **「확인 필요」** 다. 이 한 쌍이 있어야 §60 머리의 「고쳐야 할 것 1건」이 실제로 1 이 된다.
+ * 판정을 시드가 적지 않는다 — 서버가 parent_id 를 보고 정한다 (D-R39).
+ */
+export const MFBS: Array<{
+  id: number; mktId: number; byId: number; kind: 'comment' | 'reply'; parentId: number | null;
+  body: string; at: string;
+}> = [
+  { id: 1, mktId: 2, byId: 1, kind: 'comment', parentId: null,
+    body: '제목이 길어 검색에 안 걸립니다. 키워드를 앞에 두세요.', at: `${D(-23)}T21:15:00+09:00` },
+  { id: 2, mktId: 2, byId: 2, kind: 'reply', parentId: 1,
+    body: "제목을 '국제학교 준비 로드맵 | 강남 TN'으로 바꿨습니다.", at: `${D(-22)}T09:30:00+09:00` },
+  { id: 3, mktId: 1, byId: 1, kind: 'comment', parentId: null,
+    body: '릴스 첫 3초에 학원명이 안 보입니다. 로고를 앞으로 빼주세요.', at: `${D(-23)}T21:10:00+09:00` },
 ];
 
 /** 기획 — 5단계 (§61) */

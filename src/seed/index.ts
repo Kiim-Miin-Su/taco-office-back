@@ -19,7 +19,7 @@ import { STUDENTS, ENROLLMENTS, LEADS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
-import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
+import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, MFBS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
 
 /**
  * `--reset` 이 비우는 표 — 넣을 때의 이 순서를 **역순으로** 지운다.
@@ -40,7 +40,7 @@ export const SEEDED_TABLES = [
   'inv', 'inv_line', 'pay', 'expense', 'payout',
   'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
-  'mkt', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
+  'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
   'gtpl', 'vers', 'hist', 'file', 'zassign',
   // 기록만 쌓이는 표들 — 안 비우면 dev DB 에 옛 QA 흔적이 끝없이 남는다
@@ -192,7 +192,8 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('gpa_alloc', GPA_ALLOCS.map((a) => ({ cycle_id: a.cycleId, student_id: a.studentId, coord_id: a.coordId, points: a.points })));
     await add('gpa_use', GPA_USES.map((u) => ({ cycle_id: u.cycleId, student_id: u.studentId, ser_id: u.serId, svc_key: u.svcKey, points: u.points, on_date: u.onDate, start_min: u.startMin, coord_id: u.coordId, state: u.state })));
     await add('cons_sess', CONS_SESSIONS.map((s) => ({ cons_id: s.consId, seq: s.seq, on_date: s.onDate, who: s.who, what: s.what, why: s.why, how: s.how })));
-    await add('mkt', MKTS.map((m) => ({ channel: m.channel, item: m.item, url: m.url, result: JSON.stringify(m.result), on_date: m.onDate })));
+    await add('mkt', MKTS.map((m) => ({ id: m.id, channel: m.channel, item: m.item, url: m.url, result: JSON.stringify(m.result), on_date: m.onDate, title: m.title ?? null, by_id: m.byId ?? null })));
+    await add('mfb', MFBS.map((f) => ({ id: f.id, mkt_id: f.mktId, by_id: f.byId, kind: f.kind, parent_id: f.parentId, body: f.body, at: f.at })));
     await add('plan', PLANS.map((p) => ({ id: p.id, title: p.title, stage: p.stage, goal: p.goal, research: p.research, ask: p.ask, due_on: p.dueOn, owner_id: p.ownerId })));
     await add('mtrec', MEETINGS.map((m) => ({ id: m.id, mt_type: m.mtType, title: m.title, on_date: m.onDate, minutes: m.minutes })));
     await add('mtattd', MEETINGS.flatMap((m) => m.attendees.map((a) => ({ mt_id: m.id, staff_id: a, confirmed: m.minutes !== null }))));
@@ -202,7 +203,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('todo', TODOS.map((t) => ({ title: t.title, from_id: t.fromId, to_id: t.toId, due_on: t.dueOn, done: t.done, src: t.src, mt_id: num((t as { mtId?: number }).mtId), plan_id: num((t as { planId?: number }).planId) })));
 
     // 손으로 넣은 id 뒤로 시퀀스를 밀어 둔다 — 안 하면 다음 INSERT 가 충돌한다
-    for (const t of ['room', 'zacc', 'staff', 'stu', 'lead', 'ser', 'lib', 'inv', 'cons', 'plan', 'mtrec', 'gpa_cycle']) {
+    for (const t of ['room', 'zacc', 'staff', 'stu', 'lead', 'ser', 'lib', 'inv', 'cons', 'plan', 'mtrec', 'gpa_cycle', 'mkt', 'mfb']) {
       await q.query(`SELECT setval(pg_get_serial_sequence('${t}', 'id'), GREATEST((SELECT COALESCE(MAX(id), 1) FROM ${t}), 1))`);
     }
 

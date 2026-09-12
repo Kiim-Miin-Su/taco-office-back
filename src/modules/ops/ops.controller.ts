@@ -4,11 +4,13 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
 import { ApiConflictResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { LeadDto, LeadFailDto, LeadResumeDto, OpsDto } from './ops.dto';
+import { Perm, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import {
+  LeadDto, LeadFailDto, LeadResumeDto, MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
+} from './ops.dto';
 import { OpsService } from './ops.service';
 
 @ApiTags('ops')
@@ -24,7 +26,11 @@ export class OpsController {
   })
   @ApiOkResponse({ type: OpsDto })
   async all(@CurrentUser() user: RequestUser): Promise<OpsDto> {
-    return this.svc.all(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms));
+    return this.svc.all(
+      user.id,
+      isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms),
+      isRole(user.role) && canCeoComment(user.role),
+    );
   }
 
   @Post('leads/:id/fail')
@@ -59,5 +65,55 @@ export class OpsController {
     @Body() dto: LeadResumeDto,
   ): Promise<LeadDto> {
     return this.svc.resumeLead(user.id, id, dto);
+  }
+
+  /* ══ §60 대표 피드백 ═══════════════════════════════════════════════════ */
+
+  @Post('marketing/:id/comments')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '대표 코멘트 — 관리자 전원에게 알림 (원문 §60)',
+    description: '「대표가 코멘트를 남기면 관리자 전원에게 알림이 갑니다」. 쓸 때의 종류를 kind 로 적는다 — 쓴 사람의 지금 역할로 되짚지 않는다.',
+  })
+  @ApiOkResponse({ type: [MfbThreadDto] })
+  @ApiConflictResponse({ description: 'code CEO_ONLY' })
+  @ApiNotFoundResponse({ description: '마케팅 활동 없음' })
+  async comment(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MfbCommentWriteDto,
+  ): Promise<MfbThreadDto[]> {
+    return this.svc.comment(user.id, isRole(user.role) && canCeoComment(user.role), id, dto);
+  }
+
+  @Post('marketing/:id/replies')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '담당자 답변 — 코멘트를 쓴 대표에게만 알림 (원문 §60)',
+    description: '「담당자 답변은 대표에게만」. 어느 코멘트에 대한 답인지 parentId 로 들고 있어야 「고쳤습니다」 판정이 한 곳에 산다.',
+  })
+  @ApiOkResponse({ type: [MfbThreadDto] })
+  @ApiConflictResponse({ description: 'code NOT_A_COMMENT | NOT_OWNER' })
+  @ApiNotFoundResponse({ description: '코멘트 없음' })
+  async reply(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MfbReplyWriteDto,
+  ): Promise<MfbThreadDto[]> {
+    return this.svc.reply(user.id, id, dto);
+  }
+
+  @Patch('marketing/feedback/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '답 고치기 — 자기가 쓴 글만 (원문 §60)' })
+  @ApiOkResponse({ type: [MfbThreadDto] })
+  @ApiConflictResponse({ description: 'code NOT_AUTHOR' })
+  @ApiNotFoundResponse({ description: '글 없음' })
+  async editPost(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MfbEditDto,
+  ): Promise<MfbThreadDto[]> {
+    return this.svc.editPost(user.id, id, dto);
   }
 }

@@ -5,7 +5,8 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { MFB_STATES } from '../../lib/marketing-words';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -106,8 +107,15 @@ export class MeetingDto {
 /** §59 마케팅 트래킹 */
 export class MarketingDto {
   @ApiProperty() id!: number;
-  @ApiProperty() channel!: string;
-  @ApiProperty() item!: string;
+  @ApiProperty({ description: '코드값 — 이름은 channelLabel 을 쓴다' }) channel!: string;
+  @ApiProperty({ description: '코드값 — 이름은 itemLabel 을 쓴다' }) item!: string;
+  /* 낱말은 서버가 만든다 — 화면이 영어 코드를 한글로 옮기지 않는다 (D-R18 · C53) */
+  @ApiProperty({ description: '채널 이름' }) channelLabel!: string;
+  @ApiProperty({ description: '항목 이름' }) itemLabel!: string;
+  @ApiPropertyOptional({ ...S, description: '활동 이름 — 원문 §59·§60 카드 제목 (옛 행은 null)' }) title?: string | null;
+  @ApiProperty({ description: '카드에 쓰는 이름 — title 이 없으면 채널·항목으로 부른다' }) name!: string;
+  @ApiPropertyOptional(N) byId?: number | null;
+  @ApiPropertyOptional({ ...S, description: '담당자 — §60 답변을 쓸 수 있는 사람' }) byName?: string | null;
   @ApiPropertyOptional(S) url?: string | null;
   @ApiPropertyOptional(N) impressions?: number | null;
   @ApiPropertyOptional(N) clicks?: number | null;
@@ -115,6 +123,61 @@ export class MarketingDto {
   @ApiPropertyOptional(N) enrolled?: number | null;
   @ApiPropertyOptional({ ...N, description: '집행 비용 — 대표만 (D-R39)' }) cost?: number | null;
   @ApiPropertyOptional({ ...N, description: '등록당 비용' }) costPerEnroll?: number | null;
+}
+
+/** §60 대표 피드백 — 글 한 줄 (코멘트 · 답변 공용) */
+export class MfbPostDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: ['comment', 'reply'], description: '쓸 때의 종류 — 역할로 되짚지 않는다' }) kind!: string;
+  @ApiProperty({ description: '칩에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)' }) kindLabel!: string;
+  @ApiProperty() body!: string;
+  @ApiProperty() byId!: number;
+  @ApiPropertyOptional(S) byName?: string | null;
+  @ApiProperty({ description: 'KST ISO' }) at!: string;
+}
+
+/**
+ * §60 카드 하나 — 마케팅 활동 하나에 달린 글타래.
+ *
+ * 「고쳤습니다 / 확인 필요」와 「고쳐야 할 것 N건」은 **서버가 정한다.** 화면이 코멘트와 답변의
+ * 시각을 견주면 카드의 칩과 머리의 숫자가 갈린다 (D-R37 · D-R39).
+ */
+export class MfbThreadDto {
+  @ApiProperty({ description: '마케팅 활동 id' }) mktId!: number;
+  @ApiProperty({ description: '카드 이름 — MarketingDto.name 과 같은 자리에서 나온다' }) name!: string;
+  @ApiProperty() channelLabel!: string;
+  @ApiProperty() itemLabel!: string;
+  @ApiPropertyOptional(S) url?: string | null;
+  @ApiPropertyOptional({ ...S, description: '담당자 — 답변을 쓸 수 있는 사람' }) byName?: string | null;
+  @ApiProperty({ enum: MFB_STATES, description: '판정은 서버가 한다' }) state!: string;
+  @ApiProperty({ description: '칩에 쓰는 이름' }) stateLabel!: string;
+  @ApiProperty({ description: '가장 나중 대표 코멘트의 시각 — 카드 오른쪽 위' }) at!: string;
+  @ApiProperty({ type: [MfbPostDto], description: '코멘트와 그 답변이 시각 순으로 섞여 있다' }) posts!: MfbPostDto[];
+  @ApiProperty({ description: '내가 답변을 쓸 수 있는가 — 담당자이거나 담당자가 없을 때' }) canReply!: boolean;
+}
+
+/** 대표 코멘트 쓰기 — 원문 §60 「+ 코멘트 남기기」 */
+export class MfbCommentWriteDto {
+  @ApiProperty({ description: '코멘트 본문', maxLength: 1000 })
+  @IsString() @MinLength(1, { message: '코멘트를 적어 주세요' }) @MaxLength(1000)
+  body!: string;
+}
+
+/** 담당자 답변 쓰기 — 원문 §60 「고친 것 알리기」 */
+export class MfbReplyWriteDto {
+  @ApiProperty({ description: '어느 코멘트에 대한 답인가' })
+  @IsInt() @Min(1)
+  parentId!: number;
+  @ApiProperty({ description: '답변 본문', maxLength: 1000 })
+  @IsString() @MinLength(1, { message: '답변을 적어 주세요' }) @MaxLength(1000)
+  body!: string;
+}
+
+/** 답 고치기 — 원문 §60 「답 고치기」. 자기가 쓴 글만 고친다 */
+export class MfbEditDto {
+  @ApiProperty({ maxLength: 1000 })
+  @IsString() @MinLength(1, { message: '본문을 적어 주세요' }) @MaxLength(1000)
+  body!: string;
 }
 
 /** 건의 사항 */
@@ -135,6 +198,9 @@ export class OpsDto {
   @ApiProperty({ type: [PlanDto] }) plans!: PlanDto[];
   @ApiProperty({ type: [MeetingDto] }) meetings!: MeetingDto[];
   @ApiProperty({ type: [MarketingDto] }) marketing!: MarketingDto[];
+  @ApiProperty({ type: [MfbThreadDto], description: '§60 대표 피드백 — 코멘트가 달린 활동만' }) feedback!: MfbThreadDto[];
+  @ApiProperty({ description: '고쳐야 할 것 — 서버가 센다 (D-R37)' }) feedbackNeedsFix!: number;
+  @ApiProperty({ description: '대표 코멘트를 남길 수 있는가 — 원문 §60 「대표가 코멘트하면」 (D-R39)' }) canComment!: boolean;
   @ApiProperty({ type: [SuggestionDto] }) suggestions!: SuggestionDto[];
   @ApiProperty({ description: '집행 비용을 볼 수 있는가' }) canSeeAmounts!: boolean;
 }

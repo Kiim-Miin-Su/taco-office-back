@@ -33,4 +33,12 @@ export class Mkt {
 
   @Column({ type: 'date', nullable: true })
   onDate: string | null;
+
+  /** 활동 이름 — 원문 §59·§60 카드의 제목 (C53) */
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  title: string | null;
+
+  /** 담당자 — 원문 §60 「담당자 답변」을 쓸 수 있는 사람 (C53) */
+  @Column({ type: 'bigint', nullable: true })
+  byId: number | null;
 }
