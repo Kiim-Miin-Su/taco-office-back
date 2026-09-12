@@ -127,7 +127,26 @@ export async function project(
   );
 
   const want = new Set(serIds);
-  const rows: Array<[number, string, number | null, number | null, boolean, string]> = [];
+  const rows: Array<[number, string, number | null, number | null, boolean, string, number | null]> = [];
+
+  /* 줌 계정 배정 — 정본은 `zassign` 이고 `ser_occ.zacc_id` 는 그 **투영**이다 (C48).
+     규칙 단위(ser_id)로 붙인 것이 기본이고, 회차 하나만 다른 계정을 쓰면 그 회차의 EXC 에 붙는다.
+     회차 쪽이 이기고, 겹침은 `ser_occ` 의 EXCLUDE 가 마지막으로 막는다 — 같은 계정이 같은 시간에
+     두 수업에 붙을 수 없다. 투영이 이 칸을 채우지 않으면 그 제약이 아무것도 지키지 못한다. */
+  const zas = (await q.query(
+    `SELECT z.ser_id, z.exc_id, z.zacc_id, e.ser_id AS exc_ser_id, to_char(e.on_date,'YYYY-MM-DD') AS exc_on_date
+       FROM zassign z LEFT JOIN exc e ON e.id = z.exc_id
+      WHERE z.ser_id = ANY($1) OR e.ser_id = ANY($1)`,
+    [serIds],
+  )) as Array<{ ser_id: string | null; exc_id: string | null; zacc_id: string; exc_ser_id: string | null; exc_on_date: string | null }>;
+  const zBySer = new Map<number, number>();
+  const zByOcc = new Map<string, number>();
+  for (const z of zas) {
+    if (z.exc_id && z.exc_ser_id && z.exc_on_date) zByOcc.set(`${z.exc_ser_id}|${z.exc_on_date}`, Number(z.zacc_id));
+    else if (z.ser_id) zBySer.set(Number(z.ser_id), Number(z.zacc_id));
+  }
+  const zaccOf = (serId: number, onDate: string): number | null =>
+    zByOcc.get(`${serId}|${onDate}`) ?? zBySer.get(serId) ?? null;
 
   /* `occ()` 는 **표시용**이라 휴강을 그리지 않는다 (「휴강 — 그리지 않는다」).
      투영은 그것만으로 부족하다 — 현황판이 「취소·휴강 n건」을 세려면 그 회차도 표에 있어야 하고,
@@ -148,6 +167,7 @@ export async function project(
         o.roomId,
         o.canceled,
         `[${at(o.date, o.startMin)},${at(o.date, o.endMin)})`,
+        zaccOf(o.serId, o.onDate),
       ]);
     }
 
@@ -163,6 +183,7 @@ export async function project(
         e.roomSet ? e.roomId : ser.roomId,
         true,
         `[${at(d, e.startMin ?? ser.startMin)},${at(d, e.endMin ?? ser.endMin)})`,
+        zaccOf(ser.id, d),
       ]);
     }
   }
@@ -171,17 +192,17 @@ export async function project(
   // 한 번에 넣는다 — 회차마다 왕복하면 규칙 하나에 수백 번이 된다
   const vals: unknown[] = [];
   const tuples = rows.map((r, i) => {
-    const b = i * 6;
+    const b = i * 7;
     vals.push(...r);
-    return `($${b + 1}, $${b + 2}::date, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}::tstzrange)`;
+    return `($${b + 1}, $${b + 2}::date, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6}::tstzrange, $${b + 7})`;
   });
 
   await q.query(
-    `INSERT INTO ser_occ (ser_id, on_date, teacher_id, room_id, canceled, span)
+    `INSERT INTO ser_occ (ser_id, on_date, teacher_id, room_id, canceled, span, zacc_id)
      VALUES ${tuples.join(', ')}
      ON CONFLICT (ser_id, on_date) DO UPDATE SET
        teacher_id = EXCLUDED.teacher_id, room_id = EXCLUDED.room_id,
-       canceled = EXCLUDED.canceled, span = EXCLUDED.span`,
+       canceled = EXCLUDED.canceled, span = EXCLUDED.span, zacc_id = EXCLUDED.zacc_id`,
     vals,
   );
   await projectReports(q, serIds);

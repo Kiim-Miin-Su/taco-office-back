@@ -8,16 +8,19 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Rep } from '../../entities';
 import { ReportsController } from './reports.controller';
-import { REPORT_FILE_STORE, VercelReportFileStore } from './report-file.store';
+import { FilesModule } from '../files/files.module';
+import { NeonReportFileStore, REPORT_FILE_STORE, VercelReportFileStore } from './report-file.store';
 import { ReportsService } from './reports.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Rep])],
+  imports: [TypeOrmModule.forFeature([Rep]), FilesModule],
   controllers: [ReportsController],
   providers: [
     ReportsService,
     VercelReportFileStore,
-    { provide: REPORT_FILE_STORE, useExisting: VercelReportFileStore },
+    NeonReportFileStore,
+    // 새 파일은 Neon 으로 간다. Vercel 은 예전 주소를 지울 때만 불린다 (대표 결정 2026-09-12)
+    { provide: REPORT_FILE_STORE, useExisting: NeonReportFileStore },
   ],
 })
 export class ReportsModule {}

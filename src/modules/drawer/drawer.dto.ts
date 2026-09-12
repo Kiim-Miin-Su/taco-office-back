@@ -6,6 +6,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 // 여기서 다시 적었다가 DB(time_move)·읽기 DTO(time)·쓰기 검증(off)이 세 벌로 갈렸다.
+import { KIND_GROUPS } from '../../lib/catalog-words';
 import { CHREQ_TYPES } from '../../lib/change-request';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 
@@ -164,7 +165,9 @@ export class KindRowDto {
   @ApiProperty() name!: string;
   @ApiProperty() color!: string;
   @ApiProperty({ description: '정원' }) cap!: number;
-  @ApiProperty({ enum: ['lesson', 'intake', 'meeting'] }) grp!: string;
+  @ApiProperty({ enum: KIND_GROUPS }) grp!: string;
+  /* 서랍이 화면에 코드표를 다시 적고 있었고 그 표가 원문과 달랐다 — 「상담」/「상담·진단」 (C48 · D-R18) */
+  @ApiProperty({ description: '묶음 이름 — 낱말은 서버가 만든다 (D-R18)' }) grpLabel!: string;
   @ApiProperty({ description: 'true 인 종류만 리포트 대상 (D-R6)' }) rep!: boolean;
 }
 

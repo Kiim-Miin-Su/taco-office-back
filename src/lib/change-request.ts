@@ -74,13 +74,16 @@ export function chreqAsked(
 /**
  * 이 요청을 **지금 반영할 수 있는가**.
  *
- * 줌 계정 배정(`ser_occ.zacc_id`)을 쓰는 코드가 저장소에 하나도 없다 — 경로가 없는데
- * 승인 단추를 그리면 눌러도 아무 일이 없거나, 더 나쁘게는 「반영했다」고 적힌다.
- * 경로가 생기는 청크에서 이 함수만 고친다.
+ * 원문 §19 의 갈래는 넷이다 — 시간 옮기기 · 강사 바꾸기 · 강의실 바꾸기 · 휴강.
+ * (배정 자체를 시작하는 자리는 §43 안내 할 일의 「계정 배정 →」이다.)
+ * 온라인 수업의 「강의실」이 줌 계정이라, `room` 은 `{roomId}` 와 `{zaccId}` 두 모양을 갖는다.
+ *
+ * 그 중 `{zaccId}` 모양만 한동안 `false` 였다 — 줌 계정을 붙이는 코드가 저장소에 하나도 없어서,
+ * 승인 단추를 그려 봐야 눌러도 아무 일이 없거나 더 나쁘게는 「반영했다」고 적혔다.
+ * **C48 에서 배정 경로가 생겼다**(ZASSIGN → `ser_occ.zacc_id` 투영 · 대표 결정 2026-09-12).
+ * 이제 네 갈래가 두 모양까지 모두 반영된다.
  */
-export function chreqApplicable(reqType: string, payload: unknown): boolean {
-  const p = (payload ?? {}) as Record<string, unknown>;
-  if (reqType === 'room' && p.zaccId !== undefined) return false;
+export function chreqApplicable(reqType: string, _payload: unknown): boolean {
   return isChreqType(reqType);
 }
 

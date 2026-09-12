@@ -30,6 +30,10 @@ import { TeacherModule } from './modules/teacher/teacher.module';
 import { GpaModule } from './modules/gpa/gpa.module';
 import { ExecModule } from './modules/exec/exec.module';
 import { DrawerModule } from './modules/drawer/drawer.module';
+import { FilesModule } from './modules/files/files.module';
+import { NotifyModule } from './modules/notify/notify.module';
+import { ZoomModule } from './modules/zoom/zoom.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
 
 @Module({
   imports: [
@@ -83,6 +87,14 @@ import { DrawerModule } from './modules/drawer/drawer.module';
     ExecModule,
     // 탭 02 — 전역 우측 서랍. 다른 탭이 여기로 링크를 건다
     DrawerModule,
+    // 올린 파일은 Neon 안에 둔다 (대표 결정 2026-09-12 · D6 · A-D4)
+    FilesModule,
+    // 바깥으로 나가는 발송 — 메일(SMTP)·문자(SENS). 키가 없으면 보낸 척하지 않는다
+    NotifyModule,
+    // §21 서랍의 「줌 계정 관리」가 가는 자리 — 대표 결정 2026-09-12 로 신설
+    ZoomModule,
+    // §18 서랍의 「프로그램·과목 전체 열기」가 가는 자리 — 같은 결정으로 신설
+    CatalogModule,
   ],
   controllers: [HealthController],
   providers: [

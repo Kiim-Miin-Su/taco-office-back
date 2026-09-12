@@ -8,6 +8,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Lead } from '../../entities';
 import { ScheduleModule } from '../schedule/schedule.module';
+import { ZoomModule } from '../zoom/zoom.module';
 import { DrawerController } from './drawer.controller';
 import { DrawerService } from './drawer.service';
 
@@ -16,7 +17,7 @@ import { DrawerService } from './drawer.service';
  * 표가 하나 늘 때마다 또 한 줄이 는다 — 읽기 전용 SQL 이므로 커넥션 하나면 된다.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([Lead]), ScheduleModule],
+  imports: [TypeOrmModule.forFeature([Lead]), ScheduleModule, ZoomModule],
   controllers: [DrawerController],
   providers: [DrawerService],
 })

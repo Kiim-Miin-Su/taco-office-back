@@ -20,6 +20,7 @@ export * from './enr.entity';
 export * from './exc.entity';
 export * from './exc-stu-out.entity';
 export * from './expense.entity';
+export * from './file.entity';
 export * from './gpa-alloc.entity';
 export * from './gpa-cycle.entity';
 export * from './gpa-use.entity';

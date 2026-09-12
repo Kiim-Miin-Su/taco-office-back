@@ -21,7 +21,9 @@ import {
   apFlow, labelOf, reqAsked, reqAskedLine, toApState,
   GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
+import { kindGroupLabel } from '../../lib/catalog-words';
 import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
+import { ZoomService } from '../zoom/zoom.service';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
 import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
@@ -39,6 +41,8 @@ export class DrawerService {
     @InjectRepository(Lead) private readonly anyRepo: Repository<Lead>,
     /** 변경 요청 반영은 **기존 일정 쓰기를 그대로 탄다** — 규칙을 두 벌 만들지 않는다 (C42) */
     private readonly schedWrite?: ScheduleWriteService,
+    /** 줌 갈래도 같은 이유로 **줌 배정 경로를 그대로 탄다** (C48) */
+    private readonly zoom?: ZoomService,
   ) {}
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
@@ -231,10 +235,14 @@ export class DrawerService {
 
     const kinds = (await this.q(
       `SELECT key, name, color, cap, grp::text AS grp, rep FROM kind ORDER BY sort`,
-    )).map((r) => ({
-      key: String(r.key), name: String(r.name), color: String(r.color),
-      cap: Number(r.cap), grp: String(r.grp), rep: r.rep === true,
-    }));
+    )).map((r) => {
+      const grp = String(r.grp);
+      return {
+        key: String(r.key), name: String(r.name), color: String(r.color),
+        // 묶음 이름은 서버가 만든다 — 화면이 코드표를 다시 적으면 원문과 갈린다 (D-R18)
+        cap: Number(r.cap), grp, grpLabel: kindGroupLabel(grp), rep: r.rep === true,
+      };
+    });
 
     const changeReqs = (await this.q(
       `SELECT c.id, c.req_type, c.ser_id, to_char(c.on_date,'YYYY-MM-DD') AS on_date,
@@ -539,7 +547,7 @@ export class DrawerService {
     if (!chreqApplicable(req.req_type, req.payload)) {
       throw new ConflictException({
         code: 'CHREQ_NOT_APPLICABLE',
-        message: '줌 계정 배정은 아직 반영 경로가 없습니다 — 일정 화면에서 직접 배정해 주세요',
+        message: '아직 반영 경로가 없는 요청입니다',
       });
     }
     if (!this.schedWrite) throw new Error('ScheduleWriteService 가 주입되지 않았습니다');
@@ -551,6 +559,25 @@ export class DrawerService {
       await q.query(`SELECT id FROM chreq WHERE id = $1 FOR UPDATE`, [chreqId]);
       await close((sql, p) => q.query(sql, p));
     };
+
+    /* 줌 갈래 — 강의실이 아니라 **줌 계정**을 바꾸는 요청이다 (payload 에 zaccId 가 있다).
+       배정 경로를 그대로 타고, 배정과 요청 종결이 **한 트랜잭션**이라 겹쳐서 막히면
+       요청도 pending 으로 되돌아간다. 전에는 경로가 없어 이 갈래만 막혀 있었다 (C48 이 열었다). */
+    const p0 = (req.payload ?? {}) as Record<string, unknown>;
+    if (req.req_type === 'room' && p0.zaccId !== undefined) {
+      if (!this.zoom) throw new Error('ZoomService 가 주입되지 않았습니다');
+      await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+        await m.query(`SELECT id FROM chreq WHERE id = $1 FOR UPDATE`, [chreqId]);
+        await this.zoom!.assignIn(m, viewerId, {
+          serId,
+          // apply_all 이면 규칙 전체, 아니면 그 회차만 (D-R16 과 같은 뜻)
+          onDate: req.apply_all ? undefined : req.on_date,
+          zaccId: Number(p0.zaccId),
+        });
+        await close((sql, p) => m.query(sql, p));
+      });
+      return { id: chreqId, state: 'approved', applied: asked };
+    }
 
     if (req.req_type === 'cancel') {
       await this.schedWrite.remove(serId, { scope, onDate: req.on_date }, inside);

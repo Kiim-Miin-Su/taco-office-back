@@ -18,9 +18,11 @@
  */
 import { DataSource } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
-import { Lead } from '../src/entities';
+import { Lead, Zacc } from '../src/entities';
+import { ConfigService } from '@nestjs/config';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { ScheduleWriteService } from '../src/modules/schedule/schedule.write.service';
+import { ZoomService } from '../src/modules/zoom/zoom.service';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -60,7 +62,8 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     if (dataSourceOptions.type !== 'postgres') throw new Error('PostgreSQL required');
     ds = new DataSource({ ...dataSourceOptions, url, ssl: false, logging: false });
     await ds.initialize();
-    svc = new DrawerService(ds.getRepository(Lead), new ScheduleWriteService(ds));
+    const cfg = { get: (k: string) => (k === 'ZOOM_ENC_KEY' ? '테스트 키' : undefined) } as unknown as ConfigService;
+    svc = new DrawerService(ds.getRepository(Lead), new ScheduleWriteService(ds), new ZoomService(ds.getRepository(Zacc), cfg));
     await q(
       `INSERT INTO kind(key,name,color,cap,grp) VALUES('chreq_test','변경검증','#000000',4,'lesson')
        ON CONFLICT (key) DO NOTHING`,
@@ -180,20 +183,39 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
       .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
   });
 
-  it('줌 계정 변경은 **반영 경로가 없다** — 승인했다고 적지 않는다 (C42 경계)', async () => {
-    const id = await chreq('room', { zaccId: 1 });
+  /**
+   * C42 에서는 이 갈래만 「반영 경로가 없다」로 막혀 있었다 — 줌 계정을 붙이는 코드가
+   * 저장소에 하나도 없었기 때문이다. **C48 에서 경로가 생겼다**(대표 결정 2026-09-12).
+   * 이제 승인하면 계정이 실제로 붙고, 붙는 일과 요청 종결이 한 트랜잭션이다.
+   */
+  it('줌 계정 변경도 반영된다 — 계정이 실제로 붙는다 (C48 에서 열림)', async () => {
+    const [z] = (await ds.query(
+      `INSERT INTO zacc (label, login_email, login_secret, join_url, active)
+       VALUES ('CHREQ-Z','z@t.kr','\\x00'::bytea,'https://zoom.us/j/99',true) RETURNING id`,
+    )) as { id: string }[];
+    const zaccId = Number(z.id);
+    const id = await chreq('room', { zaccId });
     await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }))
-      .rejects.toMatchObject({ response: { code: 'CHREQ_NOT_APPLICABLE' } });
-    expect(await row(id)).toMatchObject({ state: 'pending' });
+      .resolves.toMatchObject({ state: 'approved' });
+    expect(await row(id)).toMatchObject({ state: 'approved' });
+
+    const [{ n }] = (await ds.query(
+      `SELECT count(*)::int AS n FROM ser_occ WHERE ser_id = $1 AND zacc_id = $2`, [SER, zaccId],
+    )) as { n: number }[];
+    expect(n).toBeGreaterThan(0);
+    await ds.query(`DELETE FROM zassign WHERE zacc_id = $1`, [zaccId]);
+    await ds.query(`DELETE FROM zlog WHERE zacc_id = $1`, [zaccId]);
+    await ds.query(`UPDATE ser_occ SET zacc_id = NULL WHERE zacc_id = $1`, [zaccId]);
+    await ds.query(`DELETE FROM zacc WHERE id = $1`, [zaccId]);
   });
 
-  it('승인 대기함 줄이 무엇을 바꾸는지 말하고, 줌 갈래만 처리 불가로 내려간다', async () => {
+  it('승인 대기함 줄이 무엇을 바꾸는지 말한다 — 네 갈래가 두 모양까지 모두 처리 가능하다 (C48)', async () => {
     const ok = await chreq('teacher', { teacherId: T2 });
     const zoom = await chreq('room', { zaccId: 1 });
     const flow = (await svc.all(BOSS, true, true, false)).approvals;
     const rows = [...flow.waiting, ...flow.back, ...flow.mine];
     expect(rows.find((r) => r.kind === 'chreq' && r.id === ok))
       .toMatchObject({ canAct: true, asked: '강사 → 바뀔 강사' });
-    expect(rows.find((r) => r.kind === 'chreq' && r.id === zoom)).toMatchObject({ canAct: false });
+    expect(rows.find((r) => r.kind === 'chreq' && r.id === zoom)).toMatchObject({ canAct: true });
   });
 });
