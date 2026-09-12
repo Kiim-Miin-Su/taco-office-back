@@ -10,7 +10,7 @@ import { Repository } from 'typeorm';
 import { Ser } from '../../entities';
 import {
   REPORT_UNWRITTEN_CANDIDATE_DB, REPORT_WRITTEN_DB,
-  latePenalty, minutesSinceEnd, tierFor, withholding, type SessionLike,
+  latePenalty, minutesSinceEnd, payoutConfirmed, tierFor, withholding, type SessionLike,
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
@@ -385,9 +385,10 @@ export class TeacherService {
       [teacherId, today],
     );
 
-    // 확정 payout 행이 있으면 그 저장값이 정본이다 — 화면 계산과 어긋나면 저장값이 이긴다.
+    // 저장된 payout 행이 있으면 그 값이 정본이다 — 화면 계산과 어긋나면 저장값이 이긴다.
+    // 「저장돼 있다」와 「확정됐다」는 다른 질문이라 낱말이 아니라 confirmed_by 로 가른다 (N-27).
     const [po] = await this.q(
-      `SELECT hours, gross, late_rep_cut, income_tax, local_tax, net, state
+      `SELECT hours, gross, late_rep_cut, income_tax, local_tax, net, confirmed_by
          FROM payout WHERE staff_id = $1 AND year_month = $2`,
       [teacherId, ym],
     );
@@ -396,7 +397,7 @@ export class TeacherService {
     const tax = withholding(base);
     const settlement = po
       ? {
-          yearMonth: ym, confirmed: true, state: String(po.state),
+          yearMonth: ym, confirmed: payoutConfirmed(po.confirmed_by as string | null), saved: true,
           writtenMinutes: Math.round(Number(po.hours) * 60),
           gross: Number(po.gross), lateCut: Number(po.late_rep_cut),
           incomeTax: Number(po.income_tax), localTax: Number(po.local_tax), net: Number(po.net),
@@ -404,7 +405,7 @@ export class TeacherService {
           remainingCount: agg.remainingCount, remainingMinutes: agg.remainingMinutes, remainingAmount: agg.remainingAmount,
         }
       : {
-          yearMonth: ym, confirmed: false, state: null,
+          yearMonth: ym, confirmed: false, saved: false,
           writtenMinutes: agg.writtenMinutes,
           gross: agg.gross, lateCut: agg.lateCut,
           incomeTax: tax.income, localTax: tax.local, net: base - tax.total,

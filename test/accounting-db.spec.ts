@@ -371,11 +371,11 @@ d('§52 회계 머리 여섯 칸 — 집합이 곧 정의다 (C43)', () => {
       `INSERT INTO staff (id,name,email,role) VALUES (64,'정산 강사','payout64@t.kr','teacher')
        ON CONFLICT (id) DO NOTHING`,
     );
-    // 확정은 **누가 확정했는가**로 가린다 — payout.state 낱말은 아직 세 곳이 다르다 (N-27)
+    // 확정은 **누가 확정했는가**로 가린다 — payout.state 낱말은 판정에 쓰지 않는다 (N-27)
     await q.query(
-      `INSERT INTO payout (staff_id, year_month, hours, gross, net, state, confirmed_by)
-       VALUES (64, '2026-08', 10.00, 1200000, 1000000, 'approved', 64),
-              (64, '2026-07', 10.00, 1200000, 900000, 'draft', NULL)`,
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net, state, confirmed_by, confirmed_at)
+       VALUES (64, '2026-08', 10.00, 1200000, 1000000, 'approved', 64, now()),
+              (64, '2026-07', 10.00, 1200000, 900000, 'draft', NULL, NULL)`,
     );
     await q.query(
       `INSERT INTO expense (spend_on, category, amount, state)
@@ -387,7 +387,7 @@ d('§52 회계 머리 여섯 칸 — 집합이 곧 정의다 (C43)', () => {
     expect(h.net).toBe(1_500_000);
   });
 
-  it('정산이 나간 돈에 드는 기준은 낱말이 아니라 **누가 확정했는가**다 (N-27 — payout.state 는 아직 세 곳이 다르다)', async () => {
+  it('정산이 나간 돈에 드는 기준은 낱말이 아니라 **누가 확정했는가**다 (N-27 · 대표 결정)', async () => {
     await inv('paid', 5_000_000, 5_000_000, -10);
     await q.query(
       `INSERT INTO staff (id,name,email,role) VALUES (65,'낱말 강사','payout65@t.kr','teacher')
@@ -395,11 +395,37 @@ d('§52 회계 머리 여섯 칸 — 집합이 곧 정의다 (C43)', () => {
     );
     // 같은 뜻을 서로 다른 낱말로 적은 두 행. 낱말로 골랐다면 한 쪽이 통째로 빠진다.
     await q.query(
-      `INSERT INTO payout (staff_id, year_month, hours, gross, net, state, confirmed_by)
-       VALUES (65, '2026-06', 10.00, 1000000, 700000, 'approved', 65),
-              (65, '2026-05', 10.00, 1000000, 300000, 'confirmed', 65)`,
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net, state, confirmed_by, confirmed_at)
+       VALUES (65, '2026-06', 10.00, 1000000, 700000, 'approved', 65, now()),
+              (65, '2026-05', 10.00, 1000000, 300000, 'confirmed', 65, now())`,
     );
     expect((await head()).net).toBe(4_000_000);
+  });
+
+  it('확정 흔적은 반쪽으로 남지 않는다 — 마지막 방어선은 표다 (payout_confirm_pair · 원칙 26)', async () => {
+    await q.query(
+      `INSERT INTO staff (id,name,email,role) VALUES (66,'짝 강사','payout66@t.kr','teacher')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    const halves = [
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net, confirmed_by)
+         VALUES (66, '2026-04', 10.00, 1000000, 900000, 66)`,
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net, confirmed_at)
+         VALUES (66, '2026-03', 10.00, 1000000, 900000, now())`,
+    ];
+    for (const sql of halves) {
+      await q.query('SAVEPOINT pair');
+      await expect(q.query(sql)).rejects.toMatchObject({ constraint: 'payout_confirm_pair' });
+      await q.query('ROLLBACK TO SAVEPOINT pair');
+    }
+    // 둘 다 없거나 둘 다 있으면 통과한다
+    await q.query(
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net) VALUES (66, '2026-02', 10.00, 1000000, 900000)`,
+    );
+    await q.query(
+      `INSERT INTO payout (staff_id, year_month, hours, gross, net, confirmed_by, confirmed_at)
+         VALUES (66, '2026-01', 10.00, 1000000, 900000, 66, now())`,
+    );
   });
 
   it('나간 돈이 받은 돈보다 크면 「남은 돈」은 음수다 — 원문 표본이 그 모양이다', async () => {

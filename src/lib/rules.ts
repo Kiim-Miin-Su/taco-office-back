@@ -507,6 +507,26 @@ export function sinceText(min: number): string {
   return m ? `${h}시간 ${m}분` : `${h}시간`;
 }
 
+/* ══ 정산 확정 판정 — 판정이 사는 단 하나의 자리 (N-27 · 대표 결정 2026-09-12) ══
+   대표 원문: **「전부 단일 진실원을 지키며 구현하며 confirmed_by는 필요함」**.
+
+   정산이 확정됐는지는 **낱말이 아니라 「누가 확정했는가」** 로 본다. `payout.state` 는
+   정본 낱말이 없었다 — entity 주석은 `confirmed`, 회계 화면은 `'confirmed'` 일 때만 확정,
+   강사 화면은 `'paid'`·`'draft'` 로 셋을 갈랐고, 시드는 `confirmed_by` 를 채운 채 `'approved'`
+   를 넣었다. 네 곳이 같은 것을 각자 판정하고 있었고, 그래서 확정된 정산이 화면에서 「대기」로
+   보였다. 판정은 여기 하나뿐이고, SQL 도 TS 도 이 두 줄만 쓴다. */
+
+/** 저장된 정산 행이 확정됐는가 — 행을 손에 들고 있을 때의 판정 */
+export const payoutConfirmed = (confirmedBy: number | string | null | undefined): boolean =>
+  confirmedBy !== null && confirmedBy !== undefined;
+
+/**
+ * 같은 판정의 SQL 표현 — 합계처럼 행을 가져오지 않고 거르는 자리에서 쓴다.
+ * 별칭이 있으면 붙인다: `payoutConfirmedSql('po')`.
+ */
+export const payoutConfirmedSql = (alias = ''): string =>
+  `${alias ? `${alias}.` : ''}confirmed_by IS NOT NULL`;
+
 /* ══ 청구서 상태 낱말 (§52 회계 머리 · §53 단계) ═══════════════════════
    회계 머리의 「보낸 청구서」와 대표 보고의 회계 배지는 **같은 집합**을 봐야 한다.
    낱말을 두 곳에 적으면 한쪽만 고쳐지고 두 숫자가 조용히 어긋난다 (D-R18 · AGENT §9). */

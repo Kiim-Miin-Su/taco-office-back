@@ -7630,8 +7630,9 @@
             "type": "number",
             "nullable": true
           },
-          "state": {
-            "type": "string"
+          "confirmed": {
+            "type": "boolean",
+            "description": "확정됐는가 — 누가 확정했는가(confirmed_by)로 본다 (N-27)"
           }
         },
         "required": [
@@ -7645,7 +7646,7 @@
           "incomeTax",
           "localTax",
           "net",
-          "state"
+          "confirmed"
         ]
       },
       "ExpenseDto": {
@@ -7738,6 +7739,36 @@
           "state"
         ]
       },
+      "ExpenseTotalDto": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "rent",
+              "book",
+              "supply",
+              "ent",
+              "fee",
+              "etc"
+            ]
+          },
+          "categoryLabel": {
+            "type": "string",
+            "description": "분류 이름 — 코드표는 서버가 소유한다 (D-R18)"
+          },
+          "sum": {
+            "type": "number",
+            "nullable": true,
+            "description": "확정된 지출의 합 — 권한이 없으면 null (D-R39)"
+          }
+        },
+        "required": [
+          "category",
+          "categoryLabel",
+          "sum"
+        ]
+      },
       "AccountingDto": {
         "type": "object",
         "properties": {
@@ -7768,6 +7799,13 @@
             "items": {
               "$ref": "#/components/schemas/ExpenseDto"
             }
+          },
+          "expenseTotals": {
+            "description": "§56 분류별 확정 지출 합계 — 화면이 더하지 않는다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExpenseTotalDto"
+            }
           }
         },
         "required": [
@@ -7775,7 +7813,8 @@
           "invoices",
           "payments",
           "payouts",
-          "expenses"
+          "expenses",
+          "expenseTotals"
         ]
       },
       "PaymentCreateDto": {
@@ -9443,12 +9482,11 @@
           },
           "confirmed": {
             "type": "boolean",
-            "description": "true면 payout 저장값, false면 실시간 계산"
+            "description": "확정됐는가 — 누가 확정했는가(confirmed_by)로 본다 (N-27)"
           },
-          "state": {
-            "type": "string",
-            "nullable": true,
-            "description": "payout.state — 확정 행이 있을 때만"
+          "saved": {
+            "type": "boolean",
+            "description": "저장된 정산 행에서 온 숫자인가 — false 면 실시간 계산이다"
           },
           "writtenMinutes": {
             "type": "number",
@@ -9500,6 +9538,7 @@
         "required": [
           "yearMonth",
           "confirmed",
+          "saved",
           "writtenMinutes",
           "gross",
           "lateCut",

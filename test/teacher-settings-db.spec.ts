@@ -142,3 +142,69 @@ d('강사 §8 내 설정 — 올리기만 하고 적용하지 않는다 (C39)', 
     expect(after.settings.requests[0]).toMatchObject({ reqType: 'wage_change', state: 'pending' });
   });
 });
+
+/* ── 정산 확정 판정은 한 곳뿐이다 (N-27 · 대표 결정 2026-09-12) ────────────────────
+   대표 원문: 「전부 단일 진실원을 지키며 구현하며 confirmed_by는 필요함」.
+   전에는 「행이 있다」를 곧 「확정」으로 읽었다. 그래서 마감 작성 중인 정산이
+   강사에게 「확정」으로 보였고, 화면은 payout.state 낱말로 또 갈랐다.
+   여기서 증명하는 것은 셋이다 — ① 행이 있어도 확정이 아니다 ② 확정은 confirmed_by 다
+   ③ 낱말이 무엇이든 판정이 흔들리지 않는다. */
+d('강사 월 정산 — 「저장돼 있다」와 「확정됐다」는 다른 질문이다 (N-27)', () => {
+  let ds: DataSource;
+  let q: QueryRunner;
+  const ME = 82;
+  const YM = '2026-08';
+
+  const svc = () => new TeacherService(q.manager.getRepository(Ser));
+  const settlement = async () => (await svc().history(ME, YM)).settlement;
+  const savePayout = async (state: string, confirmedBy: number | null) => {
+    await q.query(`DELETE FROM payout WHERE staff_id = $1`, [ME]);
+    await q.query(
+      `INSERT INTO payout (staff_id, year_month, hours, gross, late_rep_cut, income_tax, local_tax, net,
+                           state, confirmed_by, confirmed_at)
+       VALUES ($1, $2, 10.00, 420000, 0, 12600, 1260, 406140, $3, $4,
+               CASE WHEN $4::bigint IS NULL THEN NULL ELSE now() END)`,
+      [ME, YM, state, confirmedBy],
+    );
+  };
+
+  beforeAll(async () => {
+    ds = scratchDataSource();
+    await ds.initialize();
+  });
+  beforeEach(async () => {
+    q = ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    await q.query(
+      `INSERT INTO staff (id,name,email,role,tz) VALUES ($1,'정산 강사','settle82@t.kr','teacher','Asia/Seoul')
+       ON CONFLICT (id) DO NOTHING`, [ME],
+    );
+    await q.query(`DELETE FROM wage WHERE staff_id = $1`, [ME]);
+    await q.query(`INSERT INTO wage (staff_id, rate, from_date) VALUES ($1, 42000, '2026-01-01')`, [ME]);
+    await q.query(`DELETE FROM payout WHERE staff_id = $1`, [ME]);
+  });
+  afterEach(async () => {
+    if (q?.isTransactionActive) await q.rollbackTransaction();
+    if (q && !q.isReleased) await q.release();
+  });
+  afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
+
+  it('행이 없으면 실시간 계산이다 — 저장값도 확정도 아니다', async () => {
+    expect(await settlement()).toMatchObject({ yearMonth: YM, saved: false, confirmed: false });
+  });
+
+  it('행이 있어도 아무도 확정하지 않았으면 **확정이 아니다** — 저장값은 쓰되 확정이라 말하지 않는다', async () => {
+    await savePayout('draft', null);
+    const s = await settlement();
+    expect(s).toMatchObject({ saved: true, confirmed: false });
+    expect(s.net).toBe(406140); // 숫자는 저장값이 정본이다
+  });
+
+  it('확정은 **누가 확정했는가**다 — 낱말이 무엇이든 판정이 같다', async () => {
+    for (const word of ['approved', 'confirmed', 'paid']) {
+      await savePayout(word, 2);
+      expect(await settlement()).toMatchObject({ saved: true, confirmed: true });
+    }
+  });
+});

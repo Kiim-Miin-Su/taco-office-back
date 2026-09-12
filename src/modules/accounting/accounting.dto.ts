@@ -18,6 +18,13 @@ export const PAY_METHODS = ['transfer', 'cash'] as const;
  * 라벨은 **서버가 내려보낸다** — 화면에 코드표를 복사해 두지 않는다 (D-R18).
  */
 export const EXPENSE_CATEGORIES = ['rent', 'book', 'supply', 'ent', 'fee', 'etc'] as const;
+
+/**
+ * 「나간 돈」에 드는 지출 상태 — **낱말 하나**다 (C43-b).
+ * 결재 중인 신청은 아직 나간 돈이 아니다. 머리의 「남은 돈」과 §56 분류 합계가 같은 집합을 봐야 한다.
+ * `expense.state` 는 CHECK `expense_state_words` 가 세 낱말로 지킨다.
+ */
+export const EXPENSE_SETTLED = 'approved';
 export const EXPENSE_CATEGORY_LABEL: Record<string, string> = {
   rent: '임대료', book: '도서·교재비', supply: '소모품비', ent: '접대비', fee: '지급수수료', etc: '기타',
 };
@@ -133,7 +140,13 @@ export class PayoutDto {
   @ApiProperty({ type: Number, nullable: true }) incomeTax!: number | null;
   @ApiProperty({ type: Number, nullable: true }) localTax!: number | null;
   @ApiProperty({ type: Number, nullable: true }) net!: number | null;
-  @ApiProperty() state!: string;
+  /**
+   * 확정됐는가 — **`payout.state` 낱말은 내려보내지 않는다** (N-27 · 대표 결정 2026-09-12).
+   * 판정은 `lib/rules` 한 곳에서 `confirmed_by` 로 낸다. 낱말을 같이 보내면 화면이 그것으로
+   * 다시 판정하게 되고, 그 순간 같은 질문에 답이 둘이 된다. 「지급 완료(paid)」 같은 갈래가
+   * 필요해지면 그때 낱말을 정하고 칸을 만든다 — 지금 없는 구분을 있는 척 내보내지 않는다.
+   */
+  @ApiProperty({ description: '확정됐는가 — 누가 확정했는가(confirmed_by)로 본다 (N-27)' }) confirmed!: boolean;
 }
 
 /**
@@ -157,10 +170,23 @@ export class MoneySummaryDto {
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39 · 사람별 예외까지 반영된 canMoney)' }) canSeeAmounts!: boolean;
 }
 
+/**
+ * §56 분류별 지출 합계 — **화면이 더하지 않는다** (C43-b · 대표 지시 「전부 단일 진실원」).
+ *
+ * 전에는 회계 화면이 지출 줄을 받아 분류별로 직접 더했다. 같은 돈을 머리(「남은 돈」)와
+ * 여기서 각각 세면 두 숫자가 어긋날 수 있고, 어긋나도 아무도 모른다 (AGENT §9).
+ */
+export class ExpenseTotalDto {
+  @ApiProperty({ enum: EXPENSE_CATEGORIES }) category!: string;
+  @ApiProperty({ description: '분류 이름 — 코드표는 서버가 소유한다 (D-R18)' }) categoryLabel!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '확정된 지출의 합 — 권한이 없으면 null (D-R39)' }) sum!: number | null;
+}
+
 export class AccountingDto {
   @ApiProperty({ type: MoneySummaryDto }) summary!: MoneySummaryDto;
   @ApiProperty({ type: [InvoiceDto] }) invoices!: InvoiceDto[];
   @ApiProperty({ type: [PaymentDto] }) payments!: PaymentDto[];
   @ApiProperty({ type: [PayoutDto] }) payouts!: PayoutDto[];
   @ApiProperty({ type: [ExpenseDto], description: '나간 돈 §56 — 부대비용·법인카드 신청분' }) expenses!: ExpenseDto[];
+  @ApiProperty({ type: [ExpenseTotalDto], description: '§56 분류별 확정 지출 합계 — 화면이 더하지 않는다' }) expenseTotals!: ExpenseTotalDto[];
 }

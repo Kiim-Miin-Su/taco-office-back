@@ -13,11 +13,12 @@ import { EntityManager, Repository } from 'typeorm';
 import { Inv } from '../../entities';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
-import { INV_BILLABLE, INV_OPEN, won } from '../../lib/rules';
+import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { sqlWordList } from '../../lib/sql';
-import { EXPENSE_CATEGORY_LABEL } from './accounting.dto';
+import { EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED } from './accounting.dto';
 import type {
-  AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, PaymentCreateDto, PaymentDto, PayoutDto,
+  AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, PaymentCreateDto, PaymentDto,
+  PayoutDto,
 } from './accounting.dto';
 
 const daysBetween = (a: string, b: string) =>
@@ -64,16 +65,19 @@ const MONEY_SUMMARY_SQL = `
  * 원본 표본이 그 자리에 5,096,750 − 95,000 − 165,058 = 4,836,692 를 적어 두었다.
  *
  * 지출은 낱말로 고른다 — `expense.state` 는 CHECK `expense_state_words` 가 지키는 세 낱말뿐이다.
- * **정산은 낱말로 고르지 않는다.** `payout.state` 는 CHECK 가 없고 지금 세 곳이 서로 다른 낱말을
- * 쓴다(entity 주석·화면은 `confirmed`, 시드는 `confirmed_by` 를 채운 채 `approved`). 어느 쪽이
- * 맞는지는 원문에 없어 **내가 고를 일이 아니다**(N-27 로 올렸다). 그래서 여기서는 말 대신 사실을
- * 본다 — **누가 확정했는가**(`confirmed_by`). 낱말 다툼이 어느 쪽으로 끝나도 이 합은 흔들리지 않는다.
+ * **정산은 낱말로 고르지 않는다** — 확정 판정은 `lib/rules` 한 곳에 있다 (N-27 · 대표 결정).
  */
 const MONEY_OUT_SQL = `
   SELECT (
-    COALESCE((SELECT SUM(amount) FROM expense WHERE state = 'approved'), 0)
-    + COALESCE((SELECT SUM(net) FROM payout WHERE confirmed_by IS NOT NULL), 0)
+    COALESCE((SELECT SUM(amount) FROM expense WHERE state = '${EXPENSE_SETTLED}'), 0)
+    + COALESCE((SELECT SUM(net) FROM payout WHERE ${payoutConfirmedSql()}), 0)
   )::bigint AS out`;
+
+/** §56 분류별 확정 지출 — 머리의 「남은 돈」과 **같은 집합**을 본다. 화면이 더하지 않는다 (C43-b) */
+const EXPENSE_TOTAL_SQL = `
+  SELECT category, SUM(amount)::bigint AS sum
+    FROM expense WHERE state = '${EXPENSE_SETTLED}' AND amount IS NOT NULL
+   GROUP BY category ORDER BY SUM(amount) DESC`;
 
 /** 「손봐야 할 것」 — 대표 보고 §69 회계 배지와 **같은 판정**이다. 두 곳에서 세지 않는다 */
 const MONEY_TODO_SQL = areaCountSql('money');
@@ -145,7 +149,7 @@ export class AccountingService {
 
     const poRows = (await this.inv.query(
       `SELECT po.id, po.staff_id, t.name AS staff_name, po.year_month, po.hours,
-              po.gross, po.late_rep_cut, po.income_tax, po.local_tax, po.net, po.state
+              po.gross, po.late_rep_cut, po.income_tax, po.local_tax, po.net, po.confirmed_by
          FROM payout po JOIN staff t ON t.id = po.staff_id
         ORDER BY po.year_month DESC, po.net DESC`,
     )) as Array<Record<string, unknown>>;
@@ -154,7 +158,8 @@ export class AccountingService {
       yearMonth: String(r.year_month), hours: String(r.hours),
       gross: money(r.gross), lateRepCut: money(r.late_rep_cut),
       incomeTax: money(r.income_tax), localTax: money(r.local_tax), net: money(r.net),
-      state: String(r.state),
+      // 낱말을 내려보내지 않는다 — 화면이 그것으로 다시 판정하면 판정이 두 곳이 된다 (N-27)
+      confirmed: payoutConfirmed(r.confirmed_by as string | null),
     }));
 
     const expRows = (await this.inv.query(
@@ -162,7 +167,16 @@ export class AccountingService {
     )) as Array<Record<string, unknown>>;
     const expenses: ExpenseDto[] = expRows.map((r) => this.expenseRow(r, canSeeAmounts));
 
-    return { summary: await this.moneySummary(canSeeAmounts, today), invoices, payments, payouts, expenses };
+    const totalRows = (await this.inv.query(EXPENSE_TOTAL_SQL)) as Array<Record<string, unknown>>;
+    const expenseTotals: ExpenseTotalDto[] = totalRows.map((r) => {
+      const category = String(r.category);
+      return { category, categoryLabel: EXPENSE_CATEGORY_LABEL[category] ?? category, sum: money(r.sum) };
+    });
+
+    return {
+      summary: await this.moneySummary(canSeeAmounts, today),
+      invoices, payments, payouts, expenses, expenseTotals,
+    };
   }
 
   /**

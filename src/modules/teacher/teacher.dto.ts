@@ -147,11 +147,20 @@ export class TeacherHistoryStatsDto {
   @ApiProperty() unwrittenMinutes!: number;
 }
 
-/** 월 정산 — payout 행이 있으면 저장값(확정), 없으면 실시간 계산 (D-R24 · D-R7 · D-R32 · D-15). */
+/**
+ * 월 정산 — 저장된 payout 행이 있으면 **그 값이 정본**이고, 없으면 실시간 계산이다
+ * (D-R7 리포트 기준 시수 · D-R32 지각 차감 · D-15 원천징수).
+ *
+ * 두 가지는 **다른 질문**이라 칸을 나눈다 (N-27 · 대표 결정 2026-09-12).
+ *   `confirmed` — 확정됐는가. 판정은 `lib/rules` 한 곳에서 `confirmed_by` 로 낸다.
+ *   `saved`     — 지금 보이는 숫자가 저장값인가. 행은 있는데 아직 아무도 확정하지 않았을 수 있다.
+ * 전에는 「행이 있다」를 곧 「확정」으로 썼고, 화면은 `payout.state` 낱말로 셋을 또 갈랐다.
+ * 그래서 마감 작성 중인 정산이 강사에게 「확정」으로 보였다.
+ */
 export class TeacherSettlementDto {
   @ApiProperty({ description: 'YYYY-MM' }) yearMonth!: string;
-  @ApiProperty({ description: 'true면 payout 저장값, false면 실시간 계산' }) confirmed!: boolean;
-  @ApiPropertyOptional({ ...S, description: 'payout.state — 확정 행이 있을 때만' }) state?: string | null;
+  @ApiProperty({ description: '확정됐는가 — 누가 확정했는가(confirmed_by)로 본다 (N-27)' }) confirmed!: boolean;
+  @ApiProperty({ description: '저장된 정산 행에서 온 숫자인가 — false 면 실시간 계산이다' }) saved!: boolean;
   @ApiProperty({ description: '제출 인정 시수(분)' }) writtenMinutes!: number;
   @ApiProperty({ description: '시급×인정 시수 (정수 절사)' }) gross!: number;
   @ApiProperty({ description: '지각 차감 합 (D-R32)' }) lateCut!: number;

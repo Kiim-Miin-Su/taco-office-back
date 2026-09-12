@@ -36,7 +36,7 @@ export const CHREQS = [
   { serId: 3,  onDate: occurrenceDate(3, 'past'), reqType: 'time_move', payload: { startMin: 1080, endMin: 1170 }, reason: '학교 시험 기간이라 1시간 미뤄 주세요', state: 'approved', byId: 7, resolvedBy: 3, applyAll: false, createdAt: D(-6) },
   { serId: 9,  onDate: occurrenceDate(9, 'past'), reqType: 'teacher',   payload: { teacherId: 15 }, reason: '개인 사정으로 하루 대강 부탁드립니다', state: 'approved', byId: 12, resolvedBy: 3, applyAll: false, createdAt: D(-7) },
   { serId: 17, onDate: occurrenceDate(17, 'future'), reqType: 'cancel', payload: {}, reason: '병가', state: 'pending', byId: 10, applyAll: false, createdAt: D(-1) },
-  { serId: 5,  onDate: occurrenceDate(5, 'past', 2), reqType: 'room', payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', state: 'rejected', byId: 9, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
+  { serId: 5,  onDate: occurrenceDate(5, 'past', 2), reqType: 'room', payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', rejectReason: '강남 같은 시간대에 빈 강의실이 없습니다 — 10월 시간표에서 다시 봅니다', state: 'rejected', byId: 9, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
 ];
 
 /**
