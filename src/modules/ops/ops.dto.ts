@@ -5,8 +5,9 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 import { MFB_STATES } from '../../lib/marketing-words';
+import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_STAGES } from '../../lib/plan-words';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -85,12 +86,89 @@ export class TodoDto {
 export class PlanDto {
   @ApiProperty() id!: number;
   @ApiProperty() title!: string;
-  @ApiProperty({ description: 'draft | review | rework | approved | done' }) stage!: string;
+  @ApiProperty({ enum: PLAN_STAGES, description: '코드값 — 이름은 stageLabel 을 쓴다' }) stage!: string;
+  @ApiProperty({ description: '단계 이름 — 낱말은 서버가 만든다 (D-R18 · C56)' }) stageLabel!: string;
   @ApiPropertyOptional(S) goal?: string | null;
   @ApiPropertyOptional(S) ask?: string | null;
   @ApiPropertyOptional(S) dueOn?: string | null;
   @ApiPropertyOptional(S) ownerName?: string | null;
   @ApiProperty() overdueDays!: number;
+  /** 기한이 대표를 지나왔는가 — 「최종 승인」이 열리는 조건이다 (원문 §61·§65) */
+  @ApiProperty({ enum: PLAN_DUE_STATES, description: '기한 상태 — due_on 과 due_approved_at 에서 파생' })
+  dueState!: string;
+}
+
+/** §62 기획 기한 한 줄 — 기획 마감과 과제 기한이 **한 표에** 섞인다 */
+export class PlanDueRowDto {
+  @ApiProperty({ description: '한 표 안에서 겹치지 않는 키 — `plan:3` · `task:11`' }) key!: string;
+  @ApiProperty({ enum: PLAN_DUE_KINDS }) kind!: string;
+  @ApiProperty({ description: '구분 이름 — 원문 「기획 마감 · 과제」' }) kindLabel!: string;
+  @ApiProperty({ example: '2026-08-25' }) dueOn!: string;
+  /** 「D-2 · 오늘 · 1일 지남」 — 화면이 날짜를 빼지 않는다 (D-R37) */
+  @ApiProperty({ description: '남은 날 한 낱말' }) dueLabel!: string;
+  @ApiProperty({ description: '지난 날 수 — 0 이면 안 지났다. 붉게 칠하는 판정이 이 값 하나다' })
+  overdueDays!: number;
+  @ApiProperty({ description: '내용 — 기획 제목 또는 과제 제목' }) title!: string;
+  @ApiProperty({ description: '어느 기획인가' }) planId!: number;
+  @ApiProperty() planTitle!: string;
+  @ApiPropertyOptional(S) ownerName?: string | null;
+  @ApiProperty({ enum: PLAN_STAGES }) stage!: string;
+  @ApiProperty() stageLabel!: string;
+}
+
+/** §65 기획 보고서의 과제 한 줄 — TODO 에서 온다 (명세서 슬라이드 65 연동) */
+export class PlanTaskDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() title!: string;
+  @ApiProperty() done!: boolean;
+  @ApiPropertyOptional(S) toName?: string | null;
+  @ApiPropertyOptional(S) dueOn?: string | null;
+  @ApiProperty({ description: '지난 날 수 — 끝난 과제는 0' }) overdueDays!: number;
+}
+
+/** §65 기획 보고서 — 목표 → 과제 → 리서치 → 결정 요청 */
+export class PlanDetailDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() title!: string;
+  @ApiProperty({ enum: PLAN_STAGES }) stage!: string;
+  @ApiProperty() stageLabel!: string;
+  @ApiPropertyOptional(S) ownerName?: string | null;
+  @ApiProperty({ description: '작성일 YYYY-MM-DD' }) createdOn!: string;
+
+  @ApiPropertyOptional({ ...S, description: '1 · 목표' }) goal?: string | null;
+  @ApiProperty({ type: [PlanTaskDto], description: '2 · 과제 — TODO 에서 온다' }) tasks!: PlanTaskDto[];
+  @ApiProperty({ description: '끝낸 과제 / 전체 — 화면이 다시 세지 않는다 (D-R37)' }) taskDone!: number;
+  @ApiPropertyOptional({ ...S, description: '3 · 리서치' }) research?: string | null;
+  @ApiPropertyOptional({ ...S, description: '4 · 결정 요청' }) ask?: string | null;
+
+  @ApiPropertyOptional(S) dueOn?: string | null;
+  @ApiProperty({ enum: PLAN_DUE_STATES }) dueState!: string;
+  @ApiProperty({ description: '띠에 쓰는 이름' }) dueStateLabel!: string;
+  @ApiPropertyOptional({ ...S, description: '기한을 승인한 사람' }) dueApprovedByName?: string | null;
+  @ApiProperty() overdueDays!: number;
+
+  /* 단추가 열리는지는 **서버가 정한다** — 화면이 역할과 기한 상태를 다시 조합하지 않는다 (D-R39) */
+  @ApiProperty({ description: '기한을 승인·반려할 수 있는가 — 대표이고 아직 제안 상태일 때' })
+  canDecideDue!: boolean;
+  @ApiProperty({ description: '최종 승인·보완 요청을 할 수 있는가 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65)' })
+  canReview!: boolean;
+  @ApiProperty({ description: '단추가 닫혀 있는 이유 — 열려 있으면 null', nullable: true, type: String })
+  reviewBlockedReason!: string | null;
+}
+
+/** 기한 승인 · 반려 — 원문 §65 의 「기한 승인」 「기한 반려」 */
+export class PlanDueDecisionDto {
+  @ApiProperty({ description: 'true 면 승인, false 면 반려' })
+  @IsBoolean() approve!: boolean;
+}
+
+/** 최종 승인 · 보완 요청 — 원문 §65 바닥의 두 단추 */
+export class PlanReviewDto {
+  @ApiProperty({ enum: ['approve', 'rework'] })
+  @IsIn(['approve', 'rework']) decision!: 'approve' | 'rework';
+
+  @ApiPropertyOptional({ description: '보완 요청 사유 — 되돌릴 때는 필수다', maxLength: 500 })
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 
 /** §63 회의 목록 */
@@ -196,6 +274,9 @@ export class OpsDto {
   @ApiProperty({ type: [ComplaintDto] }) complaints!: ComplaintDto[];
   @ApiProperty({ type: [TodoDto] }) todos!: TodoDto[];
   @ApiProperty({ type: [PlanDto] }) plans!: PlanDto[];
+  @ApiProperty({ type: [PlanDueRowDto], description: '§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표' })
+  planDues!: PlanDueRowDto[];
+  @ApiProperty({ description: '기한 지난 것 — 서버가 센다 (D-R37)' }) planOverdue!: number;
   @ApiProperty({ type: [MeetingDto] }) meetings!: MeetingDto[];
   @ApiProperty({ type: [MarketingDto] }) marketing!: MarketingDto[];
   @ApiProperty({ type: [MfbThreadDto], description: '§60 대표 피드백 — 코멘트가 달린 활동만' }) feedback!: MfbThreadDto[];

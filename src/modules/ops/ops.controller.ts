@@ -4,12 +4,13 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
 import { ApiConflictResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { Perm, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   LeadDto, LeadFailDto, LeadResumeDto, MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
+  PlanDetailDto, PlanDueDecisionDto, PlanReviewDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
 
@@ -115,5 +116,58 @@ export class OpsController {
     @Body() dto: MfbEditDto,
   ): Promise<MfbThreadDto[]> {
     return this.svc.editPost(user.id, id, dto);
+  }
+
+  /* ══ §62 기획 기한 · §65 기획 보고서 ═══════════════════════════════════ */
+
+  @Get('plans/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§65 기획 보고서 — 목표 · 과제 · 리서치 · 결정 요청',
+    description: '단추가 열리는지도 서버가 정한다 — 원문 §61·§65 「대표는 기한을 먼저 승인해야 최종 승인이 열립니다」. 막힌 이유를 문장으로 함께 내려보낸다.',
+  })
+  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiNotFoundResponse({ description: '기획 없음' })
+  async planDetail(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<PlanDetailDto> {
+    const out = await this.svc.planDetail(id, isRole(user.role) && canCeoApprovePlan(user.role));
+    if (!out) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
+    return out;
+  }
+
+  @Post('plans/:id/due')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '기한 승인 · 반려 — 대표 전용 (원문 §65)',
+    description: '반려는 기한을 지운다 — 승인 안 된 날짜가 §62 기한 표에 남으면 「대표를 지나오지 않은 마감」이 섞인다.',
+  })
+  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiConflictResponse({ description: 'code CEO_ONLY | NO_DUE | DUE_ALREADY_APPROVED' })
+  @ApiNotFoundResponse({ description: '기획 없음' })
+  async decidePlanDue(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PlanDueDecisionDto,
+  ): Promise<PlanDetailDto> {
+    return this.svc.decidePlanDue(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
+  }
+
+  @Post('plans/:id/review')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '최종 승인 · 보완 요청 — 기한이 먼저 승인돼야 열린다 (원문 §61·§65)',
+    description: '화면이 단추를 숨기는 것과 별개로 서버가 막는다 (DUE_NOT_APPROVED).',
+  })
+  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiConflictResponse({ description: 'code DUE_NOT_APPROVED | NOT_REVIEWABLE | REASON_REQUIRED' })
+  @ApiNotFoundResponse({ description: '기획 없음' })
+  async reviewPlan(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PlanReviewDto,
+  ): Promise<PlanDetailDto> {
+    return this.svc.reviewPlan(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
   }
 }

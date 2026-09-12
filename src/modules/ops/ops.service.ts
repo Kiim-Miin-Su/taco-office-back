@@ -8,14 +8,19 @@ import { ConflictException, Injectable, InternalServerErrorException, NotFoundEx
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
-import { overdueDays as daysSince, todayKst } from '../../lib/kst';
+import { daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { kstAt } from '../../lib/sql';
 import {
   MFB_KIND_LABEL, mfbStateLabel, mktChannelLabel, mktItemLabel, mktTitle,
   type MfbKind,
 } from '../../lib/marketing-words';
+import {
+  PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, dueLabel, planDueKindLabel, planDueState, planStageLabel,
+  type PlanDueState,
+} from '../../lib/plan-words';
 import type {
   LeadDto, MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
+  PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanReviewDto, PlanTaskDto,
 } from './ops.dto';
 
 type R = Record<string, unknown>;
@@ -104,18 +109,25 @@ export class OpsService {
     });
 
     const plans = (await this.q(
-      `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on, s.name AS owner_name
+      `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
+              p.due_approved_at, s.name AS owner_name
          FROM plan p LEFT JOIN staff s ON s.id = p.owner_id ORDER BY p.due_on NULLS LAST, p.id`,
     )).map((r) => {
       const due = (r.due_on as string) ?? null;
-      const open = r.stage !== 'done' && r.stage !== 'approved';
+      const stage = String(r.stage);
+      const open = PLAN_OPEN_STAGES.includes(stage);
       return {
-        id: Number(r.id), title: String(r.title), stage: String(r.stage),
+        id: Number(r.id), title: String(r.title), stage,
+        // 단계 이름을 만드는 자리는 서버 한 곳이다 — §61 보드 · §62 기한 표 · §65 보고서가 같이 쓴다 (D-R18)
+        stageLabel: planStageLabel(stage),
         goal: (r.goal as string) ?? null, ask: (r.ask as string) ?? null,
         dueOn: due, ownerName: (r.owner_name as string) ?? null,
         overdueDays: open && due && due < today ? daysSince(due) : 0,
+        dueState: planDueState(due, r.due_approved_at) as string,
       };
     });
+
+    const { planDues, planOverdue } = await this.planDeadlines(today);
 
     const meetings = (await this.q(
       `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date, m.minutes,
@@ -168,7 +180,7 @@ export class OpsService {
     }));
 
     return {
-      leads, complaints, todos, plans, meetings, marketing,
+      leads, complaints, todos, plans, planDues, planOverdue, meetings, marketing,
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
     };
@@ -394,5 +406,166 @@ export class OpsService {
     }
     await this.q(`UPDATE mfb SET body = $2 WHERE id = $1`, [postId, dto.body.trim()]);
     return this.feedbackThreads(viewerId);
+  }
+
+  /* ══ §62 기획 기한 · §65 기획 보고서 (C56) ═══════════════════════════ */
+
+  /**
+   * 원문 §62 는 **기획 마감과 과제 기한을 한 표에** 날짜 순으로 섞는다.
+   *
+   * 두 표(PLAN · TODO)에서 오지만 화면은 한 줄씩만 본다 — 「남은 날」 낱말도 「기한 지난 것 N건」도
+   * 서버가 만든다. 화면이 날짜를 빼기 시작하면 머리의 숫자와 줄의 색이 갈린다 (D-R37).
+   */
+  private async planDeadlines(today: string): Promise<{ planDues: PlanDueRowDto[]; planOverdue: number }> {
+    const rows = await this.q(
+      `SELECT 'plan' AS kind, p.id AS ref_id, p.id AS plan_id, p.title AS title, p.title AS plan_title,
+              to_char(p.due_on,'YYYY-MM-DD') AS due_on, p.stage, o.name AS owner_name
+         FROM plan p LEFT JOIN staff o ON o.id = p.owner_id
+        WHERE p.due_on IS NOT NULL AND p.stage = ANY($1::text[])
+       UNION ALL
+       SELECT 'task', t.id, p.id, t.title, p.title,
+              to_char(t.due_on,'YYYY-MM-DD'), p.stage, o.name
+         FROM todo t
+         JOIN plan p ON p.id = t.plan_id
+         LEFT JOIN staff o ON o.id = t.to_id
+        WHERE t.due_on IS NOT NULL AND NOT t.done
+        ORDER BY 6, 2`,
+      [[...PLAN_OPEN_STAGES]],
+    );
+
+    const planDues: PlanDueRowDto[] = rows.map((r) => {
+      const due = String(r.due_on);
+      const left = daysUntil(due, today);
+      const kind = String(r.kind);
+      const stage = String(r.stage);
+      return {
+        key: `${kind}:${String(r.ref_id)}`,
+        kind, kindLabel: planDueKindLabel(kind),
+        dueOn: due,
+        // 「D-2 · 오늘 · 1일 지남」 — 낱말은 lib/plan-words 한 곳에서 나온다
+        dueLabel: dueLabel(left),
+        overdueDays: Math.max(0, -left),
+        title: String(r.title), planId: leadId(r.plan_id), planTitle: String(r.plan_title),
+        ownerName: (r.owner_name as string) ?? null,
+        stage, stageLabel: planStageLabel(stage),
+      };
+    });
+    return { planDues, planOverdue: planDues.filter((d) => d.overdueDays > 0).length };
+  }
+
+  /** §65 기획 보고서 — 목표 → 과제 → 리서치 → 결정 요청 */
+  async planDetail(id: number, canApprove: boolean): Promise<PlanDetailDto | null> {
+    const today = todayKst();
+    const [p] = await this.q(
+      `SELECT p.id, p.title, p.stage, p.goal, p.research, p.ask,
+              to_char(p.due_on,'YYYY-MM-DD') AS due_on, p.due_approved_at,
+              to_char(p.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS created_on,
+              o.name AS owner_name, a.name AS due_by_name
+         FROM plan p
+         LEFT JOIN staff o ON o.id = p.owner_id
+         LEFT JOIN staff a ON a.id = p.due_approved_by
+        WHERE p.id = $1`,
+      [id],
+    );
+    if (!p) return null;
+
+    const tasks = (await this.q(
+      `SELECT t.id, t.title, t.done, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name
+         FROM todo t LEFT JOIN staff s ON s.id = t.to_id
+        WHERE t.plan_id = $1 ORDER BY t.due_on NULLS LAST, t.id`,
+      [id],
+    )).map((t): PlanTaskDto => {
+      const due = (t.due_on as string) ?? null;
+      const done = t.done === true;
+      return {
+        id: leadId(t.id), title: String(t.title), done,
+        toName: (t.to_name as string) ?? null, dueOn: due,
+        overdueDays: !done && due && due < today ? daysSince(due) : 0,
+      };
+    });
+
+    const due = (p.due_on as string) ?? null;
+    const dueState = planDueState(due, p.due_approved_at);
+    const stage = String(p.stage);
+    const open = PLAN_OPEN_STAGES.includes(stage);
+
+    /* 원문 §61·§65: 「대표는 **기한을 먼저 승인해야** 최종 승인이 열립니다」.
+       판정은 여기 한 곳이고, 막힌 이유까지 서버가 문장으로 내려보낸다 — 화면이 역할과
+       기한 상태를 다시 조합하면 단추 모양과 서버의 답이 갈린다 (D-R39). */
+    const canDecideDue = canApprove && dueState === 'proposed';
+    const reviewBlockedReason =
+      !canApprove ? '기획 결재는 대표만 합니다'
+        : !open ? '이미 끝난 기획입니다'
+          : dueState !== 'approved' ? '기한부터 승인하세요'
+            : null;
+
+    return {
+      id: leadId(p.id), title: String(p.title), stage, stageLabel: planStageLabel(stage),
+      ownerName: (p.owner_name as string) ?? null, createdOn: String(p.created_on),
+      goal: (p.goal as string) ?? null,
+      tasks, taskDone: tasks.filter((t) => t.done).length,
+      research: (p.research as string) ?? null, ask: (p.ask as string) ?? null,
+      dueOn: due, dueState, dueStateLabel: PLAN_DUE_STATE_LABEL[dueState as PlanDueState],
+      dueApprovedByName: (p.due_by_name as string) ?? null,
+      overdueDays: open && due && due < today ? daysSince(due) : 0,
+      canDecideDue, canReview: reviewBlockedReason === null, reviewBlockedReason,
+    };
+  }
+
+  /**
+   * 기한 승인 · 반려 — 원문 §65 의 띠 안 단추 둘.
+   *
+   * 반려는 **기한을 지운다.** 담당자가 새 날짜를 다시 내야 하기 때문이다 — 승인 안 된 날짜를
+   * 그대로 두면 §62 기한 표에 「대표를 지나오지 않은 마감」이 섞인다.
+   */
+  async decidePlanDue(viewerId: number, canApprove: boolean, id: number, dto: PlanDueDecisionDto): Promise<PlanDetailDto> {
+    if (!canApprove) {
+      throw new ConflictException({ code: 'CEO_ONLY', message: '기한 승인은 대표만 합니다 (원문 §61·§65)' });
+    }
+    const [row] = await this.q(
+      `SELECT id, due_on, due_approved_at FROM plan WHERE id = $1`, [id],
+    );
+    if (!row) throw new NotFoundException('기획이 없습니다');
+    if (!row.due_on) {
+      throw new ConflictException({ code: 'NO_DUE', message: '제안된 기한이 없습니다' });
+    }
+    if (row.due_approved_at) {
+      throw new ConflictException({ code: 'DUE_ALREADY_APPROVED', message: '이미 승인된 기한입니다' });
+    }
+
+    if (dto.approve) {
+      await this.q(`UPDATE plan SET due_approved_at = now(), due_approved_by = $2 WHERE id = $1`, [id, viewerId]);
+    } else {
+      await this.q(`UPDATE plan SET due_on = NULL, due_approved_at = NULL, due_approved_by = NULL WHERE id = $1`, [id]);
+    }
+    return (await this.planDetail(id, canApprove))!;
+  }
+
+  /** 최종 승인 · 보완 요청 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65) */
+  async reviewPlan(viewerId: number, canApprove: boolean, id: number, dto: PlanReviewDto): Promise<PlanDetailDto> {
+    const before = await this.planDetail(id, canApprove);
+    if (!before) throw new NotFoundException('기획이 없습니다');
+    if (!before.canReview) {
+      throw new ConflictException({
+        code: before.dueState === 'approved' ? 'NOT_REVIEWABLE' : 'DUE_NOT_APPROVED',
+        message: before.reviewBlockedReason ?? '지금은 결재할 수 없습니다',
+      });
+    }
+    if (dto.decision === 'rework' && !dto.reason?.trim()) {
+      throw new ConflictException({ code: 'REASON_REQUIRED', message: '보완 요청에는 사유가 필요합니다' });
+    }
+
+    const next = dto.decision === 'approve' ? 'approved' : 'rework';
+    await this.lead.manager.transaction(async (em) => {
+      await em.query(`UPDATE plan SET stage = $2 WHERE id = $1`, [id, next]);
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1, 'plan', $2, $3, $4::jsonb, $5::jsonb)`,
+        [viewerId, id, dto.decision,
+          JSON.stringify({ stage: before.stage }),
+          JSON.stringify({ stage: next, reason: dto.reason?.trim() ?? null })],
+      );
+    });
+    return (await this.planDetail(id, canApprove))!;
   }
 }

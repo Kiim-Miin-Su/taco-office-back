@@ -3807,6 +3807,267 @@
         ]
       }
     },
+    "/ops/plans/{id}": {
+      "get": {
+        "description": "단추가 열리는지도 서버가 정한다 — 원문 §61·§65 「대표는 기한을 먼저 승인해야 최종 승인이 열립니다」. 막힌 이유를 문장으로 함께 내려보낸다.",
+        "operationId": "OpsController_planDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "기획 없음"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§65 기획 보고서 — 목표 · 과제 · 리서치 · 결정 요청",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/plans/{id}/due": {
+      "post": {
+        "description": "반려는 기한을 지운다 — 승인 안 된 날짜가 §62 기한 표에 남으면 「대표를 지나오지 않은 마감」이 섞인다.",
+        "operationId": "OpsController_decidePlanDue",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanDueDecisionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "기획 없음"
+          },
+          "409": {
+            "description": "code CEO_ONLY | NO_DUE | DUE_ALREADY_APPROVED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "기한 승인 · 반려 — 대표 전용 (원문 §65)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/plans/{id}/review": {
+      "post": {
+        "description": "화면이 단추를 숨기는 것과 별개로 서버가 막는다 (DUE_NOT_APPROVED).",
+        "operationId": "OpsController_reviewPlan",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanReviewDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "기획 없음"
+          },
+          "409": {
+            "description": "code DUE_NOT_APPROVED | NOT_REVIEWABLE | REASON_REQUIRED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "최종 승인 · 보완 요청 — 기한이 먼저 승인돼야 열린다 (원문 §61·§65)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/consulting": {
       "get": {
         "description": "최종 canAdminPage와 canCrudAll이 모두 필요하다. 공개 범위로 투영된 items의 stage(contract/running/done)를 클라이언트에서 필터링하며 추가 GET은 0이다. 전체/단계 건수는 같은 items에서 파생하고 금액·상세 공개 권한을 변경하지 않는다.",
@@ -10361,7 +10622,18 @@
           },
           "stage": {
             "type": "string",
-            "description": "draft | review | rework | approved | done"
+            "enum": [
+              "draft",
+              "review",
+              "rework",
+              "approved",
+              "done"
+            ],
+            "description": "코드값 — 이름은 stageLabel 을 쓴다"
+          },
+          "stageLabel": {
+            "type": "string",
+            "description": "단계 이름 — 낱말은 서버가 만든다 (D-R18 · C56)"
           },
           "goal": {
             "type": "string",
@@ -10381,13 +10653,97 @@
           },
           "overdueDays": {
             "type": "number"
+          },
+          "dueState": {
+            "type": "string",
+            "enum": [
+              "none",
+              "proposed",
+              "approved"
+            ],
+            "description": "기한 상태 — due_on 과 due_approved_at 에서 파생"
           }
         },
         "required": [
           "id",
           "title",
           "stage",
-          "overdueDays"
+          "stageLabel",
+          "overdueDays",
+          "dueState"
+        ]
+      },
+      "PlanDueRowDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "한 표 안에서 겹치지 않는 키 — `plan:3` · `task:11`"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "task"
+            ]
+          },
+          "kindLabel": {
+            "type": "string",
+            "description": "구분 이름 — 원문 「기획 마감 · 과제」"
+          },
+          "dueOn": {
+            "type": "string",
+            "example": "2026-08-25"
+          },
+          "dueLabel": {
+            "type": "string",
+            "description": "남은 날 한 낱말"
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "지난 날 수 — 0 이면 안 지났다. 붉게 칠하는 판정이 이 값 하나다"
+          },
+          "title": {
+            "type": "string",
+            "description": "내용 — 기획 제목 또는 과제 제목"
+          },
+          "planId": {
+            "type": "number",
+            "description": "어느 기획인가"
+          },
+          "planTitle": {
+            "type": "string"
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "review",
+              "rework",
+              "approved",
+              "done"
+            ]
+          },
+          "stageLabel": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "kindLabel",
+          "dueOn",
+          "dueLabel",
+          "overdueDays",
+          "title",
+          "planId",
+          "planTitle",
+          "stage",
+          "stageLabel"
         ]
       },
       "MeetingDto": {
@@ -10687,6 +11043,17 @@
               "$ref": "#/components/schemas/PlanDto"
             }
           },
+          "planDues": {
+            "description": "§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanDueRowDto"
+            }
+          },
+          "planOverdue": {
+            "type": "number",
+            "description": "기한 지난 것 — 서버가 센다 (D-R37)"
+          },
           "meetings": {
             "type": "array",
             "items": {
@@ -10730,6 +11097,8 @@
           "complaints",
           "todos",
           "plans",
+          "planDues",
+          "planOverdue",
           "meetings",
           "marketing",
           "feedback",
@@ -10817,6 +11186,180 @@
         },
         "required": [
           "body"
+        ]
+      },
+      "PlanTaskDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "toName": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "지난 날 수 — 끝난 과제는 0"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "done",
+          "overdueDays"
+        ]
+      },
+      "PlanDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "review",
+              "rework",
+              "approved",
+              "done"
+            ]
+          },
+          "stageLabel": {
+            "type": "string"
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdOn": {
+            "type": "string",
+            "description": "작성일 YYYY-MM-DD"
+          },
+          "goal": {
+            "type": "string",
+            "nullable": true,
+            "description": "1 · 목표"
+          },
+          "tasks": {
+            "description": "2 · 과제 — TODO 에서 온다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanTaskDto"
+            }
+          },
+          "taskDone": {
+            "type": "number",
+            "description": "끝낸 과제 / 전체 — 화면이 다시 세지 않는다 (D-R37)"
+          },
+          "research": {
+            "type": "string",
+            "nullable": true,
+            "description": "3 · 리서치"
+          },
+          "ask": {
+            "type": "string",
+            "nullable": true,
+            "description": "4 · 결정 요청"
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueState": {
+            "type": "string",
+            "enum": [
+              "none",
+              "proposed",
+              "approved"
+            ]
+          },
+          "dueStateLabel": {
+            "type": "string",
+            "description": "띠에 쓰는 이름"
+          },
+          "dueApprovedByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "기한을 승인한 사람"
+          },
+          "overdueDays": {
+            "type": "number"
+          },
+          "canDecideDue": {
+            "type": "boolean",
+            "description": "기한을 승인·반려할 수 있는가 — 대표이고 아직 제안 상태일 때"
+          },
+          "canReview": {
+            "type": "boolean",
+            "description": "최종 승인·보완 요청을 할 수 있는가 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65)"
+          },
+          "reviewBlockedReason": {
+            "type": "string",
+            "description": "단추가 닫혀 있는 이유 — 열려 있으면 null",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "stage",
+          "stageLabel",
+          "createdOn",
+          "tasks",
+          "taskDone",
+          "dueState",
+          "dueStateLabel",
+          "overdueDays",
+          "canDecideDue",
+          "canReview",
+          "reviewBlockedReason"
+        ]
+      },
+      "PlanDueDecisionDto": {
+        "type": "object",
+        "properties": {
+          "approve": {
+            "type": "boolean",
+            "description": "true 면 승인, false 면 반려"
+          }
+        },
+        "required": [
+          "approve"
+        ]
+      },
+      "PlanReviewDto": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "rework"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "보완 요청 사유 — 되돌릴 때는 필수다",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "decision"
         ]
       },
       "ConsultingSessionDto": {

@@ -48,6 +48,17 @@ export const addDays = (iso: string, n: number): string =>
  * 기한이 며칠 지났는가. 안 지났으면 0.
  * **끝난 일에는 쓰지 않는다** — 완료한 할 일은 늦었든 아니든 0으로 보여 준다.
  */
+/**
+ * 기한까지 며칠 남았는가 — **부호가 있다.** 오늘이면 0, 지났으면 음수.
+ *
+ * `overdueDays` 는 안 지났으면 전부 0 이라 「D-2」를 만들 수 없다. 화면이 날짜 둘을 빼지
+ * 않게 하려면(D-R37) 남은 날을 그대로 주는 자리가 필요하다 (C56 · §62).
+ */
+export const daysUntil = (dueOn: string, today = todayKst()): number =>
+  Math.round(
+    (new Date(`${dueOn}T00:00:00Z`).getTime() - new Date(`${today}T00:00:00Z`).getTime()) / 86400000,
+  );
+
 export const overdueDays = (dueOn: string | null | undefined, today = todayKst()): number => {
   if (!dueOn) return 0;
   const d = (new Date(`${today}T00:00:00Z`).getTime() - new Date(`${dueOn}T00:00:00Z`).getTime()) / 86400000;

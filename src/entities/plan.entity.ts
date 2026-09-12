@@ -43,6 +43,14 @@ export class Plan {
   @Column({ type: 'bigint', nullable: true })
   ownerId: number | null;
 
+  /** 대표가 기한을 승인한 순간 — 비어 있으면 `dueOn` 은 아직 제안이다 (원문 §61·§65 · C56) */
+  @Column({ type: 'timestamptz', nullable: true })
+  dueApprovedAt: Date | null;
+
+  /** 기한을 승인한 사람 (C56) */
+  @Column({ type: 'bigint', nullable: true })
+  dueApprovedBy: number | null;
+
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
 }

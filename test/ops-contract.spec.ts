@@ -50,8 +50,8 @@ describe('§23·§24 LEAD 응답 projection', () => {
       failFrom: null, revivalStage: null, revivalSource: null,
     }]);
     // 7 고정 목록 + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
-    // + §60 대표 피드백 글타래 1회 (C53)
-    expect(query).toHaveBeenCalledTimes(9);
+    // + §60 대표 피드백 글타래 1회 (C53) + §62 기획 기한 1회 (C56)
+    expect(query).toHaveBeenCalledTimes(10);
   });
 
   it.each(['ownerId', 'studentId'])('%s는 Swagger에서 optional·nullable number다', (field) => {
@@ -173,6 +173,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   const empty: OpsDto = {
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
+    planDues: [], planOverdue: 0,
   };
 
   beforeAll(async () => {
@@ -190,7 +191,10 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   afterAll(async () => { await app?.close(); });
 
   it('실제 handler에 프론트와 동일한 두 권한이 모두 선언되어 있다 — 읽기와 실패/되살리기 쓰기 동일', () => {
-    for (const handler of ['all', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost'] as const) {
+    for (const handler of [
+      'all', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
+      'planDetail', 'decidePlanDue', 'reviewPlan',
+    ] as const) {
       expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
     }
   });
@@ -225,6 +229,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       '/ops', '/ops/leads/{id}/fail', '/ops/leads/{id}/resume',
       // §60 대표 피드백 — 코멘트·답변·답 고치기 (C53). 검색 GET·query 계약은 그대로 0이다.
       '/ops/marketing/{id}/comments', '/ops/marketing/{id}/replies', '/ops/marketing/feedback/{id}',
+      // §65 기획 보고서 — 상세·기한 결재·최종 결재 (C56)
+      '/ops/plans/{id}', '/ops/plans/{id}/due', '/ops/plans/{id}/review',
     ]);
     expect(Object.keys(path)).toEqual(['get']);
     expect(path.get?.description).toMatch(/name.*school.*ownerName.*reason/);
@@ -333,7 +339,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       })));
       expect(res.body.leads).toMatchObject([{ id: 1, name: '상담 계약 테스트' }]);
       expect(Object.keys(res.body).sort()).toEqual(Object.keys(empty).sort());
-      expect(query).toHaveBeenCalledTimes(9); // 7 목록 + N-25 도달 기록 1회 + §60 피드백 1회 (C53)
+      expect(query).toHaveBeenCalledTimes(10); // 7 목록 + N-25 도달 기록 + §60 피드백 + §62 기한 (C53·C56)
       expect(query.mock.calls.every(([sql]) => /^SELECT\b/.test(sql))).toBe(true);
       expect(marketingRows).toEqual(before);
     },
