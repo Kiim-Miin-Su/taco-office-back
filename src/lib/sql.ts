@@ -76,3 +76,28 @@ export function writtenRows<T = unknown>(res: unknown): T[] {
   }
   return (Array.isArray(res) ? res : []) as T[];
 }
+
+/** `ALTER TABLE … ADD CONSTRAINT … CHECK (…)` 한 문장에서 읽어 낸 것 */
+export interface CheckConstraintSql {
+  table: string;
+  name: string;
+  expr: string;
+}
+
+/**
+ * 실패한 제약 추가 문장에서 **표·제약 이름·CHECK 식**을 꺼낸다.
+ *
+ * 쓰는 곳은 마이그레이션 예행(`scripts/migration-dryrun.ts`)이다 — 제약이 거절한 행을
+ * `WHERE NOT (식)` 으로 되물으려면 식이 필요한데, Postgres 에러는 **제약 이름만** 준다.
+ *
+ * 정규식을 파일 안에 묻어 뒀다가 조용히 안 맞은 적이 있다(여러 줄로 적힌 `CHECK` 를 못 읽었다).
+ * 안 맞으면 `null` 을 돌려주고 부르는 쪽이 「못 읽었다」고 **말한다** — 틀린 식으로 세지 않는다.
+ */
+export function parseCheckConstraint(sql: string): CheckConstraintSql | null {
+  const m = /ALTER\s+TABLE\s+(?:ONLY\s+)?"?(\w+)"?\s+ADD\s+CONSTRAINT\s+"?(\w+)"?\s+CHECK\s*\(([\s\S]+)\)\s*(?:NOT\s+VALID)?\s*;?\s*$/i
+    .exec(sql.trim());
+  if (!m) return null;
+  const [, table, name, expr] = m;
+  if (expr.trim() === '') return null;
+  return { table, name, expr: expr.replace(/\s+/g, ' ').trim() };
+}

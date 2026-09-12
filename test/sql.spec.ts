@@ -10,8 +10,10 @@
  * 이 파일이 있는 이유: 시각 형식이 서비스마다 흩어져 있을 때
  * 아홉 군데 전부가 `+00` 을 내려보내고 있었는데 어느 테스트도 잡지 못했다.
  */
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DataSource, QueryRunner } from 'typeorm';
-import { KST, kstAt, kstDateOf, minOf, spanOf, START_MIN, END_MIN } from '../src/lib/sql';
+import { KST, kstAt, kstDateOf, minOf, parseCheckConstraint, spanOf, START_MIN, END_MIN } from '../src/lib/sql';
 import { ScheduleService } from '../src/modules/schedule/schedule.service';
 
 describe('lib/sql', () => {
@@ -108,6 +110,80 @@ d('수업 종료 분 — 실제 KST 날짜 경계', () => {
       });
     } finally {
       clock.mockRestore();
+    }
+  });
+});
+
+/**
+ * 마이그레이션 예행이 「어느 행이 걸리는가」를 세려면 CHECK 식을 문장에서 읽어야 한다.
+ * 여기 있는 문장은 전부 **실제 마이그레이션에서 그대로 가져온 모양**이다 —
+ * 한 번 조용히 안 맞아서(여러 줄 CHECK) 「못 읽었습니다」만 찍고 넘어간 적이 있다.
+ */
+describe('parseCheckConstraint', () => {
+  it('여러 줄로 적힌 CHECK 도 읽는다 — 마이그레이션은 대개 여러 줄이다', () => {
+    const got = parseCheckConstraint(
+      `ALTER TABLE expense ADD CONSTRAINT expense_amount_le_requested
+      CHECK (requested_amount IS NULL OR amount IS NULL OR amount <= requested_amount)`,
+    );
+    expect(got).toEqual({
+      table: 'expense',
+      name: 'expense_amount_le_requested',
+      expr: 'requested_amount IS NULL OR amount IS NULL OR amount <= requested_amount',
+    });
+  });
+
+  it('식 안의 괄호를 잘라 먹지 않는다 — 비탐욕 매칭이 여기서 틀린다', () => {
+    const got = parseCheckConstraint(
+      `ALTER TABLE expense ADD CONSTRAINT expense_category_code
+      CHECK (category IN ('rent', 'book', 'supply', 'ent', 'fee', 'etc'))`,
+    );
+    expect(got?.expr).toBe(`category IN ('rent', 'book', 'supply', 'ent', 'fee', 'etc')`);
+  });
+
+  it('NOT VALID 가 붙어도 식만 가져온다', () => {
+    const got = parseCheckConstraint(
+      `ALTER TABLE chreq ADD CONSTRAINT chreq_reject_needs_reason
+         CHECK (state <> 'rejected' OR reject_reason IS NOT NULL) NOT VALID`,
+    );
+    expect(got?.name).toBe('chreq_reject_needs_reason');
+    expect(got?.expr).toBe(`state <> 'rejected' OR reject_reason IS NOT NULL`);
+  });
+
+  it('짝(=) 검사처럼 등호가 든 식도 그대로 온다', () => {
+    const got = parseCheckConstraint(
+      `ALTER TABLE payout ADD CONSTRAINT payout_confirm_pair
+         CHECK ((confirmed_by IS NULL) = (confirmed_at IS NULL)) NOT VALID`,
+    );
+    expect(got?.expr).toBe('(confirmed_by IS NULL) = (confirmed_at IS NULL)');
+  });
+
+  it('따옴표 친 이름과 ONLY 도 받는다', () => {
+    const got = parseCheckConstraint(`ALTER TABLE ONLY "file" ADD CONSTRAINT "file_size_cap" CHECK (bytes > 0);`);
+    expect(got).toEqual({ table: 'file', name: 'file_size_cap', expr: 'bytes > 0' });
+  });
+
+  it('CHECK 이 아닌 문장은 null 이다 — 틀린 식으로 세느니 못 읽었다고 말한다', () => {
+    expect(parseCheckConstraint(`ALTER TABLE file ADD CONSTRAINT file_uploader_fk FOREIGN KEY (uploaded_by) REFERENCES staff(id)`)).toBeNull();
+    expect(parseCheckConstraint(`CREATE UNIQUE INDEX gpa_alloc_cycle_student ON gpa_alloc (cycle_id, student_id)`)).toBeNull();
+    expect(parseCheckConstraint(`ROLLBACK`)).toBeNull();
+    expect(parseCheckConstraint(``)).toBeNull();
+  });
+
+  it('실제 마이그레이션의 CHECK 문장을 전부 읽는다 — 하나라도 못 읽으면 그 자리에서 눈이 먼다', () => {
+    const dir = join(__dirname, '..', 'src', 'migrations');
+    const stmts: string[] = [];
+    for (const f of readdirSync(dir).filter((n) => n.endsWith('.ts'))) {
+      const src = readFileSync(join(dir, f), 'utf8');
+      for (const m of src.matchAll(/`(ALTER TABLE[\s\S]*?)`/g)) {
+        // 변수로 조립하는 문장이 있다(`CHECK (${c.expression})`). 실행 시점에는 평범한 SQL 이 되므로
+        // 자리만 채워 **모양**을 검사한다 — 빼 버리면 그 갈래가 회귀에서 빠진다
+        const sql = m[1].replace(/\$\{[^}]*\}/g, 'x');
+        if (/ADD CONSTRAINT[\s\S]*CHECK\s*\(/i.test(sql)) stmts.push(sql);
+      }
+    }
+    expect(stmts.length).toBeGreaterThan(10);
+    for (const s of stmts) {
+      expect({ sql: s.slice(0, 60), got: parseCheckConstraint(s) !== null }).toEqual({ sql: s.slice(0, 60), got: true });
     }
   });
 });

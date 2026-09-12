@@ -18,10 +18,12 @@
     "openapi:check": "npm run openapi:gen -- --check",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/data-source.ts",
+    "migration:dryrun": "ts-node -P tsconfig.json scripts/migration-dryrun.ts",
     "seed": "ts-node -P tsconfig.json scripts/seed.ts",
     "db": "./scripts/dev-db.sh",
     "db:doctor": "./scripts/dev-db.sh doctor",
     "schema:check": "ts-node -P tsconfig.json scripts/schema-check.ts",
+    "write:coverage": "ts-node -P tsconfig.json scripts/write-coverage.ts",
     "migration:deploy": "ts-node -P tsconfig.json scripts/deploy-check.ts --run",
     "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts"
   },
