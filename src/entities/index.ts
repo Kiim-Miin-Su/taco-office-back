@@ -20,7 +20,11 @@ export * from './enr.entity';
 export * from './exc.entity';
 export * from './exc-stu-out.entity';
 export * from './expense.entity';
+export * from './gpa-alloc.entity';
+export * from './gpa-cycle.entity';
+export * from './gpa-use.entity';
 export * from './gpapack.entity';
+export * from './gpasvc.entity';
 export * from './gtpl.entity';
 export * from './guide.entity';
 export * from './hist.entity';
@@ -83,7 +87,11 @@ import {
   Exc,
   ExcStuOut,
   Expense,
+  GpaAlloc,
+  GpaCycle,
+  GpaUse,
   Gpapack,
+  Gpasvc,
   Gtpl,
   Guide,
   Hist,
@@ -132,7 +140,7 @@ import {
   Zlog,
 } from './index';
 
-/** DataSource 에 넘길 목록. GPA 4표는 N-13 결정 대기라 빠져 있습니다. */
+/** DataSource 에 넘길 목록. GPA 4표는 N-13 채택(2026-09-12 §4-17)으로 C34 에서 합류했다. */
 export const ENTITIES = [
   Att,
   Autorep,
@@ -148,7 +156,11 @@ export const ENTITIES = [
   Exc,
   ExcStuOut,
   Expense,
+  GpaAlloc,
+  GpaCycle,
+  GpaUse,
   Gpapack,
+  Gpasvc,
   Gtpl,
   Guide,
   Hist,

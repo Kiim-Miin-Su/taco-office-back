@@ -77,6 +77,48 @@ export const CONS_PICKS = [
  * 컨설팅 항목 원장 (N-18 채택 §4-17 · 47D-B) — §31 원문의 국제학교 지원 기본 7항목만 시드한다.
  * essay·roadmap 유형의 기본 항목표는 확정 전(N-18-a)이라 비워 둔다 — 화면이 그 이유를 말한다.
  */
+/**
+ * GPA 4표 시드 (N-13 채택 · v2 §4.5) — 서비스 5종은 원문 포인트 그대로.
+ * 현재 사이클은 원문 실측(배정 56 · 사용 32 · 대기 3 · 잔여 21)을 합계로 재현하고
+ * 초과 표본 1명(학생 3: 8p 배정 − 10p 사용 = −2)을 둔다 — «붉게 + 안내» 경로가 화면에 보이게.
+ */
+export const GPASVCS = [
+  { key: 'hw',   name: '숙제 지원',        point: 1, sort: 1 },
+  { key: 'prj',  name: '프로젝트 피드백',  point: 2, sort: 2 },
+  { key: 'quiz', name: 'Quiz 대비',        point: 2, sort: 3 },
+  { key: 'test', name: 'Test 대비',        point: 4, sort: 4 },
+  { key: 'self', name: '자습 지원',        point: 6, sort: 5 },
+];
+export const GPA_CYCLES = [
+  { id: 1, no: 3, fromDate: D(-41), toDate: D(-14), closed: true },
+  { id: 2, no: 4, fromDate: D(-13), toDate: D(14), closed: false },
+];
+export const GPA_ALLOCS = [
+  { cycleId: 2, studentId: 5, coordId: 3, points: 24 },
+  { cycleId: 2, studentId: 8, coordId: 3, points: 24 },
+  { cycleId: 2, studentId: 3, coordId: 4, points: 8 },
+  { cycleId: 1, studentId: 5, coordId: 3, points: 20 },
+];
+export const GPA_USES = [
+  // 학생 5 — ok 10p (hw1 + prj2 + self6 + hw1)
+  { cycleId: 2, studentId: 5, serId: 15, svcKey: 'hw',   points: 1, onDate: D(-10), startMin: 1140, coordId: 3, state: 'ok' },
+  { cycleId: 2, studentId: 5, serId: 15, svcKey: 'prj',  points: 2, onDate: D(-6),  startMin: 1140, coordId: 3, state: 'ok' },
+  { cycleId: 2, studentId: 5, serId: null, svcKey: 'self', points: 6, onDate: D(-3), startMin: null, coordId: 3, state: 'ok' },
+  { cycleId: 2, studentId: 5, serId: 15, svcKey: 'hw',   points: 1, onDate: D(-1),  startMin: 1140, coordId: 3, state: 'ok' },
+  // 학생 8 — ok 12p (test4 + self6 + quiz2) + wait 3p (prj2 + hw1)
+  { cycleId: 2, studentId: 8, serId: 15, svcKey: 'test', points: 4, onDate: D(-9), startMin: 1140, coordId: 3, state: 'ok' },
+  { cycleId: 2, studentId: 8, serId: null, svcKey: 'self', points: 6, onDate: D(-5), startMin: null, coordId: 3, state: 'ok' },
+  { cycleId: 2, studentId: 8, serId: 15, svcKey: 'quiz', points: 2, onDate: D(-2), startMin: 1140, coordId: 3, state: 'ok' },
+  { cycleId: 2, studentId: 8, serId: null, svcKey: 'prj', points: 2, onDate: D(-1), startMin: null, coordId: 4, state: 'wait' },
+  { cycleId: 2, studentId: 8, serId: null, svcKey: 'hw',  points: 1, onDate: D(0),  startMin: null, coordId: 3, state: 'wait' },
+  // 학생 3 — 초과 표본: 8p 배정에 ok 10p (test4 + test4 + prj2)
+  { cycleId: 2, studentId: 3, serId: null, svcKey: 'test', points: 4, onDate: D(-8), startMin: null, coordId: 4, state: 'ok' },
+  { cycleId: 2, studentId: 3, serId: null, svcKey: 'test', points: 4, onDate: D(-4), startMin: null, coordId: 4, state: 'ok' },
+  { cycleId: 2, studentId: 3, serId: null, svcKey: 'prj',  points: 2, onDate: D(-2), startMin: null, coordId: 4, state: 'ok' },
+  // 지난(닫힌) 사이클 — 소멸 표본
+  { cycleId: 1, studentId: 5, serId: null, svcKey: 'self', points: 6, onDate: D(-20), startMin: null, coordId: 3, state: 'ok' },
+];
+
 export const INTL_SCHOOL_ITEMS = ['지원서 작성', '학업 성적 공증', '추천서 2부', '자기소개 에세이', '활동 증빙 자료', '여권 사본', '재학 증명서'] as const;
 export const CONS_ITEMS = [
   // cons 1 — 진행 중: 4/7 완료 (처리자 김범준)

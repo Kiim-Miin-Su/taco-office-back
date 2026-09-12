@@ -938,8 +938,9 @@ Table DIAG {
 }
 
 // ─────────────────────────────────────────────────────────── GPA (v2 §14)
-// 명세서 엔티티 37종 목록에 없다. SER(kind='gpa') 에 얹을지 표로 뺄지는 N-13.
-// 아래는 「표로 뺀다」 안. 확정 전까지 마이그레이션에 넣지 않는다.
+// N-13 채택 (2026-09-12 §4-17 ①) — 「표로 뺀다」 안 그대로 확정.
+// migration 1758300000000 (C34 · 구 M2) 로 4표가 실제 스키마에 합류했다.
+// CHECK: point>0 · alloc points≥0 · use points>0 · state IN(wait,ok) · from<to.
 
 Table GPASVC {
   key         varchar(8)  [pk, note: 'hw · prj · quiz · test · self']
@@ -1091,6 +1092,10 @@ Table SER_OCC {
 // v4.13 → v4.14 (2026-09-12 · TBO-50 C33 명단 가격 구간)
 //   + RATE.heads           N-17 채택 ① — 인원 구간(기존 행 DEFAULT 1 재해석·소비처 0 확인) ·
 //                          CHECK heads≥1 · (kind,COALESCE(sub,''),heads,from) UNIQUE 표현식 인덱스
+//
+// v4.14 → v4.15 (2026-09-12 · TBO-50 C34 GPA 4표 합류)
+//   + GPASVC·GPA_CYCLE·GPA_ALLOC·GPA_USE — N-13 채택. 기존 「표로 뺀다」 안 그대로,
+//     계획 주석만 확정으로 교정 · CHECK 5종 · points 는 규정 스냅샷
 //
 // ============================================================================
 // 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
