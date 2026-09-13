@@ -21,6 +21,8 @@ import {
   hasPerm,
   isRole,
   ROLE_LABEL,
+  canCeoComment,
+  canCeoApprovePlan,
   type Role,
 } from '../src/common/perm';
 
@@ -54,6 +56,14 @@ describe('권한 3줄 파생 (D-R39)', () => {
 
   it('관리자와 매니저는 권한이 같다 — 직함만 다르다', () => {
     expect(permsOf('manager')).toEqual(permsOf('admin'));
+    expect(canCeoComment('manager')).toBe(canCeoComment('admin'));
+    expect(canCeoApprovePlan('manager')).toBe(canCeoApprovePlan('admin'));
+    // 같은 DB 예외가 주어졌을 때에도 역할에 따른 숨은 분기가 없어야 한다.
+    for (const flag of ['canMoney', 'canWage', 'canApprove', 'canHide', 'canGpaPack'] as const) {
+      for (const value of [null, true, false]) {
+        expect(permsOf('manager', { [flag]: value })).toEqual(permsOf('admin', { [flag]: value }));
+      }
+    }
   });
 });
 

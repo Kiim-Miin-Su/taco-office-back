@@ -9,8 +9,8 @@
  * 탭 10(§59~§67) 과 탭 11(§69~§73), 탭 02 서랍(§14~§21)이 이 데이터를 쓴다.
  */
 import { addD } from '../lib/recurrence';
-import { SEED_TODAY } from './base';
-import { expand } from './schedule';
+import { SEED_TODAY, WAGES } from './base';
+import { expand, resolveExceptions } from './schedule';
 
 const D = (n: number) => addD(SEED_TODAY, n);
 const SCHEDULE_OCCURRENCES = expand();
@@ -25,17 +25,21 @@ const occurrenceDate = (serId: number, side: 'past' | 'future', nth = 1) => {
 
 /** 승인 요청 — 우측 서랍 §14 승인 대기함 */
 export const REQS = [
-  { staffId: 6,  reqType: 'wage_change', payload: { from: 42000, to: 45000 }, state: 'pending', createdAt: D(-2) },
+  { staffId: 7,  reqType: 'wage_change', payload: { from: WAGES.find((w) => w.staffId === 7)!.rate, to: 45000 }, state: 'pending', createdAt: D(-2) },
   { staffId: 7,  reqType: 'unav_add',    payload: { dow: 3, startMin: 540, endMin: 720 }, state: 'pending', createdAt: D(-1) },
-  { staffId: 6, reqType: 'wage_change', payload: { from: 35000, to: 37000 }, state: 'rejected', resolvedBy: 1, rejectReason: '3개월 뒤 재검토', createdAt: D(-9) },
+  { staffId: 7, reqType: 'wage_change', payload: { from: 35000, to: 37000 }, state: 'rejected', resolvedBy: 1, rejectReason: '3개월 뒤 재검토', createdAt: D(-9) },
   { staffId: 7,  reqType: 'unav_add',    payload: { dow: 6, startMin: 840, endMin: 1080 }, state: 'approved', resolvedBy: 3, createdAt: D(-14) },
 ];
 
 /** 변경 요청 — §19 넣기 · §20 이력 */
 export const CHREQS = [
-  { serId: 3,  onDate: occurrenceDate(3, 'past'), reqType: 'time_move', payload: { startMin: 1080, endMin: 1170 }, reason: '학교 시험 기간이라 1시간 미뤄 주세요', state: 'approved', byId: 7, resolvedBy: 3, applyAll: false, createdAt: D(-6) },
-  { serId: 9,  onDate: occurrenceDate(9, 'past'), reqType: 'teacher',   payload: { teacherId: 7 }, reason: '개인 사정으로 하루 대강 부탁드립니다', state: 'approved', byId: 6, resolvedBy: 3, applyAll: false, createdAt: D(-7) },
-  { serId: 17, onDate: occurrenceDate(17, 'future'), reqType: 'cancel', payload: {}, reason: '병가', state: 'pending', byId: 6, applyAll: false, createdAt: D(-1) },
+  // 승인 이력과 회차의 날짜·시간·사유는 같은 예외에서 파생한다.
+  ...resolveExceptions(SCHEDULE_OCCURRENCES).filter((e) => e.startMin !== undefined).map((e) => ({
+    serId: e.serId, onDate: e.onDate, reqType: 'time_move',
+    payload: { startMin: e.startMin, endMin: e.endMin }, reason: e.reason,
+    state: 'approved', byId: 7, resolvedBy: e.byId, applyAll: false, createdAt: e.onDate,
+  })),
+  { serId: 17, onDate: occurrenceDate(17, 'future'), reqType: 'cancel', payload: {}, reason: '병가', state: 'pending', byId: 7, applyAll: false, createdAt: D(-1) },
   { serId: 5,  onDate: occurrenceDate(5, 'past', 2), reqType: 'room', payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', rejectReason: '강남 같은 시간대에 빈 강의실이 없습니다 — 10월 시간표에서 다시 봅니다', state: 'rejected', byId: 7, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
 ];
 
@@ -51,7 +55,7 @@ export const GPAPACKS = [
 
 /** 알림 — 앱 안에서만 (카카오 실발송은 출시 후) */
 export const NOTIS = [
-  { toId: 6,  fromId: 3, body: '리포트 5건이 밀려 있습니다. 오늘 자정까지 써 주세요.', link: '/reports/unwritten', createdAt: D(0) },
+  { toId: 7,  fromId: 3, body: '리포트 5건이 밀려 있습니다. 오늘 자정까지 써 주세요.', link: '/reports/unwritten', createdAt: D(0) },
   { toId: 7,  fromId: 3, body: '리포트 3건이 밀려 있습니다.', link: '/reports/unwritten', createdAt: D(0) },
   { toId: 3,  fromId: 1, body: '주간 보고가 이틀째 결재 대기입니다.', link: '/reports/weekly', createdAt: D(-1) },
   { toId: 2,  fromId: 1, body: '컴플레인 2건이 모두 스케줄 통보 누락입니다. 재발 방지안을 주세요.', link: '/ops/complaints', createdAt: D(-1) },
@@ -66,11 +70,11 @@ export const NOTIS = [
 /** 컨설팅 — 계약 5단계 → 진행 → 종료 (§26~§31) */
 export const CONSULTINGS = [
   { id: 1, consType: 'admissions', stage: 'running', contractStep: 5, amount: 8400000, sessions: 13, endOn: '2027-01-31', ownerId: 3, share: 'money_only', students: [5] },
-  { id: 2, consType: 'essay',      stage: 'running', contractStep: 5, amount: 3600000, sessions: 8,  endOn: '2026-12-20', ownerId: 6, share: 'money_only', students: [6] },
+  { id: 2, consType: 'essay',      stage: 'running', contractStep: 5, amount: 3600000, sessions: 8,  endOn: '2026-12-20', ownerId: 7, share: 'money_only', students: [6] },
   { id: 3, consType: 'roadmap',    stage: 'contract', contractStep: 1, amount: 2800000, sessions: 6, endOn: '2027-02-28', ownerId: 3, share: 'money_only', students: [3] },
   // 공개 범위를 섞어 둔다 — 전부 money_only 면 두 번째 권한 층(csCan)이 한 번도 안 돈다.
   { id: 4, consType: 'admissions', stage: 'contract', contractStep: 3, amount: 7200000, sessions: 12, endOn: '2027-01-31', ownerId: 2, share: 'picked',  students: [1] },
-  { id: 5, consType: 'admissions', stage: 'done',    contractStep: 5, amount: 8400000, sessions: 13, endOn: '2026-08-15', ownerId: 6, share: 'private', students: [8] },
+  { id: 5, consType: 'admissions', stage: 'done',    contractStep: 5, amount: 8400000, sessions: 13, endOn: '2026-08-15', ownerId: 7, share: 'private', students: [8] },
 ];
 
 /**
@@ -80,11 +84,11 @@ export const CONSULTINGS = [
  * 「진단 기록이 없습니다」라 적어 **읽기 갈래가 한 번도 안 돈다.** 반대로 다 채우면
  * 「아직 없음 → 쓰기」 갈래가 안 돈다. 그래서 담당 학생 하나만 채워 둔다.
  *
- * 강사 6 은 시리즈 1·2 의 담당이고 학생 1 은 그 두 수업에 다 들어 있다.
+ * 강사 7 은 시리즈 1·2 의 담당이고 학생 1 은 그 두 수업에 다 들어 있다.
  */
 export const DIAGS = [
   {
-    studentId: 1, serId: 2, createdBy: 6,
+    studentId: 1, serId: 2, createdBy: 7,
     levelSummary: '학년 수준 독해는 되지만 논증 글쓰기에서 문단 사이 연결이 끊긴다.',
     strengths: '어휘 폭이 또래보다 넓고, 읽은 것을 자기 말로 옮기는 것을 잘한다.',
     weaknesses: '근거를 하나만 대고 넘어간다. 긴 지문 후반부에서 집중이 떨어진다.',
@@ -171,7 +175,7 @@ export const CONS_SESSIONS = [
   { consId: 1, seq: 8, onDate: D(-2), who: '김범준 · 오예린', what: '보충 에세이 A대 2차 첨삭 · 문단 3개 재구성', why: 'A대 마감 09-15. 남은 5회 안에 3개 대학 보충분을 끝내야 함', how: '학생이 먼저 낭독 → 문단 단위 지적 → 그 자리에서 재작성' },
   { consId: 1, seq: 7, onDate: D(-9), who: '김범준 · 오예린', what: '공통 에세이 최종 확정', why: '9월 첫 주 제출분 확정 필요', how: '3안 비교 후 1안 채택' },
   { consId: 1, seq: 6, onDate: D(-16), who: '김범준 · 오예린', what: '추천서 요청 메일 발송', why: '교사 3인 회신에 2주 필요', how: '초안 작성 → 학생이 발송' },
-  { consId: 2, seq: 3, onDate: D(-5), who: '이다현 · 정하람', what: 'Body Paragraph 논거 재배치', why: '주제문과 근거 순서가 뒤집혀 있었음', how: 'MLA 형식 교정 병행' },
+  { consId: 2, seq: 3, onDate: D(-5), who: '김재훈 · 정하람', what: 'Body Paragraph 논거 재배치', why: '주제문과 근거 순서가 뒤집혀 있었음', how: 'MLA 형식 교정 병행' },
 ];
 
 /** 마케팅 — 채널 7종 (§59) */
@@ -218,11 +222,11 @@ export const PLANS = [
 
 /** 회의 5종 (§63 · §66) */
 export const MEETINGS = [
-  { id: 1, mtType: 'plan',      title: '9월 마케팅 집행 확정 회의', onDate: D(0),  minutes: null, attendees: [1, 2, 3, 4, 6] },
-  { id: 2, mtType: 'consulting', title: '대학 원서 마감 일정 점검',  onDate: D(0),  minutes: null, attendees: [3, 6, 8] },
-  { id: 3, mtType: 'general',   title: '주간 운영 회의 (35주차)',   onDate: D(3),  minutes: null, attendees: [1, 2, 3, 4, 5, 6, 7, 8] },
-  { id: 4, mtType: 'marketing', title: '8월 채널별 성과 리뷰',      onDate: D(-2), minutes: '채널별 등록당 비용을 비교. 인스타 재검토 결정.', attendees: [1, 2, 4, 5, 6] },
-  { id: 5, mtType: 'general',   title: '주간 운영 회의 (34주차)',   onDate: D(-4), minutes: '리포트 작성률 하락 원인 공유. 배정 분산 합의.', attendees: [1, 2, 3, 4, 5, 6, 7] },
+  { id: 1, mtType: 'plan',      title: '9월 마케팅 집행 확정 회의', onDate: D(0),  minutes: null, attendees: [1, 2, 3, 4, 7] },
+  { id: 2, mtType: 'consulting', title: '대학 원서 마감 일정 점검',  onDate: D(0),  minutes: null, attendees: [3, 7] },
+  { id: 3, mtType: 'general',   title: '주간 운영 회의 (35주차)',   onDate: D(3),  minutes: null, attendees: [1, 2, 3, 4, 7] },
+  { id: 4, mtType: 'marketing', title: '8월 채널별 성과 리뷰',      onDate: D(-2), minutes: '채널별 등록당 비용을 비교. 인스타 재검토 결정.', attendees: [1, 2, 3, 4, 7] },
+  { id: 5, mtType: 'general',   title: '주간 운영 회의 (34주차)',   onDate: D(-4), minutes: '리포트 작성률 하락 원인 공유. 배정 분산 합의.', attendees: [1, 2, 3, 4, 7] },
 ];
 
 /** 컴플레인 — 영역 5종 · 접수 → 대응 → 결과 (§67) */
@@ -231,7 +235,7 @@ export const COMPLAINTS = [
   { area: 'teacher',  studentId: 5,  stage: 'received', body: '수업 시작이 10분씩 반복해서 늦습니다.', teacherChanged: false, ownerId: 4, createdAt: D(-1) },
   { area: 'book',     studentId: 4,  stage: 'acting',   body: '교재 배송이 3일 지연됐습니다.', action: '통화 완료 · 재발송 처리 중', teacherChanged: false, ownerId: 4, createdAt: D(-5) },
   { area: 'lesson',   studentId: 7,  stage: 'acting',   body: '그룹 수업 인원이 너무 많습니다.', action: '분반 검토 중 · 09-01 회신 약속', teacherChanged: false, ownerId: 3, createdAt: D(-6) },
-  { area: 'intake',   studentId: null, stage: 'acting', body: '상담 예약 시간이 착오로 잡혔습니다.', action: '사과 + 재예약 완료', teacherChanged: false, ownerId: 5, createdAt: D(-8) },
+  { area: 'intake',   studentId: null, stage: 'acting', body: '상담 예약 시간이 착오로 잡혔습니다.', action: '사과 + 재예약 완료', teacherChanged: false, ownerId: 3, createdAt: D(-8) },
   { area: 'lesson',   studentId: 11, stage: 'closed',   body: '수업 취소 환불이 지연됩니다.', action: '환불 처리', result: '08-24 환불 완료', teacherChanged: false, ownerId: 2, createdAt: D(-12) },
   { area: 'lesson',   studentId: 2,  stage: 'closed',   body: '리포트 내용이 부실합니다.', action: '재작성 요청', result: '08-22 재작성 전달', teacherChanged: true, ownerId: 3, createdAt: D(-14) },
   { area: 'book',     studentId: 10, stage: 'closed',   body: '교재가 파본입니다.', action: '교체 발송', result: '08-20 교체 완료', teacherChanged: false, ownerId: 4, createdAt: D(-16) },
@@ -239,10 +243,10 @@ export const COMPLAINTS = [
 
 /** 건의 사항 — 강사 창구 (§Data/Suggestion Card) */
 export const SUGGESTIONS = [
-  { staffId: 6,  category: 'schedule', body: '화요일 저녁 슬롯이 너무 붙어 있습니다. 30분 간격을 주세요.', state: 'open',      createdAt: D(-2) },
+  { staffId: 7,  category: 'schedule', body: '화요일 저녁 슬롯이 너무 붙어 있습니다. 30분 간격을 주세요.', state: 'open',      createdAt: D(-2) },
   { staffId: 7,  category: 'lesson',   body: 'MAP Math 그룹 인원을 4명 이하로 유지해 주세요.', state: 'reviewing', createdAt: D(-6) },
-  { staffId: 6, category: 'pay',      body: '지각 차감 기준을 강사 화면에도 표시해 주세요.', state: 'done', reply: '§47 화면에 구간표를 넣었습니다.', replyBy: 3, replyAt: D(-3), createdAt: D(-11) },
-  { staffId: 7,  category: 'etc',      body: '3층 회의실 프로젝터 교체 요청합니다.', state: 'open', createdAt: D(-4) },
+  { staffId: 7, category: 'pay',      body: '지각 차감 기준을 강사 화면에도 표시해 주세요.', state: 'done', reply: '§47 화면에 구간표를 넣었습니다.', replyBy: 3, replyAt: D(-3), createdAt: D(-11) },
+  { staffId: 7,  category: 'etc',      body: '3층 회의실 프로젝터 교체 요청합니다.', state: 'open', createdAt: D(-40) },
 ];
 
 /** 대표 보고 — 일 · 주 · 월 (§69~§71) */

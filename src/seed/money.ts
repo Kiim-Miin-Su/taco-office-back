@@ -73,16 +73,14 @@ export const EXPENSES = [
  */
 export const PAYOUTS = [
   /*
-   * 한 사람 한 달에 한 줄이다(`payout_staff_id_year_month_uniq`). 강사가 둘이므로
+   * 한 사람 한 달에 한 줄이다(`payout_staff_id_year_month_uniq`). 강사가 한 명이므로
    * **두 달**을 써야 `approved` 와 `draft` 두 갈래가 다 돈다 — 값이 한 종류뿐이면
    * 검증된 적 없는 것이다. 지난달은 아직 작성 중, 그 앞달은 확정분이다.
    *
-   * gross = 시수 × 시급(WAGES: 이다현 42,000 · 김재훈 40,000).
+   * gross = 시수 × 시급(WAGES: 김재훈 40,000). 두 사람의 정산을 합병하지 않는다.
    * 과세표준 = gross − 지각 차감, 소득세 3% · 지방세는 소득세의 10% (D-R32).
    */
-  { staffId: 6, yearMonth: PREV2, hours: '48.0', gross: 2016000, lateRepCut: 25000, incomeTax: 59730, localTax: 5973, net: 1925297, state: 'approved', confirmedBy: 2 },
   { staffId: 7, yearMonth: PREV2, hours: '42.0', gross: 1680000, lateRepCut: 15000, incomeTax: 49950, localTax: 4995, net: 1610055, state: 'approved', confirmedBy: 2 },
-  { staffId: 6, yearMonth: PREV,  hours: '36.0', gross: 1512000, lateRepCut: 10000, incomeTax: 45060, localTax: 4506, net: 1452434, state: 'draft',    confirmedBy: null },
   { staffId: 7, yearMonth: PREV,  hours: '31.5', gross: 1260000, lateRepCut: 0,     incomeTax: 37800, localTax: 3780, net: 1218420, state: 'draft',    confirmedBy: null },
 ];
 

@@ -17,6 +17,8 @@
  *
  * 명세서 v2 의 교수실장·상담실장·코디네이터는 **직함**이며 권한상 전부 manager 와 같다.
  * 직함은 STAFF.title 에 문자열로 둔다 (docs/contracts/db/erd.dbml).
+ * 2026-09-14 재확정: admin과 manager는 현재 같은 기본 권한을 소비한다.
+ * 추후 분리도 여기서만 변경한다. STAFF의 개인별 예외와 대표 전용 판정은 보존한다.
  */
 
 export const ROLES = ['teacher', 'manager', 'admin', 'ceo'] as const;
