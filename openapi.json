@@ -6120,6 +6120,78 @@
         ]
       }
     },
+    "/teacher/diagnostics": {
+      "post": {
+        "description": "원문 권한 표가 「진단 리포트 작성 — 강사 **가능** · 나머지 **조회**」라 적는다. 역할만으로는 남의 학생 진단을 쓸 수 있어, 서버가 **그 학생이 정말 내 학생인지** 다시 본다 (수업 안내와 같은 담당 판정을 쓴다 — 두 곳이 따로 판정하면 「안내에는 보이는데 진단은 못 쓰는 학생」이 생긴다). 고치는 자리는 없다 — 진단은 그때의 판단이라 쌓고, 읽기는 늘 최신 한 건이다.",
+        "operationId": "TeacherController_createDiagnostic",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherDiagCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherGuideDiagDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "내 담당 학생·내 수업이 아니다 — 남의 학생인지 없는 학생인지 구분해 주지 않는다"
+          },
+          "409": {
+            "description": "code EMPTY_BODY — 현재 수준이 비었다"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "진단 리포트 작성 — 강사만 (강사 원문 슬라이드 20 · 47)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/teacher/unavailable": {
       "get": {
         "operationId": "TeacherController_unavailable",
@@ -13943,6 +14015,10 @@
       "TeacherGuideLessonDto": {
         "type": "object",
         "properties": {
+          "serId": {
+            "type": "number",
+            "description": "이 회차의 시리즈 id"
+          },
           "onDate": {
             "type": "string",
             "description": "YYYY-MM-DD (KST)"
@@ -13963,6 +14039,7 @@
           }
         },
         "required": [
+          "serId",
           "onDate",
           "startMin",
           "durMin"
@@ -14028,6 +14105,16 @@
           "weaknesses": {
             "type": "string",
             "nullable": true
+          },
+          "curriculum": {
+            "type": "string",
+            "nullable": true,
+            "description": "권장 커리큘럼 — 원문 04 진단 리포트의 둘째 줄"
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true,
+            "description": "쓴 사람 — 조회하는 쪽이 누구 글인지 알아야 한다"
           }
         },
         "required": [
@@ -14243,6 +14330,44 @@
         "required": [
           "category",
           "body"
+        ]
+      },
+      "TeacherDiagCreateDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number",
+            "description": "누구의 진단인가 — 서버가 내 담당 학생인지 다시 본다"
+          },
+          "levelSummary": {
+            "type": "string",
+            "description": "현재 수준 — 원문 「현재 수준 · 강점과 약점」의 첫 줄",
+            "maxLength": 2000
+          },
+          "strengths": {
+            "type": "string",
+            "description": "강점",
+            "maxLength": 2000
+          },
+          "weaknesses": {
+            "type": "string",
+            "description": "약점",
+            "maxLength": 2000
+          },
+          "curriculum": {
+            "type": "string",
+            "description": "권장 커리큘럼 — 원문 04 의 둘째 줄",
+            "maxLength": 2000
+          },
+          "serId": {
+            "type": "number",
+            "description": "어느 회차에서 봤는가 — 안 주면 null",
+            "nullable": true
+          }
+        },
+        "required": [
+          "studentId",
+          "levelSummary"
         ]
       },
       "TeacherUnavCycleDto": {

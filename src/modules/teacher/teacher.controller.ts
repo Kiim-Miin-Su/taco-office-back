@@ -7,11 +7,12 @@
 import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
-  ApiOkResponse, ApiOperation, ApiTags,
+  ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
+  TeacherDiagCreateDto, TeacherGuideDiagDto,
   TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
@@ -82,6 +83,28 @@ export class TeacherController {
   ): Promise<TeacherSuggestionDto> {
     this.assertTeacher(user);
     return this.svc.createSuggestion(user.id, dto);
+  }
+
+
+  @Post('diagnostics')
+  @ApiOperation({
+    summary: '진단 리포트 작성 — 강사만 (강사 원문 슬라이드 20 · 47)',
+    description:
+      '원문 권한 표가 「진단 리포트 작성 — 강사 **가능** · 나머지 **조회**」라 적는다. '
+      + '역할만으로는 남의 학생 진단을 쓸 수 있어, 서버가 **그 학생이 정말 내 학생인지** 다시 본다 '
+      + '(수업 안내와 같은 담당 판정을 쓴다 — 두 곳이 따로 판정하면 「안내에는 보이는데 진단은 못 쓰는 학생」이 생긴다). '
+      + '고치는 자리는 없다 — 진단은 그때의 판단이라 쌓고, 읽기는 늘 최신 한 건이다.',
+  })
+  @ApiCreatedResponse({ type: TeacherGuideDiagDto })
+  @ApiConflictResponse({ description: 'code EMPTY_BODY — 현재 수준이 비었다' })
+  @ApiNotFoundResponse({ description: '내 담당 학생·내 수업이 아니다 — 남의 학생인지 없는 학생인지 구분해 주지 않는다' })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async createDiagnostic(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: TeacherDiagCreateDto,
+  ): Promise<TeacherGuideDiagDto> {
+    this.assertTeacher(user);
+    return this.svc.createDiagnostic(user.id, dto);
   }
 
   @Get('unavailable')

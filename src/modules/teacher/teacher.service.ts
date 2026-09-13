@@ -15,7 +15,7 @@ import {
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
 import type {
-  TeacherGuideStudentDto, TeacherGuidesDto,
+  TeacherDiagCreateDto, TeacherGuideDiagDto, TeacherGuideStudentDto, TeacherGuidesDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
   TeacherHistoryDto, TeacherHistoryLessonDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
@@ -481,6 +481,7 @@ export class TeacherService {
       }
       s.weekCount += 1;
       s.lessons.push({
+        serId: Number(r.ser_id),
         onDate: String(r.on_date), startMin: Number(r.start_min), durMin: Number(r.dur_min),
         subKey: (r.sub_key as string) ?? null, title: (r.title as string) ?? null,
       });
@@ -509,10 +510,12 @@ export class TeacherService {
       const diags = await this.q(
         `SELECT DISTINCT ON (d.student_id)
                 d.student_id, to_char(d.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS on_date,
-                d.level_summary, d.strengths, d.weaknesses
-           FROM diag d
+                d.level_summary, d.strengths, d.weaknesses, d.curriculum, w.name AS by_name
+           FROM diag d LEFT JOIN staff w ON w.id = d.created_by
           WHERE d.student_id = ANY($1)
-          ORDER BY d.student_id, d.created_at DESC`,
+          -- id 로 한 번 더 가른다: created_at 은 기본값이 now() 라 같은 트랜잭션·같은 시각에
+          -- 들어온 두 건이 **동점**이 되고, 그때 「최신」이 아무 것이나 된다 (회귀가 잡았다)
+          ORDER BY d.student_id, d.created_at DESC, d.id DESC`,
         [ids],
       );
       for (const d of diags) {
@@ -523,6 +526,8 @@ export class TeacherService {
             levelSummary: String(d.level_summary),
             strengths: (d.strengths as string) ?? null,
             weaknesses: (d.weaknesses as string) ?? null,
+            curriculum: (d.curriculum as string) ?? null,
+            byName: (d.by_name as string) ?? null,
           };
         }
       }
@@ -728,5 +733,71 @@ export class TeacherService {
     }
     await this.q(`DELETE FROM unav WHERE id = $1 AND staff_id = $2`, [id, teacherId]);
     return { ok: true };
+  }
+
+  /**
+   * 진단 리포트 쓰기 — 강사 원문 슬라이드 20 「04 진단 리포트 · 신규 학생 첫 수업」.
+   *
+   * **강사만 쓴다.** 원문 슬라이드 47 의 권한 표가 「진단 리포트 작성 — 강사 **가능** ·
+   * 나머지 **조회**」라고 적는다. 컨트롤러의 `assertTeacher` 가 역할을 보고, 여기서는
+   * **그 학생이 정말 내 학생인지** 다시 본다 — 역할만으로는 남의 학생 진단을 쓸 수 있다.
+   *
+   * 담당 판정은 새로 만들지 않는다. 수업 안내가 쓰는 `TEACHER_OF` 와 **같은 식**이다 —
+   * 회차 담당(`ser_occ.teacher_id`)이 있으면 그것, 없으면 시리즈 담당(`ser.teacher_id`).
+   * 두 곳이 따로 판정하면 「안내에는 보이는데 진단은 못 쓰는 학생」이 생긴다.
+   *
+   * **고치지 않고 쌓는다.** `diag` 에 수정 자리가 없고, 원문도 고치라고 하지 않는다.
+   * 진단은 「그때 그 학생이 어땠는가」의 기록이라, 나중에 고치면 그 시점의 판단이 사라진다.
+   * 읽기는 늘 최신 한 건이다(`DISTINCT ON`) — 쌓아도 화면은 안 어지럽다.
+   */
+  async createDiagnostic(teacherId: number, dto: TeacherDiagCreateDto): Promise<TeacherGuideDiagDto> {
+    const level = dto.levelSummary.trim();
+    if (!level) throw new ConflictException({ code: 'EMPTY_BODY', message: '현재 수준을 적어 주세요' });
+
+    const [mine] = await this.q(
+      `SELECT 1 AS ok
+         FROM ser_occ o JOIN ser s ON s.id = o.ser_id JOIN ser_stu ss ON ss.ser_id = o.ser_id
+        WHERE ss.student_id = $2 AND ${TEACHER_OF} = $1
+        LIMIT 1`,
+      [teacherId, dto.studentId],
+    );
+    if (!mine) {
+      // 없는 학생과 남의 학생을 같은 말로 돌려보낸다 — 누가 누구 학생인지 흘리지 않는다
+      throw new NotFoundException('내 담당 학생이 아닙니다');
+    }
+    if (dto.serId !== null && dto.serId !== undefined) {
+      const [own] = await this.q(
+        `SELECT 1 AS ok
+           FROM ser_occ o JOIN ser s ON s.id = o.ser_id
+          WHERE o.ser_id = $2 AND ${TEACHER_OF} = $1
+          LIMIT 1`,
+        [teacherId, dto.serId],
+      );
+      if (!own) throw new NotFoundException('내 수업이 아닙니다');
+    }
+
+    const trimmed = (v: string | undefined): string | null => {
+      const t = v?.trim();
+      return t ? t : null;
+    };
+    const [row] = await this.q(
+      `INSERT INTO diag (student_id, ser_id, level_summary, strengths, weaknesses, curriculum, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING to_char(created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS on_date,
+                 level_summary, strengths, weaknesses, curriculum`,
+      [
+        dto.studentId, dto.serId ?? null, level,
+        trimmed(dto.strengths), trimmed(dto.weaknesses), trimmed(dto.curriculum), teacherId,
+      ],
+    );
+    const [me] = await this.q(`SELECT name FROM staff WHERE id = $1`, [teacherId]);
+    return {
+      onDate: (row.on_date as string) ?? null,
+      levelSummary: String(row.level_summary),
+      strengths: (row.strengths as string) ?? null,
+      weaknesses: (row.weaknesses as string) ?? null,
+      curriculum: (row.curriculum as string) ?? null,
+      byName: (me?.name as string) ?? null,
+    };
   }
 }

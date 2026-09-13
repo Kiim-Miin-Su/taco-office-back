@@ -214,6 +214,8 @@ export class TeacherSuggestionCreateDto {
 /* ══ 수업 안내 (강사 덱 §10~13 — 이번 주 담당 학생·교재·진단·수업 설정) ══ */
 
 export class TeacherGuideLessonDto {
+  /** 진단을 「어느 수업에서 봤는가」로 달 수 있게 회차의 시리즈 id 를 함께 준다 (C61) */
+  @ApiProperty({ description: '이 회차의 시리즈 id' }) serId!: number;
   @ApiProperty({ description: 'YYYY-MM-DD (KST)' }) onDate!: string;
   @ApiProperty() startMin!: number;
   @ApiProperty() durMin!: number;
@@ -237,6 +239,41 @@ export class TeacherGuideDiagDto {
   @ApiProperty() levelSummary!: string;
   @ApiPropertyOptional(S) strengths?: string | null;
   @ApiPropertyOptional(S) weaknesses?: string | null;
+  /** 강사 원문 슬라이드 20 — 진단 리포트는 「현재 수준 · 강점과 약점」과 **「권장 커리큘럼」** 두 줄이다 */
+  @ApiPropertyOptional({ ...S, description: '권장 커리큘럼 — 원문 04 진단 리포트의 둘째 줄' })
+  curriculum?: string | null;
+  @ApiPropertyOptional({ ...S, description: '쓴 사람 — 조회하는 쪽이 누구 글인지 알아야 한다' })
+  byName?: string | null;
+}
+
+/**
+ * 진단 리포트 쓰기 — 강사 원문 슬라이드 20 「04 진단 리포트 · 신규 학생 첫 수업」.
+ *
+ * 원문이 준 칸은 **둘**이다 — 「현재 수준 · 강점과 약점」과 「권장 커리큘럼」.
+ * 강점과 약점을 한 칸에 몰지 않는다: 원문이 둘을 한 줄에 적었어도 표(`diag`)는
+ * `strengths`·`weaknesses` 로 갈라 두었고, 갈라 두면 나중에 「약점만 모아 보기」가 된다.
+ *
+ * **글자 수 하한을 두지 않는다.** 원문은 일반·그룹 리포트에만 하한(30자↑·60자↑)을 적었고
+ * 진단에는 안 적었다. 없는 규칙을 만들면 그 순간 원문에 없는 거절이 생긴다 (D-R44).
+ */
+export class TeacherDiagCreateDto {
+  @ApiProperty({ description: '누구의 진단인가 — 서버가 내 담당 학생인지 다시 본다' })
+  @IsInt() @Min(1) studentId!: number;
+
+  @ApiProperty({ description: '현재 수준 — 원문 「현재 수준 · 강점과 약점」의 첫 줄', maxLength: 2000 })
+  @IsString() @MaxLength(2000) levelSummary!: string;
+
+  @ApiPropertyOptional({ description: '강점', maxLength: 2000 })
+  @IsOptional() @IsString() @MaxLength(2000) strengths?: string;
+
+  @ApiPropertyOptional({ description: '약점', maxLength: 2000 })
+  @IsOptional() @IsString() @MaxLength(2000) weaknesses?: string;
+
+  @ApiPropertyOptional({ description: '권장 커리큘럼 — 원문 04 의 둘째 줄', maxLength: 2000 })
+  @IsOptional() @IsString() @MaxLength(2000) curriculum?: string;
+
+  @ApiPropertyOptional({ description: '어느 회차에서 봤는가 — 안 주면 null', type: Number, nullable: true })
+  @IsOptional() @IsInt() @Min(1) serId?: number | null;
 }
 
 export class TeacherGuideStudentDto {

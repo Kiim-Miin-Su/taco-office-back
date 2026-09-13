@@ -19,7 +19,7 @@ import { STUDENTS, ENROLLMENTS, LEADS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
-import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, MFBS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, CONS_PAYS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
+import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, MFBS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, CONS_PAYS, DIAGS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
 
 /**
  * `--reset` 이 비우는 표 — 넣을 때의 이 순서를 **역순으로** 지운다.
@@ -38,7 +38,7 @@ export const SEEDED_TABLES = [
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout',
-  'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay',
+  'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay', 'diag',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
   'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
@@ -188,6 +188,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('cons_pick', CONS_PICKS.map((p) => ({ cons_id: p.consId, staff_id: p.staffId })));
     await add('cons_item', CONS_ITEMS.map((x) => ({ cons_id: x.consId, seq: x.seq, label: x.label, done: x.done, done_by: x.doneBy, done_at: x.doneAt })));
     await add('cons_pay', CONS_PAYS.map((p) => ({ cons_id: p.consId, amount: p.amount, paid_on: p.paidOn, memo: p.memo, by_id: 2 })));
+    await add('diag', DIAGS.map((d) => ({ student_id: d.studentId, ser_id: d.serId, level_summary: d.levelSummary, strengths: d.strengths, weaknesses: d.weaknesses, curriculum: d.curriculum, created_by: d.createdBy })));
     await add('gpasvc', GPASVCS);
     await add('gpa_cycle', GPA_CYCLES.map((c) => ({ id: c.id, no: c.no, from_date: c.fromDate, to_date: c.toDate, closed: c.closed })));
     await add('gpa_alloc', GPA_ALLOCS.map((a) => ({ cycle_id: a.cycleId, student_id: a.studentId, coord_id: a.coordId, points: a.points })));
