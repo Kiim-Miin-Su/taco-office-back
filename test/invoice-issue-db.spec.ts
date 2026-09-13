@@ -15,6 +15,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Inv } from '../src/entities';
 import { AccountingService } from '../src/modules/accounting/accounting.service';
+import { rosterPricing } from '../src/lib/rules';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -224,5 +225,111 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
     const inv = await issue();
     expect(inv.lines).toHaveLength(2);
     expect(inv.amount).toBe(inv.lines.reduce((n, l) => n + l.amount, 0));
+  });
+
+  /* ══ 인원 구간과 학생 예외 (C63) ═══════════════════════════════════════
+   * 원문 §54 — 「데이터 RATE(단가), **STURATE(학생별 예외)**」 ·
+   * 「규칙 **그룹 수업은 인원이 늘면 1인 단가가 내려가고 총액은 올라갑니다**」 ·
+   * 「연동 **청구서 생성 시 이 계산 결과를 씁니다**」.
+   *
+   * 이 자리가 그 셋을 하나도 안 보고 있었다. 아래 회귀가 없어서 눈에 안 띄었다 —
+   * 시드 고정 데이터의 구간이 전부 1인이라 **틀린 채로 다 초록**이었다.
+   * ═══════════════════════════════════════════════════════════════════ */
+
+  /** 이 수업에 사람을 더 넣는다 — 구간을 움직이는 유일한 입력이다 */
+  const addClassmate = async (name: string) => {
+    const [s] = (await q.query(`INSERT INTO stu (name) VALUES ($1) RETURNING id`, [name])) as Array<{ id: string }>;
+    await q.query(`INSERT INTO ser_stu (ser_id, student_id) VALUES ($1,$2)`, [serId, Number(s.id)]);
+    return Number(s.id);
+  };
+  const tier = (heads: number, unitPrice: number) =>
+    q.query(
+      `INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ('inv_test','inv-sub',$1,'2026-01-01',$2)`,
+      [unitPrice, heads],
+    );
+
+  it('인원이 늘면 1인 단가가 내려간다 — 원문 §54 의 규칙 줄 그대로', async () => {
+    await tier(2, 30000);
+    await tier(3, 22000);
+    await occ('2026-08-03');
+
+    // 혼자일 때는 1인 구간
+    expect((await issue()).lines[0]).toMatchObject({ count: 1, unitPrice: 50000 });
+  });
+
+  it('둘이면 2인 구간, 셋이면 3인 구간 — 인원 이하의 **가장 큰** 구간을 고른다', async () => {
+    await tier(2, 30000);
+    await tier(3, 22000);
+    await occ('2026-08-03');
+    await addClassmate('짝꿍 하나');
+    const two = await issue();
+    expect(two.lines[0]).toMatchObject({ unitPrice: 30000, amount: 30000 });
+
+    await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [two.id]);
+    await addClassmate('짝꿍 둘');
+    expect((await issue()).lines[0]).toMatchObject({ unitPrice: 22000 });
+  });
+
+  it('명단 화면과 청구서가 **같은 단가**를 쓴다 — 같은 수업에 값이 둘이면 안 된다 (D-R22)', async () => {
+    await tier(2, 30000);
+    await tier(3, 22000);
+    await occ('2026-08-03');
+    await addClassmate('짝꿍 하나');
+    await addClassmate('짝꿍 둘');
+
+    // 명단 화면이 쓰는 함수 — 제품 규칙을 시험 안에 복제하지 않고 그대로 부른다
+    const roster = rosterPricing(
+      [{ heads: 1, unitPrice: 50000 }, { heads: 2, unitPrice: 30000 }, { heads: 3, unitPrice: 22000 }],
+      [null, null, null],
+    );
+    expect((await issue()).lines[0].unitPrice).toBe(roster!.unitPrice);
+  });
+
+  it('구간이 여럿이어도 고르는 값이 **정해져 있다** — 같은 입력에 같은 답이 나온다', async () => {
+    await tier(2, 30000);
+    await tier(3, 22000);
+    await tier(4, 18000);
+    await occ('2026-08-03');
+    await addClassmate('짝꿍 하나');
+    const seen = new Set<number>();
+    for (let i = 0; i < 5; i += 1) {
+      const inv = await issue();
+      seen.add(inv.lines[0].unitPrice!);
+      await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [inv.id]);
+    }
+    expect([...seen]).toEqual([30000]);
+  });
+
+  it('학생 예외(STURATE)가 구간 단가를 이긴다 — 원문이 「학생별 예외」라 부르는 것이다', async () => {
+    await tier(2, 30000);
+    await occ('2026-08-03');
+    await addClassmate('짝꿍 하나');
+    await q.query(
+      `INSERT INTO sturate (student_id, kind_key, unit_price, from_date) VALUES ($1,'inv_test',12000,'2026-01-01')`,
+      [stuId],
+    );
+    expect((await issue()).lines[0]).toMatchObject({ unitPrice: 12000, amount: 12000 });
+  });
+
+  it('예외는 **그날에 유효한 것**만 이긴다 — 나중에 생긴 예외가 지난 수업을 바꾸지 않는다', async () => {
+    await occ('2026-08-03');
+    await q.query(
+      `INSERT INTO sturate (student_id, kind_key, unit_price, from_date) VALUES ($1,'inv_test',12000,'2026-09-01')`,
+      [stuId],
+    );
+    expect((await issue()).lines[0]).toMatchObject({ unitPrice: 50000 });
+  });
+
+  it('같은 과목이라도 단가가 다르면 줄이 갈린다 — 「몇 번에 얼마」가 한 줄에서 읽혀야 한다', async () => {
+    await occ('2026-08-03');
+    await occ('2026-08-10');
+    // 8월 5일부터 단가가 오른다
+    await q.query(
+      `INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ('inv_test','inv-sub',70000,'2026-08-05',1)`,
+    );
+    const inv = await issue();
+    expect(inv.lines).toHaveLength(2);
+    expect(inv.lines.map((l) => l.unitPrice).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([50000, 70000]);
+    expect(inv.amount).toBe(120000);
   });
 });

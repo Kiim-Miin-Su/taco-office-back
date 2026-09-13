@@ -276,29 +276,58 @@ export class AccountingService {
       /*
        * 과목별 회차 수 — 취소된 회차와 「그날만 빠진」 학생은 빼고 센다.
        * 달은 회차의 **시작 시각을 KST 로 본 달**이다 (D-R12 · 시간대는 한 곳에서 정한다).
+       *
+       * ── 단가 (C63 교정) ────────────────────────────────────────────────
+       * 원문 §54 — 「데이터 RATE(단가), STURATE(학생별 예외)」 ·
+       * 「규칙 **그룹 수업은 인원이 늘면 1인 단가가 내려가고 총액은 올라갑니다**」 ·
+       * 「연동 **청구서 생성 시 이 계산 결과를 씁니다**」.
+       *
+       * 그런데 여기가 **인원 구간도 학생 예외도 안 보고** 있었다. `rate` 는 같은 과목에
+       * heads 1·2·3·4 네 줄을 갖는데 `ORDER BY sub_key, from_date DESC LIMIT 1` 은
+       * 그 넷을 **가르지 못한다** — from_date 가 같으면 어느 줄이 나올지 DB 가 정한다.
+       * 실제로 2인 AP Chem 이 1인 단가(₩80,000)로 청구되고 있었고, **같은 수업의 명단
+       * 화면은 ₩45,000 을 보여 주고 있었다** (`lib/rules.rosterPricing` 은 구간을 본다).
+       * 같은 수업에 값이 두 개인 상태였다 (D-R22).
+       *
+       * 그래서 회차마다 단가를 먼저 정하고 그 단가로 묶는다 —
+       *   ① 인원 = 그 수업의 현재 명단 수. ② 그 인원 **이하의 가장 큰 구간**을 고른다.
+       *   ③ 학생 예외(STURATE)가 있으면 그것이 이긴다.
+       * 같은 과목이라도 단가가 다르면 **줄이 갈린다** — 「몇 번에 얼마」가 한 줄에서 읽혀야 한다.
        */
       const lines = (await m.query(
-        `SELECT se.sub_key,
-                COALESCE(sb.name, k.name)              AS label,
-                count(*)::int                          AS n,
-                (SELECT r.unit_price FROM rate r
-                  WHERE r.kind_key = se.kind_key
-                    AND (r.sub_key IS NULL OR r.sub_key = se.sub_key)
-                    AND r.from_date <= min(o.on_date)
-                  ORDER BY r.sub_key NULLS LAST, r.from_date DESC
-                  LIMIT 1)::int                        AS unit_price
-           FROM ser_occ o
-           JOIN ser se     ON se.id = o.ser_id
-           JOIN kind k     ON k.key = se.kind_key
-           LEFT JOIN sub sb ON sb.key = se.sub_key
-           JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1
-          WHERE NOT o.canceled
-            AND ${kstMonthOf('lower(o.span)')} = $2
-            AND NOT EXISTS (
-                  SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
-                   WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)
-          GROUP BY se.sub_key, sb.name, k.name, se.kind_key
-          ORDER BY 2`,
+        `WITH priced AS (
+           SELECT se.sub_key,
+                  COALESCE(sb.name, k.name) AS label,
+                  COALESCE(
+                    (SELECT su.unit_price FROM sturate su
+                      WHERE su.student_id = $1
+                        AND (su.kind_key IS NULL OR su.kind_key = se.kind_key)
+                        AND su.from_date <= o.on_date
+                      ORDER BY su.kind_key NULLS LAST, su.from_date DESC
+                      LIMIT 1),
+                    (SELECT r.unit_price FROM rate r
+                      WHERE r.kind_key = se.kind_key
+                        AND (r.sub_key IS NULL OR r.sub_key = se.sub_key)
+                        AND r.heads <= (SELECT count(*) FROM ser_stu x WHERE x.ser_id = se.id)
+                        AND r.from_date <= o.on_date
+                      ORDER BY r.sub_key NULLS LAST, r.heads DESC, r.from_date DESC
+                      LIMIT 1)
+                  )::int AS unit_price
+             FROM ser_occ o
+             JOIN ser se     ON se.id = o.ser_id
+             JOIN kind k     ON k.key = se.kind_key
+             LEFT JOIN sub sb ON sb.key = se.sub_key
+             JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1
+            WHERE NOT o.canceled
+              AND ${kstMonthOf('lower(o.span)')} = $2
+              AND NOT EXISTS (
+                    SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+                     WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)
+         )
+         SELECT sub_key, label, count(*)::int AS n, unit_price
+           FROM priced
+          GROUP BY sub_key, label, unit_price
+          ORDER BY label, unit_price`,
         [dto.studentId, dto.yearMonth],
       )) as Array<{ sub_key: string | null; label: string; n: number; unit_price: number | null }>;
 
