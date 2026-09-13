@@ -812,8 +812,8 @@ export class ReportsService {
       );
       if (row.teacher_id) {
         await q.query(
-          `INSERT INTO noti (to_id, from_id, body, link)
-           VALUES ($1, $2, $3, '/reports')`,
+          `INSERT INTO noti (to_id, from_id, body, link, category)
+           VALUES ($1, $2, $3, '/reports', 'report')`,
           [
             Number(row.teacher_id), actorId,
             dto.decision === 'approve'

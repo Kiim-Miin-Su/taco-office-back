@@ -5,10 +5,10 @@
  */
 
 /**
- * §16 알림 — 분류 파생과 **보관** (D9 · N-7 · D-16 채택 · C38).
+ * §16 알림 — 저장 분류와 **보관** (D9 · N-7 · D-16 채택 · C76).
  *
  * 여기서 증명하는 것 셋.
- *   ① 분류는 색과 같은 방식으로 **링크에서 파생**한다 — 표에 컬럼이 없다.
+ *   ① 분류는 NOTI.category가 정본이고, 마이그레이션 전 과거 행만 링크 fallback을 쓴다.
  *   ② 「1개월」은 **조회 범위**다 — 창 밖 행이 목록에서 빠져도 표에는 그대로 있다(N-7 영구 보관).
  *   ③ 「전부 읽음」은 **내게 온 것만** 바꾼다.
  */
@@ -34,7 +34,7 @@ function scratchDataSource(): DataSource {
   });
 }
 
-describe('§16 분류 — 색과 같은 방식으로 링크에서 파생한다 (C38)', () => {
+describe('§16 분류 — DB category가 정본이고 과거 행만 링크 fallback (C76)', () => {
   it.each([
     ['/reports/unwritten', 'report_due'],
     ['/reports/12/2026-09-01', 'report'],
@@ -43,11 +43,15 @@ describe('§16 분류 — 색과 같은 방식으로 링크에서 파생한다 (
     ['/accounting/paid', 'etc'],
     [null, 'etc'],
   ])('%s → %s', (link, expected) => {
-    expect(notiCategory(link as string | null)).toBe(expected);
+    expect(notiCategory(null, link as string | null)).toBe(expected);
   });
 
   it('독촉이 리포트보다 먼저다 — 두 규칙에 걸리는 링크가 독촉으로 간다', () => {
-    expect(notiCategory('/reports/unwritten?teacher=3')).toBe('report_due');
+    expect(notiCategory(null, '/reports/unwritten?teacher=3')).toBe('report_due');
+  });
+
+  it('같은 독촉 링크라도 저장 분류가 재알람이면 재알람이다', () => {
+    expect(notiCategory('re_alarm', '/reports/unwritten')).toBe('re_alarm');
   });
 });
 
@@ -71,11 +75,11 @@ d('§16 보관 — 안 보이는 것이지 지운 것이 아니다 (N-7 · D-16 
        ON CONFLICT (id) DO NOTHING`,
     );
     await q.query(
-      `INSERT INTO noti (to_id, body, link, created_at) VALUES
-        (71, '4시간 이상 미작성 16건', '/reports/unwritten', now()),
-        (71, '리포트 승인', '/reports/9/2026-09-01', now() - interval '2 days'),
-        (71, '아주 오래된 알림', '/ops', now() - interval '400 days'),
-        (72, '남의 알림', '/ops', now())`,
+      `INSERT INTO noti (to_id, body, link, category, created_at) VALUES
+        (71, '4시간 이상 미작성 16건', '/reports/unwritten', 'report_due', now()),
+        (71, '리포트 승인', '/reports/9/2026-09-01', 'report', now() - interval '2 days'),
+        (71, '아주 오래된 알림', '/ops', 'request', now() - interval '400 days'),
+        (72, '남의 알림', '/ops', 'request', now())`,
     );
   });
   afterEach(async () => {

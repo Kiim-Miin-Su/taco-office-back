@@ -8,7 +8,8 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 // 여기서 다시 적었다가 DB(time_move)·읽기 DTO(time)·쓰기 검증(off)이 세 벌로 갈렸다.
 import { KIND_GROUPS } from '../../lib/catalog-words';
 import { CHREQ_TYPES } from '../../lib/change-request';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 /** §14 처리의 두 갈래 — 낱말의 출처는 여기 하나다 */
 export const REQ_DECISIONS = ['approve', 'reject'] as const;
@@ -18,7 +19,7 @@ const N = { type: Number, nullable: true } as const;
 
 /** §14 · §75 결재 한 줄 — 공통 5종과 강사 리포트가 같은 모양으로 온다 (D-R26 · D-R34) */
 export class ApRowDto {
-  @ApiProperty({ enum: ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack'] }) kind!: string;
+  @ApiProperty({ enum: ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing'] }) kind!: string;
   @ApiProperty() id!: number;
   @ApiProperty() title!: string;
   @ApiPropertyOptional(S) sub?: string | null;
@@ -40,6 +41,24 @@ export class ApRowDto {
     description: '이 사람이 **지금** 이 줄을 여기서 처리할 수 있는가 (§14). 화면은 이 값만 보고 단추를 그린다',
   })
   canAct?: boolean;
+
+  @ApiProperty({
+    enum: ['schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'missing', 'other'],
+    description: '§14 필터 분류 — 서버 코드표가 정한다',
+  })
+  category!: string;
+
+  @ApiProperty({ description: '§14 필터 이름 — 화면에 코드표를 복제하지 않는다' })
+  categoryLabel!: string;
+}
+
+export class ApCategoryDto {
+  @ApiProperty({
+    enum: ['schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'missing', 'other'],
+  })
+  key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() count!: number;
 }
 
 /**
@@ -88,7 +107,11 @@ export class ApFlowDto {
   @ApiProperty({ type: [ApRowDto], description: '되돌아온 것 — 맨 위 (§75)' }) back!: ApRowDto[];
   @ApiProperty({ type: [ApRowDto], description: '기다리는 것' }) waiting!: ApRowDto[];
   @ApiProperty({ type: [ApRowDto], description: '내가 올린 것' }) mine!: ApRowDto[];
-  @ApiProperty({ description: '배지 숫자 — 손이 가야 하는 것만 센다' }) count!: number;
+  @ApiProperty({ type: [ApRowDto], description: '§14에 실제로 보이는 미처리 요청·건의·GPA·누락' }) inbox!: ApRowDto[];
+  @ApiProperty({ type: [ApCategoryDto], description: '§14 원문 순서의 필터와 DB 기반 건수' })
+  categories!: ApCategoryDto[];
+  @ApiProperty({ description: '§75 결재 흐름 배지 — 되돌아온 것 + 기다리는 것' }) count!: number;
+  @ApiProperty({ description: '§14 승인 대기함 배지 — inbox와 같은 배열의 길이' }) inboxCount!: number;
   @ApiProperty({ type: [String], description: '아직 표가 없어 못 세는 갈래 (N-13 대기)' })
   missingKinds!: string[];
 }
@@ -104,6 +127,7 @@ export class DrawerTodoDto {
   @ApiPropertyOptional(S) dueOn?: string | null;
   @ApiProperty() done!: boolean;
   @ApiProperty({ enum: ['meeting', 'complaint', 'consulting', 'plan', 'manual'] }) src!: string;
+  @ApiProperty({ description: '출처 이름 — 서버 코드표가 정한다 (D-R18)' }) srcLabel!: string;
   @ApiProperty({ description: '기한이 지난 날 수. 0이면 안 지남' }) overdueDays!: number;
   @ApiPropertyOptional({ ...S, description: '출처가 있으면 원본으로 갈 곳' }) go?: string | null;
 }
@@ -135,11 +159,17 @@ export class NotiDto {
   })
   tone!: string;
   @ApiProperty({
-    enum: ['report_due', 'report', 'schedule', 'request', 'etc'],
-    description: '§16 분류 칩. 색과 같은 방식으로 링크에서 파생한다 — 표에 컬럼이 없다 (lib/noti.ts)',
+    enum: ['report_due', 're_alarm', 'report', 'schedule', 'request', 'etc'],
+    description: '§16 분류 칩. NOTI.category가 정본이며 과거 null 행만 링크 fallback을 쓴다',
   })
   category!: string;
   @ApiProperty({ description: '분류 이름 — 코드표는 서버가 소유한다 (D-R18)' }) categoryLabel!: string;
+}
+
+export class NotiCategoryDto {
+  @ApiProperty({ enum: ['report_due', 're_alarm', 'report', 'schedule', 'request', 'etc'] }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() count!: number;
 }
 
 /** §17 구성원 · 시간대 */
@@ -218,6 +248,8 @@ export class DrawerDto {
   @ApiProperty({ type: ApFlowDto, description: '§14 승인 대기함' }) approvals!: ApFlowDto;
   @ApiProperty({ type: [DrawerTodoDto], description: '§15 할 일' }) todos!: DrawerTodoDto[];
   @ApiProperty({ type: [NotiDto], description: '§16 알림 — 기본은 최근 30일 (D-16: 조회 범위 제한이지 삭제가 아니다)' }) notis!: NotiDto[];
+  @ApiProperty({ type: [NotiCategoryDto], description: '§16 원문 순서의 분류와 현재 조회 창 건수' })
+  notiCategories!: NotiCategoryDto[];
   @ApiProperty({ description: '목록에 보이는 기간(일). notiWindow=all 이면 0' }) notiWindowDays!: number;
   @ApiProperty({ description: '창 밖에 남아 있는 알림 수 — **지운 것이 아니다** (N-7 영구 보관)' }) notiOlderCount!: number;
   @ApiProperty({ type: [MemberDto], description: '§17 구성원 — 묶지 않은 전체 (다른 화면이 쓴다)' }) members!: MemberDto[];
@@ -237,6 +269,31 @@ export class TodoDoneDto {
   @ApiProperty({ description: '완료로 바꿀지 여부' })
   @IsBoolean()
   done!: boolean;
+}
+
+/** §15 수동 할 일 만들기. 출처 연결 할 일은 각 도메인의 전용 API가 만든다. */
+export class TodoCreateDto {
+  @ApiProperty({ maxLength: 160 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(160)
+  title!: string;
+
+  @ApiPropertyOptional({ minimum: 1, description: '생략하면 나에게 배정. 다른 사람 배정은 canCrudAll만' })
+  @IsOptional() @IsInt() @Min(1)
+  toId?: number;
+
+  @ApiPropertyOptional({ example: '2026-09-14', description: 'KST 기준 기한' })
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  dueOn?: string;
+}
+
+export class TodoCreateResultDto {
+  @ApiProperty() id!: number;
+}
+
+export class TodoClearDto {
+  @ApiProperty() ok!: true;
+  @ApiProperty({ description: '이번에 삭제된 완료 할 일 수' }) deleted!: number;
 }
 
 /** 종류별 Swagger 모델이 공유하는 회차 대상. 실제 검증도 ChangeReqCreateDto가 같은 필드를 쓴다. */

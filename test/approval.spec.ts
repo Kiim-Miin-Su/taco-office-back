@@ -124,13 +124,35 @@ describe('apFlow — 세 묶음', () => {
     const f = apFlow([], ME, true);
     // 한동안 gpapack 이 「표가 없다」로 빠져 있었는데 표는 처음부터 있었다
     expect(f.missingKinds).toEqual([]);
-    expect(AP_KINDS).toEqual(['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack']);
+    expect(AP_KINDS).toEqual(['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing']);
     expect(AP_KINDS_MISSING.every((k) => (AP_KINDS as readonly string[]).includes(k))).toBe(true);
   });
 
   it('D-R13 · 반려면 사유가 함께 온다', () => {
     const f = apFlow([row({ id: 1, byId: OTHER, state: 'back', why: '근거 없음' })], ME, true);
     expect(f.back[0].why).toBe('근거 없음');
+  });
+
+  it('§14 inbox는 요청·건의·GPA·누락만 세고 §75 보고는 섞지 않는다', () => {
+    const f = apFlow([
+      row({ id: 1, kind: 'rpt' }),
+      row({ id: 2, kind: 'req', reqType: 'wage_change' }),
+      row({ id: 3, kind: 'chreq', reqType: 'time_move' }),
+      row({ id: 4, kind: 'suggestion' }),
+      row({ id: 5, kind: 'missing' }),
+      row({ id: 6, kind: 'gpapack', state: 'done' }),
+    ], ME, true);
+    expect(f.inbox.map((r) => r.id)).toEqual([2, 3, 4, 5]);
+    expect(f.inboxCount).toBe(f.inbox.length);
+    expect(f.categories.find((c) => c.key === 'wage_change')?.count).toBe(1);
+    expect(f.categories.find((c) => c.key === 'schedule_change')?.count).toBe(1);
+    expect(f.categories.find((c) => c.key === 'book_change')?.count).toBe(0);
+  });
+
+  it('§14 inbox는 승인 권한이 없으면 행과 건수를 모두 숨긴다', () => {
+    const f = apFlow([row({ id: 1, kind: 'req', reqType: 'tz_change' })], ME, false);
+    expect(f.inbox).toEqual([]);
+    expect(f.inboxCount).toBe(0);
   });
 });
 

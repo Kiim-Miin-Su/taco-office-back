@@ -24,12 +24,13 @@ import {
 import { kindGroupLabel } from '../../lib/catalog-words';
 import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ZoomService } from '../zoom/zoom.service';
-import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
+import { NOTI_CATEGORIES, NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
 import { groupByRole } from '../../lib/role-words';
 import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
+import { todoSourceLabel } from '../../lib/todo';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
-import type { ChreqReviewDto, DrawerDto, ReqReviewDto } from './drawer.dto';
+import type { ChreqReviewDto, DrawerDto, ReqReviewDto, TodoCreateDto } from './drawer.dto';
 
 type R = Record<string, unknown>;
 
@@ -50,7 +51,7 @@ export class DrawerService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
-  /** §75 공통 다섯 갈래와 §14 강사 리포트를 읽어 한 모양으로 만든다. */
+  /** §14 리포트·건의·빠진 것과 §75 결재 갈래를 읽어 공통 ApRow 한 모양으로 만든다. */
   private async approvalRows(): Promise<ApRow[]> {
     const rows: ApRow[] = [];
 
@@ -72,6 +73,41 @@ export class DrawerService {
         title: `리포트 · ${String(r.student_names)} ${String(r.on_date)}`,
         sub: null, byId: num(r.teacher_id), byName: str(r.teacher_name), at: String(r.at),
         state: toApState(str(r.state)), why: str(r.reject_reason), go: '/reports',
+      });
+    }
+
+    // §14 「건의 사항」 — 강사 전용 건의 원장의 미처리 행. 답변은 운영 화면의 전용 흐름이 맡는다.
+    for (const r of await this.q(
+      `SELECT g.id, g.category, g.body, g.state, g.staff_id, s.name AS by_name,
+              ${kstAt(`g.created_at`)} AS at
+         FROM suggestion g JOIN staff s ON s.id = g.staff_id`,
+    )) {
+      rows.push({
+        kind: 'suggestion', id: Number(r.id), title: '건의 사항',
+        sub: String(r.body), byId: num(r.staff_id), byName: str(r.by_name), at: String(r.at),
+        state: toApState(str(r.state)), why: null, go: '/ops?view=suggestions', applicable: false,
+      });
+    }
+
+    /* §14 「빠진 것」 — 별도 상태를 저장하지 않고 SER_OCC의 현재 자원 배정을 매번 계산한다.
+       원문 카드가 요구한 줌 미배정만 우선 투영한다. 교재·안내·리포트 누락은 §34 현황판의
+       네 마크이며 승인 요청이 아니므로 여기서 중복 행을 만들지 않는다. */
+    for (const r of await this.q(
+      `SELECT o.id, o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              s.title, s.kind_key, o.teacher_id, t.name AS teacher_name,
+              ${kstAt(`lower(o.span)`)} AS at
+         FROM ser_occ o
+         JOIN ser s ON s.id = o.ser_id
+         LEFT JOIN staff t ON t.id = o.teacher_id
+        WHERE NOT o.canceled AND s.mode = 'online' AND o.zacc_id IS NULL
+          AND lower(o.span) >= now() AND lower(o.span) < now() + interval '30 days'`,
+    )) {
+      rows.push({
+        kind: 'missing', id: Number(r.id),
+        title: `줌 계정 미배정 · ${str(r.title) ?? String(r.kind_key)}`,
+        sub: [str(r.teacher_name), str(r.on_date)].filter(Boolean).join(' · '),
+        byId: num(r.teacher_id), byName: str(r.teacher_name), at: String(r.at),
+        state: 'waiting', why: null, go: `/schedule?d=${String(r.on_date)}`, applicable: false,
       });
     }
 
@@ -190,7 +226,7 @@ export class DrawerService {
       id: Number(r.id), title: String(r.title),
       fromId: num(r.from_id), toId: num(r.to_id),
       fromName: str(r.from_name), toName: str(r.to_name),
-      dueOn: str(r.due_on), done: r.done === true, src: String(r.src),
+      dueOn: str(r.due_on), done: r.done === true, src: String(r.src), srcLabel: todoSourceLabel(String(r.src)),
       overdueDays: r.done === true ? 0 : overdueDays(str(r.due_on)),
       // 출처가 있으면 원본으로 돌아갈 수 있다 (§15 규칙)
       go: r.mt_id || r.cpl_id ? '/ops' : r.cons_id ? '/consulting' : r.plan_id ? '/ops' : null,
@@ -200,7 +236,7 @@ export class DrawerService {
        창 밖에 몇 건이 남아 있는지 함께 세어, 화면이 「없어진 것이 아니라 안 보이는 것」이라고 말할 수 있게 한다. */
     const windowDays = notiAll ? 0 : NOTI_WINDOW_DAYS;
     const notis = (await this.q(
-      `SELECT n.id, n.body, n.link, n.to_id, n.read_at, f.name AS from_name,
+      `SELECT n.id, n.body, n.link, n.category, n.to_id, n.read_at, f.name AS from_name,
               ${kstAt(`n.created_at`)} AS at
          FROM noti n LEFT JOIN staff f ON f.id = n.from_id
         WHERE ($2::boolean OR n.to_id = $1)
@@ -209,7 +245,7 @@ export class DrawerService {
       [viewerId, canSeeAll, windowDays],
     )).map((r) => {
       const link = str(r.link);
-      const category = notiCategory(link);
+      const category = notiCategory(str(r.category), link);
       return {
         id: Number(r.id), body: String(r.body), fromName: str(r.from_name),
         toId: num(r.to_id), link, read: r.read_at !== null, at: String(r.at),
@@ -223,6 +259,11 @@ export class DrawerService {
           AND $3::int > 0 AND n.created_at < now() - make_interval(days => $3::int)`,
       [viewerId, canSeeAll, windowDays],
     );
+    const notiCategories = NOTI_CATEGORIES.map((key) => ({
+      key,
+      label: NOTI_CATEGORY_LABEL[key],
+      count: notis.filter((noti) => noti.category === key).length,
+    }));
 
     const members = (await this.q(
       `SELECT id, name, email, role::text AS role, title, tz, active FROM staff ORDER BY active DESC, id`,
@@ -291,7 +332,7 @@ export class DrawerService {
     }));
 
     return {
-      approvals, todos, notis,
+      approvals, todos, notis, notiCategories,
       notiWindowDays: windowDays,
       notiOlderCount: Number(older?.n ?? 0),
       members, memberGroups, tzGroups, kinds, changeReqs, zoomAccounts,
@@ -299,8 +340,36 @@ export class DrawerService {
     };
   }
 
-  /* ══ 쓰기 — 서랍이 하는 일은 세 가지뿐 ═══════════════════════════════════
-     승인·반려는 없다. 줄을 누르면 그 화면으로 간다 (D-R27).                 */
+  /* ══ 쓰기 — §14~§16의 입력은 모두 여기서 DB 권한을 다시 검사한다 ═══════ */
+
+  /** §15 수동 할 일 만들기. 다른 사람에게 배정하려면 canCrudAll 이어야 한다. */
+  async createTodo(viewerId: number, canSeeAll: boolean, dto: TodoCreateDto): Promise<{ id: number }> {
+    const title = dto.title.trim();
+    if (!title) throw new BadRequestException({ code: 'TODO_TITLE_REQUIRED', message: '할 일을 적어 주세요' });
+    const toId = dto.toId ?? viewerId;
+    if (toId !== viewerId && !canSeeAll) {
+      throw new ForbiddenException({ code: 'TODO_ASSIGN_FORBIDDEN', message: '다른 사람에게 할 일을 배정할 권한이 없습니다' });
+    }
+    const [staff] = await this.q(`SELECT id, name FROM staff WHERE id = $1 AND active`, [toId]);
+    if (!staff) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '활성 구성원을 찾을 수 없습니다' });
+    const [row] = await this.q(
+      `INSERT INTO todo (title, from_id, to_id, due_on, src)
+       VALUES ($1, $2, $3, $4::date, 'manual') RETURNING id`,
+      [title, viewerId, toId, dto.dueOn ?? null],
+    );
+    return { id: Number(row.id) };
+  }
+
+  /** §15 「끝난 것 지우기」 — 화면에서 볼 수 있는 완료 행만 삭제한다. */
+  async clearDoneTodos(viewerId: number, canSeeAll: boolean): Promise<number> {
+    const rows = await this.q(
+      `DELETE FROM todo
+        WHERE done AND ($2::boolean OR to_id = $1 OR from_id = $1)
+        RETURNING id`,
+      [viewerId, canSeeAll],
+    );
+    return writtenRows(rows).length;
+  }
 
   /** §15 할 일 체크. 강사는 **자기가 주고받은 것만** 건드린다 (D-R39) */
   async setTodoDone(id: number, done: boolean, viewerId: number, canSeeAll: boolean): Promise<boolean> {
@@ -443,9 +512,9 @@ export class DrawerService {
           JSON.stringify({ state: 'pending' }),
           JSON.stringify({ state: approving ? 'approved' : 'rejected', applied, reason })],
       );
-      // 올린 사람은 결과를 알아야 한다 — 링크에서 「요청 처리」 분류가 파생된다 (§16)
+      // 올린 사람은 결과를 알아야 한다 — 분류는 NOTI.category에 명시한다 (§16)
       await m.query(
-        `INSERT INTO noti (to_id, from_id, body, link) VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, $4, 'request')`,
         [byId, viewerId,
           approving
             ? `${label} 요청이 승인됐습니다${applied ? ` — ${applied}` : ''}`
@@ -531,7 +600,7 @@ export class DrawerService {
           JSON.stringify({ state: approving ? 'approved' : 'rejected', asked, reason })],
       );
       await run(
-        `INSERT INTO noti (to_id, from_id, body, link) VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, $4, 'schedule')`,
         [Number(req.by_id), viewerId,
           approving
             ? `변경 요청이 반영됐습니다 — ${asked ?? '시간표가 바뀌었습니다'}`

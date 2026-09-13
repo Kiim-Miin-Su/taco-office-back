@@ -55,16 +55,16 @@ export const GPAPACKS = [
 
 /** 알림 — 앱 안에서만 (카카오 실발송은 출시 후) */
 export const NOTIS = [
-  { toId: 7,  fromId: 3, body: '리포트 5건이 밀려 있습니다. 오늘 자정까지 써 주세요.', link: '/reports/unwritten', createdAt: D(0) },
-  { toId: 7,  fromId: 3, body: '리포트 3건이 밀려 있습니다.', link: '/reports/unwritten', createdAt: D(0) },
-  { toId: 3,  fromId: 1, body: '주간 보고가 이틀째 결재 대기입니다.', link: '/reports/weekly', createdAt: D(-1) },
-  { toId: 2,  fromId: 1, body: '컴플레인 2건이 모두 스케줄 통보 누락입니다. 재발 방지안을 주세요.', link: '/ops/complaints', createdAt: D(-1) },
-  { toId: 4,  fromId: 1, body: '인스타 등록당 비용이 10만원을 넘었습니다. 9월 집행 재검토 바랍니다.', link: '/ops/marketing', createdAt: D(-2), readAt: D(-1) },
+  { toId: 7,  fromId: 3, body: '리포트 5건이 밀려 있습니다. 오늘 자정까지 써 주세요.', link: '/reports/unwritten', category: 'report_due', createdAt: D(0) },
+  { toId: 7,  fromId: 3, body: '리포트 3건이 밀려 있습니다.', link: '/reports/unwritten', category: 'report_due', createdAt: D(0) },
+  { toId: 3,  fromId: 1, body: '주간 보고가 이틀째 결재 대기입니다.', link: '/reports/weekly', category: 'report', createdAt: D(-1) },
+  { toId: 2,  fromId: 1, body: '컴플레인 2건이 모두 스케줄 통보 누락입니다. 재발 방지안을 주세요.', link: '/ops/complaints', category: 'request', createdAt: D(-1) },
+  { toId: 4,  fromId: 1, body: '인스타 등록당 비용이 10만원을 넘었습니다. 9월 집행 재검토 바랍니다.', link: '/ops/marketing', category: 'request', createdAt: D(-2), readAt: D(-1) },
   // 대표에게 온 것 — §16 은 대표의 서랍이다. 하나도 없으면 「전부 읽음」 분기가 한 번도 안 돌아 본 적이 없게 된다
-  { toId: 1,  fromId: 3, body: '4시간 이상 미작성 16건 — 재알람이 필요합니다.', link: '/reports/unwritten', createdAt: D(0) },
-  { toId: 1,  fromId: 3, body: 'Rebecca 스케줄 변경 요청 — 현지 학부모 면담', link: '/schedule', createdAt: D(-1) },
+  { toId: 1,  fromId: 3, body: '4시간 이상 미작성 16건 — 재알람이 필요합니다.', link: '/reports/unwritten', category: 're_alarm', createdAt: D(0) },
+  { toId: 1,  fromId: 3, body: 'Rebecca 스케줄 변경 요청 — 현지 학부모 면담', link: '/schedule', category: 'schedule', createdAt: D(-1) },
   // 보관 표본 (N-7 · D-16) — 30일 창 밖이라 목록에는 안 보이지만 **지운 것이 아니다**
-  { toId: 1,  fromId: 2, body: '지난 분기 정산 마감 안내', link: '/accounting', createdAt: D(-95) },
+  { toId: 1,  fromId: 2, body: '지난 분기 정산 마감 안내', link: '/accounting', category: 'etc', createdAt: D(-95) },
 ];
 
 /** 컨설팅 — 계약 5단계 → 진행 → 종료 (§26~§31) */

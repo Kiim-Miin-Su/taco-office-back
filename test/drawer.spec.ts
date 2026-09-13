@@ -154,14 +154,15 @@ d('우측 서랍 — §14~§21', () => {
       [M, T],
     );
     await ds.query(
-      `INSERT INTO noti (id, to_id, from_id, body, link) VALUES (9211, $1, $2, '서랍 알림', '/reports/unwritten')`,
+      `INSERT INTO noti (id, to_id, from_id, body, link, category)
+       VALUES (9211, $1, $2, '서랍 알림', '/reports/unwritten', 'report_due')`,
       [T, M],
     );
   });
 
   afterAll(async () => {
     await ds?.query('DELETE FROM noti WHERE id = 9211');
-    await ds?.query('DELETE FROM todo WHERE id = 9210');
+    await ds?.query('DELETE FROM todo WHERE id = 9210 OR from_id IN (921, 922) OR to_id IN (921, 922)');
     if (REQ_IDS.length) await ds?.query('DELETE FROM req WHERE id = ANY($1)', [REQ_IDS]);
     await ds?.query('DELETE FROM chreq WHERE by_id IN (921, 922)');
     if (ownSerId !== undefined) {
@@ -311,6 +312,28 @@ d('우측 서랍 — §14~§21', () => {
       .send({ done: true }).expect(200);
     const r = await get('/drawer', TEACHER).expect(200);
     expect(r.body.todos.find((t: { id: number }) => t.id === 9210).done).toBe(true);
+  });
+
+  it('§15 다른 사람 배정은 manager만, 생성→완료→끝난 것 삭제가 DB까지 이어진다', async () => {
+    const denied = await request(app.getHttpServer())
+      .post('/drawer/todos').set('Authorization', auth(TEACHER))
+      .send({ title: '권한 밖 배정', toId: M, dueOn: todayKst() }).expect(403);
+    expect(denied.body.code).toBe('TODO_ASSIGN_FORBIDDEN');
+
+    const made = await request(app.getHttpServer())
+      .post('/drawer/todos').set('Authorization', auth(MANAGER))
+      .send({ title: 'C76 할 일 CRUD', toId: T, dueOn: todayKst() }).expect(201);
+    const id = Number(made.body.id);
+    expect(id).toBeGreaterThan(0);
+    await request(app.getHttpServer())
+      .patch(`/drawer/todos/${id}`).set('Authorization', auth(TEACHER))
+      .send({ done: true }).expect(200);
+
+    const cleared = await request(app.getHttpServer())
+      .delete('/drawer/todos/completed').set('Authorization', auth(TEACHER)).expect(200);
+    expect(cleared.body.deleted).toBeGreaterThanOrEqual(1);
+    const [{ n }] = await ds.query('SELECT count(*)::int n FROM todo WHERE id = $1', [id]);
+    expect(n).toBe(0);
   });
 
   it('§16 알림은 읽음이 된다', async () => {

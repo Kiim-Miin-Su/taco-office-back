@@ -867,9 +867,10 @@ Table NOTI {
   from_id     bigint      [ref: > STAFF.id]
   body        text        [not null]
   link        varchar(80)
+  category    varchar(20) [not null, default: 'etc', note: '작성 독촉 · 재알람 · 리포트 · 일정 변경 · 요청 처리 · 기타. C76 migration 32 CHECK']
   read_at     timestamptz
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 5건. 인앱 구현 완료 · 카카오/알림톡 실발송은 아직 없음 (D9).'
+  Note: '시드 8건. 인앱 구현 완료 · category가 §16 분류 정본이며 링크 파생은 과거 행 fallback뿐 · 카카오/알림톡 실발송은 아직 없음 (D9).'
 }
 
 Table LOG {

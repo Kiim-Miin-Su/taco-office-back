@@ -42,25 +42,27 @@ export function notiTone(link: string | null | undefined): NotiTone {
 /**
  * 알림 분류 — §16 의 칩.
  *
- * ⚠ **`NOTI` 표에는 분류 컬럼도 없다.** 색(`notiTone`)과 **같은 방식**으로 링크에서 파생한다 —
- *   몸통 글자를 읽어 짐작하지 않는다. 표에 컬럼이 생기면 이 함수 하나만 바꾸면 된다.
- *
- * 원본 §16 의 칩은 다섯이었다 — 작성 독촉 · **재알람** · 리포트 · 요청 처리 · 일정 변경.
- * 이 중 **재알람은 만들지 않는다**: 그것은 화면 주소가 아니라 **발송 이력**(같은 알림을 다시 보냈는가)이라
- * 링크로 파생되지 않는다. 짐작해서 붙이면 정산에 반영되는 숫자를 거짓으로 만든다 — 표에 이력이 생길 때 만든다.
+ * `NOTI.category`가 정본이다. **재알람**은 같은 `/reports/unwritten` 링크라도 최초 독촉과
+ * 다른 업무 사건이라 링크로는 구분할 수 없다. C76에서 컬럼을 추가해 발송자가 분류를 명시한다.
+ * 과거 배포에서 컬럼이 없던 행만 링크 fallback으로 읽으며, 몸통 글자를 런타임에 해석하지 않는다.
  */
-export const NOTI_CATEGORIES = ['report_due', 'report', 'schedule', 'request', 'etc'] as const;
+export const NOTI_CATEGORIES = ['report_due', 're_alarm', 'report', 'schedule', 'request', 'etc'] as const;
 export type NotiCategory = (typeof NOTI_CATEGORIES)[number];
 
 export const NOTI_CATEGORY_LABEL: Record<NotiCategory, string> = {
   report_due: '작성 독촉',
+  re_alarm: '재알람',
   report: '리포트',
   schedule: '일정 변경',
   request: '요청 처리',
   etc: '알림',
 };
 
-export function notiCategory(link: string | null | undefined): NotiCategory {
+export function notiCategory(
+  stored: string | null | undefined,
+  link: string | null | undefined,
+): NotiCategory {
+  if (NOTI_CATEGORIES.includes(stored as NotiCategory)) return stored as NotiCategory;
   const l = (link ?? '').trim();
   if (!l) return 'etc';
   // 독촉이 리포트보다 먼저다 — /reports/unwritten 은 둘 다에 걸린다

@@ -11,11 +11,11 @@
  * 서랍을 열 때마다 왕복이 여덟 번이고, 칸끼리 숫자가 어긋난다
  * (배지에는 3건인데 목록에는 2건인 상태가 정확히 그래서 생긴다).
  *
- * 쓰기는 셋뿐이다 — 할 일 체크 · 알림 읽음 · 변경 요청 넣기.
+ * 쓰기는 할 일 생성/체크/완료 정리 · 알림 읽음 · 변경 요청 넣기다.
  * **승인과 반려는 여기서 하지 않는다** (D-R27). 줄을 누르면 그 화면으로 간다.
  */
 import {
-  BadRequestException, Body, Controller, Get, NotFoundException,
+  BadRequestException, Body, Controller, Delete, Get, NotFoundException,
   Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import {
@@ -29,7 +29,8 @@ import { ScheduleService } from '../schedule/schedule.service';
 import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
   ChreqReviewDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
-  TeacherChangeReqDto, TimeMoveChangeReqDto, TodoDoneDto, ZoomChangeReqDto,
+  TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoCreateDto, TodoCreateResultDto,
+  TodoDoneDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
 
@@ -56,7 +57,7 @@ export class DrawerController {
   }
 
   @Get()
-  @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 결재 5종 정규화 포함 (D-R26 · D-R34)' })
+  @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 승인함/결재 흐름 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
   all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
     const { canApprove, canSeeAll } = this.gate(user);
@@ -77,6 +78,23 @@ export class DrawerController {
     // 남의 할 일이면 「없다」로 답한다 — 「있는데 권한이 없다」를 흘리지 않는다
     if (!hit) throw new NotFoundException({ code: 'NOT_FOUND', message: '할 일을 찾을 수 없습니다' });
     return { ok: true };
+  }
+
+  @Post('todos')
+  @ApiOperation({ summary: '§15 수동 할 일 만들기 — 다른 사람 배정은 canCrudAll만' })
+  @ApiCreatedResponse({ type: TodoCreateResultDto })
+  createTodo(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: TodoCreateDto,
+  ): Promise<TodoCreateResultDto> {
+    return this.svc.createTodo(user.id, this.gate(user).canSeeAll, dto);
+  }
+
+  @Delete('todos/completed')
+  @ApiOperation({ summary: '§15 끝난 것 지우기 — 내가 볼 수 있는 완료 할 일만' })
+  @ApiOkResponse({ type: TodoClearDto })
+  async clearDoneTodos(@CurrentUser() user: RequestUser): Promise<TodoClearDto> {
+    return { ok: true, deleted: await this.svc.clearDoneTodos(user.id, this.gate(user).canSeeAll) };
   }
 
   @Patch('notis/:id/read')

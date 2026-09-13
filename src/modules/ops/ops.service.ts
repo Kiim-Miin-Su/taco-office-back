@@ -364,8 +364,8 @@ export class OpsService {
         [mktId, viewerId, dto.body.trim()],
       );
       await em.query(
-        `INSERT INTO noti (to_id, from_id, body, link)
-         SELECT id, $1, $2, '/ops?mkt' FROM staff WHERE role <> 'teacher' AND id <> $1`,
+        `INSERT INTO noti (to_id, from_id, body, link, category)
+         SELECT id, $1, $2, '/ops?mkt', 'request' FROM staff WHERE role <> 'teacher' AND id <> $1`,
         [viewerId, `대표 피드백 — ${name}`],
       );
     });
@@ -400,7 +400,7 @@ export class OpsService {
       const to = leadId(parent.by_id);
       if (to !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link) VALUES ($1, $2, $3, '/ops?mkt')`,
+          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?mkt', 'request')`,
           [to, viewerId, `피드백 답변 — ${name}`],
         );
       }
@@ -683,7 +683,7 @@ export class OpsService {
       );
       if (leadId(to.id) !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link) VALUES ($1, $2, $3, '/ops?todo')`,
+          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?todo', 'request')`,
           [dto.toId, viewerId, `회의 할 일 — ${name}`],
         );
       }

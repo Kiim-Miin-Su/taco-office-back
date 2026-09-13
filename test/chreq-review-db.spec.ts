@@ -35,6 +35,7 @@ const T1 = 921;
 const T2 = 922;
 const BOSS = 923;
 const ON = '2026-11-04';
+const ZACC_LABEL = `CHREQ-Z-${process.pid}`;
 
 d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요청도 되돌아간다 (C42)', () => {
   let ds: DataSource;
@@ -191,7 +192,8 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
   it('줌 계정 변경도 반영된다 — 계정이 실제로 붙는다 (C48 에서 열림)', async () => {
     const [z] = (await ds.query(
       `INSERT INTO zacc (label, login_email, login_secret, join_url, active)
-       VALUES ('CHREQ-Z','z@t.kr','\\x00'::bytea,'https://zoom.us/j/99',true) RETURNING id`,
+       VALUES ($1,$2,'\\x00'::bytea,'https://zoom.us/j/99',true) RETURNING id`,
+      [ZACC_LABEL, `chreq-z-${process.pid}@t.kr`],
     )) as { id: string }[];
     const zaccId = Number(z.id);
     const id = await chreq('room', { zaccId });

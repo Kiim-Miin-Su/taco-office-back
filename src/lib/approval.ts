@@ -18,7 +18,7 @@
  */
 
 /** §75 공통 다섯 갈래 + §14 강사 리포트 (D-R26 · D-R34) */
-export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack'] as const;
+export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing'] as const;
 export type ApKind = (typeof AP_KINDS)[number];
 
 /**
@@ -37,6 +37,25 @@ export const AP_KIND_LABEL: Record<ApKind, string> = {
   req: '요청',
   chreq: '변경 요청',
   gpapack: '자료 요청',
+  suggestion: '건의 사항',
+  missing: '빠진 것',
+};
+
+/** §14 필터 순서와 낱말. 화면은 이 표를 복제하지 않고 응답의 `categories`를 그린다. */
+export const AP_INBOX_CATEGORIES = [
+  'schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'missing', 'other',
+] as const;
+export type ApInboxCategory = (typeof AP_INBOX_CATEGORIES)[number];
+
+export const AP_INBOX_CATEGORY_LABEL: Record<ApInboxCategory, string> = {
+  schedule_change: '스케줄 변경',
+  book_change: '교재 변경',
+  tz_change: '시간대 변경',
+  wage_change: '시급 변경',
+  suggestion: '건의 사항',
+  gpa_request: 'GPA 요청',
+  missing: '빠진 것',
+  other: '기타',
 };
 
 /**
@@ -133,6 +152,21 @@ export interface ApRow {
   applicable?: boolean;
   /** 이 사람이 **지금** 이 줄을 처리할 수 있는가 — 판정은 서버가 한다 */
   canAct?: boolean;
+  /** §14 필터 분류 — 서버가 만들고 화면은 비교만 한다 (D-R18). */
+  category?: ApInboxCategory;
+  /** 분류의 사람이 읽는 이름 — 서버 코드표의 값. */
+  categoryLabel?: string;
+}
+
+export interface CategorizedApRow extends ApRow {
+  category: ApInboxCategory;
+  categoryLabel: string;
+}
+
+export interface ApInboxCategoryCount {
+  key: ApInboxCategory;
+  label: string;
+  count: number;
 }
 
 /**
@@ -150,13 +184,33 @@ export const AP_ACTIONABLE_KINDS: ApKind[] = ['req', 'chreq'];
 
 export interface ApFlow {
   /** 되돌아온 것 → 기다리는 것 → 내가 올린 것 순 (§75) */
-  back: ApRow[];
-  waiting: ApRow[];
-  mine: ApRow[];
+  back: CategorizedApRow[];
+  waiting: CategorizedApRow[];
+  mine: CategorizedApRow[];
+  /** §14 승인 대기함 — 요청·건의·GPA·DB에서 계산한 누락만, 완료 행은 제외한다. */
+  inbox: CategorizedApRow[];
+  /** §14 칩. 0건 갈래도 원문 순서를 유지해 화면이 누락 여부를 알 수 있다. */
+  categories: ApInboxCategoryCount[];
   /** 배지 숫자 — `apCount()` */
   count: number;
+  /** §14 우측 레일 배지 — `inbox.length`와 반드시 같다. */
+  inboxCount: number;
   /** 아직 표가 없어 못 세는 갈래 */
   missingKinds: ApKind[];
+}
+
+/** §14의 분류는 저장 표 이름이 아니라 업무 의미다. 이 함수 한 곳에서만 대응한다. */
+export function approvalInboxCategory(row: ApRow): ApInboxCategory {
+  if (row.kind === 'missing') return 'missing';
+  if (row.kind === 'suggestion') return 'suggestion';
+  if (row.kind === 'gpapack') return 'gpa_request';
+  if (row.kind === 'chreq') return 'schedule_change';
+  if (row.kind === 'req') {
+    if (row.reqType === 'tz_change') return 'tz_change';
+    if (row.reqType === 'wage_change') return 'wage_change';
+    if (row.reqType === 'book_change') return 'book_change';
+  }
+  return 'other';
 }
 
 export const AP_STATE_WORDS: Record<ApState, readonly string[]> = {
@@ -205,11 +259,18 @@ export function apFlow(
   viewerId: number,
   canApprove: boolean,
 ): ApFlow {
-  const back: ApRow[] = [];
-  const waiting: ApRow[] = [];
-  const mine: ApRow[] = [];
+  const back: CategorizedApRow[] = [];
+  const waiting: CategorizedApRow[] = [];
+  const mine: CategorizedApRow[] = [];
 
-  for (const r of rows) {
+  /* §14와 §75가 같은 원장 행을 보되, §14의 필터 분류까지 서버가 붙인다.
+     행 객체를 복제해 호출자가 넘긴 배열을 오염시키지 않는다. */
+  const categorizedRows: CategorizedApRow[] = rows.map((source) => {
+    const category = approvalInboxCategory(source);
+    return { ...source, category, categoryLabel: AP_INBOX_CATEGORY_LABEL[category] };
+  });
+
+  for (const r of categorizedRows) {
     const isMine = r.byId !== null && r.byId === viewerId;
     // 처리할 수 있는가 — 권한이 있고, 남의 것이고, 아직 기다리는 중이고, 적용 경로가 있는 갈래
     r.canAct = canApprove && !isMine && r.state === 'waiting'
@@ -229,10 +290,24 @@ export function apFlow(
   const byAtDesc = (a: ApRow, b: ApRow) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0);
   back.sort(byAtDesc); waiting.sort(byAtDesc); mine.sort(byAtDesc);
 
+  const inboxKinds: ApKind[] = ['req', 'chreq', 'gpapack', 'suggestion', 'missing'];
+  const inbox = canApprove
+    ? categorizedRows.filter((r) => inboxKinds.includes(r.kind) && r.state !== 'done').sort(byAtDesc)
+    : [];
+  const categories = AP_INBOX_CATEGORIES.map((key) => ({
+    key,
+    label: AP_INBOX_CATEGORY_LABEL[key],
+    count: inbox.filter((row) => row.category === key).length,
+  }));
+
   return {
     back, waiting, mine,
-    // 배지는 **손이 가야 하는 것**만 센다 — 끝난 것은 안 센다
+    inbox,
+    categories,
+    // §75 결재 흐름 숫자는 기존 의미를 유지한다.
     count: back.length + waiting.length,
+    // §14 우측 레일은 실제 inbox 행과 같은 배열에서 센다.
+    inboxCount: inbox.length,
     missingKinds: [...AP_KINDS_MISSING],
   };
 }

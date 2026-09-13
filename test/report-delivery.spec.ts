@@ -146,7 +146,9 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       [rep1, rep2, rep3, STUDENT_READY, STUDENT_BLOCKED],
     );
     expect(await q(
-      `SELECT 1 FROM rep_stu rs JOIN rep r ON r.id=rs.rep_id WHERE r.on_date=$1 AND rs.deliver`, [DATE],
+      `SELECT 1 FROM rep_stu rs JOIN rep r ON r.id=rs.rep_id
+        WHERE r.on_date=$1 AND r.ser_id = ANY($2) AND rs.deliver`,
+      [DATE, [SER1, SER2, SER3]],
     )).toHaveLength(4);
 
     const login = async (email: string) => (

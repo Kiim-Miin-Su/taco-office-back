@@ -29,6 +29,10 @@ export class Noti {
   @Column({ type: 'varchar', length: 80, nullable: true })
   link: string | null;
 
+  /** §16 분류 정본. 특히 같은 링크를 쓰는 최초 독촉과 재알람을 구분한다. */
+  @Column({ type: 'varchar', length: 20, default: 'etc' })
+  category: 'report_due'|'re_alarm'|'report'|'schedule'|'request'|'etc';
+
   @Column({ type: 'timestamptz', nullable: true })
   readAt: Date | null;
 
