@@ -42,9 +42,14 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   const ROSTER_STUDENT = 9921;
   const ROSTER_STUDENT_NAME = '명단결과학생';
   const ROOM = 1;
-  /** 테스트가 날짜 이동으로 시드 강사 일정과 부딪치지 않게 이 스위트 전용 staff를 쓴다. */
+  /**
+   * 테스트가 날짜 이동으로 시드 강사 일정과 부딪치지 않게 이 스위트 전용 staff를 쓴다.
+   *
+   * T2 는 한동안 **시드의 강사 번호(12)**였다 — 「전용을 쓴다」고 적어 두고 남의 것을 쓰고 있었고,
+   * 시드에서 그 사람이 사라지자 네 시험이 한꺼번에 400 을 받았다 (C74). 이제 스위트가 직접 만든다.
+   */
   const T1 = CEO;
-  const T2 = 12;
+  const T2 = 922;
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> =>
     ds.query(sql, p) as Promise<T[]>;
@@ -62,6 +67,11 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     await q(
       `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,'ceo',$4,true)`,
       [CEO, '쓰기대표', 'sched-ceo@t.kr', await bcrypt.hash(PW, 4)],
+    );
+    await q(`DELETE FROM staff WHERE id = $1`, [T2]);
+    await q(
+      `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,'teacher',$4,true)`,
+      [T2, '쓰기강사', 'sched-t2@t.kr', await bcrypt.hash(PW, 4)],
     );
     await q(`DELETE FROM stu WHERE id = $1`, [ROSTER_STUDENT]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1, $2, '10')`, [ROSTER_STUDENT, ROSTER_STUDENT_NAME]);

@@ -26,17 +26,17 @@ const occurrenceDate = (serId: number, side: 'past' | 'future', nth = 1) => {
 /** 승인 요청 — 우측 서랍 §14 승인 대기함 */
 export const REQS = [
   { staffId: 6,  reqType: 'wage_change', payload: { from: 42000, to: 45000 }, state: 'pending', createdAt: D(-2) },
-  { staffId: 9,  reqType: 'unav_add',    payload: { dow: 3, startMin: 540, endMin: 720 }, state: 'pending', createdAt: D(-1) },
-  { staffId: 12, reqType: 'wage_change', payload: { from: 35000, to: 37000 }, state: 'rejected', resolvedBy: 1, rejectReason: '3개월 뒤 재검토', createdAt: D(-9) },
+  { staffId: 7,  reqType: 'unav_add',    payload: { dow: 3, startMin: 540, endMin: 720 }, state: 'pending', createdAt: D(-1) },
+  { staffId: 6, reqType: 'wage_change', payload: { from: 35000, to: 37000 }, state: 'rejected', resolvedBy: 1, rejectReason: '3개월 뒤 재검토', createdAt: D(-9) },
   { staffId: 7,  reqType: 'unav_add',    payload: { dow: 6, startMin: 840, endMin: 1080 }, state: 'approved', resolvedBy: 3, createdAt: D(-14) },
 ];
 
 /** 변경 요청 — §19 넣기 · §20 이력 */
 export const CHREQS = [
   { serId: 3,  onDate: occurrenceDate(3, 'past'), reqType: 'time_move', payload: { startMin: 1080, endMin: 1170 }, reason: '학교 시험 기간이라 1시간 미뤄 주세요', state: 'approved', byId: 7, resolvedBy: 3, applyAll: false, createdAt: D(-6) },
-  { serId: 9,  onDate: occurrenceDate(9, 'past'), reqType: 'teacher',   payload: { teacherId: 15 }, reason: '개인 사정으로 하루 대강 부탁드립니다', state: 'approved', byId: 12, resolvedBy: 3, applyAll: false, createdAt: D(-7) },
-  { serId: 17, onDate: occurrenceDate(17, 'future'), reqType: 'cancel', payload: {}, reason: '병가', state: 'pending', byId: 10, applyAll: false, createdAt: D(-1) },
-  { serId: 5,  onDate: occurrenceDate(5, 'past', 2), reqType: 'room', payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', rejectReason: '강남 같은 시간대에 빈 강의실이 없습니다 — 10월 시간표에서 다시 봅니다', state: 'rejected', byId: 9, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
+  { serId: 9,  onDate: occurrenceDate(9, 'past'), reqType: 'teacher',   payload: { teacherId: 7 }, reason: '개인 사정으로 하루 대강 부탁드립니다', state: 'approved', byId: 6, resolvedBy: 3, applyAll: false, createdAt: D(-7) },
+  { serId: 17, onDate: occurrenceDate(17, 'future'), reqType: 'cancel', payload: {}, reason: '병가', state: 'pending', byId: 6, applyAll: false, createdAt: D(-1) },
+  { serId: 5,  onDate: occurrenceDate(5, 'past', 2), reqType: 'room', payload: { roomId: 1 }, reason: '송도 강의실이 좁습니다. 강남으로 옮겨 주세요', rejectReason: '강남 같은 시간대에 빈 강의실이 없습니다 — 10월 시간표에서 다시 봅니다', state: 'rejected', byId: 7, resolvedBy: 3, applyAll: true, createdAt: D(-12) },
 ];
 
 /**
@@ -240,8 +240,8 @@ export const COMPLAINTS = [
 /** 건의 사항 — 강사 창구 (§Data/Suggestion Card) */
 export const SUGGESTIONS = [
   { staffId: 6,  category: 'schedule', body: '화요일 저녁 슬롯이 너무 붙어 있습니다. 30분 간격을 주세요.', state: 'open',      createdAt: D(-2) },
-  { staffId: 9,  category: 'lesson',   body: 'MAP Math 그룹 인원을 4명 이하로 유지해 주세요.', state: 'reviewing', createdAt: D(-6) },
-  { staffId: 12, category: 'pay',      body: '지각 차감 기준을 강사 화면에도 표시해 주세요.', state: 'done', reply: '§47 화면에 구간표를 넣었습니다.', replyBy: 3, replyAt: D(-3), createdAt: D(-11) },
+  { staffId: 7,  category: 'lesson',   body: 'MAP Math 그룹 인원을 4명 이하로 유지해 주세요.', state: 'reviewing', createdAt: D(-6) },
+  { staffId: 6, category: 'pay',      body: '지각 차감 기준을 강사 화면에도 표시해 주세요.', state: 'done', reply: '§47 화면에 구간표를 넣었습니다.', replyBy: 3, replyAt: D(-3), createdAt: D(-11) },
   { staffId: 7,  category: 'etc',      body: '3층 회의실 프로젝터 교체 요청합니다.', state: 'open', createdAt: D(-4) },
 ];
 

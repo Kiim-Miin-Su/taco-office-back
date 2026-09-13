@@ -13,6 +13,7 @@ import { SEED_TODAY } from './base';
 
 const YM = SEED_TODAY.slice(0, 7);                        // 2026-08
 const PREV = addD(SEED_TODAY, -31).slice(0, 7);           // 2026-07
+const PREV2 = addD(SEED_TODAY, -62).slice(0, 7);          // 그 앞 달 — 확정분을 둘 자리
 
 /** 청구서 — 학생별 한 장. 상태가 골고루 있어야 §52 보드가 채워진다 */
 export const INVOICES = [
@@ -71,12 +72,18 @@ export const EXPENSES = [
  * 차감은 수업 종료 시각 기준 분 단위 (D-R32). 여기 값은 지난달 확정분이다.
  */
 export const PAYOUTS = [
-  { staffId: 6,  yearMonth: PREV, hours: '48.0', gross: 2016000, lateRepCut: 25000, incomeTax: 59730, localTax: 5973, net: 1925297, state: 'approved', confirmedBy: 2 },
-  { staffId: 7,  yearMonth: PREV, hours: '42.0', gross: 1680000, lateRepCut: 15000, incomeTax: 49950, localTax: 4995, net: 1610055, state: 'approved', confirmedBy: 2 },
-  { staffId: 8,  yearMonth: PREV, hours: '36.0', gross: 1368000, lateRepCut: 10000, incomeTax: 40740, localTax: 4074, net: 1313186, state: 'approved', confirmedBy: 2 },
-  { staffId: 9,  yearMonth: PREV, hours: '31.5', gross: 1197000, lateRepCut: 0,     incomeTax: 35910, localTax: 3591, net: 1157499, state: 'draft',     confirmedBy: null },
-  { staffId: 10, yearMonth: PREV, hours: '27.0', gross: 972000,  lateRepCut: 5000,  incomeTax: 29010, localTax: 2901, net: 935089,  state: 'draft',     confirmedBy: null },
-  { staffId: 12, yearMonth: PREV, hours: '22.5', gross: 787500,  lateRepCut: 0,     incomeTax: 23625, localTax: 2362, net: 761513,  state: 'draft',     confirmedBy: null },
+  /*
+   * 한 사람 한 달에 한 줄이다(`payout_staff_id_year_month_uniq`). 강사가 둘이므로
+   * **두 달**을 써야 `approved` 와 `draft` 두 갈래가 다 돈다 — 값이 한 종류뿐이면
+   * 검증된 적 없는 것이다. 지난달은 아직 작성 중, 그 앞달은 확정분이다.
+   *
+   * gross = 시수 × 시급(WAGES: 이다현 42,000 · 김재훈 40,000).
+   * 과세표준 = gross − 지각 차감, 소득세 3% · 지방세는 소득세의 10% (D-R32).
+   */
+  { staffId: 6, yearMonth: PREV2, hours: '48.0', gross: 2016000, lateRepCut: 25000, incomeTax: 59730, localTax: 5973, net: 1925297, state: 'approved', confirmedBy: 2 },
+  { staffId: 7, yearMonth: PREV2, hours: '42.0', gross: 1680000, lateRepCut: 15000, incomeTax: 49950, localTax: 4995, net: 1610055, state: 'approved', confirmedBy: 2 },
+  { staffId: 6, yearMonth: PREV,  hours: '36.0', gross: 1512000, lateRepCut: 10000, incomeTax: 45060, localTax: 4506, net: 1452434, state: 'draft',    confirmedBy: null },
+  { staffId: 7, yearMonth: PREV,  hours: '31.5', gross: 1260000, lateRepCut: 0,     incomeTax: 37800, localTax: 3780, net: 1218420, state: 'draft',    confirmedBy: null },
 ];
 
 /** 학생별 단가 예외 — 형제 할인 등 */
