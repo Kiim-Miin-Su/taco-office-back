@@ -44,7 +44,17 @@ export class ZoomBoardDto {
   @ApiProperty({ description: '격자가 보여 주는 끝 시 (포함)' }) toHour!: number;
   @ApiProperty({ type: [ZoomAcctDto] }) accounts!: ZoomAcctDto[];
   @ApiProperty({ type: [ZoomRowDto] }) rows!: ZoomRowDto[];
-  @ApiProperty({ description: '지금 비어 있는 계정 수 — §21 머리의 「지금 가능」' }) freeNow!: number;
+  /**
+   * 「지금」이 뜻을 갖는 것은 **오늘뿐**이다. 다른 날을 보면 null 이고, 화면은 그 칸을 비운다.
+   * 예전에는 이 칸이 「하루 내내 한 번도 안 쓰는 계정 수」였다 — 원문 §21 은
+   * 다섯 계정 모두 낮에 붉은 칸이 있는데도 「지금 가능 5」라고 적는다. 묻는 것이 다르다.
+   */
+  @ApiProperty({ type: Number, nullable: true, description: '이 셈이 선 시각(KST 시). 오늘이 아니면 null' })
+  nowHour!: number | null;
+  @ApiProperty({ description: '지금 이 시각에 비어 있는 계정 수 — §21 머리의 「지금 가능」' }) freeNow!: number;
+  /** `freeNow` 와 **같은 배열**에서 낸다. 이름과 수가 갈리지 않는 유일한 방법이다 (D-R37). */
+  @ApiProperty({ type: [String], description: '지금 쓸 수 있는 계정 이름 — §21 아래줄' })
+  freeLabels!: string[];
   @ApiProperty({ description: '한 칸도 안 남은 시간대 수 — §21 머리의 「만석 시간대」' }) fullHours!: number;
 }
 

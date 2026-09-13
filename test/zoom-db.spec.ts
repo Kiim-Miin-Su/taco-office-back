@@ -20,6 +20,7 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Zacc } from '../src/entities';
+import { nowHourKst } from '../src/lib/kst';
 import { openSecret, sealSecret, secretKeyFrom } from '../src/lib/secret-box';
 import { ZoomService } from '../src/modules/zoom/zoom.service';
 import { assertScratch, TEST_URL } from './db';
@@ -66,7 +67,7 @@ d('줌 배정 — 정본은 ZASSIGN, ser_occ 는 투영이다 (C48)', () => {
   const svc = () => new ZoomService(q.manager.getRepository(Zacc), cfg);
 
   /** 같은 시간에 도는 수업 규칙 하나 — 겹침 실험에 쓴다 */
-  const makeSer = async (subKey: string): Promise<number> => {
+  const makeSer = async (subKey: string, startHour = 10): Promise<number> => {
     await q.query(
       `INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ('zoom_test','줌검증','#000000',4,'lesson',false)
        ON CONFLICT (key) DO NOTHING`,
@@ -74,9 +75,9 @@ d('줌 배정 — 정본은 ZASSIGN, ser_occ 는 투영이다 (C48)', () => {
     await q.query(`INSERT INTO sub (key,name,color) VALUES ($1,$1,'#000000') ON CONFLICT (key) DO NOTHING`, [subKey]);
     const [r] = (await q.query(
       `INSERT INTO ser (kind_key, sub_key, mode, start_min, end_min, rrule, from_date, to_date)
-       VALUES ('zoom_test', $1, 'online', 600, 660, 'WEEKLY:MO,TU,WE,TH,FR,SA,SU',
+       VALUES ('zoom_test', $1, 'online', $2::int, $2::int + 60, 'WEEKLY:MO,TU,WE,TH,FR,SA,SU',
                (now() AT TIME ZONE 'Asia/Seoul')::date, (now() AT TIME ZONE 'Asia/Seoul')::date + 3)
-       RETURNING id`, [subKey],
+       RETURNING id`, [subKey, startHour * 60],
     )) as { id: string }[];
     return Number(r.id);
   };
@@ -187,5 +188,56 @@ d('줌 배정 — 정본은 ZASSIGN, ser_occ 는 투영이다 (C48)', () => {
     expect(board.fromHour).toBe(8);
     expect(board.toHour).toBe(21);
     expect(JSON.stringify(board)).not.toContain('login_secret');
+  });
+
+  /**
+   * 「지금 가능」이 묻는 것은 **그 시각에** 비었는가다 — 하루 내내 비었는가가 아니다.
+   *
+   * 전에는 하루 기준이었다. 원문 §21 은 다섯 계정 모두 낮에 붉은 칸이 있는데도
+   * 「지금 가능 5」라고 적는다. 하루 기준이면 그 화면은 **0** 이 된다.
+   * 그래서 지금 시각이 **아닌** 시간에 수업이 붙은 계정을 만들어, 그 계정이 여전히
+   * 「지금 가능」에 들어오는지를 본다.
+   */
+  it('「지금 가능」은 그 시각 기준이다 — 다른 시간에 수업이 있어도 지금 비었으면 가능이다', async () => {
+    const now = nowHourKst();
+    const busyAt = now === 10 ? 11 : 10;          // 지금이 아닌 시각을 고른다 (둘 다 격자 안 8~21)
+    const acc = await svc().create(ME, { label: 'TEST-NOW', loginEmail: 'n@tn.kr', joinUrl: 'https://zoom.us/j/11' });
+    const serId = await makeSer('read_lab', busyAt);
+    await svc().assign(ME, { serId, zaccId: acc.id });
+    const [{ d: today }] = (await q.query(
+      `SELECT to_char(on_date,'YYYY-MM-DD') AS d FROM ser_occ WHERE ser_id = $1 ORDER BY on_date LIMIT 1`, [serId],
+    )) as { d: string }[];
+
+    const board = await svc().board(today);
+    expect(board.nowHour).toBe(now);
+    const row = board.rows.find((r) => r.zaccId === acc.id)!;
+    expect(row.slots.find((s) => s.hour === busyAt)!.busy).toBe(1);   // 그 시각에는 차 있고
+    expect(board.freeLabels).toContain('TEST-NOW');                   // 지금은 비어 있다
+  });
+
+  it('수와 이름은 **한 배열**에서 나온다 — 「5개」인데 이름이 넷인 화면이 없다', async () => {
+    const acc = await svc().create(ME, { label: 'TEST-PAIR', loginEmail: 'p@tn.kr', joinUrl: 'https://zoom.us/j/12' });
+    const serId = await makeSer('vocab', nowHourKst() === 9 ? 14 : 9);
+    await svc().assign(ME, { serId, zaccId: acc.id });
+    const board = await svc().board();
+
+    expect(board.freeNow).toBe(board.freeLabels.length);
+    const busyNow = (r: { slots: Array<{ hour: number; busy: number }> }) =>
+      r.slots.find((s) => s.hour === board.nowHour)?.busy ?? 0;
+    expect(board.freeLabels).toEqual(board.rows.filter((r) => busyNow(r) === 0).map((r) => r.label));
+  });
+
+  it('오늘이 아니면 「지금」이 없다 — 셈을 지어내지 않고 비운다', async () => {
+    await svc().create(ME, { label: 'TEST-FUT', loginEmail: 'f@tn.kr', joinUrl: 'https://zoom.us/j/13' });
+    const [{ d: later }] = (await q.query(
+      `SELECT to_char((now() AT TIME ZONE 'Asia/Seoul')::date + 3,'YYYY-MM-DD') AS d`,
+    )) as { d: string }[];
+
+    const board = await svc().board(later);
+    expect(board.onDate).toBe(later);
+    expect(board.nowHour).toBeNull();
+    expect(board.freeNow).toBe(0);
+    expect(board.freeLabels).toEqual([]);
+    expect(board.rows.length).toBeGreaterThan(0);   // 격자는 그대로 그린다
   });
 });

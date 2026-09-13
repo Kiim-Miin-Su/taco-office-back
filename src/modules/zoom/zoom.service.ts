@@ -9,7 +9,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryRunner, Repository } from 'typeorm';
 import { Zacc } from '../../entities';
-import { todayKst } from '../../lib/kst';
+import { nowHourKst, todayKst } from '../../lib/kst';
 import { sealSecret, secretKeyFrom } from '../../lib/secret-box';
 import { loadState } from '../schedule/schedule.state.repo';
 import { project } from '../schedule/schedule.project';
@@ -74,11 +74,25 @@ export class ZoomService {
       slots: hours.map((hour) => ({ hour, busy: at.get(`${a.id}|${hour}`) ?? 0 })),
     }));
 
+    /*
+     * 「지금 가능」은 **그 시각에** 비었는가다 — 하루 내내 비었는가가 아니다.
+     * 원문 §21 은 다섯 계정 모두 낮에 붉은 칸이 있는데도 「지금 가능 5」라고 적는다.
+     * 하루 기준으로 세면 그 화면은 0 이 된다. 오늘이 아니면 「지금」이 없으므로 null 이다.
+     *
+     * 시각 밖(새벽 3시 같은)이라도 옳게 센다 — 점유 질의에 시(hour) 제한이 없어
+     * 격자에 안 그리는 시간도 `at` 에 들어 있다.
+     */
+    const nowHour = date === todayKst() ? nowHourKst() : null;
+    // 수와 이름을 **한 배열에서** 낸다. 따로 세면 「5개」인데 이름은 넷인 화면이 생긴다 (D-R37)
+    const freeRows = nowHour === null ? [] : rows.filter((r) => (at.get(`${r.zaccId}|${nowHour}`) ?? 0) === 0);
+
     return {
       onDate: date, fromHour: FROM_HOUR, toHour: TO_HOUR,
       accounts: accounts.map((a) => this.row(a)),
       rows,
-      freeNow: rows.filter((r) => r.slots.every((s) => s.busy === 0)).length,
+      nowHour,
+      freeNow: freeRows.length,
+      freeLabels: freeRows.map((r) => r.label),
       fullHours: hours.filter((h) => rows.length > 0 && rows.every((r) => (at.get(`${r.zaccId}|${h}`) ?? 0) > 0)).length,
     };
   }

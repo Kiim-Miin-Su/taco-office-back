@@ -40,6 +40,13 @@ export const nowMinKst = (now: number = Date.now()): number => {
   return d.getUTCHours() * 60 + d.getUTCMinutes();
 };
 
+/**
+ * 지금 몇 시 (KST) — §21 의 「지금 가능」이 묻는 그 시각.
+ *
+ * `nowMinKst` 를 나눠 쓴다. 분과 시를 따로 구하면 자정 언저리에서 **한 곳만** 날이 바뀐다.
+ */
+export const nowHourKst = (now: number = Date.now()): number => Math.floor(nowMinKst(now) / 60);
+
 /** `2026-08-30` 에서 n일 — 음수면 과거 */
 export const addDays = (iso: string, n: number): string =>
   new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86400000).toISOString().slice(0, 10);

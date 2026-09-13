@@ -17046,9 +17046,21 @@
               "$ref": "#/components/schemas/ZoomRowDto"
             }
           },
+          "nowHour": {
+            "type": "number",
+            "nullable": true,
+            "description": "이 셈이 선 시각(KST 시). 오늘이 아니면 null"
+          },
           "freeNow": {
             "type": "number",
-            "description": "지금 비어 있는 계정 수 — §21 머리의 「지금 가능」"
+            "description": "지금 이 시각에 비어 있는 계정 수 — §21 머리의 「지금 가능」"
+          },
+          "freeLabels": {
+            "description": "지금 쓸 수 있는 계정 이름 — §21 아래줄",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "fullHours": {
             "type": "number",
@@ -17061,7 +17073,9 @@
           "toHour",
           "accounts",
           "rows",
+          "nowHour",
           "freeNow",
+          "freeLabels",
           "fullHours"
         ]
       },
