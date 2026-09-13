@@ -395,3 +395,80 @@ export class OtherIncomeDto {
   rows!: OtherIncomeRowDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
 }
+
+/* ── §52 회계 트래킹 보드 ─────────────────────────────────────────────── */
+
+/**
+ * 보드의 **칸 넷**과 각 칸에 드는 상태 — 대표 결정 2026-09-13 (N-28).
+ *
+ * 「**단일 진실원과 자동 전이에 유리하게**」. 그래서 칸은 **`inv.state` 하나**로 가른다.
+ * 두 축(`state` + 「PAY 행이 있는가」)으로 가르면 **판정이 두 벌**이 되어 같은 청구서가
+ * 어느 칸에 있는지 두 곳이 다르게 답한다 — N-27 과 같은 함정이다.
+ * 전이는 이미 자동이다: `addPayment` 가 입금이 들어올 때마다 상태를 옮긴다.
+ *
+ * **컷의 카드 여섯이 이 표로 전부 제자리에 앉는다** —
+ *   서지호(draft) → ① · 고은성·이하린(sent) → ② · 강라율(paid) → ③ ·
+ *   고은설 「50% 냄」(partial) → ④ · 양찬욱 「연체」(partial + 기한 지남) → ④.
+ * 즉 **「50% 냄」과 「연체」는 칸을 정하는 값이 아니라 카드에 적히는 값**이다.
+ *
+ * `unpaid` 가 ① 에 드는 이유: 이 저장소에서 `unpaid` 는 「안 냈다」가 아니라
+ * **「발행했지만 아직 안 보냈다」**다(`addPayment` 의 되돌리기가 `was_sent` 로 `sent`/`unpaid` 를 가른다).
+ * ② 는 「**보냈습니다** · 입금을 기다립니다」이므로 안 보낸 것은 ② 에 설 수 없다.
+ *
+ * **아직 안 정해진 것 (N-28 ②):** 컷 §53 의 다섯 칸 판(청구서 탭)은 ①「아직 안 씀」과
+ * ②「청구서 작성」을 가르는데, 그 둘을 `state` 하나로는 못 가른다. 다섯 칸 판은 그 답이 나온 뒤에 만든다.
+ */
+export const INV_BOARD_COLUMNS = [
+  { key: 'draft', label: '청구서 작성', sub: '아직 안 만들었습니다', states: ['draft', 'unpaid'] },
+  { key: 'sent', label: '청구서 전달', sub: '보냈습니다 · 입금을 기다립니다', states: ['sent'] },
+  { key: 'paid', label: '입금 완료', sub: '돈이 들어왔습니다', states: ['paid'] },
+  { key: 'record', label: '입금 기록', sub: '장부에 넣었습니다', states: ['partial'] },
+] as const;
+
+export type InvBoardColumnKey = (typeof INV_BOARD_COLUMNS)[number]['key'];
+
+/** 어느 칸에 드는가 — **판정은 이 함수 하나뿐이다** (D-R39) */
+export function invBoardColumn(state: string): InvBoardColumnKey | null {
+  const hit = INV_BOARD_COLUMNS.find((c) => (c.states as readonly string[]).includes(state));
+  return hit ? hit.key : null; // void 는 어느 칸에도 안 든다 — 청구가 아니다
+}
+
+export class InvBoardCardDto {
+  @ApiProperty() invId!: number;
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
+  @ApiProperty({ description: '청구 종류 코드' }) invType!: string;
+  @ApiProperty({ description: '종류 이름 — §53 카드의 배지 (D-R18)' }) invTypeLabel!: string;
+  @ApiProperty() title!: string;
+  @ApiProperty({ description: '상태의 이름 — 화면이 코드값을 찍지 않는다' }) stateLabel!: string;
+
+  @ApiPropertyOptional({ type: Number, nullable: true }) amount?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true }) paid?: number | null;
+  /*
+   * 컷의 「50% 냄」이다. **화면이 나누지 않는다** — 금액을 못 보는 사람에게는 비율도 안 준다
+   * (비율과 받은 돈이 있으면 청구액이 복원된다).
+   */
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '받은 비율 0~100 — 일부 납부에만' })
+  paidPercent?: number | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true }) dueOn?: string | null;
+  @ApiProperty({ description: '기한이 지난 날 수 — 0이면 연체 아님 (서버가 센다)' }) overdueDays!: number;
+  @ApiProperty({ description: '「D-21」·「1일 지남」·「오늘」 — 낱말도 서버가 만든다 (D-R18)' }) whenLabel!: string;
+}
+
+export class InvBoardColumnDto {
+  @ApiProperty() key!: string;
+  @ApiProperty({ description: '칸 이름 — §52 컷의 낱말' }) label!: string;
+  @ApiProperty({ description: '칸 아래 한 줄 — §52 컷의 낱말' }) sub!: string;
+  @ApiProperty({ description: '그 칸의 건수 — 화면이 배열을 세지 않는다 (D-R37)' }) count!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '그 칸의 금액 합계' }) amount?: number | null;
+  @ApiProperty({ type: [InvBoardCardDto] }) cards!: InvBoardCardDto[];
+}
+
+/** `GET /accounting/board` — §52 */
+export class InvBoardDto {
+  @ApiProperty({ type: [InvBoardColumnDto], description: '칸 넷. **비어도 선다** — 칸은 어휘이지 데이터가 아니다' })
+  columns!: InvBoardColumnDto[];
+  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}

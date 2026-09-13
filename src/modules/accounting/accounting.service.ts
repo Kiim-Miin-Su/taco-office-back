@@ -17,15 +17,33 @@ import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from
 import { kstMonthOf, sqlWordList } from '../../lib/sql';
 import {
   EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED,
-  INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_ROW, INV_TYPE_SUB,
+  INV_BOARD_COLUMNS, INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_ROW, INV_TYPE_SUB,
+  invBoardColumn,
 } from './accounting.dto';
 import { invoiceLines, linesTotal, type LineSlice } from './invoice-lines';
 import type {
   AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, InvoiceIssueDto,
-  OtherIncomeDto,
+  InvBoardDto, OtherIncomeDto,
   PaymentCreateDto, PaymentDto, PayoutDto,
   TuitionDto, TuitionRowDto,
 } from './accounting.dto';
+
+/**
+ * 카드 오른쪽의 한 마디 — 「D-21」 · 「1일 지남」 · 「오늘」.
+ *
+ * **낱말도 서버가 만든다** (D-R18). 화면이 날짜를 빼기 시작하면 「연체」 배지와 이 글자가 갈린다.
+ */
+function invWhenLabel(due: string | null, today: string, overdueDays: number): string {
+  if (!due) return '기한 없음';
+  if (overdueDays > 0) return `${overdueDays}일 지남`;
+  if (due === today) return '오늘';
+  /*
+   * **지났는데 연체가 아닌 것** — 완납했거나 아직 청구 전인 건이다. 여기서 `D-` 를 그대로 쓰면
+   * **「D--23」** 이 찍힌다(실제로 찍혔다). 남은 날이 없으므로 날 수 대신 기한을 적는다.
+   */
+  if (due < today) return `기한 ${due.slice(5)}`;
+  return `D-${daysBetween(today, due)}`;
+}
 
 const daysBetween = (a: string, b: string) =>
   Math.floor((new Date(`${b}T00:00:00Z`).getTime() - new Date(`${a}T00:00:00Z`).getTime()) / 86400000);
@@ -705,6 +723,73 @@ export class AccountingService {
             issuedOn: r.issued_on, dueOn: r.due_on,
             amount: money(Number(r.amount)), paid: money(Number(r.paid_amount)),
           })),
+        };
+      }),
+    };
+  }
+
+  /**
+   * §52 회계 트래킹 보드 — 대표 결정 2026-09-13 (N-28 「단일 진실원과 자동 전이에 유리하게」).
+   *
+   * **칸은 `inv.state` 하나로 갈린다** (`invBoardColumn` 한 함수). 「50% 냄」·「연체」는
+   * 칸을 정하는 값이 아니라 **카드에 적히는 값**이다 — 두 축으로 가르면 판정이 두 벌이 된다.
+   *
+   * **칸은 비어도 선다** — 칸은 어휘이지 데이터가 아니다 (§57 줄 셋과 같은 규약 · C66).
+   * 건수·합계도 서버가 센다 — 화면이 배열을 세면 안 보이는 카드까지 세거나 빠뜨린다 (D-R37).
+   */
+  async invoiceBoard(canSeeAmounts: boolean): Promise<InvBoardDto> {
+    const today = todayKst();
+    const rows = (await this.inv.query(
+      `SELECT i.id, i.student_id, s.name AS student_name, s.grade,
+              i.inv_type, i.title, i.amount, i.paid_amount, i.state::text AS state,
+              to_char(i.due_on,'YYYY-MM-DD') AS due_on
+         FROM inv i
+         LEFT JOIN stu s ON s.id = i.student_id
+        WHERE i.state <> 'void'
+        ORDER BY i.due_on NULLS LAST, i.id`,
+    )) as Array<{
+      id: string; student_id: string; student_name: string | null; grade: string | null;
+      inv_type: string; title: string | null; amount: number; paid_amount: number;
+      state: string; due_on: string | null;
+    }>;
+
+    const money = (v: number): number | null => (canSeeAmounts ? v : null);
+    return {
+      canSeeAmounts,
+      columns: INV_BOARD_COLUMNS.map((col) => {
+        const mine = rows.filter((r) => invBoardColumn(r.state) === col.key);
+        return {
+          key: col.key, label: col.label, sub: col.sub,
+          count: mine.length,
+          amount: money(mine.reduce((n, r) => n + Number(r.amount), 0)),
+          cards: mine.map((r) => {
+            const due = r.due_on;
+            /*
+             * 연체는 **아직 받을 돈이 있는 건**에만 붙는다 — `INV_OPEN` 이 그 집합이고
+             * §52 머리의 「기한 지남」도 같은 집합을 쓴다. 초안은 아직 청구한 것이 아니라 연체가 아니고,
+             * 완납은 받을 돈이 없어 연체가 아니다. 같은 낱말을 두 곳이 다르게 세지 않는다.
+             */
+            const owed = (INV_OPEN as readonly string[]).includes(r.state);
+            const overdueDays = owed && due && due < today ? daysBetween(due, today) : 0;
+            return {
+              invId: Number(r.id), studentId: Number(r.student_id),
+              studentName: r.student_name ?? '학생 없음', grade: r.grade ?? null,
+              invType: r.inv_type, invTypeLabel: INV_TYPE_LABEL[r.inv_type] ?? r.inv_type,
+              title: r.title ?? INV_TYPE_ROW[r.inv_type] ?? r.inv_type,
+              stateLabel: INV_STATE_LABEL[r.state] ?? r.state,
+              amount: money(Number(r.amount)), paid: money(Number(r.paid_amount)),
+              /*
+               * 컷의 「50% 냄」. 일부 납부에만 붙고, **금액을 못 보면 비율도 안 준다** —
+               * 비율과 받은 돈이 같이 있으면 청구액이 복원된다 (D-R39).
+               */
+              paidPercent: canSeeAmounts && r.state === 'partial' && Number(r.amount) > 0
+                ? Math.round((Number(r.paid_amount) / Number(r.amount)) * 100)
+                : null,
+              dueOn: due,
+              overdueDays,
+              whenLabel: invWhenLabel(due, today, overdueDays),
+            };
+          }),
         };
       }),
     };

@@ -12,8 +12,8 @@ import {
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
-  AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, InvoiceIssueDto, OtherIncomeDto,
-  PaymentCreateDto, TuitionDto, TuitionQueryDto,
+  AccountingDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
+  OtherIncomeDto, PaymentCreateDto, TuitionDto, TuitionQueryDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService } from './accounting.service';
@@ -55,6 +55,23 @@ export class AccountingController {
   async tuition(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<TuitionDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.tuition(query.month ?? todayKst().slice(0, 7), canSee);
+  }
+
+  @Get('board')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '회계 트래킹 보드 — 칸 넷 (§52)',
+    description:
+      '**칸은 `inv.state` 하나로 갈린다** (대표 결정 2026-09-13 · N-28 「단일 진실원과 자동 전이에 유리하게」). '
+      + '두 축(`state` + 「PAY 행이 있는가」)으로 가르면 판정이 두 벌이 되어 같은 청구서가 어느 칸에 있는지 '
+      + '두 곳이 다르게 답한다. 전이는 이미 자동이다 — 입금이 들어오면 `addPayment` 가 상태를 옮긴다. '
+      + '「50% 냄」·「연체」는 칸을 정하는 값이 아니라 **카드에 적히는 값**이다. '
+      + '칸은 비어도 선다(어휘이지 데이터가 아니다) · 건수와 합계도 서버가 센다 (D-R37).',
+  })
+  @ApiOkResponse({ type: InvBoardDto })
+  async invoiceBoard(@CurrentUser() user: RequestUser): Promise<InvBoardDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.invoiceBoard(canSee);
   }
 
   @Get('other-income')
