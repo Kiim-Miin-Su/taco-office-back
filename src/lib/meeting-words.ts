@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: meeting-words.ts — MT_TYPES, MT_TYPE_LABEL, MINUTES_TEMPLATES 등 (util)
+ * 목적: meeting-words.ts — MT_TYPES, MtType, MT_TYPE_LABEL, mtTypeLabel, MT_ATTEND_STATES 등 (util)
  * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */

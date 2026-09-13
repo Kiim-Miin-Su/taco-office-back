@@ -1,11 +1,11 @@
 /** @file-guide
- * 목적: consulting.dto.ts — ConsultingSessionDto, ConsultingDto, ConsultingListDto (dto)
+ * 목적: consulting.dto.ts — ConsultingSessionDto, ConsItemDto, ConsItemToggleDto, ConsultingDto, ConsultingListDto 등 (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
 import { CONS_SHARES, type ConsShare } from '../../lib/rules';
 import { CONSULTING_STAGES, CONTRACT_STEP_MAX, CONSULTING_SESSION_MAX, type ConsultingStage } from './consulting.rules';
 
@@ -75,4 +75,60 @@ export class ConsultingDto {
 export class ConsultingListDto {
   @ApiProperty({ type: [ConsultingDto] }) items!: ConsultingDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}
+
+/* ══ §28 컨설팅 회계 (C58) ═══════════════════════════════════════════════ */
+
+/** 납부 기록 한 줄 — 원문 `CONS.pay[]` */
+export class ConsPaymentDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() amount!: number;
+  @ApiProperty({ example: '2026-07-12' }) paidOn!: string;
+  @ApiPropertyOptional(S) memo?: string | null;
+  @ApiPropertyOptional(S) byName?: string | null;
+}
+
+/** §28 표 한 줄 — 계약 하나의 돈 */
+export class ConsAccountRowDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: '학생 — 여럿이면 쉼표로 잇는다' }) studentName!: string;
+  @ApiProperty({ description: '종류 코드' }) consType!: string;
+  @ApiProperty({ type: String, enum: CONSULTING_STAGES }) stage!: ConsultingStage;
+  @ApiProperty({ description: '단계 이름 — 낱말은 서버가 만든다 (D-R18)' }) stageLabel!: string;
+
+  @ApiPropertyOptional({ ...N, description: '계약 금액 — 못 보면 null' }) amount?: number | null;
+  @ApiPropertyOptional({ ...N, description: '받은 돈 — 납부 기록의 합' }) paid?: number | null;
+  /** 남은 돈 — **서버가 뺀다.** 화면이 계약 − 받음을 다시 하면 머리 칸의 합계와 갈린다 (D-R37) */
+  @ApiPropertyOptional({ ...N, description: '남은 돈 — 서버가 뺀다' }) due?: number | null;
+
+  @ApiProperty({ type: [ConsPaymentDto], description: '납부 기록 — 청구서로 전환해도 그대로 남는다' })
+  payments!: ConsPaymentDto[];
+
+  @ApiPropertyOptional({ ...N, description: '전환된 청구서 — 없으면 null' }) invId?: number | null;
+  @ApiProperty({ description: '청구서로 전환할 수 있는가 — 이미 살아 있는 청구서가 있으면 false' })
+  canInvoice!: boolean;
+}
+
+/** `GET /consulting/accounting` — §28 */
+export class ConsAccountingDto {
+  @ApiProperty({ type: [ConsAccountRowDto] }) items!: ConsAccountRowDto[];
+  /* 머리 세 칸 — 원문 「계약 금액 · 받은 돈 · 남은 돈」. 화면이 줄을 더하지 않는다 (D-R37) */
+  @ApiPropertyOptional({ ...N, description: '계약 금액 합계 — 못 보면 null' }) totalAmount?: number | null;
+  @ApiPropertyOptional({ ...N, description: '받은 돈 합계' }) totalPaid?: number | null;
+  @ApiPropertyOptional({ ...N, description: '남은 돈 합계' }) totalDue?: number | null;
+  @ApiProperty({ description: '금액을 볼 수 있는가 — 공개 범위와 D-R39 두 층을 모두 통과해야 한다' })
+  canSeeAmounts!: boolean;
+}
+
+/** 납부 넣기 — 원문 §28 「납부 넣기」 */
+export class ConsPaymentCreateDto {
+  @ApiProperty({ description: '받은 금액 — 0 원은 기록이 아니라 실수다', minimum: 1 })
+  @IsInt() @Min(1) amount!: number;
+
+  @ApiProperty({ example: '2026-07-12' })
+  @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '날짜는 YYYY-MM-DD 입니다' })
+  paidOn!: string;
+
+  @ApiPropertyOptional({ maxLength: 80 })
+  @IsOptional() @IsString() @MaxLength(80) memo?: string;
 }

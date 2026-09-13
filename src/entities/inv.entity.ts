@@ -72,4 +72,8 @@ export class Inv {
 
   @Column({ type: 'varchar', length: 500, nullable: true })
   memo: string | null;
+
+  /** 어느 컨설팅에서 전환된 청구서인가 — 원문 §28 「INV 에 csid 로 연결」 (C58) */
+  @Column({ type: 'bigint', nullable: true })
+  csId: number | null;
 }

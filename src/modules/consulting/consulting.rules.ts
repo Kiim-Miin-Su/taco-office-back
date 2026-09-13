@@ -1,11 +1,24 @@
 /** @file-guide
- * 목적: consulting.rules.ts — CONSULTING_STAGES, ConsultingStage, CONTRACT_STEP_MAX, CONSULTING_SESSION_MAX, ConsultingRecord 등 (util)
+ * 목적: consulting.rules.ts — CONSULTING_STAGES, CONSULTING_STAGE_LABEL, consultingStageLabel, ConsultingStage, CONTRACT_STEP_MAX 등 (util)
  * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
 /** §26 읽기 보드의 불변식. 상태 전이·수납 판정(csPaid)은 별도 쓰기 계약이다. */
 export const CONSULTING_STAGES = ['contract', 'running', 'done'] as const;
+
+/**
+ * 단계 이름 — 원문 §26 머리글 「계약 → 진행 → 종료」 그대로 (D-R18 · C58).
+ * 한동안 화면 파일이 이 표를 따로 들고 있었고, §28 회계 표가 생기면서 두 곳이 될 뻔했다.
+ */
+export const CONSULTING_STAGE_LABEL: Record<ConsultingStage, string> = {
+  contract: '계약',
+  running: '진행',
+  done: '종료',
+};
+
+export const consultingStageLabel = (stage: string): string =>
+  CONSULTING_STAGE_LABEL[stage as ConsultingStage] ?? stage;
 export type ConsultingStage = (typeof CONSULTING_STAGES)[number];
 export const CONTRACT_STEP_MAX = 5;
 export const CONSULTING_SESSION_MAX = 32767; // DB smallint 양수 범위

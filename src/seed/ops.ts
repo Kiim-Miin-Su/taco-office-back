@@ -73,6 +73,20 @@ export const CONSULTINGS = [
   { id: 5, consType: 'admissions', stage: 'done',    contractStep: 5, amount: 8400000, sessions: 13, endOn: '2026-08-15', ownerId: 6, share: 'private', students: [8] },
 ];
 
+/**
+ * 컨설팅 납부 원장 (§28 · C58) — 받은 합은 어디에도 저장하지 않는다. 합계는 읽을 때 만든다 (D-R37).
+ *
+ * 다섯 갈래가 화면에 한 번씩은 보이게 깔았다 —
+ *   1번 일부 납부(전환 가능) · 2번 완납(남은 돈 0 → 전환할 것 없음) ·
+ *   3번 계약 1단계(수납 전이라 전환 불가) · 4번 지정 공개(두 번째 권한 층) · 5번 종료(납부 잠김).
+ */
+export const CONS_PAYS = [
+  { consId: 1, amount: 3000000, paidOn: D(-40), memo: '계약금' },
+  { consId: 1, amount: 1400000, paidOn: D(-10), memo: null },
+  { consId: 2, amount: 3600000, paidOn: D(-25), memo: '일시납' },
+  { consId: 5, amount: 8400000, paidOn: D(-120), memo: null },
+];
+
 /** share='picked' 일 때 볼 수 있는 사람 (CONS_PICK) */
 export const CONS_PICKS = [
   { consId: 4, staffId: 3 },

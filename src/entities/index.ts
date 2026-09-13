@@ -15,6 +15,7 @@ export * from './cons-pick.entity';
 export * from './cons-sess.entity';
 export * from './cons-stu.entity';
 export * from './cpl.entity';
+export * from './cons-pay.entity';
 export * from './diag.entity';
 export * from './enr.entity';
 export * from './exc.entity';

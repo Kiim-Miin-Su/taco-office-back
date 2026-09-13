@@ -19,12 +19,15 @@ describe('§26 단계 필터 조회 계약', () => {
   let app: INestApplication;
   let user: RequestUser | undefined;
   const all = jest.fn();
+  const accounting = jest.fn();
+  const addPayment = jest.fn();
+  const toInvoice = jest.fn();
   const empty = { items: [], canSeeAmounts: false };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [ConsultingController],
-      providers: [{ provide: ConsultingService, useValue: { all } }, { provide: APP_GUARD, useClass: PermGuard }],
+      providers: [{ provide: ConsultingService, useValue: { all, accounting, addPayment, toInvoice } }, { provide: APP_GUARD, useClass: PermGuard }],
     }).compile();
     app = module.createNestApplication();
     app.use((req: Request, _res: Response, next: NextFunction) => { req.user = user; next(); });
@@ -53,10 +56,14 @@ describe('§26 단계 필터 조회 계약', () => {
     await request(app.getHttpServer()).get('/consulting').expect(403);
     expect(all).not.toHaveBeenCalled();
   });
-  it('조회는 GET 하나·항목 토글은 PATCH 하나 — 그 밖의 endpoint 를 만들지 않는다 (47D-B)', () => {
+  it('조회는 GET 둘·쓰기는 셋 — 그 밖의 endpoint 를 만들지 않는다 (47D-B)', () => {
     const api = buildOpenApi(app);
-    // C5-a 의 「추가 endpoint 0」 가드는 N-18 채택(2026-09-12 §4-17)·47D-B 로 항목 토글 1개까지 확장됐다
-    expect(Object.keys(api.paths)).toEqual(['/consulting', '/consulting/{id}/items/{itemId}']);
+    // C5-a 의 「추가 endpoint 0」 가드는 N-18 채택(2026-09-12 §4-17)·47D-B 로 항목 토글 1개까지 늘었고,
+    // C58 에서 §28 회계 화면(읽기 1 · 원문 동작 둘)이 더 붙었다. 그 밖은 여전히 0 이다.
+    expect(Object.keys(api.paths)).toEqual([
+      '/consulting', '/consulting/{id}/items/{itemId}',
+      '/consulting/accounting', '/consulting/{id}/payments', '/consulting/{id}/invoice',
+    ]);
     const patch = api.paths['/consulting/{id}/items/{itemId}'].patch;
     expect(patch?.description).toMatch(/진행률 숫자는 저장하지 않는다/);
     const get = api.paths['/consulting'].get;
@@ -66,5 +73,26 @@ describe('§26 단계 필터 조회 계약', () => {
     const schema = api.components?.schemas?.ConsultingDto;
     if (!schema || '$ref' in schema) throw new Error('ConsultingDto 누락');
     expect(schema.properties?.stage).toMatchObject({ enum: ['contract', 'running', 'done'] });
+  });
+
+  it('§28 회계는 뺄셈을 서버가 한다고 계약에 적어 둔다 (D-R37)', () => {
+    const api = buildOpenApi(app);
+    const get = api.paths['/consulting/accounting'].get;
+    expect(get?.description).toMatch(/서버가 뺀다/);
+    expect(get?.parameters ?? []).toEqual([]);
+    const post = api.paths['/consulting/{id}/invoice'].post;
+    expect(post?.description).toMatch(/남은 돈으로/);
+    const schema = api.components?.schemas?.ConsAccountRowDto;
+    if (!schema || '$ref' in schema) throw new Error('ConsAccountRowDto 누락');
+    // 남음은 서버가 내려보내는 값이다 — 화면이 만들 칸이 아니다
+    expect(schema.properties?.due).toBeDefined();
+    expect(schema.properties?.canInvoice).toBeDefined();
+  });
+
+  it('금액이 오가는 쓰기 둘은 canMoney 까지 요구한다', () => {
+    const r = app.get(Reflector);
+    expect(r.get(PERM_KEY, ConsultingController.prototype.accounting)).toEqual(['canAdminPage', 'canCrudAll']);
+    expect(r.get(PERM_KEY, ConsultingController.prototype.addPayment)).toEqual(['canAdminPage', 'canCrudAll', 'canMoney']);
+    expect(r.get(PERM_KEY, ConsultingController.prototype.toInvoice)).toEqual(['canAdminPage', 'canCrudAll', 'canMoney']);
   });
 });

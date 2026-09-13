@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: noti.ts — NOTI_TONES, notiTone, NOTI_CATEGORIES, notiCategory, NOTI_WINDOW_DAYS (service)
+ * 목적: noti.ts — NOTI_TONES, NotiTone, notiTone, NOTI_CATEGORIES, NotiCategory 등 (service)
  * 책임/재사용: 기존 lib/도메인 방어·Perm 함수를 재사용한다. 쓰기는 트랜잭션/DB 제약, 읽기는 권한별 projection으로 최종 검증한다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */

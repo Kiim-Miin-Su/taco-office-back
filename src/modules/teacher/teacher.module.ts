@@ -1,6 +1,6 @@
 /** @file-guide
  * 목적: teacher.module.ts — TeacherModule (module)
- * 책임/재사용: 모듈 조립만 소유한다. providers/imports 배선 외 업무 규칙을 두지 않는다.
+ * 책임/재사용: 기존 provider/controller와 의존성 연결만 소유한다. 업무 규칙이나 별도 전역 상태를 추가하지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 

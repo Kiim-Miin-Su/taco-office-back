@@ -4,11 +4,14 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Patch } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
 import { ApiConflictResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { ConsItemDto, ConsItemToggleDto, ConsultingListDto } from './consulting.dto';
+import {
+  ConsAccountingDto, ConsAccountRowDto, ConsItemDto, ConsItemToggleDto,
+  ConsPaymentCreateDto, ConsultingListDto,
+} from './consulting.dto';
 import { ConsultingService } from './consulting.service';
 
 @ApiTags('consulting')
@@ -51,5 +54,68 @@ export class ConsultingController {
     // @Perm 가드가 매니저 이상을 이미 보장한다 — isRole 은 타입 좁힘용이다 (all() 과 같은 규약)
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
     return this.svc.toggleItem(user.id, canHide, id, itemId, dto);
+  }
+
+  /* ══ §28 컨설팅 회계 ═══════════════════════════════════════════════════ */
+
+  @Get('accounting')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '컨설팅 회계 — 계약 금액 · 받은 돈 · 남은 돈 (§28)',
+    description:
+      '머리 세 칸과 줄의 「남음」을 **서버가 뺀다** (D-R37). 화면이 계약 − 받음을 다시 하면 가려진 줄에서 합계가 갈린다. '
+      + "원문 규칙 「수납만 공개(vis='pay')여도 이 화면의 금액은 보입니다」는 새 판정이 아니라 csCanAmount 그대로다.",
+  })
+  @ApiOkResponse({ type: ConsAccountingDto })
+  async accounting(@CurrentUser() user: RequestUser): Promise<ConsAccountingDto> {
+    if (!isRole(user.role)) return { items: [], totalAmount: null, totalPaid: null, totalDue: null, canSeeAmounts: false };
+    return this.svc.accounting(
+      user.id,
+      hasPerm(user.role, 'canMoney', user.perms),
+      hasPerm(user.role, 'canHide', user.perms),
+    );
+  }
+
+  @Post(':id/payments')
+  @Perm('canAdminPage', 'canCrudAll', 'canMoney')
+  @ApiOperation({
+    summary: '납부 넣기 — §28 동작 ①',
+    description: 'cons_pay 원장에 한 줄 더한다. 받은 합은 저장하지 않는다 — 읽을 때 원장을 더한다 (D-R37).',
+  })
+  @ApiOkResponse({ type: ConsAccountRowDto, description: '바뀐 줄 하나 — 화면이 숫자를 다시 만들지 않게' })
+  @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
+  @ApiNotFoundResponse({ description: '보이지 않는 건 — 존재를 누출하지 않는다' })
+  @ApiConflictResponse({ description: 'code CONS_PAY_LOCKED — 종료된 건' })
+  async addPayment(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ConsPaymentCreateDto,
+  ): Promise<ConsAccountRowDto> {
+    const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.addPayment(user.id, canMoney, canHide, id, dto);
+  }
+
+  @Post(':id/invoice')
+  @Perm('canAdminPage', 'canCrudAll', 'canMoney')
+  @ApiOperation({
+    summary: '청구서로 전환 — §28 동작 ② · 연동 「INV 에 csid 로 연결」',
+    description:
+      '**남은 돈으로** 청구서를 낸다. 계약 전액으로 내면 이미 받은 돈이 §53 미수금에 한 번 더 얹힌다. '
+      + '전환 뒤에도 납부 기록은 cons_pay 에 그대로 남는다 — cs_id 는 연결이지 소유가 아니다.',
+  })
+  @ApiOkResponse({ type: ConsAccountRowDto })
+  @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
+  @ApiNotFoundResponse({ description: '보이지 않는 건' })
+  @ApiConflictResponse({
+    description: 'code CONS_INV_EXISTS · CONS_INV_NOT_PAID_STEP · CONS_INV_NOTHING_DUE · CONS_INV_STUDENT_AMBIGUOUS',
+  })
+  async toInvoice(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ConsAccountRowDto> {
+    const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.toInvoice(user.id, canMoney, canHide, id);
   }
 }
