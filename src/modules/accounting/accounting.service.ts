@@ -18,7 +18,7 @@ import { kstAt, kstMonthOf, sqlWordList } from '../../lib/sql';
 import {
   EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED,
   INV_BOARD_COLUMNS, INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_ROW, INV_TYPE_SUB,
-  invBoardColumn, type IncomeSpan,
+  PAY_CATEGORIES, PAY_CATEGORY_LABEL, invBoardColumn, payCategory, type IncomeSpan,
 } from './accounting.dto';
 import { invoiceLines, linesTotal, type LineSlice } from './invoice-lines';
 import type {
@@ -196,20 +196,56 @@ export class AccountingService {
 
     const invoices: InvoiceDto[] = invRows.map((r) => this.invoiceRow(r, canSeeAmounts, today));
 
+    /*
+     * §55 의 **분류**는 저장된 칸이 아니라 **읽어서 만드는 값**이다 (대표 결정 N-37 ③ —
+     * 「Entity, DTO 의 정합성과 단일 진실원 해결」). 그래서 여기서 청구서와 그 줄의 종류를 같이 읽는다.
+     * `is_gpa` — 그 청구서의 줄이 **`kind = 'gpa'` 수업**에서 나왔는가. 수업료 중 GPA 관리비를 가른다.
+     *
+     * **과목이 어느 종류에 속하는지는 `rate` 가 안다** — 단가표가 (종류, 과목) 짝으로 서 있기 때문이다.
+     * `sub` 자체에는 종류 칸이 없고, `inv_line` 도 **어느 종류에서 나온 줄인지 기억하지 않는다**.
+     * 그래서 지금은 단가표를 거쳐 읽는다. 한 과목이 두 종류에 걸리면 이 읽기가 흔들리므로
+     * **회귀가 그런 과목이 없는지 센다** — 생기는 날 빨개진다.
+     * 더 단단한 길은 `inv_line` 이 제 종류를 들고 오는 것인데, **지금 있는 줄은 되짚어 채울 수 없다**
+     * (N-25 — 추정 이관 금지). N-37 ③ 에 적어 두었다.
+     */
     const payRows = (await this.inv.query(
       `SELECT p.id, to_char(p.paid_on,'YYYY-MM-DD') AS paid_on, p.student_id, s.name AS student_name,
-              p.amount, p.method, p.reason, p.inv_id
-         FROM pay p LEFT JOIN stu s ON s.id = p.student_id
+              p.amount, p.method, p.reason, p.inv_id,
+              i.inv_type,
+              EXISTS (
+                SELECT 1 FROM inv_line l JOIN rate r ON r.sub_key = l.sub_key
+                 WHERE l.inv_id = i.id AND r.kind_key = 'gpa'
+              ) AS is_gpa
+         FROM pay p
+         LEFT JOIN stu s ON s.id = p.student_id
+         LEFT JOIN inv i ON i.id = p.inv_id
         ORDER BY p.paid_on DESC, p.id DESC`,
     )) as Array<Record<string, unknown>>;
-    const payments: PaymentDto[] = payRows.map((r) => ({
-      id: Number(r.id), paidOn: r.paid_on == null ? null : String(r.paid_on),
-      studentId: r.student_id ? Number(r.student_id) : null,
-      studentName: (r.student_name as string | null) ?? null,
-      amount: money(r.amount), method: (r.method as string | null) ?? null,
-      reason: (r.reason as string | null) ?? null,
-      invId: r.inv_id ? Number(r.inv_id) : null,
-    }));
+    const payments: PaymentDto[] = payRows.map((r) => {
+      // 판정은 `payCategory()` 한 함수뿐이다 — 화면도 칩도 같은 답을 쓴다 (D-R39)
+      const category = payCategory((r.inv_type as string | null) ?? null, r.is_gpa === true);
+      return {
+        id: Number(r.id), paidOn: r.paid_on == null ? null : String(r.paid_on),
+        studentId: r.student_id ? Number(r.student_id) : null,
+        studentName: (r.student_name as string | null) ?? null,
+        amount: money(r.amount), method: (r.method as string | null) ?? null,
+        reason: (r.reason as string | null) ?? null,
+        invId: r.inv_id ? Number(r.inv_id) : null,
+        category, categoryLabel: PAY_CATEGORY_LABEL[category] ?? category,
+      };
+    });
+
+    /*
+     * §55 의 분류 칩 — **건수가 0이어도 선다.** 분류는 어휘이지 데이터가 아니다
+     * (§57 줄 셋 · §52 칸 넷과 같은 규약). 세는 것도 서버다 (D-R37).
+     */
+    const payCategories = PAY_CATEGORIES.map((c) => {
+      const mine = payments.filter((p) => p.category === c.key);
+      return {
+        key: c.key, label: c.label, count: mine.length,
+        amount: canSeeAmounts ? mine.reduce((n, p) => n + (p.amount ?? 0), 0) : null,
+      };
+    });
 
     const poRows = (await this.inv.query(
       `SELECT po.id, po.staff_id, t.name AS staff_name, po.year_month, po.hours,
@@ -239,7 +275,7 @@ export class AccountingService {
 
     return {
       summary: await this.moneySummary(canSeeAmounts, today),
-      invoices, payments, payouts, expenses, expenseTotals,
+      invoices, payments, payouts, expenses, expenseTotals, payCategories,
     };
   }
 

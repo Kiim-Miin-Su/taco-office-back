@@ -154,6 +154,55 @@ export class InvoiceIssueDto {
   dueOn?: string;
 }
 
+/**
+ * §55 「들어온 돈」의 **분류 여섯** — 대표 결정 2026-09-13 (N-37 ③).
+ *
+ * 「**Entity, DTO 의 정합성과 단일 진실원 해결**」. 그래서 **새 칸을 만들지 않는다** —
+ * 여섯이 전부 **읽어서 만드는 값**이다:
+ *   · `pay.inv_id → inv.inv_type` 이 넷을 준다 (수업료 · 컨설팅비 · 진단고사 · 시험 응시료)
+ *   · `pay.inv_id IS NULL`(「매니저가 직접 넣은 건」 · A-D1)이 **「기타」**를 준다
+ *   · 수업료 중 **`kind = 'gpa'` 수업으로 만들어진 것**이 **「GPA 관리비」**다
+ *     (`inv_line.sub_key → sub.kind_key` 로 줄에서 읽힌다)
+ *
+ * 이것이 C50·C64 가 두 번 「원문에 6종의 목록이 없다」고 적은 그 여섯의 정체다 —
+ * **청구 종류(`INV_TYPES`)가 아니라 입금의 분류**다. 그래서 `INV_TYPES` 는 넷 그대로다.
+ *
+ * 이름은 **§55 컷의 낱말**이고 §53 칩(`INV_TYPE_LABEL`)·§57 줄(`INV_TYPE_ROW`)과 또 다르다 —
+ * 같은 종류를 세 화면이 다르게 부른다는 것을 C66 에서 적었다. 접지 않고 쓰는 자리마다 갖는다 (D-R18).
+ */
+export const PAY_CATEGORIES = [
+  { key: 'tuition', label: '수업료' },
+  { key: 'gpa', label: 'GPA 관리비' },
+  { key: 'consulting', label: '컨설팅비' },
+  { key: 'diag_intake', label: '진단고사 · 상담' },
+  { key: 'exam_fee', label: '시험 응시료' },
+  { key: 'etc', label: '기타' },
+] as const;
+
+export type PayCategoryKey = (typeof PAY_CATEGORIES)[number]['key'];
+export const PAY_CATEGORY_LABEL: Record<string, string> =
+  Object.fromEntries(PAY_CATEGORIES.map((c) => [c.key, c.label]));
+
+/**
+ * 입금 한 줄의 분류 — **판정은 이 함수 하나뿐이다** (D-R39).
+ *
+ * 청구서가 없으면 「기타」다 — 그것이 `pay.inv_id` 가 nullable 인 자리이고,
+ * 여섯 중 「기타」만 청구 종류로는 설명되지 않는 이유다.
+ */
+export function payCategory(invType: string | null, isGpa: boolean): PayCategoryKey {
+  if (invType === null) return 'etc';
+  if (invType === 'tuition') return isGpa ? 'gpa' : 'tuition';
+  return (PAY_CATEGORIES.some((c) => c.key === invType) ? invType : 'etc') as PayCategoryKey;
+}
+
+/** §55 분류 칩 한 개 — 「수업료 2」 */
+export class PayCategoryDto {
+  @ApiProperty() key!: string;
+  @ApiProperty({ description: '§55 컷의 낱말' }) label!: string;
+  @ApiProperty({ description: '그 분류의 건수 — 화면이 세지 않는다 (D-R37)' }) count!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '그 분류로 들어온 돈' }) amount?: number | null;
+}
+
 export class PaymentDto {
   @ApiProperty() id!: number;
   @ApiProperty({ type: String, format: 'date', nullable: true, description: '입금일 — 미확인 날짜는 null이며 문자열 null이 아니다' }) paidOn!: string | null;
@@ -163,6 +212,12 @@ export class PaymentDto {
   @ApiPropertyOptional({ type: String, nullable: true }) method?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true, description: '청구액과 다를 때의 사유 · 분납 회차 메모 (A-D2)' }) reason?: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) invId?: number | null;
+  /*
+   * §55 의 **분류** — 저장된 칸이 아니라 **읽어서 만든 값**이다 (N-37 ③ · 대표 결정).
+   * 낱말도 서버가 만든다 — 화면이 코드값을 찍지 않는다 (D-R18).
+   */
+  @ApiProperty({ description: '분류 코드 — 여섯 (N-37 ③)' }) category!: string;
+  @ApiProperty({ description: '분류 이름 — §55 컷의 낱말' }) categoryLabel!: string;
 }
 
 /**
@@ -288,6 +343,11 @@ export class AccountingDto {
   @ApiProperty({ type: [PayoutDto] }) payouts!: PayoutDto[];
   @ApiProperty({ type: [ExpenseDto], description: '나간 돈 §56 — 부대비용·법인카드 신청분' }) expenses!: ExpenseDto[];
   @ApiProperty({ type: [ExpenseTotalDto], description: '§56 분류별 확정 지출 합계 — 화면이 더하지 않는다' }) expenseTotals!: ExpenseTotalDto[];
+  @ApiProperty({
+    type: [PayCategoryDto],
+    description: '§55 분류 칩 여섯 — **건수가 0이어도 선다**(분류는 어휘이지 데이터가 아니다). 화면이 세지 않는다 (D-R37)',
+  })
+  payCategories!: PayCategoryDto[];
 }
 
 /* ══ §54 수업료 계산 (C65) ═══════════════════════════════════════════════

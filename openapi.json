@@ -11185,12 +11185,22 @@
           "invId": {
             "type": "number",
             "nullable": true
+          },
+          "category": {
+            "type": "string",
+            "description": "분류 코드 — 여섯 (N-37 ③)"
+          },
+          "categoryLabel": {
+            "type": "string",
+            "description": "분류 이름 — §55 컷의 낱말"
           }
         },
         "required": [
           "id",
           "paidOn",
-          "amount"
+          "amount",
+          "category",
+          "categoryLabel"
         ]
       },
       "PayoutDto": {
@@ -11371,6 +11381,32 @@
           "sum"
         ]
       },
+      "PayCategoryDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "description": "§55 컷의 낱말"
+          },
+          "count": {
+            "type": "number",
+            "description": "그 분류의 건수 — 화면이 세지 않는다 (D-R37)"
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true,
+            "description": "그 분류로 들어온 돈"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ]
+      },
       "AccountingDto": {
         "type": "object",
         "properties": {
@@ -11408,6 +11444,13 @@
             "items": {
               "$ref": "#/components/schemas/ExpenseTotalDto"
             }
+          },
+          "payCategories": {
+            "description": "§55 분류 칩 여섯 — **건수가 0이어도 선다**(분류는 어휘이지 데이터가 아니다). 화면이 세지 않는다 (D-R37)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayCategoryDto"
+            }
           }
         },
         "required": [
@@ -11416,7 +11459,8 @@
           "payments",
           "payouts",
           "expenses",
-          "expenseTotals"
+          "expenseTotals",
+          "payCategories"
         ]
       },
       "TuitionRowDto": {
