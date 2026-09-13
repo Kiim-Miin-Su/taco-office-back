@@ -14,12 +14,13 @@ import { Inv } from '../../entities';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
-import { sqlWordList } from '../../lib/sql';
+import { kstMonthOf, sqlWordList } from '../../lib/sql';
 import { EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED, INV_TYPE_LABEL } from './accounting.dto';
-import { invoiceLines, linesTotal } from './invoice-lines';
+import { invoiceLines, linesTotal, type LineSlice } from './invoice-lines';
 import type {
   AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, InvoiceIssueDto,
   PaymentCreateDto, PaymentDto, PayoutDto,
+  TuitionDto, TuitionRowDto,
 } from './accounting.dto';
 
 const daysBetween = (a: string, b: string) =>
@@ -503,5 +504,132 @@ export class AccountingService {
       const [out] = (await m.query(`${EXPENSE_SELECT} WHERE e.id = $1`, [id])) as Array<Record<string, unknown>>;
       return this.expenseRow(out, canSeeAmounts);
     });
+  }
+
+  /* ══ §54 수업료 계산 (C65) ═════════════════════════════════════════════
+   * 원문 슬라이드 54 의 마지막 줄이 이 화면의 정체다 —
+   * 「연동: **청구서 생성 시 이 계산 결과를 씁니다**」.
+   * 그래서 **단가를 여기서 다시 세지 않는다.** 청구서가 쓰는 `invoice-lines.ts` 한 벌을
+   * 그대로 부른다 (D-R22). 두 곳이 각자 계산하면 「미리 본 금액」과 「청구한 금액」이 갈린다.
+   * ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * 그 달의 학생별 수업료. 세는 것도 나누는 것도 전부 서버다 (D-R37) —
+   * 화면이 회차를 세면 취소·「그날만 빠진」을 빠뜨리고, 화면이 %를 내면 머리 칸과 갈린다.
+   *
+   * **결강은 금액에서 빠지고 「넘길 돈」으로 따로 선다.** 원문 표가 「결강」과 「넘길 돈」을
+   * 나란히 두는 것이 그 뜻이다 — 안 한 수업을 이번 달에 청구하지 않는다.
+   */
+  async tuition(month: string, canSeeAmounts: boolean): Promise<TuitionDto> {
+    const today = todayKst();
+    const [span] = (await this.inv.query(
+      `SELECT to_char(date_trunc('month', $1::date)::date, 'YYYY-MM-DD')                        AS first,
+              to_char((date_trunc('month', $1::date) + interval '1 month - 1 day')::date, 'YYYY-MM-DD') AS last`,
+      [`${month}-01`],
+    )) as Array<{ first: string; last: string }>;
+    const daysInMonth = Number(span.last.slice(8));
+    // 「21일 지남 · 10일 남음」 — 오늘이 이 달 밖이면 통째로 지났거나 통째로 남았다
+    const daysPast = today > span.last ? daysInMonth : today < span.first ? 0 : Number(today.slice(8));
+    const daysLeft = daysInMonth - daysPast;
+
+    /** 그 달에 회차가 하나라도 있는 학생만 — 이번 달 수업이 없는 학생은 줄을 만들지 않는다 */
+    const students = (await this.inv.query(
+      `SELECT DISTINCT st.id, st.name, st.grade
+         FROM ser_occ o
+         JOIN ser_stu ss ON ss.ser_id = o.ser_id
+         JOIN stu st     ON st.id = ss.student_id
+        WHERE ${kstMonthOf('lower(o.span)')} = $1
+        ORDER BY st.name, st.id`,
+      [month],
+    )) as Array<{ id: string; name: string; grade: string | null }>;
+
+    /**
+     * 회차 한 줄 = 한 학생의 한 수업. 금액이 붙는 단위라 여기서 한 번만 읽는다.
+     * `state` 는 세 가지다 — 이미 한 것 · 아직 안 한 것 · 결강(취소 또는 그날만 빠짐).
+     */
+    const occRows = students.length ? (await this.inv.query(
+      `SELECT ss.student_id,
+              to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              (o.canceled OR EXISTS (
+                 SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+                  WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = ss.student_id
+               )) AS dropped
+         FROM ser_occ o
+         JOIN ser_stu ss ON ss.ser_id = o.ser_id
+        WHERE ${kstMonthOf('lower(o.span)')} = $1
+          AND ss.student_id = ANY($2::bigint[])`,
+      [month, students.map((s) => Number(s.id))],
+    )) as Array<{ student_id: string; on_date: string; dropped: boolean }> : [];
+
+    const counts = new Map<number, { done: number; total: number; canceled: number }>();
+    for (const r of occRows) {
+      const k = Number(r.student_id);
+      const c = counts.get(k) ?? { done: 0, total: 0, canceled: 0 };
+      if (r.dropped) c.canceled += 1;
+      else {
+        c.total += 1;
+        if (r.on_date <= today) c.done += 1;
+      }
+      counts.set(k, c);
+    }
+
+    const money = (v: number): number | null => (canSeeAmounts ? v : null);
+    const items: TuitionRowDto[] = [];
+    let doneCount = 0, totalCount = 0, canceledCount = 0, doneAmount = 0, carryAmount = 0;
+
+    for (const s of students) {
+      const id = Number(s.id);
+      const c = counts.get(id) ?? { done: 0, total: 0, canceled: 0 };
+      // 청구서와 **같은 함수**다 — 미리 본 금액과 청구한 금액이 갈리지 않는다
+      const lines = await invoiceLines(this.inv, id, month);
+      const priced = lines.filter((l) => l.unit_price !== null);
+      /** 1회 평균이 아니라 **가장 많이 쓰인 단가**다 — 평균은 어느 수업의 값도 아니다 */
+      const top = priced.reduce<{ n: number; unit: number } | null>(
+        (best, l) => (best === null || l.n > best.n ? { n: l.n, unit: Number(l.unit_price) } : best), null);
+      /*
+       * 「지금까지」와 「넘길 돈」도 **나누어 내지 않고 다시 센다.**
+       * 달 총액을 회차 수로 가르면 과목마다 단가가 다른 학생에게서 **어느 수업의 값도 아닌 숫자**가 나온다
+       * (SAT 8만 8회 + 모의 4.5만 3회 중 7회를 했을 때 × 7/11 은 어느 조합과도 안 맞는다).
+       * 같은 질의를 날짜로 좁혀 다시 세면 단가 규칙이 갈릴 일도 없다 — invoice-lines.ts 의 토막 주석.
+       */
+      const sliced = async (slice: LineSlice): Promise<number> =>
+        linesTotal((await invoiceLines(this.inv, id, month, slice)).filter((l) => l.unit_price !== null));
+      const done = await sliced({ kind: 'done', upto: today });
+      const carry = await sliced({ kind: 'dropped' });
+
+      const [override] = (await this.inv.query(
+        `SELECT 1 AS hit FROM sturate su WHERE su.student_id = $1 AND su.from_date <= $2::date LIMIT 1`,
+        [id, today],
+      )) as Array<{ hit: number }>;
+
+      doneCount += c.done; totalCount += c.total; canceledCount += c.canceled;
+      doneAmount += done; carryAmount += carry;
+      items.push({
+        studentId: id, name: s.name, grade: s.grade ?? null,
+        done: c.done, total: c.total,
+        // 나누는 것도 서버다 — 화면이 다시 나누면 머리 칸과 갈린다 (D-R37)
+        percent: c.total > 0 ? Math.round((c.done / c.total) * 100) : 0,
+        canceled: c.canceled,
+        unitPrice: money(top?.unit ?? 0),
+        unitPriceOverride: override !== undefined,
+        // 단가가 둘 이상이면 화면이 하나를 적지 않는다 — 곱해서 안 맞는 숫자를 세우지 않는다
+        priceCount: new Set(priced.map((l) => Number(l.unit_price))).size,
+        doneAmount: money(done), carryAmount: money(carry),
+        // 금액을 못 보면 내역도 안 내려간다 — 줄을 세면 금액이 드러난다 (§27·§28 과 같은 규약)
+        lines: canSeeAmounts
+          ? priced.map((l) => ({
+            subKey: l.sub_key, label: l.label, count: l.n,
+            unitPrice: Number(l.unit_price), amount: l.n * Number(l.unit_price),
+          }))
+          : [],
+      });
+    }
+
+    return {
+      month, today, daysPast, daysLeft,
+      doneCount, totalCount, canceledCount,
+      doneAmount: money(doneAmount), carryAmount: money(carryAmount),
+      items, canSeeAmounts,
+    };
   }
 }

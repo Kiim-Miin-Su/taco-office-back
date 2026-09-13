@@ -2971,6 +2971,100 @@
         ]
       }
     },
+    "/accounting/tuition": {
+      "get": {
+        "description": "원문 §54 의 「연동: **청구서 생성 시 이 계산 결과를 씁니다**」가 이 화면의 정체다 — 청구서가 쓰는 바로 그 계산(`invoice-lines.ts`)을 미리 보는 자리라, 단가를 여기서 다시 세지 않는다 (D-R22). 세는 것도 나누는 것도 서버다 — 화면이 회차를 세면 취소·「그날만 빠진」을 빠뜨리고(D-R21), 화면이 %를 내면 머리 칸과 갈린다 (D-R37). 결강은 금액에서 빠지고 「넘길 돈」으로 따로 선다.",
+        "operationId": "AccountingController_tuition",
+        "parameters": [
+          {
+            "name": "month",
+            "required": false,
+            "in": "query",
+            "description": "YYYY-MM — 없으면 이번 달(KST)",
+            "schema": {
+              "example": "2026-08",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TuitionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업료 계산 — 학생별 이번 달 진행과 금액 (§54)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/invoices": {
       "post": {
         "description": "줄(INV_LINE)을 받지 않는다. 원문 명세가 「횟수는 서버가 occ() 로 센다 — 프론트가 세면 예외(EXC)를 빠뜨린다」고 적었다(D-R37). 누구의 어느 달인지만 주면 과목별 회차·단가·소계·합계를 서버가 만든다. 되돌리기는 없다 — 잘못 냈으면 취소하고 새로 만든다(원문 규칙 줄).",
@@ -11051,6 +11145,142 @@
           "payouts",
           "expenses",
           "expenseTotals"
+        ]
+      },
+      "TuitionRowDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "done": {
+            "type": "number",
+            "description": "이번 달에 **이미 한** 수업 수"
+          },
+          "total": {
+            "type": "number",
+            "description": "이번 달 전체 수업 수 (결강 제외)"
+          },
+          "percent": {
+            "type": "number",
+            "description": "얼마나 갔나 — 0~100. 화면이 나누지 않는다"
+          },
+          "canceled": {
+            "type": "number",
+            "description": "결강·휴강 수 — 취소된 회차와 「그날만 빠진」 것을 합쳐 센다 (D-R21)"
+          },
+          "unitPrice": {
+            "type": "number",
+            "nullable": true,
+            "description": "대표 단가 — 가장 많이 쓰인 1회 단가. 못 보면 null"
+          },
+          "unitPriceOverride": {
+            "type": "boolean",
+            "description": "그 단가가 학생별 예외(STURATE)에서 왔는가 — 「개별 단가」 / 「일반」"
+          },
+          "priceCount": {
+            "type": "number",
+            "description": "이 달에 붙은 단가의 가짓수 — 0(단가 없음) · 1(그 값) · 2 이상(여러 단가)"
+          },
+          "doneAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "지금까지 금액 — 이미 한 수업의 합"
+          },
+          "carryAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "다음 달로 넘길 돈 — 결강한 회차의 합"
+          },
+          "lines": {
+            "description": "내역 — 청구서가 쓸 바로 그 줄이다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceLineDto"
+            }
+          }
+        },
+        "required": [
+          "studentId",
+          "name",
+          "done",
+          "total",
+          "percent",
+          "canceled",
+          "unitPriceOverride",
+          "priceCount",
+          "lines"
+        ]
+      },
+      "TuitionDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "description": "YYYY-MM"
+          },
+          "today": {
+            "type": "string",
+            "description": "오늘 (KST) — 「오늘 08-21 기준」의 그 날"
+          },
+          "daysPast": {
+            "type": "number",
+            "description": "이 달에서 지난 날 수"
+          },
+          "daysLeft": {
+            "type": "number",
+            "description": "남은 날 수"
+          },
+          "doneCount": {
+            "type": "number",
+            "description": "한 수업 (전체 학생 합)"
+          },
+          "totalCount": {
+            "type": "number",
+            "description": "이번 달 전체"
+          },
+          "canceledCount": {
+            "type": "number",
+            "description": "결강 · 휴강"
+          },
+          "doneAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "지금까지 금액"
+          },
+          "carryAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "다음 달로 넘길 돈"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TuitionRowDto"
+            }
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "금액을 볼 수 있는가 (D-R39)"
+          }
+        },
+        "required": [
+          "month",
+          "today",
+          "daysPast",
+          "daysLeft",
+          "doneCount",
+          "totalCount",
+          "canceledCount",
+          "items",
+          "canSeeAmounts"
         ]
       },
       "InvoiceIssueDto": {

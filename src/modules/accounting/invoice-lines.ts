@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: invoice-lines.ts — InvoiceLineRow, Queryer, invoiceLines, linesTotal, RepriceVerdict 등 (config)
+ * 목적: invoice-lines.ts — InvoiceLineRow, Queryer, LineSlice, invoiceLines, linesTotal 등 (config)
  * 책임/재사용: 기존 런타임/빌드/검사 설정을 유지한다. 의존성·배포·비밀값 변경은 별도 근거와 검증 없이는 추가하지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -17,6 +17,20 @@
  *
  * 세는 규칙(D-R37) — 취소된 회차와 「그날만 빠진」 학생은 빼고 센다(D-R21).
  * 달은 회차의 **시작 시각을 KST 로 본 달**이다 (D-R12).
+ *
+ * ── 토막(`slice`) 이 있는 이유 ────────────────────────────────────────────
+ * §54 화면은 한 달을 셋으로 갈라 읽는다 — **이미 한 수업 · 아직 안 한 수업 · 결강**.
+ * 그런데 줄은 「몇 번에 얼마」로 **뭉쳐 있어서 날짜를 모른다.** 그래서 「지금까지 금액」을
+ * 「달 총액 × 한 횟수 ÷ 전체 횟수」로 나눠 쓰면, 과목마다 단가가 다른 학생에게서
+ * **어느 수업의 값도 아닌 숫자**가 나온다 (7회 중 SAT 8만원·모의 4.5만원이면 어느 조합과도 안 맞는다).
+ * 그건 C63 에서 잡은 단가 버그와 같은 종류다 — 그럴듯하지만 틀린 돈.
+ *
+ * 그래서 나누지 않고 **같은 질의를 날짜로 좁혀 다시 센다.** 세 토막 모두 한 벌의 SQL 이라
+ * 단가 규칙(인원 구간 · 학생 예외)이 토막마다 갈릴 일이 없다.
+ *   · `month`   — 청구서가 쓰는 그대로 (기본값, C63 과 한 글자도 다르지 않다)
+ *   · `done`    — `upto` 까지 이미 한 수업만  → 「지금까지 금액」
+ *   · `dropped` — 휴강·결강만               → 「다음 달로 넘길 돈」
+ * 세 토막의 합(`done + 남은 것`)은 `month` 와 정확히 같다 — 회귀가 그것을 증명한다.
  */
 import { kstMonthOf } from '../../lib/sql';
 
@@ -30,7 +44,24 @@ export interface InvoiceLineRow {
 /** 질의 하나를 실행할 수 있는 것 — EntityManager 든 QueryRunner 든 받는다 */
 export type Queryer = { query: (sql: string, params?: unknown[]) => Promise<unknown> };
 
-const SQL = `
+/** 살아 있는 회차 — 휴강도 아니고 그 학생이 그날만 빠진 것도 아닌 것 (D-R21) */
+const LIVE = `NOT o.canceled
+       AND NOT EXISTS (
+             SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+              WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)`;
+/** 결강 — 휴강(회차 통째로)이거나 그 학생만 빠진 날. 둘 다 「안 한 수업」이다 */
+const DROPPED = `(o.canceled
+        OR EXISTS (
+             SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
+              WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1))`;
+
+/** 한 달을 어디까지 셀 것인가 — 위 주석의 세 토막 */
+export type LineSlice =
+  | { kind: 'month' }
+  | { kind: 'done'; upto: string }
+  | { kind: 'dropped' };
+
+const sqlFor = (slice: LineSlice): string => `
   WITH priced AS (
     SELECT se.sub_key,
            COALESCE(sb.name, k.name) AS label,
@@ -54,11 +85,9 @@ const SQL = `
       JOIN kind k     ON k.key = se.kind_key
       LEFT JOIN sub sb ON sb.key = se.sub_key
       JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1
-     WHERE NOT o.canceled
+     WHERE ${slice.kind === 'dropped' ? DROPPED : LIVE}
        AND ${kstMonthOf('lower(o.span)')} = $2
-       AND NOT EXISTS (
-             SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
-              WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)
+       ${slice.kind === 'done' ? 'AND o.on_date <= $3::date' : ''}
   )
   SELECT sub_key, label, count(*)::int AS n, unit_price
     FROM priced
@@ -70,8 +99,12 @@ const SQL = `
  * 「몇 번에 얼마」가 한 줄에서 읽혀야 한다(달 중간에 단가가 오른 경우가 그 자리다).
  * 단가표에 없는 과목은 `unit_price` 가 null 로 온다 — 부르는 쪽이 거절한다(0 원으로 꾸미지 않는다).
  */
-export async function invoiceLines(m: Queryer, studentId: number, yearMonth: string): Promise<InvoiceLineRow[]> {
-  return (await m.query(SQL, [studentId, yearMonth])) as InvoiceLineRow[];
+export async function invoiceLines(
+  m: Queryer, studentId: number, yearMonth: string, slice: LineSlice = { kind: 'month' },
+): Promise<InvoiceLineRow[]> {
+  const params: unknown[] = [studentId, yearMonth];
+  if (slice.kind === 'done') params.push(slice.upto);
+  return (await m.query(sqlFor(slice), params)) as InvoiceLineRow[];
 }
 
 /** 줄의 합 — 「총액」을 두 곳에서 더하지 않는다 */

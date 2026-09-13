@@ -4,14 +4,18 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, InvoiceIssueDto, PaymentCreateDto } from './accounting.dto';
+import {
+  AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, InvoiceIssueDto, PaymentCreateDto,
+  TuitionDto, TuitionQueryDto,
+} from './accounting.dto';
+import { todayKst } from '../../lib/kst';
 import { AccountingService } from './accounting.service';
 
 @ApiTags('accounting')
@@ -34,6 +38,23 @@ export class AccountingController {
   async all(@CurrentUser() user: RequestUser): Promise<AccountingDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.all(canSee);
+  }
+
+
+  @Get('tuition')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '수업료 계산 — 학생별 이번 달 진행과 금액 (§54)',
+    description:
+      '원문 §54 의 「연동: **청구서 생성 시 이 계산 결과를 씁니다**」가 이 화면의 정체다 — '
+      + '청구서가 쓰는 바로 그 계산(`invoice-lines.ts`)을 미리 보는 자리라, 단가를 여기서 다시 세지 않는다 (D-R22). '
+      + '세는 것도 나누는 것도 서버다 — 화면이 회차를 세면 취소·「그날만 빠진」을 빠뜨리고(D-R21), '
+      + '화면이 %를 내면 머리 칸과 갈린다 (D-R37). 결강은 금액에서 빠지고 「넘길 돈」으로 따로 선다.',
+  })
+  @ApiOkResponse({ type: TuitionDto })
+  async tuition(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<TuitionDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.tuition(query.month ?? todayKst().slice(0, 7), canSee);
   }
 
   @Post('invoices')

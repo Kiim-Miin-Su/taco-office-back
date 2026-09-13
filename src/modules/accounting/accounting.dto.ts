@@ -249,3 +249,70 @@ export class AccountingDto {
   @ApiProperty({ type: [ExpenseDto], description: '나간 돈 §56 — 부대비용·법인카드 신청분' }) expenses!: ExpenseDto[];
   @ApiProperty({ type: [ExpenseTotalDto], description: '§56 분류별 확정 지출 합계 — 화면이 더하지 않는다' }) expenseTotals!: ExpenseTotalDto[];
 }
+
+/* ══ §54 수업료 계산 (C65) ═══════════════════════════════════════════════
+ * 원문 슬라이드 54 — 「데이터 RATE(단가), STURATE(학생별 예외), ENR」 ·
+ * 「동작 단가 수정 시 전체 재계산」 · 「규칙 그룹 수업은 인원이 늘면 1인 단가가 내려가고
+ * 총액은 올라갑니다」 · 「연동 **청구서 생성 시 이 계산 결과를 씁니다**」.
+ *
+ * 마지막 줄이 이 화면의 정체다 — **청구서가 쓰는 바로 그 계산을 미리 보는 자리**다.
+ * 그래서 단가를 여기서 다시 세지 않는다. `invoice-lines.ts` 한 벌을 청구서와 같이 쓴다 (D-R22).
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/** 한 학생의 이번 달 수업료 — 표 한 줄 */
+export class TuitionRowDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() name!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
+
+  /* 세는 것은 전부 서버다 (D-R37) — 화면이 회차를 세면 예외(EXC)를 빠뜨린다 */
+  @ApiProperty({ description: '이번 달에 **이미 한** 수업 수' }) done!: number;
+  @ApiProperty({ description: '이번 달 전체 수업 수 (결강 제외)' }) total!: number;
+  @ApiProperty({ description: '얼마나 갔나 — 0~100. 화면이 나누지 않는다' }) percent!: number;
+  @ApiProperty({ description: '결강·휴강 수 — 취소된 회차와 「그날만 빠진」 것을 합쳐 센다 (D-R21)' })
+  canceled!: number;
+
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '대표 단가 — 가장 많이 쓰인 1회 단가. 못 보면 null' })
+  unitPrice?: number | null;
+  @ApiProperty({ description: '그 단가가 학생별 예외(STURATE)에서 왔는가 — 「개별 단가」 / 「일반」' })
+  unitPriceOverride!: boolean;
+  /*
+   * 이 달에 이 학생에게 **몇 가지 단가가 붙었는가.** 둘 이상이면 화면은 대표 단가 하나를 적지 않는다 —
+   * 「15회 × 20,000원」으로 읽히는데 옆 칸은 540,000원이면, 곱해서 안 맞는 숫자를 돈 화면에 세우는 것이다.
+   * 0 이면 단가표에 그 과목이 없다 — 「단가 없음」이라 적고 0원으로 꾸미지 않는다.
+   */
+  @ApiProperty({ description: '이 달에 붙은 단가의 가짓수 — 0(단가 없음) · 1(그 값) · 2 이상(여러 단가)' })
+  priceCount!: number;
+
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '지금까지 금액 — 이미 한 수업의 합' }) doneAmount?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '다음 달로 넘길 돈 — 결강한 회차의 합' }) carryAmount?: number | null;
+
+  @ApiProperty({ type: [InvoiceLineDto], description: '내역 — 청구서가 쓸 바로 그 줄이다' })
+  lines!: InvoiceLineDto[];
+}
+
+/** `GET /accounting/tuition?month=YYYY-MM` — 달을 안 주면 서버가 이번 달(KST)로 정한다 */
+export class TuitionQueryDto {
+  @ApiPropertyOptional({ description: 'YYYY-MM — 없으면 이번 달(KST)', example: '2026-08' })
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month?: string;
+}
+
+/** `GET /accounting/tuition` — §54 */
+export class TuitionDto {
+  @ApiProperty({ description: 'YYYY-MM' }) month!: string;
+  @ApiProperty({ description: '오늘 (KST) — 「오늘 08-21 기준」의 그 날' }) today!: string;
+  @ApiProperty({ description: '이 달에서 지난 날 수' }) daysPast!: number;
+  @ApiProperty({ description: '남은 날 수' }) daysLeft!: number;
+
+  /* 머리 다섯 칸 — 줄의 합이다. 화면이 더하지 않는다 (D-R37) */
+  @ApiProperty({ description: '한 수업 (전체 학생 합)' }) doneCount!: number;
+  @ApiProperty({ description: '이번 달 전체' }) totalCount!: number;
+  @ApiProperty({ description: '결강 · 휴강' }) canceledCount!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '지금까지 금액' }) doneAmount?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '다음 달로 넘길 돈' }) carryAmount?: number | null;
+
+  @ApiProperty({ type: [TuitionRowDto] }) items!: TuitionRowDto[];
+  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}
