@@ -13,7 +13,8 @@ import { csCan, csCanAmount, csCanFull, type ConsShare, type ConsViewer } from '
 import { INV_TYPE_LABEL } from '../accounting/accounting.dto';
 import type {
   ConsAccountingDto, ConsAccountRowDto, ConsItemDto, ConsItemToggleDto,
-  ConsPaymentCreateDto, ConsPaymentDto, ConsultingListDto, ConsultingSessionDto,
+  ConsPaymentCreateDto, ConsPaymentDto, ConsStudentCaseDto, ConsStudentDto, ConsStudentsDto,
+  ConsultingListDto, ConsultingSessionDto,
 } from './consulting.dto';
 import {
   CONTRACT_STEP_MAX, consultingRecordIssue, consultingSessionIssue, consultingStageLabel,
@@ -398,5 +399,125 @@ export class ConsultingService {
     const hit = items.find((x) => x.id === consId);
     if (!hit) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
     return hit;
+  }
+
+  /* ══ §27 컨설팅 학생별 (C59) ═══════════════════════════════════════════
+   * 원문 슬라이드 27 — 데이터 「CONS 를 학생 기준으로 재구성」 · 동작 「학생 클릭 → 그 학생의
+   * 컨설팅 목록」 · 규칙 「**csCan() 으로 볼 수 있는 것만 집계합니다**」 ·
+   * 연동 「공개 범위가 solo/some 이면 목록에서도 빠집니다」.
+   *
+   * 규칙 줄이 곧 구현이다 — 보이는 건만 골라 놓고 그 위에서 센다. 안 보이는 건을 세었다가
+   * 화면에서 감추면 **「컨설팅 2건」이라 적어 놓고 한 건만 보이는 화면**이 된다.
+   * ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * 학생 기준 재구성. 한 건에 학생이 여럿이면 **그 학생들 모두의 줄에 걸린다** —
+   * 원문이 「학생 여러 명」을 허용하므로(슬라이드 29) 한 명에게만 붙이면 나머지가 사라진다.
+   *
+   * 세는 것은 전부 서버다 (D-R37) — 기록 회차 · 끝낸 항목 · 받은 돈 · 건수.
+   * 화면이 `items.length` 를 세면 **내용이 잠긴 건에서 분모가 0** 이 되어 「항목 0/0」이 된다.
+   */
+  async students(viewerId: number, canMoney: boolean, canHide: boolean): Promise<ConsStudentsDto> {
+    const rows = await this.q(
+      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
+              to_char(c.end_on,'YYYY-MM-DD')     AS end_on,
+              to_char(c.created_at,'YYYY-MM-DD') AS created_on,
+              o.name AS owner_name,
+              EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
+              (SELECT count(*)::int FROM cons_sess s WHERE s.cons_id = c.id)                 AS sessions_logged,
+              (SELECT count(*)::int FROM cons_item i WHERE i.cons_id = c.id)                 AS items_total,
+              (SELECT count(*)::int FROM cons_item i WHERE i.cons_id = c.id AND i.done)      AS items_done,
+              COALESCE((SELECT sum(p.amount)::int FROM cons_pay p WHERE p.cons_id = c.id), 0) AS paid
+         FROM cons c LEFT JOIN staff o ON o.id = c.owner_id
+        ORDER BY c.created_at DESC, c.id`,
+      [viewerId],
+    );
+
+    const visible = rows.flatMap((r) => {
+      const share = String(r.share) as ConsShare;
+      const viewer: ConsViewer = {
+        isOwner: r.owner_id !== null && Number(r.owner_id) === viewerId,
+        isPicked: r.is_picked === true, canHide, canMoney,
+      };
+      return csCan(share, viewer)
+        ? [{ r, full: csCanFull(share, viewer), money: csCanAmount(share, viewer) }]
+        : [];
+    });
+    if (visible.length === 0) return { items: [], canSeeAmounts: canMoney };
+
+    const ids = visible.map(({ r }) => Number(r.id));
+    const fullIds = visible.filter(({ full }) => full).map(({ r }) => Number(r.id));
+    const linkRows = await this.q(
+      `SELECT cs.cons_id, s.id AS student_id, s.name, s.grade
+         FROM cons_stu cs JOIN stu s ON s.id = cs.student_id
+        WHERE cs.cons_id = ANY($1::bigint[])
+        ORDER BY s.name, s.id`,
+      [ids],
+    );
+    const itemRows = fullIds.length ? await this.q(
+      `SELECT i.id, i.cons_id, i.seq, i.label, i.required, i.done, i.source,
+              to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
+         FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
+        WHERE i.cons_id = ANY($1::bigint[]) ORDER BY i.cons_id, i.seq`,
+      [fullIds],
+    ) : [];
+    const itemsByCons = new Map<number, ConsItemDto[]>();
+    for (const r of itemRows) {
+      const k = Number(r.cons_id);
+      if (!itemsByCons.has(k)) itemsByCons.set(k, []);
+      itemsByCons.get(k)!.push({
+        id: Number(r.id), seq: Number(r.seq), label: String(r.label),
+        required: r.required === true, done: r.done === true, source: String(r.source),
+        doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
+      });
+    }
+
+    const caseOf = (r: R, money: boolean, full: boolean): ConsStudentCaseDto => {
+      const record = { stage: r.stage, contractStep: r.contract_step, sessions: r.sessions };
+      assertRecord(record);
+      return {
+        id: Number(r.id),
+        consType: String(r.cons_type),
+        stage: record.stage,
+        stageLabel: consultingStageLabel(record.stage),
+        createdOn: String(r.created_on),
+        endOn: (r.end_on as string) ?? null,
+        ownerName: (r.owner_name as string) ?? null,
+        sessionsLogged: Number(r.sessions_logged),
+        sessions: record.sessions,
+        itemsDone: Number(r.items_done),
+        itemsTotal: Number(r.items_total),
+        amount: money && r.amount !== null && r.amount !== undefined ? Number(r.amount) : null,
+        paid: money ? Number(r.paid) : null,
+        items: full ? (itemsByCons.get(Number(r.id)) ?? []) : [],
+      };
+    };
+
+    const byCons = new Map(visible.map((v) => [Number(v.r.id), v]));
+    const students = new Map<number, ConsStudentDto>();
+    for (const l of linkRows) {
+      const v = byCons.get(Number(l.cons_id));
+      if (!v) continue; // 안 보이는 건은 학생 줄에도 안 걸린다
+      const sid = Number(l.student_id);
+      if (!students.has(sid)) {
+        students.set(sid, {
+          studentId: sid, name: String(l.name), grade: (l.grade as string) ?? null,
+          caseCount: 0, amount: canMoney ? 0 : null, paid: canMoney ? 0 : null, cases: [],
+        });
+      }
+      const s = students.get(sid)!;
+      const c = caseOf(v.r, v.money, v.full);
+      s.cases.push(c);
+      s.caseCount += 1;
+      // 금액이 가려진 건은 학생 합계에도 안 들어간다 — 합계로 가려진 금액이 드러나면 안 된다
+      if (canMoney && v.money) {
+        s.amount = (s.amount ?? 0) + (c.amount ?? 0);
+        s.paid = (s.paid ?? 0) + (c.paid ?? 0);
+      }
+    }
+
+    // 이름 순 — 왼쪽 줄의 차례다. 원문 컷도 이름으로 서 있다.
+    const items = [...students.values()].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+    return { items, canSeeAmounts: canMoney };
   }
 }

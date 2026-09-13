@@ -10,7 +10,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   ConsAccountingDto, ConsAccountRowDto, ConsItemDto, ConsItemToggleDto,
-  ConsPaymentCreateDto, ConsultingListDto,
+  ConsPaymentCreateDto, ConsStudentsDto, ConsultingListDto,
 } from './consulting.dto';
 import { ConsultingService } from './consulting.service';
 
@@ -70,6 +70,26 @@ export class ConsultingController {
   async accounting(@CurrentUser() user: RequestUser): Promise<ConsAccountingDto> {
     if (!isRole(user.role)) return { items: [], totalAmount: null, totalPaid: null, totalDue: null, canSeeAmounts: false };
     return this.svc.accounting(
+      user.id,
+      hasPerm(user.role, 'canMoney', user.perms),
+      hasPerm(user.role, 'canHide', user.perms),
+    );
+  }
+
+
+  @Get('students')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '컨설팅 학생별 — CONS 를 학생 기준으로 재구성 (§27)',
+    description:
+      '원문 규칙 「**csCan() 으로 볼 수 있는 것만 집계합니다**」 그대로다 — 안 보이는 건은 건수에도 합계에도 안 들어간다. '
+      + '기록 회차·끝낸 항목·받은 돈·건수를 **서버가 센다** (D-R37). 화면이 배열 길이를 세면 내용이 잠긴 건에서 「항목 0/0」이 된다. '
+      + '한 건에 학생이 여럿이면 그 학생들 모두의 줄에 걸린다(슬라이드 29 「학생 여러 명」).',
+  })
+  @ApiOkResponse({ type: ConsStudentsDto })
+  async students(@CurrentUser() user: RequestUser): Promise<ConsStudentsDto> {
+    if (!isRole(user.role)) return { items: [], canSeeAmounts: false };
+    return this.svc.students(
       user.id,
       hasPerm(user.role, 'canMoney', user.perms),
       hasPerm(user.role, 'canHide', user.perms),

@@ -132,3 +132,50 @@ export class ConsPaymentCreateDto {
   @ApiPropertyOptional({ maxLength: 80 })
   @IsOptional() @IsString() @MaxLength(80) memo?: string;
 }
+
+/* ══ §27 컨설팅 학생별 (C59) ═════════════════════════════════════════════ */
+
+/** 학생 한 명 아래 걸린 계약 하나 */
+export class ConsStudentCaseDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: '종류 코드' }) consType!: string;
+  @ApiProperty({ type: String, enum: CONSULTING_STAGES }) stage!: ConsultingStage;
+  @ApiProperty({ description: '단계 이름 — 낱말은 서버가 만든다 (D-R18)' }) stageLabel!: string;
+  @ApiProperty({ description: '건이 생긴 날 — 계약 시작일이라는 칸은 원문에 없다', example: '2026-07-12' })
+  createdOn!: string;
+  @ApiPropertyOptional({ ...S, description: '종료 예정일 — 미정이면 null' }) endOn?: string | null;
+  @ApiPropertyOptional(S) ownerName?: string | null;
+
+  /* 셋 다 **서버가 센다** — 화면이 배열 길이를 세면 잠긴 건에서 분자가 0 이 된다 (D-R37) */
+  @ApiProperty({ description: '기록된 회차 수 — 완료 회차가 아니다 (N-18 §4-17)' }) sessionsLogged!: number;
+  @ApiPropertyOptional({ ...N, description: '약정 회차 — 미정이면 null' }) sessions?: number | null;
+  @ApiProperty() itemsDone!: number;
+  @ApiProperty() itemsTotal!: number;
+
+  @ApiPropertyOptional({ ...N, description: '계약 금액 — 못 보면 null' }) amount?: number | null;
+  @ApiPropertyOptional({ ...N, description: '받은 돈' }) paid?: number | null;
+
+  @ApiProperty({
+    type: [ConsItemDto],
+    description: '진행 항목 — 내용이 잠긴 건은 빈 배열이다 (목록 계약과 같은 규약)',
+  })
+  items!: ConsItemDto[];
+}
+
+/** §27 왼쪽 줄 하나 = 학생 한 명 */
+export class ConsStudentDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() name!: string;
+  @ApiPropertyOptional({ ...S, description: '학년 — 없으면 null' }) grade?: string | null;
+  @ApiProperty({ description: '이 사람이 볼 수 있는 건만 센다 — 원문 규칙 「csCan() 으로 볼 수 있는 것만 집계합니다」' })
+  caseCount!: number;
+  @ApiPropertyOptional({ ...N }) amount?: number | null;
+  @ApiPropertyOptional({ ...N }) paid?: number | null;
+  @ApiProperty({ type: [ConsStudentCaseDto] }) cases!: ConsStudentCaseDto[];
+}
+
+/** `GET /consulting/students` — §27 */
+export class ConsStudentsDto {
+  @ApiProperty({ type: [ConsStudentDto] }) items!: ConsStudentDto[];
+  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}

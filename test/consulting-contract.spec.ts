@@ -22,12 +22,13 @@ describe('§26 단계 필터 조회 계약', () => {
   const accounting = jest.fn();
   const addPayment = jest.fn();
   const toInvoice = jest.fn();
+  const students = jest.fn();
   const empty = { items: [], canSeeAmounts: false };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [ConsultingController],
-      providers: [{ provide: ConsultingService, useValue: { all, accounting, addPayment, toInvoice } }, { provide: APP_GUARD, useClass: PermGuard }],
+      providers: [{ provide: ConsultingService, useValue: { all, accounting, addPayment, toInvoice, students } }, { provide: APP_GUARD, useClass: PermGuard }],
     }).compile();
     app = module.createNestApplication();
     app.use((req: Request, _res: Response, next: NextFunction) => { req.user = user; next(); });
@@ -56,13 +57,15 @@ describe('§26 단계 필터 조회 계약', () => {
     await request(app.getHttpServer()).get('/consulting').expect(403);
     expect(all).not.toHaveBeenCalled();
   });
-  it('조회는 GET 둘·쓰기는 셋 — 그 밖의 endpoint 를 만들지 않는다 (47D-B)', () => {
+  it('조회는 GET 셋·쓰기는 셋 — 그 밖의 endpoint 를 만들지 않는다 (47D-B)', () => {
     const api = buildOpenApi(app);
     // C5-a 의 「추가 endpoint 0」 가드는 N-18 채택(2026-09-12 §4-17)·47D-B 로 항목 토글 1개까지 늘었고,
-    // C58 에서 §28 회계 화면(읽기 1 · 원문 동작 둘)이 더 붙었다. 그 밖은 여전히 0 이다.
+    // C58 에서 §28 회계 화면(읽기 1 · 원문 동작 둘), C59 에서 §27 학생별(읽기 1)이 더 붙었다.
+    // 「이력」 탭은 endpoint 를 늘리지 않는다 — 이미 받은 items 를 stage 로 거르는 화면 선택이다 (C5-a 선례).
     expect(Object.keys(api.paths)).toEqual([
       '/consulting', '/consulting/{id}/items/{itemId}',
-      '/consulting/accounting', '/consulting/{id}/payments', '/consulting/{id}/invoice',
+      '/consulting/accounting', '/consulting/students',
+      '/consulting/{id}/payments', '/consulting/{id}/invoice',
     ]);
     const patch = api.paths['/consulting/{id}/items/{itemId}'].patch;
     expect(patch?.description).toMatch(/진행률 숫자는 저장하지 않는다/);
@@ -94,5 +97,16 @@ describe('§26 단계 필터 조회 계약', () => {
     expect(r.get(PERM_KEY, ConsultingController.prototype.accounting)).toEqual(['canAdminPage', 'canCrudAll']);
     expect(r.get(PERM_KEY, ConsultingController.prototype.addPayment)).toEqual(['canAdminPage', 'canCrudAll', 'canMoney']);
     expect(r.get(PERM_KEY, ConsultingController.prototype.toInvoice)).toEqual(['canAdminPage', 'canCrudAll', 'canMoney']);
+  });
+
+  it('§27 은 원문 규칙 줄을 계약에 그대로 적어 둔다 — 보이는 것만 집계한다', () => {
+    const api = buildOpenApi(app);
+    const get = api.paths['/consulting/students'].get;
+    expect(get?.description).toMatch(/csCan\(\) 으로 볼 수 있는 것만 집계/);
+    expect(get?.parameters ?? []).toEqual([]);
+    const schema = api.components?.schemas?.ConsStudentCaseDto;
+    if (!schema || '$ref' in schema) throw new Error('ConsStudentCaseDto 누락');
+    // 세는 것은 서버다 — 화면이 배열 길이를 세지 않게 숫자를 내려보낸다 (D-R37)
+    for (const k of ['sessionsLogged', 'itemsDone', 'itemsTotal']) expect(schema.properties?.[k]).toBeDefined();
   });
 });
