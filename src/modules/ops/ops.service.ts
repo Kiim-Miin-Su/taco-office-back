@@ -15,7 +15,8 @@ import {
   type MfbKind,
 } from '../../lib/marketing-words';
 import {
-  PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, dueLabel, planDueKindLabel, planDueState, planStageLabel,
+  PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL,
+  dueLabel, planDueKindLabel, planDueState, planStageLabel,
   type PlanDueState,
 } from '../../lib/plan-words';
 import {
@@ -187,7 +188,10 @@ export class OpsService {
     }));
 
     return {
-      leads, complaints, todos, plans, planDues, planOverdue, meetings, marketing,
+      leads, complaints, todos, plans,
+      // 칸 이름은 어휘라 데이터와 따로 간다 — 줄이 없는 칸도 이름을 갖는다 (D-R18)
+      planStages: PLAN_STAGES.map((key) => ({ key, label: PLAN_STAGE_LABEL[key] })),
+      planDues, planOverdue, meetings, marketing,
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
     };

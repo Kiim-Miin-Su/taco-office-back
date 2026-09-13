@@ -50,7 +50,10 @@ export const REQ_TYPE_LABEL: Record<string, string> = {
   wage_change: '시급 변경', tz_change: '시간대 변경', unav_add: '불가 시간 추가', doc: '서류',
   // CHREQ — 수업을 바꿔 달라는 요청
   time: '시간 변경', time_move: '시간 이동', teacher: '강사 변경',
-  room: '강의실 변경', off: '휴강', cancel: '취소',
+  // 컷 §19 의 갈래 이름 그대로다 — 「시간 옮기기 · 강사 바꾸기 · 강의실 바꾸기 · **휴강**」.
+  // `cancel` 을 「취소」라 적던 동안, 같은 줄의 대상 칸(서버가 지은 문장)은 「휴강」이라
+  // 적고 있었다 — 한 줄이 제 갈래를 두 이름으로 부르고 있었다 (`lib/change-request.ts`).
+  room: '강의실 변경', off: '휴강', cancel: '휴강',
 };
 
 /**

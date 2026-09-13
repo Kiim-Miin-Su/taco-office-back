@@ -63,24 +63,45 @@ export class ExecService {
   }
 
   /** RPT 키 날짜를 사람이 읽는 기간으로 (§73 줄 제목) */
-  private static periodLabel(rptType: string, onDate: string): string {
+  /**
+   * 주는 **월요일에 건다** — 원문 §73 의 주간 줄이 「08-17 ~ 08-23」(월~일)이다.
+   *
+   * 전에는 `RPT.on_date` 를 그대로 주의 시작으로 썼다. 그런데 그 날짜가 수요일이면
+   * 결재함 줄은 「09-09 ~ 09-15」라 적고, 눌러서 열린 주간 화면은 **월요일부터 세어**
+   * 「09-07 ~ 09-13」을 보여 준다 — **누른 것과 열린 것이 다른 주**였다.
+   * 기간을 정하는 자리를 서버 하나로 두고 화면은 따라온다 (D-R37).
+   */
+  private static mondayOf(onDate: string): string {
     const [y, m, d] = onDate.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    // 일요일(0)은 그 주의 끝이라 엿새를 뺀다
+    dt.setUTCDate(dt.getUTCDate() - ((dt.getUTCDay() + 6) % 7));
+    return dt.toISOString().slice(0, 10);
+  }
+
+  private static periodLabel(rptType: string, onDate: string): string {
+    const [y, m] = onDate.split('-').map(Number);
     if (rptType === 'month') return `${y}년 ${m}월`;
     if (rptType === 'week') {
-      const end = new Date(Date.UTC(y, m - 1, d + 6));
-      const pad = (n: number) => String(n).padStart(2, '0');
-      return `${pad(m)}-${pad(d)} ~ ${pad(end.getUTCMonth() + 1)}-${pad(end.getUTCDate())}`;
+      const span = ExecService.periodRange('week', onDate);
+      return `${span.from.slice(5)} ~ ${span.to.slice(5)}`;
     }
+    const d = Number(onDate.slice(8));
     const dow = '일월화수목금토'[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
     return `${String(y).slice(2)}년 ${m}월 ${d}일 ${dow}요일`;
   }
 
   /** RPT 키 날짜 → 그 주기가 덮는 실제 기간 */
   private static periodRange(rptType: string, onDate: string): { from: string; to: string } {
-    const [y, m, d] = onDate.split('-').map(Number);
+    const [y, m] = onDate.split('-').map(Number);
     const iso = (dt: Date) => dt.toISOString().slice(0, 10);
     if (rptType === 'month') return { from: `${onDate.slice(0, 7)}-01`, to: iso(new Date(Date.UTC(y, m, 0))) };
-    if (rptType === 'week') return { from: onDate, to: iso(new Date(Date.UTC(y, m - 1, d + 6))) };
+    if (rptType === 'week') {
+      // 월요일에 건다 — 위 주석
+      const mon = ExecService.mondayOf(onDate);
+      const [my, mm, md] = mon.split('-').map(Number);
+      return { from: mon, to: iso(new Date(Date.UTC(my, mm - 1, md + 6))) };
+    }
     return { from: onDate, to: onDate };
   }
 

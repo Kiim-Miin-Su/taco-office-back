@@ -340,11 +340,26 @@ export class SuggestionDto {
   @ApiProperty() createdAt!: string;
 }
 
+/**
+ * §61 기획 단계의 낱말 한 벌 — 화면이 **빈 칸의 이름**을 지을 수 있어야 한다 (D-R18).
+ *
+ * 화면은 칸 이름을 **줄에서 빌려 오고** 있었다(`items[0]?.stageLabel ?? s.key`).
+ * 그래서 **줄이 하나도 없는 칸은 빌려 올 데가 없어 코드값 `done` 을 그대로 찍었다.**
+ * 나머지 넷은 줄이 있어서 우연히 맞았을 뿐이다. 낱말은 데이터가 아니라 어휘이므로
+ * 데이터와 따로 내려보낸다 — `INV_TYPES`(C64) · `INV_TYPE_ROW`(C66)와 같은 자리다.
+ */
+export class PlanStageDto {
+  @ApiProperty({ description: '저장값' }) key!: string;
+  @ApiProperty({ description: '사람이 읽는 이름' }) label!: string;
+}
+
 export class OpsDto {
   @ApiProperty({ type: [LeadDto] }) leads!: LeadDto[];
   @ApiProperty({ type: [ComplaintDto] }) complaints!: ComplaintDto[];
   @ApiProperty({ type: [TodoDto] }) todos!: TodoDto[];
   @ApiProperty({ type: [PlanDto] }) plans!: PlanDto[];
+  @ApiProperty({ type: [PlanStageDto], description: '§61 칸 다섯의 이름 — 빈 칸도 이름을 갖는다 (D-R18)' })
+  planStages!: PlanStageDto[];
   @ApiProperty({ type: [PlanDueRowDto], description: '§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표' })
   planDues!: PlanDueRowDto[];
   @ApiProperty({ description: '기한 지난 것 — 서버가 센다 (D-R37)' }) planOverdue!: number;

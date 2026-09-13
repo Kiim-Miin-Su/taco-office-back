@@ -11807,6 +11807,23 @@
           "dueState"
         ]
       },
+      "PlanStageDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "저장값"
+          },
+          "label": {
+            "type": "string",
+            "description": "사람이 읽는 이름"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
       "PlanDueRowDto": {
         "type": "object",
         "properties": {
@@ -12190,6 +12207,13 @@
               "$ref": "#/components/schemas/PlanDto"
             }
           },
+          "planStages": {
+            "description": "§61 칸 다섯의 이름 — 빈 칸도 이름을 갖는다 (D-R18)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanStageDto"
+            }
+          },
           "planDues": {
             "description": "§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표",
             "type": "array",
@@ -12244,6 +12268,7 @@
           "complaints",
           "todos",
           "plans",
+          "planStages",
           "planDues",
           "planOverdue",
           "meetings",

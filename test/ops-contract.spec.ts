@@ -173,7 +173,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   const empty: OpsDto = {
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
-    planDues: [], planOverdue: 0,
+    planDues: [], planOverdue: 0, planStages: [],
   };
 
   beforeAll(async () => {
