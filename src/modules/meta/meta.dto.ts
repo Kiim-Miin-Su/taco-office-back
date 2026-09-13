@@ -52,6 +52,20 @@ export class StudentBriefDto {
   @ApiPropertyOptional({ type: String, nullable: true }) school?: string | null;
 }
 
+/**
+ * 청구 종류 — 낱말은 서버가 만든다 (D-R18 · 대표 결정 2026-09-13 · N-37).
+ *
+ * 화면이 `<option value="tuition">수업료 청구</option>` 처럼 적고 있었다. 종류가 둘에서 넷으로
+ * 늘던 날 그 자리가 바로 뒤처졌고, 다음에 또 늘면 같은 일이 다시 난다.
+ * 코드표(`/meta`)가 이미 종류·과목·강의실을 내려보내고 있으니 여기에 실어 보낸다.
+ */
+export class InvTypeDto {
+  @ApiProperty({ description: '저장되는 코드값' }) key!: string;
+  @ApiProperty({ description: '이름 — §53 카드의 배지' }) label!: string;
+  @ApiProperty({ description: '부제 — §57 「그 밖의 수입」 줄의 설명' }) sub!: string;
+  @ApiProperty({ description: '수업료가 아닌 돈인가 — §57 이 세는 것' }) other!: boolean;
+}
+
 export class MetaDto {
   @ApiProperty({ type: [KindDto] }) kinds!: KindDto[];
   @ApiProperty({ type: [SubDto] }) subs!: SubDto[];
@@ -59,4 +73,5 @@ export class MetaDto {
   @ApiProperty({ type: [ZaccDto] }) zaccs!: ZaccDto[];
   @ApiProperty({ type: [StaffBriefDto] }) staff!: StaffBriefDto[];
   @ApiProperty({ type: [StudentBriefDto] }) students!: StudentBriefDto[];
+  @ApiProperty({ type: [InvTypeDto], description: '청구 종류 넷 — 낱말은 서버가 만든다 (D-R18)' }) invTypes!: InvTypeDto[];
 }

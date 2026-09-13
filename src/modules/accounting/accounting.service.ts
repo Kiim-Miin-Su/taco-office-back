@@ -14,8 +14,9 @@ import { Inv } from '../../entities';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
-import { kstMonthOf, sqlWordList } from '../../lib/sql';
+import { sqlWordList } from '../../lib/sql';
 import { EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED, INV_TYPE_LABEL } from './accounting.dto';
+import { invoiceLines, linesTotal } from './invoice-lines';
 import type {
   AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, InvoiceIssueDto,
   PaymentCreateDto, PaymentDto, PayoutDto,
@@ -294,42 +295,7 @@ export class AccountingService {
        *   ③ 학생 예외(STURATE)가 있으면 그것이 이긴다.
        * 같은 과목이라도 단가가 다르면 **줄이 갈린다** — 「몇 번에 얼마」가 한 줄에서 읽혀야 한다.
        */
-      const lines = (await m.query(
-        `WITH priced AS (
-           SELECT se.sub_key,
-                  COALESCE(sb.name, k.name) AS label,
-                  COALESCE(
-                    (SELECT su.unit_price FROM sturate su
-                      WHERE su.student_id = $1
-                        AND (su.kind_key IS NULL OR su.kind_key = se.kind_key)
-                        AND su.from_date <= o.on_date
-                      ORDER BY su.kind_key NULLS LAST, su.from_date DESC
-                      LIMIT 1),
-                    (SELECT r.unit_price FROM rate r
-                      WHERE r.kind_key = se.kind_key
-                        AND (r.sub_key IS NULL OR r.sub_key = se.sub_key)
-                        AND r.heads <= (SELECT count(*) FROM ser_stu x WHERE x.ser_id = se.id)
-                        AND r.from_date <= o.on_date
-                      ORDER BY r.sub_key NULLS LAST, r.heads DESC, r.from_date DESC
-                      LIMIT 1)
-                  )::int AS unit_price
-             FROM ser_occ o
-             JOIN ser se     ON se.id = o.ser_id
-             JOIN kind k     ON k.key = se.kind_key
-             LEFT JOIN sub sb ON sb.key = se.sub_key
-             JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1
-            WHERE NOT o.canceled
-              AND ${kstMonthOf('lower(o.span)')} = $2
-              AND NOT EXISTS (
-                    SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
-                     WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)
-         )
-         SELECT sub_key, label, count(*)::int AS n, unit_price
-           FROM priced
-          GROUP BY sub_key, label, unit_price
-          ORDER BY label, unit_price`,
-        [dto.studentId, dto.yearMonth],
-      )) as Array<{ sub_key: string | null; label: string; n: number; unit_price: number | null }>;
+      const lines = await invoiceLines(m, dto.studentId, dto.yearMonth);
 
       if (lines.length === 0) {
         throw new ConflictException({
@@ -346,7 +312,7 @@ export class AccountingService {
         });
       }
 
-      const total = lines.reduce((sum, l) => sum + l.n * Number(l.unit_price), 0);
+      const total = linesTotal(lines);
       const [ym, mm] = dto.yearMonth.split('-');
       const title = dto.title?.trim()
         || `${ym}년 ${Number(mm)}월 ${INV_TYPE_LABEL[dto.invType] ?? dto.invType}`;

@@ -8824,6 +8824,33 @@
           "name"
         ]
       },
+      "InvTypeDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "저장되는 코드값"
+          },
+          "label": {
+            "type": "string",
+            "description": "이름 — §53 카드의 배지"
+          },
+          "sub": {
+            "type": "string",
+            "description": "부제 — §57 「그 밖의 수입」 줄의 설명"
+          },
+          "other": {
+            "type": "boolean",
+            "description": "수업료가 아닌 돈인가 — §57 이 세는 것"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "sub",
+          "other"
+        ]
+      },
       "MetaDto": {
         "type": "object",
         "properties": {
@@ -8862,6 +8889,13 @@
             "items": {
               "$ref": "#/components/schemas/StudentBriefDto"
             }
+          },
+          "invTypes": {
+            "description": "청구 종류 넷 — 낱말은 서버가 만든다 (D-R18)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvTypeDto"
+            }
           }
         },
         "required": [
@@ -8870,7 +8904,8 @@
           "rooms",
           "zaccs",
           "staff",
-          "students"
+          "students",
+          "invTypes"
         ]
       },
       "AttendanceDto": {
@@ -11035,7 +11070,9 @@
             "description": "청구 종류",
             "enum": [
               "tuition",
-              "consulting"
+              "consulting",
+              "diag_intake",
+              "exam_fee"
             ]
           },
           "title": {

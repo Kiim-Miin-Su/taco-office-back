@@ -14,6 +14,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Kind, Room, Staff, Stu, Sub, Zacc } from '../../entities';
+import { INV_TYPES, INV_TYPE_LABEL, INV_TYPE_SUB } from '../accounting/accounting.dto';
 import type { MetaDto } from './meta.dto';
 
 @Injectable()
@@ -44,6 +45,10 @@ export class MetaService {
       zaccs: zaccs.map((z) => ({ id: Number(z.id), label: z.label, meetingId: z.meetingId })),
       staff: staff.map((s) => ({ id: Number(s.id), name: s.name, role: s.role, title: s.title })),
       students: students.map((s) => ({ id: Number(s.id), name: s.name, grade: s.grade, school: s.school })),
+      // 종류가 늘어도 화면은 그대로다 — 낱말이 한 곳에서만 온다 (D-R18)
+      invTypes: INV_TYPES.map((key) => ({
+        key, label: INV_TYPE_LABEL[key], sub: INV_TYPE_SUB[key], other: key !== 'tuition',
+      })),
     };
   }
 }

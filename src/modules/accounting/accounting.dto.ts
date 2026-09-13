@@ -56,17 +56,36 @@ export class InvoiceDto {
 }
 
 /**
- * 청구 종류 — **원본 §53 카드에 실제로 붙어 있는 배지 두 가지뿐이다.**
+ * 청구 종류 — **넷** (대표 결정 2026-09-13 · N-37).
  *
- * `inv.entity.ts` 주석은 「청구 종류 6종」이라고 적어 두었는데 **원문에 그 여섯의 목록이 없다.**
- * 여섯을 지어내면 그 목록이 곧 발명이 된다 (D-R44). 컷이 보여 준 둘만 둔다 —
- * 「수업료 청구」·「컨설팅비 청구」. 셋째가 필요해지면 그때 원문 근거와 함께 늘린다.
- * (DB `inv.inv_type` 은 varchar 라 CHECK 가 없다. 낱말을 굳히는 것도 목록이 확정된 뒤다.)
+ * C50 은 둘만 두었다 — 원본 §53 카드의 배지가 둘이었고, 엔티티 주석의 「청구 종류 6종」은
+ * **원문에 그 여섯의 목록이 없어** 지어내지 않았다. 그 뒤 §57 컷의 「그 밖의 수입」이
+ * **수업료가 아닌 돈을 세 줄로 갈라** 보여 준다는 것을 찾았다 —
+ * 「진단고사 + 상담 비용(진단고사 · 입학 상담)」·「컨설팅비(진학 컨설팅 · 인터뷰 준비)」·
+ * 「MAP + CAT(MAP · CAT 응시료)」. 그 셋에 수업료를 더한 **넷**이 정본이다.
+ *
+ * **이름은 컷에서 읽었고 코드는 우리가 붙였다** — 원문이 코드값을 주지 않는다
+ * (`CONSULTING_TYPES` 와 같은 선례 · D-R44). 코드는 저장값이라 나중에 바꾸면 데이터 이관이다.
+ *
+ * 여섯이 아니라 넷인 것도 적어 둔다 — 엔티티 주석의 「6종」은 **여전히 근거가 없다.**
+ * 컷이 보여 준 것은 넷이고, 다섯째가 필요해지면 그때 원문 근거와 함께 늘린다.
  */
-export const INV_TYPES = ['tuition', 'consulting'] as const;
+export const INV_TYPES = ['tuition', 'consulting', 'diag_intake', 'exam_fee'] as const;
 export const INV_TYPE_LABEL: Record<string, string> = {
-  tuition: '수업료 청구', consulting: '컨설팅비 청구',
+  tuition: '수업료 청구',
+  consulting: '컨설팅비 청구',
+  diag_intake: '진단고사 + 상담 비용',
+  exam_fee: 'MAP + CAT 응시료',
 };
+/** §57 「그 밖의 수입」 — 수업료가 아닌 돈. 컷의 부제 그대로 */
+export const INV_TYPE_SUB: Record<string, string> = {
+  tuition: '정규 수업',
+  consulting: '진학 컨설팅 · 인터뷰 준비',
+  diag_intake: '진단고사 · 입학 상담',
+  exam_fee: 'MAP · CAT 응시료',
+};
+/** 수업료가 아닌 종류 — §57 「그 밖의 수입」이 세는 것 */
+export const INV_TYPES_OTHER = INV_TYPES.filter((t) => t !== 'tuition');
 
 /**
  * 청구서 한 장을 새로 낸다 (§53 「+ 새 청구서 발행」).

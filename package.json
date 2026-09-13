@@ -24,6 +24,7 @@
     "db:doctor": "./scripts/dev-db.sh doctor",
     "schema:check": "ts-node -P tsconfig.json scripts/schema-check.ts",
     "write:coverage": "ts-node -P tsconfig.json scripts/write-coverage.ts",
+    "invoice:reprice": "ts-node -P tsconfig.json scripts/invoice-reprice.ts",
     "migration:deploy": "ts-node -P tsconfig.json scripts/deploy-check.ts --run",
     "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts"
   },
