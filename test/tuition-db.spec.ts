@@ -92,6 +92,7 @@ d('§54 수업료 계산 (C65)', () => {
     q = ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
+    await q.query(`DELETE FROM carry`);
     await q.query(`DELETE FROM ser_occ`);
     await q.query(`DELETE FROM ser_stu`);
     await q.query(`DELETE FROM ser`);
@@ -298,6 +299,85 @@ d('§54 수업료 계산 (C65)', () => {
     expect(all.daysPast).toBe(31);
     expect(all.daysLeft).toBe(0);
     expect(all.month).toBe(MONTH);
+  });
+
+  /* ── 이월 처리 (N-39 · 대표 결정 2026-09-13) ─────────────────────── */
+
+  /*
+   * 「**이월 처리는 수업이 결제 됐으나 정해진 시수가 채워지지 않은 경우**」.
+   * 그래서 증명하는 것은 **받아 놓고 못 해 준 수업만 넘어간다**는 것이다.
+   */
+  const payInvoice = async (state: 'paid' | 'sent') => {
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    await q.query(`UPDATE inv SET state = $2::inv_state_t, paid_amount = CASE WHEN $2 = 'paid' THEN amount ELSE 0 END WHERE id = $1`,
+      [inv.id, state]);
+    return inv.id;
+  };
+
+  it('**돈을 안 받았으면 이월할 수 없다** — 안 청구된 것이지 넘길 것이 아니다', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1], true);           // 휴강 — 못 해 준 수업이 있다
+    await payInvoice('sent');            // 그런데 아직 안 받았다
+    expect((await row()).me.carryable).toBe(false);
+    await expect(svc().carryTuition(91, { studentId: stuId, month: MONTH }))
+      .rejects.toMatchObject({ response: { code: 'CARRY_NOT_PAID' } });
+  });
+
+  it('**못 해 준 수업이 없으면** 이월할 수 없다 — 완납이어도', async () => {
+    await occ(PAST[0]);
+    await payInvoice('paid');
+    expect((await row()).me.carryable).toBe(false);
+    await expect(svc().carryTuition(91, { studentId: stuId, month: MONTH }))
+      .rejects.toMatchObject({ response: { code: 'CARRY_NOTHING' } });
+  });
+
+  it('받아 놓고 못 해 준 수업은 **다음 달로 넘어간다** — 줄이 남는다', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1], true);           // 휴강 1회 · 5만
+    await payInvoice('paid');
+    expect((await row()).me.carryable).toBe(true);
+
+    const made = await svc().carryTuition(91, { studentId: stuId, month: MONTH });
+    expect(made.fromMonth).toBe('2026-05');
+    expect(made.toMonth).toBe('2026-06');  // 바로 다음 달
+    expect(made.amount).toBe(50_000);
+    expect(made.sessions).toBe(1);
+  });
+
+  it('**한 달은 한 번만** 넘긴다 — 두 번 누르면 같은 돈이 두 번 넘어간다', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1], true);
+    await payInvoice('paid');
+    await svc().carryTuition(91, { studentId: stuId, month: MONTH });
+
+    const { me } = await row();
+    expect(me.carryable).toBe(false);      // 단추가 더는 서지 않는다
+    expect(me.carriedAt).not.toBeNull();
+    await expect(svc().carryTuition(91, { studentId: stuId, month: MONTH }))
+      .rejects.toMatchObject({ response: { code: 'CARRY_DUPLICATE' } });
+  });
+
+  it('**다음 달이 그 돈을 받는다** — 저장하지 않으면 넘어왔는지 아무도 모른다', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1], true);
+    await payInvoice('paid');
+    await svc().carryTuition(91, { studentId: stuId, month: MONTH });
+
+    // 6월에도 수업이 있어야 줄이 선다
+    await occ('2026-06-01');
+    const june = await svc().tuition('2026-06', true);
+    expect(june.items.find((x) => x.studentId === stuId)!.carriedIn).toBe(50_000);
+    // 5월 화면에서는 「넘어온 돈」이 아니라 「넘길 돈」이다
+    expect((await row()).me.carriedIn).toBe(0);
+  });
+
+  it('금액을 못 보면 넘어온 돈도 안 준다 — 단추 여부는 금액이 아니라 판정이다', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1], true);
+    await payInvoice('paid');
+    const { me } = await row(false);
+    expect(me.carriedIn).toBeNull();
+    expect(me.carryable).toBe(true);
   });
 
   /* ── ④ 금액 권한 ─────────────────────────────────────────────────── */

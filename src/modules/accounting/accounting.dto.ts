@@ -327,6 +327,25 @@ export class TuitionRowDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '지금까지 금액 — 이미 한 수업의 합' }) doneAmount?: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '다음 달로 넘길 돈 — 결강한 회차의 합' }) carryAmount?: number | null;
 
+  /*
+   * **이월할 수 있는가** — 대표 결정 2026-09-13 (N-39):
+   * 「이월 처리는 **수업이 결제 됐으나 정해진 시수가 채워지지 않은 경우**」.
+   * 그래서 둘이 모두 참이어야 한다 — ① 그 달 수업료 청구서가 **완납**이고 ② 못 해 준 수업이 있다.
+   * **돈을 안 받았으면 이월할 것이 없다** — 그냥 안 청구된 것이고 §54 가 이미 빼고 있다.
+   * 판정은 서버가 한다 — 화면이 「완납인가」를 다시 읽으면 단추가 서는 줄과 서버의 답이 갈린다 (D-R39).
+   */
+  @ApiProperty({ description: '이월 처리를 누를 수 있는가 (N-39)' }) carryable!: boolean;
+  @ApiPropertyOptional({
+    type: String, nullable: true,
+    description: '이미 넘겼으면 그 시각 — 한 달은 한 번만 넘긴다',
+  })
+  carriedAt?: string | null;
+  @ApiPropertyOptional({
+    type: Number, nullable: true,
+    description: '지난달에서 **넘어온** 돈 — 이 달이 받은 것이다',
+  })
+  carriedIn?: number | null;
+
   @ApiProperty({ type: [InvoiceLineDto], description: '내역 — 청구서가 쓸 바로 그 줄이다' })
   lines!: InvoiceLineDto[];
 }
@@ -372,6 +391,43 @@ export class OtherIncomeItemDto {
   @ApiPropertyOptional({ type: Number, nullable: true }) paid?: number | null;
 }
 
+/**
+ * §57 오른쪽의 **「일별 · 주별 · 월별」** — 대표 결정 2026-09-13 (N-40).
+ *
+ * 「**일/주/월 + 유저 선택 시 날짜별 → 서브 그룹**」. 그래서 이 토글은 **줄의 숫자를 바꾸지 않는다** —
+ * 접힌 줄은 여전히 **전 기간**의 합계이고(§52 머리 여섯 칸과 같다 · C43),
+ * **줄을 펼쳤을 때 그 눈금으로 날짜 묶음이 생긴다.**
+ *
+ * 토글이 줄의 숫자까지 바꾸면 페이지 머리의 「‹ 2026년 8월 ›」과 **한 화면에 기간이 둘**이 되고,
+ * 줄을 쪼개면 컷의 줄 셋이 여러 줄이 된다. 둘 다 컷과 어긋난다.
+ *
+ * 자르는 기준은 **발행일(`issued_on`)** 이다 — 줄의 「건수 · 금액」이 청구서를 세는 값이기 때문이다.
+ * 발행일이 없는 건은 「날짜 없음」 묶음에 모인다(버리지 않는다).
+ */
+export const INCOME_SPANS = ['day', 'week', 'month'] as const;
+export type IncomeSpan = (typeof INCOME_SPANS)[number];
+export const INCOME_SPAN_LABEL: Record<IncomeSpan, string> = {
+  day: '일별', week: '주별', month: '월별',
+};
+
+/** `GET /accounting/other-income?span=…` */
+export class OtherIncomeQueryDto {
+  @ApiPropertyOptional({ enum: INCOME_SPANS, description: '펼쳤을 때의 날짜 눈금 — 없으면 월별' })
+  @IsOptional()
+  @IsIn(INCOME_SPANS as unknown as string[], { message: '눈금은 일별·주별·월별입니다' })
+  span?: string;
+}
+
+/** 펼친 줄 안의 **날짜 묶음** — 「2026-08-21 · 2건 ₩210,000」 */
+export class OtherIncomeGroupDto {
+  @ApiProperty({ description: '묶음 키 — 날짜 눈금의 시작일, 없으면 `none`' }) key!: string;
+  @ApiProperty({ description: '사람이 읽는 이름 — 낱말도 서버가 만든다 (D-R18)' }) label!: string;
+  @ApiProperty({ description: '그 묶음의 건수 — 화면이 세지 않는다 (D-R37)' }) count!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true }) amount?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true }) paid?: number | null;
+  @ApiProperty({ type: [OtherIncomeItemDto] }) items!: OtherIncomeItemDto[];
+}
+
 /** 컷의 한 줄 — 「진단고사 + 상담 비용 · 4건 ₩210,000 · 받음 ₩90,000 · 청구 안 함 2」 */
 export class OtherIncomeRowDto {
   @ApiProperty({ description: '청구 종류 코드' }) key!: string;
@@ -386,13 +442,18 @@ export class OtherIncomeRowDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '금액 합계' }) amount?: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '받은 돈 합계' }) paid?: number | null;
 
-  @ApiProperty({ type: [OtherIncomeItemDto] }) items!: OtherIncomeItemDto[];
+  @ApiProperty({
+    type: [OtherIncomeGroupDto],
+    description: '펼쳤을 때의 날짜 묶음 — 눈금은 `span` 이 정한다 (N-40). 줄의 합계는 묶음의 합이다',
+  })
+  groups!: OtherIncomeGroupDto[];
 }
 
 /** `GET /accounting/other-income` — §57 「그 밖의 수입 · 수업료가 아닌 돈」 */
 export class OtherIncomeDto {
   @ApiProperty({ type: [OtherIncomeRowDto], description: '컷의 세 줄. **데이터가 0건이어도 줄은 선다** — 종류는 어휘이지 데이터가 아니다' })
   rows!: OtherIncomeRowDto[];
+  @ApiProperty({ enum: INCOME_SPANS, description: '지금 고른 날짜 눈금' }) span!: string;
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
 }
 
@@ -471,4 +532,26 @@ export class InvBoardDto {
   @ApiProperty({ type: [InvBoardColumnDto], description: '칸 넷. **비어도 선다** — 칸은 어휘이지 데이터가 아니다' })
   columns!: InvBoardColumnDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}
+
+/** `POST /accounting/tuition/carry` — §54 「이월 처리」 (N-39) */
+export class TuitionCarryDto {
+  @ApiProperty({ description: '누구의' })
+  @IsInt() @Min(1) studentId!: number;
+
+  @ApiProperty({ description: '어느 달에서 넘기는가 — YYYY-MM', example: '2026-08' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month!: string;
+}
+
+/** 이월 한 줄의 결과 */
+export class CarryRowDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() studentId!: number;
+  @ApiProperty({ description: '못 해 준 수업이 있던 달' }) fromMonth!: string;
+  @ApiProperty({ description: '넘겨 받는 달' }) toMonth!: string;
+  @ApiProperty() amount!: number;
+  @ApiProperty({ description: '못 해 준 회차 수' }) sessions!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true }) invId?: number | null;
+  @ApiProperty() at!: string;
 }

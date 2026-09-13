@@ -37,7 +37,7 @@ export const SEEDED_TABLES = [
   'stu', 'enr', 'lead',
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
-  'inv', 'inv_line', 'pay', 'expense', 'payout',
+  'inv', 'inv_line', 'pay', 'expense', 'payout', 'carry',
   'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay', 'diag',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
   'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',

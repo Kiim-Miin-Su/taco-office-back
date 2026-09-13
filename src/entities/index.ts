@@ -8,6 +8,7 @@
 export * from './enums';
 export * from './att.entity';
 export * from './autorep.entity';
+export * from './carry.entity';
 export * from './chreq.entity';
 export * from './cons.entity';
 export * from './cons-item.entity';
@@ -77,6 +78,7 @@ export * from './zlog.entity';
 
 import {
   Att,
+  Carry,
   Autorep,
   Chreq,
   Cons,
@@ -146,6 +148,7 @@ import {
 
 /** DataSource 에 넘길 목록. GPA 4표는 N-13 채택(2026-09-12 §4-17)으로 C34 에서 합류했다. */
 export const ENTITIES = [
+  Carry,
   Att,
   Autorep,
   Chreq,
