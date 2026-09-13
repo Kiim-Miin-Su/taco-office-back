@@ -153,6 +153,19 @@ export class MemberDto {
   @ApiProperty() active!: boolean;
 }
 
+/**
+ * §17 묶음 — **서버가 묶고 서버가 센다.**
+ *
+ * 「강사 13」의 13 은 세는 일이고(D-R37), 화면에서 역할을 비교하면 같은 모양이 한 줄 옆으로
+ * 가는 순간 권한 판정이 된다(D-R39 · eslint 가 막는다). 그래서 묶음째 내려보낸다.
+ */
+export class MemberGroupDto {
+  @ApiProperty({ description: '역할 코드값 — 색·차례를 고르는 열쇠일 뿐 판정이 아니다' }) role!: string;
+  @ApiProperty({ description: '묶음 머리의 이름 — 「강사」·「매니저」…' }) label!: string;
+  @ApiProperty({ description: '인원. `members.length` 와 **같은 배열**에서 나온다' }) count!: number;
+  @ApiProperty({ type: [MemberDto] }) members!: MemberDto[];
+}
+
 export class TzGroupDto {
   @ApiProperty() id!: number;
   @ApiProperty() name!: string;
@@ -207,7 +220,8 @@ export class DrawerDto {
   @ApiProperty({ type: [NotiDto], description: '§16 알림 — 기본은 최근 30일 (D-16: 조회 범위 제한이지 삭제가 아니다)' }) notis!: NotiDto[];
   @ApiProperty({ description: '목록에 보이는 기간(일). notiWindow=all 이면 0' }) notiWindowDays!: number;
   @ApiProperty({ description: '창 밖에 남아 있는 알림 수 — **지운 것이 아니다** (N-7 영구 보관)' }) notiOlderCount!: number;
-  @ApiProperty({ type: [MemberDto], description: '§17 구성원' }) members!: MemberDto[];
+  @ApiProperty({ type: [MemberDto], description: '§17 구성원 — 묶지 않은 전체 (다른 화면이 쓴다)' }) members!: MemberDto[];
+  @ApiProperty({ type: [MemberGroupDto], description: '§17 역할 묶음 — 사람이 없는 역할은 빠진다' }) memberGroups!: MemberGroupDto[];
   @ApiProperty({ type: [TzGroupDto], description: '§17 시간대 그룹' }) tzGroups!: TzGroupDto[];
   @ApiProperty({ type: [KindRowDto], description: '§18 수업 종류' }) kinds!: KindRowDto[];
   @ApiProperty({ type: [ChangeReqDto], description: '§20 변경 요청' }) changeReqs!: ChangeReqDto[];

@@ -28,6 +28,8 @@ export class MeDto implements PermFlags {
   @ApiProperty() name!: string;
   @ApiProperty({ enum: ROLES }) role!: Role;
   @ApiProperty({ type: String, nullable: true, description: '직함 — 권한과 무관' }) title!: string | null;
+  /* 낱말은 서버가 만든다 (D-R18). 화면이 제 표를 들고 있으면 서랍 §17 과 머리 배지가 갈린다 */
+  @ApiProperty({ description: '역할의 이름 — 「강사」·「매니저」… 판정이 아니라 표시용이다' }) roleLabel!: string;
 
   @ApiProperty({ description: '관리자 백오피스 진입' }) canAdminPage!: boolean;
   @ApiProperty({ description: '전 항목 CRUD' }) canCrudAll!: boolean;

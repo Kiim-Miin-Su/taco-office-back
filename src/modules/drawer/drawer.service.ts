@@ -25,6 +25,7 @@ import { kindGroupLabel } from '../../lib/catalog-words';
 import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ZoomService } from '../zoom/zoom.service';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
+import { groupByRole } from '../../lib/role-words';
 import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
@@ -230,6 +231,9 @@ export class DrawerService {
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
     }));
 
+    /* 묶음은 **같은 배열**에서 낸다 — 따로 질의하면 목록과 인원이 갈린다 (D-R37 · D-R22) */
+    const memberGroups = groupByRole(members);
+
     const tzGroups = (await this.q(`SELECT id, name, tz FROM tzg ORDER BY id`))
       .map((r) => ({ id: Number(r.id), name: String(r.name), tz: String(r.tz) }));
 
@@ -290,7 +294,7 @@ export class DrawerService {
       approvals, todos, notis,
       notiWindowDays: windowDays,
       notiOlderCount: Number(older?.n ?? 0),
-      members, tzGroups, kinds, changeReqs, zoomAccounts,
+      members, memberGroups, tzGroups, kinds, changeReqs, zoomAccounts,
       tz: KST,
     };
   }

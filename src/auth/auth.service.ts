@@ -12,6 +12,7 @@ import * as bcrypt from 'bcryptjs';
 import { Staff } from '../entities';
 import { isRole, permsOf, type Role, type PermName, type RequestUser } from '../common/perm';
 import type { MeDto } from './dto/auth.dto';
+import { roleLabel } from '../lib/role-words';
 
 /** JWT 발급/검증 형상. role/perms는 호환용 snapshot이며 요청 권한의 권위는 현재 STAFF다. */
 export interface JwtPayload {
@@ -74,6 +75,8 @@ export class AuthService {
       name: s.name,
       role,
       title: s.title,
+      // 서랍 §17 묶음 머리와 **같은 표**에서 꺼낸다 — 두 곳이 다른 낱말을 쓰지 않는다 (D-R18)
+      roleLabel: roleLabel(role),
       ...permsOf(role, this.overridesOf(s)),
     };
   }

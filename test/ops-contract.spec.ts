@@ -20,6 +20,7 @@ import { OpsController } from '../src/modules/ops/ops.controller';
 import { LeadDto, type OpsDto } from '../src/modules/ops/ops.dto';
 import { OpsService } from '../src/modules/ops/ops.service';
 import { buildOpenApi } from '../src/openapi';
+import { roleLabel } from '../src/lib/role-words';
 
 type Row = Record<string, unknown>;
 const row = (over: Row = {}): Row => ({
@@ -143,7 +144,8 @@ describe('STAFF 예외 → MeDto / Access 발급·현재 사용자 투영 (DB·�
     const user = await new JwtStrategy(auth).validate(payload);
     const expected = permsOf(role, overrides);
 
-    expect(me).toEqual({ id: 17, name: '권한 검수', title: null, role, ...expected });
+    // C73 — 역할의 낱말도 서버가 싣는다 (D-R18). 화면이 제 표를 들면 서랍 §17 과 머리 배지가 갈린다
+    expect(me).toEqual({ id: 17, name: '권한 검수', title: null, role, roleLabel: roleLabel(role), ...expected });
     expect(user).toEqual({ id: 17, name: '권한 검수', role, perms: payload.perms });
     expect(permsOf(role, user.perms)).toEqual(expected);
     expect(findOne).toHaveBeenCalledTimes(1);

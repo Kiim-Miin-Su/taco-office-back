@@ -8958,6 +8958,10 @@
             "nullable": true,
             "description": "직함 — 권한과 무관"
           },
+          "roleLabel": {
+            "type": "string",
+            "description": "역할의 이름 — 「강사」·「매니저」… 판정이 아니라 표시용이다"
+          },
           "canAdminPage": {
             "type": "boolean",
             "description": "관리자 백오피스 진입"
@@ -8995,6 +8999,7 @@
           "name",
           "role",
           "title",
+          "roleLabel",
           "canAdminPage",
           "canCrudAll",
           "canSeeProfit",
@@ -16537,6 +16542,35 @@
           "active"
         ]
       },
+      "MemberGroupDto": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "역할 코드값 — 색·차례를 고르는 열쇠일 뿐 판정이 아니다"
+          },
+          "label": {
+            "type": "string",
+            "description": "묶음 머리의 이름 — 「강사」·「매니저」…"
+          },
+          "count": {
+            "type": "number",
+            "description": "인원. `members.length` 와 **같은 배열**에서 나온다"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberDto"
+            }
+          }
+        },
+        "required": [
+          "role",
+          "label",
+          "count",
+          "members"
+        ]
+      },
       "TzGroupDto": {
         "type": "object",
         "properties": {
@@ -16728,10 +16762,17 @@
             "description": "창 밖에 남아 있는 알림 수 — **지운 것이 아니다** (N-7 영구 보관)"
           },
           "members": {
-            "description": "§17 구성원",
+            "description": "§17 구성원 — 묶지 않은 전체 (다른 화면이 쓴다)",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/MemberDto"
+            }
+          },
+          "memberGroups": {
+            "description": "§17 역할 묶음 — 사람이 없는 역할은 빠진다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemberGroupDto"
             }
           },
           "tzGroups": {
@@ -16774,6 +16815,7 @@
           "notiWindowDays",
           "notiOlderCount",
           "members",
+          "memberGroups",
           "tzGroups",
           "kinds",
           "changeReqs",
