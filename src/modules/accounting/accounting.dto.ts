@@ -47,6 +47,13 @@ export class InvoiceDto {
   @ApiProperty({ type: Number, nullable: true, description: '금액 — canMoney 가 아니면 null 로 내려간다 (D-R39)' }) amount!: number | null;
   @ApiProperty({ type: Number, nullable: true }) paidAmount!: number | null;
   @ApiProperty({ enum: ['draft', 'sent', 'unpaid', 'partial', 'paid', 'void'] }) state!: string;
+  /*
+   * 상태의 **낱말**. 회계 화면 파일이 여섯을 직접 적고 있었고, 그러면 상태 이름이 바뀌던 날
+   * 그 자리만 뒤처져 **같은 행을 §53 표와 §57 줄이 다르게 부른다**(C64 가 청구 종류에서 고친 모양).
+   * 줄이 제 낱말을 들고 오므로 화면이 코드표를 따로 받을 필요가 없다 — `/meta` 를 한 번 더 부르면
+   * C50 이 고쳐 둔 「회계 화면에 들어갈 때마다 코드표를 받아 오던」 자리로 되돌아간다.
+   */
+  @ApiProperty({ description: '상태의 이름 — 낱말은 서버가 만든다 (D-R18)' }) stateLabel!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) issuedOn?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) dueOn?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) paidAt?: string | null;
@@ -84,6 +91,39 @@ export const INV_TYPE_SUB: Record<string, string> = {
   diag_intake: '진단고사 · 입학 상담',
   exam_fee: 'MAP · CAT 응시료',
 };
+/**
+ * §57 「그 밖의 수입」 **줄 제목** — §53 카드의 칩과 낱말이 다르다.
+ *
+ * 컷을 나란히 놓으면 같은 종류를 세 화면이 **다르게 부른다** —
+ *   · §53 카드 칩   「컨설팅비 **청구**」 · 「수업료 **청구**」
+ *   · §57 줄 제목   「컨설팅비」 · 「진단고사 + 상담 비용」 · 「**MAP + CAT**」(부제가 「MAP · CAT 응시료」)
+ *   · §55 분류 칩   「컨설팅비」 · 「진단고사 · 상담」 · 「시험 응시료」
+ * 하나로 접으면 어느 화면이든 원문과 다른 말을 하게 된다. 그래서 쓰는 자리마다 갖는다 (D-R18).
+ * `INV_TYPE_LABEL` 은 §53 칩 쪽이고 여기는 §57 줄이다.
+ */
+export const INV_TYPE_ROW: Record<string, string> = {
+  tuition: '수업료',
+  consulting: '컨설팅비',
+  diag_intake: '진단고사 + 상담 비용',
+  exam_fee: 'MAP + CAT',
+};
+
+/**
+ * 청구서 상태의 **낱말** — 화면이 짓지 않는다 (D-R18).
+ *
+ * C64 가 청구 종류를 화면에서 서버로 옮긴 것과 같은 자리다. 낱말이 화면 파일에 있으면
+ * 상태가 늘거나 이름이 바뀌던 날 그 자리가 바로 뒤처지고, **두 화면이 같은 행을 다르게 부른다.**
+ * 값은 `inv_state_t` 여섯 그대로이고 이름만 여기 한 벌 둔다.
+ */
+export const INV_STATE_LABEL: Record<string, string> = {
+  draft: '작성 중',
+  sent: '전달',
+  unpaid: '미납',
+  partial: '일부 납부',
+  paid: '입금 완료',
+  void: '취소',
+};
+
 /** 수업료가 아닌 종류 — §57 「그 밖의 수입」이 세는 것 */
 export const INV_TYPES_OTHER = INV_TYPES.filter((t) => t !== 'tuition');
 
@@ -314,5 +354,44 @@ export class TuitionDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '다음 달로 넘길 돈' }) carryAmount?: number | null;
 
   @ApiProperty({ type: [TuitionRowDto] }) items!: TuitionRowDto[];
+  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}
+
+/* ── §57 그 밖의 수입 ─────────────────────────────────────────────────── */
+
+/** 줄을 눌러 펼친 한 장 — 「누르면 자세히 봅니다」 */
+export class OtherIncomeItemDto {
+  @ApiProperty() invId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty() title!: string;
+  @ApiProperty({ description: '청구서 상태 — 낱말은 화면이 짓지 않는다 (D-R18)' }) stateLabel!: string;
+  @ApiProperty({ description: '아직 청구하지 않은 건인가 (draft)' }) unbilled!: boolean;
+  @ApiPropertyOptional({ type: String, nullable: true }) issuedOn?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) dueOn?: string | null;
+  @ApiPropertyOptional({ type: Number, nullable: true }) amount?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true }) paid?: number | null;
+}
+
+/** 컷의 한 줄 — 「진단고사 + 상담 비용 · 4건 ₩210,000 · 받음 ₩90,000 · 청구 안 함 2」 */
+export class OtherIncomeRowDto {
+  @ApiProperty({ description: '청구 종류 코드' }) key!: string;
+  @ApiProperty({ description: '줄 제목 — §57 컷의 낱말' }) label!: string;
+  @ApiProperty({ description: '부제 — §57 컷의 낱말' }) sub!: string;
+
+  @ApiProperty({ description: '건수 — 보낸 청구서만 센다(초안·취소 제외 · §52 머리와 같은 어휘)' })
+  count!: number;
+  @ApiProperty({ description: '「청구 안 함 N」 — 아직 초안인 청구서 건수. 건수에 들어 있지 않다' })
+  unbilled!: number;
+
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '금액 합계' }) amount?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '받은 돈 합계' }) paid?: number | null;
+
+  @ApiProperty({ type: [OtherIncomeItemDto] }) items!: OtherIncomeItemDto[];
+}
+
+/** `GET /accounting/other-income` — §57 「그 밖의 수입 · 수업료가 아닌 돈」 */
+export class OtherIncomeDto {
+  @ApiProperty({ type: [OtherIncomeRowDto], description: '컷의 세 줄. **데이터가 0건이어도 줄은 선다** — 종류는 어휘이지 데이터가 아니다' })
+  rows!: OtherIncomeRowDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
 }

@@ -15,10 +15,14 @@ import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { kstMonthOf, sqlWordList } from '../../lib/sql';
-import { EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED, INV_TYPE_LABEL } from './accounting.dto';
+import {
+  EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED,
+  INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_ROW, INV_TYPE_SUB,
+} from './accounting.dto';
 import { invoiceLines, linesTotal, type LineSlice } from './invoice-lines';
 import type {
   AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, InvoiceIssueDto,
+  OtherIncomeDto,
   PaymentCreateDto, PaymentDto, PayoutDto,
   TuitionDto, TuitionRowDto,
 } from './accounting.dto';
@@ -112,6 +116,8 @@ export class AccountingService {
       grade: (r.grade as string | null) ?? null,
       yearMonth: String(r.year_month), title: String(r.title),
       amount: money(r.amount), paidAmount: money(r.paid_amount), state: String(r.state),
+      // 낱말은 서버가 만든다 — 화면이 코드값을 찍거나 제 코드표를 갖지 않는다 (D-R18)
+      stateLabel: INV_STATE_LABEL[String(r.state)] ?? String(r.state),
       // 잔액도 금액이다 — 권한이 없으면 내려보내지 않는다 (빼기로 복원되면 가린 뜻이 없다)
       remaining: canSeeAmounts ? Number(r.amount) - Number(r.paid_amount) : null,
       issuedOn: (r.issued_on as string | null) ?? null,
@@ -630,6 +636,77 @@ export class AccountingService {
       doneCount, totalCount, canceledCount,
       doneAmount: money(doneAmount), carryAmount: money(carryAmount),
       items, canSeeAmounts,
+    };
+  }
+
+  /**
+   * §57 「그 밖의 수입 — 수업료가 아닌 돈 · 누르면 자세히 봅니다」.
+   *
+   * 컷은 줄 셋이고 줄마다 **건수 · 금액 · 「받음 ₩N」 · 「청구 안 함 N」**이다.
+   * 종류 셋은 대표가 정한 `INV_TYPES_OTHER` 그대로다 (N-37 · C64).
+   *
+   * **데이터가 0건이어도 줄은 선다** — 종류는 어휘이지 데이터가 아니다.
+   * 그 달에 진단고사 청구가 없다고 줄이 사라지면, 화면이 「이 학원은 진단고사를 안 한다」고
+   * 말하는 셈이 된다.
+   *
+   * ── 「청구 안 함 N」을 무엇으로 읽었는가 (N-37 ②) ─────────────────────────
+   * 원문이 뜻을 적지 않았다. 후보가 둘이었다 —
+   *   ⓐ **아직 초안인 청구서**(`state = 'draft'`) — 「아직 청구하지 않았다」의 유일한 기존 표현이다.
+   *   ⓑ **청구서 없이 받은 돈** — 컨설팅의 `cons_pay`(C58) 같은 것.
+   * **ⓑ 는 성립할 수 없다.** 컷은 세 종류 **모두**에 이 뱃지를 다는데, MAP·CAT 응시료에는
+   * 그런 표가 없고 만들려면 종류마다 새 표가 필요하다. 원문이 표 셋을 말한 적도 없다.
+   * ⓐ 는 **있는 칸으로 곧게 읽은 것**이고 §52 머리의 「보낸 청구서」가 초안을 빼는 것과 같은 어휘다.
+   * 틀렸다면 고칠 자리는 **이 메서드 하나**다 (C52 의 `useVersion` 과 같은 약속).
+   *
+   * **기간을 달지 않는다.** 컷 오른쪽의 「일별 · 주별 · 월별」은 **눌렀을 때 무엇이 달라지는지를
+   * 컷이 한 번도 보여 주지 않는다.** 읽기마다 숫자의 뜻이 달라지므로 만들지 않았다 (N-40).
+   * 지금 이 줄은 §52 머리 여섯 칸과 같은 **전 기간**이다 (C43 이 같은 이유로 월 라벨을 달지 않았다).
+   */
+  async otherIncome(canSeeAmounts: boolean): Promise<OtherIncomeDto> {
+    const types = [...INV_TYPES_OTHER];
+    const rows = (await this.inv.query(
+      `SELECT i.id, i.inv_type, i.title, i.amount, i.paid_amount,
+              i.state::text AS state,
+              to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
+              to_char(i.due_on,'YYYY-MM-DD')    AS due_on,
+              s.name AS student_name
+         FROM inv i
+         LEFT JOIN stu s ON s.id = i.student_id
+        WHERE i.inv_type = ANY($1::text[]) AND i.state <> 'void'
+        ORDER BY i.issued_on DESC NULLS LAST, i.id DESC`,
+      [types],
+    )) as Array<{
+      id: string; inv_type: string; title: string | null; amount: number; paid_amount: number;
+      state: string; issued_on: string | null; due_on: string | null; student_name: string | null;
+    }>;
+
+    const money = (v: number): number | null => (canSeeAmounts ? v : null);
+    return {
+      canSeeAmounts,
+      rows: types.map((key) => {
+        const mine = rows.filter((r) => r.inv_type === key);
+        // 「보낸 청구서」와 같은 어휘다 — 초안은 아직 보낸 것이 아니다 (§52 머리 · INV_BILLABLE)
+        const billed = mine.filter((r) => (INV_BILLABLE as readonly string[]).includes(r.state));
+        return {
+          key,
+          label: INV_TYPE_ROW[key] ?? INV_TYPE_LABEL[key],
+          sub: INV_TYPE_SUB[key],
+          count: billed.length,
+          unbilled: mine.filter((r) => r.state === 'draft').length,
+          amount: money(billed.reduce((n, r) => n + Number(r.amount), 0)),
+          paid: money(billed.reduce((n, r) => n + Number(r.paid_amount), 0)),
+          items: mine.map((r) => ({
+            invId: Number(r.id),
+            studentName: r.student_name ?? '학생 없음',
+            title: r.title ?? INV_TYPE_ROW[key] ?? key,
+            // 낱말은 서버가 짓는다 — 화면이 코드값을 찍지 않는다 (D-R18)
+            stateLabel: INV_STATE_LABEL[r.state] ?? r.state,
+            unbilled: r.state === 'draft',
+            issuedOn: r.issued_on, dueOn: r.due_on,
+            amount: money(Number(r.amount)), paid: money(Number(r.paid_amount)),
+          })),
+        };
+      }),
     };
   }
 }

@@ -12,8 +12,8 @@ import {
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
-  AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, InvoiceIssueDto, PaymentCreateDto,
-  TuitionDto, TuitionQueryDto,
+  AccountingDto, ExpenseDto, ExpenseReviewDto, InvoiceDto, InvoiceIssueDto, OtherIncomeDto,
+  PaymentCreateDto, TuitionDto, TuitionQueryDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService } from './accounting.service';
@@ -55,6 +55,24 @@ export class AccountingController {
   async tuition(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<TuitionDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.tuition(query.month ?? todayKst().slice(0, 7), canSee);
+  }
+
+  @Get('other-income')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '그 밖의 수입 — 수업료가 아닌 돈 (§57)',
+    description:
+      '컷의 줄 셋(진단고사 + 상담 비용 · 컨설팅비 · MAP + CAT)은 대표가 정한 청구 종류 그대로다 (N-37 · C64). '
+      + '**데이터가 0건이어도 줄은 선다** — 종류는 어휘이지 데이터가 아니다. '
+      + '건수·금액·받음은 §52 머리와 **같은 어휘**(`INV_BILLABLE`)로 세어 초안과 취소를 뺀다. '
+      + '「청구 안 함 N」은 그 종류의 **초안 건수**로 읽었다 — 원문이 뜻을 안 적었고, '
+      + '「청구서 없이 받은 돈」으로 읽으려면 종류마다 새 표가 필요한데 원문이 그런 표를 말한 적이 없다 (N-37 ②). '
+      + '컷 오른쪽의 「일별 · 주별 · 월별」은 눌렀을 때 무엇이 달라지는지 컷이 보여 주지 않아 만들지 않았다 (N-40).',
+  })
+  @ApiOkResponse({ type: OtherIncomeDto })
+  async otherIncome(@CurrentUser() user: RequestUser): Promise<OtherIncomeDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.otherIncome(canSee);
   }
 
   @Post('invoices')
