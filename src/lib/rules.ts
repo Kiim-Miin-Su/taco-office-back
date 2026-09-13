@@ -148,10 +148,16 @@ export const REPORT_UNWRITTEN_CANDIDATE_DB: RepStateDb[] = ['na', 'plan', ...REP
    D-R15 · D-R40의 「5개 섹션」은 메타데이터 2개 + 강사 입력 3개다.
    순서 · 키 · 문구 · 길이는 이 배열에서만 정한다. DTO·프론트·DB 제약이
    별도의 5개 입력으로 새는 것을 막는다. */
+/*
+ * 이름은 **원문 §50(리포트 전문)의 낱말**이다 — 「수업 내용 · 진도 **페이지** · 숙제 **페이지**」.
+ * 우리는 「진도」·「과제」라 적고 있었다. 이 이름은 학부모가 받는 문서에 그대로 찍히므로
+ * 바꾸면 **학부모가 보는 글자가 바뀐다** — C54 에서 과목 이름을 되돌릴 때와 같은 무게다.
+ * 앞의 번호(③④⑤)는 D-R15 의 「5개 섹션」 순서를 사람이 읽게 적은 것이라 그대로 둔다.
+ */
 export const REPORT_FIELDS = [
   { key: 'content', label: '③ 수업 내용', hint: '이번 수업에서 다룬 내용', min: 1, max: 2000 },
-  { key: 'progress', label: '④ 진도', hint: '어디까지 나갔는가', min: 1, max: 2000 },
-  { key: 'homework', label: '⑤ 과제', hint: '다음 수업 전까지 할 일', min: 1, max: 2000 },
+  { key: 'progress', label: '④ 진도 페이지', hint: '어디까지 나갔는가', min: 1, max: 2000 },
+  { key: 'homework', label: '⑤ 숙제 페이지', hint: '다음 수업 전까지 할 일', min: 1, max: 2000 },
 ] as const;
 
 export type ReportFieldKey = (typeof REPORT_FIELDS)[number]['key'];
