@@ -16,6 +16,11 @@ import {
 } from '../../lib/marketing-words';
 import {
   PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL,
+} from '../../lib/plan-words';
+import { INTAKE_STAGES, INTAKE_STAGE_LABEL, isIntakeFunnel } from '../../lib/intake-words';
+import { INV_OPEN } from '../../lib/rules';
+import { sqlWordList } from '../../lib/sql';
+import {
   dueLabel, planDueKindLabel, planDueState, planStageLabel,
   type PlanDueState,
 } from '../../lib/plan-words';
@@ -23,6 +28,7 @@ import {
   MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, mtAttendState, mtTypeLabel,
 } from '../../lib/meeting-words';
 import type {
+  IntakeAlertDto, IntakeHeadDto,
   LeadDto, MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanReviewDto, PlanTaskDto,
   MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
@@ -194,6 +200,101 @@ export class OpsService {
       planDues, planOverdue, meetings, marketing,
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
+      intakeHead: await this.intakeHead(leads, canSeeAmounts),
+    };
+  }
+
+  /* ══ §23 상담 머리 — 퍼널 · 담당 · 경고 (C86-a) ═══════════════════ */
+
+  /**
+   * 원본 §23 의 머리. **화면은 아무것도 세지 않는다** (D-R37 · N-19 의 교훈) —
+   * 퍼널 여섯 칸, 등록률, 담당 칩, 경고 칩이 전부 여기서 나온다.
+   *
+   * 컷의 경고는 다섯인데 여기서 만드는 것은 **셋**이다. 나머지 둘(「상담 오늘·지남」·
+   * 「사후 관리 밀림」)은 판정할 표가 아직 없다 — **없는 수를 지어내지 않는다** (N-44).
+   */
+  private async intakeHead(
+    leads: ReadonlyArray<{ stage: string; ownerId?: number | null; ownerName?: string | null }>,
+    canSeeAmounts: boolean,
+  ): Promise<IntakeHeadDto> {
+    const funnel = INTAKE_STAGES.map((key) => ({
+      key,
+      label: INTAKE_STAGE_LABEL[key],
+      count: leads.filter((l) => l.stage === key).length,
+      funnel: isIntakeFunnel(key),
+    }));
+    const total = leads.length;
+    const enrolled = funnel.find((f) => f.key === 'enrolled')?.count ?? 0;
+
+    // 담당 칩 — 한 번 훑어 담는다. 역할 비교가 아니라 사람 묶기라 Map 으로 센다
+    const bucket = new Map<string, { id: number | null; name: string; count: number }>();
+    for (const l of leads) {
+      const id = l.ownerId ?? null;
+      const key = id === null ? 'none' : String(id);
+      const got = bucket.get(key);
+      if (got) got.count += 1;
+      else bucket.set(key, { id, name: l.ownerName ?? '담당 없음', count: 1 });
+    }
+    const owners = [...bucket.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ko'));
+
+    /*
+     * 경고 셋 — 전부 **지금 남아 있는 것**을 센다(기준일이 필요 없다).
+     * 셋을 따로 물으면 `/ops` 한 번에 왕복이 셋 는다. **한 문장으로 묶는다** —
+     * 세 수는 서로 겹치지 않는 판정이라 UNION 으로 나란히 세면 된다.
+     */
+    const counts = await this.q(
+      `SELECT 'unpaid' AS key,
+              count(DISTINCT i.student_id)::int AS n,
+              COALESCE(sum(i.amount - i.paid_amount), 0)::bigint AS amount
+         FROM inv i
+        WHERE i.state IN (${sqlWordList(INV_OPEN)}) AND i.amount > i.paid_amount
+       UNION ALL
+       -- 등록했는데 시간표가 없다 — 학생이 어느 회차 명단에도 안 들어 있다
+       SELECT 'noSchedule', count(*)::int, 0::bigint FROM lead l
+        WHERE l.stage = 'enrolled' AND l.student_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM ser_stu ss WHERE ss.student_id = l.student_id)
+       UNION ALL
+       -- 등록했는데 청구서가 없다 — 초안도 없는 경우만 센다(초안이라도 있으면 시작은 한 것이다)
+       SELECT 'noInvoice', count(*)::int, 0::bigint FROM lead l
+        WHERE l.stage = 'enrolled' AND l.student_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM inv i WHERE i.student_id = l.student_id)`,
+    );
+    const at = (key: string) => counts.find((r) => String(r.key) === key);
+    const unpaidCount = Number(at('unpaid')?.n ?? 0);
+    const unpaidAmount = Number(at('unpaid')?.amount ?? 0);
+    const noSchedule = Number(at('noSchedule')?.n ?? 0);
+    const noInvoice = Number(at('noInvoice')?.n ?? 0);
+
+    const alerts: IntakeAlertDto[] = [
+      {
+        key: 'unpaid',
+        // 금액을 못 보는 사람에게는 사람 수만 말한다 — 문장을 화면이 만들지 않는다 (D-R18 · D-R39)
+        label: canSeeAmounts ? `미수 ${unpaidCount}명 ₩${unpaidAmount.toLocaleString('ko-KR')}` : `미수 ${unpaidCount}명`,
+        count: unpaidCount,
+        amount: canSeeAmounts ? unpaidAmount : null,
+        go: '/accounting',
+      },
+      {
+        key: 'noSchedule',
+        label: `스케줄 미생성 ${noSchedule}`,
+        count: noSchedule,
+        amount: null,
+        go: '/schedule',
+      },
+      {
+        key: 'noInvoice',
+        label: `등록했는데 청구서 없음 ${noInvoice}`,
+        count: noInvoice,
+        amount: null,
+        go: '/accounting',
+      },
+    ];
+
+    return {
+      funnel,
+      enrollRate: total === 0 ? 0 : Math.round((enrolled / total) * 100),
+      owners,
+      alerts,
     };
   }
 

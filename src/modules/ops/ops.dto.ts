@@ -353,6 +353,46 @@ export class PlanStageDto {
   @ApiProperty({ description: '사람이 읽는 이름' }) label!: string;
 }
 
+/* ── §23 상담 머리 — 퍼널 · 담당 · 경고 (C86-a) ────────────────────── */
+
+/**
+ * 퍼널 한 칸. **순서와 낱말은 서버가 갖는다** (D-R18 · D-R25 의 짝) —
+ * 원본 §23 은 「1차 상담 › 2차 대기 › 2차 상담 › 보류 ⇒ 등록 | 등록 실패」로 읽고,
+ * 화살표가 **⇒ 로 바뀌는 자리**(등록 전/후)까지 뜻이 있다.
+ */
+export class IntakeFunnelStepDto {
+  @ApiProperty({ description: 'first | wait2nd | second | hold | enrolled | failed' }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty({ description: '그 단계의 건수 — 서버가 센다 (D-R37)' }) count!: number;
+  @ApiProperty({ description: '등록 전 깔때기인가 — false 면 결과 칸(등록 · 등록 실패)이다' }) funnel!: boolean;
+}
+
+/** 담당 한 사람 — 원본 §23 의 「담당 [전체] [Grace] [김범준]」 칩. */
+export class IntakeOwnerDto {
+  @ApiPropertyOptional({ ...N, description: '없으면 담당 미지정' }) id?: number | null;
+  @ApiProperty() name!: string;
+  @ApiProperty() count!: number;
+}
+
+/**
+ * 경고 칩 하나 — 원본 §23 의 빨간 줄. **세는 일은 전부 서버가 한다** (D-R37).
+ * 금액이 실리는 칩은 `amount` 가 `null` 로 내려간다 (D-R39).
+ */
+export class IntakeAlertDto {
+  @ApiProperty({ description: 'unpaid | noSchedule | noInvoice' }) key!: string;
+  @ApiProperty({ description: '사람이 읽는 한 줄 — 화면이 문장을 만들지 않는다' }) label!: string;
+  @ApiProperty() count!: number;
+  @ApiPropertyOptional({ ...N, description: '금액 칩만. 볼 수 없으면 null (D-R39)' }) amount?: number | null;
+  @ApiProperty({ description: '누르면 가는 곳 — 결과는 그 화면에서 본다 (D-R27)' }) go!: string;
+}
+
+export class IntakeHeadDto {
+  @ApiProperty({ type: [IntakeFunnelStepDto] }) funnel!: IntakeFunnelStepDto[];
+  @ApiProperty({ description: '등록률 % — 등록 / 전체, 정수 반올림. 전체 0 이면 0' }) enrollRate!: number;
+  @ApiProperty({ type: [IntakeOwnerDto], description: '담당 칩 — 「전체」는 화면이 붙인다' }) owners!: IntakeOwnerDto[];
+  @ApiProperty({ type: [IntakeAlertDto] }) alerts!: IntakeAlertDto[];
+}
+
 export class OpsDto {
   @ApiProperty({ type: [LeadDto] }) leads!: LeadDto[];
   @ApiProperty({ type: [ComplaintDto] }) complaints!: ComplaintDto[];
@@ -370,4 +410,6 @@ export class OpsDto {
   @ApiProperty({ description: '대표 코멘트를 남길 수 있는가 — 원문 §60 「대표가 코멘트하면」 (D-R39)' }) canComment!: boolean;
   @ApiProperty({ type: [SuggestionDto] }) suggestions!: SuggestionDto[];
   @ApiProperty({ description: '집행 비용을 볼 수 있는가' }) canSeeAmounts!: boolean;
+  @ApiProperty({ type: IntakeHeadDto, description: '§23 상담 머리 — 퍼널 · 담당 · 경고. 화면은 세지 않는다 (D-R37)' })
+  intakeHead!: IntakeHeadDto;
 }

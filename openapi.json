@@ -16021,6 +16021,117 @@
           "createdAt"
         ]
       },
+      "IntakeFunnelStepDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "first | wait2nd | second | hold | enrolled | failed"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number",
+            "description": "그 단계의 건수 — 서버가 센다 (D-R37)"
+          },
+          "funnel": {
+            "type": "boolean",
+            "description": "등록 전 깔때기인가 — false 면 결과 칸(등록 · 등록 실패)이다"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count",
+          "funnel"
+        ]
+      },
+      "IntakeOwnerDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "nullable": true,
+            "description": "없으면 담당 미지정"
+          },
+          "name": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name",
+          "count"
+        ]
+      },
+      "IntakeAlertDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "unpaid | noSchedule | noInvoice"
+          },
+          "label": {
+            "type": "string",
+            "description": "사람이 읽는 한 줄 — 화면이 문장을 만들지 않는다"
+          },
+          "count": {
+            "type": "number"
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true,
+            "description": "금액 칩만. 볼 수 없으면 null (D-R39)"
+          },
+          "go": {
+            "type": "string",
+            "description": "누르면 가는 곳 — 결과는 그 화면에서 본다 (D-R27)"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count",
+          "go"
+        ]
+      },
+      "IntakeHeadDto": {
+        "type": "object",
+        "properties": {
+          "funnel": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeFunnelStepDto"
+            }
+          },
+          "enrollRate": {
+            "type": "number",
+            "description": "등록률 % — 등록 / 전체, 정수 반올림. 전체 0 이면 0"
+          },
+          "owners": {
+            "description": "담당 칩 — 「전체」는 화면이 붙인다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeOwnerDto"
+            }
+          },
+          "alerts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeAlertDto"
+            }
+          }
+        },
+        "required": [
+          "funnel",
+          "enrollRate",
+          "owners",
+          "alerts"
+        ]
+      },
       "OpsDto": {
         "type": "object",
         "properties": {
@@ -16102,6 +16213,14 @@
           "canSeeAmounts": {
             "type": "boolean",
             "description": "집행 비용을 볼 수 있는가"
+          },
+          "intakeHead": {
+            "description": "§23 상담 머리 — 퍼널 · 담당 · 경고. 화면은 세지 않는다 (D-R37)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IntakeHeadDto"
+              }
+            ]
           }
         },
         "required": [
@@ -16118,7 +16237,8 @@
           "feedbackNeedsFix",
           "canComment",
           "suggestions",
-          "canSeeAmounts"
+          "canSeeAmounts",
+          "intakeHead"
         ]
       },
       "LeadFailDto": {

@@ -52,7 +52,8 @@ describe('§23·§24 LEAD 응답 projection', () => {
     }]);
     // 7 고정 목록 + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
     // + §60 대표 피드백 글타래 1회 (C53) + §62 기획 기한 1회 (C56)
-    expect(query).toHaveBeenCalledTimes(10);
+    // + §23 경고 셋을 **한 문장으로 묶은** 1회 (C86-a — 따로 물으면 왕복이 셋 는다)
+    expect(query).toHaveBeenCalledTimes(11);
   });
 
   it.each(['ownerId', 'studentId'])('%s는 Swagger에서 optional·nullable number다', (field) => {
@@ -176,6 +177,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
     planDues: [], planOverdue: 0, planStages: [],
+    intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [] },
   };
 
   beforeAll(async () => {
@@ -344,7 +346,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       })));
       expect(res.body.leads).toMatchObject([{ id: 1, name: '상담 계약 테스트' }]);
       expect(Object.keys(res.body).sort()).toEqual(Object.keys(empty).sort());
-      expect(query).toHaveBeenCalledTimes(10); // 7 목록 + N-25 도달 기록 + §60 피드백 + §62 기한 (C53·C56)
+      // 7 목록 + N-25 도달 기록 + §60 피드백 + §62 기한 (C53·C56) + §23 경고 묶음 1회 (C86-a)
+      expect(query).toHaveBeenCalledTimes(11);
       expect(query.mock.calls.every(([sql]) => /^SELECT\b/.test(sql))).toBe(true);
       expect(marketingRows).toEqual(before);
     },
@@ -354,5 +357,71 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   it('알 수 없는 역할은 두 권한을 켜도 403이다', async () => {
     user = { id: 1, name: '권한 테스트', role: 'unknown', perms: { canAdminPage: true, canCrudAll: true } };
     await checkAccess(false);
+  });
+});
+
+/**
+ * §23 상담 머리 — **화면은 아무것도 세지 않는다** (D-R37 · N-19 의 교훈).
+ * 퍼널의 순서·낱말과 「등록 전/후」 경계까지 서버가 갖는다.
+ */
+describe('§23 상담 머리 (C86-a)', () => {
+  const head = (leads: Array<{ stage: string; ownerId?: number | null; ownerName?: string | null }>) => {
+    const svc = new OpsService({ query: jest.fn().mockResolvedValue([]) } as never);
+    return (svc as unknown as {
+      intakeHead: (l: unknown, m: boolean) => Promise<{
+        funnel: Array<{ key: string; label: string; count: number; funnel: boolean }>;
+        enrollRate: number;
+        owners: Array<{ id: number | null; name: string; count: number }>;
+        alerts: Array<{ key: string; label: string; count: number; amount: number | null }>;
+      }>;
+    }).intakeHead(leads, true);
+  };
+
+  it('퍼널은 여섯 칸이고 등록·등록 실패만 결과 칸이다 — 순서와 낱말이 서버에 있다', async () => {
+    const out = await head([]);
+    expect(out.funnel.map((f) => f.key)).toEqual(['first', 'wait2nd', 'second', 'hold', 'enrolled', 'failed']);
+    // 컷 §23 의 여섯째 레인 머리는 「실패」가 아니라 「등록 실패」다
+    expect(out.funnel.map((f) => f.label)).toEqual(['1차 상담', '2차 대기', '2차 상담', '보류', '등록', '등록 실패']);
+    expect(out.funnel.filter((f) => f.funnel).map((f) => f.key)).toEqual(['first', 'wait2nd', 'second', 'hold']);
+  });
+
+  it('등록률은 등록 / 전체다 — 빈 목록이면 0 이고 나눗셈이 터지지 않는다', async () => {
+    expect((await head([])).enrollRate).toBe(0);
+    const some = await head([
+      { stage: 'first' }, { stage: 'first' }, { stage: 'enrolled' },
+    ]);
+    expect(some.enrollRate).toBe(33);
+    expect(some.funnel.find((f) => f.key === 'first')!.count).toBe(2);
+  });
+
+  it('담당 칩은 많은 순이고 담당 없는 줄도 이름을 갖는다 (D-R18)', async () => {
+    const out = await head([
+      { stage: 'first', ownerId: 3, ownerName: '김범준' },
+      { stage: 'hold', ownerId: null, ownerName: null },
+      { stage: 'first', ownerId: 3, ownerName: '김범준' },
+    ]);
+    expect(out.owners.map((o) => [o.name, o.count])).toEqual([['김범준', 2], ['담당 없음', 1]]);
+  });
+
+  it('금액을 못 보는 사람에게는 금액이 null 이고 문장에도 안 실린다 (D-R39)', async () => {
+    const svc = new OpsService({ query: jest.fn().mockResolvedValue([
+      { key: 'unpaid', n: 6, amount: '4006600' },
+      { key: 'noSchedule', n: 9, amount: '0' },
+      { key: 'noInvoice', n: 2, amount: '0' },
+    ]) } as never);
+    const call = (money: boolean) => (svc as unknown as {
+      intakeHead: (l: unknown, m: boolean) => Promise<{ alerts: Array<{ key: string; label: string; amount: number | null }> }>;
+    }).intakeHead([], money);
+
+    const seen = await call(true);
+    expect(seen.alerts.find((a) => a.key === 'unpaid')).toMatchObject({ amount: 4006600 });
+    expect(seen.alerts.find((a) => a.key === 'unpaid')!.label).toContain('₩4,006,600');
+    expect(seen.alerts.find((a) => a.key === 'noSchedule')!.label).toBe('스케줄 미생성 9');
+
+    const hidden = await call(false);
+    expect(hidden.alerts.find((a) => a.key === 'unpaid')).toMatchObject({ amount: null });
+    // 가려야 할 값이 문장 안에 남아 있으면 가린 것이 아니다
+    expect(hidden.alerts.find((a) => a.key === 'unpaid')!.label).not.toContain('4,006,600');
+    expect(hidden.alerts.find((a) => a.key === 'unpaid')!.label).toBe('미수 6명');
   });
 });
