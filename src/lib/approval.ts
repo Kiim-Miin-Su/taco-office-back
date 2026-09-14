@@ -217,7 +217,7 @@ export const AP_STATE_WORDS: Record<ApState, readonly string[]> = {
   // 되돌아온 것 — PLAN.stage 의 rework 가 여기 붙는다
   back: ['rejected', 'rej', 'rework', 'denied', 'no', 'back'],
   // 끝난 것
-  done: ['approved', 'ok', 'done', 'closed', 'applied'],
+  done: ['approved', 'ok', 'done', 'closed', 'applied', 'delivered', 'received'],
   /**
    * 기다리는 것 — 기본값이기도 하다.
    *

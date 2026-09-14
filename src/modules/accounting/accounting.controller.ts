@@ -10,6 +10,7 @@ import {
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
+import { OkDto } from '../../common/http.dto';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AccountingDto, CarryRowDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
@@ -155,10 +156,10 @@ export class AccountingController {
   @Delete('payments/:id')
   @Perm('canMoney')
   @ApiOperation({ summary: '입금 줄 삭제 — 부분 납부(partial) 정정일 때만. 완납은 되돌리지 않는다' })
-  @ApiOkResponse({ description: '{ ok: true }' })
+  @ApiOkResponse({ type: OkDto })
   @ApiConflictResponse({ description: 'code INV_PAID_LOCKED' })
   @ApiNotFoundResponse({ description: '입금 기록 없음' })
-  async removePayment(@Param('id', ParseIntPipe) id: number): Promise<{ ok: true }> {
+  async removePayment(@Param('id', ParseIntPipe) id: number): Promise<OkDto> {
     return this.svc.removePayment(id);
   }
 
@@ -168,7 +169,7 @@ export class AccountingController {
     summary: '법인카드 심사 — 승인(감액 가능·증액 금지)·반려 (A-D3 · v2 §56 법인카드)',
     description: '신청 금액은 placeholder 일 뿐이고 확정 금액은 사람이 넣는다 (대표 지시 2026-08-25). 판정은 전부 서버.',
   })
-  @ApiOkResponse({ type: ExpenseDto })
+  @ApiCreatedResponse({ type: ExpenseDto })
   @ApiBadRequestResponse({ description: 'code AMOUNT_REASON_REQUIRED(사유·확정 금액 누락)' })
   @ApiForbiddenResponse({ description: 'code SELF_APPROVAL_FORBIDDEN(본인 신청 자기 심사)' })
   @ApiUnprocessableEntityResponse({ description: 'code CARD_AMOUNT_EXCEEDS_REQUEST(증액) | CARD_RECEIPT_REQUIRED(영수증 없음)' })

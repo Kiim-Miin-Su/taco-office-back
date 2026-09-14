@@ -135,15 +135,56 @@ export const PNOTIS = [
 
 /** 서가 — 교재 */
 export const LIBS = [
-  { id: 1, code: 'APC-4E',  title: 'AP Chemistry 4th Edition', subKey: 'ap-chem',  level: 'AP',  pages: 620, seTe: 'SE' },
-  { id: 2, code: 'SATM-9',  title: 'SAT Math Practice 9',      subKey: 'sat-math', level: 'SAT', pages: 410, seTe: 'SE' },
-  { id: 3, code: 'SATR-7',  title: 'SAT Reading Drills 7',     subKey: 'sat-read', level: 'SAT', pages: 380, seTe: 'SE' },
-  { id: 4, code: 'WRT-B2',  title: 'Writing Builder 2',        subKey: 'writing',  level: 'B2',  pages: 240, seTe: 'SE' },
-  { id: 5, code: 'MAPM-5',  title: 'MAP Math Level 5',         subKey: 'map-math', level: 'M5',  pages: 300, seTe: 'SE' },
-  { id: 6, code: 'MAPR-5',  title: 'MAP Reading Level 5',      subKey: 'map-read', level: 'M5',  pages: 290, seTe: 'SE' },
-  { id: 7, code: 'VOC-3K',  title: 'Vocab 3000',               subKey: 'vocab',    level: 'ALL', pages: 180, seTe: 'SE' },
-  { id: 8, code: 'APC-4T',  title: 'AP Chemistry 4th (Teacher)', subKey: 'ap-chem', level: 'AP', pages: 700, seTe: 'TE' },
+  { id: 1, code: 'APC-4E',  title: 'AP Chemistry 4th Edition', subKey: 'ap-chem',  level: 'AP',  grade: '11',  pages: 620, seTe: 'SE' },
+  { id: 2, code: 'SATM-9',  title: 'SAT Math Practice 9',      subKey: 'sat-math', level: 'SAT', grade: '11',  pages: 410, seTe: 'SE' },
+  { id: 3, code: 'SATR-7',  title: 'SAT Reading Drills 7',     subKey: 'sat-read', level: 'SAT', grade: '10',  pages: 380, seTe: 'SE' },
+  { id: 4, code: 'WRT-B2',  title: 'Writing Builder 2',        subKey: 'writing',  level: 'B2',  grade: '9',   pages: 240, seTe: 'SE' },
+  { id: 5, code: 'MAPM-5',  title: 'MAP Math Level 5',         subKey: 'map-math', level: 'M5',  grade: '5',   pages: 300, seTe: 'SE' },
+  { id: 6, code: 'MAPR-5',  title: 'MAP Reading Level 5',      subKey: 'map-read', level: 'M5',  grade: '5',   pages: 290, seTe: 'SE' },
+  { id: 7, code: 'VOC-3K',  title: 'Vocab 3000',               subKey: 'vocab',    level: 'ALL', grade: 'ALL', pages: 180, seTe: 'SE' },
+  { id: 8, code: 'APC-4T',  title: 'AP Chemistry 4th (Teacher)', subKey: 'ap-chem', level: 'AP', grade: '11', pages: 700, seTe: 'TE' },
 ];
+
+/**
+ * §39 판 파일 시드. 본문은 외부 주소가 아니라 Neon `file` 행에 저장한다.
+ * 8번 교재의 TE만 의도적으로 비워 두어 원본의 「TE 없음」 경고를 실제 DB 상태로 검증한다.
+ */
+export const BOOK_FILES = LIBS.flatMap((book) => [
+  { id: (book.id - 1) * 2 + 1, libId: book.id, kind: 'lib-se', name: `${book.code}-SE.pdf`, body: `${book.code} student edition seed` },
+  ...(book.id === 8 ? [] : [{ id: (book.id - 1) * 2 + 2, libId: book.id, kind: 'lib-te', name: `${book.code}-TE.pdf`, body: `${book.code} teacher edition seed` }]),
+]);
+
+/** 현재 판 8개 + AP Chemistry의 다음 달 판 1개. 미래 효력 판이 §39 「더 최신 판」 경고를 만든다. */
+export const BOOK_VERSIONS = [
+  { id: 1, libId: 1, edition: '2026.1', fromOffset: -90, seFileId: 1, teFileId: 2 },
+  { id: 2, libId: 1, edition: '2026.2', fromOffset: 30,  seFileId: 1, teFileId: 2 },
+  { id: 3, libId: 2, edition: '2026.1', fromOffset: -80, seFileId: 3, teFileId: 4 },
+  { id: 4, libId: 3, edition: '2026.1', fromOffset: -70, seFileId: 5, teFileId: 6 },
+  { id: 5, libId: 4, edition: '2026.1', fromOffset: -60, seFileId: 7, teFileId: 8 },
+  { id: 6, libId: 5, edition: '2026.1', fromOffset: -50, seFileId: 9, teFileId: 10 },
+  { id: 7, libId: 6, edition: '2026.1', fromOffset: -40, seFileId: 11, teFileId: 12 },
+  { id: 8, libId: 7, edition: '2026.1', fromOffset: -30, seFileId: 13, teFileId: 14 },
+  { id: 9, libId: 8, edition: '2026.1', fromOffset: -20, seFileId: 15, teFileId: null },
+] as const;
+
+/**
+ * §40의 9개 필터 낱말을 모두 포함하는 18행. refId는 reset 뒤 결정적인 LIB/VERS/ISSUE/GUIDE id다.
+ * 화면 문장은 HIST에 복제하지 않고 원본 행을 조인해 만들기 때문에 여기에는 사실 키만 둔다.
+ */
+export const BOOK_HISTORY = [
+  ...Array.from({ length: 7 }, (_, n) => ({ entity: 'issue', refId: n + 1, action: 'book_issue', byId: 3, dayOffset: -n })),
+  { entity: 'issue', refId: 8, action: 'book_drop', byId: 3, dayOffset: -7 },
+  { entity: 'lib', refId: 1, action: 'book_upload', byId: 2, dayOffset: -8 },
+  { entity: 'lib', refId: 2, action: 'book_upload', byId: 2, dayOffset: -9 },
+  { entity: 'vers', refId: 1, action: 'book_upload', byId: 2, dayOffset: -10 },
+  { entity: 'vers', refId: 2, action: 'book_swap', byId: 2, dayOffset: -11 },
+  { entity: 'guide', refId: 1, action: 'guide_write', byId: 7, dayOffset: -12 },
+  { entity: 'guide', refId: 1, action: 'guide_send', byId: 3, dayOffset: -13 },
+  { entity: 'guide', refId: 2, action: 'guide_send', byId: 3, dayOffset: -14 },
+  { entity: 'guide', refId: 3, action: 'guide_ack', byId: 7, dayOffset: -15 },
+  { entity: 'guide', refId: 4, action: 'teacher_req', byId: 7, dayOffset: -16 },
+  { entity: 'guide', refId: 5, action: 'teacher_swap', byId: 2, dayOffset: -17 },
+] as const;
 
 /** 교재 지급 — 안 나간 것이 §38 트래킹 보드에 뜬다 */
 export const ISSUES = [

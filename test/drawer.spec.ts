@@ -205,11 +205,16 @@ d('우측 서랍 — §14~§21', () => {
 
   it('여덟 칸이 한 응답에 다 온다', async () => {
     const r = await get('/drawer', MANAGER).expect(200);
-    ['approvals', 'todos', 'notis', 'members', 'tzGroups', 'kinds', 'changeReqs', 'zoomAccounts']
+    ['approvals', 'todos', 'notis', 'members', 'tzGroups', 'kinds', 'changeReqs', 'zoomAccounts', 'workSummary']
       .forEach((k) => expect(r.body).toHaveProperty(k));
     expect(r.body.tz).toBe('Asia/Seoul');            // 관리자 화면은 KST 고정 (D-R12)
     expect(r.body.members.length).toBeGreaterThan(0);
     expect(r.body.kinds.length).toBeGreaterThan(0);
+    expect(r.body.workSummary.items.map((item: { key: string }) => item.key)).toEqual([
+      'schedule', 'consulting', 'accounting', 'books', 'guides', 'zoom',
+    ]);
+    expect(r.body.workSummary.total).toBe(r.body.workSummary.items.reduce((sum: number, item: { count: number }) => sum + item.count, 0));
+    expect(r.body.workSummary.now).toBeLessThanOrEqual(r.body.workSummary.total);
   });
 
   it('D-R12 · 내려가는 시각은 전부 KST 오프셋을 달고 온다', async () => {

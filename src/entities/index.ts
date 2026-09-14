@@ -27,6 +27,8 @@ export * from './gpa-alloc.entity';
 export * from './gpa-cycle.entity';
 export * from './gpa-use.entity';
 export * from './gpapack.entity';
+export * from './gpapack-student.entity';
+export * from './gpapack-lib.entity';
 export * from './gpasvc.entity';
 export * from './gtpl.entity';
 export * from './guide.entity';
@@ -96,6 +98,8 @@ import {
   GpaCycle,
   GpaUse,
   Gpapack,
+  GpapackStudent,
+  GpapackLib,
   Gpasvc,
   Gtpl,
   Guide,
@@ -167,6 +171,8 @@ export const ENTITIES = [
   GpaCycle,
   GpaUse,
   Gpapack,
+  GpapackStudent,
+  GpapackLib,
   Gpasvc,
   Gtpl,
   Guide,

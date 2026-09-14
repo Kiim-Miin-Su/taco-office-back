@@ -243,6 +243,21 @@ export class ZoomAccountDto {
   @ApiProperty({ description: '같은 시간에 두 수업에 배정된 건수 — 0이어야 한다' }) overlaps!: number;
 }
 
+/** 개발명세서 공용 「할 일」 바의 한 도메인 — 건수와 문구는 서버가 만든다. */
+export class WorkSummaryItemDto {
+  @ApiProperty({ enum: ['schedule', 'consulting', 'accounting', 'books', 'guides', 'zoom'] }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() count!: number;
+  @ApiProperty() go!: string;
+}
+
+/** 도메인별 미처리 건수의 단일 진실원. 화면은 합계나 분류를 다시 세지 않는다. */
+export class WorkSummaryDto {
+  @ApiProperty() total!: number;
+  @ApiProperty({ description: '즉시 확인 대상 — 승인 대기 + 기한 초과, total 이하' }) now!: number;
+  @ApiProperty({ type: [WorkSummaryItemDto] }) items!: WorkSummaryItemDto[];
+}
+
 /** 서랍 하나가 여덟 칸을 함께 내려준다 — 열 때마다 여덟 번 왕복하지 않는다 */
 export class DrawerDto {
   @ApiProperty({ type: ApFlowDto, description: '§14 승인 대기함' }) approvals!: ApFlowDto;
@@ -258,6 +273,7 @@ export class DrawerDto {
   @ApiProperty({ type: [KindRowDto], description: '§18 수업 종류' }) kinds!: KindRowDto[];
   @ApiProperty({ type: [ChangeReqDto], description: '§20 변경 요청' }) changeReqs!: ChangeReqDto[];
   @ApiProperty({ type: [ZoomAccountDto], description: '§21 줌 계정' }) zoomAccounts!: ZoomAccountDto[];
+  @ApiProperty({ type: WorkSummaryDto, description: '§38~§41 등 관리자 화면 공용 할 일 요약' }) workSummary!: WorkSummaryDto;
   @ApiProperty({ description: '관리자 화면의 모든 시각은 KST 다 (D-R12)' }) tz!: string;
 }
 

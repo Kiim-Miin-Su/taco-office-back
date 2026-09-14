@@ -10,6 +10,7 @@ import {
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
+import { OkDto } from '../../common/http.dto';
 import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
   TeacherDiagCreateDto, TeacherGuideDiagDto,
@@ -131,13 +132,13 @@ export class TeacherController {
 
   @Delete('unavailable/:id')
   @ApiOperation({ summary: '불가 시간 삭제 — 열린 날짜(오늘+7 이후)의 본인 등록만 (UNAV_LOCKED)' })
-  @ApiOkResponse({ description: '{ ok: true }' })
+  @ApiOkResponse({ type: OkDto })
   @ApiConflictResponse({ description: 'code UNAV_LOCKED — 마감분·legacy 는 관리자 조정' })
   @ApiForbiddenResponse({ description: '강사 전용' })
   async deleteUnavailable(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
-  ): Promise<{ ok: true }> {
+  ): Promise<OkDto> {
     this.assertTeacher(user);
     return this.svc.deleteUnavailable(user.id, id);
   }

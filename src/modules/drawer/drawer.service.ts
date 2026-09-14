@@ -189,19 +189,23 @@ export class DrawerService {
       });
     }
 
-    // 다섯 번째 — 자료 요청 (§82). 올린 사람 컬럼이 없어 byId 는 없다.
+    // 다섯 번째 — 자료 요청 (§41). 다학생은 한 줄의 이름으로 모으고 작성자를 보존한다.
     for (const r of await this.q(
-      `SELECT g.id, g.pack_type, g.state, g.detail, s.name AS stu_name,
+      `SELECT g.id, g.pack_type, g.state, g.memo, g.created_by,
+              string_agg(s.name, ' · ' ORDER BY s.name) AS stu_names,
               ${kstAt(`g.created_at`)} AS at
-         FROM gpapack g LEFT JOIN stu s ON s.id = g.student_id`,
+         FROM gpapack g
+         LEFT JOIN gpapack_student gs ON gs.gpapack_id = g.id
+         LEFT JOIN stu s ON s.id = gs.student_id
+        GROUP BY g.id`,
     )) {
       rows.push({
         kind: 'gpapack', id: Number(r.id),
-        title: str(r.stu_name) ?? '학생',
-        sub: [labelOf(GPAPACK_TYPE_LABEL, String(r.pack_type)), str(r.detail)]
+        title: str(r.stu_names) ?? '학생',
+        sub: [labelOf(GPAPACK_TYPE_LABEL, String(r.pack_type)), str(r.memo)]
           .filter(Boolean).join(' · '),
-        byId: null, byName: null, at: String(r.at),
-        state: toApState(str(r.state)), why: null, go: '/consulting',
+        byId: num(r.created_by), byName: null, at: String(r.at),
+        state: toApState(str(r.state)), why: null, go: '/books',
       });
     }
 
@@ -331,11 +335,32 @@ export class DrawerService {
       active: r.active === true, assigned: Number(r.assigned), overlaps: Number(r.overlaps),
     }));
 
+    /* §38~§41 공용 「할 일」 바. 화면이 REQ/TODO/GUIDE/ZACC를 다시 세면
+       같은 업무가 탭마다 다른 숫자가 된다. 이 응답 한 곳에서만 분류한다. */
+    const [guideOpen] = await this.q<{ n: string }>(
+      `SELECT count(*)::text n FROM guide WHERE state <> 'read'::guide_state_t`,
+    );
+    const openTodos = todos.filter((todo) => !todo.done);
+    const workItems = [
+      { key: 'schedule', label: '스케줄', count: changeReqs.filter((row) => ['open', 'pending', 'wait'].includes(row.state)).length, go: '/schedule' },
+      { key: 'consulting', label: '상담', count: openTodos.filter((todo) => todo.src === 'consulting').length, go: '/consulting' },
+      { key: 'accounting', label: '회계', count: approvals.inbox.filter((row) => row.go === '/accounting').length, go: '/accounting' },
+      { key: 'books', label: '교재', count: approvals.inbox.filter((row) => row.go === '/books').length, go: '/books' },
+      { key: 'guides', label: '수업 안내', count: Number(guideOpen?.n ?? 0), go: '/guides' },
+      { key: 'zoom', label: '줌 계정', count: zoomAccounts.reduce((sum, row) => sum + row.overlaps, 0), go: '/zoom' },
+    ];
+    const workTotal = workItems.reduce((sum, item) => sum + item.count, 0);
+    const workSummary = {
+      total: workTotal,
+      now: Math.min(workTotal, approvals.inboxCount + openTodos.filter((todo) => todo.overdueDays > 0).length),
+      items: workItems,
+    };
+
     return {
       approvals, todos, notis, notiCategories,
       notiWindowDays: windowDays,
       notiOlderCount: Number(older?.n ?? 0),
-      members, memberGroups, tzGroups, kinds, changeReqs, zoomAccounts,
+      members, memberGroups, tzGroups, kinds, changeReqs, zoomAccounts, workSummary,
       tz: KST,
     };
   }

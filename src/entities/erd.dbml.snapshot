@@ -1,10 +1,56 @@
+/** @file-guide
+ * 목적: erd.dbml (schema)
+ * 책임/재사용: 영속 컬럼/참조/제약 설계의 책임을 갖는다. DTO 파생값/UI 상태와 구분하고 entity·migration·실제 DB를 함께 검증한다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
 // ============================================================================
 // TACO ERP — 통합 ERD
-// version : 4.11 (2026-09-07) — TBO-47C 컨설팅 stage/step/session CHECK · 회차 순번 UNIQUE
+// TBO-50 C77 최종 정합 감사 (2026-09-14): 기존 migration 1759500000000의 CARRY가 DBML 두 정본에서 빠진 것을 교정. entity·migration·DBML 71표로 일치하며 C77 신규 교재 3표와 별개인 기존 §54 원장이다.
+// TBO-50 C36-a 검수 (2026-09-12): 분납 입금은 **기존 형상만으로 성립**한다 — INV.paid_amount(D-R37)·PAY.reason·CHECK inv_paid_le_amount 재사용. 누계는 저장된 합이 아니라 그 순간 PAY 줄의 합을 서버가 다시 세어 쓴다. 새 표·컬럼·제약·migration 0 · v4.16/66표 유지(3곳 동일 확인). 초과 입금(환불·조정)과 EXPENSE 쪽 A-D3/A-D5 는 C36-b.
+// TBO-48 D3-i-c (2026-09-11): /exec from/to는 기존 집계 SQL date 인자이며 영속 컬럼이 아니다. 공용 달력 guard/DTO로 잘못된 날짜를 SQL 전에400 거절, 윤년 동일일 실제 조회/RPT 건수 불변 검수. v4.11/64표/migration14 유지; RPT 주기·6영역 쓰기는 별도 미완.
+// TBO-48 D3-i-b (2026-09-11): 기존 PAY.amount/paid_on/method NULL을 실제 HTTP/로컬 PG readback으로 검수하고 응답/생성 DTO/표시만 교정. 0/양수·금액 가림 보존, 컬럼/제약/migration 추가0·v4.11/64표 유지. 입금 쓰기와 운영 레코드 전수는 별도 미완.
+// TBO-48 D3-i-a (2026-09-11): 조회8모듈+서랍 영속/파생·누락 CRUD 정적 감사. PAY.amount/paid_on NULL 의미 손실과 PLAN/CPL 상태 어휘 드리프트를 report/DTO-INPUT-GUARD-DB-AUDIT-2026-09-02.md I-01/04로 추적. 이번 컬럼/제약/목표 어휘 수정0·v4.11/64표 유지, 실제 레코드/HTTP 교정은 후속.
+// TBO-48 D3-h3 (2026-09-11): frontend /auth/me 재검증→현재 STAFF role/예외→최종 can* 소비 연결. session generation/fingerprint는 UI 생명주기이며 DB 컬럼 아님. v4.11/64표·STAFF18·migration14·추가 컬럼/제약0, 운영 DB 적용/세션 영속은 미완.
+// TBO-48 D3-h2 (2026-09-11): 현재 STAFF role/5 nullable 예외/active를 보호 API와 Me/refresh가 공유. 인증 SELECT9필드·비밀번호/연락처 제외, STAFF18·v4.11/64표/migration14 불변·추가 컬럼/제약0. 요청 인증 시점 검증이며 동시 변경의 commit 직전 회수/영속 세션 표는 미구현.
+// TBO-48 D3-h1 (2026-09-11): JWT subject의 안전 정수 STAFF.id·active/password_hash 조회 검증, DTO 제약/쿠키 인증 문서 일치. 요청 세대는 프론트 생명주기 상태이며 DB 컬럼 아님. STAFF18·v4.11/64표/migration14·추가 컬럼/제약0. Refresh 영속 세션/서버 logout 회수·현재 권한 검증은 별도 미완.
+// TBO-48 D3-g2f (2026-09-11): SER_OCC.canceled와 ATT.result 취소를 신규 발송에서 동일 제외. REP/REP_STU 새 미작성 유입 검증·보존 RSEND/PDFLOG 재발송 확인. 기존 컬럼/제약만 재사용, 추가 필드/컬럼/migration0·v4.11/64표/migration14 유지. 모든 직접 SQL·운영 레코드 일치 보장 아님.
+// TBO-48 D3-g2e (2026-09-11): 출력 revision은 파일명/본문의 파생 SHA-256으로 영속 컬럼 아님. 준비 SER→REP 잠금 후 현재 값 재검증, RSEND/PDFLOG transaction·requestKey UNIQUE·재발송 스냅샷 재사용. 신규 컬럼/제약/migration0·v4.11/64표/migration14 유지; 운영 적용/준비 집합 밖 유입은 별도.
+// TBO-48 D3-g2d (2026-09-11): 목록/발송 실제일은 SER_OCC.span의 KST date, 상세/쓰기 키는 REP.on_date, 보낸 이력/재발송은 RSEND.on_date/body 스냅샷. 기존 컬럼 재사용·과거 이력 재작성0. v4.11/64표/migration14·entity/컬럼/제약 불변; 발송 교차 경합/운영 레코드는 별도 검증.
+// TBO-48 D3-g2c (2026-09-11): ReportRow startMin/endMin은 SER_OCC.span의 KST 파생값(투영 없으면 null, 자정 종료1440). REP.body 입력3키와 RSEND.body 문자열 컬럼 재사용, 기존 이력 재작성0. v4.11/64표/migration14·entity/컬럼/제약 변경 없음.
+// TBO-48 D3-g2b (2026-09-11): 리포트 write/review는 SER→REP 잠금 후 SER_OCC/ATT·담당을 판정, REP.body/state·LOG/NOTI를 같은 transaction에서 기록. v4.11/64표/migration14·컬럼/제약 불변. 원본 종료 시각 표시는 후속 파생 응답 검수이며 신규 DB 컬럼이 아님.
+// TBO-48 D3-g2a (2026-09-11): 출결 PUT/DELETE가 SER 부모 잠금→새 SER_OCC 판정→ATT/LOG 순서를 공유. 재투영404/새 불가409 교정, DB 형상·v4.11/64표/migration14 불변. 리포트 교차 경합은 D3-g2b 후속.
+// TBO-48 D3-g1 (2026-09-11): 동시 mutation 복구 묶음은 frontend 임시 상태이며 DB 컬럼이 아니다. SER/EXC/SER_OCC·v4.11·64표·migration14/DTO/OpenAPI 형상 변경 없음. 출결/리포트 잠금 상호작용은 D3-g2 후속 검증.
+// TBO-48 D3-f (2026-09-11): 분할/삭제 후 원래 onDate의 ruleHits를 backend 잠금 후 공용 검증. SER/EXC 유령 쓰기 거절, DB 형상·v4.11·64표·migration14 불변. 직접 SQL 교차 행을 강제하는 새 DB 제약 아님.
+// TBO-48 D3-e (2026-09-11): SER id-ordered NO KEY UPDATE를 기존 쓰기 transaction 최초 읽기에 적용. FK KEY SHARE 호환·SER/EXC 값 손실/투영 회귀 검수. v4.11·64표·컬럼·migration14 불변, 직접 자식 SQL/교차 행·운영 적용 보장 아님.
+// TBO-48 D3-d2 (2026-09-11): 기존 시간 규약을 migration14 CHECK3개/세 entity metadata로 강제. 로컬 preflight SER/EXC/span0·up/down/재적용 검증. 컬럼/64표/v4.11 유지, 직접 교차 행 상속·투영 동기화와 운영 적용은 별도.
+// TBO-48 D3-d1 (2026-09-11): rrule 신규 입력 전체 문법/정수 간격 검증 후 정규화. 로컬 SER24 malformed/time0, EXC8 명시 시각 범위0. 실제 반복/시간 CHECK 없음(D3-d2), 기존 레코드 자동 교정0·v4.11/64표/추가 migration0.
+// TBO-48 D3-c (2026-09-11): query5필드/path는 SER_OCC KST 범위·자원 투영·SER_STU EXISTS·SER/회차 키에 대응. DTO/OpenAPI/생성 타입 정렬, v4.11·64표·컬럼/추가 migration 불변. 로컬 migration13 검증과 운영 적용을 구분한다.
+// TBO-48 D3-b2b (2026-09-11): v4.11 목표 참조/컬럼 불변. migration13으로 4표12FK를 격리DB에 적용·up/down/reapply 및 entity metadata 검증. 즉시 NO ACTION/자식 우선 삭제. 설정된 원격DB 읽기전용 고아0/FK0/12migrations, 운영 대상 일치·직접 연결 확인/실제 적용은 후속. 범위 CHECK 별도.
+// TBO-48 D3-b2a (2026-09-11): SER/SER_STU/EXC/EXC_STU_OUT 참조12개를 격리DB에 직접 대조: 고아0/FK0. 제품 공통 tx 참조 검사+KEY SHARE 구현, 실제 FK와 persist의 부모/자식 삭제 순서 검증은 D3-b2b. v4.11·컬럼·migration·운영DB 변경0.
+// TBO-48 D3-b1 검수 (2026-09-11): SER 입력12필드와 varchar16/20/80/80을 DTO/OpenAPI·실제 migration 격리DB에 대조. SER/SER_STU/EXC의 아래 참조10개와 달리 실제 FK0개임을 확인(D3-b2 우선). 새 컬럼/migration/운영DB 접근0, v4.11 유지.
+// TBO-48 C5-a 검수 (2026-09-11): CONS10/CONS_SESS9컬럼 및 stage 3종/step 5단계 제약을 DTO13/8/2필드와 대조. 전체 선택·건수는 UI 파생이므로 새 컬럼0. v4.11·64표·entity/migration/운영 DB 형상 변경 없음.
+// TBO-48F-3a3b-B1 (2026-09-10): LEAD9컬럼 유지, student_id/owner_id를 기존 조회 DTO에 추가하는 연결 청크. 신규 표/migration/운영 DB 적용0. ownerName/ageDays는 투영, FQ/FSTOP/Can edit는 UI·권한 파생이며 컬럼이 아님. FK 누락은 아래 NOTE의 미완 경계 참조.
+// TBO-48F-3a1 검수 (2026-09-09): LEAD9컬럼≠LeadDto9필드(담당명·경과일 투영). ERD student_id/owner_id FK는 migration에 없음. 유입/학년/단계시각/배치/재연락/실패이력·전이/등록 쓰기 계약은 후속. UI검색 상태를 DB컬럼으로 만들지 않음. v4.11·64표·제품/migration/live DB 변경0.
+// TBO-48F-11M-e1 검수 (2026-09-09): SUGGESTION 9컬럼/분류4/상태3/인덱스는 entity·init migration과 일치. ERD staff_id/reply_by FK는 실제 migration에 없으며 본문/답변 정합성·월3회 원자적 제한·본인 API는 제품 후속. live DB 미조회, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경0.
+// TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
+// TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
+// TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
+// version : 4.19 (2026-09-14) — TBO-50 C77 교재/판/자료전달 원장과 Neon FILE 정합화
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
 // engine  : Neon Postgres · NestJS + TypeORM
+// TBO-48B-1 검수: 강사 목록/리포트 공용 소비만 변경. DB 형상·v4.11·64표·11 migrations 변경 없음.
+// TBO-48F-2b-1 검수 (2026-09-08): Figma 주간/월간 표본·문서만 변경. DB 형상·v4.11·64표 변경 없음.
+// TBO-48F-A 검수 (2026-09-08): Figma 보관 파일 분리·명칭/문서만 변경. DB 형상·v4.11·64표 변경 없음.
+// TBO-48F-G 검수 (2026-09-08): 현재 웹/모바일 묶음·페이지 이동만 변경. input/DTO/guard/DB 형상 변경0.
+// TBO-48F-2b-2/C/T1 검수 (2026-09-08): Figma 개인표·접이식·강사 홈/캘린더만 변경. input/DTO/guard/DB·v4.11·64표 변경 없음.
+// TBO-48F-2b-3 검수 (2026-09-08): Figma §12 원본 상세만 교정. 준비 fact/학생 통계 API는 R3 후속, input/DTO/guard/DB 형상 변경0.
+// TBO-48F-I 검수 (2026-09-09): 메뉴 아이콘/선택 상태의 Figma 표현만 변경, input/DTO/guard/DB 형상 변경0.
+// TBO-48F-11M-a 검수 (2026-09-09): UNAV cycle+dow만으로 2주 내 같은 요일을 구별할 수 없음. 날짜 식별/소유권/마감 N-20 계약은 후속, 형상 변경0.
+// TBO-48F-11M-b1 검수 (2026-09-09): REP.body 3키/본문·검토 CHECK 재사용. REP.lang은 존재하나 언어 쓰기 DTO는 후속, 종료시각은 응답 투영 갭. Figma 기본 작성 화면을 DB 구현 추가로 세지 않으며 형상 변경0.
+// TBO-48F-G2 검수 (2026-09-09): Figma 역할별 현행·공용 부품·모바일 모음. 기존 canMoney flag 재사용, input/DTO/guard/DB 형상 변경0.
 // ----------------------------------------------------------------------------
 // v2.2 → v3.0  — 개발 명세서 어휘로 전면 재편
 //   원칙: 명세서의 전역 배열 이름을 테이블 이름으로 **그대로** 쓴다.
@@ -164,7 +210,16 @@ Table LEAD {
   stop_at     varchar(16) [note: '실패 시 중단 지점']
   reason      text
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 18건. 어느 단계에서 멈췄는지로 분류한다 (§24).'
+  Note: '''
+  시드 18건. 어느 단계에서 멈췄는지로 분류한다 (§24).
+  48F-3a3b-B1: id/student_id/name/school/owner_id/stage/stop_at/reason/created_at 9컬럼을 기존 entity/init migration과 대조.
+  조회 LeadDto는 studentId/ownerId를 포함하고 ownerName(STAFF join)/ageDays(KST 접수 경과일)를 파생한다.
+  48F-3a3c-C1: FQ는 name/school/ownerName/reason의 로컬 검색이다. 검색어/선택 상태는 비영속이며 컬럼 추가0.
+  fail.from/at{} 대응은 N-25 채택(§4-17 · C35)으로 종결 — from=fail_from(전이 순간 서버 라이브 기록),
+  at 역순=LEAD_STAGE_LOG(id 단조) 역순 판정(failed 제외). 레거시 stop_at 추정 이관 없음 — 미분류 보존.
+  created_at은 실패일이 아니다. 실패 사건·재연락 기록·당시 배치안의 영속 계약은 후속이며 Figma 표본을 레코드로 세지 않는다.
+  위 student_id/owner_id ref는 목표 FK다. init migration에는 실제 FK가 없으며 이번에 운영 DB 무결성을 검증하거나 적용하지 않았다.
+  '''
 }
 
 Table LEAD_STAGE_LOG {
@@ -251,7 +306,7 @@ Table SER {
   mode          class_mode_t[not null]
   start_min     smallint    [not null, note: '0~1439 분 단위 정수']
   end_min       smallint    [not null]
-  rrule         varchar(80) [not null, note: '반복 규칙. 형식은 lib/recurrence.ts 의 formatRule() 이 정한다 — ONCE | DAILY[/n] | WEEKLY:MO,WE[/n]. 다른 형식으로 넣으면 parseRule 이 days:[] 를 내고 회차가 통째로 사라진다']
+  rrule         varchar(80) [not null, note: '반복 규칙. ONCE | DAILY[/n] | WEEKLY:MO,WE[/n]. 새 API 입력은 parseRuleInput의 전체 문법·양의 안전한 정수 간격 검증 후 formatRule로 정규화한다. 과거 읽기 parser와 직접 DB 쓰기 CHECK는 별도이며 무결성 완료를 뜻하지 않는다']
   from_date     date        [not null]
   to_date       date
   title         varchar(80)
@@ -260,6 +315,7 @@ Table SER {
   indexes { (from_date, to_date) (teacher_id) (room_id) }
   Note: '''
   일정 **원본**. 시드 35건. 정기 수업이 대부분이라 회차마다 행을 만들지 않는다.
+  ser_time_check: start 0~1439/end 1~1440/길이10~480분. 이력 보존 취소를 위해 to_date<from_date를 금지하지 않는다.
   그날 목록은 occ(date) = SER 반복 규칙 + EXC 로 만든다 (D-2).
   겹치면 저장이 막힌다 (D-R1).
   '''
@@ -293,6 +349,7 @@ Table EXC {
   그날만 다른 것. 시드 7건 (강사 교체 실측 시 7→19).
   nullable FK만으로는 상속과 명시적 미지정을 구분할 수 없어 *_set 플래그를 함께 쓴다 (TBO-44D-2).
   CHECK: teacher_set OR teacher_id IS NULL · room_set OR room_id IS NULL.
+  exc_time_check: 명시 start/end 범위 및 양쪽 명시 시 길이10~480분. null 상속 결과는 API 최종 상태 검사, DB 직접 부모 변경 보장은 별도.
   강사를 바꾸면 EXC + GUIDE + PNOTI + ISSUE 가 동시에 움직인다.
   그날 명단은 occRaw() 가 EXC_STU_OUT 을 걸러 만든다 (D-R21).
   '''
@@ -520,7 +577,20 @@ Table LIB {
   grade       varchar(10)
   pages       smallint
   se_te       varchar(4)  [note: 'SE 학생용 · TE 교사용']
-  Note: '교재. 시드 14건. 카드에 코드·쪽수·배부 횟수·판·SE/TE 표시.'
+  Note: '교재. 시드 8건. 카드에 코드·쪽수·배부 횟수·판·SE/TE 표시.'
+}
+
+Table FILE {
+  id          bigserial   [pk]
+  kind        varchar(24) [not null, note: '8개 파일 도메인 CHECK. raw 다운로드 권한 판정의 입력']
+  name        varchar(200)[not null]
+  mime        varchar(100)[not null, note: '클라이언트 입력이 아니라 서버가 파일 이름으로 판정']
+  bytes       int         [not null]
+  sha256      char(64)    [not null]
+  data        bytea       [not null]
+  uploaded_by bigint      [ref: > STAFF.id]
+  uploaded_at timestamptz [not null, default: `now()`]
+  Note: 'Neon 파일 본문. 원본 3MB(base64 JSON 약 4MB)·실제 bytes·sha256 형식은 migration CHECK. 시드 15건.'
 }
 
 Table VERS {
@@ -529,17 +599,30 @@ Table VERS {
   edition     varchar(20) [not null]
   file_url    text
   from_date   date
-  Note: '교재 판. 시드 2건.'
+  activated_at timestamptz [not null, default: `now()`, note: '같은 효력일에서 마지막으로 고른 판']
+  se_file_id  bigint      [ref: > FILE.id]
+  te_file_id  bigint      [ref: > FILE.id]
+  indexes {
+    (lib_id, edition) [unique, name: 'vers_lib_edition_unique']
+    (lib_id, id) [unique, name: 'vers_lib_id_unique']
+  }
+  Note: '교재 판. 판 이름은 교재 안에서 유일하며 trigger가 SE/TE FILE.kind까지 검증한다. file_url은 레거시 읽기 호환 전용. 시드 9건.'
 }
 
 Table ISSUE {
   id          bigserial   [pk]
   lib_id      bigint      [not null, ref: > LIB.id]
-  vers_id     bigint      [ref: > VERS.id]
+  vers_id     bigint      [note: 'nullable. (lib_id,vers_id) 복합 FK로 같은 교재의 판만 허용']
   student_id  bigint      [not null, ref: > STU.id]
-  issued_on   date        [not null]
+  issued_on   date
   returned_on date
-  Note: '교재 배부. 시드 5건. 학생마다 어디까지 갔는지 트래킹 보드에 표시.'
+  state       varchar(12) [not null, default: 'ok', note: 'wait | auto | ok | returned']
+  progress_page int       [note: '숙제 페이지 기준 현재 쪽수. 퍼센트는 LIB.pages로 파생']
+  requested_by bigint     [ref: > STAFF.id]
+  approved_by bigint      [ref: > STAFF.id]
+  delivered_at timestamptz
+  indexes { (student_id, lib_id) [name: 'issue_active_book_unique', note: 'returned 제외 partial unique는 migration'] }
+  Note: '교재 배부·회수·진도 원장. 상태/시각 순서와 progress>=0은 migration CHECK.'
 }
 
 Table HIST {
@@ -554,12 +637,35 @@ Table HIST {
 
 Table GPAPACK {
   id          bigserial   [pk]
-  student_id  bigint      [not null, ref: > STU.id]
   pack_type   varchar(12) [not null, note: 'exam(시험 대비) | self(자습) — 두 가지만 받는다']
-  detail      text
-  state       varchar(12) [not null, default: 'open']
+  title       varchar(120)[not null]
+  memo        text
+  state       varchar(12) [not null, default: 'pending', note: 'pending | delivered | received']
+  effective_on date       [note: '신규·수정행 필수. 레거시 null 추정 이관 금지용 NOT VALID CHECK']
+  coordinator_id bigint   [ref: > STAFF.id, note: '신규·수정행 필수. 레거시 null 추정 이관 금지용 NOT VALID CHECK']
+  created_by  bigint      [ref: > STAFF.id]
+  delivered_by bigint     [ref: > STAFF.id]
+  delivered_at timestamptz
+  received_by bigint      [ref: > STAFF.id]
+  received_at timestamptz
   created_at  timestamptz [not null, default: `now()`]
-  Note: '자료 요청. 시드 2건.'
+  updated_at  timestamptz [not null, default: `now()`]
+  Note: '§41 자료 전달 부모. 종류와 전달→수령 순서는 migration CHECK.'
+}
+
+Table GPAPACK_STUDENT {
+  gpapack_id  bigint      [not null, ref: > GPAPACK.id]
+  student_id  bigint      [not null, ref: > STU.id]
+  indexes { (gpapack_id, student_id) [pk] }
+  Note: '자료 전달의 다학생 명단.'
+}
+
+Table GPAPACK_LIB {
+  gpapack_id  bigint      [not null, ref: > GPAPACK.id]
+  lib_id      bigint      [not null, ref: > LIB.id]
+  vers_id     bigint      [note: '만들기/수정 시 적용일의 판 스냅샷. (lib_id,vers_id) 복합 FK']
+  indexes { (gpapack_id, lib_id) [pk] }
+  Note: '자료 전달의 다교재 명단. 현재 판이 바뀌어도 과거 전달 파일은 바뀌지 않는다.'
 }
 
 // ─────────────────────────────────────────────────────────────── 회계
@@ -611,7 +717,7 @@ Table INV {
   student_id  bigint      [not null, ref: > STU.id]
   enr_id      bigint      [ref: > ENR.id, note: '수강 내역에서 자동 생성 가능']
   year_month  varchar(7)  [not null]
-  inv_type    varchar(16) [not null, note: '청구 종류 6종 — 종류마다 결제 수단이 제한된다']
+  inv_type    varchar(16) [not null, note: '청구 종류 **넷** — tuition · consulting · diag_intake · exam_fee (대표 결정 2026-09-13 · N-37 · §57 「그 밖의 수입」 세 줄 + 수업료). inv_type_check NOT VALID 로 굳혔다. 예전 주석의 「6종」은 근거가 없었다']
   title       varchar(80) [not null]
   amount      int         [not null, note: '들어와야 할 금액. 회계 화면에서 placeholder 로 쓰인다']
   detail      jsonb
@@ -625,8 +731,13 @@ Table INV {
   paid_at     timestamptz
   proof_url   text        [note: '입금 증빙 — Vercel Blob (D-R42)']
   memo        varchar(500)
+  cs_id       bigint      [ref: > CONS.id, note: '어느 컨설팅에서 전환된 청구서인가 — 원문 §28 「INV 에 csid 로 연결」. 연결이지 소유가 아니다: 납부 기록은 CONS_PAY 에 그대로 남는다']
 
-  indexes { (student_id, year_month) (state, due_on) }
+  indexes {
+    (student_id, year_month)
+    (state, due_on)
+    (cs_id) [unique, name: 'inv_cs_id_live_uniq', note: 'cs_id IS NOT NULL AND state <> void — 한 컨설팅에 살아 있는 청구서는 하나']
+  }
   Note: '''
   시드 6건 ₩9,720,000. aging() 이 기한 경과일수로 미수를 분류한다.
 
@@ -675,6 +786,28 @@ Table PAY {
   '''
 }
 
+Table CARRY {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id]
+  from_month  text        [not null, note: '못 해 준 수업이 있던 달 — YYYY-MM']
+  to_month    text        [not null, note: '넘겨 받는 달 — YYYY-MM']
+  amount      int         [not null]
+  sessions    int         [not null, note: '못 해 준 회차 수']
+  inv_id      bigint      [ref: > INV.id, note: '근거가 된 완납 청구서']
+  by_id       bigint      [not null, ref: > STAFF.id]
+  at          timestamptz [not null, default: `now()`]
+
+  indexes {
+    (student_id, from_month) [unique, name: 'carry_once']
+    (to_month) [name: 'carry_to_month']
+  }
+  Note: '''
+  §54 이월 처리 원장. 결제됐지만 정해진 시수를 채우지 못한 수업만 다음 달로 넘긴다.
+  carry_month_shape는 두 달을 YYYY-MM으로 제한하고, carry_forward는 다음 달이 이전 달보다
+  뒤인지 확인하며, carry_positive는 금액과 회차가 모두 양수인지 강제한다 (migration 1759500000000).
+  '''
+}
+
 Table PAYOUT {
   id          bigserial   [pk]
   staff_id    bigint      [not null, ref: > STAFF.id]
@@ -715,7 +848,7 @@ Table PAYOUT_LINE {
 Table EXPENSE {
   id          bigserial   [pk]
   spend_on    date        [not null]
-  category    varchar(30) [not null, note: '임대료 · 부대비용 · 도서교재비 · 소모품비 · 접대비 · 지급수수료 (A-D5)']
+  category    varchar(30) [not null, note: 'rent 임대료 · book 도서교재비 · supply 소모품비 · ent 접대비 · fee 지급수수료 · etc 기타 — 간이 5분류(A-D5) + 임대료. CHECK expense_category_code']
   merchant    varchar(80)
   purpose     text
   requested_amount int    [note: '법인카드 — 직원이 올린 금액. placeholder 로 쓰인다']
@@ -723,7 +856,7 @@ Table EXPENSE {
   reason      text        [note: '신청액과 다를 때 필수']
   receipt_url text        [note: '없으면 승인 불가']
   requester_id bigint     [ref: > STAFF.id]
-  state       varchar(12) [not null, default: 'submitted', note: 'submitted | approved | rejected']
+  state       varchar(12) [not null, default: 'pending', note: 'pending | approved | rejected — CHECK expense_state_words. 대표 보고는 approved 만 센다']
   reviewer_id bigint      [ref: > STAFF.id]
   reviewed_at timestamptz
   created_at  timestamptz [not null, default: `now()`]
@@ -731,8 +864,16 @@ Table EXPENSE {
   indexes { (state, created_at) (spend_on) }
   Note: '''
   명세서의 EXPENSE(지출)에 **법인카드 승인 흐름을 얹었다** — 별도 표를 만들지 않는다.
-  requester_id = reviewer_id 는 차단 (본인 신청 자기 승인 금지).
-  amount > requested_amount 는 차단 (증액은 재신청 — A-D3).
+
+  2026-09-12 (C36-b) — 여기 적혀만 있던 규칙을 **DB 가 거부하도록** 옮겼다
+  (migration 1758500000000 · A-D3·A-D5 채택). 표에는 제약이 하나도 없었고
+  실제로는 무엇이든 들어갔다.
+    expense_category_code       분류는 코드표 6개뿐 (간이 5분류 + 임대료)
+    expense_state_words         pending | approved | rejected
+    expense_amount_le_requested amount <= requested_amount — 증액은 재신청 (A-D3)
+    expense_no_self_review      reviewer_id <> requester_id — 본인 신청 자기 승인 금지
+  레거시 misc 는 etc 로 **낱말만** 옮겼다(뜻 동일 · 1756800000000 선례). 추정 이관이 아니다.
+  카드 **신청** 화면은 원본 61컷에 없어 미배선 — 이번 청크는 승인/반려뿐이다.
   '''
 }
 
@@ -758,6 +899,27 @@ Table CONS {
 
 Table CONS_STU  { cons_id bigint [ref: > CONS.id]  student_id bigint [ref: > STU.id]  indexes { (cons_id, student_id) [pk] } }
 Table CONS_PICK { cons_id bigint [ref: > CONS.id]  staff_id   bigint [ref: > STAFF.id] indexes { (cons_id, staff_id) [pk] } Note: 'share=picked 일 때 볼 수 있는 사람' }
+
+Table CONS_PAY {
+  id          bigserial   [pk]
+  cons_id     bigint      [not null, ref: > CONS.id]
+  amount      int         [not null, note: 'cons_pay_amount_positive (>0) — 0 원은 기록이 아니라 실수다']
+  paid_on     date        [not null]
+  memo        varchar(80)
+  by_id       bigint      [not null, ref: > STAFF.id, note: '넣은 사람']
+  created_at  timestamptz [not null, default: `now()`]
+  indexes { (cons_id, paid_on) }
+  Note: '''
+  §28 컨설팅 회계의 납부 원장 — 원문 `CONS.pay[]`.
+
+  **PAY 표를 빌려 쓰지 않는다.** PAY 는 INV.id 에 매달려 있는데, 컨설팅 수납은 청구서 없이도
+  들어온다 (슬라이드 30 「수납 시 청구서(INV) 생성 **가능**」 — 가능이지 필수가 아니다).
+
+  받은 합을 저장하는 칸은 **어디에도 없다.** 합계는 읽을 때 이 줄들을 더해서 만든다 (D-R37).
+  청구서로 전환해도 이 줄은 그대로 남는다 — INV.cs_id 는 연결이지 옮김이 아니다.
+  TBO-48 C58 migration 1759300000000.
+  '''
+}
 
 Table CONS_SESS {
   id          bigserial   [pk]
@@ -827,8 +989,14 @@ Table MTREC {
   on_date     date
   pre_files   jsonb
   minutes     text        [note: '속기록']
+  minutes_at  timestamptz [note: '속기록을 마지막으로 저장한 시각 — created_at(행이 생긴 시각)과 다른 값이다']
+  minutes_by  bigint      [ref: > STAFF.id, note: '마지막으로 저장한 사람']
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 1건. 속기록 → 할 일 → 알림으로 퍼진다.'
+  Note: '''
+  시드 5건. 속기록 → 할 일 → 알림으로 퍼진다.
+  TBO-48 C57 migration 1759200000000: mtrec_minutes_author_pair —
+  저장 시각만 있고 저장한 사람이 없을 수는 없다((minutes_at IS NULL) = (minutes_by IS NULL)).
+  '''
 }
 
 Table MTATTD { mt_id bigint [ref: > MTREC.id]  staff_id bigint [ref: > STAFF.id]  confirmed boolean  indexes { (mt_id, staff_id) [pk] } }
@@ -854,6 +1022,7 @@ Table REQ {
   staff_id    bigint      [not null, ref: > STAFF.id, note: '강사가 올린다']
   req_type    varchar(16) [not null]
   payload     jsonb
+  student_id  bigint      [ref: > STU.id, note: 'book_change 안정 식별자. 레거시는 null']
   state       varchar(12) [not null, default: 'open']
   resolved_by bigint      [ref: > STAFF.id]
   reject_reason text      [note: '반려 시 필수 (D-R13)']
@@ -1030,6 +1199,7 @@ Table SER_OCC {
   전개된 회차. 반복 규칙(SER)은 기간이 열려 있어 겹침 제약을 걸 대상이 없으므로,
   occ() 와 같은 규칙으로 회차를 펼쳐 이 표에 넣고 **여기에** EXCLUDE 를 건다 (D-R43 · 부록 A).
   span 은 tstzrange(start_at, end_at) 이고, canceled=true 인 회차는 제약에서 빠진다.
+  위 제외는 EXCLUDE만 해당한다. ser_occ_time_check는 취소 포함 유한 [start,end), 정수 분/10~480분·KST당일(끝24:00 허용)을 검사한다. 이동 회차의 on_date와 표시 날짜는 같을 필요 없다.
   강의실 · 강사 · 줌 세 제약이 전부 이 표에 붙는다 — 최종 방어선이 여기다.
   '''
 }
@@ -1109,10 +1279,14 @@ Table SER_OCC {
 // v4.12 → v4.13 (2026-09-12 · TBO-50 C32 컨설팅 항목 원장)
 //   + CONS_ITEM            §31 항목 체크리스트 — N-18 채택. (cons_id,seq) UNIQUE ·
 //                          done↔done_by/done_at CHECK · source CHECK · 진행률은 projection
-//
+////
 // v4.13 → v4.14 (2026-09-12 · TBO-50 C33 명단 가격 구간)
 //   + RATE.heads           N-17 채택 ① — 인원 구간(기존 행 DEFAULT 1 재해석·소비처 0 확인) ·
 //                          CHECK heads≥1 · (kind,COALESCE(sub,''),heads,from) UNIQUE 표현식 인덱스
+//// ============================================================================
+// 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
+// ----------------------------------------------------------------------------
+// 원자성은 세 층으로 막는다 (contracts/STACK.md §1.2). 여기 적은 것이 ③ 마지막 방어선이다.
 //
 // v4.14 → v4.15 (2026-09-12 · TBO-50 C34 GPA 4표 합류)
 //   + GPASVC·GPA_CYCLE·GPA_ALLOC·GPA_USE — N-13 채택. 기존 「표로 뺀다」 안 그대로,
@@ -1122,11 +1296,24 @@ Table SER_OCC {
 //   + LEAD.fail_from       N-25 채택 — 실패 당시 이전 단계 명시값(라이브 기록·추정 이관 금지)
 //   + LEAD_STAGE_LOG       도달 기록 append-only — 판정: 명시값 → 로그 역순 → 미분류
 //
-
-// ============================================================================
-// 부록 A — DBML 로 표현되지 않는 제약 (마이그레이션에 직접 쓴다)
-// ----------------------------------------------------------------------------
-// 원자성은 세 층으로 막는다 (contracts/STACK.md §1.2). 여기 적은 것이 ③ 마지막 방어선이다.
+// v4.16 → v4.17 (2026-09-12 · TBO-50 C36-b 법인카드 심사·지출 분류)
+//   ~ EXPENSE CHECK 4종 — 분류 코드표(A-D5 간이 5분류 + 임대료) · 상태 낱말 ·
+//     증액 금지(A-D3) · 자기 승인 금지(A-5). 컬럼 추가 0, 규칙을 주석에서 DB 로 옮겼다
+//   ~ EXPENSE.state 기본값 표기 교정 — entity 의 'submitted' 가 DB 의 'pending' 과 달랐다
+//
+// v4.17 → v4.18 (2026-09-12 · TBO-50 C42 변경 요청 반영·반려)
+//   + CHREQ.reject_reason  반려 사유 칸 (D-R13). 지금까지 신청 사유와 반려 사유가 **같은 칸**이라
+//     반려하면 올린 사람이 적은 말이 지워졌다 — REQ 표와 모양을 맞춘다
+//   + CHECK chreq_reject_needs_reason — 반려면 사유가 있어야 한다 (NOT VALID: 옛 행은 검사 안 함,
+//     이미 반려된 건의 reason 이 신청 사유인지 반려 사유인지 알 수 없어 추정 이관하지 않는다)
+//
+// v4.18 → v4.19 (2026-09-14 · TBO-50 C77 교재 §38~§41)
+//   + FILE                Neon 파일 본문 3MB 원장(C77에서 Vercel 실제 경로와 정합). 서버 MIME 판정·관리자 raw 다운로드 경계
+//   + VERS.activated_at   같은 효력일에서 마지막으로 고른 판을 현재 판으로 판정
+//   + VERS.se/te_file_id  학생용/교사용 파일을 분리해 연결
+//   + GPAPACK_LIB.vers_id 전달 만들기/수정 시 적용일의 판을 고정해 과거 전달물 불변
+//   + ISSUE 상태·진도·행위자/시각, GPAPACK 다학생·다교재·전달/수령 전이
+//   ~ DBML 정합 감사      기존 §54 CARRY 표 누락 교정 — 새 migration 없이 entity·기존 migration과 71표 정렬
 //
 //   ── 겹침 금지 — 애플리케이션이 아니라 DB 가 거부한다 (D-R43)
 //   CREATE EXTENSION IF NOT EXISTS btree_gist;

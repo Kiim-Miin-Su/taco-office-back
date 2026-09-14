@@ -129,7 +129,7 @@ export class DrawerController {
       + '시간대면 STAFF.tz 를 바꾼다. 그 밖의 갈래는 적용 대상이 없어 상태만 닫는다. '
       + '잠금·적용·LOG·NOTI 가 한 트랜잭션이다.',
   })
-  @ApiOkResponse({ type: ReqReviewResultDto })
+  @ApiCreatedResponse({ type: ReqReviewResultDto })
   async reviewRequest(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
@@ -149,7 +149,7 @@ export class DrawerController {
       + '시간표 변경과 요청 종결이 한 트랜잭션이라, 겹쳐서 막히면 요청도 대기로 되돌아간다. '
       + '줌 계정 변경은 아직 배정 경로가 없어 CHREQ_NOT_APPLICABLE 로 거절한다.',
   })
-  @ApiOkResponse({ type: ReqReviewResultDto })
+  @ApiCreatedResponse({ type: ReqReviewResultDto })
   async reviewChangeRequest(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,

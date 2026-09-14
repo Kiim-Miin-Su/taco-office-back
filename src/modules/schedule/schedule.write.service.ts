@@ -360,7 +360,7 @@ export class ScheduleWriteService {
                 ) AS need_guide,
                 NOT EXISTS (
                   SELECT 1 FROM issue i JOIN lib l ON l.id=i.lib_id
-                   WHERE i.student_id=st.id AND i.returned_on IS NULL
+                   WHERE i.student_id=st.id AND i.state='ok'
                      AND (s.sub_key IS NULL OR l.sub_key IS NULL OR l.sub_key=s.sub_key)
                 ) AS need_book
            FROM stu st CROSS JOIN ser s

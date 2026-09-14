@@ -9,6 +9,7 @@ import {
   ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
+import { OkDto } from '../../common/http.dto';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
   GpaAllocPutDto, GpaBoardDto, GpaBoardQueryDto, GpaStudentDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
@@ -53,9 +54,9 @@ export class GpaController {
   @Delete('uses/:id')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({ summary: '대기(wait) 기록 삭제 — 승인분은 USE_APPROVED 로 거절' })
-  @ApiOkResponse({ description: '{ ok: true }' })
+  @ApiOkResponse({ type: OkDto })
   @ApiConflictResponse({ description: 'code CYCLE_CLOSED | USE_APPROVED' })
-  async deleteUse(@Param('id', ParseIntPipe) id: number): Promise<{ ok: true }> {
+  async deleteUse(@Param('id', ParseIntPipe) id: number): Promise<OkDto> {
     return this.svc.deleteUse(id);
   }
 

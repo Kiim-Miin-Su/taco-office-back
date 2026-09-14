@@ -42,6 +42,8 @@ export class StaffBriefDto {
   @ApiProperty() id!: number;
   @ApiProperty() name!: string;
   @ApiProperty({ enum: ['teacher', 'manager', 'admin', 'ceo'] }) role!: string;
+  @ApiProperty({ description: '코디네이터·관리자 후보 판정. role을 화면에서 다시 비교하지 않는다' }) canAdminPage!: boolean;
+  @ApiProperty({ description: '자료 요청 코디네이터 후보 판정. 개인별 권한 예외까지 반영한다' }) canGpaPack!: boolean;
   @ApiPropertyOptional({ type: String, nullable: true, description: '표시용 직함 — 권한과 무관하다 (D-R39)' }) title?: string | null;
 }
 

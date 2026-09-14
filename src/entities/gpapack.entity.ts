@@ -17,19 +17,43 @@ export class Gpapack {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
 
-  @Column({ type: 'bigint' })
-  studentId: number;
-
   /** exam(시험 대비) | self(자습) — 두 가지만 받는다 */
   @Column({ type: 'varchar', length: 12 })
   packType: string;
 
+  @Column({ type: 'varchar', length: 120 })
+  title: string;
+
   @Column({ type: 'text', nullable: true })
-  detail: string | null;
+  memo: string | null;
 
   @Column({ type: 'varchar', length: 12, default: 'open' })
   state: string;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
+
+  @Column({ type: 'date', nullable: true })
+  effectiveOn: string | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  coordinatorId: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  createdBy: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  deliveredBy: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  deliveredAt: Date | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  receivedBy: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  receivedAt: Date | null;
+
+  @Column({ type: 'timestamptz', default: () => 'now()' })
+  updatedAt: Date;
 }

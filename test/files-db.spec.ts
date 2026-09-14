@@ -18,7 +18,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { FileRow } from '../src/entities';
 import { FILE_MAX_BYTES } from '../src/modules/files/files.dto';
-import { decodeBase64, FilesService, fileUrlOf, mimeOf } from '../src/modules/files/files.service';
+import { canReadStoredFile, decodeBase64, FilesService, fileUrlOf, mimeOf } from '../src/modules/files/files.service';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -57,6 +57,40 @@ describe('base64 해독 — data URL 이 붙어 있어도 벗긴다', () => {
   });
 });
 
+describe('FILE kind별 중앙 권한표', () => {
+  const facts = {
+    uploadedBy: 10, bookLinked: false, expenseLinked: false, expenseRequester: false,
+    reportLinked: false, reportTeacher: false,
+  };
+  const teacher = { id: 10, name: '강사', role: 'teacher' };
+  const manager = { id: 20, name: '매니저', role: 'manager' };
+  const ceo = { id: 30, name: '대표', role: 'ceo' };
+
+  it('교재 파일은 실제 판 연결과 관리자 화면·자료 권한을 모두 요구한다', () => {
+    expect(canReadStoredFile(manager, 'lib-te', facts)).toBe(false);
+    expect(canReadStoredFile(manager, 'lib-te', { ...facts, bookLinked: true })).toBe(true);
+    expect(canReadStoredFile({ ...manager, perms: { canGpaPack: false } }, 'lib-te', { ...facts, bookLinked: true })).toBe(false);
+    expect(canReadStoredFile({ ...teacher, perms: { canGpaPack: true } }, 'lib-te', { ...facts, bookLinked: true })).toBe(false);
+  });
+
+  it('영수증은 연결 원장의 요청자 또는 canMoney만, 컨설팅은 업로더 또는 canHide만 연다', () => {
+    expect(canReadStoredFile(teacher, 'expense-receipt', { ...facts, expenseLinked: true, expenseRequester: true })).toBe(true);
+    expect(canReadStoredFile(manager, 'expense-receipt', { ...facts, expenseLinked: true })).toBe(false);
+    expect(canReadStoredFile(ceo, 'expense-receipt', { ...facts, expenseLinked: true })).toBe(true);
+    expect(canReadStoredFile(manager, 'cons-contract', facts)).toBe(false);
+    expect(canReadStoredFile(teacher, 'cons-contract', facts)).toBe(false);
+    expect(canReadStoredFile({ ...manager, id: 10 }, 'cons-contract', facts)).toBe(true);
+    expect(canReadStoredFile(ceo, 'cons-contract', facts)).toBe(true);
+  });
+
+  it('리포트는 담당 강사 또는 관리자만 열고, 알 수 없는 kind는 기본 거절한다', () => {
+    expect(canReadStoredFile(teacher, 'report-png', { ...facts, uploadedBy: null, reportLinked: true, reportTeacher: true })).toBe(true);
+    expect(canReadStoredFile(manager, 'report-png', { ...facts, uploadedBy: null, reportLinked: true })).toBe(true);
+    expect(canReadStoredFile(teacher, 'report-png', { ...facts, uploadedBy: null, reportLinked: true })).toBe(false);
+    expect(canReadStoredFile(manager, 'future-kind' as never, facts)).toBe(false);
+  });
+});
+
 d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
   let ds: DataSource;
   let q: QueryRunner;
@@ -88,6 +122,29 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
     const [row] = (await q.query(`SELECT sha256, bytes FROM file WHERE id = $1`, [ref.id])) as { sha256: string; bytes: number }[];
     expect(row.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
     expect(row.bytes).toBe(bytes.length);
+  });
+
+  it('클라이언트 MIME은 저장 계약이 아니며 서버가 파일 이름으로 다시 정한다', async () => {
+    const ref = await svc().upload(ME, {
+      kind: 'lib-se', name: '교재.pdf', base64: Buffer.from('pdf').toString('base64'), mime: 'text/html',
+    } as never);
+    expect(ref.mime).toBe('application/pdf');
+    const [row] = await q.query(`SELECT mime FROM file WHERE id=$1`, [ref.id]);
+    expect(row.mime).toBe('application/pdf');
+  });
+
+  it('raw 교재 파일은 업로더여도 판에 연결되기 전에는 닫고, 연결 뒤 두 권한을 확인한다', async () => {
+    const ref = await svc().upload(ME, { kind: 'lib-te', name: '교사용.pdf', base64: Buffer.from('te').toString('base64') });
+    await expect(svc().readAuthorized({ id: ME, name: '매니저', role: 'manager' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+    const [lib] = await q.query(`INSERT INTO lib (code,title) VALUES ($1,'raw 파일 교재') RETURNING id`, [`FILE-${ref.id}`]);
+    await q.query(`INSERT INTO vers (lib_id,edition,te_file_id) VALUES ($1,'v1',$2)`, [lib.id, ref.id]);
+    await expect(svc().readAuthorized({ id: 72, name: '강사', role: 'teacher' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+    await expect(svc().readAuthorized({ id: ME, name: '매니저', role: 'manager', perms: { canGpaPack: false } }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+    await expect(svc().readAuthorized({ id: ME, name: '매니저', role: 'manager' }, ref.id))
+      .resolves.toMatchObject({ kind: 'lib-te' });
   });
 
   it('한도를 넘으면 자르지 않고 거절한다 — 그리고 표도 거절한다', async () => {

@@ -49,7 +49,6 @@ export class NeonReportFileStore implements ReportFileStore {
       kind: 'report-png',
       name: pathname.split('/').pop() || 'report.png',
       base64: bytes.toString('base64'),
-      mime: 'image/png',
     });
     return ref.url;
   }

@@ -64,7 +64,7 @@ export class BoardService {
                                     AND eo.student_id = ss.student_id)), '{}') AS student_names,
               /* 교재 — 이 수업 학생 중 배부받은 사람이 하나라도 있는가 */
               EXISTS (SELECT 1 FROM issue i
-                       WHERE i.returned_on IS NULL
+                       WHERE i.state = 'ok'
                          AND i.student_id IN (SELECT ss.student_id FROM ser_stu ss WHERE ss.ser_id = o.ser_id)
                      ) AS book_done,
               /* 안내 — 이 수업에 아직 안 보낸 안내가 남아 있는가 */

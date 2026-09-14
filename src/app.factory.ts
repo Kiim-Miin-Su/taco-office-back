@@ -25,6 +25,8 @@ import { buildOpenApi } from './openapi';
 
 export const API_PREFIX = 'api/v1';
 export const API_BODY_MAX_BYTES = 4 * 1024 * 1024;
+/** 교차 출처 프런트가 인증 다운로드의 원래 파일명을 읽는 데 필요한 응답 헤더. */
+export const CORS_EXPOSED_HEADERS = ['Content-Disposition'] as const;
 
 /** PNG data URL도 로컬·서버리스에서 같은 상한으로 읽는다. Vercel 요청 상한보다 작게 둔다. */
 export function configureApiBodyParser(app: INestApplication): void {
@@ -53,7 +55,7 @@ export async function createApp(server?: Express): Promise<INestApplication> {
   app.use(cookieParser());
 
   const origin = process.env.CORS_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean);
-  app.enableCors({ origin, credentials: true });
+  app.enableCors({ origin, credentials: true, exposedHeaders: [...CORS_EXPOSED_HEADERS] });
 
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),

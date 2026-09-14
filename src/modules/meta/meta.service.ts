@@ -15,6 +15,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Kind, Room, Staff, Stu, Sub, Zacc } from '../../entities';
 import { INV_TYPES, INV_TYPE_LABEL, INV_TYPE_SUB } from '../accounting/accounting.dto';
+import { permsOf } from '../../common/perm';
 import type { MetaDto } from './meta.dto';
 
 @Injectable()
@@ -43,7 +44,16 @@ export class MetaService {
       subs: subs.map((s) => ({ key: s.key, name: s.name, color: s.color })),
       rooms: rooms.map((r) => ({ id: Number(r.id), branch: r.branch, name: r.name, capacity: r.capacity })),
       zaccs: zaccs.map((z) => ({ id: Number(z.id), label: z.label, meetingId: z.meetingId })),
-      staff: staff.map((s) => ({ id: Number(s.id), name: s.name, role: s.role, title: s.title })),
+      staff: staff.map((s) => {
+        const perms = permsOf(s.role, {
+          canMoney: s.canMoney, canWage: s.canWage, canApprove: s.canApprove,
+          canHide: s.canHide, canGpaPack: s.canGpaPack,
+        });
+        return {
+          id: Number(s.id), name: s.name, role: s.role, title: s.title,
+          canAdminPage: perms.canAdminPage, canGpaPack: perms.canGpaPack,
+        };
+      }),
       students: students.map((s) => ({ id: Number(s.id), name: s.name, grade: s.grade, school: s.school })),
       // 종류가 늘어도 화면은 그대로다 — 낱말이 한 곳에서만 온다 (D-R18)
       invTypes: INV_TYPES.map((key) => ({

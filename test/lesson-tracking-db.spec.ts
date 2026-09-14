@@ -134,6 +134,24 @@ d('§79 학생 트래킹 (C55)', () => {
     for (const s of shut.students) expect(s.unpaid).toBeNull();
   });
 
+  it('교재 수는 ISSUE.state=ok만 센다 — 승인·전달 대기는 배부 완료가 아니다', async () => {
+    const [lib] = await q.query(
+      `INSERT INTO lib (code,title,sub_key) VALUES ($1,'대기 교재','sat-math') RETURNING id`,
+      [`TRACK-WAIT-${stuA}`],
+    ) as Array<{ id: string }>;
+    const [issue] = await q.query(
+      `INSERT INTO issue (lib_id,student_id,state,requested_by) VALUES ($1,$2,'wait',71) RETURNING id`,
+      [Number(lib.id), stuA],
+    ) as Array<{ id: string }>;
+    expect((await svc().tracking(serId, onDate, true))!.students.find((s) => s.id === stuA)!.bookCount).toBe(0);
+
+    await q.query(
+      `UPDATE issue SET state='ok',issued_on=$2::date,approved_by=71,delivered_at=now() WHERE id=$1`,
+      [Number(issue.id), onDate],
+    );
+    expect((await svc().tracking(serId, onDate, true))!.students.find((s) => s.id === stuA)!.bookCount).toBe(1);
+  });
+
   it('취소된 청구서는 미수가 아니다 — 상태 목록을 여기서 다시 적지 않는다', async () => {
     await q.query(
       `INSERT INTO inv (student_id, year_month, title, amount, paid_amount, state, inv_type)

@@ -5,7 +5,7 @@
  */
 
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
-import { ApiConflictResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
@@ -102,7 +102,7 @@ export class ConsultingController {
     summary: '납부 넣기 — §28 동작 ①',
     description: 'cons_pay 원장에 한 줄 더한다. 받은 합은 저장하지 않는다 — 읽을 때 원장을 더한다 (D-R37).',
   })
-  @ApiOkResponse({ type: ConsAccountRowDto, description: '바뀐 줄 하나 — 화면이 숫자를 다시 만들지 않게' })
+  @ApiCreatedResponse({ type: ConsAccountRowDto, description: '바뀐 줄 하나 — 화면이 숫자를 다시 만들지 않게' })
   @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
   @ApiNotFoundResponse({ description: '보이지 않는 건 — 존재를 누출하지 않는다' })
   @ApiConflictResponse({ description: 'code CONS_PAY_LOCKED — 종료된 건' })
@@ -124,7 +124,7 @@ export class ConsultingController {
       '**남은 돈으로** 청구서를 낸다. 계약 전액으로 내면 이미 받은 돈이 §53 미수금에 한 번 더 얹힌다. '
       + '전환 뒤에도 납부 기록은 cons_pay 에 그대로 남는다 — cs_id 는 연결이지 소유가 아니다.',
   })
-  @ApiOkResponse({ type: ConsAccountRowDto })
+  @ApiCreatedResponse({ type: ConsAccountRowDto })
   @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
   @ApiNotFoundResponse({ description: '보이지 않는 건' })
   @ApiConflictResponse({

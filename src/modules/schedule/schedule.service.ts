@@ -308,7 +308,7 @@ export class ScheduleService {
       const facts = (await this.q(
         `SELECT st.id,
                 (SELECT count(*) FROM issue i
-                  WHERE i.student_id = st.id AND i.returned_on IS NULL) AS book_count,
+                  WHERE i.student_id = st.id AND i.state = 'ok') AS book_count,
                 EXISTS (
                   SELECT 1 FROM guide g
                    WHERE g.ser_id = $2 AND g.student_id = st.id

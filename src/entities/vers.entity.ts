@@ -10,8 +10,9 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+@Index('vers_lib_id_unique', ['libId', 'id'], { unique: true })
 @Entity({ name: 'vers' })
 export class Vers {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -28,4 +29,14 @@ export class Vers {
 
   @Column({ type: 'date', nullable: true })
   fromDate: string | null;
+
+  /** 같은 효력일의 판을 명시적으로 전환할 때 마지막 선택을 단일 판정 기준으로 쓴다. */
+  @Column({ type: 'timestamptz' })
+  activatedAt: Date;
+
+  @Column({ type: 'bigint', nullable: true })
+  seFileId: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  teFileId: number | null;
 }

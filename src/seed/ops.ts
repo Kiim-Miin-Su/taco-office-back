@@ -25,6 +25,8 @@ const occurrenceDate = (serId: number, side: 'past' | 'future', nth = 1) => {
 
 /** 승인 요청 — 우측 서랍 §14 승인 대기함 */
 export const REQS = [
+  { staffId: 7, reqType: 'book_change', payload: { studentName: '강라율', message: '너무 어렵습니다' }, state: 'pending', createdAt: D(0) },
+  { staffId: 7, reqType: 'book_change', payload: { studentName: '고은성', message: '다 풀었습니다' }, state: 'pending', createdAt: D(-1) },
   { staffId: 7,  reqType: 'wage_change', payload: { from: WAGES.find((w) => w.staffId === 7)!.rate, to: 45000 }, state: 'pending', createdAt: D(-2) },
   { staffId: 7,  reqType: 'unav_add',    payload: { dow: 3, startMin: 540, endMin: 720 }, state: 'pending', createdAt: D(-1) },
   { staffId: 7, reqType: 'wage_change', payload: { from: 35000, to: 37000 }, state: 'rejected', resolvedBy: 1, rejectReason: '3개월 뒤 재검토', createdAt: D(-9) },

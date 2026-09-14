@@ -27,6 +27,10 @@ export class Req {
   @Column({ type: 'jsonb', nullable: true })
   payload: Record<string, unknown> | null;
 
+  /** 교재 변경 요청의 안정적인 학생 식별자. 레거시 요청은 null이며 이름이 유일할 때만 읽기 fallback한다. */
+  @Column({ type: 'bigint', nullable: true })
+  studentId: number | null;
+
   @Column({ type: 'varchar', length: 12, default: 'open' })
   state: string;
 

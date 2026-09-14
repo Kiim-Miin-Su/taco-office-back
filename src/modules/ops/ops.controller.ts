@@ -5,7 +5,7 @@
  */
 
 import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
-import { ApiConflictResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
@@ -41,7 +41,7 @@ export class OpsController {
     summary: '상담 실패 전이 — 이전 단계를 명시값으로 보존 (v2 §24 · N-25 §4-17 · C35)',
     description: 'fail_from 은 전이 순간의 실제 단계를 서버가 기록한다 — 추정이 아니라 사실이다. 도달 기록(append-only)에 failed 를 남긴다.',
   })
-  @ApiOkResponse({ type: LeadDto })
+  @ApiCreatedResponse({ type: LeadDto })
   @ApiConflictResponse({ description: 'code ALREADY_FAILED | ENROLLED_LOCKED' })
   @ApiNotFoundResponse({ description: '상담 건 없음' })
   async failLead(
@@ -58,7 +58,7 @@ export class OpsController {
     summary: '실패 건 되살리기 — 지정값 → fail_from 명시값 → 도달 기록 역순, 없으면 UNCLASSIFIED',
     description: '레거시(stop_at 만 있는) 건은 추정하지 않는다 — 미분류로 거절하고 단계 지정을 요구한다 (N-25).',
   })
-  @ApiOkResponse({ type: LeadDto })
+  @ApiCreatedResponse({ type: LeadDto })
   @ApiConflictResponse({ description: 'code NOT_FAILED | UNCLASSIFIED' })
   @ApiNotFoundResponse({ description: '상담 건 없음' })
   async resumeLead(
@@ -77,7 +77,7 @@ export class OpsController {
     summary: '대표 코멘트 — 관리자 전원에게 알림 (원문 §60)',
     description: '「대표가 코멘트를 남기면 관리자 전원에게 알림이 갑니다」. 쓸 때의 종류를 kind 로 적는다 — 쓴 사람의 지금 역할로 되짚지 않는다.',
   })
-  @ApiOkResponse({ type: [MfbThreadDto] })
+  @ApiCreatedResponse({ type: [MfbThreadDto] })
   @ApiConflictResponse({ description: 'code CEO_ONLY' })
   @ApiNotFoundResponse({ description: '마케팅 활동 없음' })
   async comment(
@@ -94,7 +94,7 @@ export class OpsController {
     summary: '담당자 답변 — 코멘트를 쓴 대표에게만 알림 (원문 §60)',
     description: '「담당자 답변은 대표에게만」. 어느 코멘트에 대한 답인지 parentId 로 들고 있어야 「고쳤습니다」 판정이 한 곳에 산다.',
   })
-  @ApiOkResponse({ type: [MfbThreadDto] })
+  @ApiCreatedResponse({ type: [MfbThreadDto] })
   @ApiConflictResponse({ description: 'code NOT_A_COMMENT | NOT_OWNER' })
   @ApiNotFoundResponse({ description: '코멘트 없음' })
   async reply(
@@ -144,7 +144,7 @@ export class OpsController {
     summary: '기한 승인 · 반려 — 대표 전용 (원문 §65)',
     description: '반려는 기한을 지운다 — 승인 안 된 날짜가 §62 기한 표에 남으면 「대표를 지나오지 않은 마감」이 섞인다.',
   })
-  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiCreatedResponse({ type: PlanDetailDto })
   @ApiConflictResponse({ description: 'code CEO_ONLY | NO_DUE | DUE_ALREADY_APPROVED' })
   @ApiNotFoundResponse({ description: '기획 없음' })
   async decidePlanDue(
@@ -161,7 +161,7 @@ export class OpsController {
     summary: '최종 승인 · 보완 요청 — 기한이 먼저 승인돼야 열린다 (원문 §61·§65)',
     description: '화면이 단추를 숨기는 것과 별개로 서버가 막는다 (DUE_NOT_APPROVED).',
   })
-  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiCreatedResponse({ type: PlanDetailDto })
   @ApiConflictResponse({ description: 'code DUE_NOT_APPROVED | NOT_REVIEWABLE | REASON_REQUIRED' })
   @ApiNotFoundResponse({ description: '기획 없음' })
   async reviewPlan(
@@ -194,7 +194,7 @@ export class OpsController {
     summary: '속기록 저장 — 누가 언제 저장했는지 서버가 남긴다 (원문 §66)',
     description: '화면이 보낸 시각을 믿지 않는다. 시계가 틀린 기계에서 저장하면 회의록의 순서가 뒤집힌다.',
   })
-  @ApiOkResponse({ type: MeetingDetailDto })
+  @ApiCreatedResponse({ type: MeetingDetailDto })
   @ApiNotFoundResponse({ description: '회의 없음' })
   async writeMinutes(
     @CurrentUser() user: RequestUser,
@@ -210,7 +210,7 @@ export class OpsController {
     summary: '할 일 배정 — TODO 와 담당자 알림을 한 트랜잭션에서 (원문 §66 연동)',
     description: '밖에서 알림을 보내면 할 일은 안 만들어졌는데 알림만 가서 받은 사람이 자기 목록에서 그것을 못 찾는다 (D-R43).',
   })
-  @ApiOkResponse({ type: MeetingDetailDto })
+  @ApiCreatedResponse({ type: MeetingDetailDto })
   @ApiNotFoundResponse({ description: '회의 없음 · 담당자 없음' })
   async assignMeetingTask(
     @CurrentUser() user: RequestUser,

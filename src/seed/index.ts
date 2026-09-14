@@ -10,14 +10,15 @@
  * 프론트는 이 행들을 API 로만 본다. 목 데이터를 프론트에 두지 않는 이유가 이것이다 —
  * 진짜 데이터로 바꿀 때 프론트가 한 줄도 안 바뀐다 (자동 전이).
  */
+import { createHash } from 'node:crypto';
 import type { DataSource, QueryRunner } from 'typeorm';
 import bcrypt from 'bcryptjs';
 import { KINDS, SUBS, ROOMS, ZACCS, STAFF, WAGES, RATES, TZGS, SEED_TODAY, rel } from './base';
 // rrule 은 recurrence.ts 가 읽는 형식으로만 쓴다 — 형식이 둘이면 회차가 통째로 사라진다
-import { formatRule } from '../lib/recurrence';
+import { addD, formatRule } from '../lib/recurrence';
 import { STUDENTS, ENROLLMENTS, LEADS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
-import { buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
+import { BOOK_FILES, BOOK_HISTORY, BOOK_VERSIONS, buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
 import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, MFBS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, CONS_PAYS, DIAGS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
 
@@ -38,7 +39,7 @@ export const SEEDED_TABLES = [
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout', 'carry',
-  'req', 'chreq', 'gpapack', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay', 'diag',
+  'req', 'chreq', 'gpapack', 'gpapack_student', 'gpapack_lib', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay', 'diag',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
   'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
@@ -168,8 +169,29 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     }));
     await add('guide', GUIDES.map((g) => ({ ser_id: g.serId, student_id: g.studentId, teacher_id: g.teacherId, reason: g.reason, state: g.state, body: g.body, due_on: g.dueOn })));
     await add('pnoti', PNOTIS.map((p) => ({ ser_id: p.serId, on_date: p.onDate, student_id: p.studentId, channel: p.channel, body: p.body, sent_at: p.sentAt ? `${p.sentAt}T09:00:00Z` : null })));
-    await add('lib', LIBS.map((l) => ({ id: l.id, code: l.code, title: l.title, sub_key: l.subKey, level: l.level, pages: l.pages, se_te: l.seTe })));
-    await add('issue', ISSUES.map((i) => ({ lib_id: i.libId, student_id: i.studentId, issued_on: i.issuedOn })));
+    await add('lib', LIBS.map((l) => ({ id: l.id, code: l.code, title: l.title, sub_key: l.subKey, level: l.level, grade: l.grade, pages: l.pages, se_te: l.seTe })));
+    await add('file', BOOK_FILES.map((file) => {
+      const data = Buffer.from(file.body, 'utf8');
+      return {
+        id: file.id, kind: file.kind, name: file.name, mime: 'application/pdf', bytes: data.length,
+        sha256: createHash('sha256').update(data).digest('hex'), data, uploaded_by: 2,
+      };
+    }));
+    await add('vers', BOOK_VERSIONS.map((version) => ({
+      id: version.id, lib_id: version.libId, edition: version.edition, file_url: null,
+      from_date: addD(SEED_TODAY, version.fromOffset), se_file_id: version.seFileId, te_file_id: version.teFileId,
+    })));
+    const currentVersByLib = new Map<number, number>(BOOK_VERSIONS.filter((version) => version.fromOffset <= 0).map((version) => [version.libId, version.id]));
+    await add('issue', ISSUES.map((i, n) => ({
+      lib_id: i.libId, vers_id: currentVersByLib.get(i.libId) ?? null, student_id: i.studentId,
+      issued_on: i.issuedOn, returned_on: n === 7 ? addD(i.issuedOn, 30) : null, state: n === 7 ? 'returned' : 'ok',
+      // §38 진도 퍼센트의 원장은 쪽수다. 서로 다른 값과 null 분기를 모두 데모한다.
+      progress_page: n % 5 === 0 ? null : Math.max(1, Math.round((LIBS.find((l) => l.id === i.libId)?.pages ?? 1) * (0.28 + (n % 4) * 0.13))),
+    })));
+    await add('hist', BOOK_HISTORY.map((history, n) => ({
+      entity: history.entity, ref_id: history.refId, action: history.action, by_id: history.byId,
+      at: `${addD(SEED_TODAY, history.dayOffset)}T${String(9 + (n % 8)).padStart(2, '0')}:00:00+09:00`,
+    })));
 
     // ── 회계
     await add('inv', INVOICES.map((i) => ({ id: i.id, student_id: i.studentId, year_month: i.yearMonth, inv_type: i.invType, title: i.title, amount: i.amount, state: i.state, issued_on: i.issuedOn, due_on: i.dueOn, paid_amount: i.paidAmount, paid_at: (i as { paidAt?: string }).paidAt ? `${(i as { paidAt?: string }).paidAt}T00:00:00Z` : null, created_by: 2 })));
@@ -181,7 +203,24 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     // ── 운영
     await add('req', REQS.map((r) => ({ staff_id: r.staffId, req_type: r.reqType, payload: JSON.stringify(r.payload), state: r.state, resolved_by: num((r as { resolvedBy?: number }).resolvedBy), reject_reason: (r as { rejectReason?: string }).rejectReason ?? null, created_at: `${r.createdAt}T00:00:00Z` })));
     await add('chreq', CHREQS.map((c) => ({ ser_id: c.serId, on_date: c.onDate, req_type: c.reqType, payload: JSON.stringify(c.payload), reason: c.reason, reject_reason: (c as { rejectReason?: string }).rejectReason ?? null, state: c.state, by_id: c.byId, resolved_by: num((c as { resolvedBy?: number }).resolvedBy), apply_all: c.applyAll, created_at: `${c.createdAt}T00:00:00Z` })));
-    await add('gpapack', GPAPACKS.map((g) => ({ student_id: g.studentId, pack_type: g.packType, detail: g.detail, state: g.state, created_at: `${g.createdAt}T09:00:00Z` })));
+    await add('gpapack', GPAPACKS.map((g, n) => ({
+      id: n + 1, pack_type: g.packType,
+      title: g.packType === 'exam' ? '시험 대비 자료 요청' : '자습 자료 요청',
+      memo: g.detail, state: g.state === 'approved' ? 'delivered' : 'pending',
+      effective_on: g.createdAt, coordinator_id: 4, created_by: 3,
+      delivered_by: g.state === 'approved' ? 3 : null,
+      delivered_at: g.state === 'approved' ? `${g.createdAt}T10:00:00Z` : null,
+      created_at: `${g.createdAt}T09:00:00Z`, updated_at: `${g.createdAt}T10:00:00Z`,
+    })));
+    await add('gpapack_student', GPAPACKS.flatMap((g, n) => [
+      { gpapack_id: n + 1, student_id: g.studentId },
+      ...(n === 1 ? [{ gpapack_id: n + 1, student_id: 5 }] : []),
+    ]));
+    await add('gpapack_lib', [
+      { gpapack_id: 1, lib_id: 2, vers_id: 3 },
+      { gpapack_id: 2, lib_id: 1, vers_id: 1 },
+      { gpapack_id: 2, lib_id: 4, vers_id: 5 },
+    ]);
     await add('noti', NOTIS.map((n) => ({ to_id: n.toId, from_id: n.fromId, body: n.body, link: n.link, category: n.category, read_at: (n as { readAt?: string }).readAt ? `${(n as { readAt?: string }).readAt}T00:00:00Z` : null, created_at: `${n.createdAt}T00:00:00Z` })));
     await add('cons', CONSULTINGS.map((c) => ({ id: c.id, cons_type: c.consType, stage: c.stage, contract_step: c.contractStep, amount: c.amount, sessions: c.sessions, end_on: c.endOn, owner_id: c.ownerId, share: c.share })));
     await add('cons_stu', CONSULTINGS.flatMap((c) => c.students.map((s) => ({ cons_id: c.id, student_id: s }))));
@@ -213,7 +252,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('todo', TODOS.map((t) => ({ title: t.title, from_id: t.fromId, to_id: t.toId, due_on: t.dueOn, done: t.done, src: t.src, mt_id: num((t as { mtId?: number }).mtId), plan_id: num((t as { planId?: number }).planId) })));
 
     // 손으로 넣은 id 뒤로 시퀀스를 밀어 둔다 — 안 하면 다음 INSERT 가 충돌한다
-    for (const t of ['room', 'zacc', 'staff', 'stu', 'lead', 'ser', 'lib', 'inv', 'cons', 'plan', 'mtrec', 'gpa_cycle', 'mkt', 'mfb']) {
+    for (const t of ['room', 'zacc', 'staff', 'stu', 'lead', 'ser', 'lib', 'file', 'vers', 'gpapack', 'inv', 'cons', 'plan', 'mtrec', 'gpa_cycle', 'mkt', 'mfb']) {
       await q.query(`SELECT setval(pg_get_serial_sequence('${t}', 'id'), GREATEST((SELECT COALESCE(MAX(id), 1) FROM ${t}), 1))`);
     }
 

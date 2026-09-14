@@ -173,12 +173,21 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     });
   });
 
-  it('교재 — 강사도 본다. 자기 수업에 무엇을 쓰는지 알아야 한다', async () => {
-    const r = await get('/books', TEACHER).expect(200);
+  it('교재 관리 — 관리자 화면은 강사에게 DB projection 전부터 닫힌다', async () => {
+    await get('/books', TEACHER).expect(403);
+    const r = await get('/books', MANAGER).expect(200);
     expect(r.body.items.length).toBeGreaterThan(0);
     expect(Object.keys(r.body.bySub).length).toBeGreaterThan(0);
     // 코드가 카드에 그대로 보이는 값이라 비어 있으면 안 된다
     r.body.items.forEach((b: { code: string }) => expect(b.code).toBeTruthy());
+  });
+
+  it('교재 raw 파일도 같은 권한으로 닫히고 안전한 내려받기 헤더를 쓴다', async () => {
+    await get('/files/1', TEACHER).expect(403);
+    const file = await get('/files/1', MANAGER).expect(200);
+    expect(file.headers['content-disposition']).toContain('attachment;');
+    expect(file.headers['x-content-type-options']).toBe('nosniff');
+    expect(file.headers['content-type']).toContain('application/pdf');
   });
 
   it('컨설팅 — 건과 회차 기록이 같이 온다', async () => {

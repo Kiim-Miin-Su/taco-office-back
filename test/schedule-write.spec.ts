@@ -95,6 +95,8 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   /** 만들어 둔 규칙을 매번 치운다 — 겹침 제약이 다음 테스트를 막지 않게 */
   const made: number[] = [];
   afterEach(async () => {
+    await q(`DELETE FROM issue WHERE student_id = $1`, [ROSTER_STUDENT]);
+    await q(`DELETE FROM lib WHERE code LIKE 'SCHED-WAIT-%'`);
     if (!made.length) return;
     // 초기화는 ATT를 지워도 LOG를 보존하므로 이 스위트 전용 actor의 출결 이력을 정리한다.
     await q(`DELETE FROM log WHERE entity='ATT' AND actor_id=$1`, [CEO]);
@@ -828,6 +830,38 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       `SELECT count(*)::text n FROM exc_stu_out o JOIN exc e ON e.id=o.exc_id
         WHERE e.ser_id=$1 AND e.on_date=$2::date AND o.student_id=1`, [id, from]);
     expect(Number(out[0].n)).toBe(1);
+  });
+
+  it('승인·전달 대기 교재는 현황판 완료와 명단 변경의 교재 보유로 보지 않는다', async () => {
+    const { id, from } = await makeSer({ subKey: 'ap-chem', studentIds: [ROSTER_STUDENT] });
+    const [lib] = await q<{ id: string }>(
+      `INSERT INTO lib (code,title,sub_key) VALUES ($1,'명단 대기 교재','ap-chem') RETURNING id`,
+      [`SCHED-WAIT-${id}`],
+    );
+    const [issue] = await q<{ id: string }>(
+      `INSERT INTO issue (lib_id,student_id,state,requested_by) VALUES ($1,$2,'wait',$3) RETURNING id`,
+      [Number(lib.id), ROSTER_STUDENT, CEO],
+    );
+
+    const waitingBoard = await request(app.getHttpServer()).get('/board')
+      .set('Authorization', `Bearer ${token}`).query({ from, to: from }).expect(200);
+    expect(waitingBoard.body.rows.find((row: { serId: number }) => row.serId === id).marks)
+      .toContainEqual(expect.objectContaining({ key: 'book', done: false }));
+    const added = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'add', onDate: from, studentId: 1 }).expect(200);
+    expect(added.body.needBook).toContain(ROSTER_STUDENT_NAME);
+
+    expect((await api('patch', `/books/issues/${issue.id}/state`).send({ state: 'auto' }).expect(200)).body)
+      .toMatchObject({ state: 'auto' });
+    expect((await api('patch', `/books/issues/${issue.id}/state`).send({ state: 'ok' }).expect(200)).body)
+      .toMatchObject({ state: 'ok' });
+    const completedBoard = await request(app.getHttpServer()).get('/board')
+      .set('Authorization', `Bearer ${token}`).query({ from, to: from }).expect(200);
+    expect(completedBoard.body.rows.find((row: { serId: number }) => row.serId === id).marks)
+      .toContainEqual(expect.objectContaining({ key: 'book', done: true }));
+    const dropped = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'dropOnce', onDate: from, studentId: 1 }).expect(200);
+    expect(dropped.body.needBook).not.toContain(ROSTER_STUDENT_NAME);
   });
 
   it('명단 방어 — 없는 학생·회차와 현재 상태에 맞지 않는 작업을 저장하지 않는다', async () => {

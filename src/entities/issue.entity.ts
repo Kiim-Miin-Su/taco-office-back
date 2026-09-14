@@ -26,9 +26,24 @@ export class Issue {
   @Column({ type: 'bigint' })
   studentId: number;
 
-  @Column({ type: 'date' })
-  issuedOn: string;
+  @Column({ type: 'date', nullable: true })
+  issuedOn: string | null;
 
   @Column({ type: 'date', nullable: true })
   returnedOn: string | null;
+
+  @Column({ type: 'varchar', length: 12, default: 'ok' })
+  state: string;
+
+  @Column({ type: 'int', nullable: true })
+  progressPage: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  requestedBy: number | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  approvedBy: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  deliveredAt: Date | null;
 }

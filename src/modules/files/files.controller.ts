@@ -5,7 +5,7 @@
  */
 
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Res, StreamableFile } from '@nestjs/common';
-import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiTags } from '@nestjs/swagger';
+import { ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiProduces, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
@@ -15,9 +15,7 @@ import { FilesService } from './files.service';
 /**
  * 올린 파일 — **Neon 안에** 둔다 (대표 결정 2026-09-12 · D6 · A-D4).
  *
- * 열람은 로그인한 사람이면 된다. 파일마다 더 좁은 규칙(담당 강사와 매니저만 — D6)은
- * **그 파일을 가리키는 행**이 갖고 있으므로, 각 모듈이 자기 경로에서 좁힌다.
- * 여기서 kind 별 규칙을 또 적으면 같은 판정이 두 곳이 된다.
+ * raw id는 종류·연결 원장·업로더를 service에서 함께 판정한다. 로그인만으로는 어떤 종류도 열지 않는다.
  */
 @ApiTags('files')
 @Controller('files')
@@ -28,7 +26,7 @@ export class FilesController {
   @Perm('canAdminPage')
   @ApiOperation({
     summary: '파일 올리기 — base64 본문을 Neon 에 넣고 가리킬 주소를 돌려준다',
-    description: '8MB 까지. 더 크면 조용히 자르지 않고 FILE_TOO_LARGE 로 거절한다.',
+    description: '원본 파일 3MB까지. base64 JSON·Vercel 요청 한도 안에서 실제로 통과하는 값이며, 더 크면 FILE_TOO_LARGE로 거절한다.',
   })
   @ApiCreatedResponse({ type: FileRefDto })
   @ApiPayloadTooLargeResponse({ description: 'code FILE_TOO_LARGE' })
@@ -37,14 +35,17 @@ export class FilesController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: '파일 내려받기 — 본문을 그대로 흘려보낸다' })
-  @ApiOkResponse({ description: '파일 본문' })
-  async download(@Param('id', ParseIntPipe) id: number, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
-    const file = await this.svc.read(id);
+  @ApiOperation({ summary: '권한이 확인된 파일 내려받기 — 종류와 연결 원장을 서버가 판정한다' })
+  @ApiProduces('application/octet-stream')
+  @ApiOkResponse({ description: '파일 본문', schema: { type: 'string', format: 'binary' } })
+  @ApiForbiddenResponse({ description: 'code FILE_FORBIDDEN — 종류·소유·업무 권한 불일치' })
+  async download(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
+    const file = await this.svc.readAuthorized(user, id);
     res.set({
       'Content-Type': file.mime,
       // 이름에 한글이 들어가므로 RFC 5987 형식으로도 함께 싣는다
-      'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+      'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, max-age=3600',
     });
     return new StreamableFile(file.data);
