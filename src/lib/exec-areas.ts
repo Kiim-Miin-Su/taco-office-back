@@ -18,6 +18,7 @@
  * 갖고 있고, 서비스가 `BoardService` 를 불러 그 값을 그대로 쓴다 — 판정을 복사하지 않는다.
  */
 
+import { CPL_OPEN_STAGES } from './complaint-words';
 import { INV_OPEN } from './rules';
 import { sqlWordList } from './sql';
 
@@ -69,7 +70,13 @@ export const EXEC_AREAS: readonly ExecAreaDef[] = [
   },
   {
     key: 'complaint', label: '컴플레인', review: '아직 안 끝난 건', go: '/ops',
-    sql: `SELECT count(*)::text n FROM cpl WHERE stage <> 'done'`,
+    /*
+     * **한동안 이 줄이 전부를 세고 있었다.** `stage <> 'done'` 이라 적혀 있었는데
+     * 저장되는 말은 `received | acting | closed` 라 **'done' 인 행이 하나도 없었다** —
+     * 배지가 8(전부)이고 열린 건은 5였다. DBML·entity 주석이 「open | acting | done」이라
+     * 선언해 둔 것을 믿은 결과다. 이제 낱말은 `lib/complaint-words` 한 곳에서 온다.
+     */
+    sql: `SELECT count(*)::text n FROM cpl WHERE stage IN (${sqlWordList(CPL_OPEN_STAGES)})`,
   },
   {
     key: 'lesson', label: '수업', review: '교재·안내·줌·리포트가 덜 된 수업', go: '/board',

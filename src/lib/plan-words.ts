@@ -27,6 +27,18 @@ export const planStageLabel = (stage: string): string =>
   PLAN_STAGE_LABEL[stage as PlanStage] ?? stage;
 
 /** 아직 돌고 있는 기획 — 기한이 지났다고 붉게 칠할 대상이다 */
+/**
+ * 칸 이름 아래 한 줄 — 원본 §61 의 칸마다 있다.
+ * **무엇인지가 아니라 다음에 무엇을 하는지**를 적는다: 「아직 대표께 안 올렸습니다」.
+ */
+export const PLAN_STAGE_SUB: Record<PlanStage, string> = {
+  draft: '아직 대표께 안 올렸습니다',
+  review: '대표 확인을 기다립니다',
+  rework: '고쳐서 다시 올려야 합니다',
+  approved: '진행해도 됩니다',
+  done: '끝났습니다',
+};
+
 export const PLAN_OPEN_STAGES: readonly string[] = ['draft', 'review', 'rework'];
 
 /* ── §62 기획 기한 ──────────────────────────────────────────────────── */

@@ -176,7 +176,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   const empty: OpsDto = {
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
-    planDues: [], planOverdue: 0, planStages: [],
+    planDues: [], planOverdue: 0, planStages: [], cplStages: [],
     intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [] },
   };
 
@@ -369,7 +369,7 @@ describe('§23 상담 머리 (C86-a)', () => {
     const svc = new OpsService({ query: jest.fn().mockResolvedValue([]) } as never);
     return (svc as unknown as {
       intakeHead: (l: unknown, m: boolean) => Promise<{
-        funnel: Array<{ key: string; label: string; count: number; funnel: boolean }>;
+        funnel: Array<{ key: string; label: string; count: number; funnel: boolean; sub: string }>;
         enrollRate: number;
         owners: Array<{ id: number | null; name: string; count: number }>;
         alerts: Array<{ key: string; label: string; count: number; amount: number | null }>;
@@ -408,6 +408,14 @@ describe('§23 상담 머리 (C86-a)', () => {
    * §24 의 중단 지점 낱말도 서버가 쥔다 — 같은 화면 안에서 퍼널과 갈래가 다른 표를 들면
    * 한쪽을 고쳤을 때 다른 쪽이 조용히 낡는다 (C86-b).
    */
+  it('퍼널 칸마다 **다음에 무엇을 하는지** 한 줄이 따라온다 (§23 · C86-d)', async () => {
+    const out = await head([]);
+    expect(out.funnel.map((f) => f.sub)).toEqual([
+      '2차 일정 + 진단고사 잡기', '예정일에 2차 상담 진행', '보류 · 등록 · 등록 실패 중 선택',
+      'D+2에 수락 여부 확인', '해피콜 → 월간 상담', '사유 기록',
+    ]);
+  });
+
   it('중단 지점은 깔때기 순 넷이고 낱말이 서버에 있다 — 건수는 싣지 않는다', async () => {
     const out = await head([]);
     expect(out.stops.map((s) => s.key)).toEqual(['before_book', 'before_first', 'after_first', 'after_second']);

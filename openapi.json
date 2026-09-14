@@ -15532,6 +15532,15 @@
           },
           "ageDays": {
             "type": "number"
+          },
+          "areaLabel": {
+            "type": "string",
+            "description": "갈래 이름 — 화면이 제 표를 들면 §67 칩과 §69 줄이 갈린다 (D-R18)"
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true,
+            "description": "담당 — 원본 §67 카드 바닥. 없으면 null («담당 없음»)"
           }
         },
         "required": [
@@ -15540,7 +15549,8 @@
           "stage",
           "body",
           "createdAt",
-          "ageDays"
+          "ageDays",
+          "areaLabel"
         ]
       },
       "TodoDto": {
@@ -15658,11 +15668,37 @@
           "label": {
             "type": "string",
             "description": "사람이 읽는 이름"
+          },
+          "sub": {
+            "type": "string",
+            "description": "칸 이름 아래 한 줄 — **다음에 무엇을 하는지** (원본 §61)"
           }
         },
         "required": [
           "key",
-          "label"
+          "label",
+          "sub"
+        ]
+      },
+      "CplStageDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "received | acting | closed — **저장되는 말이다**"
+          },
+          "label": {
+            "type": "string"
+          },
+          "sub": {
+            "type": "string",
+            "description": "칸 이름 아래 한 줄 (원본 §67)"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "sub"
         ]
       },
       "PlanDueRowDto": {
@@ -16035,6 +16071,10 @@
             "type": "number",
             "description": "그 단계의 건수 — 서버가 센다 (D-R37)"
           },
+          "sub": {
+            "type": "string",
+            "description": "보드 칸 아래 한 줄 — **다음에 무엇을 하는지** (원본 §23)"
+          },
           "funnel": {
             "type": "boolean",
             "description": "등록 전 깔때기인가 — false 면 결과 칸(등록 · 등록 실패)이다"
@@ -16044,6 +16084,7 @@
           "key",
           "label",
           "count",
+          "sub",
           "funnel"
         ]
       },
@@ -16190,6 +16231,13 @@
               "$ref": "#/components/schemas/PlanStageDto"
             }
           },
+          "cplStages": {
+            "description": "§67 칸 셋의 이름과 한 줄 (D-R18 · D-R25)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CplStageDto"
+            }
+          },
           "planDues": {
             "description": "§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표",
             "type": "array",
@@ -16253,6 +16301,7 @@
           "todos",
           "plans",
           "planStages",
+          "cplStages",
           "planDues",
           "planOverdue",
           "meetings",

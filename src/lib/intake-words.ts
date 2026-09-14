@@ -26,6 +26,20 @@ export const INTAKE_STAGE_LABEL: Record<IntakeStage, string> = {
   failed: '등록 실패',
 };
 
+/**
+ * 칸 이름 아래 한 줄 — 원본 §23 의 칸마다 있다.
+ * **무엇인지가 아니라 다음에 무엇을 하는지**를 적는다: 「2차 일정 + 진단고사 잡기」.
+ * (원본 §23 의 칸에는 §26·§61·§67 과 달리 **번호가 없다** — 설명 줄만 있다.)
+ */
+export const INTAKE_STAGE_SUB: Record<IntakeStage, string> = {
+  first: '2차 일정 + 진단고사 잡기',
+  wait2nd: '예정일에 2차 상담 진행',
+  second: '보류 · 등록 · 등록 실패 중 선택',
+  hold: 'D+2에 수락 여부 확인',
+  enrolled: '해피콜 → 월간 상담',
+  failed: '사유 기록',
+};
+
 /** 아직 깔때기 안인 단계 — 등록·등록 실패는 결과라 빠진다 */
 export const INTAKE_FUNNEL_STAGES: readonly IntakeStage[] = ['first', 'wait2nd', 'second', 'hold'];
 

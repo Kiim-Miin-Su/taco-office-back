@@ -24,7 +24,11 @@ export class Cpl {
   @Column({ type: 'bigint', nullable: true })
   studentId: number | null;
 
-  /** open | acting | done */
+  /**
+   * received | acting | closed — **저장되는 말이다** (`cpl_stage_words` CHECK · C86-d).
+   * 한동안 이 주석이 「open | acting | done」이라 적혀 있었고 대표 보고의 배지가 그 말을 믿어
+   * 끝난 건까지 전부 세었다. 낱말은 `lib/complaint-words` 한 곳에서 온다.
+   */
   @Column({ type: 'varchar', length: 12 })
   stage: string;
 

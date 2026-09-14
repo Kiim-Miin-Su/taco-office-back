@@ -15,9 +15,10 @@ import {
   type MfbKind,
 } from '../../lib/marketing-words';
 import {
-  PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL,
+  PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL, PLAN_STAGE_SUB,
 } from '../../lib/plan-words';
-import { INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel } from '../../lib/intake-words';
+import { CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel } from '../../lib/complaint-words';
+import { INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel } from '../../lib/intake-words';
 import { INV_OPEN } from '../../lib/rules';
 import { sqlWordList } from '../../lib/sql';
 import {
@@ -96,14 +97,19 @@ export class OpsService {
 
     const complaints = (await this.q(
       `SELECT c.id, c.area, s.name AS student_name, c.stage, c.body, c.action, c.result,
-              to_char(c.created_at,'YYYY-MM-DD') AS created_at
-         FROM cpl c LEFT JOIN stu s ON s.id = c.student_id
+              to_char(c.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name
+         FROM cpl c
+         LEFT JOIN stu s ON s.id = c.student_id
+         LEFT JOIN staff o ON o.id = c.owner_id
         ORDER BY (c.stage = 'received') DESC, c.created_at DESC`,
     )).map((r) => ({
       id: Number(r.id), area: String(r.area), studentName: (r.student_name as string) ?? null,
       stage: String(r.stage), body: String(r.body),
       action: (r.action as string) ?? null, result: (r.result as string) ?? null,
       createdAt: String(r.created_at), ageDays: daysSince(r.created_at as string),
+      // 갈래 이름·담당은 **서버가 준다** — 화면이 제 표를 들면 §67 칩과 §69 줄이 갈린다 (D-R18)
+      areaLabel: cplAreaLabel(String(r.area)),
+      ownerName: (r.owner_name as string) ?? null,
     }));
 
     const todos = (await this.q(
@@ -196,7 +202,8 @@ export class OpsService {
     return {
       leads, complaints, todos, plans,
       // 칸 이름은 어휘라 데이터와 따로 간다 — 줄이 없는 칸도 이름을 갖는다 (D-R18)
-      planStages: PLAN_STAGES.map((key) => ({ key, label: PLAN_STAGE_LABEL[key] })),
+      planStages: PLAN_STAGES.map((key) => ({ key, label: PLAN_STAGE_LABEL[key], sub: PLAN_STAGE_SUB[key] })),
+      cplStages: CPL_STAGES.map((key) => ({ key, label: CPL_STAGE_LABEL[key], sub: CPL_STAGE_SUB[key] })),
       planDues, planOverdue, meetings, marketing,
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
@@ -222,6 +229,7 @@ export class OpsService {
       label: INTAKE_STAGE_LABEL[key],
       count: leads.filter((l) => l.stage === key).length,
       funnel: isIntakeFunnel(key),
+      sub: INTAKE_STAGE_SUB[key],
     }));
     const total = leads.length;
     const enrolled = funnel.find((f) => f.key === 'enrolled')?.count ?? 0;
