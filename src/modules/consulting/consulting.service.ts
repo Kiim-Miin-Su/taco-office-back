@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { hasPerm, isRole } from '../../common/perm';
-import { todayKst } from '../../lib/kst';
+import { overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { csCan, csCanAmount, csCanFull, type ConsShare, type ConsViewer } from '../../lib/rules';
 import { INV_TYPE_LABEL } from '../accounting/accounting.dto';
 import { fileUrlOf, storeFile } from '../files/files.service';
@@ -21,8 +21,10 @@ import type {
   ConsultingFileCreateDto, ConsultingSessionDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
 import {
-  CONSULTING_FILE_MAX, CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
-  consultingRecordIssue, consultingSessionIssue, consultingStageLabel,
+  CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB,
+  CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
+  consShareLabel, consultingContractStepLabel, consultingRecordIssue, consultingRequesterLabel,
+  consultingSessionIssue, consultingStageLabel,
   type ConsultingFileRole, type ConsultingType,
   type ConsultingRecord,
 } from './consulting.rules';
@@ -453,9 +455,12 @@ export class ConsultingService {
   async all(viewerId: number, canMoney: boolean, canHide: boolean): Promise<ConsultingListDto> {
     const rows = await this.q(
       `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
+              c.requester,
               to_char(c.end_on,'YYYY-MM-DD')      AS end_on,
               to_char(c.created_at,'YYYY-MM-DD')  AS created_at,
               o.name AS owner_name,
+              -- 원본 카드의 금액쌍 왼쪽 반. 청구서 입금과 **다른 표**다 (CONS_PAY)
+              COALESCE((SELECT sum(p.amount) FROM cons_pay p WHERE p.cons_id = c.id), 0) AS paid_amount,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
               COALESCE(
                 (SELECT array_agg(s.name ORDER BY s.name)
@@ -535,13 +540,29 @@ export class ConsultingService {
         createdAt: String(r.created_at),
         amount: money && r.amount !== null && r.amount !== undefined ? Number(r.amount) : null,
         canOpen: full,
+        /* 원본 §26 카드의 낱말과 수 — 화면이 만들지 않는다 (D-R18 · D-R37 · C86-e) */
+        stageLabel: consultingStageLabel(record.stage),
+        typeLabel: CONSULTING_TYPE_LABEL[String(r.cons_type) as ConsultingType] ?? String(r.cons_type),
+        shareLabel: consShareLabel(share),
+        contractStepLabel: consultingContractStepLabel(record.contractStep),
+        requesterLabel: consultingRequesterLabel(r.requester as string | null),
+        ageDays: daysSince(String(r.created_at)),
+        // 받은 돈도 **계약 금액과 같은 권한**을 탄다 — 한쪽만 보이면 나머지가 빼기로 드러난다
+        paidAmount: money ? Number(r.paid_amount ?? 0) : null,
         // 내용이 안 열리면 회차 기록도 내려보내지 않는다 — 화면에서 감추는 건 감춘 게 아니다
         sessionsLog: full ? (byCons.get(Number(r.id)) ?? []) : [],
         items: full ? (itemsByCons.get(Number(r.id)) ?? []) : [],
       };
     });
 
-    return { items, canSeeAmounts: canMoney };
+    return {
+      items,
+      canSeeAmounts: canMoney,
+      // 빈 칸도 이름과 한 줄을 갖는다 — 화면이 칸을 만들면 순서와 낱말이 갈린다 (D-R18 · D-R25)
+      stages: CONSULTING_STAGES.map((key) => ({
+        key, label: CONSULTING_STAGE_LABEL[key], sub: CONSULTING_STAGE_SUB[key],
+      })),
+    };
   }
 
   /**

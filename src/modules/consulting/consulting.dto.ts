@@ -91,15 +91,39 @@ export class ConsultingDto {
 
   @ApiProperty({ description: '내용(회차 기록)을 열 수 있는가 — csCanFull()' }) canOpen!: boolean;
 
+  /* ── 원본 §26 카드가 요구하는 낱말과 수 — 전부 서버가 만든다 (D-R18 · D-R37 · C86-e) ── */
+  @ApiProperty({ description: '단계 이름 — 「계약 · 진행 · 종료」' }) stageLabel!: string;
+  @ApiProperty({ description: '종류 이름 — 「에세이 지도」' }) typeLabel!: string;
+  @ApiProperty({ description: '공개 범위 이름 — 「수납만 공개」' }) shareLabel!: string;
+  @ApiPropertyOptional({ ...S, description: '계약 단계 이름 — 「피드백」. 미정이면 null' })
+  contractStepLabel?: string | null;
+  @ApiPropertyOptional({ ...S, description: '요청자 — 「어머니」. 안 적혔으면 null' })
+  requesterLabel?: string | null;
+  @ApiProperty({ description: '시작한 지 며칠 — 원본 「60일 지남」 (D-R37)' }) ageDays!: number;
+  @ApiPropertyOptional({
+    ...N,
+    description: '받은 돈 합 — 원본 카드의 「₩400,000 / ₩800,000」 왼쪽 반. `amount` 와 **같은 권한**을 탄다 (D-R39)',
+  })
+  paidAmount?: number | null;
+
   @ApiProperty({ type: [ConsultingSessionDto] }) sessionsLog!: ConsultingSessionDto[];
 
   /** §31 진행 항목 — 회차 기록과 별개 원장 (N-18 §4-17). 내용이 잠기면 회차처럼 내려가지 않는다. */
   @ApiProperty({ type: [ConsItemDto] }) items!: ConsItemDto[];
 }
 
+/** §26 보드 칸 — 낱말·순서·한 줄이 서버에 있다 (D-R18 · D-R25) */
+export class ConsultingStageDto {
+  @ApiProperty({ enum: CONSULTING_STAGES }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty({ description: '칸 이름 아래 한 줄 — **다음에 무엇을 하는지** (원본 §26)' }) sub!: string;
+}
+
 export class ConsultingListDto {
   @ApiProperty({ type: [ConsultingDto] }) items!: ConsultingDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+  @ApiProperty({ type: [ConsultingStageDto], description: '§26 칸 셋 — 빈 칸도 이름과 한 줄을 갖는다' })
+  stages!: ConsultingStageDto[];
 }
 
 /* ══ §29 생성 · §30 계약 5단계 (C79-product) ═══════════════════════════ */

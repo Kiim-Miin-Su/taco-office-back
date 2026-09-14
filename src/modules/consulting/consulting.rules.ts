@@ -17,6 +17,16 @@ export const CONSULTING_STAGE_LABEL: Record<ConsultingStage, string> = {
   done: '종료',
 };
 
+/**
+ * 칸 이름 아래 한 줄 — 원본 §26 의 칸마다 있다.
+ * **무엇인지가 아니라 다음에 무엇을 하는지**를 적는다: 「계약서 만들고 서명받기」.
+ */
+export const CONSULTING_STAGE_SUB: Record<ConsultingStage, string> = {
+  contract: '계약서 만들고 서명받기',
+  running: '회차별로 만나고 기록',
+  done: '마무리하고 안내',
+};
+
 export const consultingStageLabel = (stage: string): string =>
   CONSULTING_STAGE_LABEL[stage as ConsultingStage] ?? stage;
 export type ConsultingStage = (typeof CONSULTING_STAGES)[number];
@@ -47,6 +57,39 @@ export const INTERNATIONAL_SCHOOL_ITEMS = [
 ] as const;
 export const CONSULTING_REQUESTERS = ['mother', 'father'] as const;
 export type ConsultingRequester = (typeof CONSULTING_REQUESTERS)[number];
+
+/** 요청자 — 원본 §26 카드의 「어머니 · 김범준」 왼쪽 반 */
+export const CONSULTING_REQUESTER_LABEL: Record<ConsultingRequester, string> = {
+  mother: '어머니',
+  father: '아버지',
+};
+export const consultingRequesterLabel = (v: string | null | undefined): string | null =>
+  v == null ? null : (CONSULTING_REQUESTER_LABEL[v as ConsultingRequester] ?? v);
+
+/**
+ * §30 계약 5단계의 이름 — 원본 그대로 「계약서 준비 · 피드백 · 전달 · 서명 · 수납」.
+ * 한동안 **화면 파일만** 이 표를 들고 있었다(`front/src/lib/consulting.ts`) — 단계 이름이
+ * §26 카드의 칩에도 쓰이는데, 서버가 단계 수를 말하고 화면이 이름을 붙이면 둘이 갈린다 (D-R18).
+ */
+export const CONSULTING_CONTRACT_STEPS = ['계약서 준비', '피드백', '전달', '서명', '수납'] as const;
+
+/** 1~5 밖은 이름이 없다 — 미정(null)과 잘못된 값을 같은 자리에서 막는다 */
+export const consultingContractStepLabel = (step: number | null | undefined): string | null =>
+  typeof step === 'number' && Number.isInteger(step) && step >= 1 && step <= CONTRACT_STEP_MAX
+    ? CONSULTING_CONTRACT_STEPS[step - 1]
+    : null;
+
+/**
+ * 공개 범위 이름 — 역할 권한과 **독립된 두 번째 층**의 낱말 (DEV-SPEC §4.4).
+ * 화면 파일이 들고 있던 표를 **옮긴 것이고 바꾼 것이 아니다.**
+ */
+export const CONS_SHARE_LABEL: Record<string, string> = {
+  all: '전체 공개',
+  money_only: '수납만 공개',
+  picked: '지정 공개',
+  private: '전체 비공개',
+};
+export const consShareLabel = (share: string): string => CONS_SHARE_LABEL[share] ?? share;
 export const CONSULTING_FILE_ROLES = ['draft', 'revision', 'signed'] as const;
 export type ConsultingFileRole = (typeof CONSULTING_FILE_ROLES)[number];
 export const CONSULTING_FILE_MAX = 10;

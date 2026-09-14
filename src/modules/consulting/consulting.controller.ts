@@ -44,7 +44,8 @@ export class ConsultingController {
   })
   @ApiOkResponse({ type: ConsultingListDto })
   async all(@CurrentUser() user: RequestUser): Promise<ConsultingListDto> {
-    if (!isRole(user.role)) return { items: [], canSeeAmounts: false };
+    // 역할이 없으면 볼 것도 없다 — 칸 이름까지 내려보내지 않는다
+    if (!isRole(user.role)) return { items: [], canSeeAmounts: false, stages: [] };
     return this.svc.all(
       user.id,
       hasPerm(user.role, 'canMoney', user.perms),

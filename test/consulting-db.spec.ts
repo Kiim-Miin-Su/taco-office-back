@@ -63,6 +63,45 @@ d('§26 DB 제약과 migration 11', () => {
       .rejects.toMatchObject({ code: '23514', constraint: 'cons_sess_seq_check' });
   });
 
+  /**
+   * 원본 §26 카드가 요구하는 낱말과 수 — C86-e.
+   * **화면은 하나도 만들지 않는다**: 단계·종류·공개 범위·계약 단계·요청자 이름과
+   * 「N일 지남」·받은 돈이 전부 서버에서 온다 (D-R18 · D-R37).
+   */
+  it('카드의 낱말과 수가 전부 서버에서 온다 — 금액쌍은 한 권한을 함께 탄다 (§26)', async () => {
+    await q.query(
+      `UPDATE cons SET cons_type='essay', contract_step=2, amount=900000, requester='mother', share='money_only' WHERE id=$1`,
+      [id],
+    );
+    await q.query(`INSERT INTO staff (id,name,email,role) VALUES (1,'검사자','c86e@t.kr','manager') ON CONFLICT (id) DO NOTHING`);
+    await q.query(`INSERT INTO cons_pay (cons_id,amount,paid_on,by_id) VALUES ($1,400000,'2026-08-01',1)`, [id]);
+
+    const seen = (await new ConsultingService(q.manager.getRepository(Lead)).all(1, true, true))
+      .items.find((r) => r.id === id)!;
+    expect(seen).toMatchObject({
+      stageLabel: '계약', typeLabel: '에세이 지도', shareLabel: '수납만 공개',
+      contractStepLabel: '피드백', requesterLabel: '어머니',
+      amount: 900000, paidAmount: 400000,
+    });
+    expect(seen.ageDays).toBeGreaterThanOrEqual(0);
+
+    // 금액을 못 보면 **둘 다** 가려진다 — 한쪽만 보이면 나머지가 빼기로 드러난다
+    const hidden = (await new ConsultingService(q.manager.getRepository(Lead)).all(1, false, true))
+      .items.find((r) => r.id === id)!;
+    expect(hidden).toMatchObject({ amount: null, paidAmount: null, typeLabel: '에세이 지도' });
+  });
+
+  it('계약 단계가 미정이면 이름이 null 이다 — 없는 이름을 지어내지 않는다 (§26)', async () => {
+    const { items, stages } = await new ConsultingService(q.manager.getRepository(Lead)).all(1, true, true);
+    expect(items.find((r) => r.id === id)!.contractStepLabel).toBeNull();
+    // 빈 칸도 이름과 한 줄을 갖는다
+    expect(stages.map((v) => [v.key, v.label, v.sub])).toEqual([
+      ['contract', '계약', '계약서 만들고 서명받기'],
+      ['running', '진행', '회차별로 만나고 기록'],
+      ['done', '종료', '마무리하고 안내'],
+    ]);
+  });
+
   it('회차 중복은 UNIQUE로 차단한다', async () => {
     await q.query(`INSERT INTO cons_sess (cons_id,seq) VALUES ($1,1)`, [id]);
     await expect(q.query(`INSERT INTO cons_sess (cons_id,seq) VALUES ($1,1)`, [id]))
