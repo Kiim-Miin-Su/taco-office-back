@@ -10035,6 +10035,296 @@
         ]
       }
     },
+    "/exec/report": {
+      "patch": {
+        "description": "주기 키 날짜는 서버가 정규화한다 (D-R23 — 주간=월요일 · 월간=1일). 이미 올렸거나 결재된 보고는 409 RPT_LOCKED 다 — 대표가 본 것과 저장된 것이 달라지면 서명이 거짓이 된다.",
+        "operationId": "ExecController_saveMemo",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecMemoWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecReportWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "RPT_LOCKED — 이미 올린 보고",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§69 영역 메모 저장 — 보낸 칸만 합친다 (작성 중 · 반려된 것만)",
+        "tags": [
+          "exec"
+        ]
+      }
+    },
+    "/exec/report/submit": {
+      "post": {
+        "description": "숫자는 저장하지 않으므로(D-R4) 사람이 더한 것은 메모뿐이다. 하나도 없으면 409 RPT_EMPTY.",
+        "operationId": "ExecController_submit",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecSubmitDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecReportWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "RPT_EMPTY · RPT_LOCKED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§69 「대표께 올리기」 — 한 줄이라도 적어야 올라간다 (D-R14)",
+        "tags": [
+          "exec"
+        ]
+      }
+    },
+    "/exec/report/{id}/review": {
+      "post": {
+        "description": "받는 사람은 lib/approval 의 APPROVAL_FLOW_RECIPIENT.rpt 가 정한다 — 대표다. 올라온(sent) 보고만 결재할 수 있다.",
+        "operationId": "ExecController_review",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecReviewDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecReportWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "대표가 아니면 결재하지 않는다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "RPT_NOT_SENT — 올라오지 않은 보고",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§73 대표 보고 결재 — 승인 · 반려 (반려는 사유 필수 · D-R13)",
+        "tags": [
+          "exec"
+        ]
+      }
+    },
     "/drawer": {
       "get": {
         "operationId": "DrawerController_all",
@@ -20785,6 +21075,31 @@
           "money"
         ]
       },
+      "ExecAreaMemoDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "money",
+              "mkt",
+              "ops",
+              "consulting",
+              "complaint",
+              "lesson"
+            ]
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "빈 문자열이면 그 칸을 비운다"
+          }
+        },
+        "required": [
+          "key",
+          "memo"
+        ]
+      },
       "ExecReportDto": {
         "type": "object",
         "properties": {
@@ -20828,6 +21143,27 @@
             "type": "string",
             "nullable": true,
             "description": "D-R13 — 반려(rej)하면 사유가 반드시 있다"
+          },
+          "memos": {
+            "description": "6영역 메모 — **대표 관심순 여섯 칸이 언제나 다 온다**(안 적은 칸은 빈 문자열). 화면이 칸을 만들지 않는다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecAreaMemoDto"
+            }
+          },
+          "filled": {
+            "type": "number",
+            "description": "6영역 중 적힌 칸 수 — 「담당 x/6 기재」의 x"
+          },
+          "sentByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "원본 §69 서명줄 「올린 사람」. 옛 보고는 누가 올렸는지 기록이 없어 null 이다"
+          },
+          "reviewedByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "원본 §69 서명줄 「대표 승인」"
           }
         },
         "required": [
@@ -20835,7 +21171,9 @@
           "rptType",
           "onDate",
           "state",
-          "memo"
+          "memo",
+          "memos",
+          "filled"
         ]
       },
       "ExecAreaDto": {
@@ -20996,6 +21334,118 @@
           "inbox",
           "canSeeAmounts",
           "computedAt"
+        ]
+      },
+      "ExecMemoWriteDto": {
+        "type": "object",
+        "properties": {
+          "rptType": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ]
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "기간 안 아무 날짜. 서버가 주기 key 로 정규화한다 (D-R23)"
+          },
+          "memos": {
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecAreaMemoDto"
+            }
+          }
+        },
+        "required": [
+          "rptType",
+          "onDate",
+          "memos"
+        ]
+      },
+      "ExecReportWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "sent",
+              "ok",
+              "rej"
+            ]
+          },
+          "onDate": {
+            "type": "string",
+            "description": "RPT 키 날짜 — 서버가 정규화한 값 (D-R23)"
+          },
+          "filled": {
+            "type": "number",
+            "description": "6영역 중 적힌 칸 수 — 「담당 x/6 기재」의 x"
+          },
+          "sentByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "reviewedByName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "onDate",
+          "filled"
+        ]
+      },
+      "ExecSubmitDto": {
+        "type": "object",
+        "properties": {
+          "rptType": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ]
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        },
+        "required": [
+          "rptType",
+          "onDate"
+        ]
+      },
+      "ExecReviewDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "rej"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "rej 면 반드시 있어야 한다 (D-R13)"
+          }
+        },
+        "required": [
+          "action"
         ]
       },
       "TimeMoveChangeReqDto": {

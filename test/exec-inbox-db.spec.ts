@@ -124,4 +124,110 @@ d('§69 6영역 · §73 결재함 — 판정 한 곳, 이동만 (C37)', () => {
     expect(filledAreas(null)).toBe(0);
     expect(filledAreas({ money: 'a', mkt: 'b', ops: 'c', consulting: 'd', complaint: 'e', lesson: 'f' })).toBe(6);
   });
+  /* ══ §69 쓰기 — 「숫자만으로는 모를 것」과 서명 (C85-a) ══════════════ */
+
+  /** 서명 칸은 STAFF 를 가리킨다(RESTRICT) — 이 스위트가 제 사람을 만든다 */
+  const actor = async (name: string): Promise<number> => {
+    const [row] = (await q.query(
+      `INSERT INTO staff (name, email, role, password_hash, active)
+       VALUES ($1, $2, 'ceo', 'x', true) RETURNING id`,
+      [name, `${name}-${Date.now()}@t.kr`],
+    )) as { id: string }[];
+    return Number(row.id);
+  };
+
+  it('메모는 보낸 칸만 합친다 — 한 사람이 저장할 때 남의 줄이 사라지지 않는다', async () => {
+    const me = await actor('적는이');
+    await svc().saveMemo({ rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'money', memo: '회계 한 줄' }] }, me);
+    const second = await svc().saveMemo(
+      { rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'ops', memo: '운영 한 줄' }] }, me,
+    );
+    expect(second.filled).toBe(2);
+
+    const out = await svc().range('2026-08-21', '2026-08-21', true);
+    const report = out.reports.find((r) => r.rptType === 'day')!;
+    // 여섯 칸이 **언제나 다** 온다 — 화면이 칸을 만들지 않는다
+    expect(report.memos.map((m) => m.key)).toEqual([...EXEC_AREA_KEYS]);
+    expect(report.memos.find((m) => m.key === 'money')!.memo).toBe('회계 한 줄');
+    expect(report.memos.find((m) => m.key === 'ops')!.memo).toBe('운영 한 줄');
+    expect(report.memos.find((m) => m.key === 'mkt')!.memo).toBe('');
+  });
+
+  it('주기 키 날짜는 서버가 정규화한다 — 같은 주에 두 번 적어도 한 건이다 (D-R23)', async () => {
+    const me = await actor('정규화');
+    await svc().saveMemo({ rptType: 'week', onDate: '2026-08-19', memos: [{ key: 'money', memo: '수요일에 적음' }] }, me);
+    const again = await svc().saveMemo(
+      { rptType: 'week', onDate: '2026-08-21', memos: [{ key: 'ops', memo: '금요일에 적음' }] }, me,
+    );
+    expect(again.onDate).toBe('2026-08-17');
+    const [{ n }] = (await q.query(`SELECT count(*)::text n FROM rpt WHERE rpt_type='week'`)) as { n: string }[];
+    expect(n).toBe('1');
+
+    const month = await svc().saveMemo(
+      { rptType: 'month', onDate: '2026-08-21', memos: [{ key: 'money', memo: '달' }] }, me,
+    );
+    expect(month.onDate).toBe('2026-08-01');
+  });
+
+  it('한 줄도 안 적으면 못 올린다 — 숫자는 화면이 이미 보여 준다 (D-R14)', async () => {
+    const me = await actor('빈보고');
+    await q.query(`INSERT INTO rpt (rpt_type, on_date, memo, state) VALUES ('day','2026-08-21','{"note":"영역이 아니다"}'::jsonb,'draft')`);
+    await expect(svc().submit({ rptType: 'day', onDate: '2026-08-21' }, me))
+      .rejects.toMatchObject({ response: { code: 'RPT_EMPTY' } });
+  });
+
+  it('올리면 서명과 상태가 함께 서고, 올린 뒤에는 못 고친다', async () => {
+    const me = await actor('올린이');
+    await svc().saveMemo({ rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'money', memo: '한 줄' }] }, me);
+    const sent = await svc().submit({ rptType: 'day', onDate: '2026-08-21' }, me);
+    expect(sent.state).toBe('sent');
+    expect(sent.sentByName).toBe('올린이');
+
+    // 시각과 사람은 짝이다 (CHECK rpt_sign_pair)
+    const [row] = (await q.query(`SELECT sent_at IS NOT NULL AS t, sent_by FROM rpt WHERE id=$1`, [sent.id])) as
+      Array<{ t: boolean; sent_by: string }>;
+    expect(row.t).toBe(true);
+    expect(Number(row.sent_by)).toBe(me);
+
+    await expect(svc().saveMemo({ rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'ops', memo: '나중' }] }, me))
+      .rejects.toMatchObject({ response: { code: 'RPT_LOCKED' } });
+  });
+
+  it('반려는 사유가 있어야 하고, 반려된 보고는 다시 적어 올릴 수 있다 (D-R13)', async () => {
+    const writer = await actor('작성자');
+    const ceo = await actor('결재자');
+    await svc().saveMemo({ rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'money', memo: '한 줄' }] }, writer);
+    const sent = await svc().submit({ rptType: 'day', onDate: '2026-08-21' }, writer);
+
+    await expect(svc().review(sent.id, { action: 'rej' }, ceo))
+      .rejects.toMatchObject({ response: { code: 'REASON_REQUIRED' } });
+
+    const rejected = await svc().review(sent.id, { action: 'rej', reason: '컴플레인 줄이 비었습니다' }, ceo);
+    expect(rejected.state).toBe('rej');
+    expect(rejected.reviewedByName).toBe('결재자');
+
+    // 반려된 것은 고칠 수 있다 — 그러라고 반려한 것이다
+    const again = await svc().saveMemo(
+      { rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'complaint', memo: '채웠습니다' }] }, writer,
+    );
+    expect(again.filled).toBe(2);
+    const resent = await svc().submit({ rptType: 'day', onDate: '2026-08-21' }, writer);
+    // 다시 올리면 지난 결재는 지워진다 — 반려 사유가 남아 있으면 지금 상태를 속인다
+    expect(resent.state).toBe('sent');
+    expect(resent.reviewedByName).toBeNull();
+    const [after] = (await q.query(`SELECT reject_reason, reviewed_at FROM rpt WHERE id=$1`, [sent.id])) as
+      Array<{ reject_reason: string | null; reviewed_at: string | null }>;
+    expect(after.reject_reason).toBeNull();
+    expect(after.reviewed_at).toBeNull();
+  });
+
+  it('올라오지 않은 보고는 결재할 수 없다', async () => {
+    const me = await actor('성급한결재');
+    const draft = await svc().saveMemo(
+      { rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'money', memo: '아직 초안' }] }, me,
+    );
+    await expect(svc().review(draft.id, { action: 'ok' }, me))
+      .rejects.toMatchObject({ response: { code: 'RPT_NOT_SENT' } });
+  });
+
 });

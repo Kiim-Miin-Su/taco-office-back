@@ -42,4 +42,12 @@ export class Rpt {
 
   @Column({ type: 'text', nullable: true })
   rejectReason: string | null;
+
+  /** 올린 사람 — 원본 §69 서명줄. 시각과 **짝**이다 (CHECK rpt_sign_pair) */
+  @Column({ type: 'bigint', nullable: true })
+  sentBy: number | null;
+
+  /** 대표 승인 — 원본 §69 서명줄 */
+  @Column({ type: 'bigint', nullable: true })
+  reviewedBy: number | null;
 }

@@ -5,7 +5,13 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
+import { EXEC_AREA_KEYS } from '../../lib/exec-areas';
+
+/** 원본 §69 의 메모 칸 하나 — 「숫자만으로는 모를 것」. 한 줄이라 길이를 막아 둔다. */
+export const EXEC_MEMO_MAX = 500;
 
 /** 대표 보고 집계의 실제 달력 날짜. 저장할 RPT 주기 key와 구분한다. */
 export class ExecQueryDto {
@@ -36,6 +42,22 @@ export class ExecReportDto {
   @ApiPropertyOptional(S) sentAt?: string | null;
   @ApiPropertyOptional(S) reviewedAt?: string | null;
   @ApiPropertyOptional({ ...S, description: 'D-R13 — 반려(rej)하면 사유가 반드시 있다' }) rejectReason?: string | null;
+
+  /* ── §69 의 「숫자만으로는 모를 것」과 서명줄 (C85-a) ───────────────── */
+
+  @ApiProperty({
+    type: () => [ExecAreaMemoDto],
+    description: '6영역 메모 — **대표 관심순 여섯 칸이 언제나 다 온다**(안 적은 칸은 빈 문자열). 화면이 칸을 만들지 않는다',
+  })
+  memos!: ExecAreaMemoDto[];
+
+  @ApiProperty({ description: '6영역 중 적힌 칸 수 — 「담당 x/6 기재」의 x' }) filled!: number;
+
+  @ApiPropertyOptional({ ...S, description: '원본 §69 서명줄 「올린 사람」. 옛 보고는 누가 올렸는지 기록이 없어 null 이다' })
+  sentByName?: string | null;
+
+  @ApiPropertyOptional({ ...S, description: '원본 §69 서명줄 「대표 승인」' })
+  reviewedByName?: string | null;
 }
 
 /** 숫자 한 칸 — 저장하지 않고 매번 센다 (D-R4) */
@@ -84,4 +106,75 @@ export class ExecDto {
   @ApiProperty({ type: [ExecInboxDto], description: '§73 결재함 — 이동만 (N-12)' }) inbox!: ExecInboxDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
   @ApiProperty({ description: '저장하지 않는다 — 이 시각에 센 값이다 (D-R4)' }) computedAt!: string;
+}
+
+/* ── §69 쓰기 — 「숫자만으로는 모를 것」과 서명 ─────────────────────── */
+
+/**
+ * 영역 하나의 메모. 낱말(key)은 `lib/exec-areas` 한 곳에서 온다 — 화면이 제 표를 들면
+ * 「담당 x/6 기재」의 x 와 실제로 적힌 칸이 갈린다 (D-R18).
+ */
+export class ExecAreaMemoDto {
+  @ApiProperty({ enum: EXEC_AREA_KEYS })
+  @IsIn([...EXEC_AREA_KEYS])
+  key!: string;
+
+  @ApiProperty({ maxLength: EXEC_MEMO_MAX, description: '빈 문자열이면 그 칸을 비운다' })
+  @IsString() @MaxLength(EXEC_MEMO_MAX)
+  memo!: string;
+}
+
+/** PATCH /exec/report — 작성 중 저장. 주기+날짜로 한 건을 찾거나 만든다 (D-R23 정규화는 서버가). */
+export class ExecMemoWriteDto {
+  @ApiProperty({ enum: ['day', 'week', 'month'] })
+  @IsIn(['day', 'week', 'month'])
+  rptType!: string;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '기간 안 아무 날짜. 서버가 주기 key 로 정규화한다 (D-R23)' })
+  @IsCalendarDate()
+  onDate!: string;
+
+  @ApiProperty({ type: [ExecAreaMemoDto], maxItems: 6 })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(6)
+  @ValidateNested({ each: true }) @Type(() => ExecAreaMemoDto)
+  memos!: ExecAreaMemoDto[];
+}
+
+/** POST /exec/report/submit — 「대표께 올리기」 */
+export class ExecSubmitDto {
+  @ApiProperty({ enum: ['day', 'week', 'month'] })
+  @IsIn(['day', 'week', 'month'])
+  rptType!: string;
+
+  @ApiProperty(DATE_SCHEMA)
+  @IsCalendarDate()
+  onDate!: string;
+}
+
+/** POST /exec/report/:id/review — §73 결재. 반려는 사유가 있어야 한다 (D-R13). */
+export class ExecReviewDto {
+  @ApiProperty({ enum: ['ok', 'rej'] })
+  @IsIn(['ok', 'rej'])
+  action!: string;
+
+  @ApiPropertyOptional({ maxLength: EXEC_MEMO_MAX, description: 'rej 면 반드시 있어야 한다 (D-R13)' })
+  @IsOptional() @IsString() @MaxLength(EXEC_MEMO_MAX)
+  reason?: string;
+}
+
+/** 쓰기 응답 — 화면이 상태·기재 수를 다시 세지 않는다 (D-R37). */
+export class ExecReportWriteResultDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: ['draft', 'sent', 'ok', 'rej'] }) state!: string;
+  @ApiProperty({ description: 'RPT 키 날짜 — 서버가 정규화한 값 (D-R23)' }) onDate!: string;
+  @ApiProperty({ description: '6영역 중 적힌 칸 수 — 「담당 x/6 기재」의 x' }) filled!: number;
+  @ApiPropertyOptional({ type: String, nullable: true }) sentByName?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) reviewedByName?: string | null;
+}
+
+/** URL 의 RPT 식별자 — 다른 경로와 같은 안전 정수 범위다. */
+export class ExecReportParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  id!: number;
 }

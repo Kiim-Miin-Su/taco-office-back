@@ -4,15 +4,30 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
-import { EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
+import { EXEC_AREA_KEYS, EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
 import { toApState } from '../../lib/approval';
 import { BoardService } from '../board/board.service';
-import type { ExecAreaDto, ExecDto, ExecInboxDto, ExecStatDto } from './exec.dto';
+import type {
+  ExecAreaDto, ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto,
+  ExecReportWriteResultDto, ExecReviewDto, ExecStatDto, ExecSubmitDto,
+} from './exec.dto';
+
+/**
+ * 여섯 칸을 **언제나 다** 만든다 — 안 적은 칸은 빈 문자열이다.
+ * 화면이 칸 목록을 들면 순서(D-R25)와 낱말(D-R18)이 서버와 갈린다.
+ */
+function areaMemos(memo: unknown): ExecAreaMemoDto[] {
+  const m = (memo && typeof memo === 'object' ? memo : {}) as Record<string, unknown>;
+  return EXEC_AREA_KEYS.map((key) => ({
+    key,
+    memo: typeof m[key] === 'string' ? (m[key] as string) : '',
+  }));
+}
 import { kstAt } from '../../lib/sql';
 
 type R = Record<string, unknown>;
@@ -40,6 +55,17 @@ export class ExecService {
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
+  }
+
+  /**
+   * 쓰기 + `RETURNING` 의 한 줄. **UPDATE 는 모양이 다르다** —
+   * TypeORM 의 `query()` 가 `UPDATE … RETURNING` 에서는 `[rows, affected]` 를 돌려주므로
+   * 그냥 구조 분해하면 **0건일 때도 빈 배열이 잡혀 truthy 가 된다**(한 번 속았다).
+   */
+  private async row<T = R>(sql: string, p: unknown[] = []): Promise<T | null> {
+    const out = (await this.anyRepo.query(sql, p)) as unknown;
+    const rows = Array.isArray(out) && Array.isArray(out[0]) ? (out[0] as T[]) : (out as T[]);
+    return rows.length ? rows[0] : null;
   }
 
 
@@ -103,6 +129,142 @@ export class ExecService {
       return { from: mon, to: iso(new Date(Date.UTC(my, mm - 1, md + 6))) };
     }
     return { from: onDate, to: onDate };
+  }
+
+  /* ══ §69~§71 쓰기 — 「숫자만으로는 모를 것」과 서명 (C85-a) ══════════ */
+
+  /**
+   * RPT 키 날짜 — 주기마다 **한 건**이어야 하므로 날짜를 정규화한다 (D-R23).
+   * 화면이 아무 날짜나 보내도 여기서 같은 키로 모인다: 주간=그 주 월요일 · 월간=그 달 1일.
+   */
+  private static keyDate(rptType: string, onDate: string): string {
+    if (rptType === 'month') return `${onDate.slice(0, 7)}-01`;
+    if (rptType === 'week') return ExecService.mondayOf(onDate);
+    return onDate;
+  }
+
+  /** 한 건을 읽어 쓰기 응답 모양으로 — 화면이 상태·기재 수를 다시 세지 않는다 (D-R37) */
+  private async writeResult(id: number): Promise<ExecReportWriteResultDto> {
+    const row = await this.row(
+      `SELECT r.id, r.state, to_char(r.on_date,'YYYY-MM-DD') AS on_date, r.memo,
+              sb.name AS sent_by_name, rb.name AS reviewed_by_name
+         FROM rpt r
+         LEFT JOIN staff sb ON sb.id = r.sent_by
+         LEFT JOIN staff rb ON rb.id = r.reviewed_by
+        WHERE r.id = $1`,
+      [id],
+    );
+    if (!row) throw new NotFoundException({ code: 'RPT_NOT_FOUND', message: '보고를 찾을 수 없습니다' });
+    return {
+      id: Number(row.id), state: String(row.state), onDate: String(row.on_date),
+      filled: filledAreas(row.memo),
+      sentByName: (row.sent_by_name as string) ?? null,
+      reviewedByName: (row.reviewed_by_name as string) ?? null,
+    };
+  }
+
+  /**
+   * 작성 중 저장 — 영역 메모를 **덮어쓰지 않고 합친다.**
+   *
+   * 여섯 칸을 여러 사람이 나눠 적는 화면이라(원본 §69 의 칸마다 담당 이름이 다르다) 보낸
+   * 칸만 바꾼다. 안 보낸 칸을 지우면 한 사람이 저장할 때마다 남의 줄이 사라진다.
+   *
+   * 이미 올린 보고(`sent`)나 결재된 보고(`ok`)는 못 고친다 — 대표가 본 것과 저장된 것이
+   * 달라지면 서명이 거짓이 된다. 반려(`rej`)는 고칠 수 있다(그러라고 반려한 것이다).
+   */
+  async saveMemo(dto: ExecMemoWriteDto, actorId: number): Promise<ExecReportWriteResultDto> {
+    const key = ExecService.keyDate(dto.rptType, dto.onDate);
+    const patch: Record<string, string> = {};
+    for (const m of dto.memos) patch[m.key] = m.memo.trim();
+
+    const row = await this.row(
+      `INSERT INTO rpt (rpt_type, on_date, memo, state)
+            VALUES ($1, $2::date, $3::jsonb, 'draft')
+       ON CONFLICT (rpt_type, on_date) DO UPDATE
+          SET memo = rpt.memo || EXCLUDED.memo
+        WHERE rpt.state IN ('draft', 'rej')
+       RETURNING id, state`,
+      [dto.rptType, key, JSON.stringify(patch)],
+    );
+    if (!row) {
+      throw new ConflictException({
+        code: 'RPT_LOCKED',
+        message: '이미 올린 보고는 고칠 수 없습니다. 반려된 뒤에 다시 적어 주세요',
+      });
+    }
+    // 누가 적었는지는 LOG 가 갖는다 — RPT 의 서명 두 칸은 「올린 사람」과 「대표 승인」이다
+    await this.log(actorId, Number(row.id), 'memo', { areas: dto.memos.map((m) => m.key) });
+    return this.writeResult(Number(row.id));
+  }
+
+  /**
+   * 「대표께 올리기」 — **한 줄이라도 적어야 올라간다** (D-R14).
+   *
+   * 숫자는 저장하지 않으므로(D-R4) 보고에서 사람이 더한 것은 메모뿐이다. 하나도 없으면
+   * 그 보고는 집계 화면과 다를 것이 없다.
+   */
+  async submit(dto: ExecSubmitDto, actorId: number): Promise<ExecReportWriteResultDto> {
+    const key = ExecService.keyDate(dto.rptType, dto.onDate);
+    const found = await this.row(
+      `SELECT id, state, memo FROM rpt WHERE rpt_type = $1 AND on_date = $2::date`,
+      [dto.rptType, key],
+    );
+    if (!found) {
+      throw new NotFoundException({ code: 'RPT_NOT_FOUND', message: '아직 적은 것이 없습니다' });
+    }
+    if (!['draft', 'rej'].includes(String(found.state))) {
+      throw new ConflictException({ code: 'RPT_LOCKED', message: '이미 올린 보고입니다' });
+    }
+    if (filledAreas(found.memo) === 0) {
+      throw new ConflictException({
+        code: 'RPT_EMPTY',
+        message: '한 줄이라도 적어야 올릴 수 있습니다 — 숫자는 이 화면이 이미 보여 줍니다',
+      });
+    }
+    await this.q(
+      `UPDATE rpt SET state = 'sent', sent_at = now(), sent_by = $2,
+                      reviewed_at = NULL, reviewed_by = NULL, reject_reason = NULL
+        WHERE id = $1`,
+      [found.id, actorId],
+    );
+    await this.log(actorId, Number(found.id), 'submit', { state: 'sent' });
+    return this.writeResult(Number(found.id));
+  }
+
+  /**
+   * §73 결재 — **대표만** 한다 (`lib/approval` 의 `APPROVAL_FLOW_RECIPIENT.rpt = 'ceo'`).
+   * 반려는 사유가 반드시 있다 (D-R13) — 왜 돌아왔는지 모르면 다시 올릴 수가 없다.
+   */
+  async review(id: number, dto: ExecReviewDto, actorId: number): Promise<ExecReportWriteResultDto> {
+    const reason = (dto.reason ?? '').trim();
+    if (dto.action === 'rej' && reason === '') {
+      throw new BadRequestException({ code: 'REASON_REQUIRED', message: '반려에는 사유가 필요합니다 (D-R13)' });
+    }
+    const row = await this.row(
+      `UPDATE rpt
+          SET state = $2::varchar, reviewed_at = now(), reviewed_by = $3,
+              -- 같은 파라미터를 varchar 와 비교 두 곳에 쓰면 타입을 못 정한다 — 한 번만 캐스팅한다
+              reject_reason = CASE WHEN $2::text = 'rej' THEN $4::text ELSE NULL END
+        WHERE id = $1 AND state = 'sent'
+       RETURNING id`,
+      [id, dto.action, actorId, reason],
+    );
+    if (!row) {
+      throw new ConflictException({
+        code: 'RPT_NOT_SENT',
+        message: '올라온 보고만 결재할 수 있습니다',
+      });
+    }
+    await this.log(actorId, id, dto.action, { state: dto.action, reason: dto.action === 'rej' ? reason : null });
+    return this.writeResult(id);
+  }
+
+  /** append-only 이력 — 서명 두 칸이 못 담는 「누가 언제 무엇을」은 여기가 갖는다 */
+  private async log(actorId: number, id: number, action: string, after: Record<string, unknown>): Promise<void> {
+    await this.q(
+      `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'rpt',$2,$3,$4::jsonb)`,
+      [actorId, id, action, JSON.stringify(after)],
+    );
   }
 
   /**
@@ -194,21 +356,31 @@ export class ExecService {
     ];
 
     const reports = (await this.q(
-      `SELECT id, rpt_type, to_char(on_date,'YYYY-MM-DD') AS on_date, state,
+      `SELECT r.id, r.rpt_type, to_char(r.on_date,'YYYY-MM-DD') AS on_date, r.state,
               -- memo 는 jsonb 다. 그대로 내려보내면 화면에 [object Object] 가 찍힌다.
-              COALESCE(memo->>'note', memo::text) AS memo,
-              ${kstAt(`sent_at`)}     AS sent_at,
-              ${kstAt(`reviewed_at`)} AS reviewed_at,
-              reject_reason
-         FROM rpt WHERE on_date BETWEEN $1::date AND $2::date
-        ORDER BY on_date DESC, id DESC`,
+              COALESCE(r.memo->>'note', r.memo::text) AS memo,
+              r.memo AS memo_json,
+              ${kstAt(`r.sent_at`)}     AS sent_at,
+              ${kstAt(`r.reviewed_at`)} AS reviewed_at,
+              r.reject_reason,
+              sb.name AS sent_by_name, rb.name AS reviewed_by_name
+         FROM rpt r
+         LEFT JOIN staff sb ON sb.id = r.sent_by
+         LEFT JOIN staff rb ON rb.id = r.reviewed_by
+        WHERE r.on_date BETWEEN $1::date AND $2::date
+        ORDER BY r.on_date DESC, r.id DESC`,
       [from, to],
     )).map((r) => ({
       id: Number(r.id), rptType: String(r.rpt_type), onDate: String(r.on_date),
       state: String(r.state), memo: String(r.memo ?? ''),
+      // 여섯 칸은 **언제나 다 내려간다** — 화면이 칸을 만들면 순서와 낱말이 갈린다 (D-R18 · D-R25)
+      memos: areaMemos(r.memo_json),
+      filled: filledAreas(r.memo_json),
       sentAt: (r.sent_at as string) ?? null,
       reviewedAt: (r.reviewed_at as string) ?? null,
       rejectReason: (r.reject_reason as string) ?? null,
+      sentByName: (r.sent_by_name as string) ?? null,
+      reviewedByName: (r.reviewed_by_name as string) ?? null,
     }));
 
     const areas = await this.areaCounts(from, to);
