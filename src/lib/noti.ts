@@ -26,7 +26,7 @@ export type NotiTone = (typeof NOTI_TONES)[number];
  *   ok     끝났다는 소식 — 승인 · 입금 · 발송 완료
  *   alarm  그 밖의 알림 (기본값)
  */
-const WARN = ['/reports/unwritten', '/ops/complaints', '/accounting/overdue', '/exec/pending'];
+const WARN = ['/reports/unwritten', '/reports?section=unwritten', '/ops/complaints', '/accounting/overdue', '/exec/pending'];
 const OK = ['/accounting/paid', '/reports/sent', '/guides/sent'];
 
 export function notiTone(link: string | null | undefined): NotiTone {

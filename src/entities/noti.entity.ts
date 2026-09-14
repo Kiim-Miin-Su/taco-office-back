@@ -33,6 +33,14 @@ export class Noti {
   @Column({ type: 'varchar', length: 20, default: 'etc' })
   category: 'report_due'|'re_alarm'|'report'|'schedule'|'request'|'etc';
 
+  /** §47 독촉 배치의 HTTP 재시도 키. 기존/다른 알림은 null이다. */
+  @Column({ type: 'uuid', nullable: true })
+  requestKey: string | null;
+
+  /** §47 요청 범위 스냅샷. null은 전체, 값은 명시한 강사다. */
+  @Column({ type: 'bigint', nullable: true })
+  requestTeacherId: number | null;
+
   @Column({ type: 'timestamptz', nullable: true })
   readAt: Date | null;
 

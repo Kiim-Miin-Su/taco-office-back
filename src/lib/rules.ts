@@ -139,10 +139,45 @@ export const REPORT_WRITTEN_DB: RepStateDb[] = (Object.keys(REP_STATE_FROM_DB) a
 export const REPORT_PENDING_DB: RepStateDb[] = ['none', 'draft'];
 
 /**
+ * §47에서 강사가 다시 손대야 하는 상태.
+ *
+ * 원문은 `none/rej`를 미작성으로 부르지만, `draft`도 제출되지 않아 D-R7의
+ * 작성 인정과 학부모 발송을 둘 다 막는다. 작성을 시작했다는 이유로 독촉 목록에서
+ * 숨기면 초안이 영원히 남는 운영 결함이므로 `draft`를 포함한다.
+ *
+ * `rej`는 정산상 이미 작성된 리포트다(D-R7). 따라서 REPORT_WRITTEN_DB에서 빼지 않고
+ * 이 조치 목록에만 중복 포함한다.
+ */
+export const REPORT_ACTION_REQUIRED_DB: RepStateDb[] = ['none', 'draft', 'rej'];
+
+/** 파생 상태에 대해 §47 조치 대상인지 묻는 유일한 함수. */
+export const needsReportActionDbState = (state: string | null | undefined): boolean =>
+  REPORT_ACTION_REQUIRED_DB.includes(state as RepStateDb);
+
+/**
  * 종료 여부를 함께 적용하기 전의 미작성 후보. `na`·`plan`도 시간이 지나면 `none`이 되므로
  * SQL 독촉 조회는 이 목록 + `reportable` + `ended`를 함께 써야 한다.
  */
 export const REPORT_UNWRITTEN_CANDIDATE_DB: RepStateDb[] = ['na', 'plan', ...REPORT_PENDING_DB];
+
+/**
+ * 종료 여부를 적용하기 전 §47 조치 목록의 SQL 스캔 후보.
+ * 일정 재투영이 쓰는 REPORT_UNWRITTEN_CANDIDATE_DB와 분리해 `rej` 학생 스냅샷을 보존한다.
+ */
+export const REPORT_ACTION_REQUIRED_CANDIDATE_DB: RepStateDb[] = [
+  'na', 'plan', ...REPORT_ACTION_REQUIRED_DB,
+];
+
+export type ReportReminderIssue = 'REPORT_REMINDER_FORBIDDEN' | 'REPORT_REMINDER_STALE';
+
+/** 독촉 쓰기의 권한·stale 판정. 전체 대상 0명은 정상적인 빈 결과다. */
+export function reportReminderIssue(
+  canCrudAll: boolean, explicitTeacher: boolean, actionCount: number,
+): ReportReminderIssue | null {
+  if (!canCrudAll) return 'REPORT_REMINDER_FORBIDDEN';
+  if (explicitTeacher && actionCount === 0) return 'REPORT_REMINDER_STALE';
+  return null;
+}
 
 /* ══ 리포트 입력 계약 · 저장 방어 · 전이 규칙 ═══════════════════════════
    D-R15 · D-R40의 「5개 섹션」은 메타데이터 2개 + 강사 입력 3개다.

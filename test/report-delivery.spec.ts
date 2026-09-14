@@ -593,6 +593,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       const history = await request(app.getHttpServer()).get('/reports/deliveries/history').query({ onDate: movedDate })
         .set(auth(managerToken)).expect(200);
       expect(history.body.items[0]).toMatchObject({ id: sent.body.item.id, onDate: movedDate });
+      expect(history.body.total).toBe(history.body.items.length);
       const resent = await request(app.getHttpServer()).post(`/reports/deliveries/${sent.body.item.id}/resend`)
         .set(auth(managerToken)).send({ requestKey: '00000000-0000-4000-8000-000000000083' }).expect(201);
       const [copy] = await q<{on_date: string; body: string}>(

@@ -15,6 +15,7 @@ import { notiTone, NOTI_TONES } from '../src/lib/noti';
 describe('notiTone', () => {
   it('막힌 일은 warn', () => {
     expect(notiTone('/reports/unwritten')).toBe('warn');
+    expect(notiTone('/reports?section=unwritten')).toBe('warn');
     expect(notiTone('/ops/complaints')).toBe('warn');
   });
   it('끝난 소식은 ok', () => {

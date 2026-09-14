@@ -1860,6 +1860,99 @@
         ]
       }
     },
+    "/reports/reminders": {
+      "post": {
+        "description": "외부 메시지 발송이 아니라 NOTI(category=report_due) 원장 생성이다. 서버가 종료·취소·담당·REP 상태를 트랜잭션에서 다시 읽는다. 같은 actor·teacherId 범위의 requestKey 재시도는 기존 결과를 반환한다. 전체 대상 0명은 items=[]이며 원장이 없어 재시도 때 최신 대상을 다시 계산한다.",
+        "operationId": "ReportsController_reminders",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportReminderCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportReminderResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "날짜/안전한 정수 ID/상태/추가 키 검증 오류. from > to이면 BAD_RANGE. DB 조회·저장 전에 거절한다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "REPORT_REMINDER_FORBIDDEN: canCrudAll 권한이 필요함.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "REPORT_REMINDER_STALE/REPORT_REMINDER_REQUEST_KEY_REUSED: 선택 강사의 대상이 사라졌거나 요청 키를 다른 대상에 재사용함.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§47 선택 강사 또는 현재 조치 대상 강사 전체에 내부 독촉 알림 생성",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/reports/deliveries": {
       "get": {
         "description": "onDate는 실제 KST 수업일이다. 옮긴 회차도 해당 날짜의 학생 묶음에 포함하며 상세 조회는 개별 리포트의 원래 onDate를 사용한다. 일정 또는 출결이 취소된 회차는 신규 발송 대상에서 제외한다. 이미 보낸 이력과 재발송 원본은 보존한다.",
@@ -12976,6 +13069,71 @@
           "items"
         ]
       },
+      "ReportReminderCreateDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "재시도·더블클릭 중복 방지 키. 같은 키는 같은 actor·teacherId 범위로만 재사용한다"
+          },
+          "teacherId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "선택 강사. 생략하면 실행 시점의 조치 대상 강사 전체"
+          }
+        },
+        "required": [
+          "requestKey"
+        ]
+      },
+      "ReportReminderRecipientDto": {
+        "type": "object",
+        "properties": {
+          "teacherId": {
+            "type": "integer"
+          },
+          "teacherName": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "description": "독촉 생성 시점의 미제출·초안·반려 건수"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "내부 NOTI 생성 시각"
+          }
+        },
+        "required": [
+          "teacherId",
+          "teacherName",
+          "count",
+          "createdAt"
+        ]
+      },
+      "ReportReminderResultDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items": {
+            "description": "전체 요청의 현재 대상이 0명이면 빈 배열. 원장이 없으므로 같은 키 재시도도 최신 대상을 다시 계산한다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReportReminderRecipientDto"
+            }
+          }
+        },
+        "required": [
+          "requestKey",
+          "items"
+        ]
+      },
       "ReportBodyDto": {
         "type": "object",
         "properties": {
@@ -13342,6 +13500,10 @@
       "ReportSendHistoryListDto": {
         "type": "object",
         "properties": {
+          "total": {
+            "type": "number",
+            "description": "필터에 맞는 전체 이력 수. items 100건 상한과 분리한다."
+          },
           "items": {
             "type": "array",
             "items": {
@@ -13350,6 +13512,7 @@
           }
         },
         "required": [
+          "total",
           "items"
         ]
       },

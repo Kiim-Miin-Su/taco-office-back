@@ -6,7 +6,9 @@
 
 import { addD } from '../src/lib/recurrence';
 import {
-  canExportReport, effectiveRepState, effectiveRepStateFromEnded, reportPngFileName, reportReviewIssue,
+  REPORT_ACTION_REQUIRED_DB, REPORT_UNWRITTEN_CANDIDATE_DB,
+  canExportReport, effectiveRepState, effectiveRepStateFromEnded, needsReportActionDbState,
+  reportPngFileName, reportReviewIssue,
 } from '../src/lib/rules';
 import { SEED_TODAY } from '../src/seed/base';
 import { buildReports } from '../src/seed/outputs';
@@ -28,6 +30,13 @@ const occurrence = (over: Partial<OccSeed> = {}): OccSeed => ({
 });
 
 describe('리포트 상태 — 캘린더 색상의 단일 진실원', () => {
+  it('§47 조치 대상은 미제출 초안과 반려를 포함하되 일정 재투영 후보는 바꾸지 않는다', () => {
+    expect(REPORT_ACTION_REQUIRED_DB).toEqual(['none', 'draft', 'rej']);
+    expect(REPORT_UNWRITTEN_CANDIDATE_DB).toEqual(['na', 'plan', 'none', 'draft']);
+    expect(['none', 'draft', 'rej'].map(needsReportActionDbState)).toEqual([true, true, true]);
+    expect(['na', 'plan', 'wait', 'ok'].map(needsReportActionDbState)).toEqual([false, false, false, false]);
+  });
+
   it('오래된 미작성 상태는 현재 시각으로 방어하고 작성 상태는 보존한다', () => {
     const session = { date: SEED_TODAY, startMin: 16 * 60, durationMin: 60 };
 

@@ -74,6 +74,14 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
 
     await clean();
     const hash = await bcrypt.hash(PW, 4);
+    await q(
+      `INSERT INTO kind (key,name,color,cap,grp,rep,rep_form,sort)
+       VALUES ('class','수업','#4A5461',4,'lesson',true,'dev',1) ON CONFLICT (key) DO NOTHING`,
+    );
+    await q(
+      `INSERT INTO sub (key,name,color,active,sort)
+       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1) ON CONFLICT (key) DO NOTHING`,
+    );
     for (const person of [
       [TEACHER, '리포트강사', TEACHER_EMAIL, 'teacher'],
       [OTHER, '다른강사', OTHER_EMAIL, 'teacher'],
@@ -124,6 +132,9 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   });
 
   beforeEach(async () => {
+    await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`,
+      [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(
       `UPDATE rep SET body='{}'::jsonb, state='none', written_at=NULL, submitted_at=NULL,
                       reviewed_at=NULL, reviewer_id=NULL, reject_reason=NULL WHERE id=$1`,
@@ -147,6 +158,89 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     .post(`/reports/${SER}/${DATE}/submit`).set('Authorization', `Bearer ${token}`).send(value);
   const review = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
     .post(`/reports/${SER}/${DATE}/review`).set('Authorization', `Bearer ${token}`).send(value);
+  const remind = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
+    .post('/reports/reminders').set('Authorization', `Bearer ${token}`).send(value);
+
+  it('§47은 미제출 초안과 반려를 모두 조치 대상으로 보지만 반려의 정산 작성 인정은 보존한다', async () => {
+    await q(`UPDATE rep SET body=$2::jsonb, state='rej', written_at=now(), submitted_at=now(),
+                    reviewed_at=now(), reviewer_id=$3, reject_reason='진도 보완' WHERE id=$1`,
+      [repId, JSON.stringify(body), MANAGER]);
+    const rejected = await request(app.getHttpServer()).get('/reports/unwritten')
+      .set('Authorization', `Bearer ${managerToken}`).expect(200);
+    expect(rejected.body.items.find((item: { id: number }) => item.id === repId)).toMatchObject({
+      state: 'rej', written: true, penalty: 0,
+    });
+
+    await q(`UPDATE rep SET state='draft', written_at=NULL, submitted_at=NULL,
+                    reviewed_at=NULL, reviewer_id=NULL, reject_reason=NULL WHERE id=$1`, [repId]);
+    const draft = await request(app.getHttpServer()).get('/reports/unwritten')
+      .set('Authorization', `Bearer ${managerToken}`).expect(200);
+    expect(draft.body.items.find((item: { id: number }) => item.id === repId)).toMatchObject({
+      state: 'draft', written: false,
+    });
+  });
+
+  it('선택 강사 독촉은 NOTI/LOG를 한 트랜잭션으로 남기고 requestKey별 수신자 중복을 막는다', async () => {
+    const key = '00000000-0000-4000-8000-000000000147';
+    const value = { requestKey: key, teacherId: TEACHER };
+    const first = await remind(managerToken, value).expect(201);
+    expect(first.body).toEqual({
+      requestKey: key,
+      items: [expect.objectContaining({ teacherId: TEACHER, teacherName: '리포트강사', count: 1 })],
+    });
+
+    const retry = await remind(managerToken, value).expect(201);
+    expect(retry.body).toEqual(first.body);
+    expect((await remind(managerToken, { requestKey: key }).expect(409)).body.code)
+      .toBe('REPORT_REMINDER_REQUEST_KEY_REUSED');
+    expect(await q(`SELECT 1 FROM noti WHERE request_key=$1 AND to_id=$2`, [key, TEACHER])).toHaveLength(1);
+    expect(await q(
+      `SELECT 1 FROM noti WHERE request_key=$1 AND to_id=$2 AND from_id=$3
+        AND category='report_due' AND link='/reports?section=unwritten'
+        AND request_teacher_id=$2`, [key, TEACHER, MANAGER],
+    )).toHaveLength(1);
+    expect(await q(
+      `SELECT 1 FROM log l JOIN noti n ON n.id=l.entity_id
+        WHERE n.request_key=$1 AND l.entity='NOTI' AND l.action='remind'
+          AND l.after->>'count'='1'`, [key],
+    )).toHaveLength(1);
+
+    const otherKey = '00000000-0000-4000-8000-000000000148';
+    await remind(managerToken, { requestKey: otherKey, teacherId: TEACHER }).expect(201);
+    expect(await q(`SELECT 1 FROM noti WHERE to_id=$1 AND request_key = ANY($2::uuid[])`,
+      [TEACHER, [key, otherKey]])).toHaveLength(2);
+
+    expect((await remind(managerToken, { requestKey: key, teacherId: OTHER }).expect(409)).body.code)
+      .toBe('REPORT_REMINDER_REQUEST_KEY_REUSED');
+    await remind(teacherToken, { requestKey: '00000000-0000-4000-8000-000000000149', teacherId: TEACHER })
+      .expect(403);
+  });
+
+  it('NOTI 멱등 제약은 기존 null을 보존하고 같은 키·수신자만 막는다', async () => {
+    const key = '00000000-0000-4000-8000-000000000157';
+    const otherKey = '00000000-0000-4000-8000-000000000158';
+    await q(`INSERT INTO noti (to_id,from_id,body,category,request_key) VALUES
+      ($1,$2,'기존 알림 A','etc',NULL),($1,$2,'기존 알림 B','etc',NULL),
+      ($1,$2,'독촉 A','report_due',$3),($1,$2,'독촉 B','report_due',$4),
+      ($5,$2,'같은 배치의 다른 수신자','report_due',$3)`,
+      [TEACHER, MANAGER, key, otherKey, OTHER]);
+    await expect(q(
+      `INSERT INTO noti (to_id,from_id,body,category,request_key)
+       VALUES ($1,$2,'중복','report_due',$3)`, [TEACHER, MANAGER, key],
+    )).rejects.toMatchObject({ code: '23505' });
+    expect(await q(`SELECT 1 FROM noti WHERE request_key=$1`, [key])).toHaveLength(2);
+    expect(await q(`SELECT 1 FROM noti WHERE to_id=$1 AND request_key = ANY($2::uuid[])`,
+      [TEACHER, [key, otherKey]])).toHaveLength(2);
+  });
+
+  it('명시한 강사의 최신 대상이 사라지면 stale 409이고 알림을 남기지 않는다', async () => {
+    await q(`UPDATE rep SET body=$2::jsonb, state='wait', written_at=now(), submitted_at=now() WHERE id=$1`,
+      [repId, JSON.stringify(body)]);
+    const key = '00000000-0000-4000-8000-000000000150';
+    expect((await remind(managerToken, { requestKey: key, teacherId: TEACHER }).expect(409)).body.code)
+      .toBe('REPORT_REMINDER_STALE');
+    expect(await q(`SELECT 1 FROM noti WHERE request_key=$1`, [key])).toHaveLength(0);
+  });
 
   it.each([
     { date: DATE, start: 540, end: 600, label: '09:00–10:00' },

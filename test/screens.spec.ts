@@ -24,7 +24,7 @@ import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 import { buildOpenApi } from '../src/openapi';
 import { ExecService } from '../src/modules/exec/exec.service';
-import { GUIDE_PENDING_DB } from '../src/lib/rules';
+import { GUIDE_PENDING_DB, needsReportActionDbState } from '../src/lib/rules';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(40_000);
@@ -398,8 +398,11 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     expect(r.body.total).toBeGreaterThan(0);
     expect(r.body.items.length).toBe(r.body.total);
     expect(r.body.byTeacher.length).toBeGreaterThan(0);
-    // 밀린 것으로 잡힌 줄은 전부 「안 썼다」여야 한다
-    r.body.items.forEach((it: { written: boolean }) => expect(it.written).toBe(false));
+    // 초안·미작성은 미제출, 반려는 정산상 작성 인정이지만 모두 강사의 다음 조치가 필요하다.
+    r.body.items.forEach((it: { state: string; written: boolean }) => {
+      expect(needsReportActionDbState(it.state)).toBe(true);
+      expect(it.written).toBe(it.state === 'rej');
+    });
   });
 
   /* ── ③ 저장하지 않는다 (D-R4) ────────────────────────────────────── */

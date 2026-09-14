@@ -269,6 +269,10 @@ d('우측 서랍 — §14~§21', () => {
       .filter((a: { kind: string }) => a.kind === 'rep')
       .map((a: { id: number }) => a.id);
     expected.forEach((row: { id: string }) => expect(ids).toContain(Number(row.id)));
+    r.body.approvals.waiting
+      .filter((item: { kind: string }) => item.kind === 'rep')
+      .forEach((item: { go: string }) => expect(item.go)
+        .toMatch(/^\/reports\?review=approval&serId=\d+&onDate=\d{4}-\d{2}-\d{2}$/));
   });
 
   it('배지 숫자는 되돌아온 것 + 기다리는 것과 정확히 같다', async () => {

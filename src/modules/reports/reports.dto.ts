@@ -90,6 +90,36 @@ export class UnwrittenDto {
   @ApiProperty({ type: [ReportRowDto] }) items!: ReportRowDto[];
 }
 
+export class ReportReminderCreateDto {
+  @ApiProperty({
+    format: 'uuid',
+    description: '재시도·더블클릭 중복 방지 키. 같은 키는 같은 actor·teacherId 범위로만 재사용한다',
+  })
+  @IsUUID()
+  requestKey!: string;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '선택 강사. 생략하면 실행 시점의 조치 대상 강사 전체' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  teacherId?: number;
+}
+
+export class ReportReminderRecipientDto {
+  @ApiProperty({ type: 'integer' }) teacherId!: number;
+  @ApiProperty() teacherName!: string;
+  @ApiProperty({ type: 'integer', description: '독촉 생성 시점의 미제출·초안·반려 건수' }) count!: number;
+  @ApiProperty({ format: 'date-time', description: '내부 NOTI 생성 시각' }) createdAt!: string;
+}
+
+export class ReportReminderResultDto {
+  @ApiProperty({ format: 'uuid' }) requestKey!: string;
+  @ApiProperty({
+    type: [ReportReminderRecipientDto],
+    description: '전체 요청의 현재 대상이 0명이면 빈 배열. 원장이 없으므로 같은 키 재시도도 최신 대상을 다시 계산한다',
+  })
+  items!: ReportReminderRecipientDto[];
+}
+
 export class ReportListDto {
   @ApiProperty({ type: [ReportRowDto] }) items!: ReportRowDto[];
 }
@@ -245,6 +275,7 @@ export class ReportSendHistoryDto {
 }
 
 export class ReportSendHistoryListDto {
+  @ApiProperty({ description: '필터에 맞는 전체 이력 수. items 100건 상한과 분리한다.' }) total!: number;
   @ApiProperty({ type: [ReportSendHistoryDto] }) items!: ReportSendHistoryDto[];
 }
 

@@ -8,12 +8,12 @@ import { BadRequestException, Body, Controller, Get, Param, Post, Put, Query } f
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiErrorDto } from '../../common/http.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { hasPerm, isRole, Perm, type RequestUser } from '../../common/perm';
 import {
   ReportDeliveryCreateDto, ReportDeliveryQueryDto, ReportDeliveryQueueDto, ReportDeliveryResultDto,
   ReportDetailDto, ReportDeliveryHistoryQueryDto, ReportListDto, ReportRefDto, ReportResendDto,
   ReportReviewDto, ReportSendHistoryListDto, ReportSendRefDto, ReportUpsertDto, UnwrittenDto,
-  ReportQueryDto, ReportTeacherQueryDto,
+  ReportQueryDto, ReportReminderCreateDto, ReportReminderResultDto, ReportTeacherQueryDto,
 } from './reports.dto';
 import { ReportsService } from './reports.service';
 
@@ -66,6 +66,22 @@ export class ReportsController {
     return this.svc.unwritten(this.scope(user, query.teacherId));
   }
 
+  @Post('reminders')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '§47 선택 강사 또는 현재 조치 대상 강사 전체에 내부 독촉 알림 생성',
+    description: '외부 메시지 발송이 아니라 NOTI(category=report_due) 원장 생성이다. 서버가 종료·취소·담당·REP 상태를 트랜잭션에서 다시 읽는다. 같은 actor·teacherId 범위의 requestKey 재시도는 기존 결과를 반환한다. 전체 대상 0명은 items=[]이며 원장이 없어 재시도 때 최신 대상을 다시 계산한다.',
+  })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_REMINDER_FORBIDDEN: canCrudAll 권한이 필요함.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_REMINDER_STALE/REPORT_REMINDER_REQUEST_KEY_REUSED: 선택 강사의 대상이 사라졌거나 요청 키를 다른 대상에 재사용함.' })
+  @ApiCreatedResponse({ type: ReportReminderResultDto })
+  reminders(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: ReportReminderCreateDto,
+  ): Promise<ReportReminderResultDto> {
+    return this.svc.reminders(dto, user.id, this.canCrudAll(user));
+  }
+
   @Get('deliveries')
   @ApiOperation({ summary: '§48·§49 학생별 리포트 발송 큐 — 없으면 KST 어제', description: 'onDate는 실제 KST 수업일이다. 옮긴 회차도 해당 날짜의 학생 묶음에 포함하며 상세 조회는 개별 리포트의 원래 onDate를 사용한다. 일정 또는 출결이 취소된 회차는 신규 발송 대상에서 제외한다. 이미 보낸 이력과 재발송 원본은 보존한다.' })
   @ApiOkResponse({ type: ReportDeliveryQueueDto })
@@ -83,7 +99,7 @@ export class ReportsController {
     @CurrentUser() user: RequestUser,
     @Query() query: ReportDeliveryHistoryQueryDto,
   ): Promise<ReportSendHistoryListDto> {
-    return { items: await this.svc.deliveryHistory(query, this.canCrudAll(user)) };
+    return this.svc.deliveryHistory(query, this.canCrudAll(user));
   }
 
   @Post('deliveries')

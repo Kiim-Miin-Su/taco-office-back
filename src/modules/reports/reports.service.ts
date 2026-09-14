@@ -11,15 +11,17 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { createHash } from 'node:crypto';
 import {
-  LATE_REPORT_TIERS, REPORT_FIELDS, REPORT_UNWRITTEN_CANDIDATE_DB,
+  LATE_REPORT_TIERS, REPORT_ACTION_REQUIRED_CANDIDATE_DB, REPORT_FIELDS,
   canExportReport, decodeReportPng, effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue,
-  reportDeliveryIssue, reportPlainText, reportPngFileName, reportReviewIssue, reportWriteIssue, tierFor,
+  needsReportActionDbState, reportDeliveryIssue, reportPlainText, reportPngFileName, reportReminderIssue,
+  reportReviewIssue, reportWriteIssue, tierFor,
   type RepStateDb, type ReportBody, type ReportDeliveryIssue, type ReportPngIssue,
-  type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
+  type ReportReminderIssue, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
 import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
 import type {
-  ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportQueryDto, ReportReviewDto, ReportRowDto,
+  ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportQueryDto,
+  ReportReminderCreateDto, ReportReminderResultDto, ReportReviewDto, ReportRowDto,
   ReportSendHistoryDto, ReportUpsertDto, UnwrittenDto,
 } from './reports.dto';
 import { REPORT_FILE_STORE, type ReportFileStore } from './report-file.store';
@@ -66,6 +68,18 @@ interface SendHistoryRow {
   sent_by: string;
   sent_by_name: string;
   file_count: string;
+  total_count: string;
+}
+
+interface ReminderRow {
+  id: string;
+  to_id: string;
+  from_id: string | null;
+  request_teacher_id: string | null;
+  teacher_name: string;
+  category: string;
+  count: string;
+  created_at: string;
 }
 
 interface DeliveryFile {
@@ -119,6 +133,11 @@ const DELIVERY_ERRORS: Record<ReportDeliveryIssue | ReportPngIssue, {
   REPORT_DELIVERY_PNG_SIZE: { message: 'PNG 파일은 한 장당 3MB 이하여야 합니다', status: 'bad' },
 };
 
+const REMINDER_ERRORS: Record<ReportReminderIssue, { message: string; status: 'forbidden' | 'conflict' }> = {
+  REPORT_REMINDER_FORBIDDEN: { message: '리포트 독촉은 매니저 이상만 할 수 있습니다', status: 'forbidden' },
+  REPORT_REMINDER_STALE: { message: '선택한 강사에게 현재 독촉할 리포트가 없습니다', status: 'conflict' },
+};
+
 @Injectable()
 export class ReportsService {
   constructor(
@@ -126,7 +145,7 @@ export class ReportsService {
     @Inject(REPORT_FILE_STORE) private readonly files: ReportFileStore,
   ) {}
 
-  private static sql(where: string): string {
+  private static sql(where: string, lock = false): string {
     return `SELECT r.id, r.ser_id,
                    to_char(${REPORT_DATE_SQL}, 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
@@ -150,7 +169,8 @@ export class ReportsService {
               LEFT JOIN att a ON a.ser_id = r.ser_id AND a.on_date = r.on_date
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
              WHERE ${where}
-             ORDER BY date DESC, start_min DESC`;
+             ORDER BY date DESC, start_min DESC
+             ${lock ? 'FOR UPDATE OF r' : ''}`;
   }
 
   private static detailSql(where: string, lock: boolean): string {
@@ -384,6 +404,20 @@ export class ReportsService {
     throw new BadRequestException(body);
   }
 
+  private throwReminderIssue(issue: ReportReminderIssue): never {
+    const error = REMINDER_ERRORS[issue];
+    const body = { code: issue, message: error.message };
+    if (error.status === 'forbidden') throw new ForbiddenException(body);
+    throw new ConflictException(body);
+  }
+
+  private reminderRequestKeyConflict(): never {
+    throw new ConflictException({
+      code: 'REPORT_REMINDER_REQUEST_KEY_REUSED',
+      message: '같은 요청 키를 다른 독촉 대상에 사용할 수 없습니다',
+    });
+  }
+
   private requireDeliveryPermission(canCrudAll: boolean): void {
     const issue = reportDeliveryIssue({
       canCrudAll, states: [], expectedRepIds: [], actualRepIds: [],
@@ -403,9 +437,14 @@ export class ReportsService {
     return opts.state ? items.filter((item) => item.state === opts.state) : items;
   }
 
-  /** §47 안 쓴 리포트 — 강사별로 몇 건 밀렸는지. */
-  async unwritten(teacherId?: number): Promise<UnwrittenDto> {
-    const p: unknown[] = [REPORT_UNWRITTEN_CANDIDATE_DB];
+  /**
+   * §47 스캔 후보를 실제 종료·취소 상태와 겹쳐 읽는다.
+   * lock은 부모 SER를 먼저 잠겄 후에만 사용해 일정 쓰기와 순서를 맞춘다.
+   */
+  private async actionRows(
+    q: Queryer, teacherId?: number, lock = false, serIds?: number[],
+  ): Promise<Row[]> {
+    const p: unknown[] = [REPORT_ACTION_REQUIRED_CANDIDATE_DB];
     const c = [
       `r.state = ANY($${p.length}::rep_state_t[])`,
       `k.rep`,
@@ -414,9 +453,19 @@ export class ReportsService {
       `upper(o.span) < now()`,
     ];
     if (teacherId) { p.push(teacherId); c.push(`COALESCE(o.teacher_id, r.teacher_id) = $${p.length}`); }
-    const rows = await this.ds.query<Row[]>(ReportsService.sql(c.join(' AND ')), p);
+    // 부모 SER를 잠근 뒤 재검증할 때는 그 잠금 집합만 읽어, 잠그지 않은 신규 일정까지 섞지 않는다.
+    if (serIds) { p.push(serIds); c.push(`r.ser_id = ANY($${p.length}::bigint[])`); }
+    return q.query<Row[]>(ReportsService.sql(c.join(' AND '), lock), p);
+  }
+
+  private actionItems(rows: Row[]): ReportRowDto[] {
     const now = new Date();
-    const items = rows.map((r) => this.toRow(r, now));
+    return rows.map((row) => this.toRow(row, now)).filter((item) => needsReportActionDbState(item.state));
+  }
+
+  /** §47 안 쓴 리포트 — 강사별로 몇 건 밀렸는지. */
+  async unwritten(teacherId?: number): Promise<UnwrittenDto> {
+    const items = this.actionItems(await this.actionRows(this.ds, teacherId));
 
     const g = new Map<number, { name: string; items: ReportRowDto[] }>();
     for (const it of items) {
@@ -444,6 +493,114 @@ export class ReportsService {
       penaltyTotal: items.reduce((a, x) => a + x.penalty, 0),
       items,
     };
+  }
+
+  private async reminderRows(q: Queryer, requestKey: string): Promise<ReminderRow[]> {
+    return q.query<ReminderRow[]>(
+      `SELECT n.id, n.to_id, n.from_id, n.request_teacher_id,
+              s.name AS teacher_name, n.category,
+              COALESCE(l.count, '0') AS count,
+              to_char(n.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+         FROM noti n
+         JOIN staff s ON s.id=n.to_id
+         LEFT JOIN LATERAL (
+           SELECT after->>'count' AS count
+             FROM log
+            WHERE entity='NOTI' AND entity_id=n.id AND action='remind'
+            ORDER BY id DESC LIMIT 1
+         ) l ON true
+        WHERE n.request_key=$1
+        ORDER BY n.to_id`,
+      [requestKey],
+    );
+  }
+
+  private reminderResult(requestKey: string, rows: ReminderRow[]): ReportReminderResultDto {
+    return {
+      requestKey,
+      items: rows.map((row) => ({
+        teacherId: Number(row.to_id), teacherName: row.teacher_name,
+        count: Number(row.count), createdAt: row.created_at,
+      })),
+    };
+  }
+
+  /** §47 독촉은 외부 발송이 아니라 수신 강사의 NOTI 원장을 만든다. */
+  async reminders(
+    dto: ReportReminderCreateDto, actorId: number, canCrudAll: boolean,
+  ): Promise<ReportReminderResultDto> {
+    const permissionIssue = reportReminderIssue(canCrudAll, false, 0);
+    if (permissionIssue) this.throwReminderIssue(permissionIssue);
+
+    const q = this.ds.createQueryRunner();
+    try {
+      // 연결/BEGIN 실패도 finally의 runner 해제 경계를 반드시 지난다.
+      await q.connect();
+      await q.startTransaction();
+      // UNIQUE와 별개로 같은 requestKey 배치 전체를 직렬화해 서로 다른 수신자로 갈라지지 않게 한다.
+      await q.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [dto.requestKey]);
+      const prior = await this.reminderRows(q, dto.requestKey);
+      if (prior.length) {
+        const sameActor = prior.every((row) => Number(row.from_id) === actorId && row.category === 'report_due');
+        const requestedTeacherId = dto.teacherId ?? null;
+        const sameRequestScope = prior.every((row) => row.request_teacher_id === null
+          ? requestedTeacherId === null
+          : Number(row.request_teacher_id) === requestedTeacherId);
+        if (!sameActor || !sameRequestScope) this.reminderRequestKeyConflict();
+        await q.commitTransaction();
+        return this.reminderResult(dto.requestKey, prior);
+      }
+
+      const initial = this.actionItems(await this.actionRows(q, dto.teacherId));
+      const serIds = [...new Set(initial.map((item) => item.serId))];
+      await lockScheduleSeries(q, serIds);
+      const fresh = serIds.length
+        ? this.actionItems(await this.actionRows(q, dto.teacherId, true, serIds))
+        : [];
+      const staleIssue = reportReminderIssue(canCrudAll, dto.teacherId !== undefined, fresh.length);
+      if (staleIssue) this.throwReminderIssue(staleIssue);
+
+      // 전체 0명은 저장할 수신 원장이 없으므로 빈 성공이며, 같은 키 재시도도 최신 집합을 다시 센다.
+      const grouped = new Map<number, { teacherName: string; count: number }>();
+      for (const item of fresh) {
+        if (!item.teacherId) continue;
+        const current = grouped.get(item.teacherId) ?? { teacherName: item.teacherName ?? '-', count: 0 };
+        current.count += 1;
+        grouped.set(item.teacherId, current);
+      }
+
+      for (const [teacherId, summary] of [...grouped.entries()].sort(([a], [b]) => a - b)) {
+        const inserted = await q.query(
+          `INSERT INTO noti (
+             to_id, from_id, body, link, category, request_key, request_teacher_id
+           ) VALUES ($1, $2, $3, '/reports?section=unwritten', 'report_due', $4, $5)
+           ON CONFLICT (request_key, to_id) WHERE request_key IS NOT NULL DO NOTHING
+           RETURNING id`,
+          [
+            teacherId, actorId, `안 쓴 리포트 ${summary.count}건을 확인해 주세요.`,
+            dto.requestKey, dto.teacherId ?? null,
+          ],
+        ) as Array<{ id: string }>;
+        if (!inserted[0]) continue;
+        await q.query(
+          `INSERT INTO log (actor_id, entity, entity_id, action, after)
+           VALUES ($1, 'NOTI', $2, 'remind', $3::jsonb)`,
+          [actorId, Number(inserted[0].id), JSON.stringify({
+            requestKey: dto.requestKey, teacherId, count: summary.count,
+          })],
+        );
+      }
+
+      const saved = await this.reminderRows(q, dto.requestKey);
+      if (saved.length !== grouped.size) this.reminderRequestKeyConflict();
+      await q.commitTransaction();
+      return this.reminderResult(dto.requestKey, saved);
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      throw error;
+    } finally {
+      await q.release();
+    }
   }
 
   async detail(
@@ -509,7 +666,7 @@ export class ReportsService {
 
   async deliveryHistory(
     opts: { onDate?: string; repId?: number }, canCrudAll: boolean,
-  ): Promise<ReportSendHistoryDto[]> {
+  ): Promise<{ total: number; items: ReportSendHistoryDto[] }> {
     this.requireDeliveryPermission(canCrudAll);
     const p: unknown[] = [];
     const where: string[] = ['1=1'];
@@ -519,6 +676,7 @@ export class ReportsService {
       `SELECT rs.id, rs.source_send_id, rs.student_id, st.name AS student_name,
               to_char(rs.on_date, 'YYYY-MM-DD') AS on_date,
               rs.rep_ids, rs.channel,
+              count(*) OVER()::text AS total_count,
               to_char(rs.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
               rs.sent_by, sf.name AS sent_by_name,
               (SELECT count(*) FROM pdflog x WHERE x.kind='report_png' AND x.ref_id=rs.id)::text AS file_count
@@ -527,7 +685,10 @@ export class ReportsService {
         ORDER BY rs.sent_at DESC, rs.id DESC LIMIT 100`,
       p,
     );
-    return rows.map(ReportsService.historyRow);
+    return {
+      total: rows[0] ? Number(rows[0].total_count) : 0,
+      items: rows.map(ReportsService.historyRow),
+    };
   }
 
   private async sendForRequest(q: Queryer, requestKey: string): Promise<RequestSendRow | null> {

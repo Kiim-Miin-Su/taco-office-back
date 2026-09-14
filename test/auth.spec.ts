@@ -67,12 +67,19 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
   let app: INestApplication;
   let ds: DataSource;
   const PW = 'test-password-1234';
+  // 전체 DB 회귀가 한 scratch DB를 공유하므로 다른 suite의 sequence/fixture 범위와 겹치지 않는다.
+  const TEST_IDS = {
+    teacher: 9_000_000_000_901,
+    manager: 9_000_000_000_902,
+    admin: 9_000_000_000_903,
+    ceo: 9_000_000_000_904,
+  } as const;
 
   const PEOPLE = [
-    { id: 901, name: '김강사', email: 'teacher@t.kr', role: 'teacher' },
-    { id: 902, name: '이매니저', email: 'manager@t.kr', role: 'manager' },
-    { id: 903, name: '김민수', email: 'admin@t.kr', role: 'admin' },
-    { id: 904, name: '최대표', email: 'ceo@t.kr', role: 'ceo' },
+    { id: TEST_IDS.teacher, name: '김강사', email: 'teacher@t.kr', role: 'teacher' },
+    { id: TEST_IDS.manager, name: '이매니저', email: 'manager@t.kr', role: 'manager' },
+    { id: TEST_IDS.admin, name: '김민수', email: 'admin@t.kr', role: 'admin' },
+    { id: TEST_IDS.ceo, name: '최대표', email: 'ceo@t.kr', role: 'ceo' },
   ];
 
   beforeAll(async () => {
@@ -233,7 +240,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
     it('옛 역할 이름(head · coord)이 든 토큰은 통과하지 못한다', async () => {
       const jwt = await import('jsonwebtoken');
       const stale = jwt.sign(
-        { sub: 904, name: '최대표', role: 'head' },
+        { sub: TEST_IDS.ceo, name: '최대표', role: 'head' },
         process.env.JWT_SECRET as string,
         { expiresIn: '5m' },
       );
@@ -276,7 +283,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
       },
     );
     it.each(['expired', 'other secret'])('%s 토큰은401', async (mode) => {
-      const signed = jwt.sign({ sub: 904, name: '최대표', role: 'ceo' },
+      const signed = jwt.sign({ sub: TEST_IDS.ceo, name: '최대표', role: 'ceo' },
         mode === 'other secret' ? 'different-test-signature-key' : secret(),
         { expiresIn: mode === 'expired' ? -1 : '5m' });
       await call(signed).expect(401);
@@ -286,7 +293,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
   describe('이미 발급된 Access도 현재 STAFF로 판정한다', () => {
     it.each(['teacher', 'ceo'] as const)('발급 후 role=%s 변경은 기존 Access의 CRUD/손익 판정에 반영된다', async (role) => {
       const t = await token('manager@t.kr');
-      await ds.query('UPDATE staff SET role=$1 WHERE id=902', [role]);
+      await ds.query('UPDATE staff SET role=$1 WHERE id=$2', [role, TEST_IDS.manager]);
       try {
         const flags = permsOf(role);
         await request(app.getHttpServer()).get('/probe/crud').set('Authorization', `Bearer ${t}`).expect(flags.canCrudAll ? 200 : 403);
@@ -294,7 +301,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
         const res = await request(app.getHttpServer()).get('/probe/identity').set('Authorization', `Bearer ${t}`).expect(200);
         expect(res.body.role).toBe(role);
         expect(res.body.flags).toEqual(flags);
-      } finally { await ds.query("UPDATE staff SET role='manager' WHERE id=902"); }
+      } finally { await ds.query("UPDATE staff SET role='manager' WHERE id=$1", [TEST_IDS.manager]); }
     });
 
     const fields = [
@@ -305,47 +312,47 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
       '$flag=$value는 옛 토큰 예외보다 우선한다', async ({ flag, column, value }) => {
         // SQL identifier는 위 고정된 테스트 목록만 사용한다. 반대 예외로 토큰을 발급한 뒤 전환한다.
         const initial = value === null ? !permsOf('manager')[flag] : !value;
-        await ds.query(`UPDATE staff SET ${column}=$1 WHERE id=902`, [initial]);
+        await ds.query(`UPDATE staff SET ${column}=$1 WHERE id=$2`, [initial, TEST_IDS.manager]);
         try {
           const t = await token('manager@t.kr');
-          await ds.query(`UPDATE staff SET ${column}=$1 WHERE id=902`, [value]);
+          await ds.query(`UPDATE staff SET ${column}=$1 WHERE id=$2`, [value, TEST_IDS.manager]);
           const res = await request(app.getHttpServer()).get('/probe/identity').set('Authorization', `Bearer ${t}`).expect(200);
           const me = await request(app.getHttpServer()).get('/auth/me').set('Authorization', `Bearer ${t}`).expect(200);
           expect(res.body.flags[flag]).toBe(value ?? permsOf('manager')[flag]);
           expect(res.body.flags[flag]).toBe(me.body[flag]);
-        } finally { await ds.query(`UPDATE staff SET ${column}=NULL WHERE id=902`); }
+        } finally { await ds.query(`UPDATE staff SET ${column}=NULL WHERE id=$1`, [TEST_IDS.manager]); }
       },
     );
 
     it.each([true, false])('실제 /ops 비용 projection도 현재 canMoney=%s를 따른다', async (allowed) => {
-      await ds.query('UPDATE staff SET can_money=$1 WHERE id=902', [!allowed]);
+      await ds.query('UPDATE staff SET can_money=$1 WHERE id=$2', [!allowed, TEST_IDS.manager]);
       try {
         const t = await token('manager@t.kr');
-        await ds.query('UPDATE staff SET can_money=$1 WHERE id=902', [allowed]);
+        await ds.query('UPDATE staff SET can_money=$1 WHERE id=$2', [allowed, TEST_IDS.manager]);
         const res = await request(app.getHttpServer()).get('/ops').set('Authorization', `Bearer ${t}`).expect(200);
         expect(res.body.canSeeAmounts).toBe(allowed);
         if (!allowed) for (const item of res.body.marketing) expect(item.cost).toBeNull();
-      } finally { await ds.query('UPDATE staff SET can_money=NULL WHERE id=902'); }
+      } finally { await ds.query('UPDATE staff SET can_money=NULL WHERE id=$1', [TEST_IDS.manager]); }
     });
 
     it('비활성 계정의 아직 만료되지 않은 Access도 일반 보호 API에서401이다', async () => {
       const t = await token('manager@t.kr');
-      await ds.query('UPDATE staff SET active=false WHERE id=902');
+      await ds.query('UPDATE staff SET active=false WHERE id=$1', [TEST_IDS.manager]);
       try {
         await request(app.getHttpServer()).get('/probe/any').set('Authorization', `Bearer ${t}`).expect(401);
-      } finally { await ds.query('UPDATE staff SET active=true WHERE id=902'); }
+      } finally { await ds.query('UPDATE staff SET active=true WHERE id=$1', [TEST_IDS.manager]); }
     });
 
     it('삭제된 계정의 아직 만료되지 않은 Access는401이다', async () => {
-      const saved = await ds.getRepository(Staff).findOneByOrFail({ id: 903 });
+      const saved = await ds.getRepository(Staff).findOneByOrFail({ id: TEST_IDS.admin });
       const t = await token('admin@t.kr');
-      await ds.getRepository(Staff).delete(903);
+      await ds.getRepository(Staff).delete(TEST_IDS.admin);
       try {
         await request(app.getHttpServer()).get('/probe/any').set('Authorization', `Bearer ${t}`).expect(401);
       } finally {
         // save()의 신규 generated id 재할당을 피하고 이 테스트가 소유한 고정 fixture를 복원한다.
-        await ds.query('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES(903,$1,$2,$3,$4,true)',
-          [saved.name, saved.email, saved.role, saved.passwordHash]);
+        await ds.query('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES($1,$2,$3,$4,$5,true)',
+          [TEST_IDS.admin, saved.name, saved.email, saved.role, saved.passwordHash]);
       }
     });
 
@@ -355,7 +362,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
       try {
         const res = await request(app.getHttpServer()).get('/probe/identity').set('Authorization', `Bearer ${t}`).expect(200);
         expect(spy).toHaveBeenCalledTimes(1);
-        expect(spy.mock.calls[0][0]).toMatchObject({ where: { id: 902, active: true }, select: expect.any(Array) });
+        expect(spy.mock.calls[0][0]).toMatchObject({ where: { id: TEST_IDS.manager, active: true }, select: expect.any(Array) });
         const selected = spy.mock.calls[0][0].select;
         expect(selected).not.toContain('passwordHash');
         expect(selected).not.toContain('phone');
@@ -366,12 +373,12 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
 
   it('비활성 계정의 로그인/쿠키 갱신과 me는401이다', async () => {
     const before = await login('manager@t.kr');
-    await ds.query('UPDATE staff SET active=false WHERE id=902');
+    await ds.query('UPDATE staff SET active=false WHERE id=$1', [TEST_IDS.manager]);
     try {
       await request(app.getHttpServer()).post('/auth/login').send({ email: 'manager@t.kr', password: PW }).expect(401);
       await request(app.getHttpServer()).post('/auth/refresh').set('Cookie', before.headers['set-cookie']).expect(401);
       await request(app.getHttpServer()).get('/auth/me').set('Authorization', `Bearer ${before.body.accessToken}`).expect(401);
-    } finally { await ds.query('UPDATE staff SET active=true WHERE id=902'); }
+    } finally { await ds.query('UPDATE staff SET active=true WHERE id=$1', [TEST_IDS.manager]); }
   });
 
   it('logout은 쿠키를 같은 경로로 만료시키고204/빈 본문을 반환한다', async () => {

@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-50 C81 §47 독촉: NOTI.request_key nullable + (request_key,to_id) partial unique로 기존 알림을 보존하고 같은 배치의 수신자별 중복을 차단한다. request_teacher_id는 전체(null)/선택 강사 요청 범위를 재시도 때 대조한다. 외부 발송이 아닌 내부 NOTI 원장이다.
 // TBO-50 C77 최종 정합 감사 (2026-09-14): 기존 migration 1759500000000의 CARRY가 DBML 두 정본에서 빠진 것을 교정. entity·migration·DBML 71표로 일치하며 C77 신규 교재 3표와 별개인 기존 §54 원장이다.
 // TBO-50 C36-a 검수 (2026-09-12): 분납 입금은 **기존 형상만으로 성립**한다 — INV.paid_amount(D-R37)·PAY.reason·CHECK inv_paid_le_amount 재사용. 누계는 저장된 합이 아니라 그 순간 PAY 줄의 합을 서버가 다시 세어 쓴다. 새 표·컬럼·제약·migration 0 · v4.16/66표 유지(3곳 동일 확인). 초과 입금(환불·조정)과 EXPENSE 쪽 A-D3/A-D5 는 C36-b.
 // TBO-48 D3-i-c (2026-09-11): /exec from/to는 기존 집계 SQL date 인자이며 영속 컬럼이 아니다. 공용 달력 guard/DTO로 잘못된 날짜를 SQL 전에400 거절, 윤년 동일일 실제 조회/RPT 건수 불변 검수. v4.11/64표/migration14 유지; RPT 주기·6영역 쓰기는 별도 미완.
@@ -1037,8 +1038,11 @@ Table NOTI {
   body        text        [not null]
   link        varchar(80)
   category    varchar(20) [not null, default: 'etc', note: '작성 독촉 · 재알람 · 리포트 · 일정 변경 · 요청 처리 · 기타. C76 migration 32 CHECK']
+  request_key uuid        [note: '§47 독촉 HTTP 재시도 키. 기존/다른 알림은 null']
+  request_teacher_id bigint [note: '§47 요청 범위 스냅샷. null=전체, 값=명시 강사 ID']
   read_at     timestamptz
   created_at  timestamptz [not null, default: `now()`]
+  indexes { (request_key, to_id) [unique, note: 'request_key IS NOT NULL partial unique'] }
   Note: '시드 8건. 인앱 구현 완료 · category가 §16 분류 정본이며 링크 파생은 과거 행 fallback뿐 · 카카오/알림톡 실발송은 아직 없음 (D9).'
 }
 

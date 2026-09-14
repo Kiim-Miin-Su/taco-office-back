@@ -73,7 +73,8 @@ export class DrawerService {
         kind: 'rep', id: Number(r.id),
         title: `리포트 · ${String(r.student_names)} ${String(r.on_date)}`,
         sub: null, byId: num(r.teacher_id), byName: str(r.teacher_name), at: String(r.at),
-        state: toApState(str(r.state)), why: str(r.reject_reason), go: '/reports',
+        state: toApState(str(r.state)), why: str(r.reject_reason),
+        go: `/reports?review=approval&serId=${Number(r.ser_id)}&onDate=${String(r.on_date)}`,
       });
     }
 
