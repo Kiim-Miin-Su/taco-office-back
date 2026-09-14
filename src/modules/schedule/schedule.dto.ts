@@ -384,6 +384,14 @@ export class TrackedStudentDto {
   @ApiProperty({ description: '그날만 빠진 학생인가 (D-R21)' }) droppedOnce!: boolean;
 
   @ApiProperty({ description: '반납하지 않은 배부 교재 수 — 원문 「교재 N」' }) bookCount!: number;
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description: '배부 완료 교재 중 진도 쪽수와 전체 쪽수가 모두 있는 책의 동일가중 평균. 알 수 있는 책이 없으면 null',
+  })
+  progressAverage!: number | null;
+  @ApiProperty({ description: '진도 평균에 포함된 교재 수. 0이면 0%가 아니라 미확인이다' })
+  progressKnownBooks!: number;
   @ApiProperty({ description: '이 수업의 안내가 나갔는가 — 원문 「안내 됨 / 안내 없음」' }) guided!: boolean;
 
   /** 원문 「13/13 · 30일 출결」 — 확정된 출결만 센다. 아직 확정 안 한 회차는 분모에도 없다 */

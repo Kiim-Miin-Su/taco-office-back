@@ -146,7 +146,9 @@ export const EXCEPTIONS: ExcSpec[] = [
   { serId: 6,  nth: 1,  canceled: true,  reason: '학생 본인 사정', byId: 4 },
   // 단일 강사 표본에서는 자신으로 대강 교체하지 않는다. 시간 이동 갈래를 검증한다.
   { serId: 9,  nth: 2,  canceled: false, startMin: hm(12), endMin: hm(13), reason: '개인 사정으로 이번 수업 시간 변경', byId: 3 },
-  { serId: 3,  nth: 1,  canceled: false, startMin: hm(20, 30), endMin: hm(22), reason: '학교 시험으로 3시간 30분 미룸', byId: 4 },
+  // nth=1이 월/수 중 어느 요일에 걸려도 다른 회차와 겹치지 않는 표본이어야 한다.
+  // 20:30은 월요일 SER16(21:00)과 충돌해 기준일이 화요일인 날 seed 전체를 깨뜨렸다.
+  { serId: 3,  nth: 1,  canceled: false, startMin: hm(13, 30), endMin: hm(15), reason: '학교 시험으로 3시간 30분 앞당김', byId: 4 },
   { serId: 17, nth: -1, canceled: true,  reason: '강사 병가', byId: 3 },
 ];
 

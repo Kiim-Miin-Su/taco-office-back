@@ -57,6 +57,23 @@ describe('C75 — 4역할·5인 신규 개발 DB 표본', () => {
     expect(conflicts).toEqual([]);
   });
 
+  it('상대 nth 시간 이동은 기준일 요일이 바뀌어도 원본 반복표 어느 요일과도 겹치지 않는다', () => {
+    const conflicts: string[] = [];
+    for (const exception of schedule.EXCEPTIONS.filter((row) => row.startMin !== undefined && !row.canceled)) {
+      const source = schedule.SERS.find((row) => row.id === exception.serId)!;
+      for (const dow of source.days) {
+        for (const other of schedule.SERS.filter((row) => (
+          row.id !== source.id && row.teacherId === source.teacherId && row.days.includes(dow)
+        ))) {
+          if (exception.startMin! < other.endMin && other.startMin < exception.endMin!) {
+            conflicts.push(`ser${source.id}/ser${other.id}/dow${dow}`);
+          }
+        }
+      }
+    }
+    expect(conflicts).toEqual([]);
+  });
+
   it('승인된 시간 변경 요청은 실제 회차 예외와 같은 날짜와 값을 사용한다', () => {
     const exceptions = schedule.resolveExceptions(schedule.expand());
     for (const request of ops.CHREQS.filter((r) => r.state === 'approved' && r.reqType === 'time_move')) {

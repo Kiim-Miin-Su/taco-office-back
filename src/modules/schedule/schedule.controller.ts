@@ -50,9 +50,10 @@ export class ScheduleController {
       throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
     }
 
-    // 강사는 자기 수업만 본다. 화면이 안 걸러도 서버가 거른다 (D-R39).
+    // 관리자 시간표 화면에 들어갈 수 없는 사람은 자기 수업만 본다. 화면과 서버가 같은
+    // canAdminPage 결론을 써야 개인 화면인데 전체 회차가 내려가는 권한 조합이 생기지 않는다 (D-R39).
     // 역할을 직접 비교하지 않는다 — 판정은 hasPerm 한 곳에서만 한다 (eslint 가 막는다).
-    const canAll = isRole(user.role) && hasPerm(user.role, 'canCrudAll', user.perms);
+    const canAll = isRole(user.role) && hasPerm(user.role, 'canAdminPage', user.perms);
     const canCrudAttendance = isRole(user.role)
       && hasPerm(user.role, 'canCrudAttendance', user.perms);
     const forced = canAll ? undefined : user.id;
@@ -81,7 +82,7 @@ export class ScheduleController {
   @Perm('canAdminPage')
   @ApiOperation({
     summary: '§79 수강 학생 — 정원 · 교재 · 안내 · 30일 출결 · 미수 · 최신 리포트 3건',
-    description: '금액(단가·총액·미수)은 canMoney 인 사람에게만 값이 간다 (D-R39). 「진도 평균」은 저장할 자리가 없어 싣지 않는다 (N-31).',
+    description: '금액(단가·총액·미수)은 canMoney 인 사람에게만 값이 간다 (D-R39). 진도 평균은 ISSUE.progress_page/LIB.pages의 기존 교재 산식을 재사용하며 미확인은 null이다.',
   })
   @ApiOkResponse({ type: LessonTrackingDto })
   @ApiNotFoundResponse({ description: '회차 없음' })
@@ -91,7 +92,12 @@ export class ScheduleController {
   ): Promise<LessonTrackingDto> {
     const canMoney = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     const out = await this.svc.tracking(query.serId, query.onDate, canMoney);
-    if (!out) throw new NotFoundException({ code: 'SER_NOT_FOUND', message: '수업을 찾을 수 없습니다' });
+    if (!out) {
+      throw new NotFoundException({
+        code: 'OCCURRENCE_NOT_FOUND',
+        message: '해당 날짜의 수업 회차를 찾을 수 없습니다',
+      });
+    }
     return out;
   }
 

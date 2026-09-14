@@ -33,6 +33,18 @@ const row = (over: Record<string, unknown> = {}) => ({
 });
 
 describe('ScheduleService 리포트 상태 계약', () => {
+  it('학생별 조회는 그날만 빠진 학생을 EXC_STU_OUT에서 제외한다', async () => {
+    const query = jest.fn().mockResolvedValue([]);
+    const service = new ScheduleService({ query } as never);
+
+    await service.list({ from: '2026-09-01', to: '2026-09-01', studentId: 7 });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain('FROM exc e2 JOIN exc_stu_out xo');
+    expect(sql).toContain('e2.on_date = o.on_date');
+    expect(sql).toContain('xo.student_id = ss.student_id');
+  });
+
   it('오래된 na와 REP 없는 회차도 종류·시각 기준 유효 상태로 내려준다', async () => {
     const query = jest.fn().mockResolvedValue([
       row(),

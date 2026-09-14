@@ -88,6 +88,14 @@ d('§79 학생 트래킹 (C55)', () => {
     )) as Array<{ id: string }>;
     serId = Number(s.id);
     await q.query(`INSERT INTO ser_stu (ser_id, student_id) VALUES ($1,$2),($1,$3)`, [serId, stuA, stuB]);
+    // 상세는 목록에 실제로 존재하는 물리 회차에서만 연다. 반복 parser와 독립적으로
+    // 이 테스트가 검증하는 회차 키를 명시해 임의 onDate 허용 회귀를 막는다.
+    await q.query(
+      `INSERT INTO ser_occ (ser_id, on_date, teacher_id, span)
+       VALUES ($1,$2::date,71,tstzrange($2::date + time '10:00' - interval '9 hours',
+                                      $2::date + time '11:00' - interval '9 hours'))`,
+      [serId, onDate],
+    );
   });
   afterEach(async () => {
     if (q?.isTransactionActive) await q.rollbackTransaction();
@@ -114,6 +122,16 @@ d('§79 학생 트래킹 (C55)', () => {
     expect(t.canAdd).toBe(3);
     expect(t.students).toHaveLength(2);
     expect(t.students.find((s) => s.id === stuA)!.droppedOnce).toBe(true);
+  });
+
+  it('그날만 빠진 학생의 개인 시간표 조회에서는 해당 회차를 제외한다 (D-R21)', async () => {
+    const [e] = (await q.query(
+      `INSERT INTO exc (ser_id, on_date) VALUES ($1,$2) RETURNING id`, [serId, onDate],
+    )) as Array<{ id: string }>;
+    await q.query(`INSERT INTO exc_stu_out (exc_id, student_id) VALUES ($1,$2)`, [Number(e.id), stuA]);
+
+    expect(await svc().list({ from: onDate, to: onDate, studentId: stuA })).toHaveLength(0);
+    expect(await svc().list({ from: onDate, to: onDate, studentId: stuB })).toHaveLength(1);
   });
 
   it('금액은 대표만 — 못 보면 단가 · 총액 · 미수가 전부 null 이다 (D-R39)', async () => {
@@ -150,6 +168,38 @@ d('§79 학생 트래킹 (C55)', () => {
       [Number(issue.id), onDate],
     );
     expect((await svc().tracking(serId, onDate, true))!.students.find((s) => s.id === stuA)!.bookCount).toBe(1);
+  });
+
+  it('진도 평균은 배부 완료 중 쪽수를 아는 교재를 책별 동일가중하고 미확인·회수는 제외한다', async () => {
+    const [knownA] = await q.query(
+      `INSERT INTO lib (code,title,sub_key,pages) VALUES ($1,'진도 교재','sat-math',200) RETURNING id`,
+      [`TRACK-PROGRESS-A-${stuA}`],
+    ) as Array<{ id: string }>;
+    const [knownB] = await q.query(
+      `INSERT INTO lib (code,title,sub_key,pages) VALUES ($1,'두번째 진도 교재','sat-math',100) RETURNING id`,
+      [`TRACK-PROGRESS-B-${stuA}`],
+    ) as Array<{ id: string }>;
+    const [unknown] = await q.query(
+      `INSERT INTO lib (code,title,sub_key) VALUES ($1,'쪽수 미정','sat-math') RETURNING id`,
+      [`TRACK-UNKNOWN-${stuA}`],
+    ) as Array<{ id: string }>;
+    const [returned] = await q.query(
+      `INSERT INTO lib (code,title,sub_key,pages) VALUES ($1,'회수 교재','sat-math',100) RETURNING id`,
+      [`TRACK-RETURNED-${stuA}`],
+    ) as Array<{ id: string }>;
+    await q.query(
+      `INSERT INTO issue (lib_id,student_id,state,requested_by,issued_on,approved_by,delivered_at,progress_page)
+       VALUES ($1,$5,'ok',71,$6,71,now(),50),
+              ($2,$5,'ok',71,$6,71,now(),75),
+              ($3,$5,'ok',71,$6,71,now(),20),
+              ($4,$5,'ok',71,$6,71,now(),100)`,
+      [Number(knownA.id), Number(knownB.id), Number(unknown.id), Number(returned.id), stuA, onDate],
+    );
+    await q.query(`UPDATE issue SET state='returned',returned_on=$2 WHERE lib_id=$1`, [Number(returned.id), onDate]);
+
+    const student = (await svc().tracking(serId, onDate, true))!.students.find((s) => s.id === stuA)!;
+    expect({ average: student.progressAverage, knownBooks: student.progressKnownBooks })
+      .toEqual({ average: 50, knownBooks: 2 });
   });
 
   it('취소된 청구서는 미수가 아니다 — 상태 목록을 여기서 다시 적지 않는다', async () => {
@@ -240,5 +290,9 @@ d('§79 학생 트래킹 (C55)', () => {
 
   it('없는 수업이면 null 을 돌려준다 — 컨트롤러가 404 로 옮긴다', async () => {
     expect(await svc().tracking(99_999_999, onDate, true)).toBeNull();
+  });
+
+  it('SER가 있어도 실제 회차가 아닌 날짜이면 null을 돌려준다', async () => {
+    expect(await svc().tracking(serId, day(1), true)).toBeNull();
   });
 });

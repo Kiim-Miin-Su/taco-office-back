@@ -19,6 +19,7 @@ import type {
 } from './schedule.dto';
 import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
+import { progressPercent } from '../../lib/book';
 
 export interface OccQuery extends OccurrenceQueryDto {
   canCrudAttendance?: boolean;
@@ -62,7 +63,16 @@ export class ScheduleService {
     if (q.roomId) { params.push(q.roomId); cond.push(`o.room_id = $${params.length}`); }
     if (q.studentId) {
       params.push(q.studentId);
-      cond.push(`EXISTS (SELECT 1 FROM ser_stu ss WHERE ss.ser_id = o.ser_id AND ss.student_id = $${params.length})`);
+      cond.push(`EXISTS (
+        SELECT 1 FROM ser_stu ss
+         WHERE ss.ser_id = o.ser_id AND ss.student_id = $${params.length}
+           -- 「이 회차만 빼기」는 규칙 명단을 보존하되 그날 학생 시간표에서는 제외한다 (D-R21).
+           AND NOT EXISTS (
+             SELECT 1 FROM exc e2 JOIN exc_stu_out xo ON xo.exc_id = e2.id
+              WHERE e2.ser_id = o.ser_id AND e2.on_date = o.on_date
+                AND xo.student_id = ss.student_id
+           )
+      )`);
     }
 
     const rows = (await this.occ.query(
@@ -236,9 +246,8 @@ export class ScheduleService {
    * 회차 목록에 끼워 넣지 않는 이유: 한 주치 회차마다 학생별 질의가 붙는다.
    * 이 창은 눌러야 열리므로 **열 때 한 번** 부른다.
    *
-   * 「진도 평균」은 **싣지 않았다.** 원문 카드에 있지만 저장할 자리가 없고(교재 진도를 적는 칸이
-   * `issue` 에도 `lib` 에도 없다), 원문 컷의 값이 두 학생 모두 0% 라 무엇을 나눈 값인지도
-   * 말해 주지 않는다. 숫자를 지어내면 그 자리부터 거짓이 된다 — N-31 로 올렸다.
+   * 「진도 평균」은 `ISSUE.progress_page / LIB.pages`의 기존 `progressPercent` 산식을 재사용한다.
+   * 쪽수를 아는 배부 완료 교재를 책별 동일가중하고, 알려진 책이 없으면 0%가 아니라 null이다.
    */
   async tracking(
     serId: number,
@@ -260,7 +269,11 @@ export class ScheduleService {
                 FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
                WHERE ss.ser_id = s.id
               ), '[]'::json) AS students
-         FROM ser s JOIN kind k ON k.key = s.kind_key
+         FROM ser s
+         JOIN kind k ON k.key = s.kind_key
+         -- 상세는 목록에서 연 실제 회차 하나만 받는다. 같은 SER의 임의 날짜로 가격·명단
+         -- 스냅숏을 만들지 않도록 물리 회차의 원래 날짜 키를 함께 검증한다.
+         JOIN ser_occ o ON o.ser_id = s.id AND o.on_date = $2::date
         WHERE s.id = $1`,
       [serId, onDate],
     )) as Array<Record<string, unknown>>;
@@ -298,7 +311,8 @@ export class ScheduleService {
     );
 
     const students: TrackedStudentDto[] = roster.map((r) => ({
-      ...r, bookCount: 0, guided: false, attendDone: 0, attendTotal: 0,
+      ...r, bookCount: 0, progressAverage: null, progressKnownBooks: 0,
+      guided: false, attendDone: 0, attendTotal: 0,
       unpaid: canSeeAmounts ? 0 : null, reports: [],
     }));
 
@@ -309,6 +323,12 @@ export class ScheduleService {
         `SELECT st.id,
                 (SELECT count(*) FROM issue i
                   WHERE i.student_id = st.id AND i.state = 'ok') AS book_count,
+                COALESCE((
+                  SELECT json_agg(json_build_object('page', i.progress_page, 'pages', l.pages) ORDER BY i.id)
+                    FROM issue i JOIN lib l ON l.id = i.lib_id
+                   WHERE i.student_id = st.id AND i.state = 'ok'
+                     AND i.progress_page IS NOT NULL AND l.pages IS NOT NULL AND l.pages > 0
+                ), '[]'::json) AS progress_books,
                 EXISTS (
                   SELECT 1 FROM guide g
                    WHERE g.ser_id = $2 AND g.student_id = st.id
@@ -339,6 +359,13 @@ export class ScheduleService {
         const s = byId.get(Number(f.id));
         if (!s) continue;
         s.bookCount = Number(f.book_count);
+        const progressValues = ((f.progress_books ?? []) as Array<{ page: number | string; pages: number | string }>)
+          .map((book) => progressPercent(Number(book.page), Number(book.pages)))
+          .filter((value): value is number => value !== null);
+        s.progressKnownBooks = progressValues.length;
+        s.progressAverage = progressValues.length
+          ? Math.round(progressValues.reduce((sum, value) => sum + value, 0) / progressValues.length)
+          : null;
         s.guided = f.guided === true;
         s.attendTotal = Number(f.att_total);
         s.attendDone = Number(f.att_done);
