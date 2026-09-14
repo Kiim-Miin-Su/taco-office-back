@@ -307,6 +307,23 @@ export class RosterPatchDto {
   @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId!: number;
 }
 
+/**
+ * 저장은 됐지만 **강사가 못 한다고 적어 둔 시간**에 걸쳤다 (원본 §15·§16 불가 시간).
+ *
+ * 막지 않는다 — 불가 시간은 DB 제약이 아니라 강사가 미리 낸 사정이고, 급하면 관리자가
+ * 그 위에 잡는 일이 실제로 있다. 다만 **말은 해야 한다**: 지금까지 관리자 화면은 UNAV 를
+ * 어디에서도 보여 주지 않아 **적어 낸 사람만 알고 잡는 사람은 몰랐다.**
+ */
+export class UnavWarnDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty({ description: '회차가 실제로 놓인 달력 날짜' }) date!: string;
+  @ApiProperty() teacherId!: number;
+  @ApiProperty() teacherName!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() endMin!: number;
+  @ApiProperty({ description: '강사가 적은 사유 — 화면이 그대로 보여 준다' }) reason!: string;
+}
+
 export class WriteResultDto {
   @ApiProperty({ description: '실제로 적용된 범위 — 「향후」가 「모두」로 강등되면 여기서 드러난다 (D-R17)' })
   effScope!: string;
@@ -318,6 +335,12 @@ export class WriteResultDto {
 
   @ApiProperty({ type: [Number], description: '영향받은 규칙 — 화면은 이 범위만 다시 읽으면 된다' })
   serIds!: number[];
+
+  @ApiProperty({
+    type: [UnavWarnDto],
+    description: '강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄',
+  })
+  unavailable!: UnavWarnDto[];
 }
 
 /** 명단 변경 직후 서버가 같은 트랜잭션 스냅숏에서 계산한 후속 작업 (D-R22). */

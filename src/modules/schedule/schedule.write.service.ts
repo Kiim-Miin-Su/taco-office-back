@@ -28,13 +28,54 @@ import {
 } from '../../lib/recurrence';
 import { rosterPricing, GUIDE_DONE_DB } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
+import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
 import { loadState, persist } from './schedule.state.repo';
 import { assertScheduleReferences } from './schedule.references';
 import { horizon, project } from './schedule.project';
 import type {
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto,
-  RosterPatchDto, RosterResultDto, WriteResultDto,
+  RosterPatchDto, RosterResultDto, UnavWarnDto, WriteResultDto,
 } from './schedule.dto';
+
+/**
+ * 강사 불가 시간과 겹친 회차 — **막지 않고 알린다** (원본 §15·§16).
+ *
+ * UNAV 는 DB 제약이 아니다. 급할 때 관리자가 그 위에 잡는 일이 실제로 있고, 그것까지 막으면
+ * 제품이 현장을 이긴다. 다만 **지금까지는 말조차 하지 않았다** — 관리자 화면 어디에도
+ * UNAV 가 없어 **적어 낸 강사만 알고 잡는 사람은 몰랐다.**
+ *
+ * 쓰기가 끝난 트랜잭션 안에서 한 번 훑는다 — 왕복을 더하지 않는다. 지난 날은 고칠 수 없으니
+ * 오늘부터 보고, 취소된 회차는 자리를 비우는 쪽이라 세지 않는다. 열 줄에서 끊는다(경고는
+ * 읽히지 않으면 없는 것과 같다).
+ */
+async function unavailableOverlaps(q: QueryRunner, serIds: number[]): Promise<UnavWarnDto[]> {
+  if (serIds.length === 0) return [];
+  const rows = (await q.query(
+    `SELECT o.ser_id, to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS date, u.staff_id, st.name AS teacher_name,
+            u.start_min, u.end_min, u.reason
+       FROM ser_occ o
+       JOIN unav u ON u.staff_id = o.teacher_id
+                  AND u.on_date = ${kstDateOf('lower(o.span)')}
+                  AND u.start_min < ${END_MIN}
+                  AND u.end_min > ${START_MIN}
+       JOIN staff st ON st.id = u.staff_id
+      WHERE o.ser_id = ANY($1)
+        AND NOT o.canceled
+        AND ${kstDateOf('lower(o.span)')} >= (now() AT TIME ZONE 'Asia/Seoul')::date
+      ORDER BY 2, u.start_min
+      LIMIT 10`,
+    [serIds],
+  )) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    serId: Number(r.ser_id),
+    date: String(r.date),
+    teacherId: Number(r.staff_id),
+    teacherName: String(r.teacher_name),
+    startMin: Number(r.start_min),
+    endMin: Number(r.end_min),
+    reason: String(r.reason),
+  }));
+}
 
 @Injectable()
 export class ScheduleWriteService {
@@ -80,7 +121,10 @@ export class ScheduleWriteService {
       const fresh = await loadState(q, touched);
       const projected = await project(q, fresh, touched, horizon());
 
-      const base = { effScope, log, projected, serIds: touched };
+      const base = {
+        effScope, log, projected, serIds: touched,
+        unavailable: await unavailableOverlaps(q, touched),
+      };
       const result = enrich ? await enrich(q, fresh, base) : base as T;
       await q.commitTransaction();
       return result;

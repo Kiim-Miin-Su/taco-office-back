@@ -12770,6 +12770,43 @@
           "endMin"
         ]
       },
+      "UnavWarnDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "date": {
+            "type": "string",
+            "description": "회차가 실제로 놓인 달력 날짜"
+          },
+          "teacherId": {
+            "type": "number"
+          },
+          "teacherName": {
+            "type": "string"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string",
+            "description": "강사가 적은 사유 — 화면이 그대로 보여 준다"
+          }
+        },
+        "required": [
+          "serId",
+          "date",
+          "teacherId",
+          "teacherName",
+          "startMin",
+          "endMin",
+          "reason"
+        ]
+      },
       "WriteResultDto": {
         "type": "object",
         "properties": {
@@ -12794,13 +12831,21 @@
             "items": {
               "type": "number"
             }
+          },
+          "unavailable": {
+            "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnavWarnDto"
+            }
           }
         },
         "required": [
           "effScope",
           "log",
           "projected",
-          "serIds"
+          "serIds",
+          "unavailable"
         ]
       },
       "OccurrenceRefDto": {
@@ -13085,6 +13130,13 @@
               "type": "number"
             }
           },
+          "unavailable": {
+            "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnavWarnDto"
+            }
+          },
           "count": {
             "type": "number",
             "description": "그 회차의 변경 후 실제 인원"
@@ -13136,6 +13188,7 @@
           "log",
           "projected",
           "serIds",
+          "unavailable",
           "count",
           "cap",
           "needGuide",

@@ -875,6 +875,90 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       .expect(403);
   });
 
+  /**
+   * 강사가 못 한다고 적어 둔 시간 — **막지 않고 알린다** (원본 §15·§16).
+   * 지금까지 관리자 화면 어디에도 UNAV 가 없어 **적어 낸 강사만 알고 잡는 사람은 몰랐다.**
+   */
+  it('불가 시간에 걸친 회차는 저장되고, 응답이 그 사실을 이름·사유와 함께 말한다', async () => {
+    const day = nextMon(plus(kst(), 14));
+    await q(`DELETE FROM unav WHERE staff_id = $1`, [T2]);
+    await q(
+      `INSERT INTO unav (staff_id, on_date, dow, start_min, end_min, reason)
+       VALUES ($1, $2::date, EXTRACT(DOW FROM $2::date)::smallint, 540, 660, '병원 예약')`,
+      [T2, day],
+    );
+    try {
+      const res = await api('post', '/schedule')
+        .send({
+          kindKey: 'class', mode: 'offline', fromDate: day, rrule: 'WEEKLY:MO',
+          startMin: 600, endMin: 660, teacherId: T2, roomId: null, title: '불가 위에 잡은 수업',
+        })
+        .expect(201);
+      // 막지 않는다 — 규칙은 만들어졌다
+      expect(res.body.serIds.length).toBeGreaterThan(0);
+      made.push(...(res.body.serIds as number[]));
+      // 그러나 말은 한다
+      const warn = (res.body.unavailable as Array<Record<string, unknown>>)
+        .find((w) => w.date === day);
+      expect(warn).toBeTruthy();
+      expect(warn).toMatchObject({ teacherId: T2, startMin: 540, endMin: 660, reason: '병원 예약' });
+      expect(warn!.teacherName).toBe('쓰기강사');
+    } finally {
+      await q(`DELETE FROM unav WHERE staff_id = $1`, [T2]);
+    }
+  });
+
+  it('겹치지 않는 불가 시간은 말하지 않는다 — 경고가 늘 서면 아무도 안 읽는다', async () => {
+    const day = nextMon(plus(kst(), 21));
+    await q(`DELETE FROM unav WHERE staff_id = $1`, [T2]);
+    // 09:00~10:00 — 수업(10:00~11:00)이 끝나는 순간에 시작하는 쪽과 같은 경계다
+    await q(
+      `INSERT INTO unav (staff_id, on_date, dow, start_min, end_min, reason)
+       VALUES ($1, $2::date, EXTRACT(DOW FROM $2::date)::smallint, 480, 600, '오전 일정')`,
+      [T2, day],
+    );
+    try {
+      const res = await api('post', '/schedule')
+        .send({
+          kindKey: 'class', mode: 'offline', fromDate: day, rrule: 'WEEKLY:MO',
+          startMin: 600, endMin: 660, teacherId: T2, roomId: null, title: '불가 직후 수업',
+        })
+        .expect(201);
+      made.push(...(res.body.serIds as number[]));
+      expect((res.body.unavailable as unknown[]).filter((w) => (w as { date: string }).date === day)).toEqual([]);
+    } finally {
+      await q(`DELETE FROM unav WHERE staff_id = $1`, [T2]);
+    }
+  });
+
+  /**
+   * ZASSIGN — **선언과 실물이 달랐다.** DBML 은 참조 셋을 적어 두었는데 표에는 기본키뿐이었고,
+   * 코드는 「한 규칙에 한 줄」을 손으로 지키고 있었다 (C84-c).
+   */
+  it('줌 배정은 규칙에 한 줄뿐이고, 규칙이 사라지면 배정도 따라간다', async () => {
+    const { id } = await makeSer();
+    const [zacc] = await q<{ id: string }>(`SELECT id FROM zacc ORDER BY id LIMIT 1`);
+    if (!zacc) return;
+
+    await q(`INSERT INTO zassign (ser_id, zacc_id, fixed) VALUES ($1,$2,true)`, [id, zacc.id]);
+    // 한 규칙에 두 줄은 부분 유니크가 막는다 — 코드가 DELETE 뒤 INSERT 하는 이유다
+    await expect(q(`INSERT INTO zassign (ser_id, zacc_id, fixed) VALUES ($1,$2,true)`, [id, zacc.id]))
+      .rejects.toThrow();
+    // 규칙에도 회차 예외에도 안 붙은 줄은 뜻이 없다
+    await expect(q(`INSERT INTO zassign (zacc_id, fixed) VALUES ($1,true)`, [zacc.id]))
+      .rejects.toThrow();
+    // 둘 다 붙은 줄도 마찬가지다
+    await expect(q(`INSERT INTO zassign (ser_id, exc_id, zacc_id) VALUES ($1,$1,$2)`, [id, zacc.id]))
+      .rejects.toThrow();
+
+    await q(`DELETE FROM ser_occ WHERE ser_id = $1`, [id]);
+    await q(`DELETE FROM ser_stu WHERE ser_id = $1`, [id]);
+    await q(`DELETE FROM ser WHERE id = $1`, [id]);
+    const left = await q<{ n: string }>(`SELECT count(*)::text n FROM zassign WHERE ser_id = $1`, [id]);
+    expect(left[0].n).toBe('0');
+    made.splice(made.indexOf(id), 1);
+  });
+
   it('그날만 빼기 — 명단은 그대로고 그 회차에서만 빠진다 (D-R21)', async () => {
     const { id, from } = await makeSer({ subKey: 'ap-chem', studentIds: [1, ROSTER_STUDENT] });
     const r = await api('patch', `/schedule/${id}/roster`)

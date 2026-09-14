@@ -285,11 +285,16 @@ Table ZACC {
 
 Table ZASSIGN {
   id          bigserial   [pk]
-  ser_id      bigint      [ref: > SER.id]
-  exc_id      bigint      [ref: > EXC.id]
-  zacc_id     bigint      [not null, ref: > ZACC.id]
+  ser_id      bigint      [ref: > SER.id, note: 'ON DELETE CASCADE — 규칙이 사라지면 배정도 따라간다 (v4.23)']
+  exc_id      bigint      [ref: > EXC.id, note: 'ON DELETE CASCADE — 회차 예외가 사라지면 배정도 따라간다 (v4.23)']
+  zacc_id     bigint      [not null, ref: > ZACC.id, note: 'ON DELETE RESTRICT — 쓰이는 계정은 못 지운다. 그만 쓰는 길은 ZACC.active=false (v4.23)']
   fixed       boolean     [not null, default: true, note: '고정 배정 vs 변동']
-  Note: '같은 시간에 한 계정이 두 수업에 배정되면 겹침으로 표시 (D-R3).'
+  Note: '''같은 시간에 한 계정이 두 수업에 배정되면 겹침으로 표시 (D-R3).
+  물리 제약 (v4.23 · C84-c) — DBML 이 선언만 하고 표에는 없던 것들:
+    CHECK  zassign_target_one   (ser_id IS NULL) <> (exc_id IS NULL)  NOT VALID
+    UNIQUE zassign_ser_once     (ser_id) WHERE ser_id IS NOT NULL
+    UNIQUE zassign_exc_once     (exc_id) WHERE exc_id IS NOT NULL
+  정본은 이 표이고 SER_OCC.zacc_id 는 그 투영이다 — 그 칸이 비면 겹침 EXCLUDE 가 줌 계정을 지키지 못한다.'''
 }
 
 Table ZLOG {
@@ -1393,6 +1398,18 @@ Table SER_OCC {
 //   + PNOTI/GTPL 방어     channel CHECK, SER·STU FK/조회 인덱스, 문구 이름 UNIQUE
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
+//
+// v4.22 → v4.23 (2026-09-14 · TBO-50 C84-c ZASSIGN 물리 제약)
+//   ZASSIGN + FK ser_id→SER(CASCADE) · exc_id→EXC(CASCADE) · zacc_id→ZACC(RESTRICT)  전부 NOT VALID
+//          + CHECK zassign_target_one — 규칙이냐 회차 예외냐, 둘 중 정확히 하나 (NOT VALID)
+//          + UNIQUE zassign_ser_once · zassign_exc_once — 한 대상에 한 줄(부분 유니크)
+//   왜      이 표는 DBML 이 참조 셋을 **선언**해 두었는데 실제 표에는 기본키뿐이었다.
+//          코드는 셋 다 있다고 믿고 썼다 — zoom.service 가 DELETE 뒤 INSERT 로 「한 줄」을
+//          손으로 지키고, schedule.project 가 이 표를 정본으로 읽어 SER_OCC.zacc_id 를 채우며,
+//          state.repo 가 지우는 EXC 에 붙은 배정 줄은 아무도 안 지워 고아가 남았다.
+//   기존 행 보정 0 (N-25) — FK·CHECK 는 NOT VALID 로 새 행만 검사한다. 부분 유니크는
+//          NOT VALID 가 없으므로, 중복이 있으면 **어느 줄이 맞는지는 사람이 정한다** —
+//          마이그레이션이 고르지 않고 세어서 멈춘다.
 //
 // v4.21 → v4.22 (2026-09-14 · TBO-50 C82-b §12 준비 저장 정본)
 //   TODO   + ser_id · on_date (회차 지시) · todo_src_t += 'lesson' · CHECK todo_lesson_key(NOT VALID)
