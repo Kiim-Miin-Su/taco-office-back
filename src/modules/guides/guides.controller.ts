@@ -4,11 +4,14 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { hasPerm, isRole, Perm, type RequestUser } from '../../common/perm';
-import { GuideBodyDto, GuideDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto } from './guides.dto';
+import { Perm, type RequestUser } from '../../common/perm';
+import {
+  GuideBodyDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
+} from './guides.dto';
 import { GuidesService } from './guides.service';
 
 @ApiTags('guides')
@@ -17,12 +20,39 @@ export class GuidesController {
   constructor(private readonly svc: GuidesService) {}
 
   @Get()
-  @ApiOperation({ summary: '수업 안내 — 한 번만(GUIDE) · 회차마다(PNOTI) (§41 · §42)' })
+  @Perm('canAdminPage')
+  @ApiOperation({ summary: '수업 안내 — 한 번만(GUIDE) · 회차마다(PNOTI) (§43)' })
   @ApiOkResponse({ type: GuidesDto })
-  async all(@CurrentUser() user: RequestUser): Promise<GuidesDto> {
-    // 강사는 자기 것만. 판정은 hasPerm 한 곳에서만 한다.
-    const canAll = isRole(user.role) && hasPerm(user.role, 'canCrudAll', user.perms);
-    return this.svc.all(canAll ? undefined : user.id);
+  async all(): Promise<GuidesDto> {
+    return this.svc.all();
+  }
+
+  @Get('students')
+  @Perm('canAdminPage')
+  @ApiOperation({ summary: '안내 학생별 — 최신 유효 안내·교재·진단 projection (§44)' })
+  @ApiOkResponse({ type: GuideStudentsDto })
+  async students(): Promise<GuideStudentsDto> {
+    return this.svc.students();
+  }
+
+  @Get('history')
+  @Perm('canAdminPage')
+  @ApiOperation({ summary: '안내 이력과 필요한데 없는 안내 — 일·주·월 (§45)' })
+  @ApiOkResponse({ type: GuideHistoryDto })
+  async history(@Query() query: GuideHistoryQueryDto): Promise<GuideHistoryDto> {
+    return this.svc.history(query);
+  }
+
+  @Post('drafts')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '필요한데 없는 안내를 초안으로 만들기 (§45)',
+    description: '화면은 회차/학생 id만 보낸다. 서버가 첫 수업·강사 교체를 다시 판정하고 중복 생성은 같은 GUIDE로 수렴시킨다.',
+  })
+  @ApiCreatedResponse({ type: GuideDto })
+  @ApiConflictResponse({ description: 'code GUIDE_CANDIDATE_STALE | GUIDE_CREATE_RACE' })
+  async createDraft(@CurrentUser() user: RequestUser, @Body() dto: GuideDraftCreateDto): Promise<GuideDto> {
+    return this.svc.createDraft(user.id, dto);
   }
 
   /* ══ §43 머리의 「문구 관리」 — 문구 틀 ═══════════════════════════════════ */
@@ -39,7 +69,7 @@ export class GuidesController {
   }
 
   @Post('templates')
-  @Perm('canAdminPage')
+  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({ summary: '문구 틀 추가 — 이름이 겹치면 막는다' })
   @ApiCreatedResponse({ type: GuideTemplateDto })
   @ApiConflictResponse({ description: 'code GTPL_DUPLICATE' })
@@ -48,7 +78,7 @@ export class GuidesController {
   }
 
   @Patch('templates/:id')
-  @Perm('canAdminPage')
+  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({ summary: '문구 틀 고치기 — 이미 쓴 안내는 안 바뀐다' })
   @ApiOkResponse({ type: GuideTemplateDto })
   @ApiConflictResponse({ description: 'code GTPL_DUPLICATE' })
@@ -63,7 +93,7 @@ export class GuidesController {
   /* ══ §43 「안내 작성」 ════════════════════════════════════════════════════ */
 
   @Put(':id/body')
-  @Perm('canAdminPage')
+  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '안내 작성 — 쓰면 보낼 준비가 된다 (§43)',
     description: '상태 낱말은 화면이 보내지 않는다. 「썼다」만 주면 어느 상태가 되는지는 서버가 정한다 (D-R18).',

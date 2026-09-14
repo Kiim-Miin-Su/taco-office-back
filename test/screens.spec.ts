@@ -196,12 +196,16 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     expect(r.body.items.some((c: { sessionsLog: unknown[] }) => c.sessionsLog.length > 0)).toBe(true);
   });
 
-  it('안내 — 한 번(GUIDE)과 매번(PNOTI)이 나뉘어 온다', async () => {
+  it('안내 — 한 번(GUIDE)과 오늘 온라인 회차(SER_OCC)가 나뉘어 온다', async () => {
     const r = await get('/guides', MANAGER).expect(200);
     expect(r.body.guides.length).toBeGreaterThan(0);
-    expect(r.body.perLesson.length).toBeGreaterThan(0);
-    // 섞이면 「지난번에 보냈으니 됐다」가 된다 (D-R5)
-    expect(r.body.guides).not.toBe(r.body.perLesson);
+    expect(Array.isArray(r.body.perLesson)).toBe(true);
+    // 매번 영역의 정본은 과거 PNOTI 행 수가 아니라 오늘 온라인 SER_OCC다. 오늘 대상이 없으면 빈 배열이 맞다.
+    r.body.perLesson.forEach((row: { sourceOccurrenceId: number; notices: unknown[] }) => {
+      expect(row.sourceOccurrenceId).toBeGreaterThan(0);
+      expect(Array.isArray(row.notices)).toBe(true);
+    });
+    expect(r.body.deliveryCapabilities).toMatchObject({ parentExternal: false, teacherExternal: false });
   });
 
   it('안내 — 「보내야 함」은 서버 pending 플래그가 정본이다', async () => {
@@ -317,9 +321,11 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     await get('/exec?from=2026-08-01&to=2026-08-31', TEACHER).expect(403);
   });
 
-  it('안내와 현황판은 강사가 열되 자기 것만 본다', async () => {
-    const g = await get('/guides', TEACHER).expect(200);
-    expect(g.body.scopedTeacherId).toBe(911);
+  it('관리자 안내는 강사를 차단하고 강사 안내·현황판은 본인 범위만 연다', async () => {
+    await get('/guides', TEACHER).expect(403);
+    const ownGuides = await get('/teacher/guides', TEACHER).expect(200);
+    expect(ownGuides.body.students).toEqual([]);
+    await get('/teacher/guides', MANAGER).expect(403);
 
     const b = await get('/board?from=2026-08-01&to=2026-09-30&teacherId=912', TEACHER).expect(200);
     // 911 은 시드에 수업이 없는 사람이라 0건이어야 한다 — 남의 수업이 새어 나오면 안 된다

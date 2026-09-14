@@ -6899,7 +6899,283 @@
             }
           }
         },
-        "summary": "수업 안내 — 한 번만(GUIDE) · 회차마다(PNOTI) (§41 · §42)",
+        "summary": "수업 안내 — 한 번만(GUIDE) · 회차마다(PNOTI) (§43)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
+    "/guides/students": {
+      "get": {
+        "operationId": "GuidesController_students",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideStudentsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "안내 학생별 — 최신 유효 안내·교재·진단 projection (§44)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
+    "/guides/history": {
+      "get": {
+        "operationId": "GuidesController_history",
+        "parameters": [
+          {
+            "name": "span",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "month",
+              "type": "string",
+              "enum": [
+                "day",
+                "week",
+                "month"
+              ]
+            }
+          },
+          {
+            "name": "anchor",
+            "required": false,
+            "in": "query",
+            "description": "day=그날, week=그 주, month=그 달의 기준 KST 날짜",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideHistoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "안내 이력과 필요한데 없는 안내 — 일·주·월 (§45)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
+    "/guides/drafts": {
+      "post": {
+        "description": "화면은 회차/학생 id만 보낸다. 서버가 첫 수업·강사 교체를 다시 판정하고 중복 생성은 같은 GUIDE로 수렴시킨다.",
+        "operationId": "GuidesController_createDraft",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuideDraftCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code GUIDE_CANDIDATE_STALE | GUIDE_CREATE_RACE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "필요한데 없는 안내를 초안으로 만들기 (§45)",
         "tags": [
           "guides"
         ]
@@ -16460,6 +16736,17 @@
           "id": {
             "type": "number"
           },
+          "serId": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
           "reason": {
             "type": "string",
             "description": "new(첫 수업) | teacher_change(강사 교체)"
@@ -16498,8 +16785,53 @@
             "type": "string",
             "nullable": true
           },
+          "eventOn": {
+            "type": "string",
+            "nullable": true,
+            "format": "date",
+            "description": "첫 수업·강사 교체가 실제로 일어난 KST 회차일. 레거시 행은 null"
+          },
+          "sourceOccurrenceId": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 SER_OCC 투영 id. 재투영 때 바뀔 수 있으므로 GUIDE에는 저장하지 않는다"
+          },
+          "createdBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "createdByName": {
+            "type": "string",
+            "nullable": true
+          },
           "createdAt": {
             "type": "string"
+          },
+          "sentBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "sentByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "HIST guide_send의 최초 시각. 없으면 null"
+          },
+          "acknowledgedBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "acknowledgedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "acknowledgedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "HIST guide_ack의 최초 시각. 없으면 null"
           },
           "overdueDays": {
             "type": "number",
@@ -16508,11 +16840,50 @@
         },
         "required": [
           "id",
+          "studentId",
           "reason",
           "state",
           "pending",
           "createdAt",
           "overdueDays"
+        ]
+      },
+      "PerLessonNoticeRecordDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "sms",
+              "kakao",
+              "email",
+              "app"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "nullable": true
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "PNOTI 발송 기록이 없으면 null"
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName"
         ]
       },
       "PerLessonNoticeDto": {
@@ -16521,8 +16892,65 @@
           "id": {
             "type": "number"
           },
+          "sourceOccurrenceId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
           "onDate": {
             "type": "string"
+          },
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439
+          },
+          "endMin": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "kindName": {
+            "type": "string",
+            "nullable": true
+          },
+          "zaccId": {
+            "type": "number",
+            "nullable": true
+          },
+          "zaccLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "zoomAssigned": {
+            "type": "boolean"
+          },
+          "notices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PerLessonNoticeRecordDto"
+            }
+          },
+          "parentDeliveryRecorded": {
+            "type": "boolean",
+            "description": "명단 학생 모두에게 PNOTI.sent_at이 있을 때만 true"
+          },
+          "teacherDeliveryRecorded": {
+            "type": "boolean",
+            "description": "강사 독립 발송 원장이 없어 현재 false"
           },
           "channel": {
             "type": "string",
@@ -16552,9 +16980,69 @@
         },
         "required": [
           "id",
+          "sourceOccurrenceId",
+          "serId",
           "onDate",
+          "startMin",
+          "endMin",
+          "zoomAssigned",
+          "notices",
+          "parentDeliveryRecorded",
+          "teacherDeliveryRecorded",
           "channel",
           "body"
+        ]
+      },
+      "GuideStatsDto": {
+        "type": "object",
+        "properties": {
+          "monitoring": {
+            "type": "number"
+          },
+          "overdue": {
+            "type": "number"
+          },
+          "drafting": {
+            "type": "number"
+          },
+          "sendPending": {
+            "type": "number"
+          },
+          "teacherUnconfirmed": {
+            "type": "number"
+          },
+          "repeatedTeacherChange": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "monitoring",
+          "overdue",
+          "drafting",
+          "sendPending",
+          "teacherUnconfirmed",
+          "repeatedTeacherChange"
+        ]
+      },
+      "GuideDeliveryCapabilitiesDto": {
+        "type": "object",
+        "properties": {
+          "parentExternal": {
+            "type": "boolean",
+            "default": false
+          },
+          "teacherExternal": {
+            "type": "boolean",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "parentExternal",
+          "teacherExternal"
         ]
       },
       "GuidesDto": {
@@ -16581,13 +17069,327 @@
           "scopedTeacherId": {
             "type": "number",
             "nullable": true,
-            "description": "강사면 자기 것만 본다 — 그 강사 id"
+            "description": "강사 전용 service 재사용 시 자기 것만 본 그 강사 id. 관리자 API는 null"
+          },
+          "stats": {
+            "description": "§43 머리 6칸. 화면이 배열을 다시 세지 않는다",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GuideStatsDto"
+              }
+            ]
+          },
+          "deliveryCapabilities": {
+            "$ref": "#/components/schemas/GuideDeliveryCapabilitiesDto"
           }
         },
         "required": [
           "guides",
           "perLesson",
-          "todoCount"
+          "todoCount",
+          "stats",
+          "deliveryCapabilities"
+        ]
+      },
+      "GuideBookDto": {
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "number"
+          },
+          "libId": {
+            "type": "number"
+          },
+          "versId": {
+            "type": "number",
+            "nullable": true
+          },
+          "code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "edition": {
+            "type": "string",
+            "nullable": true
+          },
+          "seTe": {
+            "type": "string",
+            "nullable": true
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "issueId",
+          "libId",
+          "code",
+          "title"
+        ]
+      },
+      "GuideDiagnosticDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "levelSummary": {
+            "type": "string"
+          },
+          "strengths": {
+            "type": "string",
+            "nullable": true
+          },
+          "weaknesses": {
+            "type": "string",
+            "nullable": true
+          },
+          "curriculum": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "levelSummary",
+          "createdAt"
+        ]
+      },
+      "GuideStudentDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "guidance": {
+            "type": "string",
+            "nullable": true
+          },
+          "lang": {
+            "type": "string",
+            "nullable": true
+          },
+          "guideCount": {
+            "type": "number"
+          },
+          "latestGuide": {
+            "$ref": "#/components/schemas/GuideDto"
+          },
+          "books": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideBookDto"
+            }
+          },
+          "diagnostic": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GuideDiagnosticDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName",
+          "guideCount",
+          "latestGuide",
+          "books"
+        ]
+      },
+      "GuideStudentsDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "GUIDE가 있는 학생과 최신 유효 안내",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideStudentDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "GuideMissingDto": {
+        "type": "object",
+        "properties": {
+          "sourceOccurrenceId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "eventOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "serTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "new",
+              "teacher_change"
+            ]
+          }
+        },
+        "required": [
+          "sourceOccurrenceId",
+          "eventOn",
+          "serId",
+          "studentId",
+          "studentName",
+          "reason"
+        ]
+      },
+      "GuideHistoryDayDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideDto"
+            }
+          }
+        },
+        "required": [
+          "date",
+          "items"
+        ]
+      },
+      "GuideHistoryCountsDto": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "number"
+          },
+          "sent": {
+            "type": "number"
+          },
+          "missing": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "created",
+          "sent",
+          "missing"
+        ]
+      },
+      "GuideHistoryDto": {
+        "type": "object",
+        "properties": {
+          "span": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ]
+          },
+          "anchor": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideMissingDto"
+            }
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideHistoryDayDto"
+            }
+          },
+          "counts": {
+            "$ref": "#/components/schemas/GuideHistoryCountsDto"
+          }
+        },
+        "required": [
+          "span",
+          "anchor",
+          "from",
+          "to",
+          "missing",
+          "days",
+          "counts"
+        ]
+      },
+      "GuideDraftCreateDto": {
+        "type": "object",
+        "properties": {
+          "sourceOccurrenceId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "sourceOccurrenceId",
+          "studentId"
         ]
       },
       "GuideTemplateDto": {
