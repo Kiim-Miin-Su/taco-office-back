@@ -87,6 +87,17 @@ export class BoardSummaryDto {
   @ApiProperty({ description: '취소를 제외한 수업 수' }) lessons!: number;
   @ApiProperty({ type: [BoardMarkCountDto] }) marks!: BoardMarkCountDto[];
   @ApiProperty({ description: '네 축의 미완료 마크 합계' }) missing!: number;
+
+  /*
+   * 원본 §34~§36 의 머리 여섯 칸 — 「3/20 다 됐음 · 16 교재 안 됨 · 3 안내 안 됨 ·
+   * 2 줌 없음 · 0 리포트 안 씀 · 0 휴강」. 가운데 넷은 `marks[].missing` 이 이미 그 값이고,
+   * 양 끝 둘만 여기서 센다 — **화면이 rows 를 다시 훑지 않는다** (D-R37 · N-19).
+   */
+  @ApiProperty({ description: '네 축이 **다 된** 수업 수 — 「3/20」의 3. 취소는 빼고 센다' })
+  doneLessons!: number;
+
+  @ApiProperty({ description: '휴강·취소한 수업 수 — 「0 휴강」. lessons 에는 안 들어 있다' })
+  canceled!: number;
   @ApiProperty({ description: 'N/A를 뺀 완료 마크 비율, 정수 반올림' }) completionRate!: number;
 }
 

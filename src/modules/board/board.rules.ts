@@ -103,6 +103,9 @@ export function boardSummary(rows: readonly BoardSourceRow[]) {
   const summaryMarks = markCounts(active);
   const total = summaryMarks.reduce((sum, item) => sum + item.total, 0);
   const done = summaryMarks.reduce((sum, item) => sum + item.done, 0);
+  // 「다 됐음」은 **수업 단위**다 — 마크 합계가 아니라 네 축이 전부 선 수업의 수다
+  const doneLessons = active.filter((row) => missingOf(markCounts([row])) === 0).length;
+  const canceled = rows.length - active.length;
 
   const teacherGroups = new Map<string, BoardSourceRow[]>();
   for (const row of active) {
@@ -162,6 +165,8 @@ export function boardSummary(rows: readonly BoardSourceRow[]) {
       marks: summaryMarks,
       missing: missingOf(summaryMarks),
       completionRate: total === 0 ? 100 : Math.round((done / total) * 100),
+      doneLessons,
+      canceled,
     },
     teacherRows,
     weeks,

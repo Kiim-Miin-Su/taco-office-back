@@ -80,7 +80,15 @@ describe('boardSummary', () => {
       ],
       missing: 1,
       completionRate: 90,
+      // 원본 §34 머리의 「3/20 다 됐음」과 「0 휴강」 — 마크 합계가 아니라 **수업 단위**다
+      doneLessons: 2,
+      canceled: 1,
     });
+    // 「다 됐음」은 **네 축이 전부 선 수업**만 센다 — 리포트 하나가 빈 수업은 빠진다
+    expect(result.summary.doneLessons).toBeLessThan(result.summary.lessons);
+    // 휴강은 lessons 에 안 들어 있다 — 두 수를 더해야 그날의 전부가 된다 (넣은 행은 넷)
+    expect(result.summary.lessons + result.summary.canceled).toBe(4);
+
     expect(result.weeks).toHaveLength(1);
     expect(result.weeks[0]).toMatchObject({
       from: '2026-08-31',
