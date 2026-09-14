@@ -5,12 +5,37 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import {
+  ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString,
+  Matches, Max, MaxLength, Min, MinLength, ValidateBy,
+} from 'class-validator';
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { CONS_SHARES, type ConsShare } from '../../lib/rules';
-import { CONSULTING_STAGES, CONTRACT_STEP_MAX, CONSULTING_SESSION_MAX, type ConsultingStage } from './consulting.rules';
+import {
+  CONSULTING_FILE_MAX, CONSULTING_FILE_ROLES, CONSULTING_REQUESTERS, CONSULTING_SESSION_MAX,
+  CONSULTING_STAGES, CONSULTING_TYPES, CONTRACT_STEP_MAX, type ConsultingFileRole,
+  type ConsultingRequester, type ConsultingStage, type ConsultingType,
+} from './consulting.rules';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
+
+/** share와 지정 목록의 교차 조건을 DTO와 service 두 층에서 막는다. */
+function IsPickedStaffIds(): PropertyDecorator {
+  return ValidateBy({
+    name: 'isPickedStaffIds',
+    validator: {
+      validate(value: unknown, args) {
+        const share = (args?.object as { share?: unknown } | undefined)?.share;
+        if (share !== 'picked') return value === undefined || Array.isArray(value) && value.length === 0;
+        return Array.isArray(value) && value.length > 0
+          && value.every((id) => Number.isInteger(id) && id >= 1)
+          && new Set(value).size === value.length;
+      },
+      defaultMessage: () => "pickedStaffIds는 지정 공개일 때만 중복 없는 양의 정수 1개 이상이어야 합니다",
+    },
+  });
+}
 
 /** §31 컨설팅 회차 — 5W1H 로 적는다 (누가·무엇을·왜·어떻게) */
 export class ConsultingSessionDto {
@@ -77,6 +102,130 @@ export class ConsultingListDto {
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
 }
 
+/* ══ §29 생성 · §30 계약 5단계 (C79-product) ═══════════════════════════ */
+
+export class ConsultingCreateDto {
+  @ApiProperty({ enum: CONSULTING_TYPES, description: '§29 확정 10종. 레거시 조회 코드는 이 enum으로 축소하지 않는다.' })
+  @IsIn(CONSULTING_TYPES as unknown as string[]) consType!: ConsultingType;
+
+  @ApiProperty({ type: [Number], items: ID_SCHEMA, minItems: 1, uniqueItems: true })
+  @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true })
+  studentIds!: number[];
+
+  @ApiProperty({ enum: CONSULTING_REQUESTERS })
+  @IsIn(CONSULTING_REQUESTERS as unknown as string[]) requester!: ConsultingRequester;
+
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) ownerId!: number;
+  @ApiProperty({ minimum: 1, maximum: 2_147_483_647 }) @IsInt() @Min(1) @Max(2_147_483_647) amount!: number;
+  @ApiProperty({ minimum: 1, maximum: CONSULTING_SESSION_MAX, description: '약정 회차. 실제 일정 생성 정책은 미확정이므로 저장만 하며 수업을 자동 생성하지 않는다.' }) @IsInt() @Min(1) @Max(CONSULTING_SESSION_MAX) sessions!: number;
+  @ApiProperty({ ...DATE_SCHEMA }) @IsCalendarDate() startOn!: string;
+  @ApiProperty({ ...DATE_SCHEMA }) @IsCalendarDate() endOn!: string;
+  @ApiProperty({ enum: CONS_SHARES }) @IsIn(CONS_SHARES as unknown as string[]) share!: ConsShare;
+
+  @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, uniqueItems: true, description: "share='picked'일 때 1명 이상 필수, 그 밖에는 비워야 한다." })
+  @IsPickedStaffIds()
+  pickedStaffIds?: number[];
+}
+
+export class ConsultingShareUpdateDto {
+  @ApiProperty({ enum: CONS_SHARES }) @IsIn(CONS_SHARES as unknown as string[]) share!: ConsShare;
+  @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, uniqueItems: true, description: "share='picked'일 때 1명 이상 필수" })
+  @IsPickedStaffIds()
+  pickedStaffIds?: number[];
+}
+
+export class ConsultingFileCreateDto {
+  @ApiProperty({ maxLength: 200 }) @IsString() @MinLength(1) @MaxLength(200) name!: string;
+  @ApiProperty({ description: 'base64 본문. data URL 접두사 허용.' }) @IsString() @MinLength(1) base64!: string;
+}
+
+export class ConsultingFileDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+  @ApiProperty() mime!: string;
+  @ApiProperty() bytes!: number;
+  @ApiProperty() url!: string;
+  @ApiProperty({ enum: CONSULTING_FILE_ROLES }) role!: ConsultingFileRole;
+  @ApiProperty(S) uploadedByName!: string | null;
+  @ApiProperty() uploadedAt!: string;
+}
+
+export class ConsultingFeedbackCreateDto {
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MinLength(1) @MaxLength(2000) body!: string;
+}
+
+export class ConsultingFeedbackDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() body!: string;
+  @ApiProperty(S) createdByName!: string | null;
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() resolved!: boolean;
+  @ApiProperty(S) resolvedByName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) resolvedAt!: string | null;
+}
+
+export class ConsultingTypeCapabilityDto {
+  @ApiProperty() defaultItemsSupported!: boolean;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty({ description: '실제 일정 생성 정책은 원본에 없어 현재 false' }) scheduleCreationSupported!: boolean;
+  @ApiProperty({ type: String, nullable: true }) scheduleCreationReason!: string | null;
+}
+
+export class ConsultingCapabilitiesDto {
+  @ApiProperty() canEdit!: boolean;
+  @ApiProperty() canChangeShare!: boolean;
+  @ApiProperty() canAddContractFile!: boolean;
+  @ApiProperty() canRemoveContractFile!: boolean;
+  @ApiProperty() canAddFeedback!: boolean;
+  @ApiProperty() canResolveFeedback!: boolean;
+  @ApiProperty() canDeliver!: boolean;
+  @ApiProperty() canAddSignedFile!: boolean;
+  @ApiProperty() canAddPayment!: boolean;
+  @ApiProperty() canCreateInvoice!: boolean;
+  @ApiProperty() canArchive!: boolean;
+  @ApiProperty({ description: '학부모 연락처/채널 정책 미제공으로 현재 false. deliver는 외부 발송이 아니라 완료 기록이다.' }) externalParentSendSupported!: boolean;
+  @ApiProperty({ type: String, nullable: true }) externalParentSendReason!: string | null;
+}
+
+export class ConsultingDeliveryDto {
+  @ApiProperty() deliveredAt!: string;
+  @ApiProperty(S) deliveredByName!: string | null;
+}
+
+export class ConsultingPaymentStateDto {
+  @ApiProperty(N) paid!: number | null;
+  @ApiProperty(N) due!: number | null;
+  @ApiProperty(N) invoiceId!: number | null;
+}
+
+export class ConsultingDetailDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() consType!: string;
+  @ApiProperty() consTypeLabel!: string;
+  @ApiProperty({ enum: CONSULTING_STAGES }) stage!: ConsultingStage;
+  @ApiProperty({ type: 'integer', nullable: true, minimum: 1, maximum: CONTRACT_STEP_MAX }) contractStep!: number | null;
+  @ApiProperty({ type: [Number] }) studentIds!: number[];
+  @ApiProperty({ type: [String] }) studentNames!: string[];
+  @ApiProperty({ enum: CONSULTING_REQUESTERS, nullable: true }) requester!: ConsultingRequester | null;
+  @ApiProperty(N) ownerId!: number | null;
+  @ApiProperty(S) ownerName!: string | null;
+  @ApiProperty({ ...DATE_SCHEMA, nullable: true }) startOn!: string | null;
+  @ApiProperty({ ...DATE_SCHEMA, nullable: true }) endOn!: string | null;
+  @ApiProperty(N) amount!: number | null;
+  @ApiProperty(N) sessions!: number | null;
+  @ApiProperty({ enum: CONS_SHARES }) share!: ConsShare;
+  @ApiProperty({ type: [Number] }) pickedStaffIds!: number[];
+  @ApiProperty({ type: [String] }) pickedStaffNames!: string[];
+  @ApiProperty() createdAt!: string;
+  @ApiProperty({ type: ConsultingTypeCapabilityDto }) typeCapability!: ConsultingTypeCapabilityDto;
+  @ApiProperty({ type: ConsultingCapabilitiesDto }) capabilities!: ConsultingCapabilitiesDto;
+  @ApiProperty({ type: [ConsultingFileDto], maxItems: CONSULTING_FILE_MAX }) contractFiles!: ConsultingFileDto[];
+  @ApiProperty({ type: [ConsultingFileDto], maxItems: CONSULTING_FILE_MAX }) signedFiles!: ConsultingFileDto[];
+  @ApiProperty({ type: [ConsultingFeedbackDto] }) feedback!: ConsultingFeedbackDto[];
+  @ApiProperty({ type: ConsultingDeliveryDto, nullable: true }) delivery!: ConsultingDeliveryDto | null;
+  @ApiProperty({ type: ConsultingPaymentStateDto }) payment!: ConsultingPaymentStateDto;
+}
+
 /* ══ §28 컨설팅 회계 (C58) ═══════════════════════════════════════════════ */
 
 /** 납부 기록 한 줄 — 원문 `CONS.pay[]` */
@@ -122,7 +271,7 @@ export class ConsAccountingDto {
 
 /** 납부 넣기 — 원문 §28 「납부 넣기」 */
 export class ConsPaymentCreateDto {
-  @ApiProperty({ description: '받은 금액 — 0 원은 기록이 아니라 실수다', minimum: 1 })
+  @ApiProperty({ description: '받은 금액 — 0 원은 기록이 아니며, 누계가 계약 금액을 넘으면 OVERPAY', minimum: 1 })
   @IsInt() @Min(1) amount!: number;
 
   @ApiProperty({ example: '2026-07-12' })

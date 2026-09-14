@@ -61,6 +61,7 @@ describe('FILE kind별 중앙 권한표', () => {
   const facts = {
     uploadedBy: 10, bookLinked: false, expenseLinked: false, expenseRequester: false,
     reportLinked: false, reportTeacher: false,
+    consultingLinked: false, consultingActive: false, consultingFullAccess: false,
   };
   const teacher = { id: 10, name: '강사', role: 'teacher' };
   const manager = { id: 20, name: '매니저', role: 'manager' };
@@ -81,6 +82,15 @@ describe('FILE kind별 중앙 권한표', () => {
     expect(canReadStoredFile(teacher, 'cons-contract', facts)).toBe(false);
     expect(canReadStoredFile({ ...manager, id: 10 }, 'cons-contract', facts)).toBe(true);
     expect(canReadStoredFile(ceo, 'cons-contract', facts)).toBe(true);
+  });
+
+  it('연결된 계약 파일은 업로더가 아니라 활성 건의 csCanFull을 따른다', () => {
+    const linked = { ...facts, consultingLinked: true, consultingActive: true, consultingFullAccess: true };
+    expect(canReadStoredFile(manager, 'cons-contract', linked)).toBe(true);
+    expect(canReadStoredFile(teacher, 'cons-contract', linked)).toBe(false);
+    expect(canReadStoredFile(manager, 'cons-contract', { ...linked, consultingFullAccess: false })).toBe(false);
+    expect(canReadStoredFile(ceo, 'cons-contract', { ...linked, consultingFullAccess: false })).toBe(true);
+    expect(canReadStoredFile(ceo, 'cons-contract', { ...linked, consultingActive: false })).toBe(false);
   });
 
   it('리포트는 담당 강사 또는 관리자만 열고, 알 수 없는 kind는 기본 거절한다', () => {

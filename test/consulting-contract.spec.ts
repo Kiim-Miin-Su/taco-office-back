@@ -57,14 +57,19 @@ describe('§26 단계 필터 조회 계약', () => {
     await request(app.getHttpServer()).get('/consulting').expect(403);
     expect(all).not.toHaveBeenCalled();
   });
-  it('조회는 GET 셋·쓰기는 셋 — 그 밖의 endpoint 를 만들지 않는다 (47D-B)', () => {
+  it('명세서 상담 흐름에 필요한 endpoint만 공개한다 (47D-B · C79)', () => {
     const api = buildOpenApi(app);
     // C5-a 의 「추가 endpoint 0」 가드는 N-18 채택(2026-09-12 §4-17)·47D-B 로 항목 토글 1개까지 늘었고,
     // C58 에서 §28 회계 화면(읽기 1 · 원문 동작 둘), C59 에서 §27 학생별(읽기 1)이 더 붙었다.
+    // C79 는 §29 신규 상담과 §30 계약 워크플로를 서버 원장으로 옮겼다.
     // 「이력」 탭은 endpoint 를 늘리지 않는다 — 이미 받은 items 를 stage 로 거르는 화면 선택이다 (C5-a 선례).
     expect(Object.keys(api.paths)).toEqual([
       '/consulting', '/consulting/{id}/items/{itemId}',
       '/consulting/accounting', '/consulting/students',
+      '/consulting/{id}', '/consulting/{id}/share',
+      '/consulting/{id}/contract-files', '/consulting/{id}/contract-files/{fileId}',
+      '/consulting/{id}/feedback', '/consulting/{id}/feedback/{feedbackId}/resolve',
+      '/consulting/{id}/deliver', '/consulting/{id}/signed-files',
       '/consulting/{id}/payments', '/consulting/{id}/invoice',
     ]);
     const patch = api.paths['/consulting/{id}/items/{itemId}'].patch;

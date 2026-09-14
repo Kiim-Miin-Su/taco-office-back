@@ -23,6 +23,34 @@ export type ConsultingStage = (typeof CONSULTING_STAGES)[number];
 export const CONTRACT_STEP_MAX = 5;
 export const CONSULTING_SESSION_MAX = 32767; // DB smallint 양수 범위
 
+/** §29 생성 화면의 10종. 기존 레거시 cons_type은 조회에서 그대로 보존한다. */
+export const CONSULTING_TYPES = [
+  'admissions', 'boarding', 'transfer', 'essay', 'interview',
+  'exam', 'roadmap', 'college', 'portfolio', 'visa',
+] as const;
+export type ConsultingType = (typeof CONSULTING_TYPES)[number];
+export const CONSULTING_TYPE_LABEL: Record<ConsultingType, string> = {
+  admissions: '국제학교 지원',
+  boarding: '미국 보딩스쿨',
+  transfer: '편입·전학',
+  essay: '에세이 지도',
+  interview: '인터뷰 대비',
+  exam: '입학시험 대비',
+  roadmap: '연간 로드맵',
+  college: '대학 지원',
+  portfolio: '포트폴리오',
+  visa: '비자·서류',
+};
+export const INTERNATIONAL_SCHOOL_ITEMS = [
+  '지원서 작성', '학업 성적 공증', '추천서 2부', '자기소개 에세이',
+  '활동 증빙 자료', '여권 사본', '재학 증명서',
+] as const;
+export const CONSULTING_REQUESTERS = ['mother', 'father'] as const;
+export type ConsultingRequester = (typeof CONSULTING_REQUESTERS)[number];
+export const CONSULTING_FILE_ROLES = ['draft', 'revision', 'signed'] as const;
+export type ConsultingFileRole = (typeof CONSULTING_FILE_ROLES)[number];
+export const CONSULTING_FILE_MAX = 10;
+
 export interface ConsultingRecord {
   stage: ConsultingStage;
   contractStep: number | null;

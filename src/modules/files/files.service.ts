@@ -109,6 +109,10 @@ interface FileAccessFacts {
   expenseRequester: boolean;
   reportLinked: boolean;
   reportTeacher: boolean;
+  /** C79: 공용 FILE이 실제 컨설팅 링크에 연결됐는지와 현재 사용자의 csCanFull 결과. */
+  consultingLinked?: boolean;
+  consultingActive?: boolean;
+  consultingFullAccess?: boolean;
 }
 
 /** raw FILE id의 단일 권한표. 새 kind는 명시적으로 추가하기 전까지 거절한다. */
@@ -126,8 +130,14 @@ export function canReadStoredFile(user: RequestUser, kind: FileKind, facts: File
         && (hasPerm(user.role, 'canMoney', user.perms) || facts.expenseRequester);
     case 'cons-contract':
     case 'cons-item':
-      return hasPerm(user.role, 'canAdminPage', user.perms)
-        && (mine || hasPerm(user.role, 'canHide', user.perms));
+      if (!hasPerm(user.role, 'canAdminPage', user.perms) || !hasPerm(user.role, 'canCrudAll', user.perms)) return false;
+      // C79 링크가 있으면 업로더가 아니라 건별 공개 범위가 권위다. 보관된 건은 canHide도 열지 않는다.
+      if (facts.consultingLinked) {
+        return facts.consultingActive === true
+          && (facts.consultingFullAccess === true || hasPerm(user.role, 'canHide', user.perms));
+      }
+      // 링크 도입 전 독립 업로드 호환. 새 워크플로 파일은 항상 cons_file 링크와 같은 트랜잭션에 저장된다.
+      return mine || hasPerm(user.role, 'canHide', user.perms);
     case 'report-png':
       return mine || facts.reportTeacher
         || facts.reportLinked && hasPerm(user.role, 'canAdminPage', user.perms);
@@ -171,12 +181,25 @@ export class FilesService {
               EXISTS (
                 SELECT 1 FROM pdflog p JOIN rep r ON r.id=p.ref_id
                  WHERE p.kind='report_png' AND p.file_url=$2 AND r.teacher_id=$3
-              ) AS report_teacher
+              ) AS report_teacher,
+              EXISTS (SELECT 1 FROM cons_file cf WHERE cf.file_id=f.id) AS consulting_linked,
+              EXISTS (
+                SELECT 1 FROM cons_file cf JOIN cons c ON c.id=cf.cons_id
+                 WHERE cf.file_id=f.id AND c.deleted_at IS NULL
+              ) AS consulting_active,
+              EXISTS (
+                SELECT 1 FROM cons_file cf JOIN cons c ON c.id=cf.cons_id
+                 WHERE cf.file_id=f.id AND c.deleted_at IS NULL
+                   AND (c.share='all' OR c.owner_id=$3 OR (c.share='picked' AND EXISTS (
+                     SELECT 1 FROM cons_pick cp WHERE cp.cons_id=c.id AND cp.staff_id=$3
+                   )))
+              ) AS consulting_full_access
          FROM file f WHERE f.id=$1`,
       [id, fileUrlOf(id), user.id],
     )) as Array<{
       kind: FileKind; uploaded_by: string | null; book_linked: boolean; expense_linked: boolean;
       expense_requester: boolean; report_linked: boolean; report_teacher: boolean;
+      consulting_linked: boolean; consulting_active: boolean; consulting_full_access: boolean;
     }>;
     if (!row) throw new NotFoundException({ code: 'FILE_NOT_FOUND', message: '파일을 찾을 수 없습니다' });
     if (!canReadStoredFile(user, row.kind, {
@@ -186,6 +209,9 @@ export class FilesService {
       expenseRequester: row.expense_requester,
       reportLinked: row.report_linked,
       reportTeacher: row.report_teacher,
+      consultingLinked: row.consulting_linked,
+      consultingActive: row.consulting_active,
+      consultingFullAccess: row.consulting_full_access,
     })) {
       throw new ForbiddenException({ code: 'FILE_FORBIDDEN', message: '이 파일을 열 권한이 없습니다' });
     }

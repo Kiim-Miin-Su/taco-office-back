@@ -39,7 +39,8 @@ export const SEEDED_TABLES = [
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout', 'carry',
-  'req', 'chreq', 'gpapack', 'gpapack_student', 'gpapack_lib', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay', 'diag',
+  'req', 'chreq', 'gpapack', 'gpapack_student', 'gpapack_lib', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay',
+  'cons_file', 'cons_feedback', 'cons_event', 'diag',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
   'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**

@@ -11,6 +11,9 @@ export * from './autorep.entity';
 export * from './carry.entity';
 export * from './chreq.entity';
 export * from './cons.entity';
+export * from './cons-event.entity';
+export * from './cons-feedback.entity';
+export * from './cons-file.entity';
 export * from './cons-item.entity';
 export * from './cons-pick.entity';
 export * from './cons-sess.entity';
@@ -84,6 +87,9 @@ import {
   Autorep,
   Chreq,
   Cons,
+  ConsEvent,
+  ConsFeedback,
+  ConsFile,
   ConsItem,
   ConsPick,
   ConsSess,
@@ -157,6 +163,9 @@ export const ENTITIES = [
   Autorep,
   Chreq,
   Cons,
+  ConsEvent,
+  ConsFeedback,
+  ConsFile,
   ConsItem,
   ConsPick,
   ConsSess,

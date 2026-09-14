@@ -19,6 +19,9 @@ import type { ConsultingStage } from '../modules/consulting/consulting.rules';
 @Check('cons_contract_step_check', 'contract_step BETWEEN 1 AND 5')
 @Check('cons_paid_stage_check', "stage = 'contract' OR contract_step IS NOT DISTINCT FROM 5")
 @Check('cons_sessions_check', 'sessions > 0')
+@Check('cons_requester_check', "requester IS NULL OR requester IN ('mother','father')")
+@Check('cons_dates_check', 'start_on IS NULL OR end_on IS NULL OR start_on <= end_on')
+@Check('cons_deleted_pair_check', '(deleted_at IS NULL) = (deleted_by IS NULL)')
 export class Cons {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
@@ -41,11 +44,19 @@ export class Cons {
   @Column({ type: 'smallint', nullable: true })
   sessions: number | null;
 
+  /** §29 계약 시작일. 레거시 행은 null을 보존한다. */
+  @Column({ type: 'date', nullable: true })
+  startOn: string | null;
+
   @Column({ type: 'date', nullable: true })
   endOn: string | null;
 
   @Column({ type: 'bigint', nullable: true })
   ownerId: number | null;
+
+  /** §29 요청자 — 학부모 연락처/외부 발송 대상 정보는 이 값으로 추정하지 않는다. */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  requester: 'mother'|'father'|null;
 
   /** csCan() 목록 필터 · csCanFull() 내용 접근 */
   @Column({ type: 'enum', enum: CONS_SHARE_T_VALUES, enumName: 'cons_share_t', default: 'all' })
@@ -53,4 +64,11 @@ export class Cons {
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
+
+  /** 영구 보관 원칙: DELETE API는 실제 삭제 대신 이 두 칸을 함께 기록한다. */
+  @Column({ type: 'timestamptz', nullable: true })
+  deletedAt: Date | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  deletedBy: number | null;
 }

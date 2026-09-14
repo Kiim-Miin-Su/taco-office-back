@@ -8,16 +8,22 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
+import { hasPerm, isRole } from '../../common/perm';
 import { todayKst } from '../../lib/kst';
 import { csCan, csCanAmount, csCanFull, type ConsShare, type ConsViewer } from '../../lib/rules';
 import { INV_TYPE_LABEL } from '../accounting/accounting.dto';
+import { fileUrlOf, storeFile } from '../files/files.service';
 import type {
   ConsAccountingDto, ConsAccountRowDto, ConsItemDto, ConsItemToggleDto,
   ConsPaymentCreateDto, ConsPaymentDto, ConsStudentCaseDto, ConsStudentDto, ConsStudentsDto,
-  ConsultingListDto, ConsultingSessionDto,
+  ConsultingCreateDto, ConsultingDetailDto,
+  ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto, ConsultingListDto,
+  ConsultingFileCreateDto, ConsultingSessionDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
 import {
-  CONTRACT_STEP_MAX, consultingRecordIssue, consultingSessionIssue, consultingStageLabel,
+  CONSULTING_FILE_MAX, CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
+  consultingRecordIssue, consultingSessionIssue, consultingStageLabel,
+  type ConsultingFileRole, type ConsultingType,
   type ConsultingRecord,
 } from './consulting.rules';
 
@@ -44,6 +50,406 @@ export class ConsultingService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
+  private viewer(row: R, viewerId: number, canHide: boolean, canMoney: boolean): ConsViewer {
+    return {
+      isOwner: row.owner_id !== null && Number(row.owner_id) === viewerId,
+      isPicked: row.is_picked === true,
+      canHide,
+      canMoney,
+    };
+  }
+
+  private assertPicked(share: ConsShare, ids: readonly number[] | undefined): number[] {
+    const picked = ids ?? [];
+    if (share === 'picked' && picked.length === 0) {
+      throw new BadRequestException({ code: 'CONS_PICK_REQUIRED', message: '지정 공개는 지정 직원을 한 명 이상 골라야 합니다' });
+    }
+    if (share !== 'picked' && picked.length > 0) {
+      throw new BadRequestException({ code: 'CONS_PICK_FORBIDDEN', message: '지정 공개가 아닐 때 지정 직원은 비워야 합니다' });
+    }
+    if (new Set(picked).size !== picked.length) {
+      throw new BadRequestException({ code: 'CONS_PICK_DUPLICATE', message: '지정 직원이 중복되었습니다' });
+    }
+    return [...picked];
+  }
+
+  /** 쓰기 성공 뒤 호출자 자신이 방금 만든/바꾼 건에서 잠기는 실패를 커밋 전에 막는다. */
+  private assertNoSelfLockout(
+    share: ConsShare, ownerId: number | null, picked: readonly number[], viewerId: number, canHide: boolean,
+  ): void {
+    const remainsOpen = csCanFull(share, {
+      isOwner: ownerId === viewerId,
+      isPicked: picked.includes(viewerId),
+      canHide,
+      canMoney: false,
+    });
+    if (!remainsOpen) {
+      throw new ForbiddenException({
+        code: 'CONS_SELF_LOCKOUT',
+        message: '저장 뒤에도 이 계약을 열 수 있도록 본인을 담당자 또는 지정 직원에 포함해야 합니다',
+      });
+    }
+  }
+
+  /** owner/picked는 활성 백오피스 사용자만 허용한다. 역할 문자열 비교는 공용 권한 함수에 맡긴다. */
+  private async assertActiveAdminStaff(m: EntityManager, ids: readonly number[]): Promise<void> {
+    if (ids.length === 0) return;
+    const rows = (await m.query(
+      `SELECT id,role,can_money,can_wage,can_approve,can_hide,can_gpa_pack
+         FROM staff WHERE id=ANY($1::bigint[]) AND active`, [ids],
+    )) as Array<R>;
+    const valid = rows.filter((r) => isRole(r.role) && hasPerm(r.role, 'canAdminPage', {
+      canMoney: r.can_money as boolean | null,
+      canWage: r.can_wage as boolean | null,
+      canApprove: r.can_approve as boolean | null,
+      canHide: r.can_hide as boolean | null,
+      canGpaPack: r.can_gpa_pack as boolean | null,
+    }) && hasPerm(r.role, 'canCrudAll')).length;
+    if (valid !== new Set(ids).size) {
+      throw new BadRequestException({ code: 'CONS_STAFF_INVALID', message: '담당/지정 직원은 활성 백오피스 사용자여야 합니다' });
+    }
+  }
+
+  private async lockVisible(
+    m: EntityManager, viewerId: number, canHide: boolean, canMoney: boolean, consId: number,
+  ): Promise<{ row: R; share: ConsShare; viewer: ConsViewer }> {
+    const [row] = (await m.query(
+      `SELECT c.*,
+              EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id=c.id AND p.staff_id=$2) AS is_picked
+         FROM cons c WHERE c.id=$1 AND c.deleted_at IS NULL FOR UPDATE OF c`, [consId, viewerId],
+    )) as R[];
+    if (!row) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
+    const share = String(row.share) as ConsShare;
+    const viewer = this.viewer(row, viewerId, canHide, canMoney);
+    if (!csCan(share, viewer)) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
+    return { row, share, viewer };
+  }
+
+  private async lockFull(m: EntityManager, viewerId: number, canHide: boolean, consId: number): Promise<R> {
+    const { row, share, viewer } = await this.lockVisible(m, viewerId, canHide, false, consId);
+    if (!csCanFull(share, viewer)) throw new ForbiddenException('이 건의 내용은 공개 범위 밖입니다');
+    return row;
+  }
+
+  async create(viewerId: number, canMoney: boolean, canHide: boolean, dto: ConsultingCreateDto): Promise<ConsultingDetailDto> {
+    const picked = this.assertPicked(dto.share, dto.pickedStaffIds);
+    this.assertNoSelfLockout(dto.share, dto.ownerId, picked, viewerId, canHide);
+    if (dto.startOn > dto.endOn) {
+      throw new BadRequestException({ code: 'CONS_DATE_ORDER', message: '종료일은 시작일보다 빠를 수 없습니다' });
+    }
+    const id = await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      await this.assertActiveAdminStaff(m, [dto.ownerId, ...picked]);
+      const [{ count }] = (await m.query(
+        `SELECT count(*)::int AS count FROM stu WHERE id=ANY($1::bigint[])`, [dto.studentIds],
+      )) as Array<{ count: number }>;
+      if (count !== dto.studentIds.length) {
+        throw new BadRequestException({ code: 'CONS_STUDENT_INVALID', message: '존재하지 않는 학생이 포함되었습니다' });
+      }
+      const [created] = (await m.query(
+        `INSERT INTO cons (cons_type,stage,contract_step,amount,sessions,start_on,end_on,requester,owner_id,share)
+         VALUES ($1,'contract',1,$2,$3,$4::date,$5::date,$6,$7,$8)
+         RETURNING id`,
+        [dto.consType, dto.amount, dto.sessions, dto.startOn, dto.endOn, dto.requester, dto.ownerId, dto.share],
+      )) as Array<{ id: string }>;
+      const consId = Number(created.id);
+      await m.query(`INSERT INTO cons_stu (cons_id,student_id) SELECT $1,unnest($2::bigint[])`, [consId, dto.studentIds]);
+      if (picked.length) await m.query(`INSERT INTO cons_pick (cons_id,staff_id) SELECT $1,unnest($2::bigint[])`, [consId, picked]);
+      if (dto.consType === 'admissions') {
+        await m.query(
+          `INSERT INTO cons_item (cons_id,seq,label,required,done,source)
+           SELECT $1, ordinality::smallint, label, true, false, 'template'
+             FROM unnest($2::text[]) WITH ORDINALITY AS x(label,ordinality)`,
+          [consId, [...INTERNATIONAL_SCHOOL_ITEMS]],
+        );
+      }
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,by_id) VALUES ($1,'created',$2)`, [consId, viewerId]);
+      return consId;
+    });
+    return this.detail(viewerId, canMoney, canHide, id);
+  }
+
+  async detail(viewerId: number, canMoney: boolean, canHide: boolean, consId: number): Promise<ConsultingDetailDto> {
+    return this.anyRepo.manager.transaction(async (m) => this.detailLocked(m, viewerId, canMoney, canHide, consId));
+  }
+
+  /**
+   * 상세 응답은 공개 범위 판정부터 모든 자식 원장 조회까지 같은 트랜잭션에서 만든다.
+   * `FOR SHARE`로 CONS 한 줄을 잡아 두어 share 변경/보관이 중간에 끼어 권한이 바뀐
+   * 응답이나 `undefined` 접근 500을 만들지 않게 한다. 읽기끼리는 서로 막지 않는다.
+   */
+  private async detailLocked(
+    m: EntityManager, viewerId: number, canMoney: boolean, canHide: boolean, consId: number,
+  ): Promise<ConsultingDetailDto> {
+    const q = <T = R>(sql: string, p: unknown[] = []): Promise<T[]> => m.query(sql, p) as Promise<T[]>;
+    const { share, viewer } = await this.gate(m, viewerId, canHide, canMoney, consId);
+    if (!csCanFull(share, viewer)) throw new ForbiddenException('이 건의 내용은 공개 범위 밖입니다');
+    const [detail] = await q(
+      `SELECT c.*,to_char(c.start_on,'YYYY-MM-DD') AS start_on_text,to_char(c.end_on,'YYYY-MM-DD') AS end_on_text,
+              to_char(c.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS created_at_text,
+              o.name AS owner_name,
+              COALESCE((SELECT sum(p.amount)::int FROM cons_pay p WHERE p.cons_id=c.id),0) AS paid,
+              (SELECT i.id FROM inv i WHERE i.cs_id=c.id AND i.state<>'void') AS inv_id
+         FROM cons c LEFT JOIN staff o ON o.id=c.owner_id WHERE c.id=$1 AND c.deleted_at IS NULL`, [consId],
+    );
+    // 정상 경로에서는 SHARE lock 때문에 사라질 수 없지만, 오염/드라이버 경계도 500으로 새지 않게 한다.
+    if (!detail) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
+    const students = await q(`SELECT s.id,s.name FROM cons_stu x JOIN stu s ON s.id=x.student_id WHERE x.cons_id=$1 ORDER BY s.name,s.id`, [consId]);
+    const picked = await q(`SELECT s.id,s.name FROM cons_pick x JOIN staff s ON s.id=x.staff_id WHERE x.cons_id=$1 ORDER BY s.name,s.id`, [consId]);
+    const fileRows = await q(
+      `SELECT f.id,f.name,f.mime,f.bytes,cf.role,s.name AS by_name,
+              to_char(cf.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS at
+         FROM cons_file cf JOIN file f ON f.id=cf.file_id LEFT JOIN staff s ON s.id=cf.created_by
+        WHERE cf.cons_id=$1 ORDER BY cf.created_at,cf.file_id`, [consId],
+    );
+    const files = fileRows.map((f): ConsultingFileDto => ({
+      id: Number(f.id), name: String(f.name), mime: String(f.mime), bytes: Number(f.bytes),
+      url: fileUrlOf(Number(f.id)), role: String(f.role) as ConsultingFileRole,
+      uploadedByName: (f.by_name as string) ?? null, uploadedAt: String(f.at),
+    }));
+    const feedbackRows = await q(
+      `SELECT f.id,f.body,c.name AS created_by_name,r.name AS resolved_by_name,
+              to_char(f.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS created_at_text,
+              CASE WHEN f.resolved_at IS NULL THEN NULL ELSE to_char(f.resolved_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' END AS resolved_at_text
+         FROM cons_feedback f LEFT JOIN staff c ON c.id=f.created_by LEFT JOIN staff r ON r.id=f.resolved_by
+        WHERE f.cons_id=$1 ORDER BY f.created_at,f.id`, [consId],
+    );
+    const feedback = feedbackRows.map((f): ConsultingFeedbackDto => this.feedbackDto(f));
+    const [delivery] = await q(
+      `SELECT to_char(e.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS at,s.name AS by_name
+         FROM cons_event e LEFT JOIN staff s ON s.id=e.by_id
+        WHERE e.cons_id=$1 AND e.event_type='parent_delivered' ORDER BY e.created_at DESC,e.id DESC LIMIT 1`, [consId],
+    );
+    const step = detail.contract_step == null ? null : Number(detail.contract_step);
+    const stage = String(detail.stage) as ConsultingRecord['stage'];
+    const contractFiles = files.filter((f) => f['role'] !== 'signed');
+    const signedFiles = files.filter((f) => f['role'] === 'signed');
+    const unresolved = feedback.filter((f) => !f.resolved).length;
+    const paid = Number(detail.paid);
+    const amount = detail.amount == null ? null : Number(detail.amount);
+    const due = amount == null ? null : amount - paid;
+    const invId = detail.inv_id == null ? null : Number(detail.inv_id);
+    const mutable = stage === 'contract';
+    const consType = String(detail.cons_type);
+    const knownType = consType as ConsultingType;
+    return {
+      id: consId,
+      consType,
+      consTypeLabel: CONSULTING_TYPE_LABEL[knownType] ?? consType,
+      stage,
+      contractStep: step,
+      studentIds: students.map((s) => Number(s.id)),
+      studentNames: students.map((s) => String(s.name)),
+      requester: detail.requester == null ? null : String(detail.requester) as ConsultingDetailDto['requester'],
+      ownerId: detail.owner_id == null ? null : Number(detail.owner_id),
+      ownerName: (detail.owner_name as string) ?? null,
+      startOn: (detail.start_on_text as string) ?? null,
+      endOn: (detail.end_on_text as string) ?? null,
+      // §29·§30 계약 작성 상세의 입력값. 회계 목록/수납 API의 canMoney projection과 분리한다.
+      amount,
+      sessions: detail.sessions == null ? null : Number(detail.sessions),
+      share,
+      pickedStaffIds: picked.map((s) => Number(s.id)),
+      pickedStaffNames: picked.map((s) => String(s.name)),
+      createdAt: String(detail.created_at_text),
+      typeCapability: consType === 'admissions'
+        ? {
+          defaultItemsSupported: true, reason: null,
+          scheduleCreationSupported: false, scheduleCreationReason: '실제 일정 생성 규칙이 확정되지 않아 약정 회차만 저장합니다',
+        }
+        : {
+          defaultItemsSupported: false, reason: '이 유형의 기본 항목 템플릿은 아직 확정되지 않았습니다',
+          scheduleCreationSupported: false, scheduleCreationReason: '실제 일정 생성 규칙이 확정되지 않아 약정 회차만 저장합니다',
+        },
+      capabilities: {
+        canEdit: mutable,
+        canChangeShare: mutable,
+        canAddContractFile: mutable && (step === 1 || step === 2 || step === 4) && files.length < CONSULTING_FILE_MAX,
+        canRemoveContractFile: mutable && (step === 1 || step === 2) && feedback.length === 0 && contractFiles.length > 0,
+        canAddFeedback: mutable && step === 2 && contractFiles.length > 0,
+        canResolveFeedback: mutable && step === 2 && unresolved > 0,
+        canDeliver: mutable && step === 2 && contractFiles.length > 0 && unresolved === 0,
+        canAddSignedFile: mutable && step === 4 && Boolean(delivery) && files.length < CONSULTING_FILE_MAX,
+        canAddPayment: canMoney && step === 5 && stage !== 'done' && (due === null || due > 0),
+        canCreateInvoice: canMoney && invId === null && this.invoiceable(step, due),
+        canArchive: true,
+        externalParentSendSupported: false,
+        externalParentSendReason: '학부모 연락처와 발송 채널 정책이 없어 전달 완료 사실만 기록합니다',
+      },
+      contractFiles,
+      signedFiles,
+      feedback,
+      delivery: delivery ? { deliveredAt: String(delivery.at), deliveredByName: (delivery.by_name as string) ?? null } : null,
+      payment: { paid: canMoney ? paid : null, due: canMoney ? due : null, invoiceId: canMoney ? invId : null },
+    };
+  }
+
+  async updateShare(viewerId: number, canMoney: boolean, canHide: boolean, consId: number, dto: ConsultingShareUpdateDto): Promise<ConsultingDetailDto> {
+    const picked = this.assertPicked(dto.share, dto.pickedStaffIds);
+    await this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      if (String(c.stage) !== 'contract') {
+        throw new ConflictException({ code: 'CONS_LOCKED', message: '계약 단계에서만 공개 범위를 바꿀 수 있습니다' });
+      }
+      this.assertNoSelfLockout(dto.share, c.owner_id == null ? null : Number(c.owner_id), picked, viewerId, canHide);
+      await this.assertActiveAdminStaff(m, picked);
+      await m.query(`DELETE FROM cons_pick WHERE cons_id=$1`, [consId]);
+      if (picked.length) await m.query(`INSERT INTO cons_pick (cons_id,staff_id) SELECT $1,unnest($2::bigint[])`, [consId, picked]);
+      await m.query(`UPDATE cons SET share=$2 WHERE id=$1`, [consId, dto.share]);
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,by_id) VALUES ($1,'share_changed',$2)`, [consId, viewerId]);
+    });
+    return this.detail(viewerId, canMoney, canHide, consId);
+  }
+
+  private feedbackDto(r: R): ConsultingFeedbackDto {
+    const resolvedAt = (r.resolved_at_text as string) ?? null;
+    return {
+      id: Number(r.id), body: String(r.body), createdByName: (r.created_by_name as string) ?? null,
+      createdAt: String(r.created_at_text), resolved: resolvedAt !== null,
+      resolvedByName: (r.resolved_by_name as string) ?? null, resolvedAt,
+    };
+  }
+
+  private async readFile(m: EntityManager, fileId: number): Promise<ConsultingFileDto> {
+    const [f] = (await m.query(
+      `SELECT f.id,f.name,f.mime,f.bytes,cf.role,s.name AS by_name,
+              to_char(cf.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS at
+         FROM cons_file cf JOIN file f ON f.id=cf.file_id LEFT JOIN staff s ON s.id=cf.created_by WHERE f.id=$1`, [fileId],
+    )) as R[];
+    return { id: Number(f.id), name: String(f.name), mime: String(f.mime), bytes: Number(f.bytes), url: fileUrlOf(Number(f.id)), role: String(f.role) as ConsultingFileRole, uploadedByName: (f.by_name as string) ?? null, uploadedAt: String(f.at) };
+  }
+
+  async addContractFile(viewerId: number, canHide: boolean, consId: number, dto: ConsultingFileCreateDto): Promise<ConsultingFileDto> {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      const step = c.contract_step == null ? null : Number(c.contract_step);
+      if (String(c.stage) !== 'contract' || (step !== 1 && step !== 2 && step !== 4)) {
+        throw new ConflictException({ code: 'CONS_FILE_LOCKED', message: '계약서 작성·피드백 단계에서만 계약 파일을 추가합니다' });
+      }
+      const [{ count }] = (await m.query(`SELECT count(*)::int AS count FROM cons_file WHERE cons_id=$1`, [consId])) as Array<{ count: number }>;
+      if (count >= CONSULTING_FILE_MAX) throw new ConflictException({ code: 'CONS_FILE_LIMIT', message: '계약 관련 파일은 최대 10개입니다' });
+      const [{ drafts }] = (await m.query(`SELECT count(*)::int AS drafts FROM cons_file WHERE cons_id=$1 AND role<>'signed'`, [consId])) as Array<{ drafts: number }>;
+      const role: ConsultingFileRole = drafts === 0 ? 'draft' : 'revision';
+      const file = await storeFile(m, viewerId, { kind: 'cons-contract', name: dto.name, base64: dto.base64 });
+      await m.query(`INSERT INTO cons_file (file_id,cons_id,role,created_by) VALUES ($1,$2,$3,$4)`, [file.id, consId, role, viewerId]);
+      if (step === 1 || step === 4) await m.query(`UPDATE cons SET contract_step=2 WHERE id=$1`, [consId]);
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'file_added',$2,$3)`, [consId, file.id, viewerId]);
+      return this.readFile(m, file.id);
+    });
+  }
+
+  async removeContractFile(viewerId: number, canHide: boolean, consId: number, fileId: number): Promise<void> {
+    await this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      const step = c.contract_step == null ? null : Number(c.contract_step);
+      if (String(c.stage) !== 'contract' || (step !== 1 && step !== 2)) {
+        throw new ConflictException({ code: 'CONS_FILE_LOCKED', message: '전달 전 계약 파일만 제거할 수 있습니다' });
+      }
+      const [{ feedback }] = (await m.query(`SELECT count(*)::int AS feedback FROM cons_feedback WHERE cons_id=$1`, [consId])) as Array<{ feedback: number }>;
+      if (feedback > 0) throw new ConflictException({ code: 'CONS_FILE_HAS_FEEDBACK', message: '피드백 이력이 있는 계약 파일은 제거할 수 없습니다' });
+      const [linked] = (await m.query(`SELECT file_id FROM cons_file WHERE cons_id=$1 AND file_id=$2 AND role<>'signed' FOR UPDATE`, [consId, fileId])) as R[];
+      if (!linked) throw new NotFoundException('계약 파일을 찾을 수 없습니다');
+      await m.query(`DELETE FROM cons_file WHERE file_id=$1`, [fileId]);
+      await m.query(`DELETE FROM file WHERE id=$1`, [fileId]);
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'file_removed',$2,$3)`, [consId, fileId, viewerId]);
+      const [{ left }] = (await m.query(`SELECT count(*)::int AS left FROM cons_file WHERE cons_id=$1 AND role<>'signed'`, [consId])) as Array<{ left: number }>;
+      if (left === 0) await m.query(`UPDATE cons SET contract_step=1 WHERE id=$1`, [consId]);
+    });
+  }
+
+  async addFeedback(viewerId: number, canHide: boolean, consId: number, dto: ConsultingFeedbackCreateDto): Promise<ConsultingFeedbackDto> {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      if (String(c.stage) !== 'contract' || Number(c.contract_step) !== 2) {
+        throw new ConflictException({ code: 'CONS_FEEDBACK_LOCKED', message: '계약서 피드백 단계가 아닙니다' });
+      }
+      const [{ files }] = (await m.query(`SELECT count(*)::int AS files FROM cons_file WHERE cons_id=$1 AND role<>'signed'`, [consId])) as Array<{ files: number }>;
+      if (files === 0) throw new ConflictException({ code: 'CONS_CONTRACT_FILE_REQUIRED', message: '계약서를 먼저 올려야 합니다' });
+      const [created] = (await m.query(
+        `INSERT INTO cons_feedback (cons_id,body,created_by) VALUES ($1,$2,$3) RETURNING id`,
+        [consId, dto.body.trim(), viewerId],
+      )) as Array<{ id: string }>;
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'feedback_added',$2,$3)`, [consId, created.id, viewerId]);
+      const [row] = (await m.query(
+        `SELECT f.id,f.body,s.name AS created_by_name,NULL::text AS resolved_by_name,
+                to_char(f.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS created_at_text,
+                NULL::text AS resolved_at_text
+           FROM cons_feedback f LEFT JOIN staff s ON s.id=f.created_by WHERE f.id=$1`, [created.id],
+      )) as R[];
+      return this.feedbackDto(row);
+    });
+  }
+
+  async markFeedbackResolved(viewerId: number, canHide: boolean, consId: number, feedbackId: number): Promise<ConsultingFeedbackDto> {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      if (String(c.stage) !== 'contract' || Number(c.contract_step) !== 2) {
+        throw new ConflictException({ code: 'CONS_FEEDBACK_LOCKED', message: '계약서 피드백 단계가 아닙니다' });
+      }
+      const [existing] = (await m.query(`SELECT id,resolved_at FROM cons_feedback WHERE id=$1 AND cons_id=$2 FOR UPDATE`, [feedbackId, consId])) as R[];
+      if (!existing) throw new NotFoundException('피드백을 찾을 수 없습니다');
+      if (existing.resolved_at == null) {
+        await m.query(`UPDATE cons_feedback SET resolved_at=now(),resolved_by=$3 WHERE id=$1 AND cons_id=$2 AND resolved_at IS NULL`, [feedbackId, consId, viewerId]);
+        await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'feedback_resolved',$2,$3)`, [consId, feedbackId, viewerId]);
+      }
+      const [row] = (await m.query(
+        `SELECT f.id,f.body,c.name AS created_by_name,r.name AS resolved_by_name,
+                to_char(f.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS created_at_text,
+                to_char(f.resolved_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS resolved_at_text
+           FROM cons_feedback f LEFT JOIN staff c ON c.id=f.created_by LEFT JOIN staff r ON r.id=f.resolved_by WHERE f.id=$1`, [feedbackId],
+      )) as R[];
+      return this.feedbackDto(row);
+    });
+  }
+
+  async deliverContract(viewerId: number, canMoney: boolean, canHide: boolean, consId: number): Promise<ConsultingDetailDto> {
+    await this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      const step = Number(c.contract_step);
+      if (String(c.stage) !== 'contract' || (step !== 2 && step !== 4)) {
+        throw new ConflictException({ code: 'CONS_DELIVERY_LOCKED', message: '피드백 완료 뒤 계약서를 전달합니다' });
+      }
+      if (step === 4) return; // 재시도는 현재 단계에서 멱등이다. 수정본을 올리면 다시 step 2가 된다.
+      const [{ files, unresolved }] = (await m.query(
+        `SELECT
+           (SELECT count(*)::int FROM cons_file WHERE cons_id=$1 AND role<>'signed') AS files,
+           (SELECT count(*)::int FROM cons_feedback WHERE cons_id=$1 AND resolved_at IS NULL) AS unresolved`, [consId],
+      )) as Array<{ files: number; unresolved: number }>;
+      if (files === 0) throw new ConflictException({ code: 'CONS_CONTRACT_FILE_REQUIRED', message: '계약서를 먼저 올려야 합니다' });
+      if (unresolved > 0) throw new ConflictException({ code: 'CONS_FEEDBACK_OPEN', message: '해결되지 않은 피드백이 있습니다' });
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,by_id) VALUES ($1,'parent_delivered',$2)`, [consId, viewerId]);
+      await m.query(`UPDATE cons SET contract_step=4 WHERE id=$1`, [consId]);
+    });
+    return this.detail(viewerId, canMoney, canHide, consId);
+  }
+
+  async addSignedFile(viewerId: number, canHide: boolean, consId: number, dto: ConsultingFileCreateDto): Promise<ConsultingFileDto> {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      if (String(c.stage) !== 'contract' || Number(c.contract_step) !== 4) {
+        throw new ConflictException({ code: 'CONS_SIGNED_LOCKED', message: '학부모 전달 뒤 서명본을 등록합니다' });
+      }
+      const [{ count, deliveries }] = (await m.query(
+        `SELECT (SELECT count(*)::int FROM cons_file WHERE cons_id=$1) AS count,
+                (SELECT count(*)::int FROM cons_event WHERE cons_id=$1 AND event_type='parent_delivered') AS deliveries`, [consId],
+      )) as Array<{ count: number; deliveries: number }>;
+      if (deliveries === 0) throw new ConflictException({ code: 'CONS_DELIVERY_REQUIRED', message: '학부모 전달 기록이 필요합니다' });
+      if (count >= CONSULTING_FILE_MAX) throw new ConflictException({ code: 'CONS_FILE_LIMIT', message: '계약 관련 파일은 최대 10개입니다' });
+      const file = await storeFile(m, viewerId, { kind: 'cons-contract', name: dto.name, base64: dto.base64 });
+      await m.query(`INSERT INTO cons_file (file_id,cons_id,role,created_by) VALUES ($1,$2,'signed',$3)`, [file.id, consId, viewerId]);
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'file_added',$2,$3)`, [consId, file.id, viewerId]);
+      await m.query(`UPDATE cons SET contract_step=5 WHERE id=$1`, [consId]);
+      return this.readFile(m, file.id);
+    });
+  }
+
+  async archive(viewerId: number, canHide: boolean, consId: number): Promise<void> {
+    await this.anyRepo.manager.transaction(async (m) => {
+      await this.lockFull(m, viewerId, canHide, consId);
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,by_id) VALUES ($1,'archived',$2)`, [consId, viewerId]);
+      await m.query(`UPDATE cons SET deleted_at=now(),deleted_by=$2 WHERE id=$1 AND deleted_at IS NULL`, [consId, viewerId]);
+    });
+  }
+
   async all(viewerId: number, canMoney: boolean, canHide: boolean): Promise<ConsultingListDto> {
     const rows = await this.q(
       `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
@@ -56,6 +462,7 @@ export class ConsultingService {
                    FROM cons_stu cs JOIN stu s ON s.id = cs.student_id
                   WHERE cs.cons_id = c.id), '{}') AS student_names
          FROM cons c LEFT JOIN staff o ON o.id = c.owner_id
+        WHERE c.deleted_at IS NULL
         ORDER BY c.created_at DESC, c.id`,
       [viewerId],
     );
@@ -145,7 +552,7 @@ export class ConsultingService {
     const [c] = await this.q(
       `SELECT c.id, c.stage, c.share, c.owner_id,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $2) AS is_picked
-         FROM cons c WHERE c.id = $1`, [consId, viewerId]);
+         FROM cons c WHERE c.id = $1 AND c.deleted_at IS NULL`, [consId, viewerId]);
     if (!c) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
     const share = String(c.share) as ConsShare;
     const viewer: ConsViewer = {
@@ -186,17 +593,14 @@ export class ConsultingService {
    * 통과시키므로 `csCan && canMoney` 면 수납만 공개 건의 금액도 보인다. 여기서 다시 세지 않는다.
    * ══════════════════════════════════════════════════════════════════════ */
 
-  /**
-   * 이 뷰어가 이 건을 어떻게 볼 수 있는가 — 목록·회계·쓰기가 같은 한 곳을 쓴다.
-   * 보이지 않으면 404 로 끝낸다(존재 누출 금지 — toggleItem 과 같은 규약).
-   */
+  /** 상세 읽기의 권한 판정과 CONS 공유 잠금. 보이지 않으면 404로 존재를 숨긴다. */
   private async gate(
-    viewerId: number, canHide: boolean, canMoney: boolean, consId: number,
+    m: EntityManager, viewerId: number, canHide: boolean, canMoney: boolean, consId: number,
   ): Promise<{ row: R; share: ConsShare; viewer: ConsViewer }> {
-    const [c] = await this.q(
+    const [c] = (await m.query(
       `SELECT c.id, c.stage, c.contract_step, c.amount, c.share, c.owner_id,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $2) AS is_picked
-         FROM cons c WHERE c.id = $1`, [consId, viewerId]);
+         FROM cons c WHERE c.id = $1 AND c.deleted_at IS NULL FOR SHARE OF c`, [consId, viewerId])) as R[];
     if (!c) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
     const share = String(c.share) as ConsShare;
     const viewer: ConsViewer = {
@@ -223,7 +627,7 @@ export class ConsultingService {
                          WHERE cs.cons_id = c.id), '{}') AS student_names,
               COALESCE((SELECT sum(p.amount) FROM cons_pay p WHERE p.cons_id = c.id), 0) AS paid,
               (SELECT i.id FROM inv i WHERE i.cs_id = c.id AND i.state <> 'void') AS inv_id
-         FROM cons c
+         FROM cons c WHERE c.deleted_at IS NULL
         ORDER BY c.created_at DESC, c.id`,
       [viewerId],
     );
@@ -310,17 +714,40 @@ export class ConsultingService {
   async addPayment(
     viewerId: number, canMoney: boolean, canHide: boolean, consId: number, dto: ConsPaymentCreateDto,
   ): Promise<ConsAccountRowDto> {
-    const { row, share, viewer } = await this.gate(viewerId, canHide, canMoney, consId);
-    if (!csCanAmount(share, viewer)) throw new ForbiddenException('이 건의 금액은 공개 범위 밖입니다');
-    if (String(row.stage) === 'done') {
-      throw new ConflictException({ code: 'CONS_PAY_LOCKED', message: '종료된 컨설팅에는 납부를 더할 수 없습니다' });
-    }
     if (dto.paidOn > todayKst()) throw new BadRequestException('납부일이 오늘보다 뒤일 수 없습니다');
-
-    await this.q(
-      `INSERT INTO cons_pay (cons_id, amount, paid_on, memo, by_id) VALUES ($1, $2, $3::date, $4, $5)`,
-      [consId, dto.amount, dto.paidOn, dto.memo?.trim() || null, viewerId],
-    );
+    await this.anyRepo.manager.transaction(async (m) => {
+      const { row: locked, share, viewer } = await this.lockVisible(m, viewerId, canHide, canMoney, consId);
+      if (!csCanAmount(share, viewer)) throw new ForbiddenException('이 건의 금액은 공개 범위 밖입니다');
+      if (String(locked.stage) === 'done') {
+        throw new ConflictException({ code: 'CONS_PAY_LOCKED', message: '종료된 컨설팅에는 납부를 더할 수 없습니다' });
+      }
+      // C79 신규 계약은 서명본(step 5) 전 수납을 막는다. 레거시 행은 기존 회계 계약을 보존한다.
+      const c79 = locked.start_on != null || locked.requester != null;
+      if (c79 && Number(locked.contract_step) !== CONTRACT_STEP_MAX) {
+        throw new ConflictException({ code: 'CONS_PAY_NOT_READY', message: '서명본 등록 뒤 수납할 수 있습니다' });
+      }
+      const amount = locked.amount == null ? null : Number(locked.amount);
+      const [{ paid: paidBefore }] = (await m.query(
+        `SELECT COALESCE(sum(amount),0)::int AS paid FROM cons_pay WHERE cons_id=$1`, [consId],
+      )) as Array<{ paid: number }>;
+      const before = Number(paidBefore);
+      if (amount !== null && before + dto.amount > amount) {
+        throw new ConflictException({
+          code: 'OVERPAY',
+          message: `남은 금액은 ${Math.max(0, amount - before)}원입니다 — 그보다 많이 적을 수 없습니다`,
+        });
+      }
+      const [pay] = (await m.query(
+        `INSERT INTO cons_pay (cons_id,amount,paid_on,memo,by_id) VALUES ($1,$2,$3::date,$4,$5) RETURNING id`,
+        [consId, dto.amount, dto.paidOn, dto.memo?.trim() || null, viewerId],
+      )) as Array<{ id: string }>;
+      await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'payment_added',$2,$3)`, [consId, pay.id, viewerId]);
+      const paid = before + dto.amount;
+      // N-18: 확인된 누적 수납이 계약 금액에 도달했을 때만 진행으로 자동 전이한다.
+      if (String(locked.stage) === 'contract' && Number(locked.contract_step) === CONTRACT_STEP_MAX && amount !== null && paid >= amount) {
+        await m.query(`UPDATE cons SET stage='running' WHERE id=$1 AND stage='contract' AND contract_step=$2`, [consId, CONTRACT_STEP_MAX]);
+      }
+    });
     return this.oneRow(viewerId, canMoney, canHide, consId);
   }
 
@@ -335,14 +762,10 @@ export class ConsultingService {
    * 원문에 없다. 고르는 건 추정이라 409 로 돌려보내고 사람이 정하게 한다 (N-33).
    */
   async toInvoice(viewerId: number, canMoney: boolean, canHide: boolean, consId: number): Promise<ConsAccountRowDto> {
-    const { share, viewer } = await this.gate(viewerId, canHide, canMoney, consId);
-    if (!csCanAmount(share, viewer)) throw new ForbiddenException('이 건의 금액은 공개 범위 밖입니다');
-
     await this.anyRepo.manager.transaction(async (m: EntityManager) => {
       // 같은 건을 두 번 눌러도 청구서는 하나다 — 잠그고 다시 센다 (inv_cs_id_live_uniq 가 최후 방어)
-      const [c] = (await m.query(
-        `SELECT id, amount, contract_step, stage FROM cons WHERE id = $1 FOR UPDATE`, [consId],
-      )) as Array<R>;
+      const { row: c, share, viewer } = await this.lockVisible(m, viewerId, canHide, canMoney, consId);
+      if (!csCanAmount(share, viewer)) throw new ForbiddenException('이 건의 금액은 공개 범위 밖입니다');
       const [{ live }] = (await m.query(
         `SELECT count(*)::int AS live FROM inv WHERE cs_id = $1 AND state <> 'void'`, [consId],
       )) as Array<{ live: number }>;
@@ -429,6 +852,7 @@ export class ConsultingService {
               (SELECT count(*)::int FROM cons_item i WHERE i.cons_id = c.id AND i.done)      AS items_done,
               COALESCE((SELECT sum(p.amount)::int FROM cons_pay p WHERE p.cons_id = c.id), 0) AS paid
          FROM cons c LEFT JOIN staff o ON o.id = c.owner_id
+        WHERE c.deleted_at IS NULL
         ORDER BY c.created_at DESC, c.id`,
       [viewerId],
     );

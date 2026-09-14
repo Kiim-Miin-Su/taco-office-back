@@ -76,10 +76,14 @@ d('§26 DB 제약과 migration 11', () => {
     expect(Object.values(await migration.preflight(q)).every((n) => n === 0)).toBe(true);
   });
 
-  it('down/up은 레코드를 보존하며 6개 제약과 entity metadata를 일치시킨다', async () => {
+  it('down/up은 레코드를 보존하며 현행 9개 제약과 entity metadata를 일치시킨다', async () => {
     await migration.down(q);
     await migration.up(q);
-    const expected = ['cons_stage_check','cons_contract_step_check','cons_paid_stage_check','cons_sessions_check','cons_sess_seq_check','cons_sess_cons_seq_uniq'].sort();
+    const expected = [
+      'cons_stage_check', 'cons_contract_step_check', 'cons_paid_stage_check', 'cons_sessions_check',
+      'cons_requester_check', 'cons_dates_check', 'cons_deleted_pair_check',
+      'cons_sess_seq_check', 'cons_sess_cons_seq_uniq',
+    ].sort();
     const constraints = await q.query(`SELECT conname FROM pg_constraint WHERE conname = ANY($1)`, [expected]) as { conname: string }[];
     expect(constraints.map((r) => r.conname).sort()).toEqual(expected);
     const metadata = ds.entityMetadatas.filter((m) => ['cons','cons_sess'].includes(m.tableName));

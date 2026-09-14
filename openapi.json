@@ -4713,6 +4713,90 @@
       }
     },
     "/consulting": {
+      "post": {
+        "description": "stage=contract, contractStep=1은 서버가 정한다. amount는 이 계약 작성 화면의 입력값이며 생성 권한은 canMoney와 분리한다.",
+        "operationId": "create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code CONS_PICK_REQUIRED · CONS_PICK_FORBIDDEN · CONS_DATE_ORDER"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 시작 — §29",
+        "tags": [
+          "consulting"
+        ]
+      },
       "get": {
         "description": "최종 canAdminPage와 canCrudAll이 모두 필요하다. 공개 범위로 투영된 items의 stage(contract/running/done)를 클라이언트에서 필터링하며 추가 GET은 0이다. 전체/단계 건수는 같은 items에서 파생하고 금액·상세 공개 권한을 변경하지 않는다.",
         "operationId": "ConsultingController_all",
@@ -5050,6 +5134,865 @@
         ]
       }
     },
+    "/consulting/{id}": {
+      "get": {
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약 5단계 상세 — §30",
+        "tags": [
+          "consulting"
+        ]
+      },
+      "delete": {
+        "operationId": "archive",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 안전 보관 — 물리 삭제 없음",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/share": {
+      "patch": {
+        "operationId": "updateShare",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingShareUpdateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약 공개 범위 변경 — §29·§30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/contract-files": {
+      "post": {
+        "operationId": "addContractFile",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingFileCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약서 초안/수정본 추가 — §30, 전체 파일 최대 10개",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/contract-files/{fileId}": {
+      "delete": {
+        "operationId": "removeContractFile",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "fileId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약서 초안/수정본 제거 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/feedback": {
+      "post": {
+        "operationId": "addFeedback",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingFeedbackCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFeedbackDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약서 피드백 추가 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/feedback/{feedbackId}/resolve": {
+      "post": {
+        "operationId": "markFeedbackResolved",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "feedbackId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFeedbackDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "피드백 수정 완료 표시 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/deliver": {
+      "post": {
+        "operationId": "deliverContract",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학부모 전달 완료 기록 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/signed-files": {
+      "post": {
+        "operationId": "addSignedFile",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingFileCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학부모 서명본 등록 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
     "/consulting/{id}/payments": {
       "post": {
         "description": "cons_pay 원장에 한 줄 더한다. 받은 합은 저장하지 않는다 — 읽을 때 원장을 더한다 (D-R37).",
@@ -5112,7 +6055,7 @@
             "description": "보이지 않는 건 — 존재를 누출하지 않는다"
           },
           "409": {
-            "description": "code CONS_PAY_LOCKED — 종료된 건"
+            "description": "code CONS_PAY_LOCKED(종료된 건) | CONS_PAY_NOT_READY(서명 전) | OVERPAY(남은 금액 초과)"
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -14854,6 +15797,473 @@
           "toId"
         ]
       },
+      "ConsultingCreateDto": {
+        "type": "object",
+        "properties": {
+          "consType": {
+            "type": "string",
+            "enum": [
+              "admissions",
+              "boarding",
+              "transfer",
+              "essay",
+              "interview",
+              "exam",
+              "roadmap",
+              "college",
+              "portfolio",
+              "visa"
+            ],
+            "description": "§29 확정 10종. 레거시 조회 코드는 이 enum으로 축소하지 않는다."
+          },
+          "studentIds": {
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "type": "array"
+          },
+          "requester": {
+            "type": "string",
+            "enum": [
+              "mother",
+              "father"
+            ]
+          },
+          "ownerId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "sessions": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 32767,
+            "description": "약정 회차. 실제 일정 생성 정책은 미확정이므로 저장만 하며 수업을 자동 생성하지 않는다."
+          },
+          "startOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "endOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "share": {
+            "type": "string",
+            "enum": [
+              "all",
+              "money_only",
+              "picked",
+              "private"
+            ]
+          },
+          "pickedStaffIds": {
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "uniqueItems": true,
+            "description": "share='picked'일 때 1명 이상 필수, 그 밖에는 비워야 한다.",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consType",
+          "studentIds",
+          "requester",
+          "ownerId",
+          "amount",
+          "sessions",
+          "startOn",
+          "endOn",
+          "share"
+        ]
+      },
+      "ConsultingTypeCapabilityDto": {
+        "type": "object",
+        "properties": {
+          "defaultItemsSupported": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "scheduleCreationSupported": {
+            "type": "boolean",
+            "description": "실제 일정 생성 정책은 원본에 없어 현재 false"
+          },
+          "scheduleCreationReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "defaultItemsSupported",
+          "reason",
+          "scheduleCreationSupported",
+          "scheduleCreationReason"
+        ]
+      },
+      "ConsultingCapabilitiesDto": {
+        "type": "object",
+        "properties": {
+          "canEdit": {
+            "type": "boolean"
+          },
+          "canChangeShare": {
+            "type": "boolean"
+          },
+          "canAddContractFile": {
+            "type": "boolean"
+          },
+          "canRemoveContractFile": {
+            "type": "boolean"
+          },
+          "canAddFeedback": {
+            "type": "boolean"
+          },
+          "canResolveFeedback": {
+            "type": "boolean"
+          },
+          "canDeliver": {
+            "type": "boolean"
+          },
+          "canAddSignedFile": {
+            "type": "boolean"
+          },
+          "canAddPayment": {
+            "type": "boolean"
+          },
+          "canCreateInvoice": {
+            "type": "boolean"
+          },
+          "canArchive": {
+            "type": "boolean"
+          },
+          "externalParentSendSupported": {
+            "type": "boolean",
+            "description": "학부모 연락처/채널 정책 미제공으로 현재 false. deliver는 외부 발송이 아니라 완료 기록이다."
+          },
+          "externalParentSendReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "canEdit",
+          "canChangeShare",
+          "canAddContractFile",
+          "canRemoveContractFile",
+          "canAddFeedback",
+          "canResolveFeedback",
+          "canDeliver",
+          "canAddSignedFile",
+          "canAddPayment",
+          "canCreateInvoice",
+          "canArchive",
+          "externalParentSendSupported",
+          "externalParentSendReason"
+        ]
+      },
+      "ConsultingFileDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "number"
+          },
+          "url": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "revision",
+              "signed"
+            ]
+          },
+          "uploadedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "uploadedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mime",
+          "bytes",
+          "url",
+          "role",
+          "uploadedByName",
+          "uploadedAt"
+        ]
+      },
+      "ConsultingFeedbackDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "body": {
+            "type": "string"
+          },
+          "createdByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "resolved": {
+            "type": "boolean"
+          },
+          "resolvedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "resolvedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "createdByName",
+          "createdAt",
+          "resolved",
+          "resolvedByName",
+          "resolvedAt"
+        ]
+      },
+      "ConsultingDeliveryDto": {
+        "type": "object",
+        "properties": {
+          "deliveredAt": {
+            "type": "string"
+          },
+          "deliveredByName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "deliveredAt",
+          "deliveredByName"
+        ]
+      },
+      "ConsultingPaymentStateDto": {
+        "type": "object",
+        "properties": {
+          "paid": {
+            "type": "number",
+            "nullable": true
+          },
+          "due": {
+            "type": "number",
+            "nullable": true
+          },
+          "invoiceId": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "paid",
+          "due",
+          "invoiceId"
+        ]
+      },
+      "ConsultingDetailDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "consType": {
+            "type": "string"
+          },
+          "consTypeLabel": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "contract",
+              "running",
+              "done"
+            ]
+          },
+          "contractStep": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 5
+          },
+          "studentIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "studentNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requester": {
+            "type": "string",
+            "enum": [
+              "mother",
+              "father"
+            ],
+            "nullable": true
+          },
+          "ownerId": {
+            "type": "number",
+            "nullable": true
+          },
+          "ownerName": {
+            "type": "string",
+            "nullable": true
+          },
+          "startOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "endOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true
+          },
+          "share": {
+            "type": "string",
+            "enum": [
+              "all",
+              "money_only",
+              "picked",
+              "private"
+            ]
+          },
+          "pickedStaffIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "pickedStaffNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "typeCapability": {
+            "$ref": "#/components/schemas/ConsultingTypeCapabilityDto"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/ConsultingCapabilitiesDto"
+          },
+          "contractFiles": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingFileDto"
+            }
+          },
+          "signedFiles": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingFileDto"
+            }
+          },
+          "feedback": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingFeedbackDto"
+            }
+          },
+          "delivery": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConsultingDeliveryDto"
+              }
+            ]
+          },
+          "payment": {
+            "$ref": "#/components/schemas/ConsultingPaymentStateDto"
+          }
+        },
+        "required": [
+          "id",
+          "consType",
+          "consTypeLabel",
+          "stage",
+          "contractStep",
+          "studentIds",
+          "studentNames",
+          "requester",
+          "ownerId",
+          "ownerName",
+          "startOn",
+          "endOn",
+          "amount",
+          "sessions",
+          "share",
+          "pickedStaffIds",
+          "pickedStaffNames",
+          "createdAt",
+          "typeCapability",
+          "capabilities",
+          "contractFiles",
+          "signedFiles",
+          "feedback",
+          "delivery",
+          "payment"
+        ]
+      },
       "ConsultingSessionDto": {
         "type": "object",
         "properties": {
@@ -15341,12 +16751,68 @@
           "canSeeAmounts"
         ]
       },
+      "ConsultingShareUpdateDto": {
+        "type": "object",
+        "properties": {
+          "share": {
+            "type": "string",
+            "enum": [
+              "all",
+              "money_only",
+              "picked",
+              "private"
+            ]
+          },
+          "pickedStaffIds": {
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "uniqueItems": true,
+            "description": "share='picked'일 때 1명 이상 필수",
+            "type": "array"
+          }
+        },
+        "required": [
+          "share"
+        ]
+      },
+      "ConsultingFileCreateDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "base64": {
+            "type": "string",
+            "description": "base64 본문. data URL 접두사 허용."
+          }
+        },
+        "required": [
+          "name",
+          "base64"
+        ]
+      },
+      "ConsultingFeedbackCreateDto": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "body"
+        ]
+      },
       "ConsPaymentCreateDto": {
         "type": "object",
         "properties": {
           "amount": {
             "type": "number",
-            "description": "받은 금액 — 0 원은 기록이 아니라 실수다",
+            "description": "받은 금액 — 0 원은 기록이 아니며, 누계가 계약 금액을 넘으면 OVERPAY",
             "minimum": 1
           },
           "paidOn": {

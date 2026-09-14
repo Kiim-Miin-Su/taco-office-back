@@ -4,13 +4,15 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
-import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
+import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   ConsAccountingDto, ConsAccountRowDto, ConsItemDto, ConsItemToggleDto,
-  ConsPaymentCreateDto, ConsStudentsDto, ConsultingListDto,
+  ConsPaymentCreateDto, ConsStudentsDto, ConsultingCreateDto,
+  ConsultingDetailDto, ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto,
+  ConsultingFileCreateDto, ConsultingListDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
 import { ConsultingService } from './consulting.service';
 
@@ -18,6 +20,21 @@ import { ConsultingService } from './consulting.service';
 @Controller('consulting')
 export class ConsultingController {
   constructor(private readonly svc: ConsultingService) {}
+
+  @Post()
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    operationId: 'create',
+    summary: '컨설팅 시작 — §29',
+    description: 'stage=contract, contractStep=1은 서버가 정한다. amount는 이 계약 작성 화면의 입력값이며 생성 권한은 canMoney와 분리한다.',
+  })
+  @ApiCreatedResponse({ type: ConsultingDetailDto })
+  @ApiConflictResponse({ description: 'code CONS_PICK_REQUIRED · CONS_PICK_FORBIDDEN · CONS_DATE_ORDER' })
+  async create(@CurrentUser() user: RequestUser, @Body() dto: ConsultingCreateDto): Promise<ConsultingDetailDto> {
+    const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.create(user.id, canMoney, canHide, dto);
+  }
 
   @Get()
   @Perm('canAdminPage', 'canCrudAll')
@@ -96,6 +113,92 @@ export class ConsultingController {
     );
   }
 
+  @Get(':id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ operationId: 'detail', summary: '계약 5단계 상세 — §30' })
+  @ApiOkResponse({ type: ConsultingDetailDto })
+  async detail(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<ConsultingDetailDto> {
+    const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.detail(user.id, canMoney, canHide, id);
+  }
+
+  @Patch(':id/share')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ operationId: 'updateShare', summary: '계약 공개 범위 변경 — §29·§30' })
+  @ApiOkResponse({ type: ConsultingDetailDto })
+  async updateShare(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsultingShareUpdateDto): Promise<ConsultingDetailDto> {
+    const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.updateShare(user.id, canMoney, canHide, id, dto);
+  }
+
+  @Post(':id/contract-files')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ operationId: 'addContractFile', summary: '계약서 초안/수정본 추가 — §30, 전체 파일 최대 10개' })
+  @ApiCreatedResponse({ type: ConsultingFileDto })
+  async addContractFile(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsultingFileCreateDto): Promise<ConsultingFileDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.addContractFile(user.id, canHide, id, dto);
+  }
+
+  @Delete(':id/contract-files/:fileId')
+  @Perm('canAdminPage', 'canCrudAll')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ operationId: 'removeContractFile', summary: '계약서 초안/수정본 제거 — §30' })
+  @ApiNoContentResponse()
+  async removeContractFile(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Param('fileId', ParseIntPipe) fileId: number): Promise<void> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.removeContractFile(user.id, canHide, id, fileId);
+  }
+
+  @Post(':id/feedback')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ operationId: 'addFeedback', summary: '계약서 피드백 추가 — §30' })
+  @ApiCreatedResponse({ type: ConsultingFeedbackDto })
+  async addFeedback(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsultingFeedbackCreateDto): Promise<ConsultingFeedbackDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.addFeedback(user.id, canHide, id, dto);
+  }
+
+  @Post(':id/feedback/:feedbackId/resolve')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ operationId: 'markFeedbackResolved', summary: '피드백 수정 완료 표시 — §30' })
+  @ApiCreatedResponse({ type: ConsultingFeedbackDto })
+  async markFeedbackResolved(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Param('feedbackId', ParseIntPipe) feedbackId: number): Promise<ConsultingFeedbackDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.markFeedbackResolved(user.id, canHide, id, feedbackId);
+  }
+
+  @Post(':id/deliver')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ operationId: 'deliverContract', summary: '학부모 전달 완료 기록 — §30' })
+  @ApiCreatedResponse({ type: ConsultingDetailDto })
+  async deliverContract(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<ConsultingDetailDto> {
+    const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.deliverContract(user.id, canMoney, canHide, id);
+  }
+
+  @Post(':id/signed-files')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ operationId: 'addSignedFile', summary: '학부모 서명본 등록 — §30' })
+  @ApiCreatedResponse({ type: ConsultingFileDto })
+  async addSignedFile(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsultingFileCreateDto): Promise<ConsultingFileDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.addSignedFile(user.id, canHide, id, dto);
+  }
+
+  @Delete(':id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ operationId: 'archive', summary: '컨설팅 안전 보관 — 물리 삭제 없음' })
+  @ApiNoContentResponse()
+  async archive(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<void> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.archive(user.id, canHide, id);
+  }
+
   @Post(':id/payments')
   @Perm('canAdminPage', 'canCrudAll', 'canMoney')
   @ApiOperation({
@@ -105,7 +208,7 @@ export class ConsultingController {
   @ApiCreatedResponse({ type: ConsAccountRowDto, description: '바뀐 줄 하나 — 화면이 숫자를 다시 만들지 않게' })
   @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
   @ApiNotFoundResponse({ description: '보이지 않는 건 — 존재를 누출하지 않는다' })
-  @ApiConflictResponse({ description: 'code CONS_PAY_LOCKED — 종료된 건' })
+  @ApiConflictResponse({ description: 'code CONS_PAY_LOCKED(종료된 건) | CONS_PAY_NOT_READY(서명 전) | OVERPAY(남은 금액 초과)' })
   async addPayment(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
