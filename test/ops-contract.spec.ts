@@ -177,7 +177,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
     planDues: [], planOverdue: 0, planStages: [],
-    intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [] },
+    intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [] },
   };
 
   beforeAll(async () => {
@@ -373,6 +373,7 @@ describe('§23 상담 머리 (C86-a)', () => {
         enrollRate: number;
         owners: Array<{ id: number | null; name: string; count: number }>;
         alerts: Array<{ key: string; label: string; count: number; amount: number | null }>;
+        stops: Array<{ key: string; label: string }>;
       }>;
     }).intakeHead(leads, true);
   };
@@ -401,6 +402,19 @@ describe('§23 상담 머리 (C86-a)', () => {
       { stage: 'first', ownerId: 3, ownerName: '김범준' },
     ]);
     expect(out.owners.map((o) => [o.name, o.count])).toEqual([['김범준', 2], ['담당 없음', 1]]);
+  });
+
+  /**
+   * §24 의 중단 지점 낱말도 서버가 쥔다 — 같은 화면 안에서 퍼널과 갈래가 다른 표를 들면
+   * 한쪽을 고쳤을 때 다른 쪽이 조용히 낡는다 (C86-b).
+   */
+  it('중단 지점은 깔때기 순 넷이고 낱말이 서버에 있다 — 건수는 싣지 않는다', async () => {
+    const out = await head([]);
+    expect(out.stops.map((s) => s.key)).toEqual(['before_book', 'before_first', 'after_first', 'after_second']);
+    expect(out.stops.map((s) => s.label))
+      .toEqual(['상담 예약 전 이탈', '1차 상담 전 이탈', '1차 후 미진행', '2차 후 미등록']);
+    // §24 표는 **검색으로 걸러진 행**을 세므로 건수는 화면의 몫이다
+    expect(out.stops.every((s) => !('count' in s))).toBe(true);
   });
 
   it('금액을 못 보는 사람에게는 금액이 null 이고 문장에도 안 실린다 (D-R39)', async () => {

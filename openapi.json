@@ -16098,6 +16098,22 @@
           "go"
         ]
       },
+      "IntakeStopDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "before_book | before_first | after_first | after_second"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
       "IntakeHeadDto": {
         "type": "object",
         "properties": {
@@ -16123,13 +16139,21 @@
             "items": {
               "$ref": "#/components/schemas/IntakeAlertDto"
             }
+          },
+          "stops": {
+            "description": "§24 중단 지점 넷 — 낱말과 순서 (D-R18 · D-R25)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeStopDto"
+            }
           }
         },
         "required": [
           "funnel",
           "enrollRate",
           "owners",
-          "alerts"
+          "alerts",
+          "stops"
         ]
       },
       "OpsDto": {
@@ -21401,6 +21425,51 @@
           "go"
         ]
       },
+      "ExecLostRowDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "before_book | before_first | after_first | after_second | none"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ]
+      },
+      "ExecMonthlyDto": {
+        "type": "object",
+        "properties": {
+          "leads": {
+            "type": "number",
+            "description": "이 달에 들어온 문의 수 — 「등록 실패 N건」의 모집단"
+          },
+          "lost": {
+            "type": "number",
+            "description": "그중 지금 등록 실패인 건 수 — 아래 줄들의 합과 같다 (N-19)"
+          },
+          "lostRows": {
+            "description": "중단 지점별 — 0 인 갈래는 서지 않는다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecLostRowDto"
+            }
+          }
+        },
+        "required": [
+          "leads",
+          "lost",
+          "lostRows"
+        ]
+      },
       "ExecDto": {
         "type": "object",
         "properties": {
@@ -21447,6 +21516,16 @@
           "canSeeAmounts": {
             "type": "boolean",
             "description": "금액을 볼 수 있는가 (D-R39)"
+          },
+          "monthly": {
+            "nullable": true,
+            "description": "§71 월간 전용 — 기간이 달력 한 달 전체가 아니면 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ExecMonthlyDto"
+              }
+            ]
           },
           "computedAt": {
             "type": "string",

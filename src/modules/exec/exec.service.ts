@@ -10,10 +10,11 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import { EXEC_AREA_KEYS, EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
+import { INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
 import { toApState } from '../../lib/approval';
 import { BoardService } from '../board/board.service';
 import type {
-  ExecAreaDto, ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto,
+  ExecAreaDto, ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto, ExecMonthlyDto,
   ExecReportWriteResultDto, ExecReviewDto, ExecStatDto, ExecSubmitDto,
 } from './exec.dto';
 
@@ -296,6 +297,58 @@ export class ExecService {
     return out;
   }
 
+  /**
+   * 기간이 **달력 한 달 전체**인가 — §71 월간 판을 세울지 정하는 유일한 근거다.
+   *
+   * 주기 종류를 인자로 받지 않는다. 그것은 기간이 이미 말해 주는 사실이고(주는 달을 채울 수
+   * 없고 하루도 그렇다), 입력이 둘이면 둘이 어긋날 수 있다.
+   */
+  private wholeMonth(from: string, to: string): boolean {
+    if (!from.endsWith('-01')) return false;
+    const [y, m] = from.split('-').map(Number);
+    // 다음 달 0일 = 이 달의 마지막 날. UTC 로 만들어 표준시 경계에서 하루가 밀리지 않게 한다.
+    const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    return to === last;
+  }
+
+  /**
+   * §71 월간 「어디서 놓쳤나」 — 이 달에 **들어온** 문의 중 지금 등록 실패인 것을
+   * 중단 지점별로 센다. 조회는 한 번이다.
+   *
+   * 컷의 **「상담 퍼널」 판은 세우지 않았다** — 「2차까지 왔는가」를 셀 근거가 없다.
+   * `LEAD_STAGE_LOG` 는 이름과 달리 **실패·되살림에만** 쓰이고(단계를 앞으로 옮기는 길이
+   * 제품에 아직 없다) 보류·등록 건이 2차를 거쳤는지는 어디에도 남아 있지 않다.
+   * 흐름이 직선이라고 가정해 세면 **컷의 수를 맞춘 척**하게 된다 — N-45 로 올렸다.
+   */
+  private async monthly(from: string, to: string): Promise<ExecMonthlyDto | null> {
+    if (!this.wholeMonth(from, to)) return null;
+    const rows = await this.q(
+      `SELECT COALESCE(stop_at, $3) AS key, count(*)::int AS n,
+              count(*) FILTER (WHERE stage = 'failed')::int AS lost
+         FROM lead
+        WHERE created_at::date BETWEEN $1::date AND $2::date
+        GROUP BY 1`,
+      [from, to, INTAKE_STOP_UNSET],
+    );
+    // 실패가 아닌 건에도 stop_at 이 남아 있을 수 있다(되살린 건) — 실패인 것만 줄로 센다.
+    const lostBy = new Map<string, number>();
+    let leads = 0;
+    for (const r of rows) {
+      leads += Number(r.n);
+      const lost = Number(r.lost);
+      if (lost > 0) lostBy.set(String(r.key), (lostBy.get(String(r.key)) ?? 0) + lost);
+    }
+    const order = [...INTAKE_STOPS, INTAKE_STOP_UNSET];
+    const lostRows = order
+      .filter((key) => (lostBy.get(key) ?? 0) > 0)
+      .map((key) => ({
+        key,
+        label: intakeStopLabel(key),
+        count: lostBy.get(key) ?? 0,
+      }));
+    return { leads, lost: lostRows.reduce((a, r) => a + r.count, 0), lostRows };
+  }
+
   async range(from: string, to: string, canSeeAmounts: boolean): Promise<ExecDto> {
     const [lessons, canceled, students, newLeads, enrolled, unwritten] = await Promise.all([
       this.one(`SELECT count(*)::text n FROM ser_occ o
@@ -394,6 +447,7 @@ export class ExecService {
       reviewCount: areas.reduce((a, x) => a + x.count, 0),
       filled: here?.filled ?? 0,
       inbox,
+      monthly: await this.monthly(from, to),
       canSeeAmounts, computedAt: new Date().toISOString(),
     };
   }

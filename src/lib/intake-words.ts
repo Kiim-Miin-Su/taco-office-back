@@ -34,3 +34,37 @@ export const intakeStageLabel = (stage: string): string =>
 
 export const isIntakeFunnel = (stage: string): boolean =>
   (INTAKE_FUNNEL_STAGES as readonly string[]).includes(stage);
+
+/**
+ * 중단 지점 네 어휘 — **낱말과 순서가 사는 단 하나의 자리** (원본 §24 · N-25 채택 §4-17 · C35).
+ *
+ * 이 넷은 **저장된 값**이다(`LEAD.stop_at`). 컷 §24 는 「1차 상담 중단 · 2차 안 옴 ·
+ * 2차 상담 중단 · 보류 후 무산」으로, 컷 §71 은 「1차 중단 · 2차 안 옴 · 배치 중단 ·
+ * 보류 무산」으로 적어 **두 컷이 서로 다르게 쓰고 우리 넷과도 집합이 다르다**.
+ * 이름만 갈아 끼우면 **이미 분류된 행이 다른 뜻으로 읽힌다** — 그래서 되돌리지 않고
+ * [CUT-VS-PRODUCT](../../../docs/report/CUT-VS-PRODUCT-2026-09-13.md) 에 남겨 둔 것이다.
+ * 여기서 하는 일은 **낱말을 옮기는 것**뿐이고 바꾸는 것이 아니다.
+ *
+ * 순서는 깔때기 순이다 — 실패 지정 select 도 「어디서 놓쳤나」 표도 이 순서를 쓴다 (D-R25).
+ */
+export const INTAKE_STOPS = ['before_book', 'before_first', 'after_first', 'after_second'] as const;
+export type IntakeStop = (typeof INTAKE_STOPS)[number];
+
+export const INTAKE_STOP_LABEL: Record<IntakeStop, string> = {
+  before_book: '상담 예약 전 이탈',
+  before_first: '1차 상담 전 이탈',
+  after_first: '1차 후 미진행',
+  after_second: '2차 후 미등록',
+};
+
+/**
+ * 분류되지 않은 실패 — 레거시 건은 **추정 이관 없이 미분류로 둔다** (N-25).
+ * 이 줄이 없으면 「등록 실패 N건」 머리와 줄들의 합이 갈린다 (N-19).
+ */
+export const INTAKE_STOP_UNSET = 'none';
+export const INTAKE_STOP_UNSET_LABEL = '분류 안 됨';
+
+export const intakeStopLabel = (stop: string | null | undefined): string =>
+  stop == null || stop === INTAKE_STOP_UNSET
+    ? INTAKE_STOP_UNSET_LABEL
+    : (INTAKE_STOP_LABEL[stop as IntakeStop] ?? stop);

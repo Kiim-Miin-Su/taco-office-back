@@ -17,7 +17,7 @@ import {
 import {
   PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL,
 } from '../../lib/plan-words';
-import { INTAKE_STAGES, INTAKE_STAGE_LABEL, isIntakeFunnel } from '../../lib/intake-words';
+import { INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel } from '../../lib/intake-words';
 import { INV_OPEN } from '../../lib/rules';
 import { sqlWordList } from '../../lib/sql';
 import {
@@ -295,6 +295,8 @@ export class OpsService {
       enrollRate: total === 0 ? 0 : Math.round((enrolled / total) * 100),
       owners,
       alerts,
+      // 낱말과 순서만 — 세는 일은 §24 화면이 **검색으로 걸러진 행** 위에서 한다 (IntakeStopDto 주석)
+      stops: INTAKE_STOPS.map((key) => ({ key, label: INTAKE_STOP_LABEL[key] })),
     };
   }
 

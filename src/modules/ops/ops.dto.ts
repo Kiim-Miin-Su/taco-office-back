@@ -386,11 +386,25 @@ export class IntakeAlertDto {
   @ApiProperty({ description: '누르면 가는 곳 — 결과는 그 화면에서 본다 (D-R27)' }) go!: string;
 }
 
+/**
+ * 중단 지점 한 칸 — 원본 §24 의 갈래. **낱말과 순서만 서버가 준다.**
+ *
+ * 건수를 싣지 않는 이유가 있다 — §24 의 표는 **검색으로 걸러진 행**을 세고(FQ 가 그 화면의 축이다)
+ * 그 수는 업무 판정이 아니라 지금 보고 있는 목록의 모양이다. 낱말이 두 벌이면 갈리지만(D-R18)
+ * 보고 있는 것을 세는 일까지 서버로 보내면 글자마다 왕복이 생긴다.
+ */
+export class IntakeStopDto {
+  @ApiProperty({ description: 'before_book | before_first | after_first | after_second' }) key!: string;
+  @ApiProperty() label!: string;
+}
+
 export class IntakeHeadDto {
   @ApiProperty({ type: [IntakeFunnelStepDto] }) funnel!: IntakeFunnelStepDto[];
   @ApiProperty({ description: '등록률 % — 등록 / 전체, 정수 반올림. 전체 0 이면 0' }) enrollRate!: number;
   @ApiProperty({ type: [IntakeOwnerDto], description: '담당 칩 — 「전체」는 화면이 붙인다' }) owners!: IntakeOwnerDto[];
   @ApiProperty({ type: [IntakeAlertDto] }) alerts!: IntakeAlertDto[];
+  @ApiProperty({ type: [IntakeStopDto], description: '§24 중단 지점 넷 — 낱말과 순서 (D-R18 · D-R25)' })
+  stops!: IntakeStopDto[];
 }
 
 export class OpsDto {

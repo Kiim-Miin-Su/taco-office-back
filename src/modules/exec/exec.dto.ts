@@ -95,6 +95,35 @@ export class ExecInboxDto {
   @ApiProperty({ description: '이 줄이 가리키는 뷰 — day | week | month' }) go!: string;
 }
 
+/**
+ * §71 월간 「어디서 놓쳤나」 한 줄 — 낱말은 `lib/intake-words` 한 곳에서 온다 (D-R18).
+ * 분류되지 않은 실패는 `key: 'none'` 으로 **따로 선다** — 이 줄을 빼면 머리의 「등록 실패 N건」과
+ * 줄들의 합이 갈린다 (N-19 · N-25 는 추정 이관을 금지하므로 미분류는 사라지지 않는다).
+ */
+export class ExecLostRowDto {
+  @ApiProperty({ description: 'before_book | before_first | after_first | after_second | none' }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() count!: number;
+}
+
+/**
+ * §71 **월간에만** 서는 판 — 일간·주간 컷에는 없다.
+ *
+ * 기간이 **달력 한 달 전체**일 때만 내려간다. 주기 종류를 따로 받지 않는 이유는, 그것이 곧
+ * 기간이 말해 주는 사실이기 때문이다 — 주는 달을 채울 수 없고 하루도 그렇다. 입력이 둘이면
+ * 둘이 어긋날 수 있다.
+ *
+ * **묶는 기준은 「들어온 달」이지 「실패한 날」이 아니다.** 실패한 시각은 라이브 전이에만
+ * 남아 있어(`LEAD_STAGE_LOG`) 그 전에 만들어진 건에는 없다 — 실패한 날로 묶으면 옛 건이
+ * 통째로 사라지고 머리가 거짓이 된다. 「이번 달 들어온 문의 중 어디서 놓쳤나」로 읽는다.
+ */
+export class ExecMonthlyDto {
+  @ApiProperty({ description: '이 달에 들어온 문의 수 — 「등록 실패 N건」의 모집단' }) leads!: number;
+  @ApiProperty({ description: '그중 지금 등록 실패인 건 수 — 아래 줄들의 합과 같다 (N-19)' }) lost!: number;
+  @ApiProperty({ type: [ExecLostRowDto], description: '중단 지점별 — 0 인 갈래는 서지 않는다' })
+  lostRows!: ExecLostRowDto[];
+}
+
 export class ExecDto {
   @ApiProperty() from!: string;
   @ApiProperty() to!: string;
@@ -105,6 +134,8 @@ export class ExecDto {
   @ApiProperty({ description: '이 기간 보고의 «담당 x/6 기재» 중 x. 보고가 없으면 0' }) filled!: number;
   @ApiProperty({ type: [ExecInboxDto], description: '§73 결재함 — 이동만 (N-12)' }) inbox!: ExecInboxDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+  @ApiPropertyOptional({ type: ExecMonthlyDto, nullable: true, description: '§71 월간 전용 — 기간이 달력 한 달 전체가 아니면 null' })
+  monthly?: ExecMonthlyDto | null;
   @ApiProperty({ description: '저장하지 않는다 — 이 시각에 센 값이다 (D-R4)' }) computedAt!: string;
 }
 
