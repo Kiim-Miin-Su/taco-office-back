@@ -1141,6 +1141,8 @@ Table RPT {
   sent_at     timestamptz
   reviewed_at timestamptz
   reject_reason text
+  sent_by     bigint      [ref: > STAFF.id, note: '올린 사람 — 원본 §69 서명줄. ON DELETE RESTRICT (v4.24)']
+  reviewed_by bigint      [ref: > STAFF.id, note: '대표 승인 — 원본 §69 서명줄. ON DELETE RESTRICT (v4.24)']
   indexes { (rpt_type, on_date) [unique] }
   Note: '''
   시드 1건. 내용은 저장하지 않고 각 엔티티에서 실시간 집계한다 (D-3 · D-R24).
@@ -1398,6 +1400,18 @@ Table SER_OCC {
 //   + PNOTI/GTPL 방어     channel CHECK, SER·STU FK/조회 인덱스, 문구 이름 UNIQUE
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
+//
+// v4.23 → v4.24 (2026-09-14 · TBO-50 C85-a 대표 보고 쓰기)
+//   RPT    + sent_by · reviewed_by (STAFF · ON DELETE RESTRICT) — 원본 §69 아래 서명줄 두 칸
+//          + CHECK rpt_sign_pair — 시각이 있으면 사람이 있고, 사람이 있으면 시각이 있다 (NOT VALID)
+//   왜      RPT 는 sent_at·reviewed_at 으로 **언제**는 적어 두었는데 **누가**를 적을 칸이 없었다.
+//          시각만 있는 서명은 서명이 아니다 — 대표가 「이건 누가 올린 거냐」를 물을 수 없다.
+//          RESTRICT 인 이유: 서명한 사람을 지우면 서명이 조용히 사라진다. 사람을 그만 쓰는
+//          길은 STAFF.active=false 이고 그 길은 서명을 지우지 않는다.
+//   기존 행 보정 0 (N-25) — 시드의 옛 보고는 sent_at 만 갖고 있고 누가 올렸는지는
+//          아무도 모른다. 모르는 것을 지어내지 않는다.
+//   memo   영역별 한 줄이라는 정의는 그대로다. 쓰기가 생기면서 그 정의가 처음으로
+//          실제로 쓰인다 — 옛 시드의 {"note": …} 는 6영역 키가 아니라 「담당 0/6」이었다.
 //
 // v4.22 → v4.23 (2026-09-14 · TBO-50 C84-c ZASSIGN 물리 제약)
 //   ZASSIGN + FK ser_id→SER(CASCADE) · exc_id→EXC(CASCADE) · zacc_id→ZACC(RESTRICT)  전부 NOT VALID
