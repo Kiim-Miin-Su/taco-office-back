@@ -374,6 +374,15 @@ export const GUIDE_PENDING_DB = ['draft', 'ready'] as const;
 /** 안내가 실제로 발송된 상태. 명단 변경 후 후속 확인도 같은 낱말을 쓴다. */
 export const GUIDE_DONE_DB = ['sent', 'read'] as const;
 
+/**
+ * 안내 상태의 **이름** — 낱말은 서버가 만든다 (D-R18).
+ * §12 준비 줄이 「작성되지 않았습니다」를 적을 때 쓰는 자리이기도 하다.
+ */
+export const GUIDE_STATE_LABEL: Record<string, string> = {
+  draft: '작성 중', ready: '보낼 준비됨', sent: '보냈습니다', read: '읽었습니다',
+};
+export const guideLabel = (state: string): string => GUIDE_STATE_LABEL[state] ?? state;
+
 export const hasReport = (s: SessionLike): boolean =>
   !!s.report && REPORT_WRITTEN.includes(s.report);
 

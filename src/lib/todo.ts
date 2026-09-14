@@ -12,6 +12,7 @@ export const TODO_SOURCE_LABEL: Record<TodoSrcT, string> = {
   consulting: '컨설팅',
   plan: '기획',
   manual: '직접 등록',
+  lesson: '수업',
 };
 
 export const todoSourceLabel = (source: string): string =>

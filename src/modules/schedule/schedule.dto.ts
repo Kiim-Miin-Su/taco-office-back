@@ -410,6 +410,20 @@ export class TrackedStudentDto {
 }
 
 /** `GET /schedule/tracking` — §79 수강 학생 단계의 오른쪽 칸 */
+/**
+ * §12 준비 한 줄 — **낱말도 판정도 횟수도 서버가 만든다** (D-R18 · D-R39 · D-R37).
+ *
+ * 전에는 화면이 `doneOf()` 로 스스로 판정하고 줄 이름을 자기 파일에 적고 있었다.
+ * 그러면 현황판이 「됐다」는 회차를 상세는 「아직」이라 말할 수 있다.
+ */
+export class LessonPrepRowDto {
+  @ApiProperty({ description: '줄을 가리키는 열쇠 — 화면이 비교하지 않고 그리기만 한다' }) key!: string;
+  @ApiProperty({ description: '줄 이름 — 원문 §12·§79 의 낱말 그대로' }) label!: string;
+  @ApiProperty({ description: '됐는가' }) done!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '줄 밑의 값 — 「1명 / 정원 4명 · 이담흔」 같은 것' })
+  detail!: string | null;
+}
+
 export class LessonTrackingDto {
   @ApiProperty() serId!: number;
   @ApiProperty({ example: '2026-08-21' }) onDate!: string;
@@ -427,6 +441,15 @@ export class LessonTrackingDto {
   canSeeAmounts!: boolean;
 
   @ApiProperty({ type: [TrackedStudentDto] }) students!: TrackedStudentDto[];
+
+  /* ── §12 준비 ────────────────────────────────────────────────────
+     원문은 온라인 아홉 줄(§12)·현장 일곱 줄(§79)이다. 기본 일곱에 온라인이면 「줌 안내」가,
+     그 회차에 걸린 대표 지시가 있으면 「대표 지시 할 일」이 더 선다 (C82-b 원장). */
+  @ApiProperty({ type: [LessonPrepRowDto] }) prep!: LessonPrepRowDto[];
+  @ApiProperty({ description: '된 줄 수 — 화면이 prep 를 다시 세지 않는다' }) prepDone!: number;
+  @ApiProperty({ description: '전체 줄 수' }) prepTotal!: number;
+  @ApiProperty({ description: '머리 문장 — 원문 「3가지 남았습니다」 · 다 됐으면 「다 됐습니다」' })
+  prepRemainLabel!: string;
 }
 
 /** 창을 열 때만 부른다 */

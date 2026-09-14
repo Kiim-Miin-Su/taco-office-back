@@ -9,13 +9,13 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
 import {
-  GUIDE_DONE_DB, REPORT_WRITTEN_DB,
+  GUIDE_DONE_DB, REPORT_WRITTEN_DB, guideLabel,
   canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState, rosterPricing, tierFor,
   type AttendanceCancelReason, type AttendanceResult,
 } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
 import type {
-  LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, TrackedReportDto, TrackedStudentDto,
+  LessonPrepRowDto, LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, TrackedReportDto, TrackedStudentDto,
 } from './schedule.dto';
 import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
@@ -398,7 +398,18 @@ export class ScheduleService {
       }
     }
 
+    const prep = await this.prepRows(serId, onDate, {
+      cap, count, active: active.map((a) => a.name), roster: roster.map((r) => r.id),
+    });
+    const prepDone = prep.filter((r) => r.done).length;
+    const remain = prep.length - prepDone;
+
     return {
+      prep,
+      prepDone,
+      prepTotal: prep.length,
+      // 원문 머리 그대로 — 「3가지 남았습니다」. 화면이 빼기를 다시 하지 않는다 (D-R37)
+      prepRemainLabel: remain > 0 ? `${remain}가지 남았습니다` : '다 됐습니다',
       serId, onDate, cap, count, canAdd,
       // 원문 머리줄 그대로 — 화면이 cap − count 를 다시 하지 않는다 (D-R37)
       capLabel: canAdd > 0 ? `정원 ${cap}명 · ${canAdd}명 더 넣을 수 있습니다` : `정원 ${cap}명 · 자리가 없습니다`,
@@ -408,6 +419,164 @@ export class ScheduleService {
       canSeeAmounts,
       students,
     };
+  }
+
+  /** 원문의 날짜 문장 — 「26년 8월 21일 금요일」 */
+  private static readonly KO_DOW = ['일', '월', '화', '수', '목', '금', '토'];
+
+  private static whenLabel(drawnDate: string, from: string, to: string): string {
+    const d = new Date(`${drawnDate}T00:00:00Z`);
+    const dow = ScheduleService.KO_DOW[d.getUTCDay()];
+    return `${drawnDate.slice(2, 4)}년 ${+drawnDate.slice(5, 7)}월 ${+drawnDate.slice(8, 10)}일 ${dow}요일 ${from}-${to}`;
+  }
+
+  /**
+   * §12 준비 줄 — **원문 두 컷이 정한 목록**이다 (C82-b 원장).
+   *
+   * 기본 일곱: 일정 확정 · 강사 배정 · 수강 학생 · (강의실|줌 계정) · 교재 배정 · 수업 안내 · 강사 피드백.
+   * 온라인이면 「줌 안내」가 더 서고(§12 아홉 줄 · §79 일곱 줄의 차이),
+   * **그 회차에 걸린 대표 지시가 있으면** 「대표 지시 할 일」이 맨 위에 더 선다.
+   *
+   * 판정도 낱말도 여기서 한 번만 만든다 — 화면이 다시 판정하면 현황판과 갈린다 (D-R39 · D-R18).
+   */
+  private async prepRows(
+    serId: number,
+    onDate: string,
+    ctx: { cap: number; count: number; active: string[]; roster: number[] },
+  ): Promise<LessonPrepRowDto[]> {
+    const [f] = (await this.q(
+      `SELECT s.mode::text AS mode,
+              to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS drawn_date,
+              to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','HH24:MI') AS from_hm,
+              to_char(upper(o.span) AT TIME ZONE 'Asia/Seoul','HH24:MI') AS to_hm,
+              t.name  AS teacher_name,
+              rm.name AS room_name,
+              za.label AS zacc_label,
+              (SELECT z.fixed FROM zassign z
+                WHERE z.ser_id = s.id ORDER BY z.exc_id NULLS LAST, z.id DESC LIMIT 1) AS zacc_fixed,
+              (SELECT g.state::text FROM guide g
+                WHERE g.ser_id = s.id ORDER BY g.created_at DESC LIMIT 1) AS guide_state,
+              (SELECT r.state::text FROM rep r WHERE r.ser_id = s.id AND r.on_date = $2::date) AS rep_state,
+              (SELECT to_char(COALESCE(r.submitted_at, r.written_at) AT TIME ZONE 'Asia/Seoul','MM-DD HH24:MI')
+                 FROM rep r WHERE r.ser_id = s.id AND r.on_date = $2::date) AS rep_at,
+              (SELECT count(*)::int FROM todo td
+                WHERE td.src = 'lesson' AND td.ser_id = s.id AND td.on_date = $2::date) AS todo_total,
+              (SELECT count(*)::int FROM todo td
+                WHERE td.src = 'lesson' AND td.ser_id = s.id AND td.on_date = $2::date AND td.done) AS todo_done,
+              (SELECT count(*)::int FROM pnoti p
+                WHERE p.ser_id = s.id AND p.on_date = $2::date
+                  AND p.audience = 'parent' AND p.sent_at IS NOT NULL) AS parent_sent,
+              (SELECT count(*)::int FROM pnoti p
+                WHERE p.ser_id = s.id AND p.on_date = $2::date
+                  AND p.audience = 'teacher' AND p.sent_at IS NOT NULL) AS teacher_sent
+         FROM ser s
+         JOIN ser_occ o ON o.ser_id = s.id AND o.on_date = $2::date
+         LEFT JOIN staff t ON t.id = o.teacher_id
+         LEFT JOIN room rm ON rm.id = o.room_id
+         LEFT JOIN zacc za ON za.id = o.zacc_id
+        WHERE s.id = $1`,
+      [serId, onDate],
+    )) as Array<Record<string, unknown>>;
+    if (!f) return [];
+
+    const online = String(f.mode) === 'online';
+    const rows: LessonPrepRowDto[] = [];
+
+    /* 있을 때만 서는 줄 — 지시가 0건이면 원문 §79 처럼 줄 자체가 없다 */
+    const todoTotal = Number(f.todo_total ?? 0);
+    if (todoTotal > 0) {
+      const todoDone = Number(f.todo_done ?? 0);
+      rows.push({
+        key: 'directive', label: '대표 지시 할 일',
+        done: todoDone === todoTotal,
+        detail: `${todoDone}/${todoTotal} 끝남`,
+      });
+    }
+
+    rows.push({
+      key: 'fixed', label: '일정 확정', done: true,
+      // 회차가 있다는 것이 곧 확정이다. 날짜는 **그려지는 날**이라 옮긴 회차도 옳게 적힌다
+      detail: ScheduleService.whenLabel(String(f.drawn_date), String(f.from_hm), String(f.to_hm)),
+    });
+
+    rows.push({
+      key: 'teacher', label: '강사 배정',
+      done: f.teacher_name !== null && f.teacher_name !== undefined,
+      detail: (f.teacher_name as string | null) ?? '아직 없습니다',
+    });
+
+    rows.push({
+      key: 'roster', label: '수강 학생',
+      done: ctx.count > 0,
+      detail: ctx.count > 0
+        ? `${ctx.count}명 / 정원 ${ctx.cap}명 · ${ctx.active.join(', ')}`
+        : `0명 / 정원 ${ctx.cap}명`,
+    });
+
+    if (online) {
+      const label = f.zacc_label as string | null;
+      rows.push({
+        key: 'zacc', label: '줌 계정',
+        done: label !== null && label !== undefined,
+        // 원문 「Study · 변동」 — 고정 배정인지 변동인지가 함께 적힌다
+        detail: label ? `${label} · ${f.zacc_fixed === false ? '변동' : '고정'}` : '아직 없습니다',
+      });
+    } else {
+      rows.push({
+        key: 'room', label: '강의실',
+        done: f.room_name !== null && f.room_name !== undefined,
+        detail: (f.room_name as string | null) ?? '아직 없습니다',
+      });
+    }
+
+    /* 교재는 학생마다다 — 원문은 못 받은 사람의 이름을 적는다 (「이담흔 없음」) */
+    const missing = ctx.roster.length
+      ? ((await this.q(
+          `SELECT st.name FROM stu st
+            WHERE st.id = ANY($1::bigint[])
+              AND NOT EXISTS (SELECT 1 FROM issue i WHERE i.student_id = st.id AND i.state = 'ok')
+            ORDER BY st.name`,
+          [ctx.roster],
+        )) as Array<{ name: string }>).map((r) => r.name)
+      : [];
+    rows.push({
+      key: 'book', label: '교재 배정',
+      done: ctx.roster.length > 0 && missing.length === 0,
+      detail: ctx.roster.length === 0 ? '학생이 없습니다'
+        : missing.length ? `${missing.join(', ')} 없음`
+        : `${ctx.roster.length}명 배부`,
+    });
+
+    const guideState = f.guide_state as string | null;
+    rows.push({
+      key: 'guide', label: '수업 안내',
+      done: guideState !== null && GUIDE_DONE_DB.includes(guideState as never),
+      detail: guideState ? guideLabel(guideState) : '작성되지 않았습니다',
+    });
+
+    if (online) {
+      /*
+       * 원문 「학부모 없음 · 강사 대기」.
+       * **학부모는 보낼 곳이 없다** — STU 에 수신처 칸이 아예 없다(C82-b · N-42).
+       * 「없음」은 안 보낸 것이 아니라 보낼 대상이 없다는 뜻이라 그대로 적는다.
+       */
+      const teacherSent = Number(f.teacher_sent ?? 0) > 0;
+      rows.push({
+        key: 'zoomNoti', label: '줌 안내',
+        done: teacherSent,
+        detail: `학부모 없음 · 강사 ${teacherSent ? '보냄' : '대기'}`,
+      });
+    }
+
+    const repState = f.rep_state as string | null;
+    rows.push({
+      key: 'feedback', label: '강사 피드백',
+      done: repState === 'ok',
+      // 원문 「ok · 08-21 10:35」 — 상태값과 시각을 그대로 적는다
+      detail: repState ? (f.rep_at ? `${repState} · ${f.rep_at}` : repState) : '아직 없습니다',
+    });
+
+    return rows;
   }
 
   /** 「정시 / 지연」은 `tierFor` 한 곳이 정한다 — 강사 화면의 차감액과 같은 판정이다 (D-R32) */

@@ -36,7 +36,7 @@ export class Todo {
   done: boolean;
 
   @Column({ type: 'enum', enum: TODO_SRC_T_VALUES, enumName: 'todo_src_t', default: 'manual' })
-  src: 'meeting'|'complaint'|'consulting'|'plan'|'manual';
+  src: 'meeting'|'complaint'|'consulting'|'plan'|'manual'|'lesson';
 
   @Column({ type: 'bigint', nullable: true })
   mtId: number | null;
@@ -49,6 +49,18 @@ export class Todo {
 
   @Column({ type: 'bigint', nullable: true })
   planId: number | null;
+
+  /**
+   * 회차에 걸린 지시 — §12 첫 줄 「대표 지시 할 일」.
+   *
+   * 키가 둘인 이유는 회차의 정체가 `(ser_id, on_date)` 이기 때문이다. `ser_occ.id` 는
+   * 투영이라 쓰기마다 갈린다 (C82-b 원장). `onDate` 는 규칙이 원래 찍은 날이다.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  serId: number | null;
+
+  @Column({ type: 'date', nullable: true })
+  onDate: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;

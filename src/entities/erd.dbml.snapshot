@@ -6,7 +6,9 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
-// TBO-50 C81 §47 독촉: NOTI.request_key nullable + (request_key,to_id) partial unique로 기존 알림을 보존하고 같은 배치의 수신자별 중복을 차단한다. request_teacher_id는 전체(null)/선택 강사 요청 범위를 재시도 때 대조한다. 외부 발송이 아닌 내부 NOTI 원장이다.
+// TBO-50 C81 제품 정합 (2026-09-14): 내부 리포트 독촉의 UUID 요청키와 대상 강사를 NOTI에 nullable로 보존하고, request_key가 있을 때만 수신자와 partial unique로 멱등성을 강제한다. 외부 메시지/주간 트래킹 정책 저장은 만들지 않는다.
+// TBO-50 C79 제품 정합 (2026-09-14): 컨설팅 시작일·요청자·소프트 보관과 계약 파일/피드백/이벤트 원장을 추가한다. 기존 CONS_STU/PICK/SESS 참조는 실제 FK로 승격하며 §30 단계와 누적 수납 자동 전이는 Nest 트랜잭션이 소유한다.
+// TBO-50 C78 제품 정합 (2026-09-14): 안내 §43~§45의 사건일·작성자·학생/상태 조회 인덱스와 GUIDE/PNOTI/GTPL 최종 방어를 entity·migration·OpenAPI에 맞춰 기록한다. SER_OCC 식별자는 재투영용 응답 키이며 영속 FK가 아니다.
 // TBO-50 C77 최종 정합 감사 (2026-09-14): 기존 migration 1759500000000의 CARRY가 DBML 두 정본에서 빠진 것을 교정. entity·migration·DBML 71표로 일치하며 C77 신규 교재 3표와 별개인 기존 §54 원장이다.
 // TBO-50 C36-a 검수 (2026-09-12): 분납 입금은 **기존 형상만으로 성립**한다 — INV.paid_amount(D-R37)·PAY.reason·CHECK inv_paid_le_amount 재사용. 누계는 저장된 합이 아니라 그 순간 PAY 줄의 합을 서버가 다시 세어 쓴다. 새 표·컬럼·제약·migration 0 · v4.16/66표 유지(3곳 동일 확인). 초과 입금(환불·조정)과 EXPENSE 쪽 A-D3/A-D5 는 C36-b.
 // TBO-48 D3-i-c (2026-09-11): /exec from/to는 기존 집계 SQL date 인자이며 영속 컬럼이 아니다. 공용 달력 guard/DTO로 잘못된 날짜를 SQL 전에400 거절, 윤년 동일일 실제 조회/RPT 건수 불변 검수. v4.11/64표/migration14 유지; RPT 주기·6영역 쓰기는 별도 미완.
@@ -37,7 +39,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.19 (2026-09-14) — TBO-50 C77 교재/판/자료전달 원장과 Neon FILE 정합화
+// version : 4.22 (2026-09-14) — TBO-50 C82-b §12 준비 저장 정본(회차 지시·줌 안내 대상)
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -125,7 +127,10 @@ Enum cons_share_t  { all  money_only  picked  private }
 Enum cpl_area_t    { lesson  intake  book  schedule  teacher }
 Enum sug_cat_t     { lesson  pay  schedule  etc }
 Enum sug_state_t   { open  reviewing  done }
-Enum todo_src_t    { meeting  complaint  consulting  plan  manual }
+Enum todo_src_t    { meeting  complaint  consulting  plan  manual  lesson }
+// lesson — 회차에 걸린 대표 지시 (§12 첫 줄). ser_id·on_date 와 함께 쓴다 (C82-b)
+Enum pnoti_audience_t { parent  teacher }
+// §43 「매번」이 줄마다 학부모·강사를 따로 체크한다. 학부모 실제 발송은 수신처가 없어 아직 없다 (N-42)
 
 // ─────────────────────────────────────────────────────────────── 상수 코드표
 // 명세서 §18 — 관리자 화면에서 추가·색 지정·리포트 대상 여부를 관리한다.
@@ -543,28 +548,48 @@ Table GUIDE {
   state       guide_state_t [not null, default: 'draft']
   body        text
   due_on      date
+  event_on    date          [note: '첫 수업·강사 교체 사건일. SER_OCC 응답 키는 이 날짜와 ser_id로 서버가 재투영한다.']
+  created_by  bigint        [ref: > STAFF.id]
   created_at  timestamptz   [not null, default: `now()`]
+  indexes {
+    (ser_id, event_on, student_id, reason) [unique, name: 'guide_event_unique']
+    (student_id, created_at) [name: 'guide_student_created_idx']
+    (state, due_on) [name: 'guide_state_due_idx']
+  }
   Note: '''
   **한 번 보내는 것**만 여기 있다. 첫 수업이거나 강사가 바뀐 학생만 대상 (D-R5).
   온라인 줌 링크처럼 **매번 나가는 것은 PNOTI** 다 (§43 「한 번 / 매번」 구분).
-  수업 상세에서 "작성" 하면 학생·학년·강사·과목·형태·같은반·교재가 자동 배정된다.
+  초안 생성 시 서버가 현재 회차·수강생·담당 강사를 다시 검증하고 같은 논리 사건의 중복 생성을 막는다.
+  학부모/강사 실제 외부 전달 대상·전달 원장은 아직 미확정이므로 이 표가 전송 성공을 뜻하지 않는다.
   '''
 }
 
 Table PNOTI {
-  id          bigserial   [pk]
-  ser_id      bigint      [ref: > SER.id]
+  id          bigserial        [pk]
+  ser_id      bigint           [ref: > SER.id]
   on_date     date
-  student_id  bigint      [not null, ref: > STU.id]
-  channel     varchar(10) [not null]
-  body        text        [not null]
+  audience    pnoti_audience_t [not null, default: 'parent', note: '전달 대상 — §43 「매번」이 줄마다 학부모·강사를 따로 체크한다']
+  student_id  bigint           [ref: > STU.id, note: '학부모 행에만 있다']
+  staff_id    bigint           [ref: > STAFF.id, note: '강사 행에만 있다']
+  channel     varchar(10)      [not null]
+  body        text             [not null]
   sent_at     timestamptz
-  Note: '학부모 안내. 온라인 수업은 매번 줌 안내를 보낸다 (D-R5).'
+  indexes {
+    (ser_id, on_date) [name: 'pnoti_ser_date_idx']
+    (student_id, on_date) [name: 'pnoti_student_date_idx']
+    (ser_id, on_date, staff_id) [unique, name: 'pnoti_teacher_once', note: "audience='teacher' 부분 유니크 — 강사에게는 회차마다 한 번"]
+  }
+  Note: '''
+  줌 안내 원장. 온라인 수업은 매번 보낸다 (D-R5). channel과 FK는 DB가 방어한다.
+  대상이 둘이다 — `parent` 행은 학생을, `teacher` 행은 강사를 가리키고 섞이면 `pnoti_audience_target` 이 막는다.
+  기존 행은 전부 `parent` 다: 이 표가 「학부모 안내」였고 `student_id` 가 NOT NULL 이었으므로 다른 값일 수 없었다 (추정 이관 아님).
+  **학부모 실제 외부 전달은 아직 만들지 않았다** — STU 에 수신처 칸이 없다 (N-42). §12 는 그 사실을 「학부모 없음」으로 적는다.
+  '''
 }
 
 Table GTPL {
   id          bigserial   [pk]
-  name        varchar(40) [not null]
+  name        varchar(40) [not null, unique]
   body        text        [not null]
   Note: '안내 문구 템플릿. 시드 5건.'
 }
@@ -603,17 +628,14 @@ Table VERS {
   activated_at timestamptz [not null, default: `now()`, note: '같은 효력일에서 마지막으로 고른 판']
   se_file_id  bigint      [ref: > FILE.id]
   te_file_id  bigint      [ref: > FILE.id]
-  indexes {
-    (lib_id, edition) [unique, name: 'vers_lib_edition_unique']
-    (lib_id, id) [unique, name: 'vers_lib_id_unique']
-  }
+  indexes { (lib_id, edition) [unique, name: 'vers_lib_edition_unique'] }
   Note: '교재 판. 판 이름은 교재 안에서 유일하며 trigger가 SE/TE FILE.kind까지 검증한다. file_url은 레거시 읽기 호환 전용. 시드 9건.'
 }
 
 Table ISSUE {
   id          bigserial   [pk]
   lib_id      bigint      [not null, ref: > LIB.id]
-  vers_id     bigint      [note: 'nullable. (lib_id,vers_id) 복합 FK로 같은 교재의 판만 허용']
+  vers_id     bigint      [ref: > VERS.id]
   student_id  bigint      [not null, ref: > STU.id]
   issued_on   date
   returned_on date
@@ -664,7 +686,7 @@ Table GPAPACK_STUDENT {
 Table GPAPACK_LIB {
   gpapack_id  bigint      [not null, ref: > GPAPACK.id]
   lib_id      bigint      [not null, ref: > LIB.id]
-  vers_id     bigint      [note: '만들기/수정 시 적용일의 판 스냅샷. (lib_id,vers_id) 복합 FK']
+  vers_id     bigint      [ref: > VERS.id, note: '만들기/수정 시 적용일의 판 스냅샷']
   indexes { (gpapack_id, lib_id) [pk] }
   Note: '자료 전달의 다교재 명단. 현재 판이 바뀌어도 과거 전달 파일은 바뀌지 않는다.'
 }
@@ -887,19 +909,57 @@ Table CONS {
   contract_step smallint   [note: '1~5 또는 null(계약 중 미정). running/done은 반드시 5. 계약서 → 피드백 → 학부모 전달 → 서명본 → 수납']
   amount      int
   sessions    smallint     [note: '1~32767 또는 null(미정)']
+  start_on    date         [note: '§29 컨설팅 시작일. created_at 감사 시각과 구분']
   end_on      date
+  requester   varchar(8)   [note: 'mother | father 또는 null(레거시). cons_requester_check']
   owner_id    bigint       [ref: > STAFF.id]
   share       cons_share_t [not null, default: 'all', note: 'csCan() 목록 필터 · csCanFull() 내용 접근']
+  deleted_at  timestamptz  [note: '물리 삭제 대신 보관한 시각']
+  deleted_by  bigint       [ref: > STAFF.id, note: 'deleted_at과 함께 있거나 함께 null']
   created_at  timestamptz  [not null, default: `now()`]
   Note: '''
   공개 범위는 role 권한과 독립된 두 번째 층 (D-5 · D-R39).
   TBO-47C migration 11: cons_stage_check (contract/running/done), cons_contract_step_check (1~5),
   cons_paid_stage_check (계약 외 step=5, NULL 차단), cons_sessions_check (>0).
+  C79 migration 1759900000000: start_on/requester/deleted pair와 날짜 순서 CHECK, owner/deleted_by FK.
   '''
 }
 
 Table CONS_STU  { cons_id bigint [ref: > CONS.id]  student_id bigint [ref: > STU.id]  indexes { (cons_id, student_id) [pk] } }
 Table CONS_PICK { cons_id bigint [ref: > CONS.id]  staff_id   bigint [ref: > STAFF.id] indexes { (cons_id, staff_id) [pk] } Note: 'share=picked 일 때 볼 수 있는 사람' }
+
+Table CONS_FILE {
+  file_id     bigint      [pk, ref: > FILE.id]
+  cons_id     bigint      [not null, ref: > CONS.id]
+  role        varchar(12) [not null, note: 'draft | revision | signed']
+  created_by  bigint      [not null, ref: > STAFF.id]
+  created_at  timestamptz [not null, default: `now()`]
+  indexes { (cons_id, created_at, file_id) }
+  Note: '§30 계약서·수정본·서명본 연결 원장. CONS 부모 잠금 trigger가 한 컨설팅의 전체 파일을 최대 10개로 제한한다.'
+}
+
+Table CONS_FEEDBACK {
+  id          bigserial   [pk]
+  cons_id     bigint      [not null, ref: > CONS.id]
+  body        varchar(2000) [not null, note: '공백만 저장 금지']
+  created_by  bigint      [not null, ref: > STAFF.id]
+  created_at  timestamptz [not null, default: `now()`]
+  resolved_at timestamptz
+  resolved_by bigint      [ref: > STAFF.id, note: 'resolved_at과 함께 있거나 함께 null']
+  indexes { (cons_id, created_at, id) }
+  Note: '§30 계약 피드백 append-only 원장. 해결은 같은 행의 resolved stamp만 한 번 기록한다.'
+}
+
+Table CONS_EVENT {
+  id          bigserial   [pk]
+  cons_id     bigint      [not null, ref: > CONS.id]
+  event_type  varchar(24) [not null, note: 'created | share_changed | file_added | file_removed | feedback_added | feedback_resolved | parent_delivered | payment_added | archived']
+  ref_id      bigint      [note: '파일·피드백·납부 원장 식별자. 종류별 다형 참조라 FK로 추정하지 않음']
+  by_id       bigint      [not null, ref: > STAFF.id]
+  created_at  timestamptz [not null, default: `now()`]
+  indexes { (cons_id, created_at, id) }
+  Note: '§30 계약 단계 행위 감사 원장. 학부모 재전달도 새 행으로 남기며 최신 전달은 created_at/id로 투영한다.'
+}
 
 Table CONS_PAY {
   id          bigserial   [pk]
@@ -1014,8 +1074,17 @@ Table TODO {
   cpl_id      bigint      [ref: > CPL.id]
   cons_id     bigint      [ref: > CONS.id]
   plan_id     bigint      [ref: > PLAN.id]
+  ser_id      bigint      [ref: > SER.id, note: '회차 지시 — §12 첫 줄 「대표 지시 할 일」']
+  on_date     date        [note: '규칙이 원래 찍은 날(EXC 키). SER_OCC.id 를 쓰지 않는다 — 그 표는 쓰기마다 다시 만들어지는 투영이다']
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 4건. 출처 필드로 원본을 되짚을 수 있다.'
+  indexes {
+    (ser_id, on_date) [name: 'todo_lesson_idx']
+  }
+  Note: '''
+  시드 4건. 출처 필드로 원본을 되짚을 수 있다.
+  `src='lesson'` 이면 `(ser_id, on_date)` 가 함께 있어야 한다 (`todo_lesson_key` · NOT VALID).
+  회차 키가 둘인 이유는 회차의 정체가 그 짝이기 때문이다 (C82-b 원장).
+  '''
 }
 
 Table REQ {
@@ -1023,7 +1092,6 @@ Table REQ {
   staff_id    bigint      [not null, ref: > STAFF.id, note: '강사가 올린다']
   req_type    varchar(16) [not null]
   payload     jsonb
-  student_id  bigint      [ref: > STU.id, note: 'book_change 안정 식별자. 레거시는 null']
   state       varchar(12) [not null, default: 'open']
   resolved_by bigint      [ref: > STAFF.id]
   reject_reason text      [note: '반려 시 필수 (D-R13)']
@@ -1319,6 +1387,28 @@ Table SER_OCC {
 //   + ISSUE 상태·진도·행위자/시각, GPAPACK 다학생·다교재·전달/수령 전이
 //   ~ DBML 정합 감사      기존 §54 CARRY 표 누락 교정 — 새 migration 없이 entity·기존 migration과 71표 정렬
 //
+// v4.19 → v4.20 (2026-09-14 · TBO-50 C78 안내 §43~§45)
+//   + GUIDE.event_on      첫 수업·강사 교체 사건일. 응답의 sourceOccurrenceId는 ser_id+event_on에서 재투영
+//   + GUIDE.created_by    초안 작성 행위자. SER·STU·STAFF FK, reason CHECK, 논리 사건 UNIQUE와 조회 인덱스
+//   + PNOTI/GTPL 방어     channel CHECK, SER·STU FK/조회 인덱스, 문구 이름 UNIQUE
+//   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
+//   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
+//
+// v4.21 → v4.22 (2026-09-14 · TBO-50 C82-b §12 준비 저장 정본)
+//   TODO   + ser_id · on_date (회차 지시) · todo_src_t += 'lesson' · CHECK todo_lesson_key(NOT VALID)
+//   PNOTI  + audience(parent|teacher) · staff_id · student_id nullable
+//          + CHECK pnoti_audience_target(NOT VALID) · UNIQUE pnoti_teacher_once
+//   기존 행 보정 0 — audience 는 그 표의 정의가 이미 정해 두었던 값이다 (N-25)
+//
+// v4.20 → v4.21 (2026-09-14 · TBO-50 C79 컨설팅 §29~§30)
+//   + CONS.start_on/requester/deleted_at/deleted_by  생성 input과 보관 이력을 감사 시각과 분리
+//   + CONS_FILE          기존 FILE 본문을 계약 초안·수정본·서명본에 연결, 컨설팅별 총 10개 DB trigger
+//   + CONS_FEEDBACK      작성자/시각과 해결자/시각을 분리한 피드백 원장
+//   + CONS_EVENT         생성·공개범위·파일·피드백·전달·수납·보관 append-only 감사 원장
+//   + FK                 CONS.owner 및 CONS_STU/PICK/SESS의 기존 행을 VALIDATE한 뒤 실제 참조로 승격
+//   ~ 자동 전이          생성 contract/1 → 파일2 → 전달4 → 서명5 → 완납 running은 서버 transaction SSOT
+//   ! 미확정              admissions 외 9종 기본 항목 문구와 실제 일정의 요일·시간·강사는 원본에 없어 발명하지 않음
+//
 //   ── 겹침 금지 — 애플리케이션이 아니라 DB 가 거부한다 (D-R43)
 //   CREATE EXTENSION IF NOT EXISTS btree_gist;
 //
@@ -1366,3 +1456,4 @@ Table SER_OCC {
 //   ── 상태 되돌리기 금지는 제약이 아니라 서비스에서 막는다
 //      unpaid → partial → paid, 그리고 → void. 그 외 전이는 409.
 // ============================================================================
+// TBO-50 C81 §47 독촉: NOTI.request_key nullable + (request_key,to_id) partial unique로 기존 알림을 보존하고 같은 배치의 수신자별 중복을 차단한다. request_teacher_id는 전체(null)/선택 강사 요청 범위를 재시도 때 대조한다. 외부 발송이 아닌 내부 NOTI 원장이다.

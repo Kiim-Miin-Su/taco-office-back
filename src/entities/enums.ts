@@ -39,5 +39,9 @@ export type SugCatT = (typeof SUG_CAT_T_VALUES)[number];
 export const SUG_STATE_T_VALUES = ['open', 'reviewing', 'done'] as const;
 export type SugStateT = (typeof SUG_STATE_T_VALUES)[number];
 
-export const TODO_SRC_T_VALUES = ['meeting', 'complaint', 'consulting', 'plan', 'manual'] as const;
+export const TODO_SRC_T_VALUES = ['meeting', 'complaint', 'consulting', 'plan', 'manual', 'lesson'] as const;
 export type TodoSrcT = (typeof TODO_SRC_T_VALUES)[number];
+
+/** §43 「매번」이 줄마다 학부모·강사를 따로 체크한다 — 전달 대상 축 (C82-b) */
+export const PNOTI_AUDIENCE_T_VALUES = ['parent', 'teacher'] as const;
+export type PnotiAudienceT = (typeof PNOTI_AUDIENCE_T_VALUES)[number];

@@ -296,3 +296,159 @@ d('§79 학생 트래킹 (C55)', () => {
     expect(await svc().tracking(serId, day(1), true)).toBeNull();
   });
 });
+
+/**
+ * §12 준비 줄 — 원본 두 컷이 정한 목록 (C82-b).
+ *
+ * 온라인 §12 는 아홉 줄, 현장 §79 는 일곱 줄이다. 그 차이가 「대표 지시 할 일」과 「줌 안내」이고,
+ * 앞의 것은 **그 회차에 걸린 지시가 있을 때만** 선다.
+ */
+d('§12 준비 줄 (C82-b)', () => {
+  let ds: DataSource;
+  let q: QueryRunner;
+  let serId: number;
+  let stuA: number;
+  const svc = () => new ScheduleService(q.manager.getRepository(SerOcc));
+  const onDate = day(-1);
+
+  /**
+   * 시각을 매번 다르게 준다 — 같은 강사가 같은 시간에 두 회차를 가지면
+   * `ser_occ_teacher_no_overlap` 이 막는다. 이 시험의 관심사는 준비 줄이지 겹침이 아니다.
+   */
+  let slot = 10;
+  const makeSer = async (mode: 'online' | 'offline'): Promise<number> => {
+    const hour = slot++;
+    const [s] = (await q.query(
+      `INSERT INTO ser (kind_key, sub_key, teacher_id, rrule, from_date, mode, start_min, end_min)
+       VALUES ('class','sat-math',72,'FREQ=WEEKLY;BYDAY=MO',$1,$2,$3,$4) RETURNING id`,
+      [day(-60), mode, hour * 60, hour * 60 + 60],
+    )) as Array<{ id: string }>;
+    const id = Number(s.id);
+    await q.query(`INSERT INTO ser_stu (ser_id, student_id) VALUES ($1,$2)`, [id, stuA]);
+    await q.query(
+      `INSERT INTO ser_occ (ser_id, on_date, teacher_id, span)
+       VALUES ($1,$2::date,72,tstzrange($2::date + make_time($3,0,0) - interval '9 hours',
+                                      $2::date + make_time($3 + 1,0,0) - interval '9 hours'))`,
+      [id, onDate, hour],
+    );
+    return id;
+  };
+
+  beforeAll(async () => { ds = scratchDataSource(); await ds.initialize(); });
+  beforeEach(async () => {
+    q = ds.createQueryRunner(); await q.connect(); await q.startTransaction();
+    slot = 10;
+    await q.query(
+      `INSERT INTO staff (id,name,email,role) VALUES (72,'준비 강사','prep@t.kr','teacher')
+       ON CONFLICT (id) DO NOTHING`,
+    );
+    await q.query(
+      `INSERT INTO kind (key,name,color,cap,grp,rep,rep_form,sort)
+       VALUES ('class','수업','#4A5461',4,'lesson',true,'dev',1)
+       ON CONFLICT (key) DO UPDATE SET cap = 4`,
+    );
+    await q.query(
+      `INSERT INTO sub (key,name,color) VALUES ('sat-math','SAT Math','#9C7A38') ON CONFLICT (key) DO NOTHING`,
+    );
+    const [a] = (await q.query(`INSERT INTO stu (name, grade) VALUES ('준비학생','고1') RETURNING id`)) as Array<{ id: string }>;
+    stuA = Number(a.id);
+    serId = await makeSer('offline');
+  });
+  afterEach(async () => {
+    if (q?.isTransactionActive) await q.rollbackTransaction();
+    if (q && !q.isReleased) await q.release();
+  });
+  afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
+
+  it('현장 수업은 일곱 줄이다 — 원본 §79 「준비 4 / 7」과 같은 수', async () => {
+    const t = (await svc().tracking(serId, onDate, true))!;
+    expect(t.prepTotal).toBe(7);
+    expect(t.prep.map((r) => r.label)).toEqual([
+      '일정 확정', '강사 배정', '수강 학생', '강의실', '교재 배정', '수업 안내', '강사 피드백',
+    ]);
+    expect(t.prep.some((r) => r.key === 'zoomNoti')).toBe(false);
+    expect(t.prep.some((r) => r.key === 'directive')).toBe(false);
+  });
+
+  it('온라인 수업은 「줌 안내」가 더 선다 — 여덟 줄', async () => {
+    const online = await makeSer('online');
+    const t = (await svc().tracking(online, onDate, true))!;
+    expect(t.prepTotal).toBe(8);
+    expect(t.prep.map((r) => r.key)).toContain('zoomNoti');
+    expect(t.prep.map((r) => r.key)).toContain('zacc');
+    expect(t.prep.map((r) => r.key)).not.toContain('room');
+  });
+
+  it('회차에 걸린 대표 지시가 있으면 맨 위에 한 줄이 더 선다 — 온라인이면 원본과 같은 아홉 줄', async () => {
+    const online = await makeSer('online');
+    await q.query(
+      `INSERT INTO todo (title, src, ser_id, on_date, done) VALUES ('보강 확인','lesson',$1,$2::date,true)`,
+      [online, onDate],
+    );
+    const t = (await svc().tracking(online, onDate, true))!;
+    expect(t.prepTotal).toBe(9);                       // 원본 §12 와 같은 수
+    expect(t.prep[0].label).toBe('대표 지시 할 일');
+    expect(t.prep[0].detail).toBe('1/1 끝남');          // 원본의 낱말 그대로
+    expect(t.prep[0].done).toBe(true);
+  });
+
+  it('지시가 아직 안 끝났으면 그 줄은 안 된 것이다', async () => {
+    await q.query(
+      `INSERT INTO todo (title, src, ser_id, on_date, done) VALUES ('교재 준비','lesson',$1,$2::date,false)`,
+      [serId, onDate],
+    );
+    const t = (await svc().tracking(serId, onDate, true))!;
+    expect(t.prep[0].detail).toBe('0/1 끝남');
+    expect(t.prep[0].done).toBe(false);
+  });
+
+  it('머리 숫자와 남은 수는 서버가 센다 — 화면이 prep 를 다시 세지 않는다 (D-R37)', async () => {
+    const t = (await svc().tracking(serId, onDate, true))!;
+    expect(t.prepDone).toBe(t.prep.filter((r) => r.done).length);
+    expect(t.prepRemainLabel).toBe(`${t.prepTotal - t.prepDone}가지 남았습니다`);
+  });
+
+  it('줄마다의 부제도 서버의 낱말이다 — 「1명 / 정원 4명 · 준비학생」', async () => {
+    const t = (await svc().tracking(serId, onDate, true))!;
+    const roster = t.prep.find((r) => r.key === 'roster')!;
+    expect(roster.detail).toBe('1명 / 정원 4명 · 준비학생');
+    const book = t.prep.find((r) => r.key === 'book')!;
+    expect(book.detail).toBe('준비학생 없음');          // 원본 「이담흔 없음」과 같은 모양
+    expect(book.done).toBe(false);
+  });
+
+  it('줌 안내는 학부모와 강사를 따로 적는다 — 학부모는 보낼 곳이 없다 (N-42)', async () => {
+    const online = await makeSer('online');
+    const before = (await svc().tracking(online, onDate, true))!;
+    expect(before.prep.find((r) => r.key === 'zoomNoti')!.detail).toBe('학부모 없음 · 강사 대기');
+
+    await q.query(
+      `INSERT INTO pnoti (ser_id, on_date, audience, staff_id, channel, body, sent_at)
+       VALUES ($1,$2::date,'teacher',72,'email','줌 링크', now())`,
+      [online, onDate],
+    );
+    const after = (await svc().tracking(online, onDate, true))!;
+    const row = after.prep.find((r) => r.key === 'zoomNoti')!;
+    expect(row.detail).toBe('학부모 없음 · 강사 보냄');
+    expect(row.done).toBe(true);
+  });
+
+  it('강사 줌 안내는 회차마다 한 번이다 — 두 줄이 남지 않는다', async () => {
+    const online = await makeSer('online');
+    const ins = () => q.query(
+      `INSERT INTO pnoti (ser_id, on_date, audience, staff_id, channel, body, sent_at)
+       VALUES ($1,$2::date,'teacher',72,'email','줌 링크', now())`,
+      [online, onDate],
+    );
+    await ins();
+    await expect(ins()).rejects.toThrow();
+  });
+
+  it('학부모 행은 학생을, 강사 행은 강사를 가리킨다 — 섞이면 DB 가 막는다', async () => {
+    await expect(q.query(
+      `INSERT INTO pnoti (ser_id, on_date, audience, staff_id, student_id, channel, body)
+       VALUES ($1,$2::date,'teacher',72,$3,'email','섞인 행')`,
+      [serId, onDate, stuA],
+    )).rejects.toThrow();
+  });
+});

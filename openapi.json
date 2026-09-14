@@ -12294,6 +12294,34 @@
           "reports"
         ]
       },
+      "LessonPrepRowDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "줄을 가리키는 열쇠 — 화면이 비교하지 않고 그리기만 한다"
+          },
+          "label": {
+            "type": "string",
+            "description": "줄 이름 — 원문 §12·§79 의 낱말 그대로"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "됐는가"
+          },
+          "detail": {
+            "type": "string",
+            "nullable": true,
+            "description": "줄 밑의 값 — 「1명 / 정원 4명 · 이담흔」 같은 것"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "done",
+          "detail"
+        ]
+      },
       "LessonTrackingDto": {
         "type": "object",
         "properties": {
@@ -12341,6 +12369,24 @@
             "items": {
               "$ref": "#/components/schemas/TrackedStudentDto"
             }
+          },
+          "prep": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LessonPrepRowDto"
+            }
+          },
+          "prepDone": {
+            "type": "number",
+            "description": "된 줄 수 — 화면이 prep 를 다시 세지 않는다"
+          },
+          "prepTotal": {
+            "type": "number",
+            "description": "전체 줄 수"
+          },
+          "prepRemainLabel": {
+            "type": "string",
+            "description": "머리 문장 — 원문 「3가지 남았습니다」 · 다 됐으면 「다 됐습니다」"
           }
         },
         "required": [
@@ -12352,7 +12398,11 @@
           "capLabel",
           "priced",
           "canSeeAmounts",
-          "students"
+          "students",
+          "prep",
+          "prepDone",
+          "prepTotal",
+          "prepRemainLabel"
         ]
       },
       "HorizonDto": {
