@@ -461,3 +461,59 @@ export class LessonTrackingQueryDto {
   @IsCalendarDate()
   onDate!: string;
 }
+
+/**
+ * 겹침 미리보기 한 줄 — **막는 것은 DB 의 EXCLUDE 이고 이것은 설명만 한다** (D-R43 · §19).
+ *
+ * 409 만 던지면 화면은 「안 됩니다」밖에 못 쓴다. 사람이 시간을 고치려면 *무엇과* 겹치는지를
+ * 알아야 한다. 이 모양은 §19 변경 요청과 §07~§11 일정 이동이 **같은 것**을 쓴다 —
+ * 두 곳이 다른 모양을 쓰면 같은 겹침이 화면마다 다르게 읽힌다.
+ */
+export class ConflictRowDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty() onDate!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() endMin!: number;
+  @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
+  @ApiProperty({ enum: ['teacher', 'room', 'zoom'], description: '무엇이 겹치는가' }) with!: string;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '누구와 겹치는가 — 이름을 보여 준다' })
+  whoName?: string | null;
+}
+
+/**
+ * GET /schedule/conflicts 의 물음 — 자원을 하나도 안 주면 겹칠 대상이 없어 빈 배열이다.
+ *
+ * `date` 는 **실제로 놓일 달력 날짜**다. `ser_occ.span` 이 그 날짜로 만들어지므로
+ * 겹침도 그 날짜로 본다 — 옮긴 회차의 `on_date`(규칙이 원래 찍은 날)와는 다를 수 있다.
+ */
+export class ConflictQueryDto {
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-27', description: '놓일 달력 날짜 — EXC 키가 아니라 span 을 만드는 날짜다' })
+  @IsCalendarDate() date!: string;
+
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439 })
+  @ToHttpInteger() @IsInt() @Min(0) @Max(1439) startMin!: number;
+
+  @ApiProperty({ type: 'integer', minimum: 1, maximum: 1440 })
+  @ToHttpInteger() @IsInt() @Min(1) @Max(1440) endMin!: number;
+
+  @ApiPropertyOptional(ID_SCHEMA)
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) teacherId?: number;
+
+  @ApiPropertyOptional(ID_SCHEMA)
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number;
+
+  @ApiPropertyOptional(ID_SCHEMA)
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) zaccId?: number;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '자기 자신과는 겹치지 않는다 — 옮기는 회차의 SER' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) exceptSerId?: number;
+}
+
+export class ConflictPreviewDto {
+  @ApiProperty({ type: [ConflictRowDto], description: '비어 있어도 **저장을 건너뛰지 않는다** — 그 사이에 남이 그 자리를 잡을 수 있다' })
+  conflicts!: ConflictRowDto[];
+}

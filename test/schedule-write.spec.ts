@@ -36,6 +36,7 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
   let app: INestApplication;
   let ds: DataSource;
   let token = '';
+  let teacherToken = '';
   const PW = 'sched-write-1234';
   /** 시드와 안 부딪히게 높은 번호대를 쓴다 */
   const CEO = 921;
@@ -79,6 +80,10 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
       .send({ email: 'sched-ceo@t.kr', password: PW }).expect(201);
     token = res.body.accessToken as string;
+    const t2res = await request(app.getHttpServer())
+      .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
+      .send({ email: 'sched-t2@t.kr', password: PW }).expect(201);
+    teacherToken = t2res.body.accessToken as string;
   });
 
   afterAll(async () => {
@@ -113,6 +118,10 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
 
   const api = (m: 'post' | 'patch' | 'delete' | 'put', p: string) =>
     request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${token}`)
+      .timeout({ response: 5000, deadline: 10000 });
+
+  const get = (p: string) =>
+    request(app.getHttpServer()).get(p).set('Authorization', `Bearer ${token}`)
       .timeout({ response: 5000, deadline: 10000 });
 
   /** 월·수 반복 하나를 만든다. 날짜는 오늘 기준이라 호라이즌 안에 확실히 든다. */
@@ -809,6 +818,61 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     // 트랜잭션이 통째로 되돌아갔는가 — SER 이 늘지 않아야 한다
     const afterSers = await q<{ n: string }>(`SELECT count(*)::text n FROM ser`);
     expect(afterSers[0].n).toBe(beforeSers[0].n);
+  });
+
+  /**
+   * 겹침 미리보기 — **막는 것은 DB 고 이것은 설명이다.**
+   * 409 문구는 「같은 시간에 강사·강의실·줌이 이미 잡혀 있습니다」라 **누구와 부딪혔는지 말하지 않는다.**
+   */
+  it('미리보기는 무엇과·누구와 겹치는지 이름으로 말한다 (§19 · D-R43)', async () => {
+    const { id, from } = await makeSer({ roomId: ROOM });
+
+    const res = await get('/schedule/conflicts')
+      .query({ date: from, startMin: 630, endMin: 690, roomId: ROOM })
+      .expect(200);
+
+    expect(res.body.conflicts.length).toBeGreaterThan(0);
+    const row = res.body.conflicts[0];
+    expect(row).toMatchObject({ serId: id, onDate: from, startMin: 600, endMin: 660, with: 'room' });
+    expect(typeof row.whoName).toBe('string');
+    expect(row.whoName.length).toBeGreaterThan(0);
+
+    // 겹침의 정의는 DB 의 EXCLUDE 와 같다 — 끝나는 순간에 시작하는 것은 겹치지 않는다
+    const touching = await get('/schedule/conflicts')
+      .query({ date: from, startMin: 660, endMin: 720, roomId: ROOM })
+      .expect(200);
+    expect(touching.body.conflicts).toEqual([]);
+  });
+
+  it('미리보기는 자기 자신과 겹치지 않고, 자원을 안 주면 볼 것이 없어 빈 배열이다', async () => {
+    const { id, from } = await makeSer({ roomId: ROOM });
+
+    const self = await get('/schedule/conflicts')
+      .query({ date: from, startMin: 630, endMin: 690, roomId: ROOM, exceptSerId: id })
+      .expect(200);
+    expect(self.body.conflicts).toEqual([]);
+
+    // 강사·강의실·줌 중 하나도 주지 않으면 겹칠 대상 자체가 없다
+    const nothing = await get('/schedule/conflicts')
+      .query({ date: from, startMin: 630, endMin: 690 })
+      .expect(200);
+    expect(nothing.body.conflicts).toEqual([]);
+  });
+
+  it('미리보기 방어 — 끝이 시작보다 앞이면 400 이고, 강사는 이 길을 쓰지 않는다', async () => {
+    const { from } = await makeSer({ roomId: ROOM });
+
+    const bad = await get('/schedule/conflicts')
+      .query({ date: from, startMin: 690, endMin: 630, roomId: ROOM })
+      .expect(400);
+    expect(bad.body.code).toBe('BAD_RANGE');
+
+    // 강사의 길은 §19 변경 요청이다 — 일정 이동과 같은 권한을 요구한다
+    await request(app.getHttpServer())
+      .get('/schedule/conflicts').set('Authorization', `Bearer ${teacherToken}`)
+      .timeout({ response: 5000, deadline: 10000 })
+      .query({ date: from, startMin: 630, endMin: 690, roomId: ROOM })
+      .expect(403);
   });
 
   it('그날만 빼기 — 명단은 그대로고 그 회차에서만 빠진다 (D-R21)', async () => {

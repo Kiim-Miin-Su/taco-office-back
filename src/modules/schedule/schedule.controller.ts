@@ -14,6 +14,7 @@ import {
   OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
   WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto,
   LessonTrackingDto, LessonTrackingQueryDto,
+  ConflictPreviewDto, ConflictQueryDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
@@ -99,6 +100,41 @@ export class ScheduleController {
       });
     }
     return out;
+  }
+
+  /**
+   * 겹침 미리보기 — **누구와 겹치는지**를 돌려준다 (§19 · D-R43).
+   *
+   * 지금까지 화면이 받는 신호는 **떨어뜨린 뒤의 409** 하나뿐이었고, 그 문구는
+   * 「같은 시간에 강사·강의실·줌이 이미 잡혀 있습니다」라 **누구와 부딪혔는지 말하지 않는다.**
+   * 계산은 `ScheduleService.conflicts()` 에 이미 있었고 §19 변경 요청만 그 길로 가고 있었다.
+   *
+   * **막는 것은 DB 이고 이것은 설명할 뿐이다.** 여기서 비었다고 저장을 건너뛰지 않는다 —
+   * 그 사이에 남이 그 자리를 잡을 수 있다.
+   */
+  @Get('conflicts')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '겹침 미리보기 — 무엇과·누구와 겹치는가',
+    description: '막는 것은 ser_occ 의 EXCLUDE 이고 이 응답은 설명이다. 비어 있어도 저장을 건너뛰지 않는다. '
+      + '강사·강의실·줌 중 준 자원만 본다 — 하나도 주지 않으면 빈 배열이다.',
+  })
+  @ApiOkResponse({ type: ConflictPreviewDto })
+  async conflicts(@Query() query: ConflictQueryDto): Promise<ConflictPreviewDto> {
+    if (query.startMin >= query.endMin) {
+      throw new BadRequestException({ code: 'BAD_RANGE', message: '끝 시각이 시작 시각보다 앞입니다' });
+    }
+    const conflicts = await this.svc.conflicts({
+      // service 의 파라미터 이름은 `onDate` 지만 쓰이는 곳은 span 을 만드는 날짜다 (lib/sql.spanOf)
+      onDate: query.date,
+      startMin: query.startMin,
+      endMin: query.endMin,
+      teacherId: query.teacherId ?? null,
+      roomId: query.roomId ?? null,
+      zaccId: query.zaccId ?? null,
+      exceptSerId: query.exceptSerId ?? null,
+    });
+    return { conflicts };
   }
 
   @Get('horizon')

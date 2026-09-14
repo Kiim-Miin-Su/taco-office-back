@@ -745,6 +745,163 @@
         ]
       }
     },
+    "/schedule/conflicts": {
+      "get": {
+        "description": "막는 것은 ser_occ 의 EXCLUDE 이고 이 응답은 설명이다. 비어 있어도 저장을 건너뛰지 않는다. 강사·강의실·줌 중 준 자원만 본다 — 하나도 주지 않으면 빈 배열이다.",
+        "operationId": "ScheduleController_conflicts",
+        "parameters": [
+          {
+            "name": "date",
+            "required": true,
+            "in": "query",
+            "description": "놓일 달력 날짜 — EXC 키가 아니라 span 을 만드는 날짜다",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "example": "2026-08-27",
+              "type": "string"
+            }
+          },
+          {
+            "name": "startMin",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "maximum": 1439,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "endMin",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 1440,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "roomId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "zaccId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "exceptSerId",
+            "required": false,
+            "in": "query",
+            "description": "자기 자신과는 겹치지 않는다 — 옮기는 회차의 SER",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictPreviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "겹침 미리보기 — 무엇과·누구와 겹치는가",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule/horizon": {
       "get": {
         "operationId": "ScheduleController_bounds",
@@ -12405,6 +12562,63 @@
           "prepRemainLabel"
         ]
       },
+      "ConflictRowDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "with": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "room",
+              "zoom"
+            ],
+            "description": "무엇이 겹치는가"
+          },
+          "whoName": {
+            "type": "string",
+            "nullable": true,
+            "description": "누구와 겹치는가 — 이름을 보여 준다"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "startMin",
+          "endMin",
+          "with"
+        ]
+      },
+      "ConflictPreviewDto": {
+        "type": "object",
+        "properties": {
+          "conflicts": {
+            "description": "비어 있어도 **저장을 건너뛰지 않는다** — 그 사이에 남이 그 자리를 잡을 수 있다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConflictRowDto"
+            }
+          }
+        },
+        "required": [
+          "conflicts"
+        ]
+      },
       "HorizonDto": {
         "type": "object",
         "properties": {
@@ -22022,48 +22236,6 @@
         },
         "required": [
           "decision"
-        ]
-      },
-      "ConflictRowDto": {
-        "type": "object",
-        "properties": {
-          "serId": {
-            "type": "number"
-          },
-          "onDate": {
-            "type": "string"
-          },
-          "startMin": {
-            "type": "number"
-          },
-          "endMin": {
-            "type": "number"
-          },
-          "title": {
-            "type": "string",
-            "nullable": true
-          },
-          "with": {
-            "type": "string",
-            "enum": [
-              "teacher",
-              "room",
-              "zoom"
-            ],
-            "description": "무엇이 겹치는가"
-          },
-          "whoName": {
-            "type": "string",
-            "nullable": true,
-            "description": "누구와 겹치는가 — 이름을 보여 준다"
-          }
-        },
-        "required": [
-          "serId",
-          "onDate",
-          "startMin",
-          "endMin",
-          "with"
         ]
       },
       "ChangeReqResultDto": {

@@ -430,16 +430,13 @@ export class ChangeReqCreateDto extends ChangeReqTargetDto {
   zaccId?: number;
 }
 
-/** §19 겹침 미리보기 한 줄 — 막는 것은 DB, 설명은 이것 */
-export class ConflictRowDto {
-  @ApiProperty() serId!: number;
-  @ApiProperty() onDate!: string;
-  @ApiProperty() startMin!: number;
-  @ApiProperty() endMin!: number;
-  @ApiPropertyOptional(S) title?: string | null;
-  @ApiProperty({ enum: ['teacher', 'room', 'zoom'], description: '무엇이 겹치는가' }) with!: string;
-  @ApiPropertyOptional({ ...S, description: '누구와 겹치는가 — 이름을 보여 준다' }) whoName?: string | null;
-}
+/**
+ * §19 겹침 미리보기 한 줄 — **모양은 schedule 모듈이 갖는다.**
+ * 겹침을 세는 것도 그 모듈(`ScheduleService.conflicts()`)이고, §07~§11 일정 이동도 같은 줄을 받는다.
+ * 여기서 다시 선언하면 같은 겹침이 화면마다 다른 모양으로 읽힌다.
+ */
+import { ConflictRowDto } from '../schedule/schedule.dto';
+export { ConflictRowDto };
 
 export class ChangeReqResultDto {
   @ApiPropertyOptional({ ...N, description: '만들어진 요청 id. 겹쳐서 막혔으면 없다' }) id?: number | null;
