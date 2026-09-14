@@ -20952,6 +20952,31 @@
           "point"
         ]
       },
+      "GpaStudentSvcDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number",
+            "description": "회수"
+          },
+          "points": {
+            "type": "number",
+            "description": "포인트 합"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "count",
+          "points"
+        ]
+      },
       "GpaStudentDto": {
         "type": "object",
         "properties": {
@@ -20989,6 +21014,13 @@
           "over": {
             "type": "boolean",
             "description": "배정 초과 — 붉게 표시하고 추가 결제/다음 사이클 조정을 안내한다"
+          },
+          "svcs": {
+            "description": "§82 카드의 서비스 칩 — 0 인 갈래는 없다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GpaStudentSvcDto"
+            }
           }
         },
         "required": [
@@ -20998,7 +21030,8 @@
           "used",
           "wait",
           "remain",
-          "over"
+          "over",
+          "svcs"
         ]
       },
       "GpaUseDto": {
@@ -21100,8 +21133,12 @@
             "type": "number",
             "description": "사이클 합계 — 잔여 (배정−사용−대기)"
           },
+          "totalUses": {
+            "type": "number",
+            "description": "§82 머리의 「N회 진행」 — 이 사이클 소비 기록 수. 승인 대기도 센다 (기록이 있다는 것은 회차가 있었다는 뜻이고, 그 포인트는 이미 잔여에서 빠져 있다)"
+          },
           "students": {
-            "description": "배정 ∪ 소비 학생 — 이름 순",
+            "description": "배정 ∪ 소비 학생 — **잔여 적은 순**(원본 §82 「5명 · 잔여 적은 순」), 같으면 이름 순. 초과가 맨 앞에 온다 — 먼저 손봐야 할 것이 먼저 보여야 한다.",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GpaStudentDto"
@@ -21123,6 +21160,7 @@
           "totalUsed",
           "totalWait",
           "totalRemain",
+          "totalUses",
           "students",
           "uses"
         ]

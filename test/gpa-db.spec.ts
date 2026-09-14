@@ -61,6 +61,43 @@ d('§4.5·§82 GPA 4표 — 잔여 계산과 사이클 잠금 (N-13 채택 · C3
     expect(b.uses.map((u) => u.onDate)).toEqual(['2026-10-07', '2026-10-08', '2026-10-09']);
   });
 
+  /**
+   * 원본 §82 의 머리와 학생 카드 — C86-c.
+   * 「N회 진행」과 카드의 서비스 칩은 **서버가 센다**. 화면이 `uses` 를 다시 훑으면
+   * 「남은 9p」와 칩의 합이 갈린다 (D-R37 · N-19).
+   */
+  it('머리의 「N회 진행」은 승인 대기도 센다 — 기록이 있다는 것은 회차가 있었다는 뜻이다', async () => {
+    await q.query(`INSERT INTO gpa_alloc (cycle_id,student_id,coord_id,points) VALUES ($1,91,41,10)`, [cycleId]);
+    await q.query(`INSERT INTO gpa_use (cycle_id,student_id,svc_key,points,on_date,coord_id,state)
+                   VALUES ($1,91,'hw',1,'2026-10-06',41,'ok'), ($1,91,'hw',1,'2026-10-07',41,'wait')`, [cycleId]);
+    const b = await svc().board('2026-10-10');
+    expect(b.totalUses).toBe(2);
+    expect(b.totalUsed).toBe(1);
+    expect(b.totalWait).toBe(1);
+  });
+
+  it('카드의 서비스 칩은 회수·포인트 합이고 규정 순서를 따르며 0 인 갈래는 없다', async () => {
+    await q.query(`INSERT INTO gpa_alloc (cycle_id,student_id,coord_id,points) VALUES ($1,91,41,12)`, [cycleId]);
+    await q.query(`INSERT INTO gpa_use (cycle_id,student_id,svc_key,points,on_date,coord_id,state)
+                   VALUES ($1,91,'hw',1,'2026-10-06',41,'ok'), ($1,91,'hw',1,'2026-10-07',41,'ok'),
+                          ($1,91,'test',4,'2026-10-08',41,'wait')`, [cycleId]);
+    const b = await svc().board('2026-10-10');
+    const s91 = b.students.find((s) => s.studentId === 91)!;
+    // 승인 대기도 센다 — 잔여에서 이미 빠졌으므로 칩에서만 빼면 두 수가 갈린다
+    expect(s91.svcs.map((v) => [v.key, v.count, v.points])).toEqual([['hw', 2, 2], ['test', 1, 4]]);
+    expect(s91.svcs.reduce((a, v) => a + v.points, 0)).toBe(s91.used + s91.wait);
+    expect(b.students.find((s) => s.studentId === 92)?.svcs ?? []).toEqual([]);
+  });
+
+  it('학생은 **잔여 적은 순**이다 — 초과가 맨 앞에 온다 (원본 §82 머리)', async () => {
+    await q.query(`INSERT INTO gpa_alloc (cycle_id,student_id,coord_id,points)
+                   VALUES ($1,91,41,12), ($1,92,41,2)`, [cycleId]);
+    await q.query(`INSERT INTO gpa_use (cycle_id,student_id,svc_key,points,on_date,coord_id,state)
+                   VALUES ($1,92,'test',4,'2026-10-08',41,'ok')`, [cycleId]);
+    const b = await svc().board('2026-10-10');
+    expect(b.students.map((s) => [s.studentId, s.remain])).toEqual([[92, -2], [91, 12]]);
+  });
+
   it('기록은 wait 로 들어가고 포인트는 규정 스냅샷이다 — 규정이 바뀌어도 과거는 그대로', async () => {
     const made = await svc().createUse(41, { cycleId, studentId: 91, svcKey: 'test', onDate: '2026-10-06' });
     expect(made).toMatchObject({ state: 'wait', points: 4, coordName: '코디' });

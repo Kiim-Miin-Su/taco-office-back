@@ -16,7 +16,7 @@ import { Repository } from 'typeorm';
 import { GpaCycle } from '../../entities';
 import { todayKst } from '../../lib/kst';
 import type {
-  GpaAllocPutDto, GpaBoardDto, GpaStudentDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
+  GpaAllocPutDto, GpaBoardDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
 } from './gpa.dto';
 
 type R = Record<string, unknown>;
@@ -50,13 +50,42 @@ export class GpaService {
     const at = anchor ?? todayKst();
     const cy = await this.cycleAt(at);
     if (!cy) {
-      return { cycle: null, hasPrev: false, hasNext: false, services, totalAlloc: 0, totalUsed: 0, totalWait: 0, totalRemain: 0, students: [], uses: [] };
+      return { cycle: null, hasPrev: false, hasNext: false, services, totalAlloc: 0, totalUsed: 0, totalWait: 0, totalRemain: 0, totalUses: 0, students: [], uses: [] };
     }
     const cycleId = Number(cy.id);
     const [nav] = await this.q(
       `SELECT EXISTS (SELECT 1 FROM gpa_cycle WHERE to_date < $1) AS has_prev,
               EXISTS (SELECT 1 FROM gpa_cycle WHERE from_date > $2) AS has_next`,
       [cy.f, cy.t]);
+
+    const uses = await this.q(
+      `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date,
+              u.start_min, u.ser_id, u.note_url, u.state, co.name AS coord_name
+         FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id
+        WHERE u.cycle_id = $1
+        ORDER BY u.on_date, u.start_min NULLS LAST, u.id`, [cycleId]);
+
+    /*
+     * §82 카드의 서비스 칩 — **이미 읽어 온 소비 목록 한 벌**에서 접는다. 같은 것을 다시
+     * 묻지 않는다. 승인 대기도 센다: 그 포인트는 잔여에서 이미 빠져 있어, 카드에서만 빼면
+     * 「남은 9p」와 칩의 합이 갈린다 (N-19).
+     */
+    const svcOf = new Map<number, Map<string, { count: number; points: number }>>();
+    for (const u of uses) {
+      const sid = Number(u.student_id);
+      const per = svcOf.get(sid) ?? new Map<string, { count: number; points: number }>();
+      const got = per.get(String(u.svc_key)) ?? { count: 0, points: 0 };
+      per.set(String(u.svc_key), { count: got.count + 1, points: got.points + Number(u.points) });
+      svcOf.set(sid, per);
+    }
+    const svcsFor = (studentId: number): GpaStudentSvcDto[] =>
+      services
+        .filter((sv) => (svcOf.get(studentId)?.get(sv.key)?.count ?? 0) > 0)
+        .map((sv) => ({
+          key: sv.key, name: sv.name,
+          count: svcOf.get(studentId)!.get(sv.key)!.count,
+          points: svcOf.get(studentId)!.get(sv.key)!.points,
+        }));
 
     // 배정 ∪ 소비 학생 — 배정 없이 소비만 있어도 보드에 보인다 (숨기면 초과를 못 본다)
     const students = await this.q(
@@ -82,15 +111,15 @@ export class GpaService {
         studentId: Number(r.id), name: String(r.name), grade: (r.grade as string) ?? null,
         coordName: (r.coord_name as string) ?? null,
         alloc, used, wait, remain, over: remain < 0,
+        svcs: svcsFor(Number(r.id)),
       };
     });
+    /*
+     * 원본 §82 는 「5명 · 잔여 적은 순」이라 적는다 — **초과가 맨 앞**이다.
+     * SQL 의 `ORDER BY st.name` 은 동점을 가르는 둘째 열로 남긴다(같은 잔여면 이름 순).
+     */
+    rows.sort((a, b) => a.remain - b.remain);
 
-    const uses = await this.q(
-      `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date,
-              u.start_min, u.ser_id, u.note_url, u.state, co.name AS coord_name
-         FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id
-        WHERE u.cycle_id = $1
-        ORDER BY u.on_date, u.start_min NULLS LAST, u.id`, [cycleId]);
 
     return {
       cycle: { id: cycleId, no: Number(cy.no), from: String(cy.f), to: String(cy.t), closed: cy.closed === true },
@@ -101,6 +130,8 @@ export class GpaService {
       totalUsed: rows.reduce((a, r) => a + r.used, 0),
       totalWait: rows.reduce((a, r) => a + r.wait, 0),
       totalRemain: rows.reduce((a, r) => a + r.remain, 0),
+      // 「N회 진행」 — 기록이 있다는 것은 회차가 있었다는 뜻이다 (승인 대기도 센다)
+      totalUses: uses.length,
       students: rows,
       uses: uses.map((r) => this.useRow(r)),
     };
@@ -200,6 +231,8 @@ export class GpaService {
     return {
       studentId: Number(stu.id), name: String(stu.name), grade: (stu.grade as string) ?? null,
       coordName: co?.name ?? null, alloc: dto.points, used, wait, remain, over: remain < 0,
+      // 배정 저장 응답은 **그 한 줄**이다 — 카드 칩은 보드 조회가 만든다
+      svcs: [],
     };
   }
 }

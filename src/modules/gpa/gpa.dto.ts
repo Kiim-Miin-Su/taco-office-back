@@ -25,6 +25,18 @@ export class GpaCycleDto {
   @ApiProperty({ description: '닫힘 — 닫힌 사이클은 모든 쓰기가 잠긴다' }) closed!: boolean;
 }
 
+/**
+ * 한 학생이 이 사이클에 쓴 **서비스 한 갈래** — 원본 §82 카드의 「숙제 지원 4·4p」 칩.
+ * 앞의 수는 **회수**, 뒤는 **포인트 합**이다. 규정(`services`) 순서를 따르고 0 인 갈래는 오지 않는다.
+ * 승인 대기도 포함한다 — 잔여에서 이미 빠져 있으므로 카드에서만 빼면 두 수가 갈린다 (N-19).
+ */
+export class GpaStudentSvcDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: '회수' }) count!: number;
+  @ApiProperty({ description: '포인트 합' }) points!: number;
+}
+
 export class GpaStudentDto {
   @ApiProperty() studentId!: number;
   @ApiProperty() name!: string;
@@ -35,6 +47,8 @@ export class GpaStudentDto {
   @ApiProperty({ description: '승인 대기(wait) 합 — 타임라인 점선' }) wait!: number;
   @ApiProperty({ description: 'gpaByStudent() = 배정 − 사용 − 대기' }) remain!: number;
   @ApiProperty({ description: '배정 초과 — 붉게 표시하고 추가 결제/다음 사이클 조정을 안내한다' }) over!: boolean;
+  @ApiProperty({ type: [GpaStudentSvcDto], description: '§82 카드의 서비스 칩 — 0 인 갈래는 없다' })
+  svcs!: GpaStudentSvcDto[];
 }
 
 export class GpaUseDto {
@@ -68,7 +82,15 @@ export class GpaBoardDto {
   @ApiProperty({ description: '사이클 합계 — 승인 사용' }) totalUsed!: number;
   @ApiProperty({ description: '사이클 합계 — 승인 대기' }) totalWait!: number;
   @ApiProperty({ description: '사이클 합계 — 잔여 (배정−사용−대기)' }) totalRemain!: number;
-  @ApiProperty({ type: [GpaStudentDto], description: '배정 ∪ 소비 학생 — 이름 순' }) students!: GpaStudentDto[];
+  @ApiProperty({
+    description: '§82 머리의 「N회 진행」 — 이 사이클 소비 기록 수. 승인 대기도 센다 '
+      + '(기록이 있다는 것은 회차가 있었다는 뜻이고, 그 포인트는 이미 잔여에서 빠져 있다)',
+  }) totalUses!: number;
+  @ApiProperty({
+    type: [GpaStudentDto],
+    description: '배정 ∪ 소비 학생 — **잔여 적은 순**(원본 §82 「5명 · 잔여 적은 순」), 같으면 이름 순. '
+      + '초과가 맨 앞에 온다 — 먼저 손봐야 할 것이 먼저 보여야 한다.',
+  }) students!: GpaStudentDto[];
   @ApiProperty({ type: [GpaUseDto], description: '사이클 내 소비 — 날짜·시간 순 (gpTimeline 입력)' }) uses!: GpaUseDto[];
 }
 
