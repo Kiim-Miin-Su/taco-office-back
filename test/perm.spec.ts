@@ -23,6 +23,7 @@ import {
   ROLE_LABEL,
   canCeoComment,
   canCeoApprovePlan,
+  approvalFlowScope,
   type Role,
 } from '../src/common/perm';
 
@@ -64,6 +65,12 @@ describe('권한 3줄 파생 (D-R39)', () => {
         expect(permsOf('manager', { [flag]: value })).toEqual(permsOf('admin', { [flag]: value }));
       }
     }
+  });
+
+  it('§75 projection은 대표=all, 관리자=매니저=head, 강사=none 한 곳에서 파생한다', () => {
+    expect(ROLES.map((role) => approvalFlowScope(role))).toEqual(['none', 'head', 'head', 'all']);
+    expect(approvalFlowScope('admin', { canAdminPage: false })).toBe('none');
+    expect(approvalFlowScope('teacher', { canAdminPage: true })).toBe('none');
   });
 });
 

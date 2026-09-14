@@ -11,7 +11,7 @@
  * §14 승인 대기함과 §75 결재 흐름이 **같은 함수**를 보는 것이 이 파일이 지키는 것이다.
  */
 import {
-  apFlow, apSentence, toApState, AP_KINDS, AP_KINDS_MISSING, AP_STATE_WORDS,
+  apFlow, approvalFlowProjection, apSentence, toApState, AP_KINDS, AP_KINDS_MISSING, AP_STATE_WORDS,
   isKnownApWord, type ApRow,
 } from '../src/lib/approval';
 
@@ -165,5 +165,52 @@ describe('apSentence — 누가 누구에게', () => {
   });
   it('이름이 비어도 빈칸을 보여 주지 않는다', () => {
     expect(apSentence(row({ id: 1, byName: null }), '대표')).toBe('알 수 없음 → 대표');
+  });
+});
+
+describe('§75 approvalFlowProjection — exact 5종·수신자·역할 투영', () => {
+  const rows: ApRow[] = [
+    row({ id: 1, kind: 'rpt', byId: null, byName: null, go: '/exec?view=day&date=2026-09-14&rpt=1' }),
+    row({ id: 2, kind: 'plan', byId: OTHER, state: 'back', why: '근거 부족' }),
+    row({ id: 3, kind: 'req', byId: OTHER }),
+    row({ id: 4, kind: 'chreq', byId: OTHER }),
+    row({ id: 5, kind: 'gpapack', byId: ME }),
+    row({ id: 6, kind: 'rep' }),
+    row({ id: 7, kind: 'suggestion' }),
+    row({ id: 8, kind: 'missing' }),
+    row({ id: 9, kind: 'plan', byId: ME, state: 'back', why: '내 기획 보완' }),
+  ];
+
+  it('대표는 대표·실장 수신 전체를 보고 타일은 waiting만 세다', () => {
+    const flow = approvalFlowProjection(rows, ME, 'all');
+    expect(flow.tiles.map((tile) => [tile.kind, tile.kindLabel, tile.toLabel, tile.count])).toEqual([
+      ['rpt', '대표 보고', '대표에게', 1],
+      ['plan', '기획 결재', '대표에게', 0],
+      ['req', '강사 요청', '실장에게', 1],
+      ['chreq', '변경 요청', '실장에게', 1],
+      ['gpapack', '자료 요청', '실장에게', 0],
+    ]);
+    expect(flow.total).toBe(flow.waiting.length);
+    expect(flow.back).toEqual([expect.objectContaining({ id: 9, state: 'back', why: '내 기획 보완' })]);
+    expect(flow.mine).toEqual([expect.objectContaining({ id: 5, state: 'mine' })]);
+    expect(flow.waiting.find((item) => item.id === 1)).toMatchObject({
+      byName: '알 수 없음', to: 'ceo', toName: '대표', toLabel: '대표에게',
+    });
+    expect([...flow.back, ...flow.waiting, ...flow.mine].map((item) => item.kind))
+      .not.toEqual(expect.arrayContaining(['rep', 'suggestion', 'missing']));
+  });
+
+  it('관리자·매니저는 실장 수신 대기만 받고 대표 수신 건은 건수도 안 샌다', () => {
+    const flow = approvalFlowProjection(rows, ME, 'head');
+    expect(flow.waiting.map((item) => item.kind)).toEqual(['req', 'chreq']);
+    expect(flow.total).toBe(2);
+    expect(flow.tiles.find((tile) => tile.kind === 'rpt')?.count).toBe(0);
+    expect(flow.back).toEqual([expect.objectContaining({ id: 9 })]);
+  });
+
+  it('강사 projection은 트리거·타일·행·건수가 모두 0이다', () => {
+    expect(approvalFlowProjection(rows, ME, 'none')).toEqual({
+      canView: false, tiles: [], back: [], waiting: [], mine: [], total: 0, backCount: 0,
+    });
   });
 });

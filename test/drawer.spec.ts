@@ -97,6 +97,20 @@ describe('변경 요청 회차 소유권 — DB 독립', () => {
   });
 });
 
+describe('§75 역할별 projection 위임 — DB 독립', () => {
+  it.each([
+    ['teacher', 'none'], ['manager', 'head'], ['admin', 'head'], ['ceo', 'all'],
+  ] as const)('%s는 공용 perm selector의 %s 범위를 service에 전달한다', (role, scope) => {
+    const svc = { all: jest.fn().mockResolvedValue({}) };
+    const controller = new DrawerController(
+      svc as unknown as DrawerService,
+      {} as ScheduleService,
+    );
+    controller.all({ id: 1, name: '권한 검수', role }, {});
+    expect(svc.all).toHaveBeenCalledWith(1, role !== 'teacher', role !== 'teacher', false, scope);
+  });
+});
+
 d('우측 서랍 — §14~§21', () => {
   let app: INestApplication;
   let ds: DataSource;
@@ -272,6 +286,21 @@ d('우측 서랍 — §14~§21', () => {
     ['rpt', 'plan', 'req', 'chreq', 'gpapack'].forEach((k) => expect([...kinds]).toContain(k));
   });
 
+  it('§75 매니저 projection은 exact 5종 타일·실장 수신 대기·deep link만 내린다', async () => {
+    const { approvalFlow: flow } = (await get('/drawer', MANAGER).expect(200)).body;
+    expect(flow.canView).toBe(true);
+    expect(flow.tiles.map((tile: { kind: string }) => tile.kind))
+      .toEqual(['rpt', 'plan', 'req', 'chreq', 'gpapack']);
+    expect(flow.total).toBe(flow.waiting.length);
+    expect(flow.backCount).toBe(flow.back.length);
+    expect(flow.waiting.every((item: { to: string }) => item.to === 'head')).toBe(true);
+    expect(flow.waiting.map((item: { kind: string }) => item.kind))
+      .not.toEqual(expect.arrayContaining(['rpt', 'plan', 'rep', 'suggestion', 'missing']));
+    REQ_IDS.forEach((id) => expect(flow.waiting).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'req', id, toName: '실장', toLabel: '실장에게', go: `/ops?tab=todo&request=${id}` }),
+    ])));
+  });
+
   /* ── ③ D-R39 — 감추는 게 아니라 없다 ───────────────────────────── */
 
   it('강사에게는 남의 결재가 목록에서 빠진다 — 「있다」는 사실도 안 흘린다', async () => {
@@ -281,6 +310,11 @@ d('우측 서랍 — §14~§21', () => {
     const mine = r.body.approvals.mine.map((a: { id: number }) => a.id);
     REQ_IDS.forEach((id) => expect(mine).toContain(id));
     r.body.approvals.back.forEach((a: { byId: number }) => expect(a.byId).toBe(T));
+  });
+
+  it('강사의 §75 projection은 트리거와 업무 정보가 모두 빈다', async () => {
+    const { approvalFlow: flow } = (await get('/drawer', TEACHER).expect(200)).body;
+    expect(flow).toEqual({ canView: false, tiles: [], back: [], waiting: [], mine: [], total: 0, backCount: 0 });
   });
 
   it('강사의 할 일·알림은 자기 것만 온다', async () => {

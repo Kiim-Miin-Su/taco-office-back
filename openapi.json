@@ -20907,6 +20907,198 @@
           "missingKinds"
         ]
       },
+      "ApprovalFlowTileDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "rpt",
+              "plan",
+              "req",
+              "chreq",
+              "gpapack"
+            ]
+          },
+          "kindLabel": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string",
+            "enum": [
+              "ceo",
+              "head"
+            ]
+          },
+          "toLabel": {
+            "type": "string",
+            "enum": [
+              "대표에게",
+              "실장에게"
+            ]
+          },
+          "count": {
+            "type": "number",
+            "description": "현재 사용자에게 보이는 waiting 행 수"
+          }
+        },
+        "required": [
+          "kind",
+          "kindLabel",
+          "to",
+          "toLabel",
+          "count"
+        ]
+      },
+      "ApprovalFlowItemDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "rpt",
+              "plan",
+              "req",
+              "chreq",
+              "gpapack"
+            ]
+          },
+          "kindLabel": {
+            "type": "string",
+            "description": "원문 타일·행의 공통 종류 이름"
+          },
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "sub": {
+            "type": "string",
+            "nullable": true
+          },
+          "byId": {
+            "type": "number",
+            "nullable": true
+          },
+          "byName": {
+            "type": "string",
+            "description": "올린 사람. RPT 제출자 FK가 없으면 `알 수 없음`"
+          },
+          "to": {
+            "type": "string",
+            "enum": [
+              "ceo",
+              "head"
+            ]
+          },
+          "toName": {
+            "type": "string",
+            "enum": [
+              "대표",
+              "실장"
+            ],
+            "description": "행의 '발신자 → 수신자'에 쓰는 조사 없는 이름"
+          },
+          "toLabel": {
+            "type": "string",
+            "enum": [
+              "대표에게",
+              "실장에게"
+            ]
+          },
+          "at": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "back",
+              "waiting",
+              "mine"
+            ]
+          },
+          "why": {
+            "type": "string",
+            "nullable": true,
+            "description": "반려 사유. PLAN은 append-only LOG.after.reason에서 복원"
+          },
+          "go": {
+            "type": "string",
+            "description": "승인·반려 없이 원본 레코드로 이동할 deep link"
+          }
+        },
+        "required": [
+          "kind",
+          "kindLabel",
+          "id",
+          "title",
+          "sub",
+          "byId",
+          "byName",
+          "to",
+          "toName",
+          "toLabel",
+          "at",
+          "state",
+          "why",
+          "go"
+        ]
+      },
+      "ApprovalFlowDto": {
+        "type": "object",
+        "properties": {
+          "canView": {
+            "type": "boolean",
+            "description": "§75 트리거·데이터 표시 가능여부의 서버 판정"
+          },
+          "tiles": {
+            "description": "원문 순서 exact 5종. 강사는 빈 배열",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalFlowTileDto"
+            }
+          },
+          "back": {
+            "description": "돌아온 건 — 맨 위",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalFlowItemDto"
+            }
+          },
+          "waiting": {
+            "description": "기다리는 건",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalFlowItemDto"
+            }
+          },
+          "mine": {
+            "description": "내가 올린 건",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalFlowItemDto"
+            }
+          },
+          "total": {
+            "type": "number",
+            "description": "지금 대기 건수. waiting.length와 같음"
+          },
+          "backCount": {
+            "type": "number",
+            "description": "돌아온 건수. back.length와 같음"
+          }
+        },
+        "required": [
+          "canView",
+          "tiles",
+          "back",
+          "waiting",
+          "mine",
+          "total",
+          "backCount"
+        ]
+      },
       "DrawerTodoDto": {
         "type": "object",
         "properties": {
@@ -21355,6 +21547,14 @@
               }
             ]
           },
+          "approvalFlow": {
+            "description": "§75 exact 5종 읽기·이동 전용 중앙 결재 흐름",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ApprovalFlowDto"
+              }
+            ]
+          },
           "todos": {
             "description": "§15 할 일",
             "type": "array",
@@ -21441,6 +21641,7 @@
         },
         "required": [
           "approvals",
+          "approvalFlow",
           "todos",
           "notis",
           "notiCategories",

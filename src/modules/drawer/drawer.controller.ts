@@ -23,7 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { OkDto } from '../../common/http.dto';
-import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { approvalFlowScope, Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ScheduleService } from '../schedule/schedule.service';
 import {
@@ -53,6 +53,7 @@ export class DrawerController {
       canApprove: role !== null && hasPerm(role, 'canApprove', user.perms),
       canSeeAll: role !== null && hasPerm(role, 'canCrudAll', user.perms),
       canWage: role !== null && hasPerm(role, 'canWage', user.perms),
+      approvalFlowScope: role === null ? 'none' as const : approvalFlowScope(role, user.perms),
     };
   }
 
@@ -60,9 +61,9 @@ export class DrawerController {
   @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 승인함/결재 흐름 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
   all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
-    const { canApprove, canSeeAll } = this.gate(user);
+    const { canApprove, canSeeAll, approvalFlowScope: flowScope } = this.gate(user);
     // notiWindow=all 은 **보여 주는 범위**만 넓힌다 — 지운 적이 없으므로 예전 것이 그대로 나온다 (N-7 · D-16)
-    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all');
+    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope);
   }
 
   @Patch('todos/:id')

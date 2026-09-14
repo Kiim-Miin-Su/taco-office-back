@@ -71,6 +71,22 @@ export const canCeoComment = (r: Role): boolean => r === 'ceo';
  */
 export const canCeoApprovePlan = (r: Role): boolean => r === 'ceo';
 
+/**
+ * §75 중앙 결재 흐름의 서버 projection 범위.
+ *
+ * 역할 문자열 비교를 drawer controller에 복제하지 않고 이 결과만 소비한다.
+ * 강사는 개인 예외로 canAdminPage가 켜져도 §75 정보를 받지 않는다.
+ */
+export type ApprovalFlowScope = 'none' | 'head' | 'all';
+
+export function approvalFlowScope(
+  role: Role,
+  overrides?: Partial<Record<PermName, boolean | null>> | null,
+): ApprovalFlowScope {
+  if (!canAdminPage(role) || !hasPerm(role, 'canAdminPage', overrides)) return 'none';
+  return canCeoApprovePlan(role) ? 'all' : 'head';
+}
+
 /* ── 화면이 읽는 플래그 ────────────────────────────────────────────────
    명세서 v2 §76 은 플래그 5개로 그린다. 그 이름을 그대로 두되 **판정은
    위 세 줄에서 다시 파생**한다. 저장하지 않는다 (D-R39 · N-11 닫힘).   */

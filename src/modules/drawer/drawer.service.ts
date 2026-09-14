@@ -17,8 +17,9 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryRunner, Repository } from 'typeorm';
 import { Lead } from '../../entities';
+import type { ApprovalFlowScope } from '../../common/perm';
 import {
-  apFlow, labelOf, reqAsked, reqAskedLine, toApState,
+  apFlow, approvalFlowProjection, labelOf, reqAsked, reqAskedLine, toApState,
   GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
 import { kindGroupLabel } from '../../lib/catalog-words';
@@ -124,19 +125,31 @@ export class DrawerService {
         kind: 'rpt', id: Number(r.id),
         title: `${labelOf(RPT_TYPE_LABEL, String(r.rpt_type))} 보고`,
         sub: String(r.on_date), byId: null, byName: null, at: String(r.at),
-        state: toApState(str(r.state)), why: str(r.reject_reason), go: '/exec',
+        state: toApState(str(r.state)), why: str(r.reject_reason),
+        go: `/exec?view=${String(r.rpt_type)}&date=${String(r.on_date)}&rpt=${Number(r.id)}`,
       });
     }
 
     for (const r of await this.q(
-      `SELECT p.id, p.title, p.stage, ${kstAt(`p.created_at`)} AS at,
-              p.owner_id, s.name AS owner_name
-         FROM plan p LEFT JOIN staff s ON s.id = p.owner_id`,
+      `SELECT p.id, p.title, p.stage, to_char(p.due_on, 'MM-DD') AS due_on, ${kstAt(`p.created_at`)} AS at,
+              p.owner_id, s.name AS owner_name, rejected.reason AS reject_reason
+         FROM plan p LEFT JOIN staff s ON s.id = p.owner_id
+         LEFT JOIN LATERAL (
+           SELECT NULLIF(l.after->>'reason', '') AS reason
+             FROM log l
+            WHERE lower(l.entity) = 'plan' AND l.entity_id = p.id
+              AND lower(l.action) IN ('rework', 'reject')
+            ORDER BY l.at DESC, l.id DESC LIMIT 1
+         ) rejected ON true`,
     )) {
+      const state = toApState(str(r.stage));
+      const sub = [str(r.owner_name), r.due_on ? `마감 ${String(r.due_on)}` : null].filter(Boolean).join(' · ');
       rows.push({
-        kind: 'plan', id: Number(r.id), title: String(r.title), sub: '기획',
+        kind: 'plan', id: Number(r.id), title: String(r.title),
+        sub: sub || null,
         byId: num(r.owner_id), byName: str(r.owner_name), at: String(r.at),
-        state: toApState(str(r.stage)), why: null, go: '/ops',
+        state, why: state === 'back' ? str(r.reject_reason) : null,
+        go: `/ops?tab=plan&plan=${Number(r.id)}`,
       });
     }
 
@@ -152,7 +165,8 @@ export class DrawerService {
         // 「무엇을 바라는가」를 줄에 적는다 — 근거를 안 보고 누르는 승인이 되지 않도록 (§14)
         sub: reqAskedLine(reqType, r.payload),
         byId: num(r.staff_id), byName: str(r.by_name), at: String(r.at),
-        state: toApState(str(r.state)), why: str(r.reject_reason), go: '/ops',
+        state: toApState(str(r.state)), why: str(r.reject_reason),
+        go: `/ops?tab=todo&request=${Number(r.id)}`,
         reqType, asked: reqAskedLine(reqType, r.payload),
       });
     }
@@ -184,36 +198,49 @@ export class DrawerService {
         state: toApState(str(r.state)),
         // 반려 사유는 이제 제 칸이 있다 (v4.18) — 옛 행은 신청 사유 칸에만 있어 그것으로 갈음한다
         why: toApState(str(r.state)) === 'back' ? (str(r.reject_reason) ?? str(r.reason)) : null,
-        go: '/schedule',
+        go: `/schedule?changeRequest=${Number(r.id)}`,
         reqType, asked, applicable: chreqApplicable(reqType, r.payload),
       });
     }
 
     // 다섯 번째 — 자료 요청 (§41). 다학생은 한 줄의 이름으로 모으고 작성자를 보존한다.
     for (const r of await this.q(
-      `SELECT g.id, g.pack_type, g.state, g.memo, g.created_by,
+      `SELECT g.id, g.pack_type, g.title, g.state, g.memo, g.created_by, b.name AS by_name,
+              to_char(g.effective_on, 'MM-DD') AS effective_on,
               string_agg(s.name, ' · ' ORDER BY s.name) AS stu_names,
               ${kstAt(`g.created_at`)} AS at
          FROM gpapack g
+         LEFT JOIN staff b ON b.id = g.created_by
          LEFT JOIN gpapack_student gs ON gs.gpapack_id = g.id
          LEFT JOIN stu s ON s.id = gs.student_id
-        GROUP BY g.id`,
+        GROUP BY g.id, b.name`,
     )) {
+      const sub = [str(r.stu_names), r.effective_on ? `기한 ${String(r.effective_on)}` : null, str(r.memo)]
+        .filter(Boolean).join(' · ');
       rows.push({
         kind: 'gpapack', id: Number(r.id),
-        title: str(r.stu_names) ?? '학생',
-        sub: [labelOf(GPAPACK_TYPE_LABEL, String(r.pack_type)), str(r.memo)]
+        title: [`${labelOf(GPAPACK_TYPE_LABEL, String(r.pack_type))} 자료 요청`, str(r.title)]
           .filter(Boolean).join(' · '),
-        byId: num(r.created_by), byName: null, at: String(r.at),
-        state: toApState(str(r.state)), why: null, go: '/books',
+        sub: sub || null,
+        byId: num(r.created_by), byName: str(r.by_name), at: String(r.at),
+        state: toApState(str(r.state)), why: null,
+        go: `/books?tab=requests&pack=${Number(r.id)}`,
       });
     }
 
     return rows;
   }
 
-  async all(viewerId: number, canApprove: boolean, canSeeAll: boolean, notiAll = false): Promise<DrawerDto> {
-    const approvals = apFlow(await this.approvalRows(), viewerId, canApprove);
+  async all(
+    viewerId: number,
+    canApprove: boolean,
+    canSeeAll: boolean,
+    notiAll = false,
+    flowScope: ApprovalFlowScope = 'none',
+  ): Promise<DrawerDto> {
+    const approvalRows = await this.approvalRows();
+    const approvals = apFlow(approvalRows, viewerId, canApprove);
+    const approvalFlow = approvalFlowProjection(approvalRows, viewerId, flowScope);
 
     // 할 일 — 강사는 자기 것만 (주고받은 것). 화면이 안 걸러도 서버가 거른다 (D-R39)
     const todos = (await this.q(
@@ -357,7 +384,7 @@ export class DrawerService {
     };
 
     return {
-      approvals, todos, notis, notiCategories,
+      approvals, approvalFlow, todos, notis, notiCategories,
       notiWindowDays: windowDays,
       notiOlderCount: Number(older?.n ?? 0),
       members, memberGroups, tzGroups, kinds, changeReqs, zoomAccounts, workSummary,

@@ -18,6 +18,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { OpsService } from '../src/modules/ops/ops.service';
+import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
 
@@ -132,6 +133,15 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
       `SELECT after FROM log WHERE entity='plan' AND entity_id=$1 ORDER BY id DESC LIMIT 1`, [planId],
     );
     expect(log.after).toMatchObject({ stage: 'rework', reason: '리서치 근거 부족' });
+
+    const flow = (await new DrawerService(q.manager.getRepository(Lead))
+      .all(MGR, true, true, false, 'head')).approvalFlow;
+    expect(flow.back.find((item) => item.kind === 'plan' && item.id === planId)).toMatchObject({
+      why: '리서치 근거 부족',
+      toName: '대표',
+      toLabel: '대표에게',
+      go: `/ops?tab=plan&plan=${planId}`,
+    });
   });
 
   it('이미 승인된 기한은 다시 승인하지 않는다', async () => {

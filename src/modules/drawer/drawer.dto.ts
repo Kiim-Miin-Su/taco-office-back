@@ -8,6 +8,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 // 여기서 다시 적었다가 DB(time_move)·읽기 DTO(time)·쓰기 검증(off)이 세 벌로 갈렸다.
 import { KIND_GROUPS } from '../../lib/catalog-words';
 import { CHREQ_TYPES } from '../../lib/change-request';
+import {
+  APPROVAL_FLOW_KINDS, APPROVAL_FLOW_RECIPIENT_LABELS,
+  APPROVAL_FLOW_RECIPIENT_NAMES, APPROVAL_FLOW_RECIPIENTS,
+} from '../../lib/approval';
 import { Transform } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
@@ -114,6 +118,42 @@ export class ApFlowDto {
   @ApiProperty({ description: '§14 승인 대기함 배지 — inbox와 같은 배열의 길이' }) inboxCount!: number;
   @ApiProperty({ type: [String], description: '아직 표가 없어 못 세는 갈래 (N-13 대기)' })
   missingKinds!: string[];
+}
+
+/** §75 중앙 결재 흐름 한 줄. §14 ApRowDto와 다른 전용 projection이다. */
+export class ApprovalFlowItemDto {
+  @ApiProperty({ enum: APPROVAL_FLOW_KINDS }) kind!: (typeof APPROVAL_FLOW_KINDS)[number];
+  @ApiProperty({ description: '원문 타일·행의 공통 종류 이름' }) kindLabel!: string;
+  @ApiProperty() id!: number;
+  @ApiProperty() title!: string;
+  @ApiProperty(S) sub!: string | null;
+  @ApiProperty(N) byId!: number | null;
+  @ApiProperty({ description: '올린 사람. RPT 제출자 FK가 없으면 `알 수 없음`' }) byName!: string;
+  @ApiProperty({ enum: APPROVAL_FLOW_RECIPIENTS }) to!: (typeof APPROVAL_FLOW_RECIPIENTS)[number];
+  @ApiProperty({ enum: APPROVAL_FLOW_RECIPIENT_NAMES, description: "행의 '발신자 → 수신자'에 쓰는 조사 없는 이름" }) toName!: string;
+  @ApiProperty({ enum: APPROVAL_FLOW_RECIPIENT_LABELS }) toLabel!: string;
+  @ApiProperty() at!: string;
+  @ApiProperty({ enum: ['back', 'waiting', 'mine'] }) state!: 'back' | 'waiting' | 'mine';
+  @ApiProperty({ ...S, description: '반려 사유. PLAN은 append-only LOG.after.reason에서 복원' }) why!: string | null;
+  @ApiProperty({ description: '승인·반려 없이 원본 레코드로 이동할 deep link' }) go!: string;
+}
+
+export class ApprovalFlowTileDto {
+  @ApiProperty({ enum: APPROVAL_FLOW_KINDS }) kind!: (typeof APPROVAL_FLOW_KINDS)[number];
+  @ApiProperty() kindLabel!: string;
+  @ApiProperty({ enum: APPROVAL_FLOW_RECIPIENTS }) to!: (typeof APPROVAL_FLOW_RECIPIENTS)[number];
+  @ApiProperty({ enum: APPROVAL_FLOW_RECIPIENT_LABELS }) toLabel!: string;
+  @ApiProperty({ description: '현재 사용자에게 보이는 waiting 행 수' }) count!: number;
+}
+
+export class ApprovalFlowDto {
+  @ApiProperty({ description: '§75 트리거·데이터 표시 가능여부의 서버 판정' }) canView!: boolean;
+  @ApiProperty({ type: [ApprovalFlowTileDto], description: '원문 순서 exact 5종. 강사는 빈 배열' }) tiles!: ApprovalFlowTileDto[];
+  @ApiProperty({ type: [ApprovalFlowItemDto], description: '돌아온 건 — 맨 위' }) back!: ApprovalFlowItemDto[];
+  @ApiProperty({ type: [ApprovalFlowItemDto], description: '기다리는 건' }) waiting!: ApprovalFlowItemDto[];
+  @ApiProperty({ type: [ApprovalFlowItemDto], description: '내가 올린 건' }) mine!: ApprovalFlowItemDto[];
+  @ApiProperty({ description: '지금 대기 건수. waiting.length와 같음' }) total!: number;
+  @ApiProperty({ description: '돌아온 건수. back.length와 같음' }) backCount!: number;
 }
 
 /** §15 할 일 */
@@ -261,6 +301,8 @@ export class WorkSummaryDto {
 /** 서랍 하나가 여덟 칸을 함께 내려준다 — 열 때마다 여덟 번 왕복하지 않는다 */
 export class DrawerDto {
   @ApiProperty({ type: ApFlowDto, description: '§14 승인 대기함' }) approvals!: ApFlowDto;
+  @ApiProperty({ type: ApprovalFlowDto, description: '§75 exact 5종 읽기·이동 전용 중앙 결재 흐름' })
+  approvalFlow!: ApprovalFlowDto;
   @ApiProperty({ type: [DrawerTodoDto], description: '§15 할 일' }) todos!: DrawerTodoDto[];
   @ApiProperty({ type: [NotiDto], description: '§16 알림 — 기본은 최근 30일 (D-16: 조회 범위 제한이지 삭제가 아니다)' }) notis!: NotiDto[];
   @ApiProperty({ type: [NotiCategoryDto], description: '§16 원문 순서의 분류와 현재 조회 창 건수' })

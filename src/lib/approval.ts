@@ -17,9 +17,34 @@
  * `ApFlow.missingKinds`는 저장소가 실제로 없는 종류가 생길 때만 쓴다.
  */
 
+import type { ApprovalFlowScope } from '../common/perm';
+
 /** §75 공통 다섯 갈래 + §14 강사 리포트 (D-R26 · D-R34) */
 export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing'] as const;
 export type ApKind = (typeof AP_KINDS)[number];
+
+/** §75 중앙 결재 흐름의 정확한 다섯 갈래. §14 REP·건의·누락은 섞지 않는다. */
+export const APPROVAL_FLOW_KINDS = ['rpt', 'plan', 'req', 'chreq', 'gpapack'] as const;
+export type ApprovalFlowKind = (typeof APPROVAL_FLOW_KINDS)[number];
+export const APPROVAL_FLOW_RECIPIENTS = ['ceo', 'head'] as const;
+export type ApprovalFlowRecipient = (typeof APPROVAL_FLOW_RECIPIENTS)[number];
+
+export const APPROVAL_FLOW_KIND_LABEL: Record<ApprovalFlowKind, string> = {
+  rpt: '대표 보고', plan: '기획 결재', req: '강사 요청', chreq: '변경 요청', gpapack: '자료 요청',
+};
+
+export const APPROVAL_FLOW_RECIPIENT: Record<ApprovalFlowKind, ApprovalFlowRecipient> = {
+  rpt: 'ceo', plan: 'ceo', req: 'head', chreq: 'head', gpapack: 'head',
+};
+
+export const APPROVAL_FLOW_RECIPIENT_NAMES = ['대표', '실장'] as const;
+export const APPROVAL_FLOW_RECIPIENT_LABELS = ['대표에게', '실장에게'] as const;
+export const APPROVAL_FLOW_RECIPIENT_NAME: Record<ApprovalFlowRecipient, (typeof APPROVAL_FLOW_RECIPIENT_NAMES)[number]> = {
+  ceo: '대표', head: '실장',
+};
+export const APPROVAL_FLOW_RECIPIENT_LABEL: Record<ApprovalFlowRecipient, string> = {
+  ceo: '대표에게', head: '실장에게',
+};
 
 /**
  * 아직 표가 없어 정규화하지 못하는 것 — **지금은 없다.**
@@ -197,6 +222,90 @@ export interface ApFlow {
   inboxCount: number;
   /** 아직 표가 없어 못 세는 갈래 */
   missingKinds: ApKind[];
+}
+
+export interface ApprovalFlowItem {
+  kind: ApprovalFlowKind;
+  kindLabel: string;
+  id: number;
+  title: string;
+  sub: string | null;
+  byId: number | null;
+  byName: string;
+  to: ApprovalFlowRecipient;
+  /** 행의 '김범준 → 대표'에 쓰는 조사 없는 이름. */
+  toName: string;
+  /** 타일의 '대표에게'에 쓰는 완성된 이름. */
+  toLabel: string;
+  at: string;
+  state: 'back' | 'waiting' | 'mine';
+  why: string | null;
+  go: string;
+}
+
+export interface ApprovalFlowTile {
+  kind: ApprovalFlowKind;
+  kindLabel: string;
+  to: ApprovalFlowRecipient;
+  toLabel: string;
+  count: number;
+}
+
+export interface ApprovalFlowProjection {
+  canView: boolean;
+  tiles: ApprovalFlowTile[];
+  /** 돌아온 건 → 기다리는 건 → 내가 올린 건 순서로 화면이 그린다. */
+  back: ApprovalFlowItem[];
+  waiting: ApprovalFlowItem[];
+  mine: ApprovalFlowItem[];
+  /** 원문 '지금 N건 대기' — waiting과 같은 배열에서 세다. */
+  total: number;
+  backCount: number;
+}
+
+/** §75 전용 읽기 projection. §14와 ApRow 원장을 공유하되 의미는 섞지 않는다. */
+export function approvalFlowProjection(
+  rows: readonly ApRow[], viewerId: number, scope: ApprovalFlowScope,
+): ApprovalFlowProjection {
+  if (scope === 'none') {
+    return { canView: false, tiles: [], back: [], waiting: [], mine: [], total: 0, backCount: 0 };
+  }
+
+  const exact = rows.filter((row): row is ApRow & { kind: ApprovalFlowKind } =>
+    (APPROVAL_FLOW_KINDS as readonly ApKind[]).includes(row.kind));
+  const item = (row: ApRow & { kind: ApprovalFlowKind }, state: ApprovalFlowItem['state']): ApprovalFlowItem => {
+    const to = APPROVAL_FLOW_RECIPIENT[row.kind];
+    return {
+      kind: row.kind, kindLabel: APPROVAL_FLOW_KIND_LABEL[row.kind], id: row.id,
+      title: row.title, sub: row.sub, byId: row.byId,
+      // RPT에는 아직 제출자 FK가 없다. 화면이 추정하지 않도록 경계를 값으로 내린다.
+      byName: row.byName ?? '알 수 없음',
+      to, toName: APPROVAL_FLOW_RECIPIENT_NAME[to], toLabel: APPROVAL_FLOW_RECIPIENT_LABEL[to],
+      at: row.at, state, why: row.why, go: row.go,
+    };
+  };
+  const byAtDesc = (a: ApprovalFlowItem, b: ApprovalFlowItem) =>
+    (a.at < b.at ? 1 : a.at > b.at ? -1 : 0);
+  // '돌아온 건'은 **내가 올렸다가** 반려된 건이다. 대표라도 남의 반려 이력을 여기 섞지 않는다.
+  const back = exact
+    .filter((row) => row.state === 'back' && row.byId === viewerId)
+    .map((row) => item(row, 'back')).sort(byAtDesc);
+  const waiting = exact
+    .filter((row) => row.state === 'waiting' && row.byId !== viewerId)
+    .filter((row) => scope === 'all' || APPROVAL_FLOW_RECIPIENT[row.kind] === 'head')
+    .map((row) => item(row, 'waiting')).sort(byAtDesc);
+  const mine = exact
+    .filter((row) => row.state !== 'back' && row.byId === viewerId)
+    .map((row) => item(row, 'mine')).sort(byAtDesc);
+  const tiles = APPROVAL_FLOW_KINDS.map((kind) => {
+    const to = APPROVAL_FLOW_RECIPIENT[kind];
+    return {
+      kind, kindLabel: APPROVAL_FLOW_KIND_LABEL[kind], to,
+      toLabel: APPROVAL_FLOW_RECIPIENT_LABEL[to],
+      count: waiting.filter((row) => row.kind === kind).length,
+    };
+  });
+  return { canView: true, tiles, back, waiting, mine, total: waiting.length, backCount: back.length };
 }
 
 /** §14의 분류는 저장 표 이름이 아니라 업무 의미다. 이 함수 한 곳에서만 대응한다. */

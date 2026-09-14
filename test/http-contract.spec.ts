@@ -91,6 +91,22 @@ describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ code: 'INVALID', message: '잘못된 입력' });
   });
+  it('§75 OpenAPI는 DrawerDto의 exact 5종 전용 projection을 정적 타입으로 고정한다', () => {
+    const schemas = buildOpenApi(app).components?.schemas;
+    const drawer = schemas?.DrawerDto;
+    const item = schemas?.ApprovalFlowItemDto;
+    const tile = schemas?.ApprovalFlowTileDto;
+    if (!drawer || '$ref' in drawer || !item || '$ref' in item || !tile || '$ref' in tile) {
+      throw Error('approval flow schemas missing');
+    }
+    expect(drawer.required).toContain('approvalFlow');
+    expect(drawer.properties?.approvalFlow).toMatchObject({
+      allOf: [{ $ref: '#/components/schemas/ApprovalFlowDto' }],
+    });
+    expect(item.properties?.kind).toMatchObject({ enum: ['rpt', 'plan', 'req', 'chreq', 'gpapack'] });
+    expect(item.properties?.toName).toMatchObject({ enum: ['대표', '실장'] });
+    expect(tile.properties?.toLabel).toMatchObject({ enum: ['대표에게', '실장에게'] });
+  });
   it('Bearer 기본 요구와 Public 예외를 같은 decorator에서 파생한다', () => {
     const doc = buildOpenApi(app);
     expect(doc.security).toEqual([{ bearer: [] }]);
