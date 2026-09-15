@@ -1480,6 +1480,99 @@
         ]
       }
     },
+    "/schedule/undo": {
+      "post": {
+        "description": "서명된10분 토큰의 직후 스냅숏과 현재 DB가 같을 때만 직전 스냅숏을 복원한다. 토큰의 actor와 현재 사용자가 달라도 거절한다.",
+        "operationId": "ScheduleController_undo",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleUndoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "UNDO_STALE: 토큰 발급 뒤 같은 일정이 다시 변경됨",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "직전 일정 쓰기 되돌리기 — 같은 행이 다시 바뀌었으면 409",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule/{serId}": {
       "patch": {
         "description": "같은 SER의 쓰기는 부모 행 잠금 획득 순서로 처리하며 최신 저장값으로 부분 변경을 검증한다. 생략한 필드는 보존하고 this의 null 시간·날짜는 원본 상속으로 되돌린다. SER/EXC 저장과 회차 투영은 한 transaction이다. 버전 충돌 검출/멱등 키 계약은 제공하지 않는다.",
@@ -13122,6 +13215,11 @@
               "type": "number"
             }
           },
+          "undoToken": {
+            "type": "string",
+            "nullable": true,
+            "description": "직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다."
+          },
           "unavailable": {
             "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",
             "type": "array",
@@ -13288,6 +13386,20 @@
           "scope"
         ]
       },
+      "ScheduleUndoDto": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 32,
+            "maxLength": 100000,
+            "description": "직전 WriteResult.undoToken 그대로"
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
       "OccurrencePatchDto": {
         "type": "object",
         "properties": {
@@ -13419,6 +13531,11 @@
             "items": {
               "type": "number"
             }
+          },
+          "undoToken": {
+            "type": "string",
+            "nullable": true,
+            "description": "직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다."
           },
           "unavailable": {
             "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",

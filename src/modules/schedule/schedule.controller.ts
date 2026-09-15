@@ -12,7 +12,7 @@ import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AttendanceMutationResultDto, AttendanceWriteDto, HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
   OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
-  WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto,
+  WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto, ScheduleUndoDto,
   LessonTrackingDto, LessonTrackingQueryDto,
   ConflictPreviewDto, ConflictQueryDto,
 } from './schedule.dto';
@@ -175,24 +175,36 @@ export class ScheduleController {
   @Perm('canCrudAll')
   @ApiOperation({ summary: '수업 만들기 — 겹치면 DB 가 409 로 막는다 (D-R43)' })
   @ApiCreatedResponse({ type: WriteResultDto })
-  create(@Body() dto: OccurrenceCreateDto): Promise<WriteResultDto> {
-    return this.write.create(dto);
+  create(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrenceCreateDto): Promise<WriteResultDto> {
+    return user ? this.write.create(dto, user.id) : this.write.create(dto);
   }
 
   @Post('paste')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '회차 1~50건 복제 — 결과는 새 SER, EXC는 따라오지 않는다 (D-R19)' })
   @ApiCreatedResponse({ type: WriteResultDto })
-  paste(@Body() dto: OccurrencePasteDto): Promise<WriteResultDto> {
-    return this.write.paste(dto);
+  paste(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrencePasteDto): Promise<WriteResultDto> {
+    return user ? this.write.paste(dto, user.id) : this.write.paste(dto);
   }
 
   @Post('move')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '다중 선택 회차 이동 — 전부 저장되거나 전부 되돌아간다 (C-7)' })
   @ApiCreatedResponse({ type: WriteResultDto })
-  moveMany(@Body() dto: OccurrenceMoveDto): Promise<WriteResultDto> {
-    return this.write.moveMany(dto);
+  moveMany(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrenceMoveDto): Promise<WriteResultDto> {
+    return user ? this.write.moveMany(dto, user.id) : this.write.moveMany(dto);
+  }
+
+  @Post('undo')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '직전 일정 쓰기 되돌리기 — 같은 행이 다시 바뀌었으면 409',
+    description: '서명된10분 토큰의 직후 스냅숏과 현재 DB가 같을 때만 직전 스냅숏을 복원한다. 토큰의 actor와 현재 사용자가 달라도 거절한다.',
+  })
+  @ApiCreatedResponse({ type: WriteResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'UNDO_STALE: 토큰 발급 뒤 같은 일정이 다시 변경됨' })
+  undo(@CurrentUser() user: RequestUser, @Body() dto: ScheduleUndoDto): Promise<WriteResultDto> {
+    return this.write.undo(user.id, dto.token);
   }
 
   @Patch(':serId')
@@ -206,10 +218,11 @@ export class ScheduleController {
   })
   @ApiOkResponse({ type: WriteResultDto })
   patch(
+    @CurrentUser() user: RequestUser | undefined,
     @Param() params: ScheduleParamsDto,
     @Body() dto: OccurrencePatchDto,
   ): Promise<WriteResultDto> {
-    return this.write.patch(params.serId, dto);
+    return user ? this.write.patch(params.serId, dto, undefined, user.id) : this.write.patch(params.serId, dto);
   }
 
   @Delete(':serId')
@@ -218,10 +231,11 @@ export class ScheduleController {
   @ApiOperation({ summary: '수업 취소·휴강 — 참조가 있으면 지우지 않고 기간을 마감한다' })
   @ApiOkResponse({ type: WriteResultDto })
   remove(
+    @CurrentUser() user: RequestUser | undefined,
     @Param() params: ScheduleParamsDto,
     @Body() dto: OccurrenceDeleteDto,
   ): Promise<WriteResultDto> {
-    return this.write.remove(params.serId, dto);
+    return user ? this.write.remove(params.serId, dto, undefined, user.id) : this.write.remove(params.serId, dto);
   }
 
   @Patch(':serId/roster')
@@ -232,9 +246,10 @@ export class ScheduleController {
   @ApiOperation({ summary: '수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)' })
   @ApiOkResponse({ type: RosterResultDto })
   roster(
+    @CurrentUser() user: RequestUser | undefined,
     @Param() params: ScheduleParamsDto,
     @Body() dto: RosterPatchDto,
   ): Promise<RosterResultDto> {
-    return this.write.roster(params.serId, dto);
+    return user ? this.write.roster(params.serId, dto, user.id) : this.write.roster(params.serId, dto);
   }
 }

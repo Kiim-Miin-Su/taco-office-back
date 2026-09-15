@@ -117,7 +117,8 @@ describe('일정 조회/경로 → DTO → service 경계 (DB/인증은 통합 s
     const fn = { ...write, ...attendance }[name];
     if (name === 'save') expect(fn).toHaveBeenCalledWith(1, date, expect.objectContaining(body), 11);
     else if (name === 'clear') expect(fn).toHaveBeenCalledWith(1, date, 11);
-    else expect(fn).toHaveBeenCalledWith(1, expect.objectContaining(body));
+    else if (name === 'roster') expect(fn).toHaveBeenCalledWith(1, expect.objectContaining(body), 11);
+    else expect(fn).toHaveBeenCalledWith(1, expect.objectContaining(body), undefined, 11);
   });
   it('OpenAPI query/path가 실제 날짜·정수 타입과 제한을 노출한다', () => {
     const doc = buildOpenApi(app);

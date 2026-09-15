@@ -153,6 +153,39 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     return { id, from, body: res.body };
   }
 
+  it('Ctrl/⌘+Z 토큰은 생성과 회차 이동을 DB까지 되돌리고 같은 토큰 재사용을 막는다', async () => {
+    const created = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    expect(typeof created.body.undoToken).toBe('string');
+
+    const moved = await api('patch', `/schedule/${created.id}`)
+      .send({ scope: 'this', onDate: created.from, startMin: 690, endMin: 750 })
+      .expect(200);
+    expect(typeof moved.body.undoToken).toBe('string');
+    expect(await q('SELECT start_min,end_min FROM exc WHERE ser_id=$1', [created.id]))
+      .toEqual([{ start_min: 690, end_min: 750 }]);
+
+    await api('post', '/schedule/undo').send({ token: moved.body.undoToken }).expect(201);
+    expect(await q('SELECT start_min,end_min FROM exc WHERE ser_id=$1', [created.id])).toEqual([]);
+    const replay = await api('post', '/schedule/undo').send({ token: moved.body.undoToken }).expect(409);
+    expect(replay.body.code).toBe('UNDO_STALE');
+
+    await api('post', '/schedule/undo').send({ token: created.body.undoToken }).expect(201);
+    expect(await q('SELECT id FROM ser WHERE id=$1', [created.id])).toEqual([]);
+  });
+
+  it('토큰 뒤 같은 수업이 다시 바뀌면 오래된 Ctrl/⌘+Z가 새 변경을 덮지 않는다', async () => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
+    const first = await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, startMin: 690, endMin: 750 }).expect(200);
+    await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, startMin: 720, endMin: 780 }).expect(200);
+
+    const stale = await api('post', '/schedule/undo').send({ token: first.body.undoToken }).expect(409);
+    expect(stale.body.code).toBe('UNDO_STALE');
+    expect(await q('SELECT start_min,end_min FROM exc WHERE ser_id=$1', [id]))
+      .toEqual([{ start_min: 720, end_min: 780 }]);
+  });
+
   it('원본 변경 뒤 예외가 상속한 길이9분은 BAD_RANGE이며 모두 rollback한다', async () => {
     const {id,from}=await makeSer({kindKey:'meeting',teacherId:null,studentIds:[]});
     await api('patch',`/schedule/${id}`).send({scope:'this',onDate:from,endMin:630}).expect(200);

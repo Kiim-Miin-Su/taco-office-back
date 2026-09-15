@@ -336,11 +336,23 @@ export class WriteResultDto {
   @ApiProperty({ type: [Number], description: '영향받은 규칙 — 화면은 이 범위만 다시 읽으면 된다' })
   serIds!: number[];
 
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: '직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다.',
+  })
+  undoToken!: string | null;
+
   @ApiProperty({
     type: [UnavWarnDto],
     description: '강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄',
   })
   unavailable!: UnavWarnDto[];
+}
+
+export class ScheduleUndoDto {
+  @ApiProperty({ minLength: 32, maxLength: 100000, description: '직전 WriteResult.undoToken 그대로' })
+  @IsString() @MinLength(32) @MaxLength(100000) token!: string;
 }
 
 /** 명단 변경 직후 서버가 같은 트랜잭션 스냅숏에서 계산한 후속 작업 (D-R22). */

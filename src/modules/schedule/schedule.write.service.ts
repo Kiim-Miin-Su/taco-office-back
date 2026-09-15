@@ -18,7 +18,7 @@
  * 네 단계는 한 트랜잭션이다 (D-R43 ① 경계). 겹치면 EXCLUDE 가 23P01 을 던지고
  * 트랜잭션이 통째로 되돌아간다 — 절반만 저장된 시간표가 남지 않는다.
  */
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type QueryRunner } from 'typeorm';
 import {
@@ -30,6 +30,7 @@ import { rosterPricing, GUIDE_DONE_DB } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
 import { loadState, persist } from './schedule.state.repo';
+import { issueScheduleUndo, readScheduleUndo, sameScheduleState } from './schedule.undo';
 import { assertScheduleReferences } from './schedule.references';
 import { horizon, project } from './schedule.project';
 import type {
@@ -101,6 +102,8 @@ export class ScheduleWriteService {
       { after: State; log: string[]; effScope: string } |
       Promise<{ after: State; log: string[]; effScope: string }>,
     enrich?: (q: QueryRunner, fresh: State, base: WriteResultDto) => Promise<T>,
+    actorId?: number,
+    undoable = true,
   ): Promise<T> {
     const q = this.ds.createQueryRunner();
     await q.connect();
@@ -121,8 +124,12 @@ export class ScheduleWriteService {
       const fresh = await loadState(q, touched);
       const projected = await project(q, fresh, touched, horizon());
 
+      const snapshotIds = [...new Set([...before.SER.map((row) => row.id), ...touched])];
+      const afterSnapshot = actorId && undoable ? await loadState(q, snapshotIds) : null;
+
       const base = {
         effScope, log, projected, serIds: touched,
+        undoToken: actorId && afterSnapshot ? issueScheduleUndo(actorId, before, afterSnapshot) : null,
         unavailable: await unavailableOverlaps(q, touched),
       };
       const result = enrich ? await enrich(q, fresh, base) : base as T;
@@ -136,7 +143,7 @@ export class ScheduleWriteService {
     }
   }
 
-  async create(dto: OccurrenceCreateDto): Promise<WriteResultDto> {
+  async create(dto: OccurrenceCreateDto, actorId?: number): Promise<WriteResultDto> {
     if (!isIsoDate(dto.fromDate) || (dto.toDate != null && !isIsoDate(dto.toDate))) {
       throw new BadRequestException({ code: 'BAD_RANGE', message: '시작일·종료일은 실제 YYYY-MM-DD 날짜여야 합니다' });
     }
@@ -167,14 +174,14 @@ export class ScheduleWriteService {
         },
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    });
+    }, undefined, actorId);
   }
 
   /**
    * Ctrl+드래그와 C/X/V의 단일 저장 경로. 클라이언트가 보낸 표시용 내용을 믿지 않고
    * 원본 참조를 occ()로 다시 풀어 copyMany() → applyPaste() 순서로만 새 SER를 만든다.
    */
-  async paste(dto: OccurrencePasteDto): Promise<WriteResultDto> {
+  async paste(dto: OccurrencePasteDto, actorId?: number): Promise<WriteResultDto> {
     const sourceIds = [...new Set(dto.sources.map((s) => s.serId))];
     return this.tx(sourceIds, (before) => {
       const seen = new Set<string>();
@@ -221,11 +228,11 @@ export class ScheduleWriteService {
         scope: dto.scope as Scope,
       });
       return { after: pasted, log: [...log, ...pasted.__log], effScope: pasted.__effScope };
-    });
+    }, undefined, actorId);
   }
 
   /** C-7 — 여러 PATCH를 클라이언트에서 반복하지 않고 한 load/reduce/persist/project로 묶는다. */
-  async moveMany(dto: OccurrenceMoveDto): Promise<WriteResultDto> {
+  async moveMany(dto: OccurrenceMoveDto, actorId?: number): Promise<WriteResultDto> {
     const sourceIds = [...new Set(dto.items.map((x) => x.source.serId))];
     return this.tx(sourceIds, (before) => {
       const refs = new Set<string>();
@@ -273,7 +280,7 @@ export class ScheduleWriteService {
         log.push(...moved.__log);
       }
       return { after: current, log, effScope: dto.scope };
-    });
+    }, undefined, actorId);
   }
 
   /**
@@ -283,7 +290,7 @@ export class ScheduleWriteService {
    *   겹침으로 롤백되면 요청 상태도 함께 되돌아간다.
    */
   async patch(
-    serId: number, dto: OccurrencePatchDto, inside?: (q: QueryRunner) => Promise<void>,
+    serId: number, dto: OccurrencePatchDto, inside?: (q: QueryRunner) => Promise<void>, actorId?: number,
   ): Promise<WriteResultDto> {
     return this.tx([serId], (before) => {
       const ser = this.requireOccurrence(before, serId, dto.onDate);
@@ -320,7 +327,7 @@ export class ScheduleWriteService {
         patch,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, this.withInside(inside));
+    }, this.withInside(inside), actorId);
   }
 
   /** `inside` 를 `tx` 의 커밋 직전 자리(enrich)에 끼운다. 결과는 바꾸지 않는다. */
@@ -334,7 +341,7 @@ export class ScheduleWriteService {
 
   /** @param inside `patch` 와 같다 — 같은 트랜잭션에서 함께 커밋할 일 (C42) */
   async remove(
-    serId: number, dto: OccurrenceDeleteDto, inside?: (q: QueryRunner) => Promise<void>,
+    serId: number, dto: OccurrenceDeleteDto, inside?: (q: QueryRunner) => Promise<void>, actorId?: number,
   ): Promise<WriteResultDto> {
     return this.tx([serId], async (before, q) => {
       this.requireOccurrence(before, serId, dto.onDate);
@@ -362,11 +369,11 @@ export class ScheduleWriteService {
         hasRefs: refs[0]?.has_refs === true,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, this.withInside(inside));
+    }, this.withInside(inside), actorId, false);
   }
 
   /** §12 · §79 — 학생 넣고 빼기. 「그날만 빼기」가 D-R21 이다. */
-  async roster(serId: number, dto: RosterPatchDto): Promise<RosterResultDto> {
+  async roster(serId: number, dto: RosterPatchDto, actorId?: number): Promise<RosterResultDto> {
     return this.tx<RosterResultDto>([serId], async (before, q) => {
       this.requireOccurrence(before, serId, dto.onDate);
       const student = await q.query('SELECT id FROM stu WHERE id=$1', [dto.studentId]) as Array<{ id: string }>;
@@ -448,6 +455,51 @@ export class ScheduleWriteService {
         tierHeads: pricing ? pricing.tierHeads : null,
         overrideCount: pricing ? pricing.overrideCount : 0,
       };
-    });
+    }, actorId);
+  }
+
+  /**
+   * Ctrl/⌘+Z — 토큰이 가리키는 행만 잠그고, 발급 직후 상태와 현재 상태가 같을 때만 복원한다.
+   * 화면 캐시를 되감는 기능이 아니다. DB 복원과 재투영이 한 트랜잭션으로 끝나야 한다.
+   */
+  async undo(actorId: number, token: string): Promise<WriteResultDto> {
+    const payload = readScheduleUndo(token, actorId);
+    if (!payload) {
+      throw new BadRequestException({ code: 'BAD_UNDO_TOKEN', message: '되돌리기 시간이 지났거나 토큰이 올바르지 않습니다' });
+    }
+    const ids = [...new Set([...payload.before.SER, ...payload.after.SER].map((row) => row.id))];
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      const current = await loadState(q, ids, { forWrite: true });
+      if (!sameScheduleState(current, payload.after)) {
+        throw new ConflictException({
+          code: 'UNDO_STALE',
+          message: '그 뒤 같은 수업이 다시 바뀌어 이전 작업을 안전하게 되돌릴 수 없습니다',
+        });
+      }
+      const timeIssue = scheduleTimeIssue(payload.before);
+      if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
+      await assertScheduleReferences(q, payload.before);
+      const touched = await persist(q, current, payload.before);
+      const fresh = await loadState(q, touched);
+      const projected = await project(q, fresh, touched, horizon());
+      const result: WriteResultDto = {
+        effScope: 'undo',
+        log: ['직전 일정 쓰기를 되돌렸습니다'],
+        projected,
+        serIds: touched,
+        undoToken: null,
+        unavailable: await unavailableOverlaps(q, touched),
+      };
+      await q.commitTransaction();
+      return result;
+    } catch (error) {
+      await q.rollbackTransaction();
+      throw error;
+    } finally {
+      await q.release();
+    }
   }
 }
