@@ -252,12 +252,19 @@ export const SUGGESTIONS = [
 ];
 
 /** 대표 보고 — 일 · 주 · 월 (§69~§71) */
+/**
+ * 대표 보고 — §69~§71.
+ *
+ * **서명은 시각과 사람이 짝이다** (`rpt_sign_pair` CHECK · C85-a). `sentAt` 을 적으면 `sentBy` 를,
+ * `reviewedAt` 을 적으면 `reviewedBy` 를 **반드시 함께** 적어야 한다 — 한쪽만 있으면 DB 가 막는다.
+ * 올린 사람은 관리자(김민수 2), 결재는 **대표만**(김민선 1) 한다.
+ */
 export const REPORTS = [
-  { rptType: 'day',   onDate: D(-4), memo: { note: '출결 미확인 2건은 야간 수업이라 다음 날 정리됩니다.' }, state: 'sent',   sentAt: D(-4) },
-  { rptType: 'day',   onDate: D(-3), memo: { note: '특이사항 없습니다.' }, state: 'sent',   sentAt: D(-3) },
-  { rptType: 'day',   onDate: D(-2), memo: { note: '컴플레인 1건 접수 — 오늘 중 통화 예정입니다.' }, state: 'sent', sentAt: D(-2) },
-  { rptType: 'day',   onDate: D(-1), memo: { note: '리포트 독촉 5건 발송했습니다.' }, state: 'ok', sentAt: D(-1), reviewedAt: D(0) },
-  { rptType: 'week',  onDate: D(-4), memo: { note: '리포트 작성률 3.4%p 하락은 한 강사에게 몰린 결과입니다. 배정을 나눴습니다.' }, state: 'sent', sentAt: D(-3) },
+  { rptType: 'day',   onDate: D(-4), memo: { note: '출결 미확인 2건은 야간 수업이라 다음 날 정리됩니다.' }, state: 'sent',   sentAt: D(-4), sentBy: 2 },
+  { rptType: 'day',   onDate: D(-3), memo: { note: '특이사항 없습니다.' }, state: 'sent',   sentAt: D(-3), sentBy: 2 },
+  { rptType: 'day',   onDate: D(-2), memo: { note: '컴플레인 1건 접수 — 오늘 중 통화 예정입니다.' }, state: 'sent', sentAt: D(-2), sentBy: 2 },
+  { rptType: 'day',   onDate: D(-1), memo: { note: '리포트 독촉 5건 발송했습니다.' }, state: 'ok', sentAt: D(-1), sentBy: 2, reviewedAt: D(0), reviewedBy: 1 },
+  { rptType: 'week',  onDate: D(-4), memo: { note: '리포트 작성률 3.4%p 하락은 한 강사에게 몰린 결과입니다. 배정을 나눴습니다.' }, state: 'sent', sentAt: D(-3), sentBy: 3 },
   { rptType: 'month', onDate: '2026-08-01', memo: { note: '영업이익률 35.4% — 목표 32% 대비 +3.4%p.' }, state: 'draft' },
 ];
 

@@ -12,6 +12,7 @@
  *   · 「이번만 시간 옮김」이 회차 span 에 반영되지 않아 화면이 규칙의 시각을 보여 줬다
  *   · 리포트에 student_id 가 있어서 그룹 수업을 한 줄도 못 넣었다
  *   · 예외 날짜가 요일과 안 맞아 조용히 아무 회차에도 안 붙었다
+ *   · **서명 시각만 넣고 사람을 안 넣어 `rpt_sign_pair` 가 시드를 통째로 막았다** (C86-g)
  *
  * DATABASE_URL 이 없으면 건너뛴다.
  */
@@ -19,6 +20,7 @@ import { DataSource } from 'typeorm';
 import {
   REPORT_WRITTEN_DB, REP_STATE_FROM_DB, reportStateFromDb,
 } from '../src/lib/rules';
+import { REPORTS } from '../src/seed/ops';
 import { DEV_URL } from './db';
 
 /** 규칙이 아는 상태 이름 전부 — 옮긴 값이 여기 없으면 규칙이 못 읽는다. */
@@ -152,5 +154,34 @@ d('시드 — 화면이 보는 값이 맞는가', () => {
     const r = await one(`SELECT count(*)::text AS n FROM rep
       WHERE state = 'none' AND on_date < (SELECT max(on_date) FROM ser_occ)`);
     expect(Number(r.n)).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * 시드 상수 자체의 무결성 — **DB 없이도 돈다** (C86-g).
+ *
+ * 이 검사가 생긴 이유: C85-a 가 `rpt_sign_pair` CHECK 를 새겼는데 시드가 `sent_at` 만 넣고
+ * `sent_by` 를 안 넣어 **출하 스크립트의 시드 단계가 통째로 멈췄다.** jest·tsc·lint·openapi 는
+ * 전부 초록이었다 — **아무 게이트도 시드를 다시 돌리지 않기 때문**이다.
+ *
+ * DB 제약을 시드 상수에 대고 미리 세는 자리다. 여기서 막히면 출하 전에 안다.
+ */
+describe('시드 상수 — DB 없이 보는 것', () => {
+  it('보고의 서명은 **시각과 사람이 짝**이다 (rpt_sign_pair)', () => {
+    for (const r of REPORTS) {
+      const v = r as { rptType: string; onDate: string; sentAt?: string; sentBy?: number; reviewedAt?: string; reviewedBy?: number };
+      const where = `${v.rptType} ${v.onDate}`;
+      expect([where, v.sentAt != null]).toEqual([where, v.sentBy != null]);
+      expect([where, v.reviewedAt != null]).toEqual([where, v.reviewedBy != null]);
+    }
+  });
+
+  it('결재된 보고에는 올린 사람이 먼저 있다 — 아무도 안 올린 것을 결재할 수 없다', () => {
+    for (const r of REPORTS) {
+      const v = r as { rptType: string; onDate: string; sentBy?: number; reviewedBy?: number };
+      if (v.reviewedBy != null) {
+        expect([`${v.rptType} ${v.onDate}`, v.sentBy != null]).toEqual([`${v.rptType} ${v.onDate}`, true]);
+      }
+    }
   });
 });

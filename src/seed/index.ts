@@ -249,7 +249,17 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     }))));
     await add('cpl', COMPLAINTS.map((c) => ({ area: c.area, student_id: c.studentId, stage: c.stage, body: c.body, action: (c as { action?: string }).action ?? null, result: (c as { result?: string }).result ?? null, teacher_changed: c.teacherChanged, owner_id: c.ownerId, created_at: `${c.createdAt}T00:00:00Z` })));
     await add('suggestion', SUGGESTIONS.map((s) => ({ staff_id: s.staffId, category: s.category, body: s.body, state: s.state, reply: (s as { reply?: string }).reply ?? null, reply_by: num((s as { replyBy?: number }).replyBy), reply_at: (s as { replyAt?: string }).replyAt ? `${(s as { replyAt?: string }).replyAt}T00:00:00Z` : null, created_at: `${s.createdAt}T00:00:00Z` })));
-    await add('rpt', REPORTS.map((r) => ({ rpt_type: r.rptType, on_date: r.onDate, memo: JSON.stringify(r.memo), state: r.state, sent_at: (r as { sentAt?: string }).sentAt ? `${(r as { sentAt?: string }).sentAt}T00:00:00Z` : null, reviewed_at: (r as { reviewedAt?: string }).reviewedAt ? `${(r as { reviewedAt?: string }).reviewedAt}T00:00:00Z` : null })));
+    // 서명은 **시각과 사람이 짝**이다 — 한쪽만 넣으면 rpt_sign_pair 가 막는다 (C85-a)
+    await add('rpt', REPORTS.map((r) => {
+      const at = r as { sentAt?: string; sentBy?: number; reviewedAt?: string; reviewedBy?: number };
+      return {
+        rpt_type: r.rptType, on_date: r.onDate, memo: JSON.stringify(r.memo), state: r.state,
+        sent_at: at.sentAt ? `${at.sentAt}T00:00:00Z` : null,
+        sent_by: at.sentBy ?? null,
+        reviewed_at: at.reviewedAt ? `${at.reviewedAt}T00:00:00Z` : null,
+        reviewed_by: at.reviewedBy ?? null,
+      };
+    }));
     await add('todo', TODOS.map((t) => ({ title: t.title, from_id: t.fromId, to_id: t.toId, due_on: t.dueOn, done: t.done, src: t.src, mt_id: num((t as { mtId?: number }).mtId), plan_id: num((t as { planId?: number }).planId) })));
 
     // 손으로 넣은 id 뒤로 시퀀스를 밀어 둔다 — 안 하면 다음 INSERT 가 충돌한다
