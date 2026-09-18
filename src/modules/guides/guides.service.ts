@@ -11,9 +11,11 @@ import { Lead } from '../../entities';
 import { histSql } from '../../lib/history';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
-  GuideBodyDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto, GuideHistorySpan,
-  GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
+  GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideHistorySpan, GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
+  PerLessonNoticeDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
+import { guideAutoFill, guideAutoFills } from '../../lib/guide-body';
 import { END_MIN, kstAt, kstDateOf, START_MIN, serStuOn, writtenRows } from '../../lib/sql';
 import { addDays, isIsoDate, overdueDays as overdue, todayKst } from '../../lib/kst';
 
@@ -69,6 +71,9 @@ export class GuidesService {
       : (sql: string, p: unknown[]) => this.q(sql, p);
     const rows = await run(
       `SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.created_by,
+              (SELECT count(*)::int FROM guide sg
+                WHERE sg.ser_id=g.ser_id AND sg.event_on=g.event_on AND sg.reason=g.reason
+                  AND sg.id<>g.id) AS sibling_count,
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
               o.id AS source_occurrence_id,
@@ -90,7 +95,110 @@ export class GuidesService {
          ORDER BY g.created_at DESC,g.id DESC`,
       params,
     );
-    return rows.map((row) => this.mapGuide(row));
+    const mapped = rows.map((row) => this.mapGuide(row));
+    await this.attachAutoFill(mapped, manager);
+    return mapped;
+  }
+
+
+  /**
+   * §43 「회차마다 나가는 안내」 한 날치 (F-63).
+   *
+   * **정본은 그날의 온라인 SER_OCC** 이고 PNOTI 는 발송 기록이다. 목록과 줌 안내 쓰기 응답이
+   * 같은 함수를 쓴다 — 두 곳이 따로 만들면 보낸 직후의 줄이 목록과 다른 모양으로 보인다.
+   */
+  private async perLessonRows(onDate: string, teacherId: number | null): Promise<PerLessonNoticeDto[]> {
+    const perRows = await this.q(
+      `SELECT o.id AS source_occurrence_id,o.ser_id,
+              to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS on_date,
+              ${START_MIN} AS start_min,${END_MIN} AS end_min,
+              o.teacher_id,t.name AS teacher_name,r.title AS ser_title,k.name AS kind_name,
+              o.zacc_id,z.label AS zacc_label,ss.student_id,st.name AS student_name,
+              p.id AS notice_id,p.channel,p.body,${kstAt('p.sent_at')} AS sent_at,
+              (SELECT ${kstAt('pt.sent_at')} FROM pnoti pt
+                WHERE pt.ser_id=o.ser_id AND pt.on_date=o.on_date AND pt.audience='teacher'
+                ORDER BY pt.id DESC LIMIT 1) AS teacher_sent_at
+         FROM ser_occ o
+         JOIN ser r ON r.id=o.ser_id AND r.mode='online'::class_mode_t
+         JOIN kind k ON k.key=r.kind_key
+         JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+         JOIN stu st ON st.id=ss.student_id
+         LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
+         LEFT JOIN staff t ON t.id=o.teacher_id
+         LEFT JOIN zacc z ON z.id=o.zacc_id
+         LEFT JOIN LATERAL (
+           SELECT pn.id,pn.channel,pn.body,pn.sent_at
+             FROM pnoti pn
+            WHERE pn.ser_id=o.ser_id AND pn.on_date=o.on_date AND pn.student_id=ss.student_id
+              AND pn.audience='parent'
+            ORDER BY pn.id DESC
+            LIMIT 1
+         ) p ON true
+        WHERE NOT o.canceled
+          AND ${kstDateOf('lower(o.span)')}=$1::date
+          AND ($2::bigint IS NULL OR o.teacher_id=$2)
+          AND NOT EXISTS (
+            SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id
+          )
+        ORDER BY lower(o.span),o.id,st.name,st.id,p.id DESC`,
+      [onDate, teacherId],
+    );
+    const byOccurrence = new Map<number, R[]>();
+    for (const row of perRows) {
+      const id = Number(row.source_occurrence_id);
+      byOccurrence.set(id, [...(byOccurrence.get(id) ?? []), row]);
+    }
+    return [...byOccurrence.values()].map((rows) => {
+      const first = rows[0];
+      const notices = rows.map((row) => ({
+        id: row.notice_id == null ? null : Number(row.notice_id),
+        studentId: Number(row.student_id), studentName: String(row.student_name),
+        channel: (row.channel as string) ?? null, body: (row.body as string) ?? null,
+        sentAt: (row.sent_at as string) ?? null,
+      }));
+      const recorded = notices.length > 0 && notices.every((notice) => notice.sentAt !== null);
+      const firstNotice = notices.find((notice) => notice.id !== null);
+      return {
+        id: Number(first.source_occurrence_id), sourceOccurrenceId: Number(first.source_occurrence_id),
+        serId: Number(first.ser_id), onDate: String(first.on_date),
+        startMin: Number(first.start_min), endMin: Number(first.end_min),
+        teacherId: first.teacher_id == null ? null : Number(first.teacher_id),
+        teacherName: (first.teacher_name as string) ?? null,
+        kindName: (first.kind_name as string) ?? null,
+        zaccId: first.zacc_id == null ? null : Number(first.zacc_id),
+        zaccLabel: (first.zacc_label as string) ?? null,
+        zoomAssigned: first.zacc_id != null,
+        notices,
+        parentDeliveryRecorded: recorded,
+        // 강사 줄이 실제로 생기고 sent_at 이 찍혔을 때만 참이다 (F-63 — 그 전에는 쓰는 길이 0이었다)
+        teacherDeliveryRecorded: first.teacher_sent_at != null,
+        ...GuidesService.sendGate({
+          alreadySent: first.teacher_sent_at != null,
+          zaccId: first.zacc_id == null ? null : Number(first.zacc_id),
+          teacherId: first.teacher_id == null ? null : Number(first.teacher_id),
+        }),
+        channel: firstNotice?.channel ?? 'app',
+        studentName: notices.map((notice) => notice.studentName).join(', '),
+        serTitle: (first.ser_title as string) ?? null,
+        body: firstNotice?.body ?? '',
+        sentAt: recorded ? notices.map((notice) => notice.sentAt).sort().at(-1) ?? null : null,
+      };
+    });
+  }
+
+  /**
+   * 아직 안 쓴 초안에만 자동 채움을 얹는다 (F-60).
+   *
+   * **저장하지 않는다** — 읽을 때마다 지금 사실로 만든다. 굳혀 두면 교재가 나중에 배정될 때
+   * 낡은 말이 남는다. 이미 쓴 안내(`ready` 이상)는 사람이 쓴 말이 정본이라 건드리지 않는다.
+   * 질의는 **한 번**이다 — 안내마다 물으면 목록 하나에 왕복이 안내 수만큼 는다.
+   */
+  private async attachAutoFill(guides: GuideDto[], manager?: EntityManager): Promise<void> {
+    const drafts = guides.filter((g) => g.state === 'draft');
+    if (drafts.length === 0) return;
+    const runner = manager ?? this.anyRepo.manager;
+    const fills = await guideAutoFills(runner, drafts.map((g) => g.id));
+    for (const guide of drafts) guide.autoFill = fills.get(guide.id) ?? null;
   }
 
   private mapGuide(r: R): GuideDto {
@@ -114,6 +222,8 @@ export class GuidesService {
       acknowledgedByName: (r.acknowledged_by_name as string) ?? null,
       acknowledgedAt: (r.acknowledged_at as string) ?? null,
       overdueDays: pending ? overdue(r.due_on as string) : 0,
+      // 「나머지 학생에게 복사」가 서는지도 서버가 센다 (F-61 · D-R37) — 화면이 목록을 다시 훑지 않는다
+      siblingCount: Number(r.sibling_count ?? 0),
     };
   }
 
@@ -122,71 +232,7 @@ export class GuidesService {
     const only = teacherId !== undefined;
     const guides = await this.guideRows(`WHERE ($1::bigint IS NULL OR g.teacher_id=$1)`, [only ? teacherId : null]);
 
-    const perRows = await this.q(
-      `SELECT o.id AS source_occurrence_id,o.ser_id,
-              to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS on_date,
-              ${START_MIN} AS start_min,${END_MIN} AS end_min,
-              o.teacher_id,t.name AS teacher_name,r.title AS ser_title,k.name AS kind_name,
-              o.zacc_id,z.label AS zacc_label,ss.student_id,st.name AS student_name,
-              p.id AS notice_id,p.channel,p.body,${kstAt('p.sent_at')} AS sent_at
-         FROM ser_occ o
-         JOIN ser r ON r.id=o.ser_id AND r.mode='online'::class_mode_t
-         JOIN kind k ON k.key=r.kind_key
-         JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
-         JOIN stu st ON st.id=ss.student_id
-         LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
-         LEFT JOIN staff t ON t.id=o.teacher_id
-         LEFT JOIN zacc z ON z.id=o.zacc_id
-         LEFT JOIN LATERAL (
-           SELECT pn.id,pn.channel,pn.body,pn.sent_at
-             FROM pnoti pn
-            WHERE pn.ser_id=o.ser_id AND pn.on_date=o.on_date AND pn.student_id=ss.student_id
-            ORDER BY pn.id DESC
-            LIMIT 1
-         ) p ON true
-        WHERE NOT o.canceled
-          AND ${kstDateOf('lower(o.span)')}=$1::date
-          AND ($2::bigint IS NULL OR o.teacher_id=$2)
-          AND NOT EXISTS (
-            SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id
-          )
-        ORDER BY lower(o.span),o.id,st.name,st.id,p.id DESC`,
-      [todayKst(), only ? teacherId : null],
-    );
-    const byOccurrence = new Map<number, R[]>();
-    for (const row of perRows) {
-      const id = Number(row.source_occurrence_id);
-      byOccurrence.set(id, [...(byOccurrence.get(id) ?? []), row]);
-    }
-    const perLesson = [...byOccurrence.values()].map((rows) => {
-      const first = rows[0];
-      const notices = rows.map((row) => ({
-        id: row.notice_id == null ? null : Number(row.notice_id),
-        studentId: Number(row.student_id), studentName: String(row.student_name),
-        channel: (row.channel as string) ?? null, body: (row.body as string) ?? null,
-        sentAt: (row.sent_at as string) ?? null,
-      }));
-      const recorded = notices.length > 0 && notices.every((notice) => notice.sentAt !== null);
-      const firstNotice = notices.find((notice) => notice.id !== null);
-      return {
-        id: Number(first.source_occurrence_id), sourceOccurrenceId: Number(first.source_occurrence_id),
-        serId: Number(first.ser_id), onDate: String(first.on_date),
-        startMin: Number(first.start_min), endMin: Number(first.end_min),
-        teacherId: first.teacher_id == null ? null : Number(first.teacher_id),
-        teacherName: (first.teacher_name as string) ?? null,
-        kindName: (first.kind_name as string) ?? null,
-        zaccId: first.zacc_id == null ? null : Number(first.zacc_id),
-        zaccLabel: (first.zacc_label as string) ?? null,
-        zoomAssigned: first.zacc_id != null,
-        notices, parentDeliveryRecorded: recorded, teacherDeliveryRecorded: false,
-        channel: firstNotice?.channel ?? 'app',
-        studentName: notices.map((notice) => notice.studentName).join(', '),
-        serTitle: (first.ser_title as string) ?? null,
-        body: firstNotice?.body ?? '',
-        sentAt: recorded ? notices.map((notice) => notice.sentAt).sort().at(-1) ?? null : null,
-      };
-    });
-
+    const perLesson = await this.perLessonRows(todayKst(), only ? teacherId : null);
     const teacherChanges = new Map<string, number>();
     for (const guide of guides.filter((guide) => guide.reason === 'teacher_change')) {
       const key = `${guide.studentId}|${guide.serId ?? 'none'}`;
@@ -225,6 +271,9 @@ export class GuidesService {
            FROM guide g
        )
        SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.guide_count,g.created_by,
+              (SELECT count(*)::int FROM guide sg
+                WHERE sg.ser_id=g.ser_id AND sg.event_on=g.event_on AND sg.reason=g.reason
+                  AND sg.id<>g.id) AS sibling_count,
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
               o.id AS source_occurrence_id,${kstAt('g.created_at')} AS created_at,
@@ -256,8 +305,7 @@ export class GuidesService {
          FROM diag d WHERE d.student_id=ANY($1::bigint[])
         ORDER BY d.student_id,d.created_at DESC,d.id DESC`, [ids],
     );
-    return {
-      items: latest.map((row) => ({
+    const items = latest.map((row) => ({
         studentId: Number(row.student_id), studentName: String(row.student_name),
         grade: (row.grade as string) ?? null, guidance: (row.guidance as string) ?? null, lang: (row.lang as string) ?? null,
         guideCount: Number(row.guide_count), latestGuide: this.mapGuide(row),
@@ -274,8 +322,10 @@ export class GuidesService {
             curriculum: (diag.curriculum as string) ?? null, createdAt: String(diag.created_at),
           } : null;
         })(),
-      })),
-    };
+      }));
+    // §44 도 같은 작성 창을 연다 — 자동 채움이 §43 에만 서면 같은 창이 화면마다 다르게 열린다
+    await this.attachAutoFill(items.map((item) => item.latestGuide));
+    return { items };
   }
 
   private range(span: GuideHistorySpan, anchor: string): { from: string; to: string } {
@@ -471,6 +521,237 @@ export class GuidesService {
       if (ins[0]) made.push(Number(ins[0].id));
     }
     return made;
+  }
+
+  /* ══ §43 「나머지 학생에게 복사」 (F-61) ═════════════════════════════════════ */
+
+  /**
+   * 그룹 수업 안내를 형제 초안으로 옮긴다.
+   *
+   * **같은 규칙 · 같은 날 · 같은 사유**의 다른 학생 초안만 받는다 — 다른 날의 안내는 다른 사건이다.
+   * **이미 쓴 형제는 건너뛴다.** 덮으면 그 사람이 쓴 말이 소리 없이 사라진다.
+   * **머리말은 받는 학생 것으로 다시 만든다** — 그대로 옮기면 A 의 이름·학년·교재가 B 의 안내에
+   * 남고 그 말이 학부모에게 나간다. 원본이 자기 머리말로 시작할 때만 앞자락을 갈아 끼우고,
+   * 사람이 머리말까지 고쳐 써서 앞자락이 안 맞으면 그대로 옮기며 `headReplaced:false` 로 알린다.
+   */
+  async copyBody(userId: number, id: number): Promise<GuideCopyResultDto> {
+    const copiedIds: number[] = [];
+    const skipped: GuideCopyResultDto['skipped'] = [];
+    let headReplaced = false;
+
+    await this.anyRepo.manager.transaction(async (m) => {
+      const [src] = await m.query(
+        /* 날짜는 문자열로 받는다 — Date 를 그대로 되돌려주면 파라미터로 다시 넣을 때 깨진다 */
+        `SELECT g.id, g.ser_id, to_char(g.event_on,'YYYY-MM-DD') AS event_on, g.reason, g.body, g.state
+           FROM guide g WHERE g.id=$1 FOR UPDATE`,
+        [id],
+      ) as Array<R>;
+      if (!src) throw new NotFoundException('안내를 찾을 수 없습니다');
+      const body = (src.body as string | null) ?? '';
+      if (body.trim() === '') {
+        throw new ConflictException({
+          code: 'GUIDE_COPY_EMPTY',
+          message: '먼저 이 학생의 안내를 쓴 뒤에 복사하세요',
+        });
+      }
+      if (src.ser_id === null || src.event_on === null) {
+        throw new ConflictException({
+          code: 'GUIDE_COPY_NO_SIBLING',
+          message: '이 안내는 수업 회차에 붙어 있지 않아 옮길 곳이 없습니다',
+        });
+      }
+
+      /* 형제 — 같은 규칙·같은 날·같은 사유의 다른 학생. 상태와 무관하게 전부 가져와 이유를 돌려준다 */
+      const siblings = await m.query(
+        `SELECT g.id, g.state, st.name AS student_name
+           FROM guide g LEFT JOIN stu st ON st.id=g.student_id
+          WHERE g.ser_id=$1 AND g.event_on=$2::date AND g.reason=$3 AND g.id<>$4
+          ORDER BY st.name, g.id
+          FOR UPDATE OF g`,
+        [Number(src.ser_id), String(src.event_on), String(src.reason), id],
+      ) as Array<R>;
+      if (siblings.length === 0) {
+        throw new ConflictException({
+          code: 'GUIDE_COPY_NO_SIBLING',
+          message: '이 수업에는 같은 날 안내를 받는 다른 학생이 없습니다',
+        });
+      }
+
+      /* 원본 머리말 — 이 앞자락으로 시작할 때만 갈아 끼운다 */
+      const srcFill = await guideAutoFill(m, id);
+      const srcHead = srcFill?.body ?? '';
+      const hasHead = srcHead !== '' && body.startsWith(srcHead);
+      const tail = hasHead ? body.slice(srcHead.length) : body;
+      headReplaced = hasHead;
+
+      for (const sib of siblings) {
+        const sibId = Number(sib.id);
+        const name = (sib.student_name as string) ?? '이름 없음';
+        if (String(sib.state) !== 'draft') {
+          skipped.push({ id: sibId, studentName: name, reason: GuidesService.copySkipReason(String(sib.state)) });
+          continue;
+        }
+        const head = hasHead ? (await guideAutoFill(m, sibId))?.body ?? '' : '';
+        const next = hasHead ? head + tail : tail;
+        const rows = writtenRows<R>(await m.query(
+          `UPDATE guide SET body=$2,state='ready'::guide_state_t
+            WHERE id=$1 AND state='draft'::guide_state_t RETURNING id`,
+          [sibId, next],
+        ));
+        if (!rows[0]) {
+          skipped.push({ id: sibId, studentName: name, reason: '그 사이에 상태가 바뀌었습니다' });
+          continue;
+        }
+        await m.query(histSql(), ['guide', sibId, 'guide_write', userId]);
+        copiedIds.push(sibId);
+      }
+    });
+
+    const copied = copiedIds.length
+      ? await this.guideRows(`WHERE g.id = ANY($1::bigint[])`, [copiedIds])
+      : [];
+    return { copied, skipped, headReplaced };
+  }
+
+  /** 왜 건너뛰었는지 — 낱말은 여기 하나다 (D-R18) */
+  private static copySkipReason(state: string): string {
+    if (state === 'ready') return '이미 쓴 안내라 덮지 않았습니다';
+    if (state === 'sent') return '이미 보낸 안내입니다';
+    if (state === 'read') return '강사가 확인한 안내입니다';
+    return `상태가 ${state} 라 옮기지 않았습니다`;
+  }
+
+  /* ══ §43 회차 안내의 「강사 안내」 — 줌 안내 (F-63) ══════════════════════════ */
+
+  /**
+   * 단추가 서는지와 실제로 보낼 수 있는지를 **같은 함수**가 정한다 (D-R39 · D-R22).
+   * 화면이 「온라인인가 · 줌 계정이 있는가」를 다시 보면 눌리는데 거절당하는 단추가 생긴다.
+   */
+  private static sendGate(f: { alreadySent: boolean; zaccId: number | null; teacherId: number | null }):
+    { canSendTeacher: boolean; sendBlockedReason: string | null } {
+    if (f.alreadySent) return { canSendTeacher: false, sendBlockedReason: '이미 보냈습니다' };
+    if (f.teacherId === null) return { canSendTeacher: false, sendBlockedReason: '강사가 아직 정해지지 않았습니다' };
+    if (f.zaccId === null) return { canSendTeacher: false, sendBlockedReason: '줌 계정이 아직 배정되지 않았습니다' };
+    return { canSendTeacher: true, sendBlockedReason: null };
+  }
+
+  /**
+   * 온라인 회차의 줌 안내를 남긴다.
+   *
+   * **강사 수신함에는 줄이 남는다** — 내부 사용자라 NOTI 한 건이 그 사람 앞으로 선다. 그래서
+   * `pnoti.sent_at` 을 찍는다. 다만 **강사 화면에는 아직 §16 알림 칸이 없다**(N-26 · 열린 안건) —
+   * 기록까지가 참이고 화면은 그 안건이 닫힐 때 붙는다. 지금 적어 두지 않으면 다음 사람이
+   * 「보냈는데 왜 안 보이나」를 처음부터 다시 조사한다.
+   * **학부모에게는 보낼 곳이 없다**(STU 에 수신처 칸이 없다 · N-42) —
+   * 줄은 「보낼 것」으로 남기고 `sent_at` 은 비운다. 「없음」은 안 보낸 것이 아니라 보낼 대상이
+   * 없다는 뜻이고, §12 준비 아홉째 줄이 그렇게 적고 있다.
+   *
+   * 회차 키는 `(ser_id, on_date)` 다. 투영을 읽기 전에 **부모 SER 를 먼저 잠근다** — 그 사이에
+   * 재투영이 돌면 옛 행을 기다리다 잘못된 404 를 낸다(D3-g2a 가 출결에서 고친 그 자리).
+   * 두 번째 요청은 `pnoti_teacher_once` 부분 유니크가 막는다 — 앱이 다시 세지 않는다.
+   *
+   * **비밀번호는 본문에 넣지 않는다.** `zacc.meeting_pw_enc` 는 암호화해 둔 값이고 PNOTI 는
+   * 평문 `text` 다 — 옮기면 암호화가 없던 일이 된다.
+   */
+  async sendZoomNotice(userId: number, dto: ZoomNoticeWriteDto): Promise<ZoomNoticeResultDto> {
+    let teacherNotices = 0;
+    let parentNotices = 0;
+
+    await this.anyRepo.manager.transaction(async (m) => {
+      await m.query(`SELECT id FROM ser WHERE id=$1 FOR NO KEY UPDATE`, [dto.serId]);
+      const [occ] = await m.query(
+        `SELECT o.ser_id, o.on_date, o.canceled, o.teacher_id, o.zacc_id,
+                r.mode::text AS mode, r.title AS ser_title,
+                k.name AS kind_name, t.name AS teacher_name,
+                z.label AS zacc_label, z.join_url, z.meeting_id,
+                to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS drawn_date,
+                ${START_MIN} AS start_min, ${END_MIN} AS end_min
+           FROM ser_occ o
+           JOIN ser r ON r.id=o.ser_id
+           JOIN kind k ON k.key=r.kind_key
+           LEFT JOIN staff t ON t.id=o.teacher_id
+           LEFT JOIN zacc z ON z.id=o.zacc_id
+          WHERE o.ser_id=$1 AND o.on_date=$2::date`,
+        [dto.serId, dto.onDate],
+      ) as Array<R>;
+      if (!occ) throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '해당 회차를 찾을 수 없습니다' });
+      if (String(occ.mode) !== 'online') {
+        throw new ConflictException({ code: 'ZOOM_NOTICE_NOT_ONLINE', message: '현장 수업에는 줌 안내가 없습니다' });
+      }
+      if (occ.canceled === true) {
+        throw new ConflictException({ code: 'ZOOM_NOTICE_CANCELED', message: '휴강한 회차에는 줌 안내를 보내지 않습니다' });
+      }
+      const gate = GuidesService.sendGate({
+        alreadySent: false,
+        zaccId: occ.zacc_id == null ? null : Number(occ.zacc_id),
+        teacherId: occ.teacher_id == null ? null : Number(occ.teacher_id),
+      });
+      if (!gate.canSendTeacher) {
+        throw new ConflictException({
+          code: occ.teacher_id == null ? 'ZOOM_NOTICE_NO_TEACHER' : 'ZOOM_NOTICE_NO_ACCOUNT',
+          message: gate.sendBlockedReason ?? '줌 안내를 보낼 수 없습니다',
+        });
+      }
+
+      const when = `${String(occ.drawn_date)} ${GuidesService.hm(Number(occ.start_min))}–${GuidesService.hm(Number(occ.end_min))}`;
+      const lesson = (occ.ser_title as string | null) ?? (occ.kind_name as string | null) ?? '수업';
+      const account = (occ.zacc_label as string | null) ?? '';
+      const meeting = (occ.meeting_id as string | null) ?? null;
+      /* 비밀번호는 싣지 않는다 — 암호화 저장을 평문으로 옮기지 않는다 */
+      const body = [
+        `[줌 안내] ${lesson}`,
+        `일시 ${when}`,
+        `계정 ${account}`,
+        meeting ? `회의 ID ${meeting}` : null,
+        `참가 ${String(occ.join_url ?? '')}`,
+      ].filter((line) => line !== null).join('\n');
+
+      const teacherRows = await m.query(
+        `INSERT INTO pnoti (ser_id, on_date, audience, staff_id, channel, body, sent_at)
+         VALUES ($1, $2::date, 'teacher', $3, 'app', $4, now())
+         ON CONFLICT DO NOTHING RETURNING id`,
+        [dto.serId, dto.onDate, Number(occ.teacher_id), body],
+      ) as Array<{ id: string }>;
+      if (!teacherRows[0]) {
+        throw new ConflictException({ code: 'ZOOM_NOTICE_ALREADY', message: '이 회차의 줌 안내는 이미 보냈습니다' });
+      }
+      teacherNotices = 1;
+
+      /* 학부모 줄 — 보낼 것으로 남는다(N-42). 이미 남겨 둔 줄은 다시 만들지 않는다 */
+      const parentRows = await m.query(
+        `INSERT INTO pnoti (ser_id, on_date, audience, student_id, channel, body)
+         SELECT $1, $2::date, 'parent', ss.student_id, 'app', $3
+           FROM ser_stu ss
+           JOIN ser_occ o ON o.ser_id=ss.ser_id AND o.on_date=$2::date
+           LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
+          WHERE ss.ser_id=$1 AND ${serStuOn('ss', '$2::date')}
+            AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id)
+            AND NOT EXISTS (
+              SELECT 1 FROM pnoti p
+               WHERE p.ser_id=$1 AND p.on_date=$2::date AND p.audience='parent'
+                 AND p.student_id=ss.student_id AND p.body=$3)
+         RETURNING id`,
+        [dto.serId, dto.onDate, body],
+      ) as Array<{ id: string }>;
+      parentNotices = parentRows.length;
+
+      await m.query(
+        `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/teacher', 'schedule')`,
+        [Number(occ.teacher_id), userId, `줌 안내 — ${lesson} · ${when} · ${account}`],
+      );
+      await m.query(histSql(), ['pnoti', Number(teacherRows[0].id), 'guide_send', userId]);
+    });
+
+    /* 목록과 같은 함수로 그 회차를 다시 읽는다 — 오늘이 아닌 날짜도 옳게 돌려준다 */
+    const rows = await this.perLessonRows(dto.onDate, null);
+    const lesson = rows.find((row) => row.serId === dto.serId);
+    if (!lesson) throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '해당 회차를 찾을 수 없습니다' });
+    return { lesson, teacherNotices, parentNotices };
+  }
+
+  /** 「09:30」 — 안내 본문의 시각 한 곳 */
+  private static hm(min: number): string {
+    return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
   }
 
   /* ══ §43 머리의 「문구 관리」 — 문구 틀 (C51) ═══════════════════════════════ */

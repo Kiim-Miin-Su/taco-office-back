@@ -9,7 +9,7 @@ import { validate } from 'class-validator';
 import { Reflector } from '@nestjs/core';
 import { PERM_KEY } from '../src/common/perm';
 import { GuidesController } from '../src/modules/guides/guides.controller';
-import { GuideDraftCreateDto, GuideHistoryQueryDto } from '../src/modules/guides/guides.dto';
+import { GuideDraftCreateDto, GuideHistoryQueryDto, ZoomNoticeWriteDto } from '../src/modules/guides/guides.dto';
 import { GuidesService } from '../src/modules/guides/guides.service';
 
 describe('§43~§45 안내 HTTP 계약 (C78)', () => {
@@ -19,7 +19,7 @@ describe('§43~§45 안내 HTTP 계약 (C78)', () => {
     expect(reflector.get(PERM_KEY, GuidesController.prototype[handler])).toEqual(['canAdminPage']);
   });
 
-  it.each(['createDraft', 'createTemplate', 'patchTemplate', 'writeBody'] as const)(
+  it.each(['createDraft', 'createTemplate', 'patchTemplate', 'writeBody', 'copyBody', 'sendZoomNotice'] as const)(
     '%s 쓰기는 관리자 화면과 전체 CRUD 권한을 모두 요구한다',
     (handler) => {
       expect(reflector.get(PERM_KEY, GuidesController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
@@ -31,6 +31,14 @@ describe('§43~§45 안내 HTTP 계약 (C78)', () => {
     expect(await validate(history)).toHaveLength(2);
     const draft = plainToInstance(GuideDraftCreateDto, { sourceOccurrenceId: '1e3', studentId: 0 });
     expect(await validate(draft)).toHaveLength(2);
+  });
+
+  it('줌 안내는 회차 키 (serId, onDate) 만 받고 실제 달력 날짜가 아니면 거절한다 (C98 · F-63)', async () => {
+    const bad = plainToInstance(ZoomNoticeWriteDto, { serId: '1e3', onDate: '2026-02-30' });
+    const errors = await validate(bad);
+    expect(errors.map((e) => e.property).sort()).toEqual(['onDate', 'serId']);
+    // 재투영 때 바뀌는 sourceOccurrenceId 는 계약에 없다
+    expect(Object.keys(plainToInstance(ZoomNoticeWriteDto, { serId: 1, onDate: '2026-09-19' }))).toEqual(['serId', 'onDate']);
   });
 
   it('컨트롤러는 이유·날짜·상태를 만들지 않고 서비스 계약에 그대로 위임한다', async () => {

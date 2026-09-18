@@ -7,6 +7,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsInt, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
+import { GUIDE_FACT_KEYS, type GuideFactKey } from '../../lib/guide-body';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -15,6 +16,26 @@ const N = { type: Number, nullable: true } as const;
  * §43 수업 안내 — **한 번만** 나가는 것.
  * 첫 수업 안내 · 강사 교체 안내가 여기다. 보냈으면 끝이다.
  */
+/**
+ * §43 「안내 작성」의 자동 채움 한 칸 (F-60).
+ * 못 채운 칸은 `value=null` 이고 **왜 없는지**는 서버가 문장으로 준다 — 화면이 「—」를 짓지 않는다.
+ */
+export class GuideFactDto {
+  @ApiProperty({ enum: GUIDE_FACT_KEYS }) key!: GuideFactKey;
+  @ApiProperty({ description: '칸 이름 — 본문 머리말과 같은 낱말' }) label!: string;
+  @ApiPropertyOptional({ ...S, description: '못 채웠으면 null' }) value?: string | null;
+  @ApiProperty() filled!: boolean;
+}
+
+/**
+ * 아직 안 쓴 초안에만 실린다 — **저장하지 않는다**(`guide.body` 는 사람이 쓴 말이다).
+ * 쓰는 순간 `PUT /guides/{id}/body` 가 그 텍스트를 굳히고 그 뒤로는 `autoFill` 이 null 이다.
+ */
+export class GuideAutoFillDto {
+  @ApiProperty({ description: '머리말 — 작성 창이 이 문자열로 열린다. 언제나 빈 줄로 끝난다' }) body!: string;
+  @ApiProperty({ type: [GuideFactDto], description: '일곱 칸 — 순서는 서버가 정한다' }) facts!: GuideFactDto[];
+}
+
 export class GuideDto {
   @ApiProperty() id!: number;
   @ApiPropertyOptional(N) serId?: number | null;
@@ -43,6 +64,13 @@ export class GuideDto {
   @ApiPropertyOptional(S) acknowledgedByName?: string | null;
   @ApiPropertyOptional({ ...S, description: 'HIST guide_ack의 최초 시각. 없으면 null' }) acknowledgedAt?: string | null;
   @ApiProperty({ description: '기한이 지난 날 수. 0이면 안 지남' }) overdueDays!: number;
+  @ApiProperty({ description: '같은 규칙·같은 날·같은 사유의 다른 학생 안내 수 — 0이면 그룹이 아니다 (F-61)' })
+  siblingCount!: number;
+  @ApiPropertyOptional({
+    type: GuideAutoFillDto, nullable: true,
+    description: '아직 안 쓴 초안의 자동 채움 일곱 칸 (F-60). 이미 쓴/보낸 안내는 null — 저장하지 않는다',
+  })
+  autoFill?: GuideAutoFillDto | null;
 }
 
 export class PerLessonNoticeRecordDto {
@@ -71,7 +99,10 @@ export class PerLessonNoticeDto {
   @ApiProperty() zoomAssigned!: boolean;
   @ApiProperty({ type: [PerLessonNoticeRecordDto] }) notices!: PerLessonNoticeRecordDto[];
   @ApiProperty({ description: '명단 학생 모두에게 PNOTI.sent_at이 있을 때만 true' }) parentDeliveryRecorded!: boolean;
-  @ApiProperty({ description: '강사 독립 발송 원장이 없어 현재 false' }) teacherDeliveryRecorded!: boolean;
+  @ApiProperty({ description: 'PNOTI audience=teacher 가 있고 sent_at 이 찍혔을 때만 true (F-63)' }) teacherDeliveryRecorded!: boolean;
+  /** 단추가 서는지도 서버가 정한다 (D-R39) — 화면이 온라인·줌 계정·강사를 다시 보지 않는다. */
+  @ApiProperty({ description: '줌 안내를 보낼 수 있는가 — 취소 아님 · 줌 계정 있음 · 강사 있음 · 아직 안 보냄 (F-63)' }) canSendTeacher!: boolean;
+  @ApiPropertyOptional({ ...S, description: '못 보내는 이유 — 보낼 수 있으면 null' }) sendBlockedReason?: string | null;
   /** 아래 호환 필드는 구조화 notices 첫 항목/전체 상태에서 파생한다. */
   @ApiProperty({ enum: ['sms', 'kakao', 'email', 'app'] }) channel!: string;
   @ApiPropertyOptional(S) studentName?: string | null;
@@ -232,4 +263,51 @@ export class GuideTemplateWriteDto {
 export class GuideBodyDto {
   @ApiProperty({ description: '안내 본문' })
   @IsString() @MinLength(1) @MaxLength(4000) body!: string;
+}
+
+/**
+ * §43 「나머지 학생에게 복사」 — F-61.
+ *
+ * 그룹 수업의 안내는 공통 문단이 대부분이라 학생마다 다시 치게 하면 실제로는 안 쓴다.
+ * 그래서 **쓴 본문을 같은 규칙·같은 날의 다른 학생 초안으로** 옮긴다.
+ *
+ * **머리말은 받는 학생 것으로 다시 만든다.** 그대로 복사하면 A 의 이름·학년·교재가 B 의 안내에
+ * 남고, 그 말이 학부모에게 나간다. 원본이 자기 머리말로 시작할 때만 앞자락을 떼고 갈아 끼우며,
+ * 사람이 머리말까지 고쳐 써서 앞자락이 안 맞으면 **그대로 복사하고 `headReplaced:false` 로 알린다**
+ * — 조용히 머리말을 지어내지 않는다.
+ */
+export class GuideCopySkippedDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ description: '왜 건너뛰었는지 — 이미 쓴 안내는 덮지 않는다' }) reason!: string;
+}
+
+export class GuideCopyResultDto {
+  @ApiProperty({ type: [GuideDto], description: '본문이 채워진 형제 초안' }) copied!: GuideDto[];
+  @ApiProperty({ type: [GuideCopySkippedDto], description: '건너뛴 형제와 이유' }) skipped!: GuideCopySkippedDto[];
+  @ApiProperty({ description: '받는 학생의 머리말로 갈아 끼웠는가 — false 면 원본 본문을 그대로 옮겼다' })
+  headReplaced!: boolean;
+}
+
+/**
+ * §43 회차 안내의 「강사 안내」 — F-63.
+ *
+ * 회차 키는 **`(serId, onDate)`** 다. `ser_occ.id` 는 재투영 때 바뀌므로 저장·전달의 키가 될 수 없다
+ * (C82-b 가 §12 준비 할 일에서 같은 판단을 했다).
+ */
+export class ZoomNoticeWriteDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  serId!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '회차가 그려지는 KST 날짜' })
+  @IsCalendarDate()
+  onDate!: string;
+}
+
+export class ZoomNoticeResultDto {
+  @ApiProperty({ type: PerLessonNoticeDto, description: '보낸 뒤의 그 회차 — 화면이 다시 세지 않는다' })
+  lesson!: PerLessonNoticeDto;
+  @ApiProperty({ description: '강사에게 남긴 줄 수 — 회차마다 하나(pnoti_teacher_once)' }) teacherNotices!: number;
+  @ApiProperty({ description: '학부모에게 「보낼 것」으로 남긴 줄 수 — 실제 발송은 아직 없다(N-42)' }) parentNotices!: number;
 }

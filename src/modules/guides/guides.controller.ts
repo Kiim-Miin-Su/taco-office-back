@@ -9,8 +9,8 @@ import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResp
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
-  GuideBodyDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
-  GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
+  GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { GuidesService } from './guides.service';
 
@@ -107,6 +107,47 @@ export class GuidesController {
     @Body() dto: GuideBodyDto,
   ): Promise<GuideDto> {
     return this.svc.writeBody(user.id, id, dto);
+  }
+
+  @Post(':id/copy')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '나머지 학생에게 복사 — 그룹 수업 안내 (§43 · F-61)',
+    description:
+      '같은 규칙·같은 날·같은 사유의 다른 학생 **초안**에만 옮긴다. 이미 쓴 형제는 덮지 않고 이유를 돌려준다. '
+      + '머리말은 받는 학생 것으로 다시 만든다 — 그대로 옮기면 남의 이름이 학부모에게 간다.',
+  })
+  @ApiCreatedResponse({ type: GuideCopyResultDto })
+  @ApiConflictResponse({ description: 'code GUIDE_COPY_EMPTY · GUIDE_COPY_NO_SIBLING' })
+  @ApiNotFoundResponse({ description: '안내 없음' })
+  async copyBody(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<GuideCopyResultDto> {
+    return this.svc.copyBody(user.id, id);
+  }
+
+  /* ══ §43 회차 안내의 「강사 안내」 — 줌 안내 ═══════════════════════════════ */
+
+  @Post('zoom-notice')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '줌 안내 — 온라인 회차의 강사에게 보낸다 (§43 · §12 준비 · F-63)',
+    description:
+      '강사 수신함에 줄이 남는다(NOTI · PNOTI sent_at) — 강사 화면의 알림 칸은 N-26 이 닫혀야 붙는다. '
+      + '학부모 줄은 「보낼 것」으로 남는다 — 수신처가 없다(N-42). '
+      + '회차 키는 (serId, onDate) 다. 비밀번호는 본문에 싣지 않는다.',
+  })
+  @ApiCreatedResponse({ type: ZoomNoticeResultDto })
+  @ApiConflictResponse({
+    description: 'code ZOOM_NOTICE_NOT_ONLINE · ZOOM_NOTICE_CANCELED · ZOOM_NOTICE_NO_TEACHER · ZOOM_NOTICE_NO_ACCOUNT · ZOOM_NOTICE_ALREADY',
+  })
+  @ApiNotFoundResponse({ description: 'code OCCURRENCE_NOT_FOUND' })
+  async sendZoomNotice(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: ZoomNoticeWriteDto,
+  ): Promise<ZoomNoticeResultDto> {
+    return this.svc.sendZoomNotice(user.id, dto);
   }
 
 }

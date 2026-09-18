@@ -9732,6 +9732,163 @@
         ]
       }
     },
+    "/guides/{id}/copy": {
+      "post": {
+        "description": "같은 규칙·같은 날·같은 사유의 다른 학생 **초안**에만 옮긴다. 이미 쓴 형제는 덮지 않고 이유를 돌려준다. 머리말은 받는 학생 것으로 다시 만든다 — 그대로 옮기면 남의 이름이 학부모에게 간다.",
+        "operationId": "GuidesController_copyBody",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideCopyResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "안내 없음"
+          },
+          "409": {
+            "description": "code GUIDE_COPY_EMPTY · GUIDE_COPY_NO_SIBLING"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "나머지 학생에게 복사 — 그룹 수업 안내 (§43 · F-61)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
+    "/guides/zoom-notice": {
+      "post": {
+        "description": "강사 수신함에 줄이 남는다(NOTI · PNOTI sent_at) — 강사 화면의 알림 칸은 N-26 이 닫혀야 붙는다. 학부모 줄은 「보낼 것」으로 남는다 — 수신처가 없다(N-42). 회차 키는 (serId, onDate) 다. 비밀번호는 본문에 싣지 않는다.",
+        "operationId": "GuidesController_sendZoomNotice",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZoomNoticeWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoomNoticeResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "code OCCURRENCE_NOT_FOUND"
+          },
+          "409": {
+            "description": "code ZOOM_NOTICE_NOT_ONLINE · ZOOM_NOTICE_CANCELED · ZOOM_NOTICE_NO_TEACHER · ZOOM_NOTICE_NO_ACCOUNT · ZOOM_NOTICE_ALREADY"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "줌 안내 — 온라인 회차의 강사에게 보낸다 (§43 · §12 준비 · F-63)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
     "/consulting": {
       "post": {
         "description": "stage=contract, contractStep=1은 서버가 정한다. amount는 이 계약 작성 화면의 입력값이며 생성 권한은 canMoney와 분리한다.",
@@ -23553,6 +23710,60 @@
           "inUse"
         ]
       },
+      "GuideFactDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "student",
+              "grade",
+              "teacher",
+              "subject",
+              "mode",
+              "startOn",
+              "books"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "칸 이름 — 본문 머리말과 같은 낱말"
+          },
+          "value": {
+            "type": "string",
+            "nullable": true,
+            "description": "못 채웠으면 null"
+          },
+          "filled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "filled"
+        ]
+      },
+      "GuideAutoFillDto": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "머리말 — 작성 창이 이 문자열로 열린다. 언제나 빈 줄로 끝난다"
+          },
+          "facts": {
+            "description": "일곱 칸 — 순서는 서버가 정한다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideFactDto"
+            }
+          }
+        },
+        "required": [
+          "body",
+          "facts"
+        ]
+      },
       "GuideDto": {
         "type": "object",
         "properties": {
@@ -23659,6 +23870,20 @@
           "overdueDays": {
             "type": "number",
             "description": "기한이 지난 날 수. 0이면 안 지남"
+          },
+          "siblingCount": {
+            "type": "number",
+            "description": "같은 규칙·같은 날·같은 사유의 다른 학생 안내 수 — 0이면 그룹이 아니다 (F-61)"
+          },
+          "autoFill": {
+            "nullable": true,
+            "description": "아직 안 쓴 초안의 자동 채움 일곱 칸 (F-60). 이미 쓴/보낸 안내는 null — 저장하지 않는다",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GuideAutoFillDto"
+              }
+            ]
           }
         },
         "required": [
@@ -23668,7 +23893,8 @@
           "state",
           "pending",
           "createdAt",
-          "overdueDays"
+          "overdueDays",
+          "siblingCount"
         ]
       },
       "PerLessonNoticeRecordDto": {
@@ -23773,7 +23999,16 @@
           },
           "teacherDeliveryRecorded": {
             "type": "boolean",
-            "description": "강사 독립 발송 원장이 없어 현재 false"
+            "description": "PNOTI audience=teacher 가 있고 sent_at 이 찍혔을 때만 true (F-63)"
+          },
+          "canSendTeacher": {
+            "type": "boolean",
+            "description": "줌 안내를 보낼 수 있는가 — 취소 아님 · 줌 계정 있음 · 강사 있음 · 아직 안 보냄 (F-63)"
+          },
+          "sendBlockedReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "못 보내는 이유 — 보낼 수 있으면 null"
           },
           "channel": {
             "type": "string",
@@ -23812,6 +24047,7 @@
           "notices",
           "parentDeliveryRecorded",
           "teacherDeliveryRecorded",
+          "canSendTeacher",
           "channel",
           "body"
         ]
@@ -24261,6 +24497,100 @@
         },
         "required": [
           "body"
+        ]
+      },
+      "GuideCopySkippedDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "description": "왜 건너뛰었는지 — 이미 쓴 안내는 덮지 않는다"
+          }
+        },
+        "required": [
+          "id",
+          "studentName",
+          "reason"
+        ]
+      },
+      "GuideCopyResultDto": {
+        "type": "object",
+        "properties": {
+          "copied": {
+            "description": "본문이 채워진 형제 초안",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideDto"
+            }
+          },
+          "skipped": {
+            "description": "건너뛴 형제와 이유",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideCopySkippedDto"
+            }
+          },
+          "headReplaced": {
+            "type": "boolean",
+            "description": "받는 학생의 머리말로 갈아 끼웠는가 — false 면 원본 본문을 그대로 옮겼다"
+          }
+        },
+        "required": [
+          "copied",
+          "skipped",
+          "headReplaced"
+        ]
+      },
+      "ZoomNoticeWriteDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "회차가 그려지는 KST 날짜"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate"
+        ]
+      },
+      "ZoomNoticeResultDto": {
+        "type": "object",
+        "properties": {
+          "lesson": {
+            "description": "보낸 뒤의 그 회차 — 화면이 다시 세지 않는다",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PerLessonNoticeDto"
+              }
+            ]
+          },
+          "teacherNotices": {
+            "type": "number",
+            "description": "강사에게 남긴 줄 수 — 회차마다 하나(pnoti_teacher_once)"
+          },
+          "parentNotices": {
+            "type": "number",
+            "description": "학부모에게 「보낼 것」으로 남긴 줄 수 — 실제 발송은 아직 없다(N-42)"
+          }
+        },
+        "required": [
+          "lesson",
+          "teacherNotices",
+          "parentNotices"
         ]
       },
       "ConsultingCreateDto": {
