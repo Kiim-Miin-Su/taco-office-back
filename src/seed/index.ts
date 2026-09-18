@@ -44,7 +44,7 @@ export const SEEDED_TABLES = [
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
   'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
-  'gtpl', 'vers', 'hist', 'file', 'zassign',
+  'gtpl', 'vers', 'hist', 'file', 'zassign', 'stu_pause',
   // 기록만 쌓이는 표들 — 안 비우면 dev DB 에 옛 QA 흔적이 끝없이 남는다
   'att', 'lead_stage_log', 'log', 'pdflog', 'rsend', 'zlog',
 ] as const;

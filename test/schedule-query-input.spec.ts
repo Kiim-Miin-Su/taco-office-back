@@ -12,6 +12,7 @@ import { ScheduleController } from '../src/modules/schedule/schedule.controller'
 import { ScheduleService } from '../src/modules/schedule/schedule.service';
 import { ScheduleWriteService } from '../src/modules/schedule/schedule.write.service';
 import { ScheduleAttendanceService } from '../src/modules/schedule/schedule.attendance.service';
+import { SchedulePauseService } from '../src/modules/schedule/schedule.pause.service';
 import { ApiErrorFilter } from '../src/common/filters/api-error.filter';
 import { buildOpenApi } from '../src/openapi';
 
@@ -32,6 +33,7 @@ describe('일정 조회/경로 → DTO → service 경계 (DB/인증은 통합 s
       { provide: ScheduleService, useValue: { list, tracking } },
       { provide: ScheduleWriteService, useValue: write },
       { provide: ScheduleAttendanceService, useValue: attendance },
+      { provide: SchedulePauseService, useValue: {} },
     ] }).compile();
     app = mod.createNestApplication();
     app.use((req: Request & { user?: unknown }, _res: Response, next: NextFunction) => {

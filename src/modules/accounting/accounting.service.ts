@@ -14,7 +14,7 @@ import { Inv } from '../../entities';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
-import { kstAt, kstMonthOf, sqlWordList } from '../../lib/sql';
+import { kstAt, kstMonthOf, sqlWordList, stuPausedOn } from '../../lib/sql';
 import {
   EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED,
   INV_BOARD_COLUMNS, INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_ROW, INV_TYPE_SUB,
@@ -683,10 +683,10 @@ export class AccountingService {
               to_char(o.on_date,'YYYY-MM-DD') AS on_date,
               o.canceled,
               (SELECT e.cancel_treat FROM exc e WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date) AS treat,
-              EXISTS (
+              (EXISTS (
                  SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
                   WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = ss.student_id
-               ) AS stu_out
+               ) OR ${stuPausedOn('ss.student_id', 'o.on_date')}) AS stu_out
          FROM ser_occ o
          JOIN ser_stu ss ON ss.ser_id = o.ser_id
         WHERE ${kstMonthOf('lower(o.span)')} = $1

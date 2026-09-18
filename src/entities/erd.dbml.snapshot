@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-51 C92-c 휴원·복귀 (2026-09-18): STU_PAUSE 표 하나 — 기간 안의 회차는 시간표·§54·청구서가 「그날만 빠짐」과 같은 것으로 읽는다(lib/sql.stuPausedOn 한 곳). 회차를 지우지 않고 복귀는 to_date 를 당길 뿐이라 기간이 이력으로 남는다. 겹침은 EXCLUDE.
 // TBO-51 C92-b 보강·이월 청구 (2026-09-18): EXC.makeup_ser_id 로 보강 회차를 잇고(원래 회차는 세지 않는다) 지난달 carry 를 이 달 청구서의 음수 줄로 뺀다.
 // TBO-51 C92-a 휴강 정책 (2026-09-18): EXC 에 휴강 사유·처리(이월/차감/보강 이관)를 적고 exc_cancel_policy CHECK 로 「차감은 학생 결석에만」을 DB 가 지킨다. 회계 §54·청구서는 처리로 회차를 가른다.
 // TBO-50 C81 제품 정합 (2026-09-14): 내부 리포트 독촉의 UUID 요청키와 대상 강사를 NOTI에 nullable로 보존하고, request_key가 있을 때만 수신자와 partial unique로 멱등성을 강제한다. 외부 메시지/주간 트래킹 정책 저장은 만들지 않는다.
@@ -384,6 +385,29 @@ Table EXC_STU_OUT {
   v2 §79·§80 — 「이 회차만 빼기」. 소스의 EXC[id|date].stuOut 이다.
   「아주 빼기」는 여기가 아니라 SER_STU 에서 지운다 (D-R21).
   학생에 「향후」 범위를 줄지는 결정 안건 N-15.
+  '''
+}
+
+Table STU_PAUSE {
+  id          bigserial   [pk]
+  student_id  bigint      [not null, ref: > STU.id, note: 'ON DELETE CASCADE']
+  from_date   date        [not null, note: '휴원 시작일 — 이 날부터 회차에서 빠진다']
+  to_date     date        [note: '휴원 종료일(포함) — null 이면 복귀 전까지 무기한. 복귀 처리가 복귀 전날로 당긴다']
+  reason      text
+  by_id       bigint      [not null, ref: > STAFF.id, note: '누가 잡았나']
+  at          timestamptz [not null, default: `now()`]
+  resumed_by  bigint      [ref: > STAFF.id, note: '복귀 처리한 사람 — resumed_at 과 짝']
+  resumed_at  timestamptz [note: '복귀 처리 시각. null 이면 아직 기간대로다']
+  indexes { (student_id, from_date) }
+  Note: '''
+  v4.28 · C92-c — 테스트 시나리오 C-36 「장기 휴원」 · C-37 「복귀」.
+  **회차를 지우는 표가 아니다.** 기간 하나를 적으면 시간표(학생별)·§54 수업료·청구서·명단이 그 기간의 회차를
+  「그날만 빠짐」(EXC_STU_OUT · D-R21)과 같은 것으로 읽는다 — 판정은 lib/sql.stuPausedOn 한 곳이다.
+  복귀는 to_date 를 복귀 전날로 당기고 resumed_* 를 채운다. 기간은 이력으로 남는다(지우는 길이 없다).
+  stu_pause_range CHECK: to_date ≥ from_date.
+  stu_pause_no_overlap EXCLUDE (gist · student_id =, daterange(from_date, COALESCE(to_date, infinity), '[]') &&):
+  같은 학생의 기간은 겹치지 않는다 — 오류 필터가 409 PAUSE_OVERLAP 으로 번역한다.
+  이미 발행한 청구서는 바뀌지 않는다(청구서는 INSERT 뿐이다). 기존 행 0 (N-25).
   '''
 }
 
@@ -1416,6 +1440,10 @@ Table SER_OCC {
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
 //
+// v4.27 → v4.28 (2026-09-18 · TBO-51 C92-c 휴원·복귀) — 새 표 STU_PAUSE (student_id · from_date · to_date · reason · by_id · at · resumed_by · resumed_at).
+//   장기 휴원은 회차를 지우는 일이 아니다 — 기간 하나를 적고 시간표·§54·청구서·명단이 그 기간을 「그날만 빠짐」과 같이 읽는다
+//   (lib/sql.stuPausedOn 한 곳). 복귀는 to_date 를 복귀 전날로 당길 뿐이라 회차는 그대로 돌아오고 기간은 이력이다.
+//   stu_pause_range CHECK · stu_pause_no_overlap EXCLUDE(gist). 새 표 1 · 마이그레이션 1 (1760700000000-stu-pause) · 기존 행 보정 0.
 // v4.26 → v4.27 (2026-09-18 · TBO-51 C92-b 보강 회차 링크 · 이월 청구 반영) — EXC.makeup_ser_id (FK SER · SET NULL) + exc_makeup_link CHECK.
 //   보강 이관은 원래 회차를 접고 ONCE 규칙 하나를 새로 만든다. 회계가 둘을 한 번만 세려면 서로를 알아야 한다.
 //   INV_LINE.count 는 이월 줄에서 음수다(carry.to_month = 그 달 → issueInvoice 가 음수 줄로 뺀다 · C-35).

@@ -17,7 +17,7 @@ import { isRecurring, type Ser } from '../../lib/recurrence';
 import type {
   LessonPrepRowDto, LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, TrackedReportDto, TrackedStudentDto,
 } from './schedule.dto';
-import { START_MIN, END_MIN, kstDateOf, spanOf } from '../../lib/sql';
+import { START_MIN, END_MIN, kstDateOf, spanOf, stuPausedOn } from '../../lib/sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
 import { progressPercent } from '../../lib/book';
 
@@ -39,7 +39,7 @@ interface Row {
   attendance_id: string | null; attendance_result: AttendanceResult | null;
   attendance_reason: AttendanceCancelReason | null; attendance_confirmed_by: string | null;
   attendance_confirmed_by_name: string | null; attendance_confirmed_at: Date | string | null;
-  students: Array<{ id: number; name: string; grade: string | null; droppedOnce: boolean }> | null;
+  students: Array<{ id: number; name: string; grade: string | null; droppedOnce: boolean; paused: boolean }> | null;
 }
 
 @Injectable()
@@ -74,6 +74,8 @@ export class ScheduleService {
               WHERE e2.ser_id = o.ser_id AND e2.on_date = o.on_date
                 AND xo.student_id = ss.student_id
            )
+           -- 휴원 기간의 회차도 그 학생 시간표에서 빠진다 (C92-c · C-36)
+           AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
       )`);
     }
 
@@ -108,7 +110,9 @@ export class ScheduleService {
                          -- 그날만 빠진 학생은 지우지 않고 표시만 한다 (D-R21)
                          'droppedOnce', EXISTS (
                            SELECT 1 FROM exc_stu_out xo
-                            WHERE xo.exc_id = e.id AND xo.student_id = st.id)
+                            WHERE xo.exc_id = e.id AND xo.student_id = st.id),
+                         -- 휴원 중인 학생도 같다 — 명단에 남기고 「휴원」으로 표시한다 (C92-c)
+                         'paused', ${stuPausedOn('st.id', 'o.on_date')}
                        ) ORDER BY st.id)
                 FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
                 WHERE ss.ser_id = o.ser_id
@@ -196,7 +200,7 @@ export class ScheduleService {
           countsForPay: r.attendance_result === 'completed',
         },
         students: (r.students ?? []).map((s) => ({
-          id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce),
+          id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce), paused: Boolean(s.paused),
         })),
       };
     });
@@ -281,7 +285,15 @@ export class ScheduleService {
                   'droppedOnce', EXISTS (
                     SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
                      WHERE e.ser_id = s.id AND e.on_date = $2::date AND xo.student_id = st.id
-                  )
+                  ),
+                  'paused', ${stuPausedOn('st.id', '$2::date')},
+                  -- 학생 카드의 「휴원」 — 지금 진행 중이거나 앞으로 잡힌 기간 하나 (C92-c · C-36/C-37)
+                  'pause', (SELECT json_build_object('id', sp.id, 'fromDate', to_char(sp.from_date,'YYYY-MM-DD'),
+                                                     'toDate', to_char(sp.to_date,'YYYY-MM-DD'), 'reason', sp.reason,
+                                                     'resumed', sp.resumed_at IS NOT NULL)
+                              FROM stu_pause sp
+                             WHERE sp.student_id = st.id AND (sp.to_date IS NULL OR sp.to_date >= $3::date)
+                             ORDER BY sp.from_date LIMIT 1)
                 ) ORDER BY st.name)
                 FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
                WHERE ss.ser_id = s.id
@@ -292,14 +304,16 @@ export class ScheduleService {
          -- 스냅숏을 만들지 않도록 물리 회차의 원래 날짜 키를 함께 검증한다.
          JOIN ser_occ o ON o.ser_id = s.id AND o.on_date = $2::date
         WHERE s.id = $1`,
-      [serId, onDate],
+      [serId, onDate, today],
     )) as Array<Record<string, unknown>>;
     if (!head) return null;
 
     const roster = (head.students ?? []) as Array<{
-      id: number; name: string; grade: string | null; droppedOnce: boolean;
+      id: number; name: string; grade: string | null; droppedOnce: boolean; paused: boolean;
+      pause: { id: number; fromDate: string; toDate: string | null; reason: string | null; resumed: boolean } | null;
     }>;
-    const active = roster.filter((r) => !r.droppedOnce);
+    // 그날 빠졌거나 휴원 중이면 그날 명단이 아니다 — 정원·단가도 그 수로 센다
+    const active = roster.filter((r) => !r.droppedOnce && !r.paused);
     const ids = roster.map((r) => r.id);
     const cap = Number(head.cap);
     const count = active.length;

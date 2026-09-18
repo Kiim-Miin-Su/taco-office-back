@@ -31,6 +31,16 @@ export class OccStudentDto {
   @ApiProperty() name!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
   @ApiProperty({ description: '그날만 빠진 학생인가 (D-R21)' }) droppedOnce!: boolean;
+  @ApiProperty({ description: '그날 휴원 중인가 — 명단에 남되 시간표·청구에서는 빠진다 (C92-c · C-36)' }) paused!: boolean;
+}
+
+/** 학생 카드의 휴원 기간 — 진행 중이거나 앞으로 잡힌 것 하나 (C92-c) */
+export class StudentPauseDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: 'YYYY-MM-DD' }) fromDate!: string;
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'YYYY-MM-DD · null 이면 복귀 전까지' }) toDate?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) reason?: string | null;
+  @ApiProperty({ description: '복귀 처리가 끝났는가 — 끝났으면 「복귀」 단추가 서지 않는다 (복귀일 전이라도)' }) resumed!: boolean;
 }
 
 export class OccurrenceDto {
@@ -492,6 +502,9 @@ export class TrackedStudentDto {
   @ApiProperty() name!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
   @ApiProperty({ description: '그날만 빠진 학생인가 (D-R21)' }) droppedOnce!: boolean;
+  @ApiProperty({ description: '그날 휴원 중인가 (C92-c)' }) paused!: boolean;
+  @ApiPropertyOptional({ type: () => StudentPauseDto, nullable: true, description: '진행 중이거나 앞으로 잡힌 휴원 — 「휴원 9/1~9/30」 · 「복귀」 단추의 근거' })
+  pause?: StudentPauseDto | null;
 
   @ApiProperty({ description: '반납하지 않은 배부 교재 수 — 원문 「교재 N」' }) bookCount!: number;
   @ApiProperty({
@@ -626,4 +639,35 @@ export class ConflictQueryDto {
 export class ConflictPreviewDto {
   @ApiProperty({ type: [ConflictRowDto], description: '비어 있어도 **저장을 건너뛰지 않는다** — 그 사이에 남이 그 자리를 잡을 수 있다' })
   conflicts!: ConflictRowDto[];
+}
+
+/* ══ 휴원 · 복귀 (C92-c · 테스트 시나리오 C-36 · C-37) ═══════════════════ */
+
+export class StudentParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId!: number;
+}
+
+export class StudentResumeParamsDto extends StudentParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) pauseId!: number;
+}
+
+/** 학생 카드 「휴원」 — 기간을 적으면 그 기간의 회차가 시간표·청구에서 빠진다. 회차를 지우지 않는다 */
+export class StudentPauseWriteDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '휴원 시작일' }) @IsCalendarDate() fromDate!: string;
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '휴원 종료일(포함) — 비우면 복귀 처리 전까지' })
+  @IsOptional() @IsCalendarDate() toDate?: string;
+  @ApiPropertyOptional({ maxLength: 200 }) @IsOptional() @IsString() @MaxLength(200) reason?: string;
+}
+
+/** 학생 카드 「복귀」 — 복귀일부터 회차가 돌아온다. 기간은 이력으로 남는다 */
+export class StudentResumeWriteDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '복귀일 — 이 날부터 시간표·청구가 재개된다' }) @IsCalendarDate() resumeOn!: string;
+}
+
+export class StudentPauseResultDto extends StudentPauseDto {
+  @ApiProperty({ description: '학생 id' }) studentId!: number;
+  @ApiProperty({ description: '기간 안에서 빠지는(또는 돌아오는) 회차 수 — 서버가 센다 (D-R37)' }) affected!: number;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '복귀 처리 시각 (ISO) — 복귀 전이면 null' }) resumedAt?: string | null;
 }

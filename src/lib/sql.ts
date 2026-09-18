@@ -109,3 +109,12 @@ export function parseCheckConstraint(sql: string): CheckConstraintSql | null {
   if (expr.trim() === '') return null;
   return { table, name, expr: expr.replace(/\s+/g, ' ').trim() };
 }
+
+/**
+ * 학생이 그 날짜에 **휴원 중**인가 (C92-c · C-36/C-37). 시간표·명단·청구가 같은 판정을 쓴다 —
+ * 기간 안의 회차는 그 학생에게 「그날만 빠짐」과 같다. 복귀하면 to_date 가 당겨져 저절로 돌아온다.
+ * @param student 학생 id 표현식 (예: `ss.student_id`) · @param date 날짜 표현식 (예: `o.on_date`)
+ */
+export const stuPausedOn = (student: string, date: string): string =>
+  `EXISTS (SELECT 1 FROM stu_pause sp WHERE sp.student_id = ${student}
+             AND ${date} >= sp.from_date AND (sp.to_date IS NULL OR ${date} <= sp.to_date))`;

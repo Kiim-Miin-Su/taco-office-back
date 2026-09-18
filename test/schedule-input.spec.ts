@@ -16,6 +16,7 @@ import { ScheduleWriteService } from '../src/modules/schedule/schedule.write.ser
 import { ScheduleController } from '../src/modules/schedule/schedule.controller';
 import { ScheduleService } from '../src/modules/schedule/schedule.service';
 import { ScheduleAttendanceService } from '../src/modules/schedule/schedule.attendance.service';
+import { SchedulePauseService } from '../src/modules/schedule/schedule.pause.service';
 import { buildOpenApi } from '../src/openapi';
 import { isIsoDate } from '../src/lib/kst';
 
@@ -112,6 +113,7 @@ describe('스케줄 OpenAPI/실제 HTTP 경계 (권한/DB 검증은 별도)', ()
     const mod = await Test.createTestingModule({ controllers: [ScheduleController], providers: [
       { provide: ScheduleService, useValue: {} }, { provide: ScheduleWriteService, useValue: write },
       { provide: ScheduleAttendanceService, useValue: {} },
+      { provide: SchedulePauseService, useValue: {} },
     ] }).compile();
     app = mod.createNestApplication();
     app.useGlobalPipes(pipe);

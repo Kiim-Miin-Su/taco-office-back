@@ -32,7 +32,7 @@
  *   · `dropped` — 휴강·결강만               → 「다음 달로 넘길 돈」
  * 세 토막의 합(`done + 남은 것`)은 `month` 와 정확히 같다 — 회귀가 그것을 증명한다.
  */
-import { kstMonthOf } from '../../lib/sql';
+import { kstMonthOf, stuPausedOn } from '../../lib/sql';
 
 export interface InvoiceLineRow {
   sub_key: string | null;
@@ -53,9 +53,11 @@ export type Queryer = { query: (sql: string, params?: unknown[]) => Promise<unkn
  * 「그날만 빠진」 학생(D-R21)은 처리가 없으므로 이월과 같다.
  */
 const TREAT = `(SELECT e.cancel_treat FROM exc e WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date)`;
-const STU_OUT = `EXISTS (
+/** 그날만 빠졌거나 **휴원 중**인 학생 — 둘 다 「그 학생에게는 없는 회차」다 (D-R21 · C92-c) */
+const STU_OUT = `(EXISTS (
              SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
-              WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)`;
+              WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)
+           OR ${stuPausedOn('$1', 'o.on_date')})`;
 /** 청구하는 회차 — 살아 있거나, 휴강이어도 **차감(소진)** 으로 처리된 것. 그날만 빠진 학생은 아니다 */
 const LIVE = `(NOT o.canceled OR ${TREAT} = 'deduct')
        AND NOT ${STU_OUT}`;

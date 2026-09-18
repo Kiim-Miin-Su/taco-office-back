@@ -309,6 +309,66 @@ d('§54 수업료 계산 (C65)', () => {
     expect(inv.lines.every((l) => l.count > 0)).toBe(true);
   });
 
+  /* ── 휴원 기간의 회차는 청구되지 않는다 (C92-c · C-36 · C-37) ─────────── */
+
+  /** 휴원 기간 — 회차는 그대로 두고 표에 기간 하나를 적는다 (`stu_pause`) */
+  const pauseBetween = async (from: string, to: string | null) => {
+    await q.query(
+      `INSERT INTO stu_pause (student_id, from_date, to_date, by_id) VALUES ($1, $2::date, $3::date, 91)`,
+      [stuId, from, to],
+    );
+  };
+
+  it('**휴원** 기간의 회차는 「그날만 빠짐」과 같다 — 결강으로 세고 금액·청구서에서 빠진다 (C-36 「청구가 중단된다」)', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1]);
+    await occ(PAST[2]);
+    await pauseBetween(PAST[1], PAST[2]); // 둘째·셋째 주 휴원
+    const { me, all } = await row();
+    expect(me.done).toBe(1);
+    expect(me.total).toBe(1);
+    expect(me.canceled).toBe(2);
+    expect(me.deducted).toBe(0);
+    expect(me.doneAmount).toBe(50_000);
+    expect(all.canceledCount).toBe(2);
+    // 청구서도 같은 값이다 — 휴원한 회차는 줄에 없다 (D-R22)
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    expect(inv.amount).toBe(50_000);
+    expect(inv.lines).toHaveLength(1);
+    expect(inv.lines[0]!.count).toBe(1);
+    // 회차 자체는 그대로다 — 지우지 않았다
+    const rows = await q.query(`SELECT count(*)::int AS n FROM ser_occ WHERE ser_id = $1 AND NOT canceled`, [serId]) as Array<{ n: number }>;
+    expect(rows[0]!.n).toBe(3);
+  });
+
+  it('**복귀**하면 복귀일부터 다시 센다 — 종료일이 당겨진 기간 밖의 회차는 청구에 든다 (C-37)', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1]);
+    await occ(PAST[2]);
+    // 둘째 주부터 무기한 휴원했다가 셋째 주에 복귀 — to_date 가 복귀 전날로 당겨진 모양
+    await pauseBetween(PAST[1], '2026-05-17');
+    const { me } = await row();
+    expect(me.done).toBe(2);
+    expect(me.canceled).toBe(1);
+    expect(me.doneAmount).toBe(100_000);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    expect(inv.amount).toBe(100_000);
+  });
+
+  it('휴원은 **그 학생만** 빠진다 — 같은 수업의 다른 학생은 그대로 청구된다', async () => {
+    const [other] = (await q.query(`INSERT INTO stu (name, grade) VALUES ('휴원 아닌 학생','G8') RETURNING id`)) as Array<{ id: string }>;
+    await q.query(`INSERT INTO ser_stu (ser_id, student_id) VALUES ($1,$2)`, [serId, Number(other.id)]);
+    await occ(PAST[0]);
+    await pauseBetween(PAST[0], PAST[0]);
+    const v = await svc().tuition(MONTH, true);
+    const mine = v.items.find((x) => x.studentId === stuId)!;
+    const theirs = v.items.find((x) => x.studentId === Number(other.id))!;
+    expect(mine.done).toBe(0);
+    expect(mine.canceled).toBe(1);
+    expect(theirs.done).toBe(1);
+    expect(theirs.canceled).toBe(0);
+  });
+
   /* ── 안분을 쓰지 않는다 ──────────────────────────────────────────── */
 
   /*

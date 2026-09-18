@@ -77,6 +77,7 @@ export * from './unav.entity';
 export * from './vers.entity';
 export * from './wage.entity';
 export * from './wrep.entity';
+export * from './stu-pause.entity';
 export * from './zacc.entity';
 export * from './zassign.entity';
 export * from './zlog.entity';
@@ -84,6 +85,7 @@ export * from './zlog.entity';
 import {
   Att,
   Carry,
+  StuPause,
   Autorep,
   Chreq,
   Cons,
@@ -159,6 +161,7 @@ import {
 /** DataSource 에 넘길 목록. GPA 4표는 N-13 채택(2026-09-12 §4-17)으로 C34 에서 합류했다. */
 export const ENTITIES = [
   Carry,
+  StuPause,
   Att,
   Autorep,
   Chreq,

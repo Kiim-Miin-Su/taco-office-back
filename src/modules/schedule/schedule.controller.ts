@@ -16,10 +16,12 @@ import {
   LessonTrackingDto, LessonTrackingQueryDto,
   ConflictPreviewDto, ConflictQueryDto,
   DayCancelDto, DayCancelResultDto,
+  StudentParamsDto, StudentResumeParamsDto, StudentPauseWriteDto, StudentResumeWriteDto, StudentPauseResultDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
 import { ScheduleAttendanceService } from './schedule.attendance.service';
+import { SchedulePauseService } from './schedule.pause.service';
 import { horizon } from './schedule.project';
 
 const missingOccurrenceResponse = {
@@ -38,6 +40,7 @@ export class ScheduleController {
     private readonly svc: ScheduleService,
     private readonly write: ScheduleWriteService,
     private readonly attendance: ScheduleAttendanceService,
+    private readonly pauses: SchedulePauseService,
   ) {}
 
   @Get('occurrences')
@@ -208,6 +211,48 @@ export class ScheduleController {
   @ApiBadRequestResponse({ description: 'code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED', type: ApiErrorDto })
   dayCancel(@CurrentUser() user: RequestUser | undefined, @Body() dto: DayCancelDto): Promise<DayCancelResultDto> {
     return this.write.dayCancel(dto, user?.id);
+  }
+
+  /* ══ 휴원 · 복귀 (C92-c · 테스트 시나리오 C-36 · C-37) ═══════════════════
+     학생 카드(§79 학생 트래킹)의 「휴원」·「복귀」. 회차를 지우지 않고 기간 하나를 적는다 —
+     시간표·§54·명단이 그 기간을 「그날만 빠짐」과 같은 것으로 읽는다. */
+
+  @Post('students/:studentId/pause')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '학생 휴원 — 기간 안의 회차가 시간표·청구에서 빠진다. 회차는 그대로다 (C-36)',
+    description: '종료일을 비우면 복귀 처리 전까지다. 같은 학생의 기간이 겹치면 409 PAUSE_OVERLAP (DB EXCLUDE). '
+      + '「빠지는 회차 수」는 서버가 센다. 지난 기간도 잡을 수 있지만 이미 발행한 청구서는 바뀌지 않는다 (청구서는 INSERT 뿐이다).',
+  })
+  @ApiCreatedResponse({ type: StudentPauseResultDto })
+  @ApiNotFoundResponse({ description: 'code STUDENT_NOT_FOUND', type: ApiErrorDto })
+  @ApiConflictResponse({ description: 'code PAUSE_OVERLAP — 이미 잡힌 휴원 기간과 겹친다', type: ApiErrorDto })
+  @ApiBadRequestResponse({ description: 'code BAD_RANGE — 종료일이 시작일보다 앞', type: ApiErrorDto })
+  pauseStudent(
+    @CurrentUser() user: RequestUser,
+    @Param() params: StudentParamsDto,
+    @Body() dto: StudentPauseWriteDto,
+  ): Promise<StudentPauseResultDto> {
+    return this.pauses.pause(params.studentId, dto, user.id);
+  }
+
+  @Post('students/:studentId/pause/:pauseId/resume')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '학생 복귀 — 복귀일부터 회차가 돌아온다. 기간은 이력으로 남는다 (C-37)',
+    description: '휴원 종료일을 복귀 전날로 당기고 누가·언제 복귀시켰는지 남긴다. 복귀일은 시작일 다음 날부터이며 '
+      + '원래 종료일 뒤로는 못 잡는다 (BAD_RANGE). 이미 복귀 처리한 기록은 409 PAUSE_ALREADY_RESUMED.',
+  })
+  @ApiCreatedResponse({ type: StudentPauseResultDto })
+  @ApiNotFoundResponse({ description: 'code PAUSE_NOT_FOUND — 그 학생의 휴원 기록이 아니다', type: ApiErrorDto })
+  @ApiConflictResponse({ description: 'code PAUSE_ALREADY_RESUMED', type: ApiErrorDto })
+  @ApiBadRequestResponse({ description: 'code BAD_RANGE', type: ApiErrorDto })
+  resumeStudent(
+    @CurrentUser() user: RequestUser,
+    @Param() params: StudentResumeParamsDto,
+    @Body() dto: StudentResumeWriteDto,
+  ): Promise<StudentPauseResultDto> {
+    return this.pauses.resume(params.studentId, params.pauseId, dto, user.id);
   }
 
   @Post('undo')
