@@ -61,6 +61,30 @@ function cancelArgs(dto: { cancelKind?: AttendanceCancelReason; cancelTreat?: Ca
  * **회차마다 한 건**이다 — 학생마다 남기면 네 명 반의 휴강 하나가 수신함에 넉 줄로 서고, 「알림 2건」이 여덟이 된다.
  * 낱말은 서버가 만든다 (D-R18). 화면은 body 를 그대로 보여 준다.
  */
+/**
+ * 그 규칙에 **지우면 사라지는 사실**이 붙어 있는가 — 열한 표를 한 번에 훑는다.
+ *
+ * 두 곳이 같은 목록을 본다: `remove()` 는 「지울까 마감할까」를 정하는 데 쓰고(참조가 있으면
+ * SER 를 남기고 `to_date` 만 당긴다 — 지난 회차의 근거가 사라지면 안 된다),
+ * `undo()` 는 **되돌리기가 지우게 될 규칙**을 미리 걸러 **409 로 설명한다**.
+ * 목록이 두 벌이면 한쪽만 표가 늘어난 것을 모른 채 낡는다 (D-R22).
+ *
+ * FK 는 전부 즉시 NO ACTION 이라 막는 것은 지금도 DB 다 — 이 함수는 **설명하는 쪽**이다
+ * (C84-b 가 겹침에서 한 것과 같다: 막는 것은 EXCLUDE, 누구와 부딪혔는지는 조회).
+ */
+export const SCHEDULE_REF_TABLES = [
+  'att', 'rep', 'autorep', 'chreq', 'guide', 'pnoti', 'payout_line', 'cons_sess', 'note', 'diag', 'zassign',
+] as const;
+
+async function referencedSeries(q: QueryRunner, serIds: number[]): Promise<number[]> {
+  if (!serIds.length) return [];
+  const union = SCHEDULE_REF_TABLES
+    .map((t) => `SELECT DISTINCT ser_id FROM ${t} WHERE ser_id = ANY($1::bigint[])`)
+    .join(' UNION ');
+  const rows = (await q.query(union, [serIds])) as Array<{ ser_id: string }>;
+  return [...new Set(rows.map((r) => Number(r.ser_id)))].sort((a, b) => a - b);
+}
+
 async function notifyCancel(
   q: QueryRunner, actorId: number | undefined, serId: number, onDate: string, fresh: State, treat: string,
   makeup?: { date: string; startMin: number },
@@ -98,6 +122,67 @@ async function notifyCancel(
        SELECT id, $1, $2, $3, 'schedule' FROM staff
         WHERE active AND role = 'ceo' AND ($1::bigint IS NULL OR id <> $1)`,
       [actorId ?? null, `${head.subject} 이월 1회 발생 — ${who} · 다음 달 청구에서 빠집니다 (${onDate})`, `/accounting?tab=tuition&month=${month}`],
+    );
+  }
+}
+
+/**
+ * **학생을 넣으면 알림 세 건** (테스트 시나리오 M-124 · 원본 §16).
+ *
+ * M 영역 머리글이 이 함수의 이유다 — 「학생을 한 명 넣으면 안내와 교재가 필요해지는데,
+ * **이걸 담당자가 기억해야 한다면 시스템이 아닙니다.**」 지금까지 `roster()` 는
+ * `needGuide`/`needBook` 을 **응답에만** 실었고, 화면은 그것을 **모달이 닫히면 사라지는 창**
+ * 하나로 보여 줬다. 보여 주는 쪽만 있고 **남기는 쪽이 없었다.**
+ *
+ * 판정을 다시 하지 않는다 — 같은 트랜잭션이 이미 센 `needGuide`/`needBook` 을 그대로 받는다
+ * (D-R22 · D-R37). 화면이 본 목록과 수신함에 남는 줄이 **같은 배열**이어야 한다.
+ *
+ * **넣은 사람을 빼지 않는다.** `notifyCancel` 은 「남에게 알리는 일」이라 `id <> actor` 로
+ * 자기를 빼지만, 안내·교재는 **넣은 사람이 해야 할 일**이고 원문이 「① 넣기 ② 수신함 확인 →
+ * 3건」이라 적는다.
+ *
+ * 필요 없는 줄은 보내지 않는다 — 이미 안내가 있는 학생에게 「안내가 필요합니다」는 **거짓말**이다.
+ */
+async function notifyRosterAdd(
+  q: QueryRunner, actorId: number | undefined, serId: number, onDate: string, fresh: State,
+  studentId: number, needGuide: boolean, needBook: boolean,
+): Promise<void> {
+  const ser = fresh.SER.find((s) => s.id === serId);
+  if (!ser) return;
+  const exc = fresh.EXC.find((e) => e.serId === serId && e.onDate === onDate);
+  const teacherId = exc?.teacherSet ? exc.teacherId : ser.teacherId;
+  const [head] = await q.query(
+    `SELECT st.name AS student, COALESCE(sb.name, k.name) AS subject
+       FROM stu st
+       CROSS JOIN ser s
+       JOIN kind k ON k.key = s.kind_key
+       LEFT JOIN sub sb ON sb.key = s.sub_key
+      WHERE st.id = $2 AND s.id = $1`,
+    [serId, studentId],
+  ) as Array<{ student: string; subject: string }>;
+  if (!head) return;
+  // ⓐ 들어왔다 — 그 수업 강사와 관리자급 전원 (`notifyCancel` 과 같은 술어)
+  await q.query(
+    `INSERT INTO noti (to_id, from_id, body, link, category)
+     SELECT id, $1, $2, $3, 'schedule' FROM staff
+      WHERE active AND (id = $4 OR role <> 'teacher')`,
+    [actorId ?? null, `${head.student} 학생이 ${head.subject} 수업에 들어왔습니다`,
+     `/schedule?date=${onDate}`, teacherId ?? -1],
+  );
+  // ⓑ·ⓒ 준비할 일 — 쓰는 사람은 관리자다 (§43 안내 · §38 교재는 관리자 화면이다)
+  if (needGuide) {
+    await q.query(
+      `INSERT INTO noti (to_id, from_id, body, link, category)
+       SELECT id, $1, $2, '/guides', 'request' FROM staff WHERE active AND role <> 'teacher'`,
+      [actorId ?? null, `${head.student} 수업 안내가 필요합니다`],
+    );
+  }
+  if (needBook) {
+    // 링크·분류는 C91 등록 확정이 쓰는 것과 같은 선택이다 — 같은 일에 두 자리가 생기지 않게
+    await q.query(
+      `INSERT INTO noti (to_id, from_id, body, link, category)
+       SELECT id, $1, $2, '/books', 'request' FROM staff WHERE active AND role <> 'teacher'`,
+      [actorId ?? null, `${head.student} 교재 배정이 필요합니다`],
     );
   }
 }
@@ -482,33 +567,22 @@ export class ScheduleWriteService {
       this.requireOccurrence(before, serId, dto.onDate);
       // ATT를 포함한 이력 원장은 SER_OCC와 달리 재투영해 지울 수 없다. 전 회차 삭제 요청이어도
       // 사실 참조가 하나라도 있으면 SER를 보존하고 기간만 마감해야 감사 근거가 함께 남는다.
-      const refs = await q.query(
-        `SELECT EXISTS (
-           SELECT 1 FROM att WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM rep WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM autorep WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM chreq WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM guide WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM pnoti WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM payout_line WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM cons_sess WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM note WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM diag WHERE ser_id=$1
-           UNION ALL SELECT 1 FROM zassign WHERE ser_id=$1
-         ) AS has_refs`, [serId],
-      ) as Array<{ has_refs: boolean }>;
+      const referenced = await referencedSeries(q, [serId]);
       const a = applyDelete(before, {
         serId,
         onDate: dto.onDate,
         scope: dto.scope as Scope,
-        hasRefs: refs[0]?.has_refs === true,
+        hasRefs: referenced.length > 0,
         cancel,
         makeup: makeup
           ? { date: makeup.date, startMin: makeup.startMin, endMin: makeup.endMin, teacherId: makeup.teacherId, roomId: makeup.roomId }
           : undefined,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, after, actorId, false);
+      // N-138 「실수로 지운 일정 되돌리기」 — 토큰을 준다. C87 이 「삭제는 경계」로 닫아 둔 것은
+      // 이 다섯째 인자 하나였다(스냅숏도 발급기도 이미 있었다). 되살릴 때 번호를 지키는 길은
+      // `undo()` 가 `restoreSerIds` 로 연다.
+    }, after, actorId, true);
   }
 
   /**
@@ -556,7 +630,9 @@ export class ScheduleWriteService {
     }, async (q, fresh, base) => {
       for (const t of targets) await notifyCancel(q, actorId, t.serId, t.onDate, fresh, cancel.treat);
       return { ...base, count, skipped };
-    }, actorId, false);
+      // 그날 전체도 **한 토큰**이다 — `tx` 가 그날의 모든 SER 를 한 스냅숏에 담으므로
+      // 되돌리기 한 번이 그날을 통째로 되살린다 (N-138 · 건너뛴 회차는 애초에 안 건드렸다)
+    }, actorId, true);
   }
 
   /** §12 · §79 — 학생 넣고 빼기. 「그날만 빼기」가 D-R21 이다. */
@@ -590,7 +666,7 @@ export class ScheduleWriteService {
         throw new BadRequestException({ code: 'KIND_NOT_FOUND', message: '수업 종류와 정원을 찾을 수 없습니다' });
       }
       const rows = await q.query(
-        `SELECT st.name,
+        `SELECT st.id::text AS id, st.name,
                 NOT EXISTS (
                   SELECT 1 FROM guide g
                    WHERE g.ser_id=$1 AND g.student_id=st.id
@@ -605,7 +681,7 @@ export class ScheduleWriteService {
           WHERE s.id=$1 AND st.id = ANY($2::bigint[])
           ORDER BY st.name`,
         [serId, ids, [...GUIDE_DONE_DB]],
-      ) as Array<{ name: string; need_guide: boolean; need_book: boolean }>;
+      ) as Array<{ id: string; name: string; need_guide: boolean; need_book: boolean }>;
       if (rows.length !== ids.length) {
         throw new BadRequestException({ code: 'INVALID_ROSTER', message: '명단에 존재하지 않는 학생이 있습니다' });
       }
@@ -630,12 +706,23 @@ export class ScheduleWriteService {
         tiers.map((r) => ({ heads: Number(r.heads), unitPrice: Number(r.unit_price) })),
         overrides.map((r) => (r.unit_price === null || r.unit_price === undefined ? null : Number(r.unit_price))),
       );
+      const needGuide = rows.filter((r) => r.need_guide).map((r) => r.name);
+      const needBook = rows.filter((r) => r.need_book).map((r) => r.name);
+      // M-124 — 넣었을 때만. 빼기(dropOnce·dropAll)와 되돌리기(undoOnce)는 준비할 일이 생기지 않는다.
+      // 등록 확정(C91)은 제 알림 세트를 갖고 `create()` 로 명단을 넣으므로 여기서 겹치지 않는다.
+      if (dto.op === 'add') {
+        const added = rows.find((r) => r.id === String(dto.studentId));
+        await notifyRosterAdd(
+          q, actorId, serId, dto.onDate, fresh, dto.studentId,
+          added?.need_guide === true, added?.need_book === true,
+        );
+      }
       return {
         ...base,
         count: ids.length,
         cap: Number(meta[0].cap),
-        needGuide: rows.filter((r) => r.need_guide).map((r) => r.name),
-        needBook: rows.filter((r) => r.need_book).map((r) => r.name),
+        needGuide,
+        needBook,
         priced: pricing !== null,
         unitPrice: pricing ? pricing.unitPrice : null,
         total: pricing ? pricing.total : null,
@@ -669,7 +756,29 @@ export class ScheduleWriteService {
       const timeIssue = scheduleTimeIssue(payload.before);
       if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
       await assertScheduleReferences(q, payload.before);
-      const touched = await persist(q, current, payload.before);
+      /*
+       * 되돌리기가 **지우게 될** 규칙 — 되돌릴 `create`, 휴강의 보강 회차가 여기 든다.
+       * 그 사이 누가 출결·리포트를 적었으면 즉시 NO ACTION FK 가 막아 **500** 이 난다.
+       * 막는 것은 그대로 DB 이고 여기서는 **설명한다** (C84-b 가 겹침에서 한 것과 같다).
+       * `remove()` 와 **같은 목록**을 본다 — 두 벌이면 표가 늘 때 한쪽만 낡는다 (D-R22).
+       */
+      const keepIds = new Set(payload.before.SER.map((row) => row.id));
+      const willDelete = current.SER.map((row) => row.id).filter((id) => !keepIds.has(id));
+      const blocked = await referencedSeries(q, willDelete);
+      if (blocked.length) {
+        throw new ConflictException({
+          code: 'UNDO_HAS_REFS',
+          message: '그 뒤 출결·리포트·안내가 붙어 이전 작업을 안전하게 되돌릴 수 없습니다',
+        });
+      }
+      /*
+       * 지워진 규칙은 **번호를 지키며** 되살린다 — `before` 에 있는데 지금 DB 에 없는 것이 그것이다.
+       * 새 번호를 받으면 되살아난 것이 아니라 닮은 규칙이 하나 생긴 것이고, 그 사이 사람이
+       * 들고 있던 링크·선택은 전부 엉뚱한 곳을 가리킨다 (N-138 「연결된 데이터도 함께」).
+       */
+      const present = new Set(current.SER.map((row) => row.id));
+      const restoreSerIds = new Set([...keepIds].filter((id) => !present.has(id)));
+      const touched = await persist(q, current, payload.before, { restoreSerIds });
       const fresh = await loadState(q, touched);
       const projected = await project(q, fresh, touched, horizon());
       const result: WriteResultDto = {

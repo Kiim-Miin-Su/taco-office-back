@@ -118,7 +118,22 @@ export async function loadState(
 }
 
 /** SER 하나를 새로 넣고 **DB 가 준 id** 를 돌려준다. 리듀서가 만든 임시 id 는 버린다. */
-async function insertSer(q: QueryRunner, s: Ser): Promise<number> {
+/**
+ * @param keepId **되살리는 규칙만** 준다 (N-138). 시퀀스는 이미 그 번호를 지나왔으므로 앞으로도
+ *   겹치지 않고, 번호가 바뀌면 되살아난 것이 아니라 **닮은 규칙이 하나 생긴 것**이다.
+ *   새 규칙은 지금처럼 시퀀스가 번호를 준다 — 이 인자를 넘기는 곳은 `undo()` 하나다.
+ */
+async function insertSer(q: QueryRunner, s: Ser, keepId?: number): Promise<number> {
+  if (keepId !== undefined) {
+    const r = (await q.query(
+      `INSERT INTO ser (id, kind_key, sub_key, teacher_id, room_id, mode, start_min, end_min,
+                        rrule, from_date, to_date, title)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::date,$11::date,$12) RETURNING id`,
+      [keepId, s.kind, s.sub, s.teacherId, s.roomId, s.mode, s.startMin, s.endMin,
+       s.rrule, s.fromDate, s.toDate, s.title || null],
+    )) as Array<{ id: string }>;
+    return Number(r[0].id);
+  }
   const r = (await q.query(
     `INSERT INTO ser (kind_key, sub_key, teacher_id, room_id, mode, start_min, end_min,
                       rrule, from_date, to_date, title)
@@ -132,12 +147,19 @@ async function insertSer(q: QueryRunner, s: Ser): Promise<number> {
 /**
  * `before` → `after` 의 차이를 SQL 로 옮긴다.
  *
- * 리듀서는 새 행에 **음수 임시 id** 를 붙인다(`mkGen`). 그것을 DB 시퀀스가 준 진짜 id 로
- * 바꿔 주는 것이 이 함수의 절반이다 — 임시 id 가 밖으로 새면 다음 요청에서 못 찾는다.
+ * 리듀서는 새 행에 **임시 id** 를 붙인다(`mkGen` — 지금 State 의 최대값 + 1 이라 **양수**다.
+ * 「음수」라 적어 둔 옛 주석은 사실과 달랐다). 그것을 DB 시퀀스가 준 진짜 id 로 바꿔 주는 것이
+ * 이 함수의 절반이다 — 임시 id 가 밖으로 새면 다음 요청에서 못 찾는다.
+ * 임시 id 와 **되살리는 id** 는 둘 다 「before 에 없는 양수」라 구분이 안 되므로,
+ * 되살리는 쪽만 `opts.restoreSerIds` 로 **부르는 쪽이 말해 준다** (N-138).
  *
  * @returns 바뀐 SER id 들. 호출한 쪽이 이 범위만 다시 투영하면 된다.
  */
-export async function persist(q: QueryRunner, before: State, after: State): Promise<number[]> {
+export async function persist(
+  q: QueryRunner, before: State, after: State,
+  /** 되돌리기가 **번호를 지키며 되살릴** SER (N-138). 그 밖에는 아무도 넘기지 않는다. */
+  opts: { restoreSerIds?: ReadonlySet<number> } = {},
+): Promise<number[]> {
   const touched = new Set<number>();
   /** 리듀서의 임시 id → DB id */
   const idMap = new Map<number, number>();
@@ -149,7 +171,7 @@ export async function persist(q: QueryRunner, before: State, after: State): Prom
   for (const s of after.SER) {
     const old = beforeSer.get(s.id);
     if (!old) {
-      const realId = await insertSer(q, s);
+      const realId = await insertSer(q, s, opts.restoreSerIds?.has(s.id) ? s.id : undefined);
       idMap.set(s.id, realId);
       touched.add(realId);
       continue;

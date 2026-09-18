@@ -55,7 +55,7 @@ export const NOTI_CATEGORY_LABEL: Record<NotiCategory, string> = {
   report: '리포트',
   schedule: '일정 변경',
   request: '요청 처리',
-  etc: '알림',
+  etc: '시스템',   // 원문 M-128 의 여섯째 낱말이다 — 「알림」이라 적던 것을 되돌렸다 (C99 · D-R18)
 };
 
 export function notiCategory(

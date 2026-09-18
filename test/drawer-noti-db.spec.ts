@@ -16,7 +16,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
-import { NOTI_WINDOW_DAYS, notiCategory } from '../src/lib/noti';
+import { NOTI_CATEGORIES, NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory } from '../src/lib/noti';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -52,6 +52,13 @@ describe('§16 분류 — DB category가 정본이고 과거 행만 링크 fallb
 
   it('같은 독촉 링크라도 저장 분류가 재알람이면 재알람이다', () => {
     expect(notiCategory('re_alarm', '/reports/unwritten')).toBe('re_alarm');
+  });
+
+  it('분류 여섯의 낱말이 원문 M-128 그대로다 — 여섯째는 「알림」이 아니라 「시스템」이다', () => {
+    // 원문: 「작성 독촉 · 재알람 · 리포트 · 요청 처리 · 일정 변경 · 시스템」 (C99 · D-R18)
+    expect(NOTI_CATEGORIES.map((k) => NOTI_CATEGORY_LABEL[k])).toEqual([
+      '작성 독촉', '재알람', '리포트', '일정 변경', '요청 처리', '시스템',
+    ]);
   });
 });
 
