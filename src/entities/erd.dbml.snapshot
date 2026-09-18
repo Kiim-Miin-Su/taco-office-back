@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-51 C92-b 보강·이월 청구 (2026-09-18): EXC.makeup_ser_id 로 보강 회차를 잇고(원래 회차는 세지 않는다) 지난달 carry 를 이 달 청구서의 음수 줄로 뺀다.
 // TBO-51 C92-a 휴강 정책 (2026-09-18): EXC 에 휴강 사유·처리(이월/차감/보강 이관)를 적고 exc_cancel_policy CHECK 로 「차감은 학생 결석에만」을 DB 가 지킨다. 회계 §54·청구서는 처리로 회차를 가른다.
 // TBO-50 C81 제품 정합 (2026-09-14): 내부 리포트 독촉의 UUID 요청키와 대상 강사를 NOTI에 nullable로 보존하고, request_key가 있을 때만 수신자와 partial unique로 멱등성을 강제한다. 외부 메시지/주간 트래킹 정책 저장은 만들지 않는다.
 // TBO-50 C79 제품 정합 (2026-09-14): 컨설팅 시작일·요청자·소프트 보관과 계약 파일/피드백/이벤트 원장을 추가한다. 기존 CONS_STU/PICK/SESS 참조는 실제 FK로 승격하며 §30 단계와 누적 수납 자동 전이는 Nest 트랜잭션이 소유한다.
@@ -355,6 +356,7 @@ Table EXC {
   reason      text        [note: '휴강 메모 — C92 부터 휴강 창의 「메모」가 여기 적힌다']
   cancel_kind  varchar(16) [note: 'teacher_absent | student_absent | academy | holiday | other — 휴강 사유 (v4.26 · C92)']
   cancel_treat varchar(8)  [note: 'carry | deduct | makeup — 이월 · 차감 · 보강 이관 (v4.26 · C92). null = 옛 휴강 = 이월로 읽는다']
+  makeup_ser_id bigint     [ref: > SER.id, note: '보강 이관이면 보강 회차(ONCE 규칙)의 SER — ON DELETE SET NULL · exc_makeup_link CHECK: 처리가 makeup 일 때만 (v4.27 · C92-b)']
   by_id       bigint      [ref: > STAFF.id]
   at          timestamptz [not null, default: `now()`]
 
@@ -364,6 +366,8 @@ Table EXC {
   exc_cancel_policy (v4.26 · C92 · NOT VALID): 사유·처리는 낱말 안에서만, 처리는 취소 회차에만(사유와 짝),
   **차감은 학생 결석에만** — 학원 사정·공휴일·강사 결강은 이월이고 강사료에도 안 든다 (테스트 시나리오 C-30~C-34).
   cancel_treat 가 null 인 옛 휴강은 이월로 센다 — 기존 행 보정 0 (N-25). 판정은 lib/rules.cancelPolicyIssue 한 곳.
+  보강 이관(v4.27 · C-34)은 같은 리듀스에서 ONCE 규칙 하나를 새로 만들고 makeup_ser_id 가 그것을 가리킨다 —
+  회계는 원래 회차를 세지 않고(이월도 아니다) 보강 회차를 센다: 「원래 1 + 보강 1 = 2 가 아니라 1」.
   nullable FK만으로는 상속과 명시적 미지정을 구분할 수 없어 *_set 플래그를 함께 쓴다 (TBO-44D-2).
   CHECK: teacher_set OR teacher_id IS NULL · room_set OR room_id IS NULL.
   exc_time_check: 명시 start/end 범위 및 양쪽 명시 시 길이10~480분. null 상속 결과는 API 최종 상태 검사, DB 직접 부모 변경 보장은 별도.
@@ -787,7 +791,7 @@ Table INV_LINE {
   inv_id      bigint      [not null, ref: > INV.id]
   sub_key     varchar(16) [ref: > SUB.key, note: '과목']
   label       varchar(80) [not null, note: '표시용 — "고2 수학"']
-  count       int         [not null, note: '수강 횟수 — occ() 로 센 취소 아닌 회차 수. 사람이 세지 않는다']
+  count       int         [not null, note: '수강 횟수 — occ() 로 센 취소 아닌 회차 수. 사람이 세지 않는다. 이월 줄(v4.27 · C-35)은 음수 — 지난달에서 넘어온 회차를 이 달 청구에서 뺀다']
   unit_price  int         [not null]
   amount      int         [not null, note: 'count × unit_price — 저장 시점 스냅샷']
   seq         smallint    [not null, default: 0]
@@ -1412,6 +1416,10 @@ Table SER_OCC {
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
 //
+// v4.26 → v4.27 (2026-09-18 · TBO-51 C92-b 보강 회차 링크 · 이월 청구 반영) — EXC.makeup_ser_id (FK SER · SET NULL) + exc_makeup_link CHECK.
+//   보강 이관은 원래 회차를 접고 ONCE 규칙 하나를 새로 만든다. 회계가 둘을 한 번만 세려면 서로를 알아야 한다.
+//   INV_LINE.count 는 이월 줄에서 음수다(carry.to_month = 그 달 → issueInvoice 가 음수 줄로 뺀다 · C-35).
+//   새 표 0 · 컬럼 1 · 마이그레이션 1 (1760600000000-makeup-link) · 기존 행 보정 0.
 // v4.25 → v4.26 (2026-09-18 · TBO-51 C92-a 휴강 사유·처리) — EXC.cancel_kind · EXC.cancel_treat + exc_cancel_policy CHECK.
 //   휴강이 「취소」 한 가지였고 회계 §54 는 취소 회차를 전부 「넘길 돈」으로 읽었다. 테스트 시나리오 C-30~C-34 가
 //   이월·차감·보강 이관을 가르므로 회차 예외에 사유·처리를 적는다. 차감은 학생 결석에만(CHECK 이중 방어).

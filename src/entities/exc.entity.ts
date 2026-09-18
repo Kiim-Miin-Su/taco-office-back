@@ -21,6 +21,7 @@ import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey, Check } from
 // D3-d2 수동 CHECK metadata: migration14와 함께 보존/검증한다.
 @Check('exc_time_check', "(start_min IS NULL OR start_min BETWEEN 0 AND 1439) AND (end_min IS NULL OR end_min BETWEEN 1 AND 1440) AND (start_min IS NULL OR end_min IS NULL OR end_min - start_min BETWEEN 10 AND 480)")
 // C92 수동 CHECK metadata: migration 1760500000000 과 함께 보존/검증한다 — lib/rules.cancelPolicyIssue 와 같은 규칙.
+@Check('exc_makeup_link', "makeup_ser_id IS NULL OR cancel_treat = 'makeup'")
 @Check('exc_cancel_policy', "(cancel_kind IS NULL OR cancel_kind IN ('teacher_absent','student_absent','academy','holiday','other')) AND (cancel_treat IS NULL OR cancel_treat IN ('carry','deduct','makeup')) AND (cancel_treat IS NULL OR (canceled AND cancel_kind IS NOT NULL)) AND (cancel_treat IS DISTINCT FROM 'deduct' OR cancel_kind = 'student_absent')")
 @Entity({ name: 'exc' })
 export class Exc {
@@ -79,6 +80,13 @@ export class Exc {
    */
   @Column({ type: 'varchar', length: 8, nullable: true })
   cancelTreat: string | null;
+
+  /**
+   * 보강 이관이면 보강 회차(ONCE 규칙)의 SER id (C92-b · C-34). FK ON DELETE SET NULL —
+   * 보강을 지우면 링크만 풀리고 원래 회차의 휴강은 남는다. 처리가 makeup 일 때만 값이 있다 (`exc_makeup_link`).
+   */
+  @Column({ type: 'bigint', nullable: true })
+  makeupSerId: number | null;
 
   @Column({ type: 'bigint', nullable: true })
   byId: number | null;

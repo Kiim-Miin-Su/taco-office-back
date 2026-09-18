@@ -12821,6 +12821,26 @@
             "nullable": true,
             "description": "처리 이름 — 「이월」 「차감」 「보강 이관」"
           },
+          "makeupSerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "보강 이관이면 보강 회차의 SER id"
+          },
+          "makeupDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "보강 회차의 날짜 YYYY-MM-DD"
+          },
+          "makeupStartMin": {
+            "type": "number",
+            "nullable": true,
+            "description": "보강 회차의 시작 (KST 분)"
+          },
+          "makeupOfDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "이 회차가 보강이면 원래 회차의 날짜 YYYY-MM-DD"
+          },
           "hasException": {
             "type": "boolean",
             "description": "이 회차에 예외가 붙었는가"
@@ -13747,6 +13767,40 @@
           "onDate"
         ]
       },
+      "MakeupDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "보강 날짜 (실제 달력 날짜)"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "KST 0~1439 분"
+          },
+          "endMin": {
+            "type": "number",
+            "description": "KST 분 · 시작보다 뒤 · 24:00 = 1440"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true,
+            "description": "비우면 원래 회차의 강사 · null 이면 미지정"
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true,
+            "description": "비우면 원래 회차의 강의실 · null 이면 미지정"
+          }
+        },
+        "required": [
+          "date",
+          "startMin",
+          "endMin"
+        ]
+      },
       "OccurrenceDeleteDto": {
         "type": "object",
         "properties": {
@@ -13787,6 +13841,14 @@
             "type": "string",
             "description": "메모 — 「아침에 발열로 연락」 (500자)",
             "maxLength": 500
+          },
+          "makeup": {
+            "description": "처리가 makeup 이면 필수 — 보강 회차의 날짜·시각 (C-34)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MakeupDto"
+              }
+            ]
           }
         },
         "required": [
@@ -15329,6 +15391,10 @@
             "nullable": true,
             "description": "지난달에서 **넘어온** 돈 — 이 달이 받은 것이다"
           },
+          "carriedInSessions": {
+            "type": "number",
+            "description": "지난달에서 넘어온 **회차 수** — 「이월 4회 · 9월 청구에서 빠집니다」의 4 (C92-b · C-35). 금액 권한과 무관하게 센다"
+          },
           "lines": {
             "description": "내역 — 청구서가 쓸 바로 그 줄이다",
             "type": "array",
@@ -15348,6 +15414,7 @@
           "unitPriceOverride",
           "priceCount",
           "carryable",
+          "carriedInSessions",
           "lines"
         ]
       },
@@ -15396,6 +15463,15 @@
             "nullable": true,
             "description": "다음 달로 넘길 돈"
           },
+          "carriedInCount": {
+            "type": "number",
+            "description": "지난달에서 넘어온 회차 수의 합"
+          },
+          "carriedInAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "넘어온 돈의 합 — 이 달 청구서에서 빠진다"
+          },
           "items": {
             "type": "array",
             "items": {
@@ -15416,6 +15492,7 @@
           "totalCount",
           "canceledCount",
           "deductedCount",
+          "carriedInCount",
           "items",
           "canSeeAmounts"
         ]

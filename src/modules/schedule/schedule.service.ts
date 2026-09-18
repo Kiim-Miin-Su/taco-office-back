@@ -34,6 +34,7 @@ interface Row {
   room_id: string | null; room_name: string | null;
   zacc_id: string | null; mode: string; canceled: boolean;
   cancel_kind: AttendanceCancelReason | null; cancel_treat: CancelTreat | null;
+  makeup_ser_id: string | null; makeup_date: string | null; makeup_start_min: number | null; makeup_of_date: string | null;
   has_exception: boolean; reportable: boolean; rep_state: string | null;
   attendance_id: string | null; attendance_result: AttendanceResult | null;
   attendance_reason: AttendanceCancelReason | null; attendance_confirmed_by: string | null;
@@ -90,6 +91,11 @@ export class ScheduleService {
               o.teacher_id, t.name AS teacher_name,
               o.room_id, rm.name AS room_name, o.zacc_id, o.canceled,
               e.cancel_kind, e.cancel_treat,
+              -- 보강 링크 (C92-b · C-34): 원래 회차 → 보강이 언제인지 · 보강 회차 → 어느 회차의 보강인지
+              e.makeup_ser_id,
+              (SELECT to_char(ms.from_date, 'YYYY-MM-DD') FROM ser ms WHERE ms.id = e.makeup_ser_id) AS makeup_date,
+              (SELECT ms.start_min FROM ser ms WHERE ms.id = e.makeup_ser_id) AS makeup_start_min,
+              (SELECT to_char(mo.on_date, 'YYYY-MM-DD') FROM exc mo WHERE mo.makeup_ser_id = o.ser_id ORDER BY mo.on_date LIMIT 1) AS makeup_of_date,
               (e.id IS NOT NULL) AS has_exception,
               r.state AS rep_state,
               a.id AS attendance_id, a.result AS attendance_result, a.reason AS attendance_reason,
@@ -161,6 +167,10 @@ export class ScheduleService {
         cancelKindLabel: r.canceled && r.cancel_kind ? ATTENDANCE_CANCEL_REASON_LABEL[r.cancel_kind] ?? null : null,
         cancelTreat: r.canceled ? (r.cancel_treat ?? null) : null,
         cancelTreatLabel: r.canceled && r.cancel_treat ? CANCEL_TREAT_LABEL[r.cancel_treat] ?? null : null,
+        makeupSerId: r.canceled && r.makeup_ser_id ? Number(r.makeup_ser_id) : null,
+        makeupDate: r.canceled && r.makeup_ser_id ? r.makeup_date : null,
+        makeupStartMin: r.canceled && r.makeup_ser_id && r.makeup_start_min !== null ? Number(r.makeup_start_min) : null,
+        makeupOfDate: r.makeup_of_date ?? null,
         hasException: r.has_exception,
         // 「물어야 하는가」는 규칙이 정한다 — 화면은 이 값만 본다 (§5A.0). 남은 회차는
         // **이 회차의 날짜부터** 센다: 마지막 한 회만 남은 반복은 단발처럼 바로 저장한다.

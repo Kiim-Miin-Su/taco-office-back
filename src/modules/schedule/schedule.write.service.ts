@@ -62,6 +62,7 @@ function cancelArgs(dto: { cancelKind?: AttendanceCancelReason; cancelTreat?: Ca
  */
 async function notifyCancel(
   q: QueryRunner, actorId: number | undefined, serId: number, onDate: string, fresh: State, treat: string,
+  makeup?: { date: string; startMin: number },
 ): Promise<void> {
   const ser = fresh.SER.find((s) => s.id === serId);
   if (!ser) return;
@@ -81,11 +82,14 @@ async function notifyCancel(
   const who = head.students ?? '학생 없음';
   const month = onDate.slice(0, 7);
   const treatLabel = CANCEL_TREAT_LABEL[treat as CancelTreat] ?? '이월';
+  // 보강 이관이면 「언제 보강인지」까지 한 문장에 — 강사·관리자가 새 회차를 따로 찾지 않게 (C-34)
+  const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const treatText = makeup ? `${treatLabel} → ${makeup.date} ${hhmm(makeup.startMin)}` : treatLabel;
   await q.query(
     `INSERT INTO noti (to_id, from_id, body, link, category)
      SELECT id, $1, $2, $3, 'schedule' FROM staff
       WHERE active AND (id = $4 OR role <> 'teacher') AND ($1::bigint IS NULL OR id <> $1)`,
-    [actorId ?? null, `${head.subject} 결강 — ${who} (${onDate} · ${treatLabel})`, `/schedule?date=${onDate}`, teacherId ?? -1],
+    [actorId ?? null, `${head.subject} 결강 — ${who} (${onDate} · ${treatText})`, `/schedule?date=${onDate}`, teacherId ?? -1],
   );
   if (treat === 'carry') {
     await q.query(
@@ -404,14 +408,30 @@ export class ScheduleWriteService {
   ): Promise<WriteResultDto> {
     // 사유·처리는 휴강(이번만)에만 붙는다. 향후·모두는 수업 종료라 정책이 없다 (C92)
     const cancel = dto.scope === 'this' ? cancelArgs(dto) : undefined;
-    if (dto.scope !== 'this' && (dto.cancelKind !== undefined || dto.cancelTreat !== undefined)) {
+    if (dto.scope !== 'this' && (dto.cancelKind !== undefined || dto.cancelTreat !== undefined || dto.makeup !== undefined)) {
       throw new BadRequestException({
         code: 'CANCEL_SCOPE', message: '휴강 사유·처리는 이번 회차에만 붙습니다 — 향후·모두는 수업 종료입니다',
       });
     }
+    // 보강 이관은 보강 회차가 있어야 성립한다 — 날짜 없는 「보강 이관」은 세지도 않고 잡지도 않은 회차가 된다 (C-34)
+    if (cancel?.treat === 'makeup' && !dto.makeup) {
+      throw new BadRequestException({ code: 'MAKEUP_REQUIRED', message: '보강 이관은 보강 날짜와 시각이 필요합니다' });
+    }
+    if (dto.makeup && cancel?.treat !== 'makeup') {
+      throw new BadRequestException({ code: 'MAKEUP_NOT_MAKEUP', message: '보강 날짜는 처리가 「보강 이관」일 때만 보냅니다' });
+    }
+    const makeup = dto.makeup;
+    if (makeup) {
+      if (!isIsoDate(makeup.date)) throw new BadRequestException({ code: 'BAD_RANGE', message: '보강 날짜는 실제 YYYY-MM-DD 날짜여야 합니다' });
+      const timeIssue = lessonTimeIssue(makeup.startMin, makeup.endMin);
+      if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
+      if (makeup.date === dto.onDate) {
+        throw new BadRequestException({ code: 'MAKEUP_SAME_DAY', message: '보강은 같은 날이 아닙니다 — 시각만 바꾸려면 회차를 옮기세요' });
+      }
+    }
     const after = cancel
       ? async (q: QueryRunner, fresh: State, base: WriteResultDto): Promise<WriteResultDto> => {
-        await notifyCancel(q, actorId, serId, dto.onDate, fresh, cancel.treat);
+        await notifyCancel(q, actorId, serId, dto.onDate, fresh, cancel.treat, makeup ? { date: makeup.date, startMin: makeup.startMin } : undefined);
         if (inside) await inside(q);
         return base;
       }
@@ -441,6 +461,9 @@ export class ScheduleWriteService {
         scope: dto.scope as Scope,
         hasRefs: refs[0]?.has_refs === true,
         cancel,
+        makeup: makeup
+          ? { date: makeup.date, startMin: makeup.startMin, endMin: makeup.endMin, teacherId: makeup.teacherId, roomId: makeup.roomId }
+          : undefined,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
     }, after, actorId, false);
@@ -454,6 +477,10 @@ export class ScheduleWriteService {
   async dayCancel(dto: DayCancelDto, actorId?: number): Promise<DayCancelResultDto> {
     const cancel = cancelArgs(dto);
     if (!cancel) throw new BadRequestException({ code: 'CANCEL_REASON_REQUIRED', message: CANCEL_POLICY_MESSAGE.CANCEL_REASON_REQUIRED });
+    // 회차마다 보강 날짜가 다르다 — 그날 전체는 이월(또는 차감)만 받고 보강은 회차의 휴강 창에서 잡는다 (C-33 · C-34)
+    if (cancel.treat === 'makeup') {
+      throw new BadRequestException({ code: 'MAKEUP_NOT_BULK', message: '그날 전체 휴강은 보강 이관을 받지 않습니다 — 보강은 회차마다 잡습니다' });
+    }
     const q0 = this.ds.createQueryRunner();
     await q0.connect();
     let serIds: number[];

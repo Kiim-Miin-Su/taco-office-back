@@ -344,6 +344,79 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
       .send({ date: from, cancelKind: 'holiday', cancelTreat: 'carry' }).expect(403);
   });
 
+  /* ── ⑨ 보강 이관 (C-34 · C92-b) ────────────────────────────────────── */
+
+  it('보강 이관은 보강 회차(ONCE)를 같은 명단·강사로 만들고 원래 회차가 그것을 가리킨다 — 알림에 보강 날짜가 든다 (C-34)', async () => {
+    const { id, from } = await makeSer(600);
+    const makeupDate = plus(from, 3); // 목요일 — 이 스위트의 규칙은 월요일뿐이라 겹치지 않는다
+    const res = await api('delete', `/schedule/${id}`)
+      .send({
+        scope: 'this', onDate: from, cancelKind: 'teacher_absent', cancelTreat: 'makeup',
+        makeup: { date: makeupDate, startMin: 960, endMin: 1020 },
+      })
+      .expect(200);
+    const madeId = (res.body.serIds as number[]).find((x) => x !== id)!;
+    expect(madeId).toBeDefined();
+    made.push(madeId);
+    // 원래 회차 — 접혔고 보강을 가리킨다
+    const exc = await q<{ canceled: boolean; cancel_treat: string; makeup_ser_id: string }>(
+      `SELECT canceled, cancel_treat, makeup_ser_id FROM exc WHERE ser_id = $1`, [id],
+    );
+    expect(exc).toEqual([{ canceled: true, cancel_treat: 'makeup', makeup_ser_id: String(madeId) }]);
+    // 보강 회차 — ONCE · 그 날짜 · 그 시각 · 같은 명단 · 같은 강사
+    const [ser] = await q<Record<string, unknown>>(
+      `SELECT rrule, to_char(from_date,'YYYY-MM-DD') AS from_date, to_char(to_date,'YYYY-MM-DD') AS to_date, start_min, end_min, teacher_id, kind_key
+         FROM ser WHERE id = $1`, [madeId],
+    );
+    expect(ser).toMatchObject({ rrule: 'ONCE', from_date: makeupDate, to_date: makeupDate, start_min: 960, end_min: 1020, teacher_id: String(TEACHER), kind_key: 'class' });
+    expect(await q(`SELECT student_id FROM ser_stu WHERE ser_id = $1`, [madeId])).toEqual([{ student_id: String(STU_A) }]);
+    // 투영 — 원래 날짜에는 취소 행, 보강 날짜에는 산 행 하나
+    const occs = await q<{ ser_id: string; on_date: string; canceled: boolean }>(
+      `SELECT ser_id, to_char(on_date,'YYYY-MM-DD') AS on_date, canceled FROM ser_occ WHERE ser_id = ANY($1) AND on_date IN ($2::date, $3::date) ORDER BY on_date`,
+      [[id, madeId], from, makeupDate],
+    );
+    expect(occs).toEqual([{ ser_id: String(id), on_date: from, canceled: true }, { ser_id: String(madeId), on_date: makeupDate, canceled: false }]);
+    // 목록 — 원래 회차는 「보강 → 언제」, 보강 회차는 「어느 회차의 보강」
+    const list = await api('get', '/schedule/occurrences').query({ from, to: makeupDate }).expect(200);
+    const items = list.body.items as Array<Record<string, unknown>>;
+    expect(items.find((x) => x.serId === id && x.onDate === from)).toMatchObject({
+      canceled: true, cancelTreat: 'makeup', makeupSerId: madeId, makeupDate, makeupStartMin: 960,
+    });
+    expect(items.find((x) => x.serId === madeId)).toMatchObject({ canceled: false, makeupOfDate: from, recurring: false });
+    // 알림 — 결강 통보에 보강 날짜·시각이 든다 · 이월 알림은 없다
+    const toTeacher = await notisTo(TEACHER, '/schedule?date=%');
+    expect(toTeacher).toHaveLength(1);
+    expect(toTeacher[0].body).toContain(`보강 이관 → ${makeupDate} 16:00`);
+    expect(await q(`SELECT 1 FROM noti WHERE link LIKE '/accounting?tab=tuition%' AND from_id = $1`, [CEO])).toHaveLength(0);
+  });
+
+  it('보강 이관에 보강 날짜가 없으면 400 · 같은 날이면 400 · 보강 날짜만 오고 처리가 다르면 400 · 그날 전체에는 못 쓴다', async () => {
+    const { id, from } = await makeSer(600);
+    const missing = await api('delete', `/schedule/${id}`).send({ scope: 'this', onDate: from, cancelKind: 'holiday', cancelTreat: 'makeup' });
+    expect(missing.status).toBe(400); expect(missing.body.code).toBe('MAKEUP_REQUIRED');
+    const sameDay = await api('delete', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, cancelKind: 'holiday', cancelTreat: 'makeup', makeup: { date: from, startMin: 900, endMin: 960 } });
+    expect(sameDay.status).toBe(400); expect(sameDay.body.code).toBe('MAKEUP_SAME_DAY');
+    const notMakeup = await api('delete', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, cancelKind: 'holiday', cancelTreat: 'carry', makeup: { date: plus(from, 1), startMin: 900, endMin: 960 } });
+    expect(notMakeup.status).toBe(400); expect(notMakeup.body.code).toBe('MAKEUP_NOT_MAKEUP');
+    const bulk = await api('post', '/schedule/day-cancel').send({ date: from, cancelKind: 'holiday', cancelTreat: 'makeup' });
+    expect(bulk.status).toBe(400); expect(bulk.body.code).toBe('MAKEUP_NOT_BULK');
+    expect(await excOf(id)).toEqual([]);
+    expect(await q(`SELECT id FROM ser WHERE rrule = 'ONCE' AND title = '휴강 테스트'`)).toEqual([]);
+  });
+
+  it('보강 회차가 겹치면 통째로 되돌아간다 — 원래 회차도 접히지 않는다 (D-R43)', async () => {
+    const a = await makeSer(600);
+    const b = await makeSer(720);
+    // b 의 다음 주 월요일 자리(12:00)에 a 의 보강을 놓는다 — 같은 강사라 EXCLUDE 가 막는다
+    const res = await api('delete', `/schedule/${a.id}`)
+      .send({ scope: 'this', onDate: a.from, cancelKind: 'teacher_absent', cancelTreat: 'makeup', makeup: { date: plus(b.from, 7), startMin: 720, endMin: 780 } });
+    expect(res.status).toBe(409);
+    expect(await excOf(a.id)).toEqual([]);
+    expect(await q(`SELECT id FROM ser WHERE rrule = 'ONCE' AND title = '휴강 테스트'`)).toEqual([]);
+  });
+
   /* ── ⑧ 강사 정산 (C-32) ───────────────────────────────────────────── */
 
   it('학원 사정 휴강은 강사 정산에서 빠진다 — 취소 회차는 「한 수업」이 아니다 (C-32)', async () => {

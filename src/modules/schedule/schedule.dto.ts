@@ -62,6 +62,15 @@ export class OccurrenceDto {
   cancelTreat?: CancelTreat | null;
   @ApiPropertyOptional({ type: String, nullable: true, description: '처리 이름 — 「이월」 「차감」 「보강 이관」' })
   cancelTreatLabel?: string | null;
+  /* 보강 링크 (C92-b · C-34) — 원래 회차는 보강이 언제인지, 보강 회차는 어느 회차의 보강인지 */
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '보강 이관이면 보강 회차의 SER id' })
+  makeupSerId?: number | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '보강 회차의 날짜 YYYY-MM-DD' })
+  makeupDate?: string | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '보강 회차의 시작 (KST 분)' })
+  makeupStartMin?: number | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '이 회차가 보강이면 원래 회차의 날짜 YYYY-MM-DD' })
+  makeupOfDate?: string | null;
   @ApiProperty({ description: '이 회차에 예외가 붙었는가' }) hasException!: boolean;
 
   @ApiProperty({
@@ -305,6 +314,19 @@ export class OccurrenceMoveDto {
  * 판정하고 EXC 에 새긴다. 둘 다 비우면 옛 방식 그대로 취소만 남긴다(기본 정책 = 이월).
  * `future`·`all` 은 휴강이 아니라 **수업 종료**라 사유·처리를 받지 않는다.
  */
+/** 보강 회차 — 원래 회차의 종류·과목·명단·강사·강의실을 물려받고 날짜·시각만 새로 정한다 (C92-b · C-34) */
+export class MakeupDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '보강 날짜 (실제 달력 날짜)' }) @IsCalendarDate() date!: string;
+  @ApiProperty({ description: 'KST 0~1439 분' }) @IsInt() @Min(0) @Max(1439) startMin!: number;
+  @ApiProperty({ description: 'KST 분 · 시작보다 뒤 · 24:00 = 1440' }) @IsInt() @Min(1) @Max(1440) endMin!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '비우면 원래 회차의 강사 · null 이면 미지정' })
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  teacherId?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '비우면 원래 회차의 강의실 · null 이면 미지정' })
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  roomId?: number | null;
+}
+
 export class OccurrenceDeleteDto {
   @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';
@@ -322,6 +344,10 @@ export class OccurrenceDeleteDto {
   @ApiPropertyOptional({ description: '메모 — 「아침에 발열로 연락」 (500자)', maxLength: 500 })
   @IsOptional() @IsString() @MaxLength(500)
   memo?: string;
+
+  @ApiPropertyOptional({ type: () => MakeupDto, description: '처리가 makeup 이면 필수 — 보강 회차의 날짜·시각 (C-34)' })
+  @IsOptional() @IsObject() @ValidateNested() @Type(() => MakeupDto)
+  makeup?: MakeupDto;
 }
 
 /** 그날 전체 휴강 (테스트 시나리오 C-33 · N-133) — 그날의 취소 아닌 회차 전부를 같은 사유·처리로 */

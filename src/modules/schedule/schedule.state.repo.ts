@@ -69,7 +69,7 @@ export async function loadState(
     `SELECT e.id, e.ser_id, e.on_date::text AS on_date, e.canceled,
             e.new_date::text AS new_date, e.start_min, e.end_min,
             e.teacher_set, e.teacher_id, e.room_set, e.room_id, e.reason,
-            e.cancel_kind, e.cancel_treat,
+            e.cancel_kind, e.cancel_treat, e.makeup_ser_id,
             COALESCE(
               (SELECT array_agg(o.student_id ORDER BY o.student_id)
                  FROM exc_stu_out o WHERE o.exc_id = e.id), '{}') AS stu_out
@@ -108,6 +108,7 @@ export async function loadState(
       reason: str(r.reason),
       cancelKind: str(r.cancel_kind),
       cancelTreat: str(r.cancel_treat),
+      makeupSerId: num(r.makeup_ser_id),
       stuOut: ((r.stu_out as number[]) ?? []).map(Number),
     })),
   };
@@ -195,17 +196,19 @@ export async function persist(q: QueryRunner, before: State, after: State): Prom
     const old = beforeExc.get(`${e.serId}|${e.onDate}`);
     const row = (await q.query(
       `INSERT INTO exc (ser_id, on_date, canceled, new_date, start_min, end_min,
-                       teacher_set, teacher_id, room_set, room_id, reason, cancel_kind, cancel_treat)
-       VALUES ($1,$2::date,$3,$4::date,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                       teacher_set, teacher_id, room_set, room_id, reason, cancel_kind, cancel_treat, makeup_ser_id)
+       VALUES ($1,$2::date,$3,$4::date,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        ON CONFLICT (ser_id, on_date) DO UPDATE SET
          canceled=EXCLUDED.canceled, new_date=EXCLUDED.new_date,
          start_min=EXCLUDED.start_min, end_min=EXCLUDED.end_min,
          teacher_set=EXCLUDED.teacher_set, teacher_id=EXCLUDED.teacher_id,
          room_set=EXCLUDED.room_set, room_id=EXCLUDED.room_id, reason=EXCLUDED.reason,
-         cancel_kind=EXCLUDED.cancel_kind, cancel_treat=EXCLUDED.cancel_treat
+         cancel_kind=EXCLUDED.cancel_kind, cancel_treat=EXCLUDED.cancel_treat, makeup_ser_id=EXCLUDED.makeup_ser_id
        RETURNING id`,
+      // 보강 SER 는 이 리듀스에서 막 생긴 임시 id 일 수 있다 — 위에서 붙인 진짜 id 로 바꿔 적는다
       [sid, e.onDate, e.canceled, e.newDate, e.startMin, e.endMin,
-       e.teacherSet, e.teacherId, e.roomSet, e.roomId, e.reason, e.cancelKind, e.cancelTreat],
+       e.teacherSet, e.teacherId, e.roomSet, e.roomId, e.reason, e.cancelKind, e.cancelTreat,
+       e.makeupSerId === null ? null : real(e.makeupSerId)],
     )) as Array<{ id: string }>;
     const excId = Number(row[0].id);
 

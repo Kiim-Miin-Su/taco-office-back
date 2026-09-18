@@ -411,7 +411,25 @@ export class AccountingService {
         });
       }
 
-      const total = linesTotal(lines);
+      /*
+       * 이월분이 이 달 청구에서 빠진다 (C92-b · 테스트 시나리오 C-35 「다음 달 청구 회차 = 예정 − 이월」).
+       * 지난달에서 넘긴 `carry` 줄(to_month = 이 달)을 **음수 줄**로 얹는다 — 받아 놓고 못 해 준 회차의 값이라
+       * 이번 달 회차에서 그만큼 뺀다. 넘긴 돈은 그때 굳힌 금액(carry.amount)이지 지금 단가로 다시 세지 않는다.
+       * 수업료 청구서에만 붙는다 — 컨설팅비·응시료는 이월이 없다.
+       */
+      const carries = dto.invType === 'tuition' ? (await m.query(
+        `SELECT from_month, amount, sessions FROM carry WHERE student_id = $1 AND to_month = $2 ORDER BY from_month, id`,
+        [dto.studentId, dto.yearMonth],
+      )) as Array<{ from_month: string; amount: number; sessions: number }> : [];
+      const carriedIn = carries.reduce((n, c) => n + Number(c.amount), 0);
+      const total = linesTotal(lines) - carriedIn;
+      if (total < 0) {
+        // 넘어온 돈이 이 달 수업보다 많다 — 청구서를 음수로 내지 않는다. 남는 돈을 어느 달로 넘길지는 사람이 정한다
+        throw new ConflictException({
+          code: 'INV_CARRY_EXCEEDS',
+          message: `이월분(${won(carriedIn)})이 ${dto.yearMonth} 수업료(${won(linesTotal(lines))})보다 많습니다 — 청구서를 내기 전에 이월을 정리하세요`,
+        });
+      }
       const [ym, mm] = dto.yearMonth.split('-');
       const title = dto.title?.trim()
         || `${ym}년 ${Number(mm)}월 ${INV_TYPE_LABEL[dto.invType] ?? dto.invType}`;
@@ -430,6 +448,16 @@ export class AccountingService {
           `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [invId, l.sub_key, l.label, l.n, l.unit_price, l.n * Number(l.unit_price), i],
+        );
+      }
+      for (const [i, c] of carries.entries()) {
+        // 음수 줄 — count 는 −회차, amount 는 −넘긴 돈. 단가는 표시용 평균(여러 과목이 섞여 정확한 단가가 없다)
+        const sessions = Number(c.sessions);
+        const amount = Number(c.amount);
+        await m.query(
+          `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq)
+           VALUES ($1, NULL, $2, $3, $4, $5, $6)`,
+          [invId, `이월 (${c.from_month} 에서 ${sessions}회)`, -sessions, sessions > 0 ? Math.round(amount / sessions) : 0, -amount, lines.length + i],
         );
       }
 
@@ -699,15 +727,18 @@ export class AccountingService {
       `SELECT student_id, ${kstAt('at')} AS at FROM carry WHERE from_month = $1`, [month],
     )) as Array<{ student_id: string; at: string }>) carriedOut.set(Number(r.student_id), r.at);
 
-    const carriedIn = new Map<number, number>();
+    const carriedIn = new Map<number, { amount: number; sessions: number }>();
     for (const r of (await this.inv.query(
-      `SELECT student_id, SUM(amount)::int AS amount FROM carry WHERE to_month = $1 GROUP BY student_id`,
+      `SELECT student_id, SUM(amount)::int AS amount, SUM(sessions)::int AS sessions FROM carry WHERE to_month = $1 GROUP BY student_id`,
       [month],
-    )) as Array<{ student_id: string; amount: number }>) carriedIn.set(Number(r.student_id), Number(r.amount));
+    )) as Array<{ student_id: string; amount: number; sessions: number }>) {
+      carriedIn.set(Number(r.student_id), { amount: Number(r.amount), sessions: Number(r.sessions) });
+    }
 
     const money = (v: number): number | null => (canSeeAmounts ? v : null);
     const items: TuitionRowDto[] = [];
     let doneCount = 0, totalCount = 0, canceledCount = 0, deductedCount = 0, doneAmount = 0, carryAmount = 0;
+    let carriedInCount = 0, carriedInAmount = 0;
 
     for (const s of students) {
       const id = Number(s.id);
@@ -734,8 +765,10 @@ export class AccountingService {
         [id, today],
       )) as Array<{ hit: number }>;
 
+      const got = carriedIn.get(id) ?? { amount: 0, sessions: 0 };
       doneCount += c.done; totalCount += c.total; canceledCount += c.canceled; deductedCount += c.deducted;
       doneAmount += done; carryAmount += carry;
+      carriedInCount += got.sessions; carriedInAmount += got.amount;
       items.push({
         studentId: id, name: s.name, grade: s.grade ?? null,
         done: c.done, total: c.total,
@@ -754,7 +787,8 @@ export class AccountingService {
          */
         carryable: paidInv.has(id) && carry > 0 && !carriedOut.has(id),
         carriedAt: carriedOut.get(id) ?? null,
-        carriedIn: money(carriedIn.get(id) ?? 0),
+        carriedIn: money(got.amount),
+        carriedInSessions: got.sessions,
         // 금액을 못 보면 내역도 안 내려간다 — 줄을 세면 금액이 드러난다 (§27·§28 과 같은 규약)
         lines: canSeeAmounts
           ? priced.map((l) => ({
@@ -769,6 +803,7 @@ export class AccountingService {
       month, today, daysPast, daysLeft,
       doneCount, totalCount, canceledCount, deductedCount,
       doneAmount: money(doneAmount), carryAmount: money(carryAmount),
+      carriedInCount, carriedInAmount: money(carriedInAmount),
       items, canSeeAmounts,
     };
   }

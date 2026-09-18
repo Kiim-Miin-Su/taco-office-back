@@ -407,6 +407,8 @@ export class TuitionRowDto {
     description: '지난달에서 **넘어온** 돈 — 이 달이 받은 것이다',
   })
   carriedIn?: number | null;
+  @ApiProperty({ description: '지난달에서 넘어온 **회차 수** — 「이월 4회 · 9월 청구에서 빠집니다」의 4 (C92-b · C-35). 금액 권한과 무관하게 센다' })
+  carriedInSessions!: number;
 
   @ApiProperty({ type: [InvoiceLineDto], description: '내역 — 청구서가 쓸 바로 그 줄이다' })
   lines!: InvoiceLineDto[];
@@ -434,6 +436,9 @@ export class TuitionDto {
   @ApiProperty({ description: '차감(소진) 처리한 휴강 — 청구에 들어 있다 (C92)' }) deductedCount!: number;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '지금까지 금액' }) doneAmount?: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '다음 달로 넘길 돈' }) carryAmount?: number | null;
+  /* 이 달이 받은 이월 — 「상단에 4회 이월 표시 · 다음 달 청구 회차 = 예정 − 이월」 (C92-b · C-35) */
+  @ApiProperty({ description: '지난달에서 넘어온 회차 수의 합' }) carriedInCount!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '넘어온 돈의 합 — 이 달 청구서에서 빠진다' }) carriedInAmount?: number | null;
 
   @ApiProperty({ type: [TuitionRowDto] }) items!: TuitionRowDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;

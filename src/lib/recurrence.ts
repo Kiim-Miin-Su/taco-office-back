@@ -107,6 +107,12 @@ export interface Exc {
    */
   cancelKind: string | null;
   cancelTreat: string | null;
+  /**
+   * 보강 이관이면 그 보강 회차의 SER (ONCE 규칙) — 원래 회차에 「보강 → 언제」를 붙이고,
+   * 회계는 원래 회차를 세지 않고 보강 회차를 센다 (C92-b · C-34 「1 + 1 = 2 가 아니라 1」).
+   * 리듀서 안에서는 임시 id 이고 persist 가 진짜 id 로 바꾼다.
+   */
+  makeupSerId: number | null;
   /** 이 회차만 빠지는 학생 (D-R21) */
   stuOut: number[];
 }
@@ -478,6 +484,7 @@ export function applyEdit(
     // 복원된 회차에 휴강 사유·처리가 남으면 청구 계산이 「이월」로 읽는다 — 함께 지운다 (C92)
     e.cancelKind = null;
     e.cancelTreat = null;
+    e.makeupSerId = null;
     log.push(`EXC upsert (${serId}, ${onDate})`);
     S.EXC = S.EXC.filter(hasExcEffect);
     return { ...S, __log: log, __effScope: eff };
@@ -556,9 +563,14 @@ export function applyDelete(
     serId: number; onDate: IsoDate; scope: Scope; nextId?: IdGen; hasRefs?: boolean;
     /** 휴강(이번만)의 사유·처리·메모 — 없으면 옛 방식 그대로 취소만 남긴다 (C92) */
     cancel?: { kind: string; treat: string; memo?: string | null };
+    /**
+     * 보강 이관(treat=makeup)의 보강 회차 — 같은 리듀스 안에서 ONCE 규칙 하나를 새로 만들고
+     * 원래 회차 예외가 그 id 를 가리킨다. 명단은 그날의 명단(그날만 빠진 학생 제외)이다.
+     */
+    makeup?: { date: IsoDate; startMin: number; endMin: number; teacherId?: number | null; roomId?: number | null };
   },
 ): Applied {
-  const { serId, onDate, scope, nextId, hasRefs, cancel } = args;
+  const { serId, onDate, scope, nextId, hasRefs, cancel, makeup } = args;
   const S = clone(state);
   const ser = S.SER.find((s) => s.id === serId);
   if (!ser) throw new Error('SER not found: ' + serId);
@@ -567,6 +579,11 @@ export function applyDelete(
   const genId = mkGen(S, nextId);
 
   if (eff === 'this') {
+    // 보강 회차는 원래 회차의 **그날 명단**(그날만 빠진 학생 제외)과 강사·강의실을 물려받는다 — 접기 전에 읽는다
+    const roster = makeup ? rosterAt(S, serId, onDate) : [];
+    const prior = S.EXC.find((x) => x.serId === serId && x.onDate === onDate);
+    const inheritedTeacher = prior?.teacherSet ? prior.teacherId : ser.teacherId;
+    const inheritedRoom = prior?.roomSet ? prior.roomId : ser.roomId;
     const e = upsertExc(S, serId, onDate, genId);
     e.canceled = true;
     if (cancel) {
@@ -576,6 +593,20 @@ export function applyDelete(
       log.push(`EXC (${serId}, ${onDate}) canceled=true kind=${cancel.kind} treat=${cancel.treat}`);
     } else {
       log.push(`EXC (${serId}, ${onDate}) canceled=true`);
+    }
+    if (makeup) {
+      const made: Ser = {
+        id: genId(),
+        kind: ser.kind, sub: ser.sub, mode: ser.mode, title: ser.title,
+        teacherId: makeup.teacherId === undefined ? inheritedTeacher : makeup.teacherId,
+        roomId: makeup.roomId === undefined ? inheritedRoom : makeup.roomId,
+        startMin: makeup.startMin, endMin: makeup.endMin,
+        rrule: 'ONCE', fromDate: makeup.date, toDate: makeup.date,
+      };
+      S.SER.push(made);
+      roster.forEach((sid) => S.SER_STU.push({ serId: made.id, studentId: sid }));
+      e.makeupSerId = made.id;
+      log.push(`SER ${made.id} 보강 신규 (${makeup.date} ${makeup.startMin}-${makeup.endMin}) ← EXC (${serId}, ${onDate})`);
     }
   } else if (eff === 'future') {
     ser.toDate = addD(onDate, -1);
@@ -1074,6 +1105,7 @@ function upsertExc(S: State, serId: number, onDate: IsoDate, genId: IdGen): Exc 
       reason: null,
       cancelKind: null,
       cancelTreat: null,
+      makeupSerId: null,
       stuOut: [],
     };
     S.EXC.push(e);

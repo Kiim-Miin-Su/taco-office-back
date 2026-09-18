@@ -240,6 +240,75 @@ d('§54 수업료 계산 (C65)', () => {
     await expect(cancelWith(PAST[0], 'academy', 'deduct')).rejects.toThrow(/exc_cancel_policy/);
   });
 
+  it('보강 이관 + 보강 회차 = **1회** — 원래 회차는 안 세고 보강 회차가 선다 (C-34 「1 + 1 = 2 가 아니라 1」)', async () => {
+    await occ(PAST[0]);
+    await cancelWith(PAST[1], 'teacher_absent', 'makeup');
+    // 보강 회차 — 같은 과목의 ONCE 규칙, 같은 달
+    const [mk] = (await q.query(
+      `INSERT INTO ser (kind_key, sub_key, title, mode, start_min, end_min, rrule, from_date, to_date)
+       VALUES ('tu_test','tu-sub','보강','offline',900,960,'ONCE','2026-05-20','2026-05-20') RETURNING id`,
+    )) as Array<{ id: string }>;
+    await q.query(`INSERT INTO ser_stu (ser_id, student_id) VALUES ($1,$2)`, [Number(mk.id), stuId]);
+    await q.query(`UPDATE exc SET makeup_ser_id = $1 WHERE ser_id = $2 AND on_date = $3::date`, [Number(mk.id), serId, PAST[1]]);
+    await occOn(Number(mk.id), '2026-05-20');
+    const { me } = await row();
+    expect(me.done).toBe(2);       // 5/4 원래 + 5/20 보강
+    expect(me.total).toBe(2);
+    expect(me.canceled).toBe(1);   // 5/11 원래 회차는 결강으로 적히되
+    expect(me.carryAmount).toBe(0); // 넘길 돈에는 들지 않는다 — 보강이 대신 섰다
+    expect(me.doneAmount).toBe(100_000);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    expect(inv.amount).toBe(100_000);
+  });
+
+  it('보강 링크는 처리가 makeup 일 때만 — 이월 회차에 링크를 붙이면 DB 가 막는다 (exc_makeup_link)', async () => {
+    await cancelWith(PAST[0], 'student_absent', 'carry');
+    await expect(q.query(`UPDATE exc SET makeup_ser_id = $1 WHERE ser_id = $1 AND on_date = $2::date`, [serId, PAST[0]]))
+      .rejects.toThrow(/exc_makeup_link/);
+  });
+
+  /* ── 이월분이 다음 달 청구에서 빠진다 (C92-b · C-35) ─────────────────── */
+
+  const carryIn = async (fromMonth: string, amount: number, sessions: number) => {
+    await q.query(
+      `INSERT INTO carry (student_id, from_month, to_month, amount, sessions, by_id) VALUES ($1, $2, $3, $4, $5, 91)`,
+      [stuId, fromMonth, MONTH, amount, sessions],
+    );
+  };
+
+  it('**이월분이 이 달 청구서에서 빠진다** — 음수 줄 하나 · 회차와 금액이 그대로 (C-35)', async () => {
+    for (const day of PAST) await occ(day); // 3회 × 50,000 = 150,000
+    await carryIn('2026-04', 100_000, 2);
+    const { me, all } = await row();
+    expect(me.carriedIn).toBe(100_000);
+    expect(me.carriedInSessions).toBe(2);
+    expect(all.carriedInCount).toBe(2);
+    expect(all.carriedInAmount).toBe(100_000);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    expect(inv.amount).toBe(50_000);
+    const carryLine = inv.lines.find((l) => l.count < 0)!;
+    expect(carryLine).toMatchObject({ count: -2, amount: -100_000, unitPrice: 50_000 });
+    expect(carryLine.label).toContain('2026-04');
+    // 이월 줄을 뺀 나머지는 §54 내역과 같다 (D-R22)
+    expect(inv.lines.filter((l) => l.count > 0)).toEqual(me.lines);
+  });
+
+  it('이월분이 이 달 수업보다 많으면 청구서를 내지 않는다 — 음수 청구서 대신 409 INV_CARRY_EXCEEDS', async () => {
+    await occ(PAST[0]); // 50,000
+    await carryIn('2026-04', 120_000, 3);
+    await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true))
+      .rejects.toMatchObject({ response: { code: 'INV_CARRY_EXCEEDS' } });
+    expect(await q.query(`SELECT id FROM inv WHERE student_id = $1 AND year_month = $2`, [stuId, MONTH])).toEqual([]);
+  });
+
+  it('이월은 수업료 청구서에만 붙는다 — 다른 종류는 넘어온 돈을 빼지 않는다', async () => {
+    await occ(PAST[0]);
+    await carryIn('2026-04', 20_000, 1);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'exam_fee' }, true);
+    expect(inv.amount).toBe(50_000);
+    expect(inv.lines.every((l) => l.count > 0)).toBe(true);
+  });
+
   /* ── 안분을 쓰지 않는다 ──────────────────────────────────────────── */
 
   /*
