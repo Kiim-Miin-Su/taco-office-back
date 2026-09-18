@@ -20,6 +20,7 @@ import {
   PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto, PayoutMonthParamsDto,
   type IncomeSpan,
   StudentWithdrawDto, WithdrawResultDto,
+  RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService } from './accounting.service';
@@ -311,5 +312,68 @@ export class AccountingController {
   ): Promise<ExpenseDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.reviewExpense(user.id, id, dto, canSee);
+  }
+
+  /* ══ 단가표 · 학생별 예외 · 지출 등록 (C94-d · H-81 · H-83 · C-38) ═══════════════════ */
+
+  @Get('rates')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '단가표 — 기본 단가(RATE)와 학생별 예외(STURATE) (§54 「데이터 RATE, STURATE」)',
+    description: '청구서·§54·명단 가격이 읽는 바로 그 두 표다. 「살아 있는 줄」은 서버가 오늘 기준으로 판정한다 (D-R37).',
+  })
+  @ApiOkResponse({ type: RateBookDto })
+  rateBook(): Promise<RateBookDto> {
+    return this.svc.rateBook(todayKst());
+  }
+
+  @Post('rates')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '기본 단가 한 줄 등록 — 그 날짜부터 청구서·§54·명단 가격에 든다 (C-38 · N-17 ①)',
+    description: '지난 줄은 고치지도 지우지도 않는다 — 이미 낸 청구서가 그 값으로 서 있다. '
+      + '같은 종류·과목·인원·날짜는 409 RATE_DUPLICATE (rate_tier_key). 종류·과목이 코드표에 없으면 404.',
+  })
+  @ApiCreatedResponse({ type: RateRowDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'KIND_NOT_FOUND | SUB_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'RATE_DUPLICATE' })
+  writeRate(@CurrentUser() user: RequestUser, @Body() dto: RateWriteDto): Promise<RateRowDto> {
+    return this.svc.writeRate(user.id, dto);
+  }
+
+  @Post('sturates')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '학생별 단가 예외 한 줄 — 사유 필수 (H-81)',
+    description: '그 학생의 그 종류(비우면 전부)만 이 값으로 청구된다 — 다른 학생은 한 원도 안 바뀐다. '
+      + '사유가 비면 400 STURATE_REASON_REQUIRED(DTO) · 표는 CHECK sturate_reason_present. 같은 학생·종류·날짜는 409 STURATE_DUPLICATE.',
+  })
+  @ApiCreatedResponse({ type: StudentRateRowDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'STURATE_REASON_REQUIRED · 입력 검증' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND | KIND_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'STURATE_DUPLICATE' })
+  writeStudentRate(@CurrentUser() user: RequestUser, @Body() dto: StudentRateWriteDto): Promise<StudentRateRowDto> {
+    return this.svc.writeStudentRate(user.id, dto);
+  }
+
+  /**
+   * 지출 등록은 **돈 권한이 아니라 직원 권한**이다 — 올리는 사람은 금액을 확정하지 않는다(A-1).
+   * 확정은 `POST /expenses/{id}/review`(canMoney) 뿐이고, 본인 신청은 본인이 심사할 수 없다(A-5).
+   * 강사는 §76 에서 회계·지출이 「조회 불가」라 canAdminPage 밖이다.
+   */
+  @Post('expenses')
+  @Perm('canAdminPage')
+  @ApiOperation({
+    summary: '지출 등록 — 직원이 올리면 언제나 pending (H-83 「바로 확정되면 실패」)',
+    description: '확정 금액·상태는 받지 않는다. 영수증은 POST /files(kind expense-receipt) 로 먼저 올리고 id 를 준다 — 없이 올릴 수 있지만 승인은 안 된다(A-4). '
+      + '대표(ceo)에게 「심사 대기」 알림 한 건. 대표가 직원 대신 올릴 때만 requesterId 를 준다.',
+  })
+  @ApiCreatedResponse({ type: ExpenseDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'EXPENSE_RECEIPT_KIND · 입력 검증' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND | FILE_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'EXPENSE_RECEIPT_USED' })
+  createExpense(@CurrentUser() user: RequestUser, @Body() dto: ExpenseCreateDto): Promise<ExpenseDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.createExpense(user.id, dto, canSee);
   }
 }

@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-51 C94-d 추가 수업·단가 예외·지출 등록 (2026-09-18): KIND.extra 깃발(추가 수업 — 시간표 배지·§54 추가 칸·청구서 별도 줄) · STURATE.reason/by_id/created_at(예외 사유 필수 · NOT VALID) · RATE/STURATE/EXPENSE 쓰기 경로. 새 표 0.
 // TBO-51 C94-c 수강 종료·환불 (2026-09-18): SER_STU 에 from_date/to_date — 「아주 빼기」로 행을 지우면 지난 달 셈이 바뀌므로(N-50 ①) 수강 종료는 to_date 를 적는다. 시간표·§54·청구서·단가 구간(인원)이 lib/sql.serStuOn 한 조각으로 그 날짜의 명단을 읽는다. 환불은 PAY 음수 줄 + INV 음수 줄(같은 트랜잭션) · ENR.ended_on.
 // TBO-51 C92-d 월 마감 (2026-09-18): MONTH_CLOSE 표 하나 — 마감 달의 회차·휴강·출결·청구서·이월·휴원 쓰기는 409 MONTH_CLOSED(lib/month-close 한 곳 · 스케줄은 마감 달 회차·예외 스냅숏 앞뒤 비교). 해제는 대표 전용·사유 필수·행을 지우지 않는다(N-140).
 // TBO-51 C92-c 휴원·복귀 (2026-09-18): STU_PAUSE 표 하나 — 기간 안의 회차는 시간표·§54·청구서가 「그날만 빠짐」과 같은 것으로 읽는다(lib/sql.stuPausedOn 한 곳). 회차를 지우지 않고 복귀는 to_date 를 당길 뿐이라 기간이 이력으로 남는다. 겹침은 EXCLUDE.
@@ -150,6 +151,7 @@ Table KIND {
   rep         boolean     [not null, default: false, note: 'true 인 종류만 리포트 대상 (D-4)']
   rep_form    varchar(16) [note: '⚠️ 쓰지 않는다 — 양식은 5칸 하나뿐 (D-R40). 컬럼만 남겨 둔다']
   sort        smallint
+  extra       boolean     [not null, default: false, note: 'v4.31 · 추가 수업인가 (C-38) — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 줄 「추가 수업 · 과목」. 종류 자체는 §18 이 만든다']
 }
 
 Table SUB {
@@ -782,7 +784,13 @@ Table STURATE {
   kind_key    varchar(16) [ref: > KIND.key]
   unit_price  int         [not null]
   from_date   date        [not null]
-  Note: '학생별 단가 예외.'
+  reason      text        [note: 'v4.31 · 예외 사유 — 새 행은 필수 (sturate_reason_present CHECK · NOT VALID · 옛 시드 2행 보정 0) (H-81)']
+  by_id       bigint      [ref: > STAFF.id, note: 'v4.31 · 누가 적었나']
+  created_at  timestamptz [not null, default: `now()`]
+  Note: '''
+  학생별 단가 예외. 청구서·§54·§79 카드가 같은 순서로 읽는다 — 학생 예외(sturate · 종류 지정 우선) → 기본 단가표(rate · 그 날짜의 인원 구간).
+  v4.31 · C94-d — 테스트 시나리오 H-81 「형제 할인 · 동생 단가만 · 사유가 없으면 실패」. POST /accounting/sturates 가 적는다(대표 · canMoney · LOG).
+  '''
 }
 
 Table WAGE {
@@ -1469,6 +1477,9 @@ Table SER_OCC {
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
 //
+// v4.30 → v4.31 (2026-09-18 · TBO-51 C94-d 추가 수업·단가 예외·지출 등록) — KIND.extra · STURATE.reason/by_id/created_at (+ sturate_reason_present NOT VALID).
+//   추가 수업은 종류의 깃발이다(종류 행은 §18 이 만든다) — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 줄 「추가 수업 · 과목」(C-38). 단가 예외는 사유·누가·언제를 남긴다(H-81).
+//   RATE(기본 단가표)·STURATE·EXPENSE 쓰기 경로가 처음 열렸다 — 새 표 0 · 컬럼 4 · 마이그레이션 1 (1761000000000-kind-extra-sturate-reason) · 기존 행 보정 0.
 // v4.29 → v4.30 (2026-09-18 · TBO-51 C94-c 수강 종료·환불) — SER_STU.from_date · SER_STU.to_date (+ ser_stu_range CHECK).
 //   「아주 빼기」로 행을 지우면 지난 달 셈이 바뀐다(N-50 ①) — 수강 종료는 to_date 를 적고, 시간표·§54·청구서·단가 구간(인원)·리포트 발송이
 //   lib/sql.serStuOn 한 조각으로 그 날짜의 명단을 읽는다. 환불은 PAY 음수 줄 + INV 음수 줄을 한 트랜잭션에서(잔여 회차 × 회당 단가 · invoice-lines 같은 함수) · ENR.ended_on.

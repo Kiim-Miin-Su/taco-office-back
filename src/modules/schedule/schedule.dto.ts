@@ -55,6 +55,7 @@ export class OccurrenceDto {
   @ApiProperty({ description: '자정부터 분' }) startMin!: number;
   @ApiProperty() endMin!: number;
   @ApiProperty() kindKey!: string;
+  @ApiProperty({ description: '추가 수업 종류의 회차인가 — 블록 「추가」 배지 (C94-d · C-38). 판정은 KIND.extra 다' }) extra!: boolean;
   @ApiPropertyOptional({ type: String, nullable: true }) subKey?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) teacherId?: number | null;

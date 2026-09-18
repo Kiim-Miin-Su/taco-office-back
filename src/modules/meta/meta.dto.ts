@@ -18,6 +18,7 @@ export class KindDto {
   @ApiProperty() cap!: number;
   @ApiProperty({ enum: ['lesson', 'intake', 'meeting'] }) grp!: string;
   @ApiProperty({ description: '리포트 대상인가 (D-4)' }) rep!: boolean;
+  @ApiProperty({ description: '추가 수업인가 — 시간표 「추가」 배지 · §54 「추가」 칸 (C94-d · C-38)' }) extra!: boolean;
 }
 
 export class SubDto {

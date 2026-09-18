@@ -109,7 +109,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('staff', STAFF.map((s) => ({ id: s.id, name: s.name, email: s.email, role: s.role, title: s.title, tz: 'Asia/Seoul', password_hash: hash, phone_verified: true, hired_on: s.hiredOn, active: true })));
     await add('wage', WAGES.map((w) => ({ staff_id: w.staffId, rate: w.rate, from_date: w.fromDate, approved_by: 1 })));
     await add('rate', RATES.map((r) => ({ kind_key: r.kindKey, heads: (r as { heads?: number }).heads ?? 1, sub_key: r.subKey, unit_price: r.unitPrice, from_date: r.fromDate })));
-    await add('sturate', STURATES.map((r) => ({ student_id: r.studentId, kind_key: r.kindKey, unit_price: r.unitPrice, from_date: r.fromDate })));
+    await add('sturate', STURATES.map((r) => ({ student_id: r.studentId, kind_key: r.kindKey, unit_price: r.unitPrice, from_date: r.fromDate, reason: r.reason, by_id: r.byId })));
 
     // ── 사람
     await add('stu', STUDENTS.map((s) => ({ id: s.id, name: s.name, grade: s.grade, school: s.school, target_exam: s.targetExam, started_on: rel(s.startedOn), lang: s.lang })));

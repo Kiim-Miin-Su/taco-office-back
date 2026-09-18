@@ -305,7 +305,7 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
     await occ('2026-08-03');
     await addClassmate('짝꿍 하나');
     await q.query(
-      `INSERT INTO sturate (student_id, kind_key, unit_price, from_date) VALUES ($1,'inv_test',12000,'2026-01-01')`,
+      `INSERT INTO sturate (student_id, kind_key, unit_price, from_date, reason) VALUES ($1,'inv_test',12000,'2026-01-01','형제 할인')`,
       [stuId],
     );
     expect((await issue()).lines[0]).toMatchObject({ unitPrice: 12000, amount: 12000 });
@@ -314,7 +314,7 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
   it('예외는 **그날에 유효한 것**만 이긴다 — 나중에 생긴 예외가 지난 수업을 바꾸지 않는다', async () => {
     await occ('2026-08-03');
     await q.query(
-      `INSERT INTO sturate (student_id, kind_key, unit_price, from_date) VALUES ($1,'inv_test',12000,'2026-09-01')`,
+      `INSERT INTO sturate (student_id, kind_key, unit_price, from_date, reason) VALUES ($1,'inv_test',12000,'2026-09-01','형제 할인')`,
       [stuId],
     );
     expect((await issue()).lines[0]).toMatchObject({ unitPrice: 50000 });

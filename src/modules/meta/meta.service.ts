@@ -44,7 +44,7 @@ export class MetaService {
       this.students.find({ order: { id: 'ASC' } }),
     ]);
     return {
-      kinds: kinds.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep })),
+      kinds: kinds.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, extra: k.extra === true })),
       subs: subs.map((s) => ({ key: s.key, name: s.name, color: s.color })),
       rooms: rooms.map((r) => ({ id: Number(r.id), branch: r.branch, name: r.name, capacity: r.capacity })),
       zaccs: zaccs.map((z) => ({ id: Number(z.id), label: z.label, meetingId: z.meetingId })),

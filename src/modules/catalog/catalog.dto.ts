@@ -24,6 +24,7 @@ export class KindRowsDto {
   @ApiProperty({ description: '리포트 작성·차감 대상인가 (§18 원문의 「리포트」 표시)' }) rep!: boolean;
   @ApiPropertyOptional({ type: String, nullable: true, enum: REP_FORMS }) repForm?: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) sort?: number | null;
+  @ApiProperty({ description: '추가 수업인가 — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 별도 줄 (C94-d · C-38)' }) extra!: boolean;
   @ApiProperty({ description: '이 프로그램으로 돌고 있는 수업 규칙 수 — 0 이 아니면 코드를 바꿀 수 없다' }) serCount!: number;
 }
 
@@ -56,6 +57,7 @@ export class KindCreateDto {
   @ApiPropertyOptional({ description: '리포트 대상인가' }) @IsOptional() @IsBoolean() rep?: boolean;
   @ApiPropertyOptional({ enum: REP_FORMS }) @IsOptional() @IsIn(REP_FORMS as unknown as string[]) repForm?: string;
   @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) sort?: number;
+  @ApiPropertyOptional({ description: '추가 수업인가 — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 별도 줄 (C-38)' }) @IsOptional() @IsBoolean() extra?: boolean;
 }
 
 export class KindPatchDto {
@@ -66,6 +68,7 @@ export class KindPatchDto {
   @ApiPropertyOptional() @IsOptional() @IsBoolean() rep?: boolean;
   @ApiPropertyOptional({ enum: REP_FORMS, nullable: true }) @IsOptional() @IsIn([...REP_FORMS, null] as unknown as string[]) repForm?: string | null;
   @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) sort?: number;
+  @ApiPropertyOptional({ description: '추가 수업인가 (C-38)' }) @IsOptional() @IsBoolean() extra?: boolean;
 }
 
 export class SubCreateDto {

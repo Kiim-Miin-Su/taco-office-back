@@ -5,7 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 
 /** 입금 수단 — 지금 저장되는 두 가지뿐이다. 코드표 확장은 원문 근거가 생길 때 한다 (발명 금지) */
@@ -342,6 +342,12 @@ export class ExpenseTotalDto {
   @ApiProperty({ type: Number, nullable: true, description: '확정된 지출의 합 — 권한이 없으면 null (D-R39)' }) sum!: number | null;
 }
 
+/** 지출 분류 코드표 한 줄 — 「+ 지출 등록」의 고르기가 이것을 쓴다. 화면에 코드표를 복사해 두지 않는다 (D-R18 · C94-d) */
+export class ExpenseCategoryDto {
+  @ApiProperty({ enum: EXPENSE_CATEGORIES }) key!: string;
+  @ApiProperty() label!: string;
+}
+
 export class AccountingDto {
   @ApiProperty({ type: MoneySummaryDto }) summary!: MoneySummaryDto;
   @ApiProperty({ type: [InvoiceDto] }) invoices!: InvoiceDto[];
@@ -349,6 +355,7 @@ export class AccountingDto {
   @ApiProperty({ type: [PayoutDto] }) payouts!: PayoutDto[];
   @ApiProperty({ type: [ExpenseDto], description: '나간 돈 §56 — 부대비용·법인카드 신청분' }) expenses!: ExpenseDto[];
   @ApiProperty({ type: [ExpenseTotalDto], description: '§56 분류별 확정 지출 합계 — 화면이 더하지 않는다' }) expenseTotals!: ExpenseTotalDto[];
+  @ApiProperty({ type: [ExpenseCategoryDto], description: '지출 분류 여섯 — 건수가 0이어도 선다 (어휘이지 데이터가 아니다 · C94-d)' }) expenseCategories!: ExpenseCategoryDto[];
   @ApiProperty({
     type: [PayCategoryDto],
     description: '§55 분류 칩 여섯 — **건수가 0이어도 선다**(분류는 어휘이지 데이터가 아니다). 화면이 세지 않는다 (D-R37)',
@@ -377,6 +384,7 @@ export class TuitionRowDto {
   @ApiProperty({ description: '얼마나 갔나 — 0~100. 화면이 나누지 않는다' }) percent!: number;
   @ApiProperty({ description: '결강·휴강 수 — 이월·보강 이관으로 처리된 휴강과 「그날만 빠진」 것을 합쳐 센다 (D-R21). 차감은 여기 안 든다' })
   canceled!: number;
+  @ApiProperty({ description: '추가 수업(KIND.extra) 회차 수 — 전체에 들되 따로 센다 (C94-d · C-38)' }) extra!: number;
   @ApiProperty({ description: '차감(소진)으로 처리된 휴강 수 — 이번 달 회차로 세어 청구한다 (C92 · C-31)' })
   deducted!: number;
 
@@ -440,6 +448,7 @@ export class TuitionDto {
   @ApiProperty({ description: '이번 달 전체' }) totalCount!: number;
   @ApiProperty({ description: '결강 · 휴강 (이월·보강 이관·그날만 빠짐)' }) canceledCount!: number;
   @ApiProperty({ description: '차감(소진) 처리한 휴강 — 청구에 들어 있다 (C92)' }) deductedCount!: number;
+  @ApiProperty({ description: '추가 수업 회차 — 「상단 추가 칸」 (C94-d · C-38). 전체에도 들어 있다' }) extraCount!: number;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '지금까지 금액' }) doneAmount?: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '다음 달로 넘길 돈' }) carryAmount?: number | null;
   /* 이 달이 받은 이월 — 「상단에 4회 이월 표시 · 다음 달 청구 회차 = 예정 − 이월」 (C92-b · C-35) */
@@ -794,4 +803,127 @@ export class CarryRowDto {
   @ApiProperty({ description: '못 해 준 회차 수' }) sessions!: number;
   @ApiPropertyOptional({ type: Number, nullable: true }) invId?: number | null;
   @ApiProperty() at!: string;
+}
+
+/* ══ 단가표 · 학생별 예외 · 지출 등록 (C94-d · 테스트 시나리오 H-81 · H-83 · C-38) ═══════════
+ * 원문 §54 「데이터 RATE, STURATE(학생별 예외)」 — 청구서·§54·명단 가격이 이미 읽는 두 표에
+ * **쓰는 길**이 없었다(시드만 있었다). 여기서 쓰는 것은 줄 하나뿐이고 **셈은 한 곳도 바뀌지 않는다** —
+ * `invoice-lines.ts` 가 `from_date` 로 그 날짜의 단가를 고르므로, 새 줄은 그 날짜부터 청구서·§54·명단에
+ * 같이 든다. 지난 줄은 고치지도 지우지도 않는다(이미 낸 청구서가 그 값으로 서 있다 — C63 의 교훈).
+ * ══════════════════════════════════════════════════════════════════════════════════════ */
+
+/** 기본 단가 한 줄 — `rate` (종류 · 과목 · 인원 구간 · 언제부터) */
+export class RateRowDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() kindKey!: string;
+  @ApiProperty({ description: '종류 이름 — 낱말은 서버가 만든다 (D-R18)' }) kindName!: string;
+  @ApiProperty({ description: '추가 수업 종류인가 (C-38)' }) kindExtra!: boolean;
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'null 이면 그 종류 전체' }) subKey?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) subName?: string | null;
+  @ApiProperty({ description: '인원 구간 — 인원 이하의 최대 heads 줄이 적용된다 (N-17 ①)' }) heads!: number;
+  @ApiProperty({ description: '회당 단가' }) unitPrice!: number;
+  @ApiProperty({ description: '이 날부터 (YYYY-MM-DD)' }) fromDate!: string;
+  @ApiProperty({ description: '오늘 기준으로 이 구간에서 살아 있는 줄인가 — 같은 (종류·과목·인원)의 가장 최근 from_date' }) current!: boolean;
+}
+
+/** 학생별 예외 한 줄 — `sturate` (사유 · 누가 · 언제) */
+export class StudentRateRowDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiPropertyOptional({ type: String, nullable: true, description: 'null 이면 모든 종류' }) kindKey?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) kindName?: string | null;
+  @ApiProperty() unitPrice!: number;
+  @ApiProperty() fromDate!: string;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '옛 시드 행만 null — 새 줄은 사유가 필수다 (H-81)' }) reason?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) byName?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) createdAt?: string | null;
+  @ApiProperty({ description: '오늘 기준으로 그 학생·종류에 살아 있는 줄인가' }) current!: boolean;
+}
+
+/** `GET /accounting/rates` — 단가표와 학생별 예외를 한 번에 */
+export class RateBookDto {
+  @ApiProperty({ type: [RateRowDto], description: '종류 → 과목 → 인원 → 최근순' }) rates!: RateRowDto[];
+  @ApiProperty({ type: [StudentRateRowDto], description: '학생 이름 → 최근순' }) studentRates!: StudentRateRowDto[];
+}
+
+const KIND_KEY = /^[a-z][a-z0-9_]{1,15}$/;
+const SUB_KEY = /^[a-z][a-z0-9-]{1,19}$/;
+
+/** `POST /accounting/rates` — 기본 단가 한 줄. 같은 (종류·과목·인원·날짜)는 409 RATE_DUPLICATE (`rate_tier_key`) */
+export class RateWriteDto {
+  @ApiProperty({ description: '종류 코드 — §18 프로그램의 KIND' })
+  @IsString() @Matches(KIND_KEY, { message: '종류 코드가 아닙니다' })
+  kindKey!: string;
+
+  @ApiPropertyOptional({ description: '과목 코드 — 비우면 그 종류 전체의 단가' })
+  @IsOptional() @IsString() @Matches(SUB_KEY, { message: '과목 코드가 아닙니다' })
+  subKey?: string;
+
+  @ApiProperty({ description: '인원 구간 — 1 이면 1인 단가. 그룹은 인원마다 줄을 둔다 (D-R10 · N-17 ①)', example: 1 })
+  @IsInt() @Min(1) @Max(100)
+  heads!: number;
+
+  @ApiProperty({ description: '회당 단가 (원). 0 원은 단가가 아니다 — 무료면 줄을 두지 않는다', example: 60000 })
+  @IsInt() @Min(1) @Max(100_000_000)
+  unitPrice!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '이 날부터 — 그 날짜 이후 회차의 청구서·§54·명단 가격이 이 값을 읽는다' })
+  @IsCalendarDate()
+  fromDate!: string;
+}
+
+/** `POST /accounting/sturates` — 학생별 예외 한 줄. **사유가 없으면 실패** (H-81) */
+export class StudentRateWriteDto {
+  @ApiProperty() @IsInt() @Min(1) studentId!: number;
+
+  @ApiPropertyOptional({ description: '종류 코드 — 비우면 그 학생의 모든 종류' })
+  @IsOptional() @IsString() @Matches(KIND_KEY, { message: '종류 코드가 아닙니다' })
+  kindKey?: string;
+
+  @ApiProperty({ description: '회당 단가 (원)', example: 50000 })
+  @IsInt() @Min(1) @Max(100_000_000)
+  unitPrice!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '이 날부터' })
+  @IsCalendarDate()
+  fromDate!: string;
+
+  @ApiProperty({ description: '사유 — 「형제 할인」·「장학」 … 없으면 400 (H-81 · CHECK sturate_reason_present)', maxLength: 200 })
+  @IsString() @MinLength(1) @MaxLength(200)
+  reason!: string;
+}
+
+/**
+ * `POST /accounting/expenses` — 지출 등록 (H-83 「직원이 등록하면 pending · 바로 확정되면 실패」).
+ * 상태는 받지 않는다 — 언제나 `pending` 이고 확정 금액은 심사(`/expenses/{id}/review`)가 넣는다.
+ */
+export class ExpenseCreateDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '사용일' })
+  @IsCalendarDate()
+  spendOn!: string;
+
+  @ApiProperty({ enum: EXPENSE_CATEGORIES, description: '분류 — 코드표 6개뿐 (CHECK expense_category_code)' })
+  @IsIn(EXPENSE_CATEGORIES as unknown as string[])
+  category!: string;
+
+  @ApiPropertyOptional({ description: '가맹점', maxLength: 80 })
+  @IsOptional() @IsString() @MaxLength(80)
+  merchant?: string;
+
+  @ApiPropertyOptional({ description: '용도', maxLength: 300 })
+  @IsOptional() @IsString() @MaxLength(300)
+  purpose?: string;
+
+  @ApiProperty({ description: '신청 금액 (원) — 심사 칸의 placeholder 가 된다 (A-1)', example: 35000 })
+  @IsInt() @Min(1) @Max(100_000_000)
+  requestedAmount!: number;
+
+  @ApiPropertyOptional({ description: '영수증 — `POST /files`(kind expense-receipt) 로 올린 파일의 id. 없이 올릴 수 있지만 승인은 안 된다 (A-4)' })
+  @IsOptional() @IsInt() @Min(1)
+  receiptFileId?: number;
+
+  @ApiPropertyOptional({ description: '누구의 지출인가 — 비우면 올리는 사람. 대표가 직원 대신 올릴 때만 쓴다 (본인 신청은 본인이 심사할 수 없다 · A-5)' })
+  @IsOptional() @IsInt() @Min(1)
+  requesterId?: number;
 }

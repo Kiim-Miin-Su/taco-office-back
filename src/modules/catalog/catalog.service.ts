@@ -23,7 +23,7 @@ export class CatalogService {
    */
   async all(): Promise<CatalogDto> {
     const kinds = (await this.kinds.query(
-      `SELECT k.key, k.name, k.color, k.cap, k.grp, k.rep, k.rep_form, k.sort,
+      `SELECT k.key, k.name, k.color, k.cap, k.grp, k.rep, k.rep_form, k.sort, k.extra,
               (SELECT count(*)::int FROM ser s WHERE s.kind_key = k.key) AS ser_count
          FROM kind k ORDER BY k.sort NULLS LAST, k.key`,
     )) as Array<Record<string, unknown>>;
@@ -45,6 +45,7 @@ export class CatalogService {
       cap: Number(r.cap), grp, grpLabel: KIND_GROUP_LABEL[grp] ?? grp,
       rep: r.rep === true, repForm: (r.rep_form as string | null) ?? null,
       sort: r.sort === null || r.sort === undefined ? null : Number(r.sort),
+      extra: r.extra === true,
       serCount: Number(r.ser_count ?? 0),
     };
   }
@@ -67,8 +68,8 @@ export class CatalogService {
         throw new BadRequestException({ code: 'REP_FORM_REQUIRED', message: '리포트 대상이면 서식을 골라 주세요' });
       }
       await m.query(
-        `INSERT INTO kind (key,name,color,cap,grp,rep,rep_form,sort) VALUES ($1,$2,$3,$4,$5::kind_grp_t,$6,$7,$8)`,
-        [dto.key, dto.name.trim(), dto.color, dto.cap, dto.grp, dto.rep === true, dto.rep ? dto.repForm : null, dto.sort ?? null],
+        `INSERT INTO kind (key,name,color,cap,grp,rep,rep_form,sort,extra) VALUES ($1,$2,$3,$4,$5::kind_grp_t,$6,$7,$8,$9)`,
+        [dto.key, dto.name.trim(), dto.color, dto.cap, dto.grp, dto.rep === true, dto.rep ? dto.repForm : null, dto.sort ?? null, dto.extra === true],
       );
       return this.one(m, dto.key);
     });
@@ -93,6 +94,7 @@ export class CatalogService {
       if (dto.cap !== undefined) put('cap', dto.cap);
       if (dto.grp !== undefined) put('grp', dto.grp, '::kind_grp_t');
       if (dto.sort !== undefined) put('sort', dto.sort);
+      if (dto.extra !== undefined) put('extra', dto.extra);
       if (dto.rep !== undefined || dto.repForm !== undefined) {
         put('rep', rep);
         put('rep_form', rep ? repForm : null);
@@ -105,7 +107,7 @@ export class CatalogService {
 
   private async one(m: EntityManager, key: string): Promise<KindRowsDto> {
     const [row] = (await m.query(
-      `SELECT k.key,k.name,k.color,k.cap,k.grp,k.rep,k.rep_form,k.sort,
+      `SELECT k.key,k.name,k.color,k.cap,k.grp,k.rep,k.rep_form,k.sort,k.extra,
               (SELECT count(*)::int FROM ser s WHERE s.kind_key = k.key) AS ser_count
          FROM kind k WHERE k.key = $1`, [key],
     )) as Array<Record<string, unknown>>;

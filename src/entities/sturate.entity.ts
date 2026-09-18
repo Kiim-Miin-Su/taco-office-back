@@ -10,8 +10,11 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, ForeignKey, PrimaryGeneratedColumn } from 'typeorm';
 
+// C94-d (v4.31 · migration 1761000000000): 예외에는 사유·누가·언제 — 새 행은 사유 필수 (NOT VALID · 옛 시드 2행 보정 0)
+@Check('sturate_reason_present', '"reason" IS NOT NULL AND btrim("reason") <> \'\'')
+@ForeignKey('staff', ['byId'], ['id'], { name: 'sturate_by_id_fkey', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'sturate' })
 export class Sturate {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -28,4 +31,14 @@ export class Sturate {
 
   @Column({ type: 'date' })
   fromDate: string;
+
+  /** 예외 사유 — 「형제 할인」 · 「장학」 … (H-81 「사유가 없으면 실패」) */
+  @Column({ type: 'text', nullable: true })
+  reason: string | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  byId: number | null;
+
+  @Column({ type: 'timestamptz', default: () => 'now()' })
+  createdAt: Date;
 }

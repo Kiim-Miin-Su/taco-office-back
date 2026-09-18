@@ -84,8 +84,12 @@ export const PAYOUTS = [
   { staffId: 7, yearMonth: PREV,  hours: '31.5', gross: 1260000, lateRepCut: 0,     incomeTax: 37800, localTax: 3780, net: 1218420, state: 'draft',    confirmedBy: null },
 ];
 
-/** 학생별 단가 예외 — 형제 할인 등 */
+/**
+ * 학생별 단가 예외 — 형제 할인 등.
+ * C94-d(migration 1761000000000)부터 **새 행은 사유가 필수**다 (CHECK `sturate_reason_present` — NOT VALID 는 기존 행만 미룬다,
+ * 시드는 언제나 새 INSERT 다 · C86-g). 누가 적었는지는 관리자(2).
+ */
 export const STURATES = [
-  { studentId: 7,  kindKey: 'class', unitPrice: 54000, fromDate: '2026-04-06' },
-  { studentId: 15, kindKey: 'class', unitPrice: 54000, fromDate: '2026-06-15' },
+  { studentId: 7,  kindKey: 'class', unitPrice: 54000, fromDate: '2026-04-06', reason: '형제 할인', byId: 2 },
+  { studentId: 15, kindKey: 'class', unitPrice: 54000, fromDate: '2026-06-15', reason: '형제 할인', byId: 2 },
 ];

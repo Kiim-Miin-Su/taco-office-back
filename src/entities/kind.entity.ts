@@ -43,4 +43,8 @@ export class Kind {
 
   @Column({ type: 'smallint', nullable: true })
   sort: number | null;
+
+  /** 추가 수업인가 — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 별도 줄 (C94-d · C-38 · v4.31) */
+  @Column({ type: 'boolean', default: false })
+  extra: boolean;
 }

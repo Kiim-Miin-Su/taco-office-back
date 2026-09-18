@@ -35,7 +35,7 @@ interface Row {
   zacc_id: string | null; mode: string; canceled: boolean;
   cancel_kind: AttendanceCancelReason | null; cancel_treat: CancelTreat | null;
   makeup_ser_id: string | null; makeup_date: string | null; makeup_start_min: number | null; makeup_of_date: string | null;
-  has_exception: boolean; reportable: boolean; rep_state: string | null;
+  has_exception: boolean; reportable: boolean; extra: boolean; rep_state: string | null;
   attendance_id: string | null; attendance_result: AttendanceResult | null;
   attendance_reason: AttendanceCancelReason | null; attendance_confirmed_by: string | null;
   attendance_confirmed_by_name: string | null; attendance_confirmed_at: Date | string | null;
@@ -89,7 +89,7 @@ export class ScheduleService {
               to_char(o.on_date, 'YYYY-MM-DD') AS on_date,
               ${START_MIN} AS start_min,
               ${END_MIN} AS end_min,
-              s.kind_key, s.sub_key, s.title, s.mode, k.rep AS reportable,
+              s.kind_key, s.sub_key, s.title, s.mode, k.rep AS reportable, k.extra AS extra,
               s.rrule, to_char(s.from_date, 'YYYY-MM-DD') AS ser_from,
               to_char(s.to_date, 'YYYY-MM-DD') AS ser_to,
               o.teacher_id, t.name AS teacher_name,
@@ -160,6 +160,7 @@ export class ScheduleService {
         startMin: r.start_min,
         endMin: r.end_min,
         kindKey: r.kind_key,
+        extra: r.extra === true,
         subKey: r.sub_key,
         title: r.title,
         teacherId: r.teacher_id ? Number(r.teacher_id) : null,

@@ -78,7 +78,8 @@ export type LineSlice =
 const sqlFor = (slice: LineSlice): string => `
   WITH priced AS (
     SELECT se.sub_key,
-           COALESCE(sb.name, k.name) AS label,
+           -- 추가 수업(KIND.extra)은 줄 이름부터 갈라 「별도로 잡힌다」 (C-38)
+           CASE WHEN k.extra THEN k.name || COALESCE(' · ' || sb.name, '') ELSE COALESCE(sb.name, k.name) END AS label,
            COALESCE(
              (SELECT su.unit_price FROM sturate su
                WHERE su.student_id = $1

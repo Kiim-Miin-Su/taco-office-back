@@ -21,6 +21,7 @@ import {
   REPORT_WRITTEN_DB, REP_STATE_FROM_DB, reportStateFromDb,
 } from '../src/lib/rules';
 import { REPORTS } from '../src/seed/ops';
+import { STURATES } from '../src/seed/money';
 import { DEV_URL } from './db';
 
 /** 규칙이 아는 상태 이름 전부 — 옮긴 값이 여기 없으면 규칙이 못 읽는다. */
@@ -182,6 +183,14 @@ describe('시드 상수 — DB 없이 보는 것', () => {
       if (v.reviewedBy != null) {
         expect([`${v.rptType} ${v.onDate}`, v.sentBy != null]).toEqual([`${v.rptType} ${v.onDate}`, true]);
       }
+    }
+  });
+
+  // C94-d 가 `sturate_reason_present` 를 새겼다 — NOT VALID 는 기존 행만 미루고 시드는 언제나 새 INSERT 다 (C86-g 와 같은 자리)
+  it('학생별 단가 예외에는 사유가 있다 (sturate_reason_present)', () => {
+    for (const r of STURATES) {
+      const v = r as { studentId: number; reason?: string };
+      expect([v.studentId, (v.reason ?? '').trim() !== '']).toEqual([v.studentId, true]);
     }
   });
 });
