@@ -9,17 +9,18 @@ import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNoCon
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
-  ConsAccountingDto, ConsAccountRowDto, ConsItemDto, ConsItemToggleDto,
-  ConsPaymentCreateDto, ConsStudentsDto, ConsultingCreateDto,
+  ConsAccountingDto, ConsAccountRowDto, ConsCloseDto, ConsCloseResultDto, ConsItemDto, ConsItemToggleDto,
+  ConsPaymentCreateDto, ConsSessionCreateDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsStudentsDto, ConsultingCreateDto,
   ConsultingDetailDto, ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto,
-  ConsultingFileCreateDto, ConsultingListDto, ConsultingShareUpdateDto,
+  ConsultingFileCreateDto, ConsultingListDto, ConsultingSessionDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
+import { ConsultingSessionService } from './consulting-session.service';
 import { ConsultingService } from './consulting.service';
 
 @ApiTags('consulting')
 @Controller('consulting')
 export class ConsultingController {
-  constructor(private readonly svc: ConsultingService) {}
+  constructor(private readonly svc: ConsultingService, private readonly sessions: ConsultingSessionService) {}
 
   @Post()
   @Perm('canAdminPage', 'canCrudAll')
@@ -198,6 +199,75 @@ export class ConsultingController {
   async archive(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<void> {
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
     return this.svc.archive(user.id, canHide, id);
+  }
+
+  /* ══ C95 · §31 회차 · 종료 (테스트 시나리오 I-91 · I-95 · N-18 채택) ═══════════════════════════════ */
+
+  @Post(':id/sessions/preview')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '회차 잡기 미리보기 — 같은 트랜잭션을 돌리고 되돌린다 (쓰기 0)',
+    description: '날짜마다 「시간표의 기존 회차에 연결」인지 「하루짜리 회차를 새로 만듦」인지, 순번, 시각, 불가 시간 알림을 돌려준다. 화면은 세지 않는다 (D-R37).',
+  })
+  @ApiCreatedResponse({ type: ConsSessionsResultDto })
+  @ApiConflictResponse({ description: 'code CONS_NOT_RUNNING · CONS_LOCKED · RESOURCE_CONFLICT(겹침 — 어느 날짜인지 문장에)' })
+  async previewSessions(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsSessionCreateDto): Promise<ConsSessionsResultDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.sessions.addSessions(user.id, canHide, id, dto, true);
+  }
+
+  @Post(':id/sessions')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '회차 잡기 — 날짜 여러 개 (I-91 「날짜 3개 고르기」 · 원본 §2 「CONS.sess → SER → TODO」)',
+    description: '진행(running) 중인 건만. 날짜마다 cons_sess(순번은 서버 · 「누가」는 담당 · 학생) · 담당의 할 일 · 시간표 회차(있으면 연결, 없으면 ScheduleWriteService.create — 겹침은 EXCLUDE 409 로 전부 되돌아간다) · cons_event. 담당이 남이면 알림.',
+  })
+  @ApiCreatedResponse({ type: ConsSessionsResultDto })
+  @ApiNotFoundResponse({ description: '보이지 않는 건 · STAFF_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'code CONS_NOT_RUNNING(수납 전) · CONS_LOCKED(종료) · RESOURCE_CONFLICT · 400 CONS_SESSION_TIME_REQUIRED · CONS_STAFF_REQUIRED · STAFF_INACTIVE' })
+  async addSessions(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsSessionCreateDto): Promise<ConsSessionsResultDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.sessions.addSessions(user.id, canHide, id, dto, false);
+  }
+
+  @Patch(':id/sessions/:sessId')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '회차 육하원칙 — 보낸 칸만 (§31 누가 · 무엇을 · 왜 · 어떻게)',
+    description: '무엇을·왜·어떻게가 다 적히면 그 회차의 할 일을 끝낸 것으로 접는다. 종료된 건은 409 CONS_LOCKED.',
+  })
+  @ApiOkResponse({ type: ConsultingSessionDto })
+  @ApiNotFoundResponse({ description: '보이지 않는 건 · CONS_SESSION_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'code CONS_LOCKED · EMPTY_PATCH' })
+  async writeSession(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Param('sessId', ParseIntPipe) sessId: number, @Body() dto: ConsSessionWriteDto,
+  ): Promise<ConsultingSessionDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.sessions.writeSession(user.id, canHide, id, sessId, dto);
+  }
+
+  @Post(':id/close/preview')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '종료 미리보기 — 안내문 본문과 회차 수를 돌려주고 되돌린다 (쓰기 0)' })
+  @ApiCreatedResponse({ type: ConsCloseResultDto })
+  @ApiConflictResponse({ description: 'code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED' })
+  async previewClose(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsCloseDto): Promise<ConsCloseResultDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.sessions.close(user.id, canHide, id, dto, true);
+  }
+
+  @Post(':id/close')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '컨설팅 종료 — I-95 · 원본 §26 「종료 · 마무리하고 안내」',
+    description: 'N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다. stage=done · 종료일 · 학생마다 학부모 안내 행(PNOTI parent · 문구 틀 선택 · 발송처는 N-42) · cons_event closed · 담당 알림. 예외 종료(사유·승인)는 N-18-a.',
+  })
+  @ApiCreatedResponse({ type: ConsCloseResultDto })
+  @ApiNotFoundResponse({ description: '보이지 않는 건 · GTPL_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED' })
+  async close(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsCloseDto): Promise<ConsCloseResultDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.sessions.close(user.id, canHide, id, dto, false);
   }
 
   @Post(':id/payments')

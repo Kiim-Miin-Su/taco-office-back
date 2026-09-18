@@ -23,6 +23,11 @@ export class GpaCycleDto {
   @ApiProperty({ description: '시작 YYYY-MM-DD' }) from!: string;
   @ApiProperty({ description: '끝 YYYY-MM-DD — 4주. 이월 없음, 닫히면 소멸 (D-R29)' }) to!: string;
   @ApiProperty({ description: '닫힘 — 닫힌 사이클은 모든 쓰기가 잠긴다' }) closed!: boolean;
+  /* ── C95 · O-150 「4주마다 — GPA 사이클 마감」 — 도장과 판정은 서버다 ── */
+  @ApiProperty({ ...S, description: '마감 시각 (KST ISO) — 시드가 켠 옛 닫힘은 null (N-25)' }) closedAt!: string | null;
+  @ApiProperty({ ...S, description: '마감한 사람' }) closedByName!: string | null;
+  @ApiProperty({ description: '지금 마감할 수 있는가 — 열려 있고 · 끝날이 지났고 · 승인 대기가 0 이어야 한다' }) canClose!: boolean;
+  @ApiProperty({ ...S, description: '마감이 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null' }) closeBlockedReason!: string | null;
 }
 
 /**
@@ -126,4 +131,22 @@ export class GpaAllocPutDto {
   @ApiProperty({ description: '이 사이클 배정량 — 0 이상 (0 은 배정 회수)' })
   @IsInt() @Min(0) @Max(32000)
   points!: number;
+}
+
+/* ══ C95 · O-150 사이클 마감 ═══════════════════════════════════════════════════════════════════
+ * 「이월 없음 — 사이클이 끝나면 소멸한다」(D-R29)를 **사람이 도장 찍는 순간**이다. 잔여는 board() 가 세던 그 수(배정 − 사용 − 대기)가
+ * 그대로 소멸 포인트다 — 여기서 다시 세지 않는다. 다음 사이클이 없으면 끝날 다음 날부터 4주를 연다(4주마다 하는 일이라 한 번에).
+ * ═══════════════════════════════════════════════════════════════════════════════════════ */
+
+export class GpaExpiredRowDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: '소멸한 잔여 (배정 − 승인 사용) — 음수면 초과였다' }) remain!: number;
+}
+
+export class GpaCycleCloseResultDto {
+  @ApiProperty({ type: GpaCycleDto, description: '닫힌 사이클 (도장 찍힘)' }) cycle!: GpaCycleDto;
+  @ApiPropertyOptional({ type: GpaCycleDto, nullable: true, description: '이번에 새로 연 다음 사이클 — 이미 있었으면 null' }) opened?: GpaCycleDto | null;
+  @ApiProperty({ description: '소멸한 포인트 합 (잔여가 양수인 학생만)' }) expiredPoints!: number;
+  @ApiProperty({ type: [GpaExpiredRowDto], description: '학생별 잔여 — 잔여 적은 순' }) students!: GpaExpiredRowDto[];
 }

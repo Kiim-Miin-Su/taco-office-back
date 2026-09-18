@@ -12,6 +12,7 @@ import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
 import { PERM_KEY, PermGuard, ROLES, permsOf, type RequestUser } from '../src/common/perm';
 import { ConsultingController } from '../src/modules/consulting/consulting.controller';
+import { ConsultingSessionService } from '../src/modules/consulting/consulting-session.service';
 import { ConsultingService } from '../src/modules/consulting/consulting.service';
 import { buildOpenApi } from '../src/openapi';
 
@@ -28,7 +29,11 @@ describe('§26 단계 필터 조회 계약', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [ConsultingController],
-      providers: [{ provide: ConsultingService, useValue: { all, accounting, addPayment, toInvoice, students } }, { provide: APP_GUARD, useClass: PermGuard }],
+      providers: [
+        { provide: ConsultingService, useValue: { all, accounting, addPayment, toInvoice, students } },
+        { provide: ConsultingSessionService, useValue: {} },
+        { provide: APP_GUARD, useClass: PermGuard },
+      ],
     }).compile();
     app = module.createNestApplication();
     app.use((req: Request, _res: Response, next: NextFunction) => { req.user = user; next(); });
@@ -63,6 +68,7 @@ describe('§26 단계 필터 조회 계약', () => {
     // C58 에서 §28 회계 화면(읽기 1 · 원문 동작 둘), C59 에서 §27 학생별(읽기 1)이 더 붙었다.
     // C79 는 §29 신규 상담과 §30 계약 워크플로를 서버 원장으로 옮겼다.
     // 「이력」 탭은 endpoint 를 늘리지 않는다 — 이미 받은 items 를 stage 로 거르는 화면 선택이다 (C5-a 선례).
+    // C95 는 §31 회차 잡기(미리보기·확정·육하원칙)와 종료(미리보기·확정) 다섯을 더했다 (I-91 · I-95 · N-18 채택).
     expect(Object.keys(api.paths)).toEqual([
       '/consulting', '/consulting/{id}/items/{itemId}',
       '/consulting/accounting', '/consulting/students',
@@ -70,8 +76,13 @@ describe('§26 단계 필터 조회 계약', () => {
       '/consulting/{id}/contract-files', '/consulting/{id}/contract-files/{fileId}',
       '/consulting/{id}/feedback', '/consulting/{id}/feedback/{feedbackId}/resolve',
       '/consulting/{id}/deliver', '/consulting/{id}/signed-files',
+      '/consulting/{id}/sessions/preview', '/consulting/{id}/sessions', '/consulting/{id}/sessions/{sessId}',
+      '/consulting/{id}/close/preview', '/consulting/{id}/close',
       '/consulting/{id}/payments', '/consulting/{id}/invoice',
     ]);
+    for (const h of ['previewSessions', 'addSessions', 'writeSession', 'previewClose', 'close'] as const) {
+      expect(app.get(Reflector).get(PERM_KEY, ConsultingController.prototype[h])).toEqual(['canAdminPage', 'canCrudAll']);
+    }
     const patch = api.paths['/consulting/{id}/items/{itemId}'].patch;
     expect(patch?.description).toMatch(/진행률 숫자는 저장하지 않는다/);
     const get = api.paths['/consulting'].get;

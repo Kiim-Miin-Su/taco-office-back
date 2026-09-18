@@ -157,4 +157,40 @@ d('§4.5·§82 GPA 4표 — 잔여 계산과 사이클 잠금 (N-13 채택 · C3
     expect(b.students).toEqual([]);
     expect(b.services.length).toBeGreaterThanOrEqual(2);
   });
+
+  /**
+   * C95 · O-150 — 마감이 다음 사이클을 연다. 4주마다 하는 일이 한 번에 끝나야 다음 기록이 막히지 않는다.
+   * `closeCycle` 은 제 트랜잭션을 열므로 이 스위트의 러너 트랜잭션 밖에서 돌리고 스스로 치운다 —
+   * beforeEach 가 아직 커밋하지 않은 행(staff 41 · stu 91 · gpasvc hw)과 **겹치지 않는 키**만 쓴다(겹치면 그 잠금을 기다리다 멈춘다).
+   */
+  it('뒤에 사이클이 없으면 마감이 끝날 다음 날부터 4주를 연다 — 도장·소멸 포인트·로그 (O-150)', async () => {
+    const outer = new GpaService(ds.getRepository(GpaCycle));
+    const made = (await ds.query(`INSERT INTO gpa_cycle (no, from_date, to_date) VALUES (95, '2020-01-06', '2020-02-02') RETURNING id`)) as { id: string }[];
+    const id = Number(made[0]!.id);
+    await ds.query(`INSERT INTO staff (id,name,email,role) VALUES (42,'마감자','gpa42@t.kr','manager') ON CONFLICT (id) DO NOTHING`);
+    await ds.query(`INSERT INTO stu (id,name) VALUES (93,'지파삼') ON CONFLICT (id) DO NOTHING`);
+    await ds.query(`INSERT INTO gpasvc (key,name,point,sort) VALUES ('c95','마감 표본',1,9)`);
+    let openedId: number | null = null;
+    try {
+      await ds.query(`INSERT INTO gpa_alloc (cycle_id,student_id,coord_id,points) VALUES ($1,93,42,9)`, [id]);
+      await ds.query(`INSERT INTO gpa_use (cycle_id,student_id,svc_key,points,on_date,coord_id,state) VALUES ($1,93,'c95',1,'2020-01-10',42,'ok')`, [id]);
+      const r = await outer.closeCycle(42, id);
+      openedId = r.opened?.id ?? null;
+      expect(r.cycle).toMatchObject({ id, closed: true, closedByName: '마감자', canClose: false });
+      expect(r.opened).toMatchObject({ no: 96, from: '2020-02-03', to: '2020-03-01', closed: false });
+      expect(r.students).toEqual([{ studentId: 93, name: '지파삼', remain: 8 }]);
+      expect(r.expiredPoints).toBe(8);
+      await expect(outer.closeCycle(42, id)).rejects.toMatchObject({ response: { code: 'CYCLE_CLOSED' } });
+      const logs = (await ds.query(`SELECT action FROM log WHERE entity = 'GPA_CYCLE' AND entity_id = $1`, [id])) as { action: string }[];
+      expect(logs.map((l) => l.action)).toEqual(['close']);
+    } finally {
+      await ds.query(`DELETE FROM log WHERE entity = 'GPA_CYCLE' AND entity_id = $1`, [id]);
+      await ds.query(`DELETE FROM gpa_use WHERE cycle_id = $1`, [id]);
+      await ds.query(`DELETE FROM gpa_alloc WHERE cycle_id = $1`, [id]);
+      await ds.query(`DELETE FROM gpa_cycle WHERE id = ANY($1)`, [[id, ...(openedId ? [openedId] : [])]]);
+      await ds.query(`DELETE FROM stu WHERE id = 93`);
+      await ds.query(`DELETE FROM staff WHERE id = 42`);
+      await ds.query(`DELETE FROM gpasvc WHERE key = 'c95'`);
+    }
+  });
 });

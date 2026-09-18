@@ -23,8 +23,8 @@ import type {
 import {
   CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB,
   CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
-  consShareLabel, consultingContractStepLabel, consultingRecordIssue, consultingRequesterLabel,
-  consultingSessionIssue, consultingStageLabel,
+  consShareLabel, consultingCloseIssue, consultingContractStepLabel, consultingRecordIssue, consultingRequesterLabel,
+  consultingSessionAddIssue, consultingSessionDone, consultingSessionIssue, consultingStageLabel,
   type ConsultingFileRole, type ConsultingType,
   type ConsultingRecord,
 } from './consulting.rules';
@@ -127,7 +127,8 @@ export class ConsultingService {
     return { row, share, viewer };
   }
 
-  private async lockFull(m: EntityManager, viewerId: number, canHide: boolean, consId: number): Promise<R> {
+  /** 내용까지 열리는 건을 FOR UPDATE 로 잡는다 — 회차·종료 쓰기(C95 `ConsultingSessionService`)도 같은 문을 지난다 */
+  async lockFull(m: EntityManager, viewerId: number, canHide: boolean, consId: number): Promise<R> {
     const { row, share, viewer } = await this.lockVisible(m, viewerId, canHide, false, consId);
     if (!csCanFull(share, viewer)) throw new ForbiddenException('이 건의 내용은 공개 범위 밖입니다');
     return row;
@@ -221,6 +222,19 @@ export class ConsultingService {
          FROM cons_event e LEFT JOIN staff s ON s.id=e.by_id
         WHERE e.cons_id=$1 AND e.event_type='parent_delivered' ORDER BY e.created_at DESC,e.id DESC LIMIT 1`, [consId],
     );
+    /* C95 — 회차·필수 항목·종료 도장. 세는 것은 전부 여기다 (D-R37) */
+    const today = todayKst();
+    const [counts] = await q<{ done: number; planned: number; required_left: number }>(
+      `SELECT (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND (x.on_date IS NULL OR x.on_date <= $2::date)) AS done,
+              (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND x.on_date > $2::date) AS planned,
+              (SELECT count(*)::int FROM cons_item i WHERE i.cons_id=$1 AND i.required AND NOT i.done) AS required_left`,
+      [consId, today],
+    );
+    const [closedEvent] = await q(
+      `SELECT to_char(e.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS at,s.name AS by_name
+         FROM cons_event e LEFT JOIN staff s ON s.id=e.by_id
+        WHERE e.cons_id=$1 AND e.event_type='closed' ORDER BY e.created_at DESC,e.id DESC LIMIT 1`, [consId],
+    );
     const step = detail.contract_step == null ? null : Number(detail.contract_step);
     const stage = String(detail.stage) as ConsultingRecord['stage'];
     const contractFiles = files.filter((f) => f['role'] !== 'signed');
@@ -233,6 +247,12 @@ export class ConsultingService {
     const mutable = stage === 'contract';
     const consType = String(detail.cons_type);
     const knownType = consType as ConsultingType;
+    const sessionsDone = Number(counts?.done ?? 0);
+    const sessionsPlanned = Number(counts?.planned ?? 0);
+    const requiredLeft = Number(counts?.required_left ?? 0);
+    const closeIssue = consultingCloseIssue({
+      stage, sessions: detail.sessions == null ? null : Number(detail.sessions), sessionsDone, requiredLeft,
+    });
     return {
       id: consId,
       consType,
@@ -276,12 +296,20 @@ export class ConsultingService {
         canArchive: true,
         externalParentSendSupported: false,
         externalParentSendReason: '학부모 연락처와 발송 채널 정책이 없어 전달 완료 사실만 기록합니다',
+        canAddSession: consultingSessionAddIssue(stage) === null,
+        canClose: closeIssue === null,
+        closeBlockedReason: closeIssue?.message ?? null,
       },
       contractFiles,
       signedFiles,
       feedback,
       delivery: delivery ? { deliveredAt: String(delivery.at), deliveredByName: (delivery.by_name as string) ?? null } : null,
       payment: { paid: canMoney ? paid : null, due: canMoney ? due : null, invoiceId: canMoney ? invId : null },
+      sessionsDone,
+      sessionsPlanned,
+      requiredLeft,
+      closedAt: closedEvent ? String(closedEvent.at) : null,
+      closedByName: closedEvent ? ((closedEvent.by_name as string) ?? null) : null,
     };
   }
 
@@ -506,14 +534,18 @@ export class ConsultingService {
     }
 
     const byCons = new Map<number, ConsultingSessionDto[]>();
+    const today = todayKst();
     for (const r of logs) {
       const k = Number(r.cons_id);
       if (!byCons.has(k)) byCons.set(k, []);
+      const onDate = (r.on_date as string) ?? null;
       byCons.get(k)!.push({
-        id: Number(r.id), seq: Number(r.seq), onDate: (r.on_date as string) ?? null,
+        id: Number(r.id), seq: Number(r.seq), onDate,
         who: (r.who as string) ?? null, what: (r.what as string) ?? null,
         why: (r.why as string) ?? null, how: (r.how as string) ?? null,
         serId: r.ser_id === null || r.ser_id === undefined ? null : Number(r.ser_id),
+        // 기록 ≠ 완료 (N-18) — 앞으로 잡아 둔 날짜는 아직 한 회차가 아니다
+        done: consultingSessionDone(onDate, today),
       });
     }
 
@@ -551,6 +583,7 @@ export class ConsultingService {
         paidAmount: money ? Number(r.paid_amount ?? 0) : null,
         // 내용이 안 열리면 회차 기록도 내려보내지 않는다 — 화면에서 감추는 건 감춘 게 아니다
         sessionsLog: full ? (byCons.get(Number(r.id)) ?? []) : [],
+        sessionsDone: full ? (byCons.get(Number(r.id)) ?? []).filter((x) => x.done).length : 0,
         items: full ? (itemsByCons.get(Number(r.id)) ?? []) : [],
       };
     });

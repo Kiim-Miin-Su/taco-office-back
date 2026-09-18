@@ -7,7 +7,7 @@ import { Check, Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 @Entity({ name: 'cons_event' })
 @Index(['consId', 'createdAt'])
-@Check('cons_event_type_check', "event_type IN ('created','share_changed','file_added','file_removed','feedback_added','feedback_resolved','parent_delivered','payment_added','archived')")
+@Check('cons_event_type_check', "event_type IN ('created','share_changed','file_added','file_removed','feedback_added','feedback_resolved','parent_delivered','payment_added','archived','session_added','session_written','closed')")
 export class ConsEvent {
   @PrimaryGeneratedColumn({ type: 'bigint' }) id: number;
   @Column({ type: 'bigint' }) consId: number;

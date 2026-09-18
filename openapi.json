@@ -10574,6 +10574,467 @@
         ]
       }
     },
+    "/consulting/{id}/sessions/preview": {
+      "post": {
+        "description": "날짜마다 「시간표의 기존 회차에 연결」인지 「하루짜리 회차를 새로 만듦」인지, 순번, 시각, 불가 시간 알림을 돌려준다. 화면은 세지 않는다 (D-R37).",
+        "operationId": "ConsultingController_previewSessions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsSessionCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsSessionsResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code CONS_NOT_RUNNING · CONS_LOCKED · RESOURCE_CONFLICT(겹침 — 어느 날짜인지 문장에)"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회차 잡기 미리보기 — 같은 트랜잭션을 돌리고 되돌린다 (쓰기 0)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/sessions": {
+      "post": {
+        "description": "진행(running) 중인 건만. 날짜마다 cons_sess(순번은 서버 · 「누가」는 담당 · 학생) · 담당의 할 일 · 시간표 회차(있으면 연결, 없으면 ScheduleWriteService.create — 겹침은 EXCLUDE 409 로 전부 되돌아간다) · cons_event. 담당이 남이면 알림.",
+        "operationId": "ConsultingController_addSessions",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsSessionCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsSessionsResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "보이지 않는 건 · STAFF_NOT_FOUND"
+          },
+          "409": {
+            "description": "code CONS_NOT_RUNNING(수납 전) · CONS_LOCKED(종료) · RESOURCE_CONFLICT · 400 CONS_SESSION_TIME_REQUIRED · CONS_STAFF_REQUIRED · STAFF_INACTIVE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회차 잡기 — 날짜 여러 개 (I-91 「날짜 3개 고르기」 · 원본 §2 「CONS.sess → SER → TODO」)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/sessions/{sessId}": {
+      "patch": {
+        "description": "무엇을·왜·어떻게가 다 적히면 그 회차의 할 일을 끝낸 것으로 접는다. 종료된 건은 409 CONS_LOCKED.",
+        "operationId": "ConsultingController_writeSession",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "sessId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsSessionWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingSessionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "보이지 않는 건 · CONS_SESSION_NOT_FOUND"
+          },
+          "409": {
+            "description": "code CONS_LOCKED · EMPTY_PATCH"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회차 육하원칙 — 보낸 칸만 (§31 누가 · 무엇을 · 왜 · 어떻게)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/close/preview": {
+      "post": {
+        "operationId": "ConsultingController_previewClose",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsCloseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsCloseResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "종료 미리보기 — 안내문 본문과 회차 수를 돌려주고 되돌린다 (쓰기 0)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/close": {
+      "post": {
+        "description": "N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다. stage=done · 종료일 · 학생마다 학부모 안내 행(PNOTI parent · 문구 틀 선택 · 발송처는 N-42) · cons_event closed · 담당 알림. 예외 종료(사유·승인)는 N-18-a.",
+        "operationId": "ConsultingController_close",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsCloseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsCloseResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "보이지 않는 건 · GTPL_NOT_FOUND"
+          },
+          "409": {
+            "description": "code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 종료 — I-95 · 원본 §26 「종료 · 마무리하고 안내」",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
     "/consulting/{id}/payments": {
       "post": {
         "description": "cons_pay 원장에 한 줄 더한다. 받은 합은 저장하지 않는다 — 읽을 때 원장을 더한다 (D-R37).",
@@ -12052,6 +12513,84 @@
           }
         },
         "summary": "배정 upsert — (사이클, 학생) 하나. 0 은 배정 회수. 담당 코디는 마지막 저장자",
+        "tags": [
+          "gpa"
+        ]
+      }
+    },
+    "/gpa/cycles/{id}/close": {
+      "post": {
+        "description": "열려 있고 끝날이 지났고 승인 대기가 0 일 때만. closed_at/by 도장 · 잔여는 소멸(D-R29 · 이월 없음) · 다음 사이클이 없으면 끝날 다음 날부터 4주를 연다 · LOG.",
+        "operationId": "GpaController_closeCycle",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GpaCycleCloseResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "사이클 없음"
+          },
+          "409": {
+            "description": "code CYCLE_CLOSED(이미 마감) · CYCLE_NOT_ENDED(끝날 전) · CYCLE_HAS_WAIT(승인 대기 남음)"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "사이클 마감 — O-150 「4주마다 — GPA 사이클 마감」 (C95)",
         "tags": [
           "gpa"
         ]
@@ -23020,6 +23559,19 @@
           "externalParentSendReason": {
             "type": "string",
             "nullable": true
+          },
+          "canAddSession": {
+            "type": "boolean",
+            "description": "회차를 더 잡을 수 있는가 — 진행(running) 중인 건만 (I-91)"
+          },
+          "canClose": {
+            "type": "boolean",
+            "description": "종료할 수 있는가 — N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다 (I-95)"
+          },
+          "closeBlockedReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "종료가 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null"
           }
         },
         "required": [
@@ -23035,7 +23587,10 @@
           "canCreateInvoice",
           "canArchive",
           "externalParentSendSupported",
-          "externalParentSendReason"
+          "externalParentSendReason",
+          "canAddSession",
+          "canClose",
+          "closeBlockedReason"
         ]
       },
       "ConsultingFileDto": {
@@ -23294,6 +23849,28 @@
           },
           "payment": {
             "$ref": "#/components/schemas/ConsultingPaymentStateDto"
+          },
+          "sessionsDone": {
+            "type": "number",
+            "description": "오늘까지 한 회차 수 (날짜 오늘 이하 또는 미정)"
+          },
+          "sessionsPlanned": {
+            "type": "number",
+            "description": "앞으로 잡아 둔 회차 수 (날짜가 오늘 뒤)"
+          },
+          "requiredLeft": {
+            "type": "number",
+            "description": "아직 안 끝낸 필수 항목 수"
+          },
+          "closedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "종료 시각 — cons_event closed 행 (없으면 null)"
+          },
+          "closedByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "종료한 사람"
           }
         },
         "required": [
@@ -23321,7 +23898,12 @@
           "signedFiles",
           "feedback",
           "delivery",
-          "payment"
+          "payment",
+          "sessionsDone",
+          "sessionsPlanned",
+          "requiredLeft",
+          "closedAt",
+          "closedByName"
         ]
       },
       "ConsultingSessionDto": {
@@ -23362,6 +23944,10 @@
             "type": "number",
             "nullable": true,
             "description": "연결된 수업이 있으면 그 SER"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "C95 · 오늘까지 한 회차인가 — 날짜가 오늘 이하(또는 미정). 앞으로 잡아 둔 날짜는 false (기록 ≠ 완료 · N-18)"
           }
         },
         "required": [
@@ -23522,6 +24108,10 @@
               "$ref": "#/components/schemas/ConsultingSessionDto"
             }
           },
+          "sessionsDone": {
+            "type": "number",
+            "description": "C95 · 오늘까지 한 회차 수 — `sessionsLog` 중 날짜가 오늘 이하(또는 미정)인 것. 내용이 잠기면 0 (D-R37)"
+          },
           "items": {
             "type": "array",
             "items": {
@@ -23542,6 +24132,7 @@
           "shareLabel",
           "ageDays",
           "sessionsLog",
+          "sessionsDone",
           "items"
         ]
       },
@@ -23933,6 +24524,296 @@
         },
         "required": [
           "body"
+        ]
+      },
+      "ConsSessionCreateDto": {
+        "type": "object",
+        "properties": {
+          "dates": {
+            "minItems": 1,
+            "maxItems": 31,
+            "uniqueItems": true,
+            "description": "회차 날짜들 YYYY-MM-DD — 연속일 필요 없다. 오름차순으로 순번을 붙인다",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439,
+            "description": "시작 KST 분 — 그날 시간표에 이미 있는 회차에 연결될 때는 그 회차의 시각이 이긴다. 새로 만들 때는 필수"
+          },
+          "endMin": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "staffId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "담당 — 없으면 건의 담당(owner). 활동 중인 직원"
+          },
+          "roomId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "nullable": true,
+            "description": "새로 만드는 회차의 강의실"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ],
+            "description": "새로 만드는 회차의 방식 — 기본 offline"
+          },
+          "what": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "「무엇을」 — 잡는 회차 전부에 같은 글이 들어간다. 회차마다 다르면 뒤에 따로 적는다"
+          }
+        },
+        "required": [
+          "dates"
+        ]
+      },
+      "ConsSessionPlanRowDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "seq": {
+            "type": "number",
+            "description": "서버가 붙인 순번"
+          },
+          "sessId": {
+            "type": "number",
+            "nullable": true
+          },
+          "serId": {
+            "type": "number",
+            "nullable": true
+          },
+          "linked": {
+            "type": "boolean",
+            "description": "시간표에 이미 있던 회차에 연결했는가 (false = 하루짜리 회차를 새로 만들었다)"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "오늘까지 한 회차인가"
+          },
+          "todoId": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "date",
+          "seq",
+          "sessId",
+          "serId",
+          "linked",
+          "startMin",
+          "endMin",
+          "done",
+          "todoId"
+        ]
+      },
+      "ConsSessionsResultDto": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "type": "boolean",
+            "description": "true 면 아무것도 쓰지 않았다"
+          },
+          "consId": {
+            "type": "number"
+          },
+          "staffId": {
+            "type": "number"
+          },
+          "staffName": {
+            "type": "string"
+          },
+          "studentNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsSessionPlanRowDto"
+            }
+          },
+          "created": {
+            "type": "number",
+            "description": "이번에 만든 하루짜리 회차 수"
+          },
+          "linked": {
+            "type": "number",
+            "description": "이미 있던 회차에 연결한 수"
+          },
+          "sessionsDone": {
+            "type": "number",
+            "description": "잡은 뒤 오늘까지 한 회차 수"
+          },
+          "sessionsPlanned": {
+            "type": "number",
+            "description": "잡은 뒤 앞으로 남은 회차 수"
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true
+          },
+          "overContract": {
+            "type": "boolean",
+            "description": "약정 회차를 넘겼는가 — 막지 않고 말한다 (seq ≤ sessions 규칙은 미확정 · N-18)"
+          },
+          "unavailable": {
+            "description": "새 회차가 담당의 불가 시간 위에 놓였으면 (C84-c 와 같은 알림)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnavWarnDto"
+            }
+          },
+          "notified": {
+            "type": "boolean",
+            "description": "담당에게 알림을 보냈는가 (돌린 사람 본인이면 false)"
+          }
+        },
+        "required": [
+          "preview",
+          "consId",
+          "staffId",
+          "staffName",
+          "studentNames",
+          "rows",
+          "created",
+          "linked",
+          "sessionsDone",
+          "sessionsPlanned",
+          "sessions",
+          "overContract",
+          "unavailable",
+          "notified"
+        ]
+      },
+      "ConsSessionWriteDto": {
+        "type": "object",
+        "properties": {
+          "who": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "누가 — 비우면 서버가 잡을 때 적은 「담당 · 학생」이 남는다"
+          },
+          "what": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000
+          },
+          "why": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000
+          },
+          "how": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000
+          }
+        }
+      },
+      "ConsCloseDto": {
+        "type": "object",
+        "properties": {
+          "templateId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "안내 문구 틀(gtpl) — 고르면 그 본문이 안내문이 된다. 없으면 서버 기본 문장"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "안내문 뒤에 붙는 한 줄"
+          }
+        }
+      },
+      "ConsCloseResultDto": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "type": "boolean",
+            "description": "true 면 아무것도 쓰지 않았다"
+          },
+          "consId": {
+            "type": "number"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "contract",
+              "running",
+              "done"
+            ]
+          },
+          "studentNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "noticeBody": {
+            "type": "string",
+            "description": "학부모 안내문 본문 — PNOTI parent 행에 그대로 남는다 (발송처는 N-42)"
+          },
+          "parentNotices": {
+            "type": "number",
+            "description": "남긴 학부모 안내 행 수 (학생마다 하나)"
+          },
+          "sessionsDone": {
+            "type": "number"
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true
+          },
+          "endOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "notified": {
+            "type": "boolean",
+            "description": "담당에게 알림을 보냈는가"
+          }
+        },
+        "required": [
+          "preview",
+          "consId",
+          "stage",
+          "studentNames",
+          "noticeBody",
+          "parentNotices",
+          "sessionsDone",
+          "sessions",
+          "endOn",
+          "notified"
         ]
       },
       "ConsPaymentCreateDto": {
@@ -25374,6 +26255,25 @@
           "closed": {
             "type": "boolean",
             "description": "닫힘 — 닫힌 사이클은 모든 쓰기가 잠긴다"
+          },
+          "closedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "마감 시각 (KST ISO) — 시드가 켠 옛 닫힘은 null (N-25)"
+          },
+          "closedByName": {
+            "type": "string",
+            "nullable": true,
+            "description": "마감한 사람"
+          },
+          "canClose": {
+            "type": "boolean",
+            "description": "지금 마감할 수 있는가 — 열려 있고 · 끝날이 지났고 · 승인 대기가 0 이어야 한다"
+          },
+          "closeBlockedReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "마감이 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null"
           }
         },
         "required": [
@@ -25381,7 +26281,11 @@
           "no",
           "from",
           "to",
-          "closed"
+          "closed",
+          "closedAt",
+          "closedByName",
+          "canClose",
+          "closeBlockedReason"
         ]
       },
       "GpaServiceDto": {
@@ -25689,6 +26593,65 @@
           "cycleId",
           "studentId",
           "points"
+        ]
+      },
+      "GpaExpiredRowDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "remain": {
+            "type": "number",
+            "description": "소멸한 잔여 (배정 − 승인 사용) — 음수면 초과였다"
+          }
+        },
+        "required": [
+          "studentId",
+          "name",
+          "remain"
+        ]
+      },
+      "GpaCycleCloseResultDto": {
+        "type": "object",
+        "properties": {
+          "cycle": {
+            "description": "닫힌 사이클 (도장 찍힘)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GpaCycleDto"
+              }
+            ]
+          },
+          "opened": {
+            "nullable": true,
+            "description": "이번에 새로 연 다음 사이클 — 이미 있었으면 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GpaCycleDto"
+              }
+            ]
+          },
+          "expiredPoints": {
+            "type": "number",
+            "description": "소멸한 포인트 합 (잔여가 양수인 학생만)"
+          },
+          "students": {
+            "description": "학생별 잔여 — 잔여 적은 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GpaExpiredRowDto"
+            }
+          }
+        },
+        "required": [
+          "cycle",
+          "expiredPoints",
+          "students"
         ]
       },
       "ExecStatDto": {

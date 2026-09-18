@@ -119,3 +119,46 @@ export function consultingSessionIssue(sequences: readonly unknown[]): string | 
   if (new Set(sequences).size !== sequences.length) return 'duplicate_session_seq';
   return null;
 }
+
+/* ══ §31 회차 · 종료 — C95 (테스트 시나리오 I-91 · I-95 · N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」) ══ */
+
+/** 회차 기록의 「이미 한 회차」 — 날짜가 오늘 이하(또는 미정)인 행. 앞으로 잡아 둔 날짜는 아직 한 것이 아니다 (기록 ≠ 완료 · N-18). */
+export function consultingSessionDone(onDate: string | null, today: string): boolean {
+  return onDate === null || onDate <= today;
+}
+
+export interface ConsultingCloseInput {
+  stage: string;
+  /** 약정 회차 — null 이면 회차 조건 없음 */
+  sessions: number | null;
+  /** 오늘까지 한 회차 수 */
+  sessionsDone: number;
+  /** 아직 안 끝낸 필수 항목 수 */
+  requiredLeft: number;
+}
+
+/**
+ * 종료할 수 있는가 — **N-18 채택문 그대로**: 「필수 항목과 약정 회차 완료 후 명시 종료」.
+ * 예외 종료(사유·승인)는 N-18-a 가 아직 열려 있어 만들지 않는다 — 막힌 이유를 문장으로 돌려 화면이 그대로 말한다.
+ */
+export function consultingCloseIssue(input: ConsultingCloseInput): { code: string; message: string } | null {
+  if (input.stage === 'done') return { code: 'CONS_ALREADY_DONE', message: '이미 종료된 컨설팅입니다' };
+  if (input.stage !== 'running') return { code: 'CONS_NOT_RUNNING', message: '수납이 끝나 진행 중인 컨설팅만 종료할 수 있습니다' };
+  if (input.requiredLeft > 0) {
+    return { code: 'CONS_ITEMS_LEFT', message: `필수 항목 ${input.requiredLeft}개가 남아 있습니다 — 끝내야 종료할 수 있습니다 (N-18)` };
+  }
+  if (input.sessions !== null && input.sessionsDone < input.sessions) {
+    return {
+      code: 'CONS_SESSIONS_LEFT',
+      message: `약정 ${input.sessions}회 중 ${input.sessionsDone}회를 했습니다 — 남은 ${input.sessions - input.sessionsDone}회를 마쳐야 종료할 수 있습니다 (예외 종료는 N-18-a)`,
+    };
+  }
+  return null;
+}
+
+/** 회차를 더 잡을 수 있는가 — 진행 중인 건만. 종료·계약 단계는 이유를 돌려준다 */
+export function consultingSessionAddIssue(stage: string): { code: string; message: string } | null {
+  if (stage === 'done') return { code: 'CONS_LOCKED', message: '종료된 컨설팅에는 회차를 더할 수 없습니다' };
+  if (stage !== 'running') return { code: 'CONS_NOT_RUNNING', message: '수납이 끝나야 회차를 기록할 수 있습니다 (계약 → 진행)' };
+  return null;
+}

@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { consultingRecordIssue, consultingSessionIssue } from '../src/modules/consulting/consulting.rules';
+import { consultingCloseIssue, consultingRecordIssue, consultingSessionAddIssue, consultingSessionDone, consultingSessionIssue } from '../src/modules/consulting/consulting.rules';
 
 describe('§26 컨설팅 순수 불변식', () => {
   const record = { stage: 'contract', contractStep: null, sessions: null };
@@ -44,5 +44,29 @@ describe('§26 컨설팅 순수 불변식', () => {
     for (const seq of [null, undefined, 0, -1, 32768, 1.5, NaN, Infinity, '1']) {
       expect(consultingSessionIssue([seq])).toBe('invalid_session_seq');
     }
+  });
+});
+
+/** C95 — 종료 판정은 N-18 채택문 그대로다: 「필수 항목과 약정 회차 완료 후 명시 종료」. 화면은 이 문장을 그대로 띄운다 */
+describe('§31 회차 · 종료 판정 (C95 · I-91 · I-95 · N-18 채택)', () => {
+  it('오늘 이하(또는 미정) 날짜만 「한 회차」다 — 앞으로 잡아 둔 날짜는 기록이지 완료가 아니다', () => {
+    expect(consultingSessionDone('2026-09-17', '2026-09-18')).toBe(true);
+    expect(consultingSessionDone('2026-09-18', '2026-09-18')).toBe(true);
+    expect(consultingSessionDone(null, '2026-09-18')).toBe(true);
+    expect(consultingSessionDone('2026-09-19', '2026-09-18')).toBe(false);
+  });
+  it('회차는 진행 중인 건에만 잡는다', () => {
+    expect(consultingSessionAddIssue('running')).toBeNull();
+    expect(consultingSessionAddIssue('contract')?.code).toBe('CONS_NOT_RUNNING');
+    expect(consultingSessionAddIssue('done')?.code).toBe('CONS_LOCKED');
+  });
+  it('종료는 필수 항목이 0 · 약정 회차를 채웠을 때만 — 순서대로 막힌 이유 하나를 말한다', () => {
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 0 })).toBeNull();
+    expect(consultingCloseIssue({ stage: 'running', sessions: null, sessionsDone: 0, requiredLeft: 0 })).toBeNull();
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 5, requiredLeft: 0 })).toBeNull();
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 2 })).toMatchObject({ code: 'CONS_ITEMS_LEFT', message: expect.stringContaining('필수 항목 2개') });
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 1, requiredLeft: 0 })).toMatchObject({ code: 'CONS_SESSIONS_LEFT', message: expect.stringContaining('남은 2회') });
+    expect(consultingCloseIssue({ stage: 'contract', sessions: 3, sessionsDone: 3, requiredLeft: 0 })?.code).toBe('CONS_NOT_RUNNING');
+    expect(consultingCloseIssue({ stage: 'done', sessions: 3, sessionsDone: 3, requiredLeft: 0 })?.code).toBe('CONS_ALREADY_DONE');
   });
 });

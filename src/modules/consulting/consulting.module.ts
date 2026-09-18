@@ -7,12 +7,15 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Lead } from '../../entities';
+import { ScheduleModule } from '../schedule/schedule.module';
 import { ConsultingController } from './consulting.controller';
+import { ConsultingSessionService } from './consulting-session.service';
 import { ConsultingService } from './consulting.service';
 
+/** 회차 잡기(C95)는 시간표의 **기존 쓰기**를 한 트랜잭션에서 부른다 — ScheduleModule 을 들여온다 */
 @Module({
-  imports: [TypeOrmModule.forFeature([Lead])],
+  imports: [TypeOrmModule.forFeature([Lead]), ScheduleModule],
   controllers: [ConsultingController],
-  providers: [ConsultingService],
+  providers: [ConsultingService, ConsultingSessionService],
 })
 export class ConsultingModule {}

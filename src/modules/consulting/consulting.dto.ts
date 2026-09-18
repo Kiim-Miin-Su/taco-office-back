@@ -6,10 +6,11 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString,
+  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString,
   Matches, Max, MaxLength, Min, MinLength, ValidateBy,
 } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate } from '../../common/validation';
+import { UnavWarnDto } from '../schedule/schedule.dto';
 import { CONS_SHARES, type ConsShare } from '../../lib/rules';
 import {
   CONSULTING_FILE_MAX, CONSULTING_FILE_ROLES, CONSULTING_REQUESTERS, CONSULTING_SESSION_MAX,
@@ -47,6 +48,8 @@ export class ConsultingSessionDto {
   @ApiPropertyOptional(S) why?: string | null;
   @ApiPropertyOptional(S) how?: string | null;
   @ApiPropertyOptional({ ...N, description: '연결된 수업이 있으면 그 SER' }) serId?: number | null;
+  @ApiPropertyOptional({ description: 'C95 · 오늘까지 한 회차인가 — 날짜가 오늘 이하(또는 미정). 앞으로 잡아 둔 날짜는 false (기록 ≠ 완료 · N-18)' })
+  done?: boolean;
 }
 
 
@@ -107,6 +110,8 @@ export class ConsultingDto {
   paidAmount?: number | null;
 
   @ApiProperty({ type: [ConsultingSessionDto] }) sessionsLog!: ConsultingSessionDto[];
+  @ApiProperty({ description: 'C95 · 오늘까지 한 회차 수 — `sessionsLog` 중 날짜가 오늘 이하(또는 미정)인 것. 내용이 잠기면 0 (D-R37)' })
+  sessionsDone!: number;
 
   /** §31 진행 항목 — 회차 기록과 별개 원장 (N-18 §4-17). 내용이 잠기면 회차처럼 내려가지 않는다. */
   @ApiProperty({ type: [ConsItemDto] }) items!: ConsItemDto[];
@@ -209,6 +214,10 @@ export class ConsultingCapabilitiesDto {
   @ApiProperty() canArchive!: boolean;
   @ApiProperty({ description: '학부모 연락처/채널 정책 미제공으로 현재 false. deliver는 외부 발송이 아니라 완료 기록이다.' }) externalParentSendSupported!: boolean;
   @ApiProperty({ type: String, nullable: true }) externalParentSendReason!: string | null;
+  /* ── C95 · §31 회차 · 종료 ── */
+  @ApiProperty({ description: '회차를 더 잡을 수 있는가 — 진행(running) 중인 건만 (I-91)' }) canAddSession!: boolean;
+  @ApiProperty({ description: '종료할 수 있는가 — N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다 (I-95)' }) canClose!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '종료가 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null' }) closeBlockedReason!: string | null;
 }
 
 export class ConsultingDeliveryDto {
@@ -248,6 +257,12 @@ export class ConsultingDetailDto {
   @ApiProperty({ type: [ConsultingFeedbackDto] }) feedback!: ConsultingFeedbackDto[];
   @ApiProperty({ type: ConsultingDeliveryDto, nullable: true }) delivery!: ConsultingDeliveryDto | null;
   @ApiProperty({ type: ConsultingPaymentStateDto }) payment!: ConsultingPaymentStateDto;
+  /* ── C95 · §31 회차 · 종료 — 세는 것은 전부 서버다 (D-R37) ── */
+  @ApiProperty({ description: '오늘까지 한 회차 수 (날짜 오늘 이하 또는 미정)' }) sessionsDone!: number;
+  @ApiProperty({ description: '앞으로 잡아 둔 회차 수 (날짜가 오늘 뒤)' }) sessionsPlanned!: number;
+  @ApiProperty({ description: '아직 안 끝낸 필수 항목 수' }) requiredLeft!: number;
+  @ApiProperty({ type: String, nullable: true, description: '종료 시각 — cons_event closed 행 (없으면 null)' }) closedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '종료한 사람' }) closedByName!: string | null;
 }
 
 /* ══ §28 컨설팅 회계 (C58) ═══════════════════════════════════════════════ */
@@ -351,4 +366,96 @@ export class ConsStudentDto {
 export class ConsStudentsDto {
   @ApiProperty({ type: [ConsStudentDto] }) items!: ConsStudentDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}
+
+/* ══ C95 · §31 회차 기록 · 종료 (테스트 시나리오 I-91 · I-95 · N-18 채택) ═════════════════════════════════════════
+ * 회차는 **날짜 여러 개를 한 번에** 잡는다(I-91 「날짜 3개 고르기」). 날짜마다 `cons_sess` 한 줄(순번은 서버) · 담당의 할 일(TODO) 한 줄 ·
+ * 그날 그 담당의 컨설팅 회차(`kind=consulting`)가 시간표에 이미 있으면 **그 회차에 연결**하고, 없으면 **시간표 쓰기 그대로**
+ * (`ScheduleWriteService.create` · ONCE · 겹침은 EXCLUDE 409 · 불가 시간은 응답) 하루짜리 회차를 만든다 — 원본 §2 「CONS.sess → SER → TODO」.
+ * 미리보기는 같은 트랜잭션을 돌리고 되돌린다 (C91·C93 과 같은 모양 · D-R37).
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+export const CONS_SESSION_DATES_MAX = 31;
+
+export class ConsSessionCreateDto {
+  @ApiProperty({ type: [String], minItems: 1, maxItems: CONS_SESSION_DATES_MAX, uniqueItems: true, description: '회차 날짜들 YYYY-MM-DD — 연속일 필요 없다. 오름차순으로 순번을 붙인다' })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(CONS_SESSION_DATES_MAX) @ArrayUnique() @IsCalendarDate({ each: true })
+  dates!: string[];
+
+  @ApiPropertyOptional({ type: 'integer', minimum: 0, maximum: 1439, description: '시작 KST 분 — 그날 시간표에 이미 있는 회차에 연결될 때는 그 회차의 시각이 이긴다. 새로 만들 때는 필수' })
+  @IsOptional() @IsInt() @Min(0) @Max(1439) startMin?: number;
+
+  @ApiPropertyOptional({ type: 'integer', minimum: 1, maximum: 1440 })
+  @IsOptional() @IsInt() @Min(1) @Max(1440) endMin?: number;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '담당 — 없으면 건의 담당(owner). 활동 중인 직원' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) staffId?: number;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true, description: '새로 만드는 회차의 강의실' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number | null;
+
+  @ApiPropertyOptional({ enum: ['offline', 'online'], description: '새로 만드는 회차의 방식 — 기본 offline' })
+  @IsOptional() @IsIn(['offline', 'online']) mode?: 'offline' | 'online';
+
+  @ApiPropertyOptional({ maxLength: 500, description: '「무엇을」 — 잡는 회차 전부에 같은 글이 들어간다. 회차마다 다르면 뒤에 따로 적는다' })
+  @IsOptional() @IsString() @MaxLength(500) what?: string;
+}
+
+/** 회차의 육하원칙 — 보낸 칸만 바꾼다 (C93 PATCH 와 같은 규약) */
+export class ConsSessionWriteDto {
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 200, description: '누가 — 비우면 서버가 잡을 때 적은 「담당 · 학생」이 남는다' })
+  @IsOptional() @IsString() @MaxLength(200) who?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) what?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) why?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) how?: string | null;
+}
+
+/** 잡힌 회차 한 줄 — 미리보기와 확정이 같은 모양 */
+export class ConsSessionPlanRowDto {
+  @ApiProperty({ ...DATE_SCHEMA }) date!: string;
+  @ApiProperty({ description: '서버가 붙인 순번' }) seq!: number;
+  @ApiProperty(N) sessId!: number | null;
+  @ApiProperty(N) serId!: number | null;
+  @ApiProperty({ description: '시간표에 이미 있던 회차에 연결했는가 (false = 하루짜리 회차를 새로 만들었다)' }) linked!: boolean;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() endMin!: number;
+  @ApiProperty({ description: '오늘까지 한 회차인가' }) done!: boolean;
+  @ApiProperty(N) todoId!: number | null;
+}
+
+export class ConsSessionsResultDto {
+  @ApiProperty({ description: 'true 면 아무것도 쓰지 않았다' }) preview!: boolean;
+  @ApiProperty() consId!: number;
+  @ApiProperty() staffId!: number;
+  @ApiProperty() staffName!: string;
+  @ApiProperty({ type: [String] }) studentNames!: string[];
+  @ApiProperty({ type: [ConsSessionPlanRowDto] }) rows!: ConsSessionPlanRowDto[];
+  @ApiProperty({ description: '이번에 만든 하루짜리 회차 수' }) created!: number;
+  @ApiProperty({ description: '이미 있던 회차에 연결한 수' }) linked!: number;
+  @ApiProperty({ description: '잡은 뒤 오늘까지 한 회차 수' }) sessionsDone!: number;
+  @ApiProperty({ description: '잡은 뒤 앞으로 남은 회차 수' }) sessionsPlanned!: number;
+  @ApiProperty(N) sessions!: number | null;
+  @ApiProperty({ description: '약정 회차를 넘겼는가 — 막지 않고 말한다 (seq ≤ sessions 규칙은 미확정 · N-18)' }) overContract!: boolean;
+  @ApiProperty({ type: [UnavWarnDto], description: '새 회차가 담당의 불가 시간 위에 놓였으면 (C84-c 와 같은 알림)' }) unavailable!: UnavWarnDto[];
+  @ApiProperty({ description: '담당에게 알림을 보냈는가 (돌린 사람 본인이면 false)' }) notified!: boolean;
+}
+
+export class ConsCloseDto {
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '안내 문구 틀(gtpl) — 고르면 그 본문이 안내문이 된다. 없으면 서버 기본 문장' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) templateId?: number;
+  @ApiPropertyOptional({ maxLength: 500, description: '안내문 뒤에 붙는 한 줄' })
+  @IsOptional() @IsString() @MaxLength(500) memo?: string;
+}
+
+export class ConsCloseResultDto {
+  @ApiProperty({ description: 'true 면 아무것도 쓰지 않았다' }) preview!: boolean;
+  @ApiProperty() consId!: number;
+  @ApiProperty({ enum: CONSULTING_STAGES }) stage!: ConsultingStage;
+  @ApiProperty({ type: [String] }) studentNames!: string[];
+  @ApiProperty({ description: '학부모 안내문 본문 — PNOTI parent 행에 그대로 남는다 (발송처는 N-42)' }) noticeBody!: string;
+  @ApiProperty({ description: '남긴 학부모 안내 행 수 (학생마다 하나)' }) parentNotices!: number;
+  @ApiProperty() sessionsDone!: number;
+  @ApiProperty(N) sessions!: number | null;
+  @ApiProperty(S) endOn!: string | null;
+  @ApiProperty({ description: '담당에게 알림을 보냈는가' }) notified!: boolean;
 }

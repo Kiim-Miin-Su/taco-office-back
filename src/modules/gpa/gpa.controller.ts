@@ -12,7 +12,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { OkDto } from '../../common/http.dto';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
-  GpaAllocPutDto, GpaBoardDto, GpaBoardQueryDto, GpaStudentDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
+  GpaAllocPutDto, GpaBoardDto, GpaBoardQueryDto, GpaCycleCloseResultDto, GpaStudentDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
 } from './gpa.dto';
 import { GpaService } from './gpa.service';
 
@@ -67,5 +67,18 @@ export class GpaController {
   @ApiConflictResponse({ description: 'code CYCLE_CLOSED' })
   async putAlloc(@CurrentUser() user: RequestUser, @Body() dto: GpaAllocPutDto): Promise<GpaStudentDto> {
     return this.svc.putAlloc(user.id, dto);
+  }
+
+  @Post('cycles/:id/close')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '사이클 마감 — O-150 「4주마다 — GPA 사이클 마감」 (C95)',
+    description: '열려 있고 끝날이 지났고 승인 대기가 0 일 때만. closed_at/by 도장 · 잔여는 소멸(D-R29 · 이월 없음) · 다음 사이클이 없으면 끝날 다음 날부터 4주를 연다 · LOG.',
+  })
+  @ApiCreatedResponse({ type: GpaCycleCloseResultDto })
+  @ApiNotFoundResponse({ description: '사이클 없음' })
+  @ApiConflictResponse({ description: 'code CYCLE_CLOSED(이미 마감) · CYCLE_NOT_ENDED(끝날 전) · CYCLE_HAS_WAIT(승인 대기 남음)' })
+  async closeCycle(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<GpaCycleCloseResultDto> {
+    return this.svc.closeCycle(user.id, id);
   }
 }

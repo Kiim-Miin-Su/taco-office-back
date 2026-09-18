@@ -133,8 +133,12 @@ export const GPASVCS = [
   { key: 'test', name: 'Test 대비',        point: 4, sort: 4 },
   { key: 'self', name: '자습 지원',        point: 6, sort: 5 },
 ];
+/**
+ * 지난 3차 사이클은 **끝났지만 아직 마감하지 않은** 상태로 둔다 (C95 · O-150 「4주마다 — GPA 사이클 마감」의 할 일 표본).
+ * 마감(`POST /gpa/cycles/{id}/close`)이 도장(closed_at/by)을 찍고 잔여를 소멸시킨다 — 시드가 `closed:true` 로 켜 두면 누가 언제 닫았는지 없는 행이 된다.
+ */
 export const GPA_CYCLES = [
-  { id: 1, no: 3, fromDate: D(-41), toDate: D(-14), closed: true },
+  { id: 1, no: 3, fromDate: D(-41), toDate: D(-14), closed: false },
   { id: 2, no: 4, fromDate: D(-13), toDate: D(14), closed: false },
 ];
 export const GPA_ALLOCS = [
@@ -159,7 +163,7 @@ export const GPA_USES = [
   { cycleId: 2, studentId: 3, serId: null, svcKey: 'test', points: 4, onDate: D(-8), startMin: null, coordId: 4, state: 'ok' },
   { cycleId: 2, studentId: 3, serId: null, svcKey: 'test', points: 4, onDate: D(-4), startMin: null, coordId: 4, state: 'ok' },
   { cycleId: 2, studentId: 3, serId: null, svcKey: 'prj',  points: 2, onDate: D(-2), startMin: null, coordId: 4, state: 'ok' },
-  // 지난(닫힌) 사이클 — 소멸 표본
+  // 지난 사이클(끝남 · 마감 대기) — 마감하면 20 − 6 = 14p 가 소멸한다
   { cycleId: 1, studentId: 5, serId: null, svcKey: 'self', points: 6, onDate: D(-20), startMin: null, coordId: 3, state: 'ok' },
 ];
 

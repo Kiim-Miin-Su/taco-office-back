@@ -14,12 +14,14 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GpaCycle } from '../../entities';
-import { todayKst } from '../../lib/kst';
+import { addDays, todayKst } from '../../lib/kst';
+import { kstAt, writtenRows } from '../../lib/sql';
 import type {
-  GpaAllocPutDto, GpaBoardDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
+  GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
 } from './gpa.dto';
 
 type R = Record<string, unknown>;
+const md = (iso: string) => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}`;
 
 @Injectable()
 export class GpaService {
@@ -29,17 +31,42 @@ export class GpaService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
+  /** 사이클 한 줄 — 도장(누가·언제)과 승인 대기 수까지. board() 와 마감이 같은 모양을 읽는다 */
+  private static readonly CYCLE_SELECT = `SELECT c.id, c.no, c.from_date::text AS f, c.to_date::text AS t, c.closed,
+              ${kstAt('c.closed_at')} AS closed_at, cb.name AS closed_by_name,
+              (SELECT count(*)::int FROM gpa_use u WHERE u.cycle_id = c.id AND u.state = 'wait') AS wait_count
+         FROM gpa_cycle c LEFT JOIN staff cb ON cb.id = c.closed_by`;
+
   /** anchor 를 품는 사이클, 없으면 직전(과거) 사이클 — 미래 사이클을 임의로 만들지 않는다. */
   private async cycleAt(anchor: string): Promise<R | null> {
     const [hit] = await this.q(
-      `SELECT id, no, from_date::text AS f, to_date::text AS t, closed
-         FROM gpa_cycle WHERE from_date <= $1 AND to_date >= $1
-        ORDER BY from_date DESC, id DESC LIMIT 1`, [anchor]);
+      `${GpaService.CYCLE_SELECT} WHERE c.from_date <= $1 AND c.to_date >= $1
+        ORDER BY c.from_date DESC, c.id DESC LIMIT 1`, [anchor]);
     if (hit) return hit;
     const [prev] = await this.q(
-      `SELECT id, no, from_date::text AS f, to_date::text AS t, closed
-         FROM gpa_cycle WHERE to_date < $1 ORDER BY to_date DESC, id DESC LIMIT 1`, [anchor]);
+      `${GpaService.CYCLE_SELECT} WHERE c.to_date < $1 ORDER BY c.to_date DESC, c.id DESC LIMIT 1`, [anchor]);
     return prev ?? null;
+  }
+
+  /**
+   * 마감할 수 있는가 — **오늘** 기준이다(anchor 가 아니다). 열려 있고 · 끝날이 지났고 · 승인 대기가 0.
+   * 끝나기 전에 닫으면 남은 날의 기록을 적을 사이클이 없어진다(기록 날짜는 사이클 창 안이어야 한다) — 그래서 끝날 전에는 막는다.
+   */
+  private closeIssue(cy: R, today: string): string | null {
+    if (cy.closed === true) return '이미 마감된 사이클입니다';
+    if (String(cy.t) >= today) return `사이클 끝(${md(String(cy.t))})이 지나야 마감할 수 있습니다 — 그 전에는 남은 날의 기록을 적을 자리가 없어집니다`;
+    const wait = Number(cy.wait_count ?? 0);
+    if (wait > 0) return `승인 대기 ${wait}건을 먼저 승인하거나 지워야 마감할 수 있습니다`;
+    return null;
+  }
+
+  private cycleDto(cy: R, today: string): GpaCycleDto {
+    const issue = this.closeIssue(cy, today);
+    return {
+      id: Number(cy.id), no: Number(cy.no), from: String(cy.f), to: String(cy.t), closed: cy.closed === true,
+      closedAt: (cy.closed_at as string | null) ?? null, closedByName: (cy.closed_by_name as string | null) ?? null,
+      canClose: issue === null, closeBlockedReason: issue,
+    };
   }
 
   async board(anchor?: string): Promise<GpaBoardDto> {
@@ -122,7 +149,7 @@ export class GpaService {
 
 
     return {
-      cycle: { id: cycleId, no: Number(cy.no), from: String(cy.f), to: String(cy.t), closed: cy.closed === true },
+      cycle: this.cycleDto(cy, todayKst()),
       hasPrev: (nav?.has_prev as boolean) === true,
       hasNext: (nav?.has_next as boolean) === true,
       services,
@@ -234,5 +261,59 @@ export class GpaService {
       // 배정 저장 응답은 **그 한 줄**이다 — 카드 칩은 보드 조회가 만든다
       svcs: [],
     };
+  }
+
+  /* ══ C95 · O-150 「4주마다 — GPA 사이클 마감」 ════════════════════════════════════════════════════
+   * 도장(closed_at/by)을 찍고 잔여를 그대로 소멸 포인트로 돌려준다 — board() 와 같은 셈(배정 − 승인 사용)이다.
+   * 다음 사이클이 없으면 끝날 다음 날부터 4주를 연다 — 4주마다 하는 일이 한 번에 끝나야 다음 기록이 막히지 않는다.
+   * ══════════════════════════════════════════════════════════════════════════════════════ */
+  async closeCycle(userId: number, cycleId: number): Promise<GpaCycleCloseResultDto> {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const q = <T = R>(sql: string, p: unknown[] = []): Promise<T[]> => m.query(sql, p) as Promise<T[]>;
+      await q(`SELECT id FROM gpa_cycle WHERE id = $1 FOR UPDATE`, [cycleId]);
+      const [cy] = await q(`${GpaService.CYCLE_SELECT} WHERE c.id = $1`, [cycleId]);
+      if (!cy) throw new NotFoundException('사이클을 찾을 수 없습니다');
+      const today = todayKst();
+      const issue = this.closeIssue(cy, today);
+      if (issue) {
+        throw new ConflictException({ code: cy.closed === true ? 'CYCLE_CLOSED' : Number(cy.wait_count ?? 0) > 0 ? 'CYCLE_HAS_WAIT' : 'CYCLE_NOT_ENDED', message: issue });
+      }
+      const students = await q(
+        `SELECT st.id, st.name, COALESCE(a.points, 0) - COALESCE(u.used, 0) AS remain
+           FROM (SELECT student_id FROM gpa_alloc WHERE cycle_id = $1
+                 UNION SELECT student_id FROM gpa_use WHERE cycle_id = $1) x
+           JOIN stu st ON st.id = x.student_id
+           LEFT JOIN gpa_alloc a ON a.cycle_id = $1 AND a.student_id = st.id
+           LEFT JOIN (SELECT student_id, SUM(points) FILTER (WHERE state = 'ok') AS used FROM gpa_use WHERE cycle_id = $1 GROUP BY student_id) u
+                  ON u.student_id = st.id
+          ORDER BY remain, st.name`, [cycleId]);
+      const rows = students.map((r) => ({ studentId: Number(r.id), name: String(r.name), remain: Number(r.remain) }));
+      const closedRows = writtenRows<R>(await q(
+        `UPDATE gpa_cycle SET closed = true, closed_at = now(), closed_by = $2 WHERE id = $1 AND NOT closed RETURNING id`, [cycleId, userId],
+      ));
+      if (closedRows.length === 0) throw new ConflictException({ code: 'CYCLE_CLOSED', message: '이미 마감된 사이클입니다' });
+      /* 다음 사이클 — 없을 때만. 끝날 다음 날부터 4주(28일) */
+      let opened: GpaCycleDto | null = null;
+      const [next] = await q(`SELECT id FROM gpa_cycle WHERE from_date > $1::date ORDER BY from_date LIMIT 1`, [cy.t]);
+      if (!next) {
+        const from = addDays(String(cy.t), 1);
+        const [made] = await q<{ id: string }>(
+          `INSERT INTO gpa_cycle (no, from_date, to_date) VALUES ($1, $2::date, $3::date) RETURNING id`,
+          [Number(cy.no) + 1, from, addDays(from, 27)]);
+        const [row] = await q(`${GpaService.CYCLE_SELECT} WHERE c.id = $1`, [made.id]);
+        opened = this.cycleDto(row, today);
+      }
+      await q(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'GPA_CYCLE',$2,'close',$3::jsonb,$4::jsonb)`,
+        [userId, cycleId, JSON.stringify({ closed: false }), JSON.stringify({ closed: true, expired: rows.filter((r) => r.remain > 0).reduce((a, r) => a + r.remain, 0), openedCycleId: opened?.id ?? null })],
+      );
+      const [after] = await q(`${GpaService.CYCLE_SELECT} WHERE c.id = $1`, [cycleId]);
+      return {
+        cycle: this.cycleDto(after, today),
+        opened,
+        expiredPoints: rows.filter((r) => r.remain > 0).reduce((a, r) => a + r.remain, 0),
+        students: rows,
+      };
+    });
   }
 }

@@ -4,9 +4,14 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-/** GPA_CYCLE — 4주 사이클. 이월 없음: 닫히면 잔여 포인트는 소멸한다 (D-R29 · N-13 채택). */
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+/**
+ * GPA_CYCLE — 4주 사이클. 이월 없음: 닫히면 잔여 포인트는 소멸한다 (D-R29 · N-13 채택).
+ * v4.33 (C95 · O-150) — 마감은 `POST /gpa/cycles/{id}/close` 가 `closed_at/closed_by` 를 찍는다. 옛 닫힌 행은 도장이 NULL 이다 (N-25).
+ */
+import { Check, Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+@Check('gpa_cycle_closed_pair', '(closed_at IS NULL) = (closed_by IS NULL)')
+@Check('gpa_cycle_closed_stamp', 'closed_at IS NULL OR closed')
 @Index(['fromDate', 'toDate'])
 @Entity({ name: 'gpa_cycle' })
 export class GpaCycle {
@@ -25,4 +30,11 @@ export class GpaCycle {
 
   @Column({ type: 'boolean', default: false })
   closed: boolean;
+
+  /** 마감 도장 — 누가·언제 (짝). 시드가 켠 옛 닫힘은 NULL */
+  @Column({ type: 'timestamptz', nullable: true })
+  closedAt: Date | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  closedBy: number | null;
 }
