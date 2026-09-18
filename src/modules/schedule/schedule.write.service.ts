@@ -394,6 +394,8 @@ export class ScheduleWriteService {
    */
   async patch(
     serId: number, dto: OccurrencePatchDto, inside?: (q: QueryRunner) => Promise<void>, actorId?: number,
+    /** 바깥 트랜잭션 — 강사 교체 마법사(C93)가 여러 규칙을 한 트랜잭션에서 고친다. `create` 의 `outer` 와 같다 */
+    outer?: QueryRunner,
   ): Promise<WriteResultDto> {
     return this.tx([serId], (before) => {
       const ser = this.requireOccurrence(before, serId, dto.onDate);
@@ -430,7 +432,7 @@ export class ScheduleWriteService {
         patch,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, this.withInside(inside), actorId);
+    }, this.withInside(inside), actorId, true, outer);
   }
 
   /** `inside` 를 `tx` 의 커밋 직전 자리(enrich)에 끼운다. 결과는 바꾸지 않는다. */

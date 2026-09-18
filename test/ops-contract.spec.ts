@@ -20,6 +20,7 @@ import { OpsController } from '../src/modules/ops/ops.controller';
 import { LeadDto, type OpsDto } from '../src/modules/ops/ops.dto';
 import { OpsService } from '../src/modules/ops/ops.service';
 import { LeadEnrollService } from '../src/modules/ops/enroll.service';
+import { TeacherChangeService } from '../src/modules/ops/teacher-change.service';
 import { buildOpenApi } from '../src/openapi';
 import { roleLabel } from '../src/lib/role-words';
 
@@ -177,15 +178,15 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   const empty: OpsDto = {
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
-    planDues: [], planOverdue: 0, planStages: [], cplStages: [],
+    planDues: [], planOverdue: 0, planStages: [], cplStages: [], cplAreas: [], cplSeverities: [],
     intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [] },
   };
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({
       controllers: [OpsController],
-      // 등록 확정(C91)은 다른 service 다 — 이 스위트는 GET /ops 계약만 보므로 대역으로 채운다
-      providers: [{ provide: OpsService, useValue: { all } }, { provide: LeadEnrollService, useValue: {} }, { provide: APP_GUARD, useClass: PermGuard }],
+      // 등록 확정(C91)·강사 교체(C93)는 다른 service 다 — 이 스위트는 GET /ops 계약만 보므로 대역으로 채운다
+      providers: [{ provide: OpsService, useValue: { all } }, { provide: LeadEnrollService, useValue: {} }, { provide: TeacherChangeService, useValue: {} }, { provide: APP_GUARD, useClass: PermGuard }],
     }).compile();
     app = mod.createNestApplication();
     app.use((req: Request, _res: Response, next: NextFunction) => { req.user = user; next(); });
@@ -201,6 +202,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       'all', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
       'planDetail', 'decidePlanDue', 'reviewPlan',
       'meetingDetail', 'writeMinutes', 'assignMeetingTask',
+      'createComplaint', 'patchComplaint', 'teacherChangePreview', 'teacherChange',
     ] as const) {
       expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
     }
@@ -236,6 +238,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       '/ops', '/ops/leads/{id}/fail', '/ops/leads/{id}/resume',
       // 등록 확정 — 미리보기·실제 (C91 · A-05). 검색 GET·query 계약은 여전히 0이다
       '/ops/leads/{id}/enroll/preview', '/ops/leads/{id}/enroll',
+      // §67 컴플레인 접수·처리 · 강사 교체 미리보기·실제 (C93 · J-96 · J-97). 검색 GET·query 계약은 그대로 0이다
+      '/ops/complaints', '/ops/complaints/{id}', '/ops/teacher-change/preview', '/ops/teacher-change',
       // §60 대표 피드백 — 코멘트·답변·답 고치기 (C53). 검색 GET·query 계약은 그대로 0이다.
       '/ops/marketing/{id}/comments', '/ops/marketing/{id}/replies', '/ops/marketing/feedback/{id}',
       // §65 기획 보고서 — 상세·기한 결재·최종 결재 (C56)

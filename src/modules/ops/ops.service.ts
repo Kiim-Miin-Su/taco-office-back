@@ -17,7 +17,7 @@ import {
 import {
   PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL, PLAN_STAGE_SUB,
 } from '../../lib/plan-words';
-import { CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel } from '../../lib/complaint-words';
+import { CPL_AREAS, CPL_AREA_LABEL, CPL_OPEN_STAGES, CPL_SEVERITIES, CPL_SEVERITY_LABEL, CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel, cplSeverityLabel } from '../../lib/complaint-words';
 import { INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel } from '../../lib/intake-words';
 import { INV_OPEN } from '../../lib/rules';
 import { sqlWordList } from '../../lib/sql';
@@ -30,6 +30,7 @@ import {
 } from '../../lib/meeting-words';
 import type {
   IntakeAlertDto, IntakeHeadDto,
+  ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
   LeadDto, MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanReviewDto, PlanTaskDto,
   MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
@@ -95,22 +96,7 @@ export class OpsService {
       }
     }
 
-    const complaints = (await this.q(
-      `SELECT c.id, c.area, s.name AS student_name, c.stage, c.body, c.action, c.result,
-              to_char(c.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name
-         FROM cpl c
-         LEFT JOIN stu s ON s.id = c.student_id
-         LEFT JOIN staff o ON o.id = c.owner_id
-        ORDER BY (c.stage = 'received') DESC, c.created_at DESC`,
-    )).map((r) => ({
-      id: Number(r.id), area: String(r.area), studentName: (r.student_name as string) ?? null,
-      stage: String(r.stage), body: String(r.body),
-      action: (r.action as string) ?? null, result: (r.result as string) ?? null,
-      createdAt: String(r.created_at), ageDays: daysSince(r.created_at as string),
-      // 갈래 이름·담당은 **서버가 준다** — 화면이 제 표를 들면 §67 칩과 §69 줄이 갈린다 (D-R18)
-      areaLabel: cplAreaLabel(String(r.area)),
-      ownerName: (r.owner_name as string) ?? null,
-    }));
+    const complaints = await this.complaintRows('', [], today);
 
     const todos = (await this.q(
       `SELECT t.id, t.title, t.done, t.src, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name
@@ -204,11 +190,143 @@ export class OpsService {
       // 칸 이름은 어휘라 데이터와 따로 간다 — 줄이 없는 칸도 이름을 갖는다 (D-R18)
       planStages: PLAN_STAGES.map((key) => ({ key, label: PLAN_STAGE_LABEL[key], sub: PLAN_STAGE_SUB[key] })),
       cplStages: CPL_STAGES.map((key) => ({ key, label: CPL_STAGE_LABEL[key], sub: CPL_STAGE_SUB[key] })),
+      cplAreas: CPL_AREAS.map((key) => ({ key, label: CPL_AREA_LABEL[key] })),
+      cplSeverities: CPL_SEVERITIES.map((key) => ({ key, label: CPL_SEVERITY_LABEL[key] })),
       planDues, planOverdue, meetings, marketing,
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
       intakeHead: await this.intakeHead(leads, canSeeAmounts),
     };
+  }
+
+  /* ══ §67 컴플레인 — 읽기 한 벌 · 접수 · 처리 (C93 · J-96 · J-98 · J-101) ═══════ */
+
+  /** §67 카드 한 줄 — `GET /ops` 와 쓰기 응답이 같은 SELECT 를 쓴다 */
+  private async complaintRows(where: string, params: unknown[], today = todayKst()): Promise<ComplaintDto[]> {
+    return (await this.q(
+      `SELECT c.id, c.area, c.student_id, s.name AS student_name, c.stage, c.body, c.action, c.result,
+              to_char(c.created_at,'YYYY-MM-DD') AS created_at, c.owner_id, o.name AS owner_name,
+              to_char(c.due_on,'YYYY-MM-DD') AS due_on, c.severity, c.teacher_changed
+         FROM cpl c
+         LEFT JOIN stu s ON s.id = c.student_id
+         LEFT JOIN staff o ON o.id = c.owner_id
+        ${where}
+        ORDER BY (c.stage = 'received') DESC, c.created_at DESC, c.id DESC`,
+      params,
+    )).map((r) => {
+      const due = (r.due_on as string) ?? null;
+      const open = CPL_OPEN_STAGES.includes(String(r.stage) as (typeof CPL_OPEN_STAGES)[number]);
+      return {
+        id: Number(r.id), area: String(r.area),
+        studentId: leadId(r.student_id, true), studentName: (r.student_name as string) ?? null,
+        stage: String(r.stage), body: String(r.body),
+        action: (r.action as string) ?? null, result: (r.result as string) ?? null,
+        createdAt: String(r.created_at), ageDays: daysSince(r.created_at as string),
+        // 갈래 이름·담당·심각도 낱말은 **서버가 준다** — 화면이 제 표를 들면 §67 칩과 §69 줄이 갈린다 (D-R18)
+        areaLabel: cplAreaLabel(String(r.area)),
+        ownerId: leadId(r.owner_id, true), ownerName: (r.owner_name as string) ?? null,
+        dueOn: due,
+        // 기한은 열린 건에만 센다 — 마무리한 건의 「N일 지남」은 재촉이 아니라 잡음이다 (§62 기획 기한과 같은 판정)
+        overdueDays: open && due && due < today ? daysSince(due) : 0,
+        severity: (r.severity as string) ?? null, severityLabel: cplSeverityLabel(r.severity as string | null),
+        teacherChanged: Boolean(r.teacher_changed),
+      };
+    });
+  }
+
+  private async complaintOne(id: number): Promise<ComplaintDto> {
+    const [row] = await this.complaintRows('WHERE c.id = $1', [id]);
+    if (!row) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
+    return row;
+  }
+
+  /**
+   * 「+ 접수」 (J-96) — 접수는 언제나 `received` 다. 담당을 정했으면 그 사람에게 알림, LOG 는 같은 트랜잭션.
+   * 학생·담당은 표가 있는지 서버가 본다 — 없는 id 를 받아 적으면 카드가 「문의자」로 조용히 바뀐다.
+   */
+  async createComplaint(viewerId: number, dto: ComplaintCreateDto): Promise<ComplaintDto> {
+    const body = dto.body.trim();
+    if (!body) throw new ConflictException({ code: 'CPL_BODY_REQUIRED', message: '내용을 적어 주세요' });
+    if (dto.studentId != null) {
+      const [stu] = await this.q(`SELECT id FROM stu WHERE id = $1`, [dto.studentId]);
+      if (!stu) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '그 학생을 찾을 수 없습니다' });
+    }
+    const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
+    const id = await this.lead.manager.transaction(async (em) => {
+      const [made] = (await em.query(
+        `INSERT INTO cpl (area, student_id, stage, body, owner_id, due_on, severity)
+         VALUES ($1, $2, 'received', $3, $4, $5::date, $6) RETURNING id`,
+        [dto.area, dto.studentId ?? null, body, owner?.id ?? null, dto.dueOn ?? null, dto.severity ?? null],
+      )) as Array<{ id: string }>;
+      const cplId = leadId(made.id);
+      if (owner && owner.id !== viewerId) {
+        await em.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?tab=complaint', 'request')`,
+          [owner.id, viewerId, `컴플레인 담당 — ${cplAreaLabel(dto.area)} · ${body.slice(0, 40)}${dto.dueOn ? ` · 기한 ${dto.dueOn.slice(5)}` : ''}`],
+        );
+      }
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'CPL',$2,'create','{}'::jsonb,$3::jsonb)`,
+        [viewerId, cplId, JSON.stringify({ area: dto.area, studentId: dto.studentId ?? null, ownerId: owner?.id ?? null, dueOn: dto.dueOn ?? null, severity: dto.severity ?? null })],
+      );
+      return cplId;
+    });
+    return this.complaintOne(id);
+  }
+
+  /**
+   * 카드 처리 (J-101) — 보낸 칸만 고친다. 단계의 조건은 원본 §67 칸의 한 줄이 말한다:
+   * 「대응」은 담당이 있어야(「담당을 정해야 합니다」), 「결과」는 결과 글이 있어야 한다(「마무리했습니다」).
+   * 담당이 바뀌면 새 담당에게 알림. 판정은 고친 뒤의 값으로 한다 — 담당과 단계를 한 번에 보내도 된다.
+   */
+  async patchComplaint(viewerId: number, id: number, dto: ComplaintPatchDto): Promise<ComplaintDto> {
+    const hasAny = ['stage', 'ownerId', 'action', 'result', 'dueOn', 'severity'].some((k) => (dto as Record<string, unknown>)[k] !== undefined);
+    if (!hasAny) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
+    const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(
+        `SELECT id, stage, owner_id, action, result, to_char(due_on,'YYYY-MM-DD') AS due_on, severity FROM cpl WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; stage: string; owner_id: string | null; action: string | null; result: string | null; due_on: string | null; severity: string | null }>;
+      if (!cur) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
+      const next = {
+        stage: dto.stage ?? cur.stage,
+        ownerId: dto.ownerId === undefined ? leadId(cur.owner_id, true) : (owner?.id ?? null),
+        action: dto.action === undefined ? cur.action : (dto.action?.trim() || null),
+        result: dto.result === undefined ? cur.result : (dto.result?.trim() || null),
+        dueOn: dto.dueOn === undefined ? cur.due_on : dto.dueOn,
+        severity: dto.severity === undefined ? cur.severity : dto.severity,
+      };
+      if (next.stage === 'acting' && next.ownerId == null) {
+        throw new ConflictException({ code: 'CPL_OWNER_REQUIRED', message: '대응으로 옮기려면 담당을 정해야 합니다 (§67 「담당을 정해야 합니다」)' });
+      }
+      if (next.stage === 'closed' && !next.result) {
+        throw new ConflictException({ code: 'CPL_RESULT_REQUIRED', message: '마무리하려면 결과를 적어야 합니다 (J-101)' });
+      }
+      await em.query(
+        `UPDATE cpl SET stage = $2, owner_id = $3, action = $4, result = $5, due_on = $6::date, severity = $7 WHERE id = $1`,
+        [id, next.stage, next.ownerId, next.action, next.result, next.dueOn, next.severity],
+      );
+      const ownerChanged = next.ownerId != null && next.ownerId !== leadId(cur.owner_id, true);
+      if (ownerChanged && next.ownerId !== viewerId) {
+        await em.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?tab=complaint', 'request')`,
+          [next.ownerId, viewerId, `컴플레인 담당 — #${id}${next.dueOn ? ` · 기한 ${String(next.dueOn).slice(5)}` : ''}`],
+        );
+      }
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'CPL',$2,'update',$3::jsonb,$4::jsonb)`,
+        [viewerId, id,
+          JSON.stringify({ stage: cur.stage, ownerId: leadId(cur.owner_id, true), dueOn: cur.due_on, severity: cur.severity }),
+          JSON.stringify({ stage: next.stage, ownerId: next.ownerId, dueOn: next.dueOn, severity: next.severity })],
+      );
+    });
+    return this.complaintOne(id);
+  }
+
+  private async activeStaff(id: number): Promise<{ id: number; name: string }> {
+    const [st] = (await this.q(`SELECT id, name FROM staff WHERE id = $1 AND active`, [id])) as Array<{ id: string; name: string }>;
+    if (!st) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
+    return { id: leadId(st.id), name: st.name };
   }
 
   /* ══ §23 상담 머리 — 퍼널 · 담당 · 경고 (C86-a) ═══════════════════ */

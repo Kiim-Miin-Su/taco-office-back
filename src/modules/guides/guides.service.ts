@@ -316,7 +316,10 @@ export class GuidesService {
           AND ($5::boolean OR NOT EXISTS (
             SELECT 1 FROM guide g
              WHERE g.ser_id=e.ser_id AND g.event_on=e.source_on
-               AND g.student_id=e.student_id AND g.reason=e.reason
+               AND g.student_id=e.student_id
+               /* 강사 교체(C93)는 규칙을 그 날짜에서 가르므로(D-R16 future) 새 규칙의 첫 회차가 「첫 수업」으로 잡힌다 —
+                  그 회차에 강사 교체 안내가 있으면 첫 수업 안내는 따로 필요 없다 */
+               AND (g.reason=e.reason OR g.reason='teacher_change')
           ))
         ORDER BY e.event_on DESC,e.source_occurrence_id,e.student_name`,
       [from, to, sourceOccurrenceId, studentId, includeSatisfied],
@@ -430,6 +433,42 @@ export class GuidesService {
         [c.serId, c.studentId, c.teacherId, c.reason, c.eventOn, source.on_date, userId],
       ) as Array<{ id: string }>;
       if (rows[0]) made.push(Number(rows[0].id));
+    }
+    return made;
+  }
+
+  /**
+   * 강사 교체 마법사(C93 · F-62 「강사 교체 시 간이 안내」)가 같은 트랜잭션에서 부른다 —
+   * 바뀐 규칙들의 **첫 바뀐 회차**(그날부터)에 그 명단의 학생마다 `teacher_change` 초안 하나. 이유를 CTE 로 되짚지 않는다:
+   * 「이 날부터 계속」은 규칙을 가르므로(D-R16) CTE 가 새 규칙의 첫 회차를 「첫 수업」으로 읽는다 — 마법사는 그것이 교체라는 것을 안다.
+   * 이미 있으면 건너뛴다(같은 유니크). 만든 id 를 돌려준다.
+   */
+  async draftsForTeacherChange(manager: EntityManager, userId: number, serIds: number[], from: string, to: string | null): Promise<number[]> {
+    if (!serIds.length) return [];
+    const rows = await manager.query(
+      `SELECT DISTINCT ON (o.ser_id, ss.student_id)
+              o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS event_on, o.teacher_id, ss.student_id
+         FROM ser_occ o
+         JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+         LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
+        WHERE o.ser_id = ANY($1) AND NOT o.canceled
+          AND ${kstDateOf('lower(o.span)')} >= $2::date
+          AND ($3::date IS NULL OR ${kstDateOf('lower(o.span)')} <= $3::date)
+          AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id)
+        ORDER BY o.ser_id, ss.student_id, o.on_date, o.id`,
+      [serIds, from, to],
+    ) as Array<{ ser_id: string; on_date: string; event_on: string; teacher_id: string | null; student_id: string }>;
+    const made: number[] = [];
+    for (const r of rows) {
+      const ins = await manager.query(
+        `INSERT INTO guide (ser_id,student_id,teacher_id,reason,state,due_on,event_on,created_by)
+         VALUES ($1,$2,$3,'teacher_change','draft'::guide_state_t,$4::date,$5::date,$6)
+         ON CONFLICT (ser_id,event_on,student_id,reason)
+           WHERE ser_id IS NOT NULL AND event_on IS NOT NULL DO NOTHING
+         RETURNING id`,
+        [Number(r.ser_id), Number(r.student_id), r.teacher_id === null ? null : Number(r.teacher_id), r.event_on, r.on_date, userId],
+      ) as Array<{ id: string }>;
+      if (ins[0]) made.push(Number(ins[0].id));
     }
     return made;
   }

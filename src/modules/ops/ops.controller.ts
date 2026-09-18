@@ -9,6 +9,7 @@ import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResp
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
+  ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
   LeadDto, LeadFailDto, LeadResumeDto, MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanReviewDto,
   MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
@@ -16,11 +17,13 @@ import {
 import { OpsService } from './ops.service';
 import { EnrollResultDto, LeadEnrollDto } from './enroll.dto';
 import { LeadEnrollService } from './enroll.service';
+import { TeacherChangeDto, TeacherChangeResultDto } from './teacher-change.dto';
+import { TeacherChangeService } from './teacher-change.service';
 
 @ApiTags('ops')
 @Controller('ops')
 export class OpsController {
-  constructor(private readonly svc: OpsService, private readonly enrollSvc: LeadEnrollService) {}
+  constructor(private readonly svc: OpsService, private readonly enrollSvc: LeadEnrollService, private readonly tcSvc: TeacherChangeService) {}
 
   @Get()
   @Perm('canAdminPage', 'canCrudAll')
@@ -100,6 +103,60 @@ export class OpsController {
   enroll(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadEnrollDto): Promise<EnrollResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.enrollSvc.enroll(user.id, id, dto, canSee);
+  }
+
+  /* ══ §67 컴플레인 접수 · 처리 · 강사 교체 (C93 · J-96 · J-97 · J-98 · J-101 · N-46 ①) ═══ */
+
+  @Post('complaints')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '「+ 접수」 — 접수는 언제나 received (C93 · 테스트 시나리오 J-96 · N-46 ①)',
+    description: '갈래 · 학생 · 내용 · 담당 · 기한 · 심각도. 담당을 정했으면 그 사람에게 알림, LOG 는 같은 트랜잭션. 상태는 받지 않는다.',
+  })
+  @ApiCreatedResponse({ type: ComplaintDto })
+  @ApiNotFoundResponse({ description: 'STUDENT_NOT_FOUND | STAFF_NOT_FOUND' })
+  createComplaint(@CurrentUser() user: RequestUser, @Body() dto: ComplaintCreateDto): Promise<ComplaintDto> {
+    return this.svc.createComplaint(user.id, dto);
+  }
+
+  @Patch('complaints/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '카드 처리 — 담당 · 단계 · 조치 · 결과 · 기한 · 심각도 (C93 · J-101)',
+    description: '보낸 칸만 고친다. 대응(acting)은 담당이 있어야 하고 마무리(closed)는 결과가 있어야 한다 — 원본 §67 칸의 한 줄이 그렇게 말한다.',
+  })
+  @ApiOkResponse({ type: ComplaintDto })
+  @ApiConflictResponse({ description: 'code CPL_OWNER_REQUIRED | CPL_RESULT_REQUIRED | EMPTY_PATCH' })
+  @ApiNotFoundResponse({ description: 'CPL_NOT_FOUND | STAFF_NOT_FOUND' })
+  patchComplaint(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ComplaintPatchDto): Promise<ComplaintDto> {
+    return this.svc.patchComplaint(user.id, id, dto);
+  }
+
+  @Post('teacher-change/preview')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '강사 교체 미리보기 — 쓰기 0 (C93 · J-97 · D-46 · N-132)',
+    description: '같은 트랜잭션을 끝까지 돌리고 되돌린다 — 겹침(409)·불가 시간·옮겨 갈 회차·정산 달이 실제와 같다. 화면이 짓지 않는다 (D-R37).',
+  })
+  @ApiCreatedResponse({ type: TeacherChangeResultDto })
+  @ApiConflictResponse({ description: '시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED' })
+  @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND | CPL_NOT_FOUND' })
+  teacherChangePreview(@CurrentUser() user: RequestUser, @Body() dto: TeacherChangeDto): Promise<TeacherChangeResultDto> {
+    return this.tcSvc.preview(user.id, dto);
+  }
+
+  @Post('teacher-change')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '강사 교체 — 여섯 단계를 한 트랜잭션에 (C93 · 테스트 시나리오 J-97 · D-46 · N-132 · D-45 · F-62)',
+    description: '스케줄(규칙마다 기존 patch · day=이번만 · from=그 날부터 규칙을 가른다) → 안내 초안(GUIDE teacher_change) → 학부모 안내(PNOTI · 보낼 것) '
+      + '→ 교재 확인(읽기) → 정산 시수(회차가 옮겨 가므로 시트가 따라온다 · 확정된 달은 알린다) → 새 강사·원래 강사·관리자 알림 → 컴플레인이면 teacher_changed + 대응. 겹치면 전부 되돌린다.',
+  })
+  @ApiCreatedResponse({ type: TeacherChangeResultDto })
+  @ApiConflictResponse({ description: '시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED' })
+  @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND | CPL_NOT_FOUND' })
+  teacherChange(@CurrentUser() user: RequestUser, @Body() dto: TeacherChangeDto): Promise<TeacherChangeResultDto> {
+    return this.tcSvc.apply(user.id, dto);
   }
 
   /* ══ §60 대표 피드백 ═══════════════════════════════════════════════════ */

@@ -5951,6 +5951,338 @@
         ]
       }
     },
+    "/ops/complaints": {
+      "post": {
+        "description": "갈래 · 학생 · 내용 · 담당 · 기한 · 심각도. 담당을 정했으면 그 사람에게 알림, LOG 는 같은 트랜잭션. 상태는 받지 않는다.",
+        "operationId": "OpsController_createComplaint",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplaintCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplaintDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND | STAFF_NOT_FOUND"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "「+ 접수」 — 접수는 언제나 received (C93 · 테스트 시나리오 J-96 · N-46 ①)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/complaints/{id}": {
+      "patch": {
+        "description": "보낸 칸만 고친다. 대응(acting)은 담당이 있어야 하고 마무리(closed)는 결과가 있어야 한다 — 원본 §67 칸의 한 줄이 그렇게 말한다.",
+        "operationId": "OpsController_patchComplaint",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplaintPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplaintDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "CPL_NOT_FOUND | STAFF_NOT_FOUND"
+          },
+          "409": {
+            "description": "code CPL_OWNER_REQUIRED | CPL_RESULT_REQUIRED | EMPTY_PATCH"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "카드 처리 — 담당 · 단계 · 조치 · 결과 · 기한 · 심각도 (C93 · J-101)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/teacher-change/preview": {
+      "post": {
+        "description": "같은 트랜잭션을 끝까지 돌리고 되돌린다 — 겹침(409)·불가 시간·옮겨 갈 회차·정산 달이 실제와 같다. 화면이 짓지 않는다 (D-R37).",
+        "operationId": "OpsController_teacherChangePreview",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherChangeResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND | CPL_NOT_FOUND"
+          },
+          "409": {
+            "description": "시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 교체 미리보기 — 쓰기 0 (C93 · J-97 · D-46 · N-132)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/teacher-change": {
+      "post": {
+        "description": "스케줄(규칙마다 기존 patch · day=이번만 · from=그 날부터 규칙을 가른다) → 안내 초안(GUIDE teacher_change) → 학부모 안내(PNOTI · 보낼 것) → 교재 확인(읽기) → 정산 시수(회차가 옮겨 가므로 시트가 따라온다 · 확정된 달은 알린다) → 새 강사·원래 강사·관리자 알림 → 컴플레인이면 teacher_changed + 대응. 겹치면 전부 되돌린다.",
+        "operationId": "OpsController_teacherChange",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherChangeResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND | CPL_NOT_FOUND"
+          },
+          "409": {
+            "description": "시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 교체 — 여섯 단계를 한 트랜잭션에 (C93 · 테스트 시나리오 J-97 · D-46 · N-132 · D-45 · F-62)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/marketing/{id}/comments": {
       "post": {
         "description": "「대표가 코멘트를 남기면 관리자 전원에게 알림이 갑니다」. 쓸 때의 종류를 kind 로 적는다 — 쓴 사람의 지금 역할로 되짚지 않는다.",
@@ -18633,6 +18965,10 @@
               "teacher"
             ]
           },
+          "studentId": {
+            "type": "number",
+            "nullable": true
+          },
           "studentName": {
             "type": "string",
             "nullable": true
@@ -18662,10 +18998,37 @@
             "type": "string",
             "description": "갈래 이름 — 화면이 제 표를 들면 §67 칩과 §69 줄이 갈린다 (D-R18)"
           },
+          "ownerId": {
+            "type": "number",
+            "nullable": true
+          },
           "ownerName": {
             "type": "string",
             "nullable": true,
             "description": "담당 — 원본 §67 카드 바닥. 없으면 null («담당 없음»)"
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "대응 기한 YYYY-MM-DD (J-98) — 없으면 null"
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "기한이 지난 날 수 — 열린 건만 · 서버가 센다 (D-R37). 0 이면 안 지남"
+          },
+          "severity": {
+            "type": "string",
+            "nullable": true,
+            "description": "light | normal | severe — 코드값 · 이름은 severityLabel"
+          },
+          "severityLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "가벼움 · 보통 · 심각 — 낱말은 서버 (D-R18)"
+          },
+          "teacherChanged": {
+            "type": "boolean",
+            "description": "강사 교체 마법사를 거쳤는가 (J-97 · `cpl.teacher_changed`)"
           }
         },
         "required": [
@@ -18675,7 +19038,9 @@
           "body",
           "createdAt",
           "ageDays",
-          "areaLabel"
+          "areaLabel",
+          "overdueDays",
+          "teacherChanged"
         ]
       },
       "TodoDto": {
@@ -18824,6 +19189,21 @@
           "key",
           "label",
           "sub"
+        ]
+      },
+      "CplWordDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
         ]
       },
       "PlanDueRowDto": {
@@ -19363,6 +19743,20 @@
               "$ref": "#/components/schemas/CplStageDto"
             }
           },
+          "cplAreas": {
+            "description": "갈래 다섯 — 「+ 접수」 폼과 칩 줄의 낱말 (D-R18 · C93)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CplWordDto"
+            }
+          },
+          "cplSeverities": {
+            "description": "심각도 셋 — 가벼움 · 보통 · 심각 (원본 §67 · C93)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CplWordDto"
+            }
+          },
           "planDues": {
             "description": "§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표",
             "type": "array",
@@ -19427,6 +19821,8 @@
           "plans",
           "planStages",
           "cplStages",
+          "cplAreas",
+          "cplSeverities",
           "planDues",
           "planOverdue",
           "meetings",
@@ -19929,6 +20325,434 @@
           "notifiedStaff",
           "unavailable",
           "stage"
+        ]
+      },
+      "ComplaintCreateDto": {
+        "type": "object",
+        "properties": {
+          "area": {
+            "type": "string",
+            "enum": [
+              "lesson",
+              "intake",
+              "book",
+              "schedule",
+              "teacher"
+            ],
+            "description": "갈래 다섯 — 낱말은 GET /ops.cplAreas"
+          },
+          "studentId": {
+            "type": "number",
+            "nullable": true,
+            "description": "학생 — 없으면 문의자"
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "내용"
+          },
+          "ownerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "담당 — 정하면 그 사람에게 알림"
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "대응 기한 YYYY-MM-DD (J-98)"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "light",
+              "normal",
+              "severe"
+            ],
+            "nullable": true,
+            "description": "가벼움 · 보통 · 심각 — 코드값"
+          }
+        },
+        "required": [
+          "area",
+          "body"
+        ]
+      },
+      "ComplaintPatchDto": {
+        "type": "object",
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "received",
+              "acting",
+              "closed"
+            ],
+            "description": "received → acting → closed — acting 은 담당이, closed 는 결과가 있어야 한다"
+          },
+          "ownerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "담당 — null 이면 담당 해제"
+          },
+          "action": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 1000,
+            "description": "조치 — 「대응」 칸에 적히는 글"
+          },
+          "result": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 1000,
+            "description": "결과 — 「결과」 칸에 적히는 글 · 마무리에 필수 (J-101)"
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "대응 기한 YYYY-MM-DD — null 이면 기한 없음"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "light",
+              "normal",
+              "severe"
+            ],
+            "nullable": true
+          }
+        }
+      },
+      "TeacherChangeDto": {
+        "type": "object",
+        "properties": {
+          "fromTeacherId": {
+            "type": "number",
+            "description": "원래 강사 (STAFF) — 퇴사한 강사면 비활성이어도 된다"
+          },
+          "toTeacherId": {
+            "type": "number",
+            "description": "새 강사 (STAFF · 활성) — 자습 감독처럼 강사 역할이 아니어도 맡을 수 있다 (C74)"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "day",
+              "from"
+            ],
+            "description": "day = 그날만 대강(회차 예외 · N-132 · D-45) · from = 이 날부터 계속(규칙을 가른다 · D-R16 · D-46 · J-97)"
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "대강 날짜 / 시작일"
+          },
+          "serIds": {
+            "description": "대상 수업(규칙) — 비우면 그 강사의 그날/그 뒤 전부. 미리보기의 series 에서 고른다",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "studentId": {
+            "type": "number",
+            "description": "이 학생의 수업만 (컴플레인에서 온 교체 · J-97) — 컴플레인에 학생이 있으면 기본값"
+          },
+          "cplId": {
+            "type": "number",
+            "description": "컴플레인 — 있으면 `cpl.teacher_changed` 를 세우고 접수 건은 대응으로 옮긴다"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "알림·안내에 실을 한 줄"
+          }
+        },
+        "required": [
+          "fromTeacherId",
+          "toTeacherId",
+          "mode",
+          "date"
+        ]
+      },
+      "TcStaffDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "활성인가 — 퇴사한 강사에게는 알림을 보내지 않는다"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "active"
+        ]
+      },
+      "TcSeriesDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "description": "원래 규칙"
+          },
+          "newSerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "from 이면 갈라진 새 규칙 (D-R16) · day 면 null"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kindName": {
+            "type": "string"
+          },
+          "subName": {
+            "type": "string",
+            "nullable": true
+          },
+          "ruleLabel": {
+            "type": "string"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "students": {
+            "description": "그 날짜의 명단",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "occurrences": {
+            "type": "number",
+            "description": "옮긴 회차 수 (day 면 1)"
+          },
+          "firstOn": {
+            "type": "string",
+            "description": "첫 바뀐 회차 날짜"
+          }
+        },
+        "required": [
+          "serId",
+          "title",
+          "kindName",
+          "ruleLabel",
+          "startMin",
+          "endMin",
+          "students",
+          "occurrences",
+          "firstOn"
+        ]
+      },
+      "TcBookDto": {
+        "type": "object",
+        "properties": {
+          "studentName": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "description": "ISSUE 상태 — wait | ok"
+          }
+        },
+        "required": [
+          "studentName",
+          "title",
+          "state"
+        ]
+      },
+      "TcPayoutMonthDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string"
+          },
+          "occurrences": {
+            "type": "number",
+            "description": "그 달에 새 강사로 옮겨 간 회차"
+          },
+          "fromConfirmed": {
+            "type": "boolean",
+            "description": "원래 강사의 그 달 정산이 이미 확정됐다 (N-51 — 되돌리지 않는다)"
+          },
+          "toConfirmed": {
+            "type": "boolean",
+            "description": "새 강사의 그 달 정산이 이미 확정됐다 (N-51)"
+          }
+        },
+        "required": [
+          "month",
+          "occurrences",
+          "fromConfirmed",
+          "toConfirmed"
+        ]
+      },
+      "TcComplaintDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "teacherChanged": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "stage",
+          "teacherChanged"
+        ]
+      },
+      "TcStepDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "guide",
+              "parent",
+              "book",
+              "payout",
+              "notify"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number",
+            "description": "그 단계가 만든/확인한 것의 수"
+          },
+          "note": {
+            "type": "string",
+            "description": "한 줄 — 낱말은 서버 (D-R18)"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count",
+          "note"
+        ]
+      },
+      "TeacherChangeResultDto": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "type": "boolean",
+            "description": "true 면 되돌린 미리보기"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "day",
+              "from"
+            ]
+          },
+          "date": {
+            "type": "string"
+          },
+          "fromTeacher": {
+            "$ref": "#/components/schemas/TcStaffDto"
+          },
+          "toTeacher": {
+            "$ref": "#/components/schemas/TcStaffDto"
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TcSeriesDto"
+            }
+          },
+          "occurrences": {
+            "type": "number",
+            "description": "옮긴 회차 합"
+          },
+          "guideDrafts": {
+            "type": "number",
+            "description": "강사 교체 안내 초안 (GUIDE · F-62)"
+          },
+          "parentNotices": {
+            "type": "number",
+            "description": "학부모 안내 행 (PNOTI · 보낼 것 · 발송처는 N-42)"
+          },
+          "books": {
+            "description": "이관 학생의 배부 교재 — 확인만 (ISSUE 에 강사 칸이 없다)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TcBookDto"
+            }
+          },
+          "payout": {
+            "description": "달마다 옮겨 간 회차 — 정산은 회차를 읽으므로 저절로 따라온다 (lib/payout-sheet)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TcPayoutMonthDto"
+            }
+          },
+          "notifiedTeachers": {
+            "type": "number"
+          },
+          "notifiedStaff": {
+            "type": "number"
+          },
+          "unavailable": {
+            "description": "새 강사의 불가 시간에 걸치는 회차 — 막지 않고 알린다 (A-07)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnavWarnDto"
+            }
+          },
+          "cpl": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TcComplaintDto"
+              }
+            ]
+          },
+          "steps": {
+            "description": "여섯 단계의 결과 — 화면은 이 목록을 체크로 그린다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TcStepDto"
+            }
+          }
+        },
+        "required": [
+          "preview",
+          "mode",
+          "date",
+          "fromTeacher",
+          "toTeacher",
+          "series",
+          "occurrences",
+          "guideDrafts",
+          "parentNotices",
+          "books",
+          "payout",
+          "notifiedTeachers",
+          "notifiedStaff",
+          "unavailable",
+          "steps"
         ]
       },
       "MfbCommentWriteDto": {

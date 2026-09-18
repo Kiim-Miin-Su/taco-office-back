@@ -14,11 +14,12 @@ import { ScheduleModule } from '../schedule/schedule.module';
 import { LeadEnrollService } from './enroll.service';
 import { OpsController } from './ops.controller';
 import { OpsService } from './ops.service';
+import { TeacherChangeService } from './teacher-change.service';
 
-/** 등록 확정(C91)은 시간표·청구서·교재·안내의 **기존 쓰기**를 한 트랜잭션에서 부른다 — 네 모듈을 들여온다 */
+/** 등록 확정(C91)·강사 교체(C93)는 시간표·청구서·교재·안내의 **기존 쓰기**를 한 트랜잭션에서 부른다 — 네 모듈을 들여온다 */
 @Module({
   imports: [TypeOrmModule.forFeature([Lead]), ScheduleModule, AccountingModule, BooksModule, GuidesModule],
   controllers: [OpsController],
-  providers: [OpsService, LeadEnrollService],
+  providers: [OpsService, LeadEnrollService, TeacherChangeService],
 })
 export class OpsModule {}

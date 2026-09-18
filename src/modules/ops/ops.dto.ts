@@ -5,7 +5,8 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { CPL_AREAS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
 import { MFB_STATES } from '../../lib/marketing-words';
 import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_STAGES } from '../../lib/plan-words';
 import { MINUTES_TEMPLATES, MT_ATTEND_STATES, MT_TYPES } from '../../lib/meeting-words';
@@ -62,7 +63,8 @@ export class LeadResumeDto {
 /** §67 컴플레인 */
 export class ComplaintDto {
   @ApiProperty() id!: number;
-  @ApiProperty({ enum: ['lesson', 'intake', 'book', 'schedule', 'teacher'] }) area!: string;
+  @ApiProperty({ enum: [...CPL_AREAS] }) area!: string;
+  @ApiPropertyOptional(N) studentId?: number | null;
   @ApiPropertyOptional(S) studentName?: string | null;
   @ApiProperty({ description: 'received | acting | closed' }) stage!: string;
   @ApiProperty() body!: string;
@@ -71,8 +73,74 @@ export class ComplaintDto {
   @ApiProperty() createdAt!: string;
   @ApiProperty() ageDays!: number;
   @ApiProperty({ description: '갈래 이름 — 화면이 제 표를 들면 §67 칩과 §69 줄이 갈린다 (D-R18)' }) areaLabel!: string;
+  @ApiPropertyOptional(N) ownerId?: number | null;
   @ApiPropertyOptional({ ...S, description: '담당 — 원본 §67 카드 바닥. 없으면 null («담당 없음»)' })
   ownerName?: string | null;
+  /* C93 — 기한 · 심각도 · 강사 교체 (J-96 · J-98 · J-97). 옛 행은 null — 「미지정」이라 적지 않는다 (N-25) */
+  @ApiPropertyOptional({ ...S, description: '대응 기한 YYYY-MM-DD (J-98) — 없으면 null' }) dueOn?: string | null;
+  @ApiProperty({ description: '기한이 지난 날 수 — 열린 건만 · 서버가 센다 (D-R37). 0 이면 안 지남' }) overdueDays!: number;
+  @ApiPropertyOptional({ ...S, description: 'light | normal | severe — 코드값 · 이름은 severityLabel' }) severity?: string | null;
+  @ApiPropertyOptional({ ...S, description: '가벼움 · 보통 · 심각 — 낱말은 서버 (D-R18)' }) severityLabel?: string | null;
+  @ApiProperty({ description: '강사 교체 마법사를 거쳤는가 (J-97 · `cpl.teacher_changed`)' }) teacherChanged!: boolean;
+}
+
+/** §67 「+ 접수」 (C93 · J-96 · N-46 ①) — 상태는 받지 않는다: 접수는 언제나 `received` */
+export class ComplaintCreateDto {
+  @ApiProperty({ enum: [...CPL_AREAS], description: '갈래 다섯 — 낱말은 GET /ops.cplAreas' })
+  @IsIn([...CPL_AREAS], { message: '갈래는 수업 · 상담 · 교재 · 스케줄 · 선생님 중 하나입니다' })
+  area!: string;
+
+  @ApiPropertyOptional({ ...N, description: '학생 — 없으면 문의자' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  studentId?: number | null;
+
+  @ApiProperty({ maxLength: 1000, description: '내용' })
+  @IsString() @MinLength(1, { message: '내용을 적어 주세요' }) @MaxLength(1000)
+  body!: string;
+
+  @ApiPropertyOptional({ ...N, description: '담당 — 정하면 그 사람에게 알림' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId?: number | null;
+
+  @ApiPropertyOptional({ ...S, description: '대응 기한 YYYY-MM-DD (J-98)' })
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '기한은 YYYY-MM-DD 입니다' })
+  dueOn?: string | null;
+
+  @ApiPropertyOptional({ enum: [...CPL_SEVERITIES], nullable: true, description: '가벼움 · 보통 · 심각 — 코드값' })
+  @IsOptional() @IsIn([...CPL_SEVERITIES], { message: '심각도는 가벼움 · 보통 · 심각 중 하나입니다' })
+  severity?: string | null;
+}
+
+/** §67 카드 처리 — 담당 · 단계 · 조치 · 결과 · 기한 · 심각도 (C93 · J-101). 보낸 칸만 고친다 */
+export class ComplaintPatchDto {
+  @ApiPropertyOptional({ enum: CPL_STAGES, description: 'received → acting → closed — acting 은 담당이, closed 는 결과가 있어야 한다' })
+  @IsOptional() @IsIn(CPL_STAGES, { message: '단계는 접수 · 대응 · 결과 중 하나입니다' })
+  stage?: string;
+
+  @ApiPropertyOptional({ ...N, description: '담당 — null 이면 담당 해제' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId?: number | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 1000, description: '조치 — 「대응」 칸에 적히는 글' })
+  @IsOptional() @IsString() @MaxLength(1000)
+  action?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 1000, description: '결과 — 「결과」 칸에 적히는 글 · 마무리에 필수 (J-101)' })
+  @IsOptional() @IsString() @MaxLength(1000)
+  result?: string | null;
+
+  @ApiPropertyOptional({ ...S, description: '대응 기한 YYYY-MM-DD — null 이면 기한 없음' })
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '기한은 YYYY-MM-DD 입니다' })
+  dueOn?: string | null;
+
+  @ApiPropertyOptional({ enum: [...CPL_SEVERITIES], nullable: true })
+  @IsOptional() @IsIn([...CPL_SEVERITIES], { message: '심각도는 가벼움 · 보통 · 심각 중 하나입니다' })
+  severity?: string | null;
+}
+
+export class CplWordDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() label!: string;
 }
 
 /** §64 운영 할 일 */
@@ -428,6 +496,10 @@ export class OpsDto {
   planStages!: PlanStageDto[];
   @ApiProperty({ type: [CplStageDto], description: '§67 칸 셋의 이름과 한 줄 (D-R18 · D-R25)' })
   cplStages!: CplStageDto[];
+  @ApiProperty({ type: [CplWordDto], description: '갈래 다섯 — 「+ 접수」 폼과 칩 줄의 낱말 (D-R18 · C93)' })
+  cplAreas!: CplWordDto[];
+  @ApiProperty({ type: [CplWordDto], description: '심각도 셋 — 가벼움 · 보통 · 심각 (원본 §67 · C93)' })
+  cplSeverities!: CplWordDto[];
   @ApiProperty({ type: [PlanDueRowDto], description: '§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표' })
   planDues!: PlanDueRowDto[];
   @ApiProperty({ description: '기한 지난 것 — 서버가 센다 (D-R37)' }) planOverdue!: number;

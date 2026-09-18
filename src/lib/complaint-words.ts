@@ -53,3 +53,18 @@ export const CPL_AREA_LABEL: Record<string, string> = {
 };
 
 export const cplAreaLabel = (area: string): string => CPL_AREA_LABEL[area] ?? area;
+
+/** 갈래 다섯의 순서 — 「+ 접수」 폼과 칩 줄이 같은 순서로 선다 (원본 §67 「전체 · 수업 · 상담 · 교재 · 스케줄 · 선생님」) */
+export const CPL_AREAS = ['lesson', 'intake', 'book', 'schedule', 'teacher'] as const;
+export type CplArea = (typeof CPL_AREAS)[number];
+
+/** 심각도 셋 — 원본 §67 카드의 「가벼움 · 보통 · 심각」. 표의 `cpl_severity_words` 가 같은 셋을 지킨다 (v4.32 · C93) */
+export const CPL_SEVERITIES = ['light', 'normal', 'severe'] as const;
+export type CplSeverity = (typeof CPL_SEVERITIES)[number];
+export const CPL_SEVERITY_LABEL: Record<CplSeverity, string> = {
+  light: '가벼움',
+  normal: '보통',
+  severe: '심각',
+};
+export const cplSeverityLabel = (severity: string | null | undefined): string | null =>
+  severity ? (CPL_SEVERITY_LABEL[severity as CplSeverity] ?? severity) : null;

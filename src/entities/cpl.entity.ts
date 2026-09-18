@@ -10,10 +10,12 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 import { CPL_AREA_T_VALUES } from './enums';
 
 @Entity({ name: 'cpl' })
+/** 심각도 낱말은 `lib/complaint-words` 한 곳 — 표는 마지막 방어다 (v4.32 · C93). NULL 은 「모른다」(옛 행 · N-25) */
+@Check('cpl_severity_words', "severity IS NULL OR severity IN ('light','normal','severe')")
 export class Cpl {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
@@ -46,6 +48,14 @@ export class Cpl {
 
   @Column({ type: 'bigint', nullable: true })
   ownerId: number | null;
+
+  /** 대응 기한 (J-98) — 없으면 기한을 세지 않는다. 옛 행은 NULL (v4.32 · C93) */
+  @Column({ type: 'date', nullable: true })
+  dueOn: string | null;
+
+  /** light | normal | severe — 원본 §67 카드의 가벼움 · 보통 · 심각. 옛 행은 NULL (v4.32 · C93) */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  severity: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
