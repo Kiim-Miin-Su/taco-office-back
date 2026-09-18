@@ -51,11 +51,13 @@ describe('§23·§24 LEAD 응답 projection', () => {
       reason: '사유', createdAt: '2026-09-07', ageDays: 3,
       // N-25 (C35): 명시값 없는 레거시 failed 건은 로그로도 판정 안 되면 미분류 그대로 — 추정 이관 없음
       failFrom: null, revivalStage: null, revivalSource: null,
+      // C90: 옛 건은 유입 경로 NULL(보정 0) · 끝난 결과라 다음 단계 없음 · 접촉 없음 → 칩 없음
+      source: null, sourceLabel: null, nextStages: [], touches: [], lastTouchAt: null, nextOn: null, nextLabel: null, nextTone: null,
     }]);
-    // 7 고정 목록 + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
+    // 7 고정 목록 + 접촉 원장 1회(lead_id = ANY — 건마다 묻지 않는다 · C90) + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
     // + §60 대표 피드백 글타래 1회 (C53) + §62 기획 기한 1회 (C56)
-    // + §23 경고 셋을 **한 문장으로 묶은** 1회 (C86-a — 따로 물으면 왕복이 셋 는다)
-    expect(query).toHaveBeenCalledTimes(11);
+    // + §23 경고 셋을 **한 문장으로 묶은** 1회 (C86-a — 따로 물으면 왕복이 셋 는다) + 도달 기록 시작일 1회 (C90 · funnelSince)
+    expect(query).toHaveBeenCalledTimes(13);
   });
 
   it.each(['ownerId', 'studentId'])('%s는 Swagger에서 optional·nullable number다', (field) => {
@@ -179,7 +181,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
     planDues: [], planOverdue: 0, planStages: [], cplStages: [], cplAreas: [], cplSeverities: [],
-    intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [] },
+    intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [], sources: [], touchKinds: [], followUpSoon: 0, funnelSince: null },
   };
 
   beforeAll(async () => {
@@ -199,7 +201,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
 
   it('실제 handler에 프론트와 동일한 두 권한이 모두 선언되어 있다 — 읽기와 실패/되살리기 쓰기 동일', () => {
     for (const handler of [
-      'all', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
+      'all', 'createLead', 'moveLeadStage', 'addLeadTouch', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
       'planDetail', 'decidePlanDue', 'reviewPlan',
       'meetingDetail', 'writeMinutes', 'assignMeetingTask',
       'createComplaint', 'patchComplaint', 'teacherChangePreview', 'teacherChange',
@@ -208,10 +210,16 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     }
   });
 
-  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 14필드로 명시한다 (11 + N-25 실패 이력 3)', () => {
+  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 22필드로 명시한다 (11 + N-25 실패 이력 3 + C90 유입·접촉·다음 단계 8)', () => {
     const schema = openApi.components?.schemas?.LeadDto;
     if (!schema || '$ref' in schema) throw new Error('LeadDto schema 누락');
-    expect(Object.keys(schema.properties ?? {})).toHaveLength(14);
+    expect(Object.keys(schema.properties ?? {})).toHaveLength(22);
+    // C90 — 판정·낱말은 서버 (D-R18 · D-R37): 다음 단계 목록과 접촉 원장은 필수 배열, 칩 한 줄과 색은 nullable
+    expect(schema.required).toEqual(expect.arrayContaining(['nextStages', 'touches']));
+    for (const field of ['source', 'sourceLabel', 'lastTouchAt', 'nextOn', 'nextLabel', 'nextTone']) {
+      expect(schema.properties?.[field]).toMatchObject({ type: 'string', nullable: true });
+      expect(schema.required).not.toContain(field);
+    }
     for (const field of ['failFrom', 'revivalStage', 'revivalSource']) {
       expect(schema.properties?.[field]).toMatchObject({ type: 'string', nullable: true });
       expect(schema.required).not.toContain(field);
@@ -235,7 +243,10 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     // C5-a의 「/ops 단일 경로」 가드는 N-25 채택(2026-09-12 §4-17)·C35로 실패/되살리기 2경로까지 확장
     // — C32 consulting-contract 갱신과 같은 선례. 검색 GET·query 계약이 늘지 않는 것은 그대로 지킨다.
     expect(Object.keys(openApi.paths)).toEqual([
-      '/ops', '/ops/leads/{id}/fail', '/ops/leads/{id}/resume',
+      '/ops',
+      // 「+ 신규 문의」 · 단계 이동 · 접촉 기록 (C90 · N-45 · N-44). 검색 GET·query 계약은 여전히 0이다
+      '/ops/leads', '/ops/leads/{id}/stage', '/ops/leads/{id}/touches',
+      '/ops/leads/{id}/fail', '/ops/leads/{id}/resume',
       // 등록 확정 — 미리보기·실제 (C91 · A-05). 검색 GET·query 계약은 여전히 0이다
       '/ops/leads/{id}/enroll/preview', '/ops/leads/{id}/enroll',
       // §67 컴플레인 접수·처리 · 강사 교체 미리보기·실제 (C93 · J-96 · J-97). 검색 GET·query 계약은 그대로 0이다
@@ -257,7 +268,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
   it.each([
     ['/ops/leads/{id}/fail', 'LeadFailDto'],
     ['/ops/leads/{id}/resume', 'LeadResumeDto'],
-  ] as const)('실패 이력 쓰기 %s는 POST 하나·경로 id·%s 본문으로만 계약한다 (N-25 · C35)', (route, dtoName) => {
+    ['/ops/leads/{id}/touches', 'LeadTouchWriteDto'],
+  ] as const)('상담 쓰기 %s는 POST 하나·경로 id·%s 본문으로만 계약한다 (N-25 · C35 · C90)', (route, dtoName) => {
     const path = openApi.paths[route];
     expect(Object.keys(path)).toEqual(['post']);
     expect((path.post?.parameters ?? []).map((p) => 'name' in p && p.name)).toEqual(['id']);
@@ -265,6 +277,27 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     if (!body || '$ref' in body) throw new Error(route + ' requestBody 누락');
     expect(JSON.stringify(body.content)).toContain(`#/components/schemas/${dtoName}`);
     expect(path.post?.responses?.['409']).toBeDefined();
+  });
+
+  it('「+ 신규 문의」는 POST /ops/leads 에 LeadCreateDto(단계 없음 · 유입 경로 필수), 단계 이동은 PATCH …/stage 에 LeadStageMoveDto 하나다 (C90 · N-45 · N-44)', () => {
+    const create = openApi.paths['/ops/leads'];
+    expect(Object.keys(create)).toEqual(['post']);
+    expect(JSON.stringify(create.post?.requestBody)).toContain('#/components/schemas/LeadCreateDto');
+    const createDto = openApi.components?.schemas?.LeadCreateDto;
+    if (!createDto || '$ref' in createDto) throw new Error('LeadCreateDto schema 누락');
+    expect(Object.keys(createDto.properties ?? {})).toEqual(['name', 'school', 'source', 'ownerId', 'note']);
+    expect(createDto.required).toEqual(['name', 'source']);
+    expect(createDto.properties?.source).toMatchObject({ enum: ['kakao', 'phone', 'blog', 'instagram', 'referral', 'walkin'] });
+    const move = openApi.paths['/ops/leads/{id}/stage'];
+    expect(Object.keys(move)).toEqual(['patch']);
+    expect((move.patch?.parameters ?? []).map((p) => 'name' in p && p.name)).toEqual(['id']);
+    expect(JSON.stringify(move.patch?.requestBody)).toContain('#/components/schemas/LeadStageMoveDto');
+    const moveDto = openApi.components?.schemas?.LeadStageMoveDto;
+    if (!moveDto || '$ref' in moveDto) throw new Error('LeadStageMoveDto schema 누락');
+    expect(Object.keys(moveDto.properties ?? {})).toEqual(['to']);
+    // 깔때기 안 넷만 — 등록·등록 실패는 각자의 길이다
+    expect(moveDto.properties?.to).toMatchObject({ enum: ['first', 'wait2nd', 'second', 'hold'] });
+    expect(move.patch?.responses?.['409']).toBeDefined();
   });
 
   it('비공개 두 비용은 기존 MarketingDto의 optional nullable number이며 응답 권한은 boolean이다', () => {
@@ -354,8 +387,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       })));
       expect(res.body.leads).toMatchObject([{ id: 1, name: '상담 계약 테스트' }]);
       expect(Object.keys(res.body).sort()).toEqual(Object.keys(empty).sort());
-      // 7 목록 + N-25 도달 기록 + §60 피드백 + §62 기한 (C53·C56) + §23 경고 묶음 1회 (C86-a)
-      expect(query).toHaveBeenCalledTimes(11);
+      // 7 목록 + 접촉 원장 1회 (C90) + N-25 도달 기록 + §60 피드백 + §62 기한 (C53·C56) + §23 경고 묶음 1회 (C86-a) + 도달 기록 시작일 1회 (C90)
+      expect(query).toHaveBeenCalledTimes(13);
       expect(query.mock.calls.every(([sql]) => /^SELECT\b/.test(sql))).toBe(true);
       expect(marketingRows).toEqual(before);
     },
@@ -373,18 +406,50 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
  * 퍼널의 순서·낱말과 「등록 전/후」 경계까지 서버가 갖는다.
  */
 describe('§23 상담 머리 (C86-a)', () => {
-  const head = (leads: Array<{ stage: string; ownerId?: number | null; ownerName?: string | null }>) => {
+  type Touch = { kind: string; nextOn: string | null };
+  const head = (leads: Array<{ stage: string; ownerId?: number | null; ownerName?: string | null; source?: string | null; touches?: Touch[] }>) => {
     const svc = new OpsService({ query: jest.fn().mockResolvedValue([]) } as never);
     return (svc as unknown as {
-      intakeHead: (l: unknown, m: boolean) => Promise<{
+      intakeHead: (l: unknown, m: boolean, today?: string) => Promise<{
         funnel: Array<{ key: string; label: string; count: number; funnel: boolean; sub: string }>;
         enrollRate: number;
         owners: Array<{ id: number | null; name: string; count: number }>;
         alerts: Array<{ key: string; label: string; count: number; amount: number | null }>;
         stops: Array<{ key: string; label: string }>;
+        sources: Array<{ key: string; label: string; count: number }>;
+        touchKinds: Array<{ key: string; label: string }>;
+        followUpSoon: number;
+        funnelSince: string | null;
       }>;
-    }).intakeHead(leads, true);
+    }).intakeHead(leads, true, '2026-09-18');
   };
+
+  it('유입 경로 칩은 여섯이 어휘라 0 이어도 서고, 「경로 없음」은 옛 건이 있을 때만 붙는다 (C90 · N-44 · N-25 보정 0)', async () => {
+    const none = await head([{ stage: 'first', source: 'kakao' }]);
+    expect(none.sources.map((s) => [s.key, s.count])).toEqual([['kakao', 1], ['phone', 0], ['blog', 0], ['instagram', 0], ['referral', 0], ['walkin', 0]]);
+    expect(none.sources.map((s) => s.label)).toEqual(['카카오채널', '전화', '블로그', '인스타그램', '소개', '워크인']);
+    const legacy = await head([{ stage: 'first', source: 'kakao' }, { stage: 'hold', source: null }, { stage: 'failed' }]);
+    expect(legacy.sources.at(-1)).toEqual({ key: 'none', label: '경로 없음', count: 2 });
+    expect(legacy.touchKinds.map((k) => k.key)).toEqual(['call', 'kakao', 'sms', 'visit', 'book', 'noshow', 'memo']);
+  });
+
+  it('「상담 오늘·지남」·「사후 관리 밀림」·「임박」은 마지막 접촉의 다음 예정일로 센다 — 실패 건은 재촉하지 않는다 (C90 · N-44)', async () => {
+    const out = await head([
+      { stage: 'wait2nd', touches: [{ kind: 'book', nextOn: '2026-09-18' }] },            // 상담 오늘
+      { stage: 'wait2nd', touches: [{ kind: 'book', nextOn: '2026-09-16' }] },            // 상담 2일 지남
+      { stage: 'enrolled', touches: [{ kind: 'call', nextOn: '2026-09-15' }] },           // 사후 관리 3일 밀림 (등록 건도 센다)
+      { stage: 'first', touches: [{ kind: 'kakao', nextOn: '2026-09-20' }] },             // 사후 관리 D-2 (임박)
+      { stage: 'first', touches: [{ kind: 'memo', nextOn: '2026-09-18' }] },              // 사후 관리 오늘 (임박)
+      { stage: 'first', touches: [{ kind: 'sms', nextOn: '2026-09-25' }] },               // 아직 멀다
+      { stage: 'failed', touches: [{ kind: 'book', nextOn: '2026-09-10' }] },             // 끝난 결과 — 세지 않는다
+      { stage: 'hold', touches: [{ kind: 'memo', nextOn: null }, { kind: 'book', nextOn: '2026-09-10' }] }, // 마지막 접촉에 날짜가 없다
+    ]);
+    const at = (key: string) => out.alerts.find((a) => a.key === key)!;
+    expect([at('consultDue').label, at('consultDue').count]).toEqual(['상담 오늘·지남 2', 2]);
+    expect([at('followUpLate').label, at('followUpLate').count]).toEqual(['사후 관리 밀림 1', 1]);
+    expect(out.followUpSoon).toBe(2);
+    expect(out.alerts.map((a) => a.key)).toEqual(['unpaid', 'noSchedule', 'noInvoice', 'consultDue', 'followUpLate']);
+  });
 
   it('퍼널은 여섯 칸이고 등록·등록 실패만 결과 칸이다 — 순서와 낱말이 서버에 있다', async () => {
     const out = await head([]);

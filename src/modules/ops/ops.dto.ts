@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: ops.dto.ts — LeadDto, LeadFailDto, LeadResumeDto, ComplaintDto, TodoDto 등 (dto)
+ * 목적: ops.dto.ts — LeadDto, LeadCreateDto, LeadStageMoveDto, LeadTouchWriteDto, LeadFailDto, LeadResumeDto, ComplaintDto, TodoDto 등 (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -7,6 +7,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { CPL_AREAS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
+import { INTAKE_FUNNEL_STAGES, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
 import { MFB_STATES } from '../../lib/marketing-words';
 import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_STAGES } from '../../lib/plan-words';
 import { MINUTES_TEMPLATES, MT_ATTEND_STATES, MT_TYPES } from '../../lib/meeting-words';
@@ -15,7 +16,7 @@ const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
 const FQ = { description: 'FQ 클라이언트 검색 대상. 원문을 보존한다.' } as const;
 
-/** §23 상담 단계 보드 · §24 중단 지점 */
+/** §23 상담 단계 보드 · §24 중단 지점 · C90 유입 경로 · 접촉 원장 · 다음 단계 */
 export class LeadDto {
   @ApiProperty() id!: number;
   @ApiProperty(FQ) name!: string;
@@ -36,6 +37,87 @@ export class LeadDto {
   revivalStage?: string | null;
   @ApiPropertyOptional({ ...S, description: "판정 근거 — 'explicit'(명시값) | 'log'(도달 기록) | null(미분류)" })
   revivalSource?: string | null;
+
+  /* C90 · N-44 유입 경로 · 접촉 원장 / N-45 단계 이동 — 낱말·판정은 전부 서버 (D-R18 · D-R37) */
+  @ApiPropertyOptional({ ...S, description: 'kakao | phone | blog | instagram | referral | walkin — 옛 건은 null (N-25 보정 0)' })
+  source?: string | null;
+  @ApiPropertyOptional({ ...S, description: '유입 경로 낱말 — null 이면 「경로 없음」 칩이 아니라 카드에 아무것도 안 붙는다' })
+  sourceLabel?: string | null;
+  @ApiProperty({ type: () => [IntakeWordDto], description: '지금 단계에서 옮길 수 있는 다음 단계 — 비면 끝난 결과(등록·등록 실패)라 옮기지 못한다 (N-45 전이표)' })
+  nextStages!: IntakeWordDto[];
+  @ApiProperty({ type: () => [LeadTouchDto], description: '접촉 원장 — 최근 것이 앞 (append-only · N-44)' })
+  touches!: LeadTouchDto[];
+  @ApiPropertyOptional({ ...S, description: '마지막 접촉 시각 (KST) — 접촉이 없으면 null' })
+  lastTouchAt?: string | null;
+  @ApiPropertyOptional({ ...S, description: '마지막 접촉의 「다음은 언제」 — 없으면 null' })
+  nextOn?: string | null;
+  @ApiPropertyOptional({ ...S, description: '카드 칩 한 줄 — 「상담 오늘」 · 「상담 2일 지남」 · 「사후 관리 D-1」 · 「사후 관리 3일 밀림」. 서버가 만든다 (D-R18)' })
+  nextLabel?: string | null;
+  @ApiPropertyOptional({ ...S, description: "칩 색 — 'danger'(지남·밀림) | 'warning'(오늘) | 'info'(임박) | null" })
+  nextTone?: string | null;
+}
+
+/** 낱말 하나 — key · label (D-R18). 다음 단계 · 접촉 「어떻게」 가 쓴다 */
+export class IntakeWordDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() label!: string;
+}
+
+/** 접촉 원장 한 줄 — 누가 · 언제 · 어떻게 · 한 줄 · 다음은 언제 (N-44 · C90) */
+export class LeadTouchDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: 'call | kakao | sms | visit | book | noshow | memo' }) kind!: string;
+  @ApiProperty() kindLabel!: string;
+  @ApiProperty() note!: string;
+  @ApiPropertyOptional({ ...S, description: '다음 접촉·상담 예정일 YYYY-MM-DD — book 이면 상담 날짜' }) nextOn?: string | null;
+  @ApiPropertyOptional(N) byId?: number | null;
+  @ApiPropertyOptional(S) byName?: string | null;
+  @ApiProperty({ description: 'KST 시각' }) at!: string;
+}
+
+/** 「+ 신규 문의」 (C90 · 테스트 시나리오 A-01 · N-45). 단계는 받지 않는다 — 유입은 언제나 1차 상담이다 */
+export class LeadCreateDto {
+  @ApiProperty({ maxLength: 40, description: '학생 이름' })
+  @IsString() @MinLength(1, { message: '이름을 적어 주세요' }) @MaxLength(40)
+  name!: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 60 })
+  @IsOptional() @IsString() @MaxLength(60)
+  school?: string | null;
+
+  @ApiProperty({ enum: [...LEAD_SOURCES], description: '유입 경로 — 컷 §23 여섯 갈래. 낱말은 GET /ops.intakeHead.sources' })
+  @IsIn([...LEAD_SOURCES], { message: '유입 경로는 카카오채널 · 전화 · 블로그 · 인스타그램 · 소개 · 워크인 중 하나입니다' })
+  source!: string;
+
+  @ApiPropertyOptional({ ...N, description: '담당 — 비우면 미배정' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId?: number | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 500, description: '첫 접촉 한 줄 — 원하는 것 · 학부모 · 연락처 · 「소개」면 누구 소개인지. 적으면 접촉 원장의 첫 줄이 된다(어떻게 = 유입 경로에서)' })
+  @IsOptional() @IsString() @MaxLength(500)
+  note?: string | null;
+}
+
+/** 단계 이동 (C90 · N-45) — 받아 주는 값은 LeadDto.nextStages 뿐. 등록·실패는 각자의 길이다 */
+export class LeadStageMoveDto {
+  @ApiProperty({ enum: [...INTAKE_FUNNEL_STAGES], description: '옮길 단계 — 깔때기 안 넷. 전이표 밖이면 409 LEAD_STAGE_INVALID · 끝난 건이면 409 LEAD_LOCKED' })
+  @IsIn([...INTAKE_FUNNEL_STAGES], { message: '옮길 단계는 1차 상담 · 2차 대기 · 2차 상담 · 보류 중 하나입니다' })
+  to!: string;
+}
+
+/** 접촉 기록 한 줄 (C90 · N-44 · A-03) */
+export class LeadTouchWriteDto {
+  @ApiProperty({ enum: [...LEAD_TOUCH_KINDS], description: '어떻게 — 낱말은 GET /ops.intakeHead.touchKinds' })
+  @IsIn([...LEAD_TOUCH_KINDS], { message: '접촉 방법은 전화 · 카카오톡 · 문자 · 방문 · 상담 예약 · 예약 불참 · 메모 중 하나입니다' })
+  kind!: string;
+
+  @ApiProperty({ maxLength: 500, description: '한 줄' })
+  @IsString() @MinLength(1, { message: '한 줄을 적어 주세요' }) @MaxLength(500)
+  note!: string;
+
+  @ApiPropertyOptional({ ...S, description: '다음은 언제 YYYY-MM-DD — 상담 예약이면 상담 날짜' })
+  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '날짜는 YYYY-MM-DD 입니다' })
+  nextOn?: string | null;
 }
 
 const LEAD_ACTIVE_STAGES = ['first', 'wait2nd', 'second', 'hold'] as const;
@@ -459,7 +541,7 @@ export class IntakeOwnerDto {
  * 금액이 실리는 칩은 `amount` 가 `null` 로 내려간다 (D-R39).
  */
 export class IntakeAlertDto {
-  @ApiProperty({ description: 'unpaid | noSchedule | noInvoice' }) key!: string;
+  @ApiProperty({ description: 'unpaid | noSchedule | noInvoice | consultDue | followUpLate' }) key!: string;
   @ApiProperty({ description: '사람이 읽는 한 줄 — 화면이 문장을 만들지 않는다' }) label!: string;
   @ApiProperty() count!: number;
   @ApiPropertyOptional({ ...N, description: '금액 칩만. 볼 수 없으면 null (D-R39)' }) amount?: number | null;
@@ -478,6 +560,13 @@ export class IntakeStopDto {
   @ApiProperty() label!: string;
 }
 
+/** 유입 경로 칩 하나 — 원본 §23 의 「유입 경로」 줄 (N-44 · C90). 건수 0 이어도 선다(어휘) · 「경로 없음」은 있을 때만 */
+export class IntakeSourceDto {
+  @ApiProperty({ description: 'kakao | phone | blog | instagram | referral | walkin | none' }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty({ description: '그 경로로 온 건수 — 서버가 센다 (D-R37)' }) count!: number;
+}
+
 export class IntakeHeadDto {
   @ApiProperty({ type: [IntakeFunnelStepDto] }) funnel!: IntakeFunnelStepDto[];
   @ApiProperty({ description: '등록률 % — 등록 / 전체, 정수 반올림. 전체 0 이면 0' }) enrollRate!: number;
@@ -485,6 +574,13 @@ export class IntakeHeadDto {
   @ApiProperty({ type: [IntakeAlertDto] }) alerts!: IntakeAlertDto[];
   @ApiProperty({ type: [IntakeStopDto], description: '§24 중단 지점 넷 — 낱말과 순서 (D-R18 · D-R25)' })
   stops!: IntakeStopDto[];
+  @ApiProperty({ type: [IntakeSourceDto], description: '유입 경로 칩 줄 — 여섯 + 「경로 없음」(옛 건이 있을 때만) · 「전체」는 화면이 붙인다 (N-44 · C90)' })
+  sources!: IntakeSourceDto[];
+  @ApiProperty({ type: [IntakeWordDto], description: '접촉 「어떻게」 일곱 — 「+ 기록」 폼의 낱말 (D-R18)' })
+  touchKinds!: IntakeWordDto[];
+  @ApiProperty({ description: '「사후 관리 임박」 타일 — 다음 예정일이 오늘~D+2 인 건 (끝난 결과·지난 것은 빼고 센다)' }) followUpSoon!: number;
+  @ApiPropertyOptional({ ...S, description: '도달 기록이 시작된 날 — §71 퍼널이 「언제부터의 값」인지 화면이 말한다 (N-45 · N-25). 기록이 없으면 null' })
+  funnelSince?: string | null;
 }
 
 export class OpsDto {

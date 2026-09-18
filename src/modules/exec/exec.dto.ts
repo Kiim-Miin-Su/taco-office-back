@@ -117,11 +117,27 @@ export class ExecLostRowDto {
  * 남아 있어(`LEAD_STAGE_LOG`) 그 전에 만들어진 건에는 없다 — 실패한 날로 묶으면 옛 건이
  * 통째로 사라지고 머리가 거짓이 된다. 「이번 달 들어온 문의 중 어디서 놓쳤나」로 읽는다.
  */
+/**
+ * §71 「상담 퍼널 — 유입에서 등록까지」 한 칸 (C90 · N-45 · 테스트 시나리오 K-108).
+ * **도달 기록**으로 센다 — 이 달 들어온 건 중 그 단계의 `lead_stage_log` 가 있거나 지금 그 단계인 건.
+ * 「지금 그 단계」는 사실이고 「보류·등록이면 2차를 거쳤겠지」는 가정이라 후자는 세지 않는다(C86-b 가 거절한 그 셈).
+ */
+export class ExecFunnelRowDto {
+  @ApiProperty({ description: 'inflow | first | wait2nd | second | enrolled' }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() count!: number;
+  @ApiProperty({ description: '유입 대비 % — 정수 반올림 · 유입 0 이면 0' }) pct!: number;
+}
+
 export class ExecMonthlyDto {
   @ApiProperty({ description: '이 달에 들어온 문의 수 — 「등록 실패 N건」의 모집단' }) leads!: number;
   @ApiProperty({ description: '그중 지금 등록 실패인 건 수 — 아래 줄들의 합과 같다 (N-19)' }) lost!: number;
   @ApiProperty({ type: [ExecLostRowDto], description: '중단 지점별 — 0 인 갈래는 서지 않는다' })
   lostRows!: ExecLostRowDto[];
+  @ApiProperty({ type: [ExecFunnelRowDto], description: '상담 퍼널 — 유입 · 1차 상담 · 2차 대기 · 2차 상담 · 등록 (도달 기록 기준 · C90)' })
+  funnel!: ExecFunnelRowDto[];
+  @ApiPropertyOptional({ type: String, nullable: true, description: '도달 기록이 시작된 날 — 그 전 건은 지금 단계로만 센다 (N-45 · N-25 보정 0). 기록이 없으면 null' })
+  funnelSince?: string | null;
 }
 
 export class ExecDto {

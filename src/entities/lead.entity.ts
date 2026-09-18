@@ -10,8 +10,9 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
+@Check('lead_source_words', "source IS NULL OR source IN ('kakao','phone','blog','instagram','referral','walkin')")
 @Entity({ name: 'lead' })
 export class Lead {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -45,6 +46,10 @@ export class Lead {
 
   @Column({ type: 'text', nullable: true })
   reason: string | null;
+
+  /** v4.34 · 유입 경로 — kakao | phone | blog | instagram | referral | walkin (컷 §23 · N-44). 옛 행은 NULL — 추정 보정 0 (N-25) */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  source: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;

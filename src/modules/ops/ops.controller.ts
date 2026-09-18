@@ -10,7 +10,8 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
-  LeadDto, LeadFailDto, LeadResumeDto, MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
+  LeadCreateDto, LeadDto, LeadFailDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
+  MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanReviewDto,
   MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
 } from './ops.dto';
@@ -38,6 +39,47 @@ export class OpsController {
       isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms),
       isRole(user.role) && canCeoComment(user.role),
     );
+  }
+
+  /* ══ 「+ 신규 문의」 · 단계 이동 · 접촉 기록 (C90 · N-45 · N-44 · A-01 · A-02 · A-03) ═══ */
+
+  @Post('leads')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '「+ 신규 문의」 — 유입은 언제나 1차 상담 (C90 · 테스트 시나리오 A-01 · N-45)',
+    description: '이름 · 학교 · 유입 경로(여섯 갈래 · lead_source_words CHECK) · 담당 · 첫 접촉 한 줄. 단계는 받지 않는다. 도달 기록(first)과 첫 접촉(적었으면)과 LOG 가 같은 트랜잭션.',
+  })
+  @ApiCreatedResponse({ type: LeadDto })
+  @ApiConflictResponse({ description: 'code LEAD_NAME_REQUIRED | LEAD_SOURCE_INVALID' })
+  @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND' })
+  createLead(@CurrentUser() user: RequestUser, @Body() dto: LeadCreateDto): Promise<LeadDto> {
+    return this.svc.createLead(user.id, dto);
+  }
+
+  @Patch('leads/:id/stage')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '단계 이동 — 전이표의 다음 단계로만 · 같은 트랜잭션에 도달 기록 (C90 · N-45 · A-02)',
+    description: '받아 주는 값은 LeadDto.nextStages 다. 등록·등록 실패는 끝난 결과라 409 LEAD_LOCKED(등록은 enroll · 실패는 fail/resume). 전이표 밖은 409 LEAD_STAGE_INVALID(문장에 갈 수 있는 곳).',
+  })
+  @ApiOkResponse({ type: LeadDto })
+  @ApiConflictResponse({ description: 'code LEAD_LOCKED | LEAD_STAGE_INVALID' })
+  @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND' })
+  moveLeadStage(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadStageMoveDto): Promise<LeadDto> {
+    return this.svc.moveLeadStage(user.id, id, dto);
+  }
+
+  @Post('leads/:id/touches')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '접촉 기록 한 줄 — 누가 · 언제 · 어떻게 · 한 줄 · 다음은 언제 (C90 · N-44 · A-03)',
+    description: 'append-only. 상담 예약(book)의 nextOn 이 상담 날짜다 — 「상담 오늘·지남」 · 「사후 관리 임박·밀림」 은 마지막 접촉의 nextOn 으로 서버가 센다.',
+  })
+  @ApiCreatedResponse({ type: LeadDto })
+  @ApiConflictResponse({ description: 'code LEAD_TOUCH_NOTE_REQUIRED | LEAD_TOUCH_KIND_INVALID' })
+  @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND' })
+  addLeadTouch(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadTouchWriteDto): Promise<LeadDto> {
+    return this.svc.addLeadTouch(user.id, id, dto);
   }
 
   @Post('leads/:id/fail')

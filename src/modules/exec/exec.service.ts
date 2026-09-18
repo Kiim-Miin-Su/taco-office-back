@@ -10,7 +10,7 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import { EXEC_AREA_KEYS, EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
-import { INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
+import { INTAKE_FUNNEL_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
 import { toApState } from '../../lib/approval';
 import { BoardService } from '../board/board.service';
 import type {
@@ -315,13 +315,34 @@ export class ExecService {
    * §71 월간 「어디서 놓쳤나」 — 이 달에 **들어온** 문의 중 지금 등록 실패인 것을
    * 중단 지점별로 센다. 조회는 한 번이다.
    *
-   * 컷의 **「상담 퍼널」 판은 세우지 않았다** — 「2차까지 왔는가」를 셀 근거가 없다.
-   * `LEAD_STAGE_LOG` 는 이름과 달리 **실패·되살림에만** 쓰이고(단계를 앞으로 옮기는 길이
-   * 제품에 아직 없다) 보류·등록 건이 2차를 거쳤는지는 어디에도 남아 있지 않다.
-   * 흐름이 직선이라고 가정해 세면 **컷의 수를 맞춘 척**하게 된다 — N-45 로 올렸다.
+   * 컷의 **「상담 퍼널」 판은 C90 이 세웠다** (N-45 · K-108) — 단계를 앞으로 옮기는 길(`PATCH /ops/leads/:id/stage`)이
+   * 생겨 `LEAD_STAGE_LOG` 가 이름대로 도달을 기록한다. 그래서 **도달 기록으로** 센다: 이 달 들어온 건 중 그 단계의 기록이
+   * 있거나 **지금 그 단계인** 건. 「보류·등록이면 2차를 거쳤겠지」는 여전히 세지 않는다(C86-b · 가정이다).
+   * 옛 건은 기록이 없으므로(N-25 보정 0) `funnelSince` 로 **언제부터의 값인지** 화면이 말한다.
    */
   private async monthly(from: string, to: string): Promise<ExecMonthlyDto | null> {
     if (!this.wholeMonth(from, to)) return null;
+    const funnelRows = await this.q(
+      `SELECT count(*)::int AS inflow,
+              count(*) FILTER (WHERE l.stage = 'first' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'first'))::int AS first,
+              count(*) FILTER (WHERE l.stage = 'wait2nd' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'wait2nd'))::int AS wait2nd,
+              count(*) FILTER (WHERE l.stage = 'second' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'second'))::int AS second,
+              count(*) FILTER (WHERE l.stage = 'enrolled' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'enrolled'))::int AS enrolled,
+              (SELECT to_char(min(at) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') FROM lead_stage_log WHERE stage = ANY($3)) AS since
+         FROM lead l
+        WHERE l.created_at::date BETWEEN $1::date AND $2::date`,
+      [from, to, [...INTAKE_FUNNEL_STAGES]],
+    );
+    const f = funnelRows[0] ?? {};
+    const inflow = Number(f.inflow ?? 0);
+    const pct = (n: number) => (inflow === 0 ? 0 : Math.round((n / inflow) * 100));
+    const funnel = [
+      { key: 'inflow', label: '유입', count: inflow, pct: pct(inflow) },
+      ...(['first', 'wait2nd', 'second', 'enrolled'] as const).map((key) => ({
+        key, label: INTAKE_STAGE_LABEL[key], count: Number(f[key] ?? 0), pct: pct(Number(f[key] ?? 0)),
+      })),
+    ];
+    const funnelSince = (f.since as string) ?? null;
     const rows = await this.q(
       `SELECT COALESCE(stop_at, $3) AS key, count(*)::int AS n,
               count(*) FILTER (WHERE stage = 'failed')::int AS lost
@@ -346,7 +367,7 @@ export class ExecService {
         label: intakeStopLabel(key),
         count: lostBy.get(key) ?? 0,
       }));
-    return { leads, lost: lostRows.reduce((a, r) => a + r.count, 0), lostRows };
+    return { leads, lost: lostRows.reduce((a, r) => a + r.count, 0), lostRows, funnel, funnelSince };
   }
 
   async range(from: string, to: string, canSeeAmounts: boolean): Promise<ExecDto> {

@@ -41,6 +41,7 @@ export * from './inv-line.entity';
 export * from './issue.entity';
 export * from './kind.entity';
 export * from './lead-stage-log.entity';
+export * from './lead-touch.entity';
 export * from './lead.entity';
 export * from './lib.entity';
 export * from './log.entity';
@@ -120,6 +121,7 @@ import {
   Kind,
   Lead,
   LeadStageLog,
+  LeadTouch,
   Lib,
   Log,
   Mfb,
@@ -198,6 +200,7 @@ export const ENTITIES = [
   Kind,
   Lead,
   LeadStageLog,
+  LeadTouch,
   Lib,
   Log,
   Mfb,

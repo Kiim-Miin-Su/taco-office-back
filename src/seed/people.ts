@@ -67,6 +67,8 @@ export const ENROLLMENTS = [
 /**
  * 상담 18건 — 1차 → 2차 대기 → 2차 → 보류 → 등록 / 실패.
  * 중단 지점(§24)이 분류되도록 stopAt 을 실패 건에만 채운다.
+ * 유입 경로(`source` · C90 · N-44)는 깔때기 안의 여섯 건(7~12)에만 하나씩 — 나머지는 NULL 로 두어
+ * 「경로 없음」 칩(옛 건 보정 0 · N-25)이 실제로 서는 표본을 남긴다. 접촉 원장(`lead_touch`)은 시드가 넣지 않는다.
  */
 export const LEADS = [
   { id: 1,  name: '김민준', studentId: 1,  school: '대원외고',   ownerId: 3, stage: 'enrolled', createdAt: '2026-02-20' },
@@ -75,12 +77,12 @@ export const LEADS = [
   { id: 4,  name: '한서준', studentId: 4,  school: '휘문고',     ownerId: 4, stage: 'enrolled', createdAt: '2026-04-29' },
   { id: 5,  name: '권시우', studentId: 19, school: '압구정중',   ownerId: 3, stage: 'enrolled', createdAt: '2026-07-02' },
   { id: 6,  name: '백서현', studentId: 15, school: '언주중',     ownerId: 4, stage: 'enrolled', createdAt: '2026-06-04' },
-  { id: 7,  name: '노현우', studentId: null, school: '세종고',   ownerId: 3, stage: 'first',    createdAt: '2026-08-26' },
-  { id: 8,  name: '차서윤', studentId: null, school: '반포중',   ownerId: 3, stage: 'first',    createdAt: '2026-08-27' },
-  { id: 9,  name: '유하람', studentId: null, school: '경신고',   ownerId: 4, stage: 'wait2nd',  createdAt: '2026-08-24' },
-  { id: 10, name: '남지완', studentId: null, school: '서초중',   ownerId: 3, stage: 'wait2nd',  createdAt: '2026-08-22' },
-  { id: 11, name: '표은결', studentId: null, school: '양재고',   ownerId: 4, stage: 'second',   createdAt: '2026-08-19' },
-  { id: 12, name: '구시온', studentId: null, school: '대명중',   ownerId: 3, stage: 'second',   createdAt: '2026-08-18' },
+  { id: 7,  name: '노현우', studentId: null, school: '세종고',   ownerId: 3, stage: 'first',    createdAt: '2026-08-26', source: 'kakao' },
+  { id: 8,  name: '차서윤', studentId: null, school: '반포중',   ownerId: 3, stage: 'first',    createdAt: '2026-08-27', source: 'phone' },
+  { id: 9,  name: '유하람', studentId: null, school: '경신고',   ownerId: 4, stage: 'wait2nd',  createdAt: '2026-08-24', source: 'instagram' },
+  { id: 10, name: '남지완', studentId: null, school: '서초중',   ownerId: 3, stage: 'wait2nd',  createdAt: '2026-08-22', source: 'blog' },
+  { id: 11, name: '표은결', studentId: null, school: '양재고',   ownerId: 4, stage: 'second',   createdAt: '2026-08-19', source: 'referral' },
+  { id: 12, name: '구시온', studentId: null, school: '대명중',   ownerId: 3, stage: 'second',   createdAt: '2026-08-18', source: 'walkin' },
   { id: 13, name: '진예람', studentId: null, school: '숭의여고', ownerId: 4, stage: 'hold',     createdAt: '2026-08-11' },
   { id: 14, name: '홍은결', studentId: null, school: 'DIS',    ownerId: 3, stage: 'hold',     createdAt: '2026-08-08' },
   { id: 15, name: '고윤슬', studentId: null, school: '개포중',   ownerId: 3, stage: 'failed',   createdAt: '2026-08-05', stopAt: 'before_book', reason: '전화 연결 실패 · 3회 회신 없음' },

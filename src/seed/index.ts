@@ -46,7 +46,7 @@ export const SEEDED_TABLES = [
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
   'gtpl', 'vers', 'hist', 'file', 'zassign', 'stu_pause', 'month_close',
   // 기록만 쌓이는 표들 — 안 비우면 dev DB 에 옛 QA 흔적이 끝없이 남는다
-  'att', 'lead_stage_log', 'log', 'pdflog', 'rsend', 'zlog',
+  'att', 'lead_stage_log', 'lead_touch', 'log', 'pdflog', 'rsend', 'zlog',
 ] as const;
 
 const PW = 'taco1234!';
@@ -114,7 +114,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     // ── 사람
     await add('stu', STUDENTS.map((s) => ({ id: s.id, name: s.name, grade: s.grade, school: s.school, target_exam: s.targetExam, started_on: rel(s.startedOn), lang: s.lang })));
     await add('enr', ENROLLMENTS.map((e) => ({ student_id: e.studentId, kind_key: e.kindKey, sub_key: e.subKey, sessions: e.sessions, started_on: rel(e.startedOn) })));
-    await add('lead', LEADS.map((l) => ({ id: l.id, student_id: l.studentId, name: l.name, school: l.school, owner_id: l.ownerId, stage: l.stage, stop_at: (l as { stopAt?: string }).stopAt ?? null, reason: (l as { reason?: string }).reason ?? null, created_at: `${rel(l.createdAt)}T00:00:00Z` })));
+    await add('lead', LEADS.map((l) => ({ id: l.id, student_id: l.studentId, name: l.name, school: l.school, owner_id: l.ownerId, stage: l.stage, stop_at: (l as { stopAt?: string }).stopAt ?? null, reason: (l as { reason?: string }).reason ?? null, source: (l as { source?: string }).source ?? null, created_at: `${rel(l.createdAt)}T00:00:00Z` })));
 
     // ── 일정
     await add('ser', SERS.map((s) => ({ id: s.id, kind_key: s.kindKey, sub_key: s.subKey, teacher_id: s.teacherId, room_id: s.roomId, mode: s.mode, start_min: s.startMin, end_min: s.endMin, rrule: formatRule(s.onceOn ? { freq: 'ONCE', days: [], interval: 1 } : { freq: 'WEEKLY', days: [...s.days], interval: 1 }), from_date: s.onceOn ?? SEED_TODAY, title: s.title ?? null })));

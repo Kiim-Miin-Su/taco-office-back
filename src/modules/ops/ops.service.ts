@@ -18,7 +18,12 @@ import {
   PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL, PLAN_STAGE_SUB,
 } from '../../lib/plan-words';
 import { CPL_AREAS, CPL_AREA_LABEL, CPL_OPEN_STAGES, CPL_SEVERITIES, CPL_SEVERITY_LABEL, CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel, cplSeverityLabel } from '../../lib/complaint-words';
-import { INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel } from '../../lib/intake-words';
+import {
+  INTAKE_FUNNEL_STAGES, INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel,
+  LEAD_SOURCES, LEAD_SOURCE_LABEL, LEAD_SOURCE_TOUCH_KIND, LEAD_SOURCE_UNSET, LEAD_SOURCE_UNSET_LABEL,
+  LEAD_TOUCH_KINDS, LEAD_TOUCH_KIND_LABEL, intakeStageLabel, leadNextStages, leadSourceLabel, leadTouchKindLabel,
+  type LeadSource,
+} from '../../lib/intake-words';
 import { INV_OPEN } from '../../lib/rules';
 import { sqlWordList } from '../../lib/sql';
 import {
@@ -31,7 +36,8 @@ import {
 import type {
   IntakeAlertDto, IntakeHeadDto,
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
-  LeadDto, MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
+  LeadCreateDto, LeadDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
+  MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanReviewDto, PlanTaskDto,
   MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
 } from './ops.dto';
@@ -60,41 +66,8 @@ export class OpsService {
   async all(viewerId: number, canSeeAmounts: boolean, canComment: boolean): Promise<OpsDto> {
     const today = todayKst();
 
-    // N-25: failed 건의 되살릴 단계 판정을 응답에 미리 싣는다 — 명시값 → 도달 기록 역순 → 미분류(null).
-    // leads 조회가 첫 query 인 기존 계약은 유지 — 로그 판정은 명시값 없는 failed 건이 있을 때만 한 번 뒤따른다.
-    const pending = new Map<number, LeadDto>();
-    const leads = (await this.q(
-      `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason, l.owner_id, l.student_id, l.fail_from,
-              to_char(l.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name
-         FROM lead l LEFT JOIN staff o ON o.id = l.owner_id
-        ORDER BY l.created_at DESC`,
-    )).map((r): LeadDto => {
-      const failFrom = (r.fail_from as string) ?? null;
-      const failed = String(r.stage) === 'failed';
-      const dto: LeadDto = {
-        id: leadId(r.id), name: String(r.name), school: (r.school as string) ?? null,
-        ownerId: leadId(r.owner_id, true), studentId: leadId(r.student_id, true),
-        stage: String(r.stage), ownerName: (r.owner_name as string) ?? null,
-        stopAt: (r.stop_at as string) ?? null, reason: (r.reason as string) ?? null,
-        createdAt: String(r.created_at), ageDays: daysSince(r.created_at as string),
-        failFrom,
-        revivalStage: failed ? failFrom : null,
-        revivalSource: failed && failFrom ? 'explicit' : null,
-      };
-      if (failed && !failFrom) pending.set(dto.id, dto);
-      return dto;
-    });
-    if (pending.size) {
-      for (const g of await this.q(
-        `SELECT DISTINCT ON (lead_id) lead_id, stage FROM lead_stage_log
-          WHERE stage <> 'failed' AND lead_id = ANY($1)
-          ORDER BY lead_id, id DESC`,
-        [[...pending.keys()]],
-      )) {
-        const dto = pending.get(Number(g.lead_id));
-        if (dto) { dto.revivalStage = String(g.stage); dto.revivalSource = 'log'; }
-      }
-    }
+    // 한 줄의 모양은 leadRows 한 곳 — GET /ops 와 쓰기 응답이 같은 SELECT·같은 판정을 쓴다 (C90)
+    const leads = await this.leadRows('', [], today);
 
     const complaints = await this.complaintRows('', [], today);
 
@@ -195,7 +168,7 @@ export class OpsService {
       planDues, planOverdue, meetings, marketing,
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
-      intakeHead: await this.intakeHead(leads, canSeeAmounts),
+      intakeHead: await this.intakeHead(leads, canSeeAmounts, today),
     };
   }
 
@@ -335,12 +308,13 @@ export class OpsService {
    * 원본 §23 의 머리. **화면은 아무것도 세지 않는다** (D-R37 · N-19 의 교훈) —
    * 퍼널 여섯 칸, 등록률, 담당 칩, 경고 칩이 전부 여기서 나온다.
    *
-   * 컷의 경고는 다섯인데 여기서 만드는 것은 **셋**이다. 나머지 둘(「상담 오늘·지남」·
-   * 「사후 관리 밀림」)은 판정할 표가 아직 없다 — **없는 수를 지어내지 않는다** (N-44).
+   * 컷의 경고 다섯이 다 선다 — C86-a 의 셋(미수 · 스케줄 미생성 · 청구서 없음)에 C90 이 둘(「상담 오늘·지남」 ·
+   * 「사후 관리 밀림」)을 더했다. 둘은 접촉 원장의 「다음은 언제」로 센다(N-44) — 카드 칩과 **같은 함수**(`nextChip`)라 수가 갈리지 않는다.
    */
   private async intakeHead(
-    leads: ReadonlyArray<{ stage: string; ownerId?: number | null; ownerName?: string | null }>,
+    leads: ReadonlyArray<Pick<LeadDto, 'stage'> & Partial<Pick<LeadDto, 'ownerId' | 'ownerName' | 'source' | 'touches'>>>,
     canSeeAmounts: boolean,
+    today = todayKst(),
   ): Promise<IntakeHeadDto> {
     const funnel = INTAKE_STAGES.map((key) => ({
       key,
@@ -362,6 +336,22 @@ export class OpsService {
       else bucket.set(key, { id, name: l.ownerName ?? '담당 없음', count: 1 });
     }
     const owners = [...bucket.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ko'));
+
+    // 유입 경로 칩 줄 (N-44) — 여섯은 어휘라 0 이어도 서고, 「경로 없음」은 옛 건이 있을 때만 선다(보정 0 을 화면이 말한다)
+    const bySource = new Map<string, number>();
+    for (const l of leads) bySource.set(l.source ?? LEAD_SOURCE_UNSET, (bySource.get(l.source ?? LEAD_SOURCE_UNSET) ?? 0) + 1);
+    const sources = LEAD_SOURCES.map((key) => ({ key, label: LEAD_SOURCE_LABEL[key], count: bySource.get(key) ?? 0 }));
+    const unset = bySource.get(LEAD_SOURCE_UNSET) ?? 0;
+    if (unset > 0) sources.push({ key: LEAD_SOURCE_UNSET as (typeof LEAD_SOURCES)[number], label: LEAD_SOURCE_UNSET_LABEL, count: unset });
+
+    // 「다음은 언제」로 세는 셋 — 카드 칩과 같은 판정이다. 상담 예약이 오늘이거나 지났으면 「상담」, 그 밖은 「사후 관리」
+    let consultDue = 0; let followUpLate = 0; let followUpSoon = 0;
+    for (const l of leads) {
+      const chip = this.nextChip(l.stage, l.touches?.[0] ?? null, today);
+      if (chip?.key === 'consultDue') consultDue += 1;
+      else if (chip?.key === 'followUpLate') followUpLate += 1;
+      else if (chip?.key === 'followUpSoon') followUpSoon += 1;
+    }
 
     /*
      * 경고 셋 — 전부 **지금 남아 있는 것**을 센다(기준일이 필요 없다).
@@ -414,7 +404,16 @@ export class OpsService {
         amount: null,
         go: '/accounting',
       },
+      // 아래 둘은 이 화면 안의 카드가 답이다 — 칩이 카드에 붙어 있으므로 갈 곳도 여기다 (D-R27)
+      { key: 'consultDue', label: `상담 오늘·지남 ${consultDue}`, count: consultDue, amount: null, go: '/intake' },
+      { key: 'followUpLate', label: `사후 관리 밀림 ${followUpLate}`, count: followUpLate, amount: null, go: '/intake' },
     ];
+
+    // 도달 기록이 언제부터 있나 — §71 퍼널이 「언제부터의 값」인지 말할 근거 (N-45 · 옛 건 보정 0)
+    const [since] = await this.q(
+      `SELECT to_char(min(at) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS since FROM lead_stage_log WHERE stage = ANY($1)`,
+      [[...INTAKE_FUNNEL_STAGES]],
+    );
 
     return {
       funnel,
@@ -423,7 +422,183 @@ export class OpsService {
       alerts,
       // 낱말과 순서만 — 세는 일은 §24 화면이 **검색으로 걸러진 행** 위에서 한다 (IntakeStopDto 주석)
       stops: INTAKE_STOPS.map((key) => ({ key, label: INTAKE_STOP_LABEL[key] })),
+      sources,
+      touchKinds: LEAD_TOUCH_KINDS.map((key) => ({ key, label: LEAD_TOUCH_KIND_LABEL[key] })),
+      followUpSoon,
+      funnelSince: (since?.since as string) ?? null,
     };
+  }
+
+  /* ══ 상담 한 줄 — 읽기 한 벌 (C35 · C86 · C90) ═══════════════════════════════ */
+
+  /**
+   * 상담 건 한 줄의 모양은 **여기 하나**다 — `GET /ops` 의 목록과 쓰기 응답(신규 · 단계 이동 · 접촉 · 실패 · 되살림)이
+   * 같은 SELECT 와 같은 판정을 쓴다. 두 곳이면 카드와 응답이 다른 말을 한다.
+   *
+   * 접촉 원장은 **한 번에** 읽는다(`lead_id = ANY`) — 건마다 물으면 18건에 열여덟 번이다.
+   * N-25: failed 건의 되살릴 단계 판정 — 명시값 → 도달 기록 역순 → 미분류(null) — 는 명시값 없는 failed 건이 있을 때만 한 번 뒤따른다.
+   */
+  private async leadRows(where: string, params: unknown[], today = todayKst()): Promise<LeadDto[]> {
+    const pending = new Map<number, LeadDto>();
+    const rows = await this.q(
+      `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason, l.owner_id, l.student_id, l.fail_from, l.source,
+              to_char(l.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name
+         FROM lead l LEFT JOIN staff o ON o.id = l.owner_id
+        ${where}
+        ORDER BY l.created_at DESC, l.id DESC`,
+      params,
+    );
+    // 연결 ID 는 접촉 원장을 묻기 **전에** 검사한다 — 오염된 행이면 한 번의 조회로 끝나야 한다(ops-contract 회귀)
+    const ids = rows.map((r) => { leadId(r.owner_id, true); leadId(r.student_id, true); return leadId(r.id); });
+    const touchesBy = new Map<number, LeadTouchDto[]>();
+    if (ids.length) {
+      for (const t of await this.q(
+        `SELECT t.id, t.lead_id, t.kind, t.note, to_char(t.next_on,'YYYY-MM-DD') AS next_on, t.by_id, s.name AS by_name,
+                ${kstAt('t.at')} AS at
+           FROM lead_touch t LEFT JOIN staff s ON s.id = t.by_id
+          WHERE t.lead_id = ANY($1)
+          ORDER BY t.lead_id, t.id DESC`,
+        [ids],
+      )) {
+        const lid = leadId(t.lead_id);
+        const list = touchesBy.get(lid) ?? [];
+        list.push({
+          id: leadId(t.id), kind: String(t.kind), kindLabel: leadTouchKindLabel(String(t.kind)), note: String(t.note),
+          nextOn: (t.next_on as string) ?? null, byId: leadId(t.by_id, true), byName: (t.by_name as string) ?? null, at: String(t.at),
+        });
+        touchesBy.set(lid, list);
+      }
+    }
+    const leads = rows.map((r): LeadDto => {
+      const id = leadId(r.id);
+      const failFrom = (r.fail_from as string) ?? null;
+      const stage = String(r.stage);
+      const failed = stage === 'failed';
+      const touches = touchesBy.get(id) ?? [];
+      const next = this.nextChip(stage, touches[0] ?? null, today);
+      const dto: LeadDto = {
+        id, name: String(r.name), school: (r.school as string) ?? null,
+        ownerId: leadId(r.owner_id, true), studentId: leadId(r.student_id, true),
+        stage, ownerName: (r.owner_name as string) ?? null,
+        stopAt: (r.stop_at as string) ?? null, reason: (r.reason as string) ?? null,
+        createdAt: String(r.created_at), ageDays: daysSince(r.created_at as string),
+        failFrom,
+        revivalStage: failed ? failFrom : null,
+        revivalSource: failed && failFrom ? 'explicit' : null,
+        source: (r.source as string) ?? null, sourceLabel: leadSourceLabel(r.source as string | null),
+        nextStages: leadNextStages(stage).map((key) => ({ key, label: INTAKE_STAGE_LABEL[key] })),
+        touches,
+        lastTouchAt: touches[0]?.at ?? null,
+        nextOn: touches[0]?.nextOn ?? null,
+        nextLabel: next?.label ?? null, nextTone: next?.tone ?? null,
+      };
+      if (failed && !failFrom) pending.set(id, dto);
+      return dto;
+    });
+    if (pending.size) {
+      for (const g of await this.q(
+        `SELECT DISTINCT ON (lead_id) lead_id, stage FROM lead_stage_log
+          WHERE stage <> 'failed' AND lead_id = ANY($1)
+          ORDER BY lead_id, id DESC`,
+        [[...pending.keys()]],
+      )) {
+        const dto = pending.get(Number(g.lead_id));
+        if (dto) { dto.revivalStage = String(g.stage); dto.revivalSource = 'log'; }
+      }
+    }
+    return leads;
+  }
+
+  /**
+   * 카드 칩 한 줄 — 마지막 접촉의 「다음은 언제」로 센다 (N-44 결정문의 「상담 오늘·지남」 · 「사후 관리 임박·밀림」).
+   * 상담 예약(`book`)은 「상담」, 그 밖은 「사후 관리」다. 등록 실패 건에는 재촉을 붙이지 않는다 — 끝난 결과다.
+   * 등록 건은 붙는다(원본 §23 「해피콜 → 월간 상담」이 사후 관리다).
+   */
+  private nextChip(stage: string, last: LeadTouchDto | null, today: string): { label: string; tone: string; key: 'consultDue' | 'followUpLate' | 'followUpSoon' } | null {
+    if (!last?.nextOn || stage === 'failed') return null;
+    const consult = last.kind === 'book';
+    const word = consult ? '상담' : '사후 관리';
+    const d = daysUntil(last.nextOn, today);
+    if (d < 0) return { label: consult ? `${word} ${-d}일 지남` : `${word} ${-d}일 밀림`, tone: 'danger', key: consult ? 'consultDue' : 'followUpLate' };
+    if (d === 0) return { label: `${word} 오늘`, tone: 'warning', key: consult ? 'consultDue' : 'followUpSoon' };
+    if (d <= 2) return { label: `${word} D-${d}`, tone: 'info', key: 'followUpSoon' };
+    return null;
+  }
+
+  /* ══ 「+ 신규 문의」 · 단계 이동 · 접촉 기록 (C90 · N-44 · N-45 · A-01 · A-02 · A-03) ═══ */
+
+  /**
+   * 「+ 신규 문의」 — 유입은 언제나 1차 상담이다(원본 §23 「유입 즉시 1차 카드 생성」). 단계를 받지 않는다.
+   * 도달 기록에 `first` 한 줄을 남긴다 — §71 퍼널의 「유입」이 여기서 센다(N-45). 첫 접촉 한 줄을 적었으면 접촉 원장의 첫 줄이 된다(어떻게 = 유입 경로).
+   */
+  async createLead(viewerId: number, dto: LeadCreateDto): Promise<LeadDto> {
+    const name = dto.name.trim();
+    if (!name) throw new ConflictException({ code: 'LEAD_NAME_REQUIRED', message: '이름을 적어 주세요' });
+    if (!(LEAD_SOURCES as readonly string[]).includes(dto.source)) {
+      throw new ConflictException({ code: 'LEAD_SOURCE_INVALID', message: '유입 경로는 카카오채널 · 전화 · 블로그 · 인스타그램 · 소개 · 워크인 중 하나입니다' });
+    }
+    const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
+    const note = dto.note?.trim() || null;
+    const id = await this.lead.manager.transaction(async (em) => {
+      const [made] = (await em.query(
+        `INSERT INTO lead (name, school, owner_id, stage, source) VALUES ($1, $2, $3, 'first', $4) RETURNING id`,
+        [name, dto.school?.trim() || null, owner?.id ?? null, dto.source],
+      )) as Array<{ id: string }>;
+      const lid = leadId(made.id);
+      await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'first', $2)`, [lid, viewerId]);
+      if (note) {
+        await em.query(
+          `INSERT INTO lead_touch (lead_id, kind, note, by_id) VALUES ($1, $2, $3, $4)`,
+          [lid, LEAD_SOURCE_TOUCH_KIND[dto.source as LeadSource], note, viewerId],
+        );
+      }
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'create','{}'::jsonb,$3::jsonb)`,
+        [viewerId, lid, JSON.stringify({ name, school: dto.school?.trim() || null, ownerId: owner?.id ?? null, source: dto.source })],
+      );
+      return lid;
+    });
+    return this.leadOne(id);
+  }
+
+  /**
+   * 단계 이동 (N-45) — 전이표(`LEAD_NEXT_STAGES`)에 있는 다음 단계로만 옮기고 **같은 트랜잭션에서** 도달 기록 한 줄을 남긴다.
+   * 등록·등록 실패는 끝난 결과라 여기서 못 옮긴다(등록은 enroll · 실패는 fail/resume 이 각자의 길). 잠근 채 판정한다 — 두 사람이 동시에 옮기면 뒤 사람이 409 다.
+   */
+  async moveLeadStage(viewerId: number, id: number, dto: LeadStageMoveDto): Promise<LeadDto> {
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(`SELECT id, stage FROM lead WHERE id = $1 FOR UPDATE`, [id])) as Array<{ id: string; stage: string }>;
+      if (!cur) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
+      const allowed = leadNextStages(cur.stage);
+      if (!allowed.length) {
+        throw new ConflictException({ code: 'LEAD_LOCKED', message: `${intakeStageLabel(cur.stage)} 건은 단계를 옮길 수 없습니다 — 등록은 등록 확정, 실패는 되살리기로` });
+      }
+      if (!(allowed as readonly string[]).includes(dto.to)) {
+        throw new ConflictException({
+          code: 'LEAD_STAGE_INVALID',
+          message: `${intakeStageLabel(cur.stage)}에서는 ${allowed.map((k) => intakeStageLabel(k)).join(' · ')}(으)로만 옮길 수 있습니다`,
+        });
+      }
+      await em.query(`UPDATE lead SET stage = $2 WHERE id = $1`, [id, dto.to]);
+      await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, $2, $3)`, [id, dto.to, viewerId]);
+    });
+    return this.leadOne(id);
+  }
+
+  /** 접촉 기록 (N-44) — append-only. 끝난 건에도 적을 수 있다(등록 뒤 해피콜 · 실패 뒤 재연락이 사후 관리다) */
+  async addLeadTouch(viewerId: number, id: number, dto: LeadTouchWriteDto): Promise<LeadDto> {
+    const note = dto.note.trim();
+    if (!note) throw new ConflictException({ code: 'LEAD_TOUCH_NOTE_REQUIRED', message: '한 줄을 적어 주세요' });
+    if (!(LEAD_TOUCH_KINDS as readonly string[]).includes(dto.kind)) {
+      throw new ConflictException({ code: 'LEAD_TOUCH_KIND_INVALID', message: '접촉 방법은 전화 · 카카오톡 · 문자 · 방문 · 상담 예약 · 예약 불참 · 메모 중 하나입니다' });
+    }
+    const [row] = await this.q(`SELECT id FROM lead WHERE id = $1`, [id]);
+    if (!row) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
+    await this.q(
+      `INSERT INTO lead_touch (lead_id, kind, note, next_on, by_id) VALUES ($1, $2, $3, $4::date, $5)`,
+      [id, dto.kind, note, dto.nextOn ?? null, viewerId],
+    );
+    return this.leadOne(id);
   }
 
   /* ══ 상담 실패 이력 (v2 §24 · N-25 채택 §4-17 · C35) — 판정·기록은 서버 한 곳 ══ */
@@ -477,28 +652,9 @@ export class OpsService {
   }
 
   private async leadOne(id: number): Promise<LeadDto> {
-    const [r] = await this.q(
-      `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason, l.owner_id, l.student_id, l.fail_from,
-              to_char(l.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name
-         FROM lead l LEFT JOIN staff o ON o.id = l.owner_id WHERE l.id = $1`, [id]);
-    const failFrom = (r.fail_from as string) ?? null;
-    const failed = String(r.stage) === 'failed';
-    let logStage: string | null = null;
-    if (failed && !failFrom) {
-      const [g] = await this.q(
-        `SELECT stage FROM lead_stage_log WHERE lead_id = $1 AND stage <> 'failed' ORDER BY id DESC LIMIT 1`, [id]);
-      logStage = g ? String(g.stage) : null;
-    }
-    return {
-      id: leadId(r.id), name: String(r.name), school: (r.school as string) ?? null,
-      ownerId: leadId(r.owner_id, true), studentId: leadId(r.student_id, true),
-      stage: String(r.stage), ownerName: (r.owner_name as string) ?? null,
-      stopAt: (r.stop_at as string) ?? null, reason: (r.reason as string) ?? null,
-      createdAt: String(r.created_at), ageDays: daysSince(r.created_at as string),
-      failFrom,
-      revivalStage: failed ? (failFrom ?? logStage) : null,
-      revivalSource: failed ? (failFrom ? 'explicit' : logStage ? 'log' : null) : null,
-    };
+    const [row] = await this.leadRows('WHERE l.id = $1', [id]);
+    if (!row) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
+    return row;
   }
 
   /* ══ §60 대표 피드백 — 코멘트 · 답변 · 판정 (C53) ══════════════════════ */

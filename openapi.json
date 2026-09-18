@@ -5599,6 +5599,261 @@
         ]
       }
     },
+    "/ops/leads": {
+      "post": {
+        "description": "이름 · 학교 · 유입 경로(여섯 갈래 · lead_source_words CHECK) · 담당 · 첫 접촉 한 줄. 단계는 받지 않는다. 도달 기록(first)과 첫 접촉(적었으면)과 LOG 가 같은 트랜잭션.",
+        "operationId": "OpsController_createLead",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND"
+          },
+          "409": {
+            "description": "code LEAD_NAME_REQUIRED | LEAD_SOURCE_INVALID"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "「+ 신규 문의」 — 유입은 언제나 1차 상담 (C90 · 테스트 시나리오 A-01 · N-45)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/leads/{id}/stage": {
+      "patch": {
+        "description": "받아 주는 값은 LeadDto.nextStages 다. 등록·등록 실패는 끝난 결과라 409 LEAD_LOCKED(등록은 enroll · 실패는 fail/resume). 전이표 밖은 409 LEAD_STAGE_INVALID(문장에 갈 수 있는 곳).",
+        "operationId": "OpsController_moveLeadStage",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadStageMoveDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LEAD_NOT_FOUND"
+          },
+          "409": {
+            "description": "code LEAD_LOCKED | LEAD_STAGE_INVALID"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "단계 이동 — 전이표의 다음 단계로만 · 같은 트랜잭션에 도달 기록 (C90 · N-45 · A-02)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/leads/{id}/touches": {
+      "post": {
+        "description": "append-only. 상담 예약(book)의 nextOn 이 상담 날짜다 — 「상담 오늘·지남」 · 「사후 관리 임박·밀림」 은 마지막 접촉의 nextOn 으로 서버가 센다.",
+        "operationId": "OpsController_addLeadTouch",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadTouchWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LEAD_NOT_FOUND"
+          },
+          "409": {
+            "description": "code LEAD_TOUCH_NOTE_REQUIRED | LEAD_TOUCH_KIND_INVALID"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "접촉 기록 한 줄 — 누가 · 언제 · 어떻게 · 한 줄 · 다음은 언제 (C90 · N-44 · A-03)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/leads/{id}/fail": {
       "post": {
         "description": "fail_from 은 전이 순간의 실제 단계를 서버가 기록한다 — 추정이 아니라 사실이다. 도달 기록(append-only)에 failed 를 남긴다.",
@@ -19415,6 +19670,63 @@
           "requestedAmount"
         ]
       },
+      "IntakeWordDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
+      "LeadTouchDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "description": "call | kakao | sms | visit | book | noshow | memo"
+          },
+          "kindLabel": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "nextOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "다음 접촉·상담 예정일 YYYY-MM-DD — book 이면 상담 날짜"
+          },
+          "byId": {
+            "type": "number",
+            "nullable": true
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true
+          },
+          "at": {
+            "type": "string",
+            "description": "KST 시각"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "kindLabel",
+          "note",
+          "at"
+        ]
+      },
       "LeadDto": {
         "type": "object",
         "properties": {
@@ -19478,6 +19790,50 @@
             "type": "string",
             "nullable": true,
             "description": "판정 근거 — 'explicit'(명시값) | 'log'(도달 기록) | null(미분류)"
+          },
+          "source": {
+            "type": "string",
+            "nullable": true,
+            "description": "kakao | phone | blog | instagram | referral | walkin — 옛 건은 null (N-25 보정 0)"
+          },
+          "sourceLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "유입 경로 낱말 — null 이면 「경로 없음」 칩이 아니라 카드에 아무것도 안 붙는다"
+          },
+          "nextStages": {
+            "description": "지금 단계에서 옮길 수 있는 다음 단계 — 비면 끝난 결과(등록·등록 실패)라 옮기지 못한다 (N-45 전이표)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeWordDto"
+            }
+          },
+          "touches": {
+            "description": "접촉 원장 — 최근 것이 앞 (append-only · N-44)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeadTouchDto"
+            }
+          },
+          "lastTouchAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "마지막 접촉 시각 (KST) — 접촉이 없으면 null"
+          },
+          "nextOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "마지막 접촉의 「다음은 언제」 — 없으면 null"
+          },
+          "nextLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "카드 칩 한 줄 — 「상담 오늘」 · 「상담 2일 지남」 · 「사후 관리 D-1」 · 「사후 관리 3일 밀림」. 서버가 만든다 (D-R18)"
+          },
+          "nextTone": {
+            "type": "string",
+            "nullable": true,
+            "description": "칩 색 — 'danger'(지남·밀림) | 'warning'(오늘) | 'info'(임박) | null"
           }
         },
         "required": [
@@ -19485,7 +19841,9 @@
           "name",
           "stage",
           "createdAt",
-          "ageDays"
+          "ageDays",
+          "nextStages",
+          "touches"
         ]
       },
       "ComplaintDto": {
@@ -20157,7 +20515,7 @@
         "properties": {
           "key": {
             "type": "string",
-            "description": "unpaid | noSchedule | noInvoice"
+            "description": "unpaid | noSchedule | noInvoice | consultDue | followUpLate"
           },
           "label": {
             "type": "string",
@@ -20199,6 +20557,27 @@
           "label"
         ]
       },
+      "IntakeSourceDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "kakao | phone | blog | instagram | referral | walkin | none"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number",
+            "description": "그 경로로 온 건수 — 서버가 센다 (D-R37)"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ]
+      },
       "IntakeHeadDto": {
         "type": "object",
         "properties": {
@@ -20231,6 +20610,29 @@
             "items": {
               "$ref": "#/components/schemas/IntakeStopDto"
             }
+          },
+          "sources": {
+            "description": "유입 경로 칩 줄 — 여섯 + 「경로 없음」(옛 건이 있을 때만) · 「전체」는 화면이 붙인다 (N-44 · C90)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeSourceDto"
+            }
+          },
+          "touchKinds": {
+            "description": "접촉 「어떻게」 일곱 — 「+ 기록」 폼의 낱말 (D-R18)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntakeWordDto"
+            }
+          },
+          "followUpSoon": {
+            "type": "number",
+            "description": "「사후 관리 임박」 타일 — 다음 예정일이 오늘~D+2 인 건 (끝난 결과·지난 것은 빼고 센다)"
+          },
+          "funnelSince": {
+            "type": "string",
+            "nullable": true,
+            "description": "도달 기록이 시작된 날 — §71 퍼널이 「언제부터의 값」인지 화면이 말한다 (N-45 · N-25). 기록이 없으면 null"
           }
         },
         "required": [
@@ -20238,7 +20640,10 @@
           "enrollRate",
           "owners",
           "alerts",
-          "stops"
+          "stops",
+          "sources",
+          "touchKinds",
+          "followUpSoon"
         ]
       },
       "OpsDto": {
@@ -20372,6 +20777,98 @@
           "suggestions",
           "canSeeAmounts",
           "intakeHead"
+        ]
+      },
+      "LeadCreateDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "학생 이름"
+          },
+          "school": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 60
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "kakao",
+              "phone",
+              "blog",
+              "instagram",
+              "referral",
+              "walkin"
+            ],
+            "description": "유입 경로 — 컷 §23 여섯 갈래. 낱말은 GET /ops.intakeHead.sources"
+          },
+          "ownerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "담당 — 비우면 미배정"
+          },
+          "note": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 500,
+            "description": "첫 접촉 한 줄 — 원하는 것 · 학부모 · 연락처 · 「소개」면 누구 소개인지. 적으면 접촉 원장의 첫 줄이 된다(어떻게 = 유입 경로에서)"
+          }
+        },
+        "required": [
+          "name",
+          "source"
+        ]
+      },
+      "LeadStageMoveDto": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "enum": [
+              "first",
+              "wait2nd",
+              "second",
+              "hold"
+            ],
+            "description": "옮길 단계 — 깔때기 안 넷. 전이표 밖이면 409 LEAD_STAGE_INVALID · 끝난 건이면 409 LEAD_LOCKED"
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "LeadTouchWriteDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "call",
+              "kakao",
+              "sms",
+              "visit",
+              "book",
+              "noshow",
+              "memo"
+            ],
+            "description": "어떻게 — 낱말은 GET /ops.intakeHead.touchKinds"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "한 줄"
+          },
+          "nextOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "다음은 언제 YYYY-MM-DD — 상담 예약이면 상담 날짜"
+          }
+        },
+        "required": [
+          "kind",
+          "note"
         ]
       },
       "LeadFailDto": {
@@ -26899,6 +27396,31 @@
           "count"
         ]
       },
+      "ExecFunnelRowDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "inflow | first | wait2nd | second | enrolled"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          },
+          "pct": {
+            "type": "number",
+            "description": "유입 대비 % — 정수 반올림 · 유입 0 이면 0"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count",
+          "pct"
+        ]
+      },
       "ExecMonthlyDto": {
         "type": "object",
         "properties": {
@@ -26916,12 +27438,25 @@
             "items": {
               "$ref": "#/components/schemas/ExecLostRowDto"
             }
+          },
+          "funnel": {
+            "description": "상담 퍼널 — 유입 · 1차 상담 · 2차 대기 · 2차 상담 · 등록 (도달 기록 기준 · C90)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecFunnelRowDto"
+            }
+          },
+          "funnelSince": {
+            "type": "string",
+            "nullable": true,
+            "description": "도달 기록이 시작된 날 — 그 전 건은 지금 단계로만 센다 (N-45 · N-25 보정 0). 기록이 없으면 null"
           }
         },
         "required": [
           "leads",
           "lost",
-          "lostRows"
+          "lostRows",
+          "funnel"
         ]
       },
       "ExecDto": {

@@ -82,3 +82,75 @@ export const intakeStopLabel = (stop: string | null | undefined): string =>
   stop == null || stop === INTAKE_STOP_UNSET
     ? INTAKE_STOP_UNSET_LABEL
     : (INTAKE_STOP_LABEL[stop as IntakeStop] ?? stop);
+
+/* ══ 유입 경로 · 접촉 원장 · 단계 전이표 (C90 · N-44 · N-45) ═══════════════════════ */
+
+/**
+ * 유입 경로 여섯 — **낱말과 순서가 사는 단 하나의 자리** (컷 §23 의 유입 칩 줄 · N-44 결정문 그대로).
+ * 저장값은 `LEAD.source`(`lead_source_words` CHECK · NULL 허용) — **옛 건은 NULL** 이고 추정하지 않는다(N-25).
+ * 「소개」가 누구 소개인지는 칸이 아니라 `LEAD_TOUCH` 의 한 줄이다(N-44).
+ */
+export const LEAD_SOURCES = ['kakao', 'phone', 'blog', 'instagram', 'referral', 'walkin'] as const;
+export type LeadSource = (typeof LEAD_SOURCES)[number];
+
+export const LEAD_SOURCE_LABEL: Record<LeadSource, string> = {
+  kakao: '카카오채널',
+  phone: '전화',
+  blog: '블로그',
+  instagram: '인스타그램',
+  referral: '소개',
+  walkin: '워크인',
+};
+
+/** 유입 경로가 비어 있는 건 — 칩 줄의 마지막 칩. 「모른다」를 이름으로 만들지 않고 「없음」이라 적는다 */
+export const LEAD_SOURCE_UNSET = 'none';
+export const LEAD_SOURCE_UNSET_LABEL = '경로 없음';
+
+export const leadSourceLabel = (source: string | null | undefined): string | null =>
+  source == null ? null : (LEAD_SOURCE_LABEL[source as LeadSource] ?? source);
+
+/**
+ * 접촉 원장의 「어떻게」 — `LEAD_TOUCH.kind`(`lead_touch_kind_words` CHECK).
+ * 전화 · 카카오톡 · 문자 · 방문 은 연락 수단, **상담 예약**(`book`)은 「언제 오기로 했나」를 적는 줄이고
+ * **예약 불참**(`noshow`)은 테스트 시나리오 A-03 「상담 예약일에 오지 않음」의 자리다. 메모는 그 밖의 것.
+ */
+export const LEAD_TOUCH_KINDS = ['call', 'kakao', 'sms', 'visit', 'book', 'noshow', 'memo'] as const;
+export type LeadTouchKind = (typeof LEAD_TOUCH_KINDS)[number];
+
+export const LEAD_TOUCH_KIND_LABEL: Record<LeadTouchKind, string> = {
+  call: '전화',
+  kakao: '카카오톡',
+  sms: '문자',
+  visit: '방문',
+  book: '상담 예약',
+  noshow: '예약 불참',
+  memo: '메모',
+};
+
+export const leadTouchKindLabel = (kind: string): string =>
+  LEAD_TOUCH_KIND_LABEL[kind as LeadTouchKind] ?? kind;
+
+/** 「+ 신규 문의」의 첫 접촉 한 줄은 어떻게 왔는지로 「어떻게」를 정한다 — 카카오채널 문의는 카카오톡, 전화 문의는 전화, 워크인은 방문 */
+export const LEAD_SOURCE_TOUCH_KIND: Record<LeadSource, LeadTouchKind> = {
+  kakao: 'kakao', phone: 'call', blog: 'memo', instagram: 'memo', referral: 'memo', walkin: 'visit',
+};
+
+/**
+ * 단계 전이표 — `PATCH /ops/leads/:id/stage` 가 받아 주는 「다음 단계」 (N-45).
+ *
+ * 깔때기는 `1차 상담 › 2차 대기 › 2차 상담 › 보류` 이고 앞으로만 간다. 1차에서 2차 대기를 건너뛰고 바로 2차 상담을
+ * 하는 날도 있고(그날 온 학부모), 어디서든 보류로 갈 수 있다. 보류가 풀리면 2차 대기나 2차 상담으로 **돌아온다**.
+ * 등록·등록 실패는 여기 없다 — 등록은 `POST …/enroll`(C91 · 일곱 가지가 함께 서야 한다), 실패는 `POST …/fail`(N-25 · 중단 지점이 필수다)이
+ * 각자의 길이고, 둘 다 끝난 결과라 이 표로는 옮기지 못한다(`LEAD_LOCKED`).
+ */
+export const LEAD_NEXT_STAGES: Record<IntakeStage, readonly IntakeStage[]> = {
+  first: ['wait2nd', 'second', 'hold'],
+  wait2nd: ['second', 'hold'],
+  second: ['hold'],
+  hold: ['wait2nd', 'second'],
+  enrolled: [],
+  failed: [],
+};
+
+export const leadNextStages = (stage: string): readonly IntakeStage[] =>
+  LEAD_NEXT_STAGES[stage as IntakeStage] ?? [];
