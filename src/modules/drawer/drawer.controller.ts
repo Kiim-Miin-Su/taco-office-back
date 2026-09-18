@@ -19,7 +19,7 @@ import {
   Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import {
-  ApiBody, ApiCreatedResponse, ApiExtraModels, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
+  ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { OkDto } from '../../common/http.dto';
@@ -28,8 +28,8 @@ import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/
 import { ScheduleService } from '../schedule/schedule.service';
 import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
-  ChreqReviewDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
-  TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoCreateDto, TodoCreateResultDto,
+  ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
+  StaffCreateDto, TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoCreateDto, TodoCreateResultDto,
   TodoDoneDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
@@ -61,9 +61,23 @@ export class DrawerController {
   @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 승인함/결재 흐름 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
   all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
-    const { canApprove, canSeeAll, approvalFlowScope: flowScope } = this.gate(user);
+    const { canApprove, canSeeAll, canWage, approvalFlowScope: flowScope } = this.gate(user);
     // notiWindow=all 은 **보여 주는 범위**만 넓힌다 — 지운 적이 없으므로 예전 것이 그대로 나온다 (N-7 · D-16)
-    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope);
+    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage);
+  }
+
+  /* ══ §17 구성원 (C97 · 테스트 시나리오 D-41) ═══════════════════════════════ */
+
+  @Post('staff')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41)',
+    description: '이름 · 이메일(유일) · 첫 비밀번호(해시로만 저장 · 응답에 없다) · 역할 둘 · 직함 · 시간대(tzg) · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). 대표·관리자 계정은 이 길로 만들지 않는다.',
+  })
+  @ApiCreatedResponse({ type: MemberDto })
+  @ApiConflictResponse({ description: 'code STAFF_EMAIL_TAKEN | TZ_UNKNOWN | WAGE_SAME_DAY' })
+  createStaff(@CurrentUser() user: RequestUser, @Body() dto: StaffCreateDto): Promise<MemberDto> {
+    return this.svc.createStaff(user.id, dto);
   }
 
   @Patch('todos/:id')

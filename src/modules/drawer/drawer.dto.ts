@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: drawer.dto.ts — REQ_DECISIONS, ApRowDto, ReqReviewDto, ChreqReviewDto, ReqReviewResultDto 등 (dto)
+ * 목적: drawer.dto.ts — REQ_DECISIONS, ApRowDto, ReqReviewDto, ChreqReviewDto, StaffCreateDto, MemberDto 등 (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -13,7 +13,7 @@ import {
   APPROVAL_FLOW_RECIPIENT_NAMES, APPROVAL_FLOW_RECIPIENTS,
 } from '../../lib/approval';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 /** §14 처리의 두 갈래 — 낱말의 출처는 여기 하나다 */
 export const REQ_DECISIONS = ['approve', 'reject'] as const;
@@ -221,6 +221,57 @@ export class MemberDto {
   @ApiPropertyOptional({ ...S, description: '직함은 권한이 아니다 (D-R39)' }) title?: string | null;
   @ApiPropertyOptional(S) tz?: string | null;
   @ApiProperty() active!: boolean;
+  /* C97 · D-48 — 지금 시급. **canWage 가 아니면 null** (D-R39 · 응답에서 뺀다). 시급 줄이 없는 강사도 null — 화면은 「시급 없음」이라 적지 않고 「시급 수정」만 세운다 */
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '오늘 붙는 기본 시급(원/시간) — canWage 아니면 null · 시급 줄이 없으면 null' })
+  wageRate?: number | null;
+  @ApiPropertyOptional({ ...S, description: '그 시급의 적용 시작일 YYYY-MM-DD' }) wageFrom?: string | null;
+  /* 「시급 수정」 단추가 서는 줄 — 강사이고 활성이며 보는 이가 canWage 일 때만. 화면은 role 을 보지 않고 이 값만 본다 (D-R39) */
+  @ApiPropertyOptional({ description: '시급 줄을 둘 수 있는 사람인가 — 활성 강사 · canWage 아니면 false (C97 · D-R39)' })
+  wageable?: boolean;
+}
+
+/** 새 구성원이 될 수 있는 역할 — 대표·관리자 계정은 이 길로 만들지 않는다(권한 상승 경로를 두지 않는다 · C97) */
+export const STAFF_CREATE_ROLES = ['teacher', 'manager'] as const;
+
+/** §17 「+ 구성원」 (C97 · 테스트 시나리오 D-41 「신규 강사 등록」). 비밀번호는 저장만 하고 어느 응답에도 싣지 않는다 */
+export class StaffCreateDto {
+  @ApiProperty({ maxLength: 40 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1, { message: '이름을 적어 주세요' }) @MaxLength(40)
+  name!: string;
+
+  @ApiProperty({ format: 'email', maxLength: 120, description: '로그인 아이디 — 유일' })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
+  @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
+  email!: string;
+
+  @ApiProperty({ minLength: 8, maxLength: 72, description: '첫 비밀번호 — 로그인 규칙과 같은 8자 이상' })
+  @IsString() @MinLength(8, { message: '비밀번호는 8자 이상입니다' }) @MaxLength(72)
+  password!: string;
+
+  @ApiProperty({ enum: [...STAFF_CREATE_ROLES], description: '강사 · 매니저 — 대표·관리자는 만들지 않는다' })
+  @IsIn([...STAFF_CREATE_ROLES], { message: '역할은 강사 · 매니저 중 하나입니다' })
+  role!: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '직함 — 권한과 무관 (D-R39)' })
+  @IsOptional() @IsString() @MaxLength(20)
+  title?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 40, description: '시간대 — 시간대 그룹(tzg)에 있는 값만. 비우면 Asia/Seoul' })
+  @IsOptional() @IsString() @MaxLength(40)
+  tz?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 20 })
+  @IsOptional() @IsString() @MaxLength(20)
+  phone?: string | null;
+
+  @ApiPropertyOptional({ ...S, description: '입사일 YYYY-MM-DD — 비우면 오늘. 불가 시간 2주 회차의 기산점' })
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '입사일은 YYYY-MM-DD 입니다' })
+  hiredOn?: string | null;
+
+  @ApiPropertyOptional({ type: Number, nullable: true, minimum: 1000, description: '기본 시급(원/시간) — 적으면 입사일(또는 오늘)부터의 WAGE 한 줄이 같은 트랜잭션에 선다 · 소급 없음' })
+  @IsOptional() @IsInt() @Min(1000) @Max(10_000_000)
+  wageRate?: number | null;
 }
 
 /**
@@ -317,6 +368,8 @@ export class DrawerDto {
   @ApiProperty({ type: [ZoomAccountDto], description: '§21 줌 계정' }) zoomAccounts!: ZoomAccountDto[];
   @ApiProperty({ type: WorkSummaryDto, description: '§38~§41 등 관리자 화면 공용 할 일 요약' }) workSummary!: WorkSummaryDto;
   @ApiProperty({ description: '관리자 화면의 모든 시각은 KST 다 (D-R12)' }) tz!: string;
+  @ApiProperty({ description: '§17 「+ 구성원」이 서는가 — canCrudAll (C97 · D-R39: 단추가 서는지도 서버)' }) canAddMember!: boolean;
+  @ApiProperty({ description: '시급을 보고 고칠 수 있는가 — canWage. false 면 members.wageRate 는 전부 null (C97)' }) canWage!: boolean;
 }
 
 /* ══ 쓰기 ═══════════════════════════════════════════════════════════════

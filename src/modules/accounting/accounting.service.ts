@@ -16,6 +16,7 @@ import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { kstAt, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
 import { assertMonthOpen } from '../../lib/month-close';
+import { insertWage } from '../../lib/wage';
 import { TEACHER_OF_OCC, payoutSheet } from '../../lib/payout-sheet';
 import { nowMinKst } from '../../lib/kst';
 import {
@@ -34,6 +35,7 @@ import type {
   InvoiceBatchDto, InvoiceBatchResultDto, InvoiceBatchSkipDto, InvoiceVoidDto,
   PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto,
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
+  WageHistoryDto, WageRowDto, WageWriteDto,
 } from './accounting.dto';
 import { fileUrlOf } from '../files/files.service';
 
@@ -1541,6 +1543,58 @@ export class AccountingService {
       const [out] = (await m.query(`${EXPENSE_SELECT} WHERE e.id = $1`, [id])) as Array<Record<string, unknown>>;
       // 올린 사람에게는 자기가 적은 신청 금액이 돌아간다 — 확정 금액은 어차피 null(미심사)이다
       return this.expenseRow(out, canSeeAmounts || requesterId === userId);
+    });
+  }
+
+  /* ══ 강사 시급 (C97 · D-48) — 규칙은 lib/wage 한 곳 · 승인 경로(C41)와 같은 함수 ═══════════ */
+
+  private static readonly WAGE_SELECT = `
+    SELECT w.id, w.staff_id, s.name AS staff_name, w.rate, to_char(w.from_date,'YYYY-MM-DD') AS from_date, w.reason,
+           a.name AS approved_by_name, ${kstAt('w.created_at')} AS created_at,
+           (w.from_date <= $1::date AND NOT EXISTS (
+              SELECT 1 FROM wage w2 WHERE w2.staff_id = w.staff_id AND w2.from_date <= $1::date AND w2.from_date > w.from_date)) AS current
+      FROM wage w JOIN staff s ON s.id = w.staff_id LEFT JOIN staff a ON a.id = w.approved_by`;
+
+  private wageRow(r: Record<string, unknown>): WageRowDto {
+    return {
+      id: Number(r.id), staffId: Number(r.staff_id), staffName: String(r.staff_name), rate: Number(r.rate),
+      fromDate: String(r.from_date), reason: (r.reason as string) ?? null, approvedByName: (r.approved_by_name as string) ?? null,
+      current: r.current === true, createdAt: String(r.created_at),
+    };
+  }
+
+  /** 시급 이력 — 적용일 내림차순. 「지금」 줄은 오늘 이하의 마지막 줄(회차의 시급과 같은 정의) */
+  async wageHistory(staffId: number): Promise<WageHistoryDto> {
+    const [st] = (await this.inv.query(`SELECT id, name FROM staff WHERE id = $1`, [staffId])) as Array<{ id: string; name: string }>;
+    if (!st) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
+    const rows = (await this.inv.query(`${AccountingService.WAGE_SELECT} WHERE w.staff_id = $2 ORDER BY w.from_date DESC, w.id DESC`, [todayKst(), staffId])) as Array<Record<string, unknown>>;
+    return { staffId: Number(st.id), staffName: st.name, rows: rows.map((r) => this.wageRow(r)) };
+  }
+
+  /**
+   * 시급 직접 수정 (D-48) — 새 줄을 쓴다. 지난 줄은 고치지도 지우지도 않는다(지난 정산이 그 줄을 읽는다 · I-8).
+   * 「소급 없음 · 같은 날 한 줄」은 `insertWage` 가 판정한다(409 `WAGE_RETROACTIVE` / `WAGE_SAME_DAY`).
+   */
+  async writeWage(userId: number, dto: WageWriteDto): Promise<WageRowDto> {
+    const today = todayKst();
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [st] = (await m.query(`SELECT id, name, active FROM staff WHERE id = $1 FOR UPDATE`, [dto.staffId])) as Array<{ id: string; name: string; active: boolean }>;
+      if (!st) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
+      if (!st.active) throw new ConflictException({ code: 'STAFF_INACTIVE', message: '그만둔 구성원의 시급은 바꾸지 않습니다' });
+      const made = await insertWage(m, { staffId: dto.staffId, rate: dto.rate, fromDate: dto.fromDate ?? today, reason: dto.reason?.trim() || null, approvedBy: userId }, today);
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'WAGE',$2,'create',$3::jsonb)`,
+        [userId, made.id, JSON.stringify({ staffId: dto.staffId, rate: dto.rate, fromDate: made.fromDate, reason: dto.reason?.trim() || null })],
+      );
+      // 강사에게 알린다 — 자기 시급이 언제부터 얼마로 바뀌는지는 본인이 알아야 한다 (§16 · 승인 경로와 같은 분류)
+      if (dto.staffId !== userId) {
+        await m.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/teacher', 'request')`,
+          [dto.staffId, userId, `기본 시급이 ${won(dto.rate)} 로 바뀝니다 — ${made.fromDate} 수업부터${dto.reason?.trim() ? ` · ${dto.reason.trim()}` : ''}`],
+        );
+      }
+      const [row] = (await m.query(`${AccountingService.WAGE_SELECT} WHERE w.id = $2`, [today, made.id])) as Array<Record<string, unknown>>;
+      return this.wageRow(row);
     });
   }
 }

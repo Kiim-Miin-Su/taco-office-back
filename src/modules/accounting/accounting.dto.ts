@@ -5,6 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 
@@ -926,4 +927,54 @@ export class ExpenseCreateDto {
   @ApiPropertyOptional({ description: '누구의 지출인가 — 비우면 올리는 사람. 대표가 직원 대신 올릴 때만 쓴다 (본인 신청은 본인이 심사할 수 없다 · A-5)' })
   @IsOptional() @IsInt() @Min(1)
   requesterId?: number;
+}
+
+/* ══ 강사 시급 (C97 · 테스트 시나리오 D-48 「시급 변경」) ═══════════════════════════════ */
+
+/** WAGE 한 줄 — 누가 언제부터 얼마 */
+export class WageRowDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() staffId!: number;
+  @ApiProperty() staffName!: string;
+  @ApiProperty({ description: '기본 시급(원/시간)' }) rate!: number;
+  @ApiProperty({ description: '이 날짜의 수업부터 (YYYY-MM-DD) — 소급 없음 (D8)' }) fromDate!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) reason?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '적은 사람 — 승인 경로면 승인자, 직접 수정이면 고친 사람' }) approvedByName?: string | null;
+  @ApiProperty({ description: '오늘 붙는 줄인가 — 같은 사람의 오늘 이하 마지막 줄' }) current!: boolean;
+  @ApiProperty({ description: 'KST 시각' }) createdAt!: string;
+}
+
+export class WageHistoryDto {
+  @ApiProperty() staffId!: number;
+  @ApiProperty() staffName!: string;
+  @ApiProperty({ type: [WageRowDto], description: '적용일 내림차순 — 맨 앞이 가장 나중 줄(미래 예약 포함)' }) rows!: WageRowDto[];
+}
+
+export class WageHistoryQueryDto {
+  @ApiProperty({ description: '구성원 id' })
+  @Transform(({ value }) => (typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value))
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  staffId!: number;
+}
+
+/**
+ * `POST /accounting/wages` — 관리자 직접 수정 (D-48). 승인 경로(C41)와 **같은 함수**(`lib/wage.insertWage`)라
+ * 「소급 없음 · 같은 날 한 줄」이 두 길에서 같다. 지난 정산은 회차 날짜의 줄을 읽으므로 흔들리지 않는다(I-8).
+ */
+export class WageWriteDto {
+  @ApiProperty({ description: '구성원 id — 활성인 사람만' })
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  staffId!: number;
+
+  @ApiProperty({ description: '기본 시급(원/시간)', example: 45000 })
+  @IsInt() @Min(1000) @Max(10_000_000)
+  rate!: number;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '적용 시작일 — 비우면 오늘. 오늘보다 앞이면 409 WAGE_RETROACTIVE' })
+  @IsOptional() @IsCalendarDate()
+  fromDate?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 200 })
+  @IsOptional() @IsString() @MaxLength(200)
+  reason?: string | null;
 }

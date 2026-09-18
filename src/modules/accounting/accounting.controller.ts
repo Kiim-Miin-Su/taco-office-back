@@ -21,6 +21,7 @@ import {
   type IncomeSpan,
   StudentWithdrawDto, WithdrawResultDto,
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
+  WageHistoryDto, WageHistoryQueryDto, WageRowDto, WageWriteDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService } from './accounting.service';
@@ -339,6 +340,34 @@ export class AccountingController {
   @ApiConflictResponse({ type: ApiErrorDto, description: 'RATE_DUPLICATE' })
   writeRate(@CurrentUser() user: RequestUser, @Body() dto: RateWriteDto): Promise<RateRowDto> {
     return this.svc.writeRate(user.id, dto);
+  }
+
+  /* ══ 강사 시급 (C97 · D-48) — canWage(매니저 이상) · 승인 경로(C41)와 같은 함수 ═══════════ */
+
+  @Get('wages')
+  @Perm('canAdminPage', 'canWage')
+  @ApiOperation({
+    summary: '시급 이력 — 한 사람의 WAGE 줄 전부 (C97 · D-48)',
+    description: '적용일 내림차순. 「지금」 줄은 오늘 이하의 마지막 줄 — 회차의 시급(lib/payout-sheet)과 같은 정의다. 미래 날짜 줄은 예약이다.',
+  })
+  @ApiOkResponse({ type: WageHistoryDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  wageHistory(@Query() q: WageHistoryQueryDto): Promise<WageHistoryDto> {
+    return this.svc.wageHistory(q.staffId);
+  }
+
+  @Post('wages')
+  @Perm('canAdminPage', 'canWage')
+  @ApiOperation({
+    summary: '시급 직접 수정 — 새 줄 한 줄 (C97 · 테스트 시나리오 D-48 · I-8)',
+    description: '지난 줄은 고치지도 지우지도 않는다 — 지난 정산이 회차 날짜의 줄을 읽는다(과거 정산 불변). '
+      + '적용일은 오늘 이후(409 WAGE_RETROACTIVE) · 같은 날 한 줄(409 WAGE_SAME_DAY) — §14 승인 경로와 같은 lib/wage.insertWage. 강사 NOTI · LOG.',
+  })
+  @ApiCreatedResponse({ type: WageRowDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WAGE_RETROACTIVE | WAGE_SAME_DAY | STAFF_INACTIVE' })
+  writeWage(@CurrentUser() user: RequestUser, @Body() dto: WageWriteDto): Promise<WageRowDto> {
+    return this.svc.writeWage(user.id, dto);
   }
 
   @Post('sturates')

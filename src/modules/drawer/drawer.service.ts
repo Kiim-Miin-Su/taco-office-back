@@ -30,8 +30,10 @@ import { groupByRole } from '../../lib/role-words';
 import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
 import { todoSourceLabel } from '../../lib/todo';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
+import { insertWage } from '../../lib/wage';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
-import type { ChreqReviewDto, DrawerDto, ReqReviewDto, TodoCreateDto } from './drawer.dto';
+import type { ChreqReviewDto, DrawerDto, MemberDto, ReqReviewDto, StaffCreateDto, TodoCreateDto } from './drawer.dto';
+import bcrypt from 'bcryptjs';
 
 type R = Record<string, unknown>;
 
@@ -238,6 +240,7 @@ export class DrawerService {
     canSeeAll: boolean,
     notiAll = false,
     flowScope: ApprovalFlowScope = 'none',
+    canWage = false,
   ): Promise<DrawerDto> {
     const approvalRows = await this.approvalRows();
     const approvals = apFlow(approvalRows, viewerId, canApprove);
@@ -297,11 +300,26 @@ export class DrawerService {
       count: notis.filter((noti) => noti.category === key).length,
     }));
 
+    // 지금 시급은 **볼 수 있는 사람에게만** 싣는다(canWage · D-R39) — 못 보면 조회 자체를 안 한다. 회차의 시급과 같은 정의(오늘 이하의 마지막 줄 · lib/wage)
     const members = (await this.q(
-      `SELECT id, name, email, role::text AS role, title, tz, active FROM staff ORDER BY active DESC, id`,
+      `SELECT s.id, s.name, s.email, s.role::text AS role, s.title, s.tz, s.active,
+              w.rate AS wage_rate, to_char(w.from_date,'YYYY-MM-DD') AS wage_from,
+              (s.role = 'teacher' AND s.active) AS wageable
+         FROM staff s
+         LEFT JOIN LATERAL (
+           SELECT rate, from_date FROM wage
+            WHERE $2::boolean AND staff_id = s.id AND from_date <= $1::date
+            ORDER BY from_date DESC LIMIT 1
+         ) w ON true
+        ORDER BY s.active DESC, s.id`,
+      [todayKst(), canWage],
     )).map((r) => ({
       id: Number(r.id), name: String(r.name), email: String(r.email),
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
+      wageRate: canWage && r.wage_rate != null ? Number(r.wage_rate) : null,
+      wageFrom: canWage ? str(r.wage_from) : null,
+      // 시급 줄을 둘 수 있는 줄은 표가 가른다(활성 강사) — 화면이 role 을 보지 않게 (D-R39)
+      wageable: canWage && r.wageable === true,
     }));
 
     /* 묶음은 **같은 배열**에서 낸다 — 따로 질의하면 목록과 인원이 갈린다 (D-R37 · D-R22) */
@@ -390,10 +408,70 @@ export class DrawerService {
       notiOlderCount: Number(older?.n ?? 0),
       members, memberGroups, tzGroups, kinds, changeReqs, zoomAccounts, workSummary,
       tz: KST,
+      canAddMember: canSeeAll,
+      canWage,
     };
   }
 
   /* ══ 쓰기 — §14~§16의 입력은 모두 여기서 DB 권한을 다시 검사한다 ═══════ */
+
+  /**
+   * §17 「+ 구성원」 (C97 · 테스트 시나리오 D-41 「신규 강사 등록」).
+   * 역할은 강사·매니저뿐(DTO enum · 대표·관리자 계정은 이 길로 만들지 않는다 — 권한 상승 경로를 두지 않는다).
+   * 이메일은 유일(표 UNIQUE 가 마지막에 막는다 · 먼저 읽어 409 문장을 준다) · 시간대는 `tzg` 에 있는 값만(C41 과 같은 낱말 `TZ_UNKNOWN`).
+   * 비밀번호는 bcryptjs 해시로만 저장하고 어느 응답에도 싣지 않는다. 시급을 적었으면 **같은 트랜잭션**에 `insertWage`(입사일 또는 오늘부터 · 소급 없음).
+   */
+  async createStaff(viewerId: number, dto: StaffCreateDto): Promise<MemberDto> {
+    const today = todayKst();
+    const tz = dto.tz?.trim() || KST;
+    const [known] = (await this.q(`SELECT tz FROM tzg WHERE tz = $1`, [tz])) as Array<{ tz: string }>;
+    if (!known) {
+      throw new ConflictException({ code: 'TZ_UNKNOWN', message: '시간대 목록에 없는 값입니다 — 구성원·시간대에서 먼저 추가하세요' });
+    }
+    const [taken] = (await this.q(`SELECT id FROM staff WHERE lower(email) = lower($1)`, [dto.email])) as Array<{ id: string }>;
+    if (taken) {
+      throw new ConflictException({ code: 'STAFF_EMAIL_TAKEN', message: '그 이메일로 이미 구성원이 있습니다 — 로그인 아이디는 하나여야 합니다' });
+    }
+    const hiredOn = dto.hiredOn ?? today;
+    const hash = await bcrypt.hash(dto.password, 10);
+    const id = await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const [made] = (await m.query(
+        `INSERT INTO staff (name, email, phone, role, title, tz, password_hash, hired_on, active)
+         VALUES ($1, lower($2), $3, $4::role_t, $5, $6, $7, $8::date, true) RETURNING id`,
+        [dto.name, dto.email, dto.phone?.trim() || null, dto.role, dto.title?.trim() || null, tz, hash, hiredOn],
+      )) as Array<{ id: string }>;
+      const staffId = Number(made.id);
+      let wage: { fromDate: string } | null = null;
+      if (dto.wageRate != null) {
+        // 입사일이 오늘보다 앞이면 오늘부터 — 지난 날짜로는 못 적는다(소급 없음)
+        wage = await insertWage(m, { staffId, rate: dto.wageRate, fromDate: hiredOn < today ? today : hiredOn, reason: '입사', approvedBy: viewerId }, today);
+      }
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'create','{}'::jsonb,$3::jsonb)`,
+        [viewerId, staffId, JSON.stringify({ name: dto.name, role: dto.role, title: dto.title?.trim() || null, tz, hiredOn, wageRate: dto.wageRate ?? null, wageFrom: wage?.fromDate ?? null })],
+      );
+      return staffId;
+    });
+    return this.memberOne(id, true);
+  }
+
+  /** 구성원 한 줄 — `all()` 의 members 와 같은 모양(시급은 canWage 일 때만) */
+  private async memberOne(id: number, canWage: boolean): Promise<MemberDto> {
+    const [r] = await this.q(
+      `SELECT id, name, email, role::text AS role, title, tz, active, (role = 'teacher' AND active) AS wageable FROM staff WHERE id = $1`, [id],
+    );
+    if (!r) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
+    const wage = canWage ? await this.q(
+      `SELECT rate, to_char(from_date,'YYYY-MM-DD') AS from_date FROM wage WHERE staff_id = $1 AND from_date <= $2::date ORDER BY from_date DESC LIMIT 1`,
+      [id, todayKst()],
+    ) : [];
+    return {
+      id: Number(r.id), name: String(r.name), email: String(r.email),
+      role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
+      wageRate: wage[0] ? Number(wage[0].rate) : null, wageFrom: wage[0] ? String(wage[0].from_date) : null,
+      wageable: canWage && r.wageable === true,
+    };
+  }
 
   /** §15 수동 할 일 만들기. 다른 사람에게 배정하려면 canCrudAll 이어야 한다. */
   async createTodo(viewerId: number, canSeeAll: boolean, dto: TodoCreateDto): Promise<{ id: number }> {
@@ -522,21 +600,8 @@ export class DrawerService {
             code: 'WAGE_RATE_INVALID', message: '요청에 적힌 시급을 읽을 수 없습니다 — 강사에게 다시 올려 달라고 하세요',
           });
         }
-        const [dup] = (await m.query(
-          `SELECT id FROM wage WHERE staff_id = $1 AND from_date = $2::date`, [byId, today],
-        )) as Array<{ id: string }>;
-        if (dup) {
-          throw new ConflictException({
-            code: 'WAGE_SAME_DAY',
-            message: '오늘 날짜로 적용된 시급이 이미 있습니다 — 지난 수업은 그때 시급 그대로여야 해서 같은 날 두 번 바꾸지 않습니다',
-          });
-        }
-        // **소급 없음** — 오늘부터의 수업에만 붙는다 (D8). 지난 정산은 흔들리지 않는다.
-        await m.query(
-          `INSERT INTO wage (staff_id, rate, from_date, reason, approved_by)
-           VALUES ($1, $2, $3::date, $4, $5)`,
-          [byId, rate, today, reason, viewerId],
-        );
+        // **소급 없음 · 같은 날 한 줄** — 규칙은 `lib/wage.insertWage` 한 곳이고 관리자 직접 수정(C97)도 같은 함수를 탄다 (D8 · D-R22)
+        await insertWage(m, { staffId: byId, rate, fromDate: today, reason, approvedBy: viewerId }, today);
         applied = `${reqAsked(req.req_type, payload).to} · ${today}부터`;
       }
 
