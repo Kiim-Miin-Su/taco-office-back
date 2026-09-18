@@ -10,11 +10,12 @@ import {
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { OkDto } from '../../common/http.dto';
-import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { ApiErrorDto, OkDto } from '../../common/http.dto';
+import { Perm, canCeoCloseMonth, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AccountingDto, CarryRowDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
   OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
+  MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
   type IncomeSpan,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
@@ -56,7 +57,33 @@ export class AccountingController {
   @ApiOkResponse({ type: TuitionDto })
   async tuition(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<TuitionDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.tuition(query.month ?? todayKst().slice(0, 7), canSee);
+    return this.svc.tuition(query.month ?? todayKst().slice(0, 7), canSee, isRole(user.role) && canCeoCloseMonth(user.role));
+  }
+
+  @Post('tuition/close')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '월 마감 — 대표 전용 (테스트 시나리오 C-39)',
+    description: '마감된 달은 회차·휴강·출결·청구서 발행·이월·휴원 쓰기가 409 MONTH_CLOSED 로 막힌다 (L-123). '
+      + '판정은 lib/month-close 한 곳. 해제 전까지는 아무도 못 고친다 — 화면이 단추를 숨기는 것과 별개로 서버가 막는다.',
+  })
+  @ApiCreatedResponse({ type: MonthCloseDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_ALREADY_CLOSED' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'MONTH_NOT_STARTED — 아직 시작하지 않은 달' })
+  closeMonth(@CurrentUser() user: RequestUser, @Body() dto: MonthCloseWriteDto): Promise<MonthCloseDto> {
+    return this.svc.closeMonth(user.id, isRole(user.role) && canCeoCloseMonth(user.role), dto);
+  }
+
+  @Post('tuition/reopen')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '마감 해제 — 대표 전용 · 사유 필수 (테스트 시나리오 N-140)',
+    description: '행을 지우지 않고 누가·언제·왜를 남긴다 — 「흔적 없이 고쳐지면 실패」. 다시 마감하면 새 행이 선다.',
+  })
+  @ApiCreatedResponse({ type: MonthCloseDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_NOT_CLOSED' })
+  reopenMonth(@CurrentUser() user: RequestUser, @Body() dto: MonthReopenWriteDto): Promise<MonthCloseDto> {
+    return this.svc.reopenMonth(user.id, isRole(user.role) && canCeoCloseMonth(user.role), dto);
   }
 
   @Get('board')

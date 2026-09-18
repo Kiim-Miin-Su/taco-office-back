@@ -72,6 +72,13 @@ export const canCeoComment = (r: Role): boolean => r === 'ceo';
 export const canCeoApprovePlan = (r: Role): boolean => r === 'ceo';
 
 /**
+ * §54 **월 마감 · 마감 해제** — 대표 전용 (테스트 시나리오 C-39 「회계 → 수강·월 청구 → 8월 마감하기」 ·
+ * N-140 「마감 해제」). 회계 탭은 `canMoney` 인데 사람별 예외로 매니저에게 금액을 열어 준 날 마감까지
+ * 열리면 안 된다 — 다른 대표 전용 줄과 같은 값이지만 같은 이유로 줄을 나눈다.
+ */
+export const canCeoCloseMonth = (r: Role): boolean => r === 'ceo';
+
+/**
  * §75 중앙 결재 흐름의 서버 projection 범위.
  *
  * 역할 문자열 비교를 drawer controller에 복제하지 않고 이 결과만 소비한다.

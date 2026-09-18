@@ -21,6 +21,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { DataSource, type QueryRunner } from 'typeorm';
 import { addDays } from '../../lib/kst';
 import { writtenRows } from '../../lib/sql';
+import { assertRangeOpen } from '../../lib/month-close';
 import type { StudentPauseResultDto, StudentPauseWriteDto, StudentResumeWriteDto } from './schedule.dto';
 
 interface PauseRow {
@@ -53,6 +54,8 @@ export class SchedulePauseService {
 
     return this.tx(async (q) => {
       await this.assertStudent(q, studentId);
+      // 휴원은 그 달의 수업료를 바꾼다 — 마감 달과 겹치는 기간은 못 잡는다 (C92-d · L-123)
+      await assertRangeOpen(q, dto.fromDate, dto.toDate ?? null);
       const [row] = await q.query(
         `INSERT INTO stu_pause (student_id, from_date, to_date, reason, by_id)
          VALUES ($1, $2::date, $3::date, $4, $5)
@@ -95,6 +98,8 @@ export class SchedulePauseService {
       if (before.toDate !== null && newTo > before.toDate) {
         throw new BadRequestException({ code: 'BAD_RANGE', message: '복귀일이 휴원 종료일보다 뒤입니다 — 기간을 늘리려면 휴원을 새로 잡아 주세요' });
       }
+      // 복귀는 복귀일부터 원래 종료일까지의 회차를 되살린다 — 그 구간이 마감 달에 걸치면 못 한다
+      await assertRangeOpen(q, dto.resumeOn, before.toDate);
       const [updated] = writtenRows<PauseRow>(await q.query(
         `UPDATE stu_pause
             SET to_date = $2::date, resumed_by = $3, resumed_at = now()

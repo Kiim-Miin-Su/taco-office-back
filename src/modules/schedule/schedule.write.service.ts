@@ -32,6 +32,7 @@ import {
 } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
+import { closedMonths, closedOccSnapshot, monthClosedError, monthOf } from '../../lib/month-close';
 import { loadState, persist } from './schedule.state.repo';
 import { issueScheduleUndo, readScheduleUndo, sameScheduleState } from './schedule.undo';
 import { assertScheduleReferences } from './schedule.references';
@@ -181,6 +182,14 @@ export class ScheduleWriteService {
       if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
 
       await assertScheduleReferences(q, after);
+      /*
+       * 월 마감 (C92-d · L-123) — 「마감 후에도 자유롭게 고쳐지면 실패」.
+       * 날짜 하나로는 못 막는다: 규칙 전체를 고치면(scope=all · 시각 변경) 투영이 지난 달 회차까지 다시 쓴다.
+       * 그래서 마감 달에 놓인 회차·예외의 모양을 persist/project 앞뒤로 찍어 **달라졌으면** 통째로 되돌린다.
+       * 새 규칙이 마감 달에 회차를 만드는 것도 같은 비교가 잡는다 (뒤 스냅숏에만 줄이 생긴다).
+       */
+      const closed = await closedMonths(q);
+      const closedBefore = await closedOccSnapshot(q, before.SER.map((row) => row.id), closed);
       const touched = await persist(q, before, after);
       // 새로 생긴 규칙은 persist 가 진짜 id 를 붙여 돌려준다. 그 id 로 다시 읽어야
       // 투영이 임시 id 가 아니라 실제 행을 편다.
@@ -188,6 +197,15 @@ export class ScheduleWriteService {
       const projected = await project(q, fresh, touched, horizon());
 
       const snapshotIds = [...new Set([...before.SER.map((row) => row.id), ...touched])];
+      if (closed.length) {
+        const closedAfter = await closedOccSnapshot(q, snapshotIds, closed);
+        if (closedAfter !== closedBefore) {
+          // 어느 달인지 말한다 — 새 규칙이면 시작일의 달, 아니면 바뀐 회차가 든 첫 마감 달
+          const hit = closed.find((m) => closedAfter.includes(`"on_date":"${m}-`) || closedBefore.includes(`"on_date":"${m}-`))
+            ?? monthOf(after.SER[0]?.fromDate ?? closed[0]!);
+          throw monthClosedError(hit);
+        }
+      }
       const afterSnapshot = actorId && undoable ? await loadState(q, snapshotIds) : null;
 
       const base = {

@@ -12,6 +12,7 @@ import {
 } from '../../lib/rules';
 import { nowMinKst, todayKst } from '../../lib/kst';
 import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
+import { assertMonthOpen } from '../../lib/month-close';
 import type { AttendanceDto, AttendanceMutationResultDto, AttendanceWriteDto } from './schedule.dto';
 import { lockScheduleSeries } from './schedule.state.repo';
 
@@ -50,6 +51,8 @@ export class ScheduleAttendanceService {
     }
 
     return this.tx(async (q) => {
+      // 마감 달의 출결은 강사료를 바꾼다 — 해제 전에는 못 고친다 (C92-d · L-123)
+      await assertMonthOpen(q, onDate);
       await this.assertManageable(q, serId, onDate);
       const before = await this.current(q, serId, onDate, true);
       if (before) {
@@ -75,6 +78,7 @@ export class ScheduleAttendanceService {
 
   async clear(serId: number, onDate: string, actorId: number): Promise<AttendanceMutationResultDto> {
     return this.tx(async (q) => {
+      await assertMonthOpen(q, onDate);
       await this.assertManageable(q, serId, onDate);
       const before = await this.current(q, serId, onDate, true);
       if (!before) {

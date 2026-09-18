@@ -5,7 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 
 /** 입금 수단 — 지금 저장되는 두 가지뿐이다. 코드표 확장은 원문 근거가 생길 때 한다 (발명 금지) */
 export const PAY_METHODS = ['transfer', 'cash'] as const;
@@ -442,6 +442,37 @@ export class TuitionDto {
 
   @ApiProperty({ type: [TuitionRowDto] }) items!: TuitionRowDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+
+  /* 월 마감 (C92-d · C-39 · L-123 · N-140) — 마감이면 그 달의 회차·휴강·출결·청구·이월·휴원 쓰기가 409 MONTH_CLOSED */
+  @ApiPropertyOptional({ type: () => MonthCloseDto, nullable: true, description: '지금 열려 있는 마감 — null 이면 열린 달' })
+  close?: MonthCloseDto | null;
+  @ApiProperty({ description: '「N월 마감하기」 단추가 서는가 — 대표 · 아직 안 마감 · 오늘이 그 달 시작 이후 (D-R39)' }) canClose!: boolean;
+  @ApiProperty({ description: '「마감 해제」 단추가 서는가 — 대표 · 마감 중' }) canReopen!: boolean;
+}
+
+/* ── 월 마감 (C92-d) ────────────────────────────────────────────────── */
+
+export class MonthCloseDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ description: 'YYYY-MM' }) month!: string;
+  @ApiProperty({ description: 'ISO' }) closedAt!: string;
+  @ApiProperty({ description: '마감한 사람 이름' }) closedBy!: string;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '해제 시각 (ISO) — 열려 있는 마감이면 null' }) reopenedAt?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) reopenedBy?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '해제 사유 — 흔적 없이 고치지 않는다 (N-140)' }) reopenReason?: string | null;
+}
+
+/** `POST /accounting/tuition/close` — 대표 전용 */
+export class MonthCloseWriteDto {
+  @ApiProperty({ description: '마감할 달 — YYYY-MM', example: '2026-08' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month!: string;
+}
+
+/** `POST /accounting/tuition/reopen` — 대표 전용 · 사유 필수 */
+export class MonthReopenWriteDto extends MonthCloseWriteDto {
+  @ApiProperty({ description: '해제 사유 — 마감 뒤 무엇을 고치려는지', minLength: 1, maxLength: 200 })
+  @IsString() @MinLength(1) @MaxLength(200) reason!: string;
 }
 
 /* ── §57 그 밖의 수입 ─────────────────────────────────────────────────── */

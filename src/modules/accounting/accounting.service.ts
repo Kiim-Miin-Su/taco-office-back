@@ -15,6 +15,7 @@ import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { kstAt, kstMonthOf, sqlWordList, stuPausedOn } from '../../lib/sql';
+import { assertMonthOpen } from '../../lib/month-close';
 import {
   EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED,
   INV_BOARD_COLUMNS, INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_ROW, INV_TYPE_SUB,
@@ -27,6 +28,7 @@ import type {
   PaymentCreateDto, PaymentDto, PayoutDto,
   TuitionCarryDto,
   TuitionDto, TuitionRowDto,
+  MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
 } from './accounting.dto';
 
 
@@ -359,6 +361,8 @@ export class AccountingService {
         id: string; name: string;
       }>;
       if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
+      // 마감 달에는 새 청구서를 내지 않는다 (C92-d · L-123) — 마감을 풀고 낸다
+      await assertMonthOpen(m, dto.yearMonth);
 
       const dup = (await m.query(
         `SELECT id FROM inv
@@ -646,8 +650,10 @@ export class AccountingService {
    * **결강은 금액에서 빠지고 「넘길 돈」으로 따로 선다.** 원문 표가 「결강」과 「넘길 돈」을
    * 나란히 두는 것이 그 뜻이다 — 안 한 수업을 이번 달에 청구하지 않는다.
    */
-  async tuition(month: string, canSeeAmounts: boolean): Promise<TuitionDto> {
+  async tuition(month: string, canSeeAmounts: boolean, canCloseMonth = false): Promise<TuitionDto> {
     const today = todayKst();
+    // 월 마감 (C92-d) — 열려 있는 마감 하나. 단추가 서는지는 여기서 정한다 (D-R39)
+    const close = await this.currentClose(this.inv.manager, month);
     const [span] = (await this.inv.query(
       `SELECT to_char(date_trunc('month', $1::date)::date, 'YYYY-MM-DD')                        AS first,
               to_char((date_trunc('month', $1::date) + interval '1 month - 1 day')::date, 'YYYY-MM-DD') AS last`,
@@ -805,7 +811,90 @@ export class AccountingService {
       doneAmount: money(doneAmount), carryAmount: money(carryAmount),
       carriedInCount, carriedInAmount: money(carriedInAmount),
       items, canSeeAmounts,
+      close,
+      // 아직 시작하지 않은 달은 마감할 것이 없다 — 오늘이 그 달 1일 이후여야 한다
+      canClose: canCloseMonth && close === null && today >= span.first,
+      canReopen: canCloseMonth && close !== null,
     };
+  }
+
+  /* ── 월 마감 (C92-d · 테스트 시나리오 C-39 · L-123 · N-140) ─────────────
+     「마감 후에도 자유롭게 고쳐지면 실패 · 이월 확정분이 바뀌지 않는다 · 흔적 없이 고쳐지면 실패」.
+     마감은 행 하나, 해제는 그 행에 누가·언제·왜(지우지 않는다), 다시 마감하면 새 행.
+     막는 쪽은 `lib/month-close` 한 곳 — 스케줄·출결·청구·이월·휴원이 같은 판정을 쓴다.        */
+
+  private async currentClose(m: { query: EntityManager['query'] }, month: string): Promise<MonthCloseDto | null> {
+    const [row] = (await m.query(
+      `SELECT c.id, c.year_month, c.closed_at, cb.name AS closed_by, c.reopened_at, rb.name AS reopened_by, c.reopen_reason
+         FROM month_close c
+         JOIN staff cb ON cb.id = c.closed_by
+         LEFT JOIN staff rb ON rb.id = c.reopened_by
+        WHERE c.year_month = $1 AND c.reopened_at IS NULL
+        ORDER BY c.id DESC LIMIT 1`,
+      [month],
+    )) as Array<Record<string, unknown>>;
+    return row ? AccountingService.toMonthClose(row) : null;
+  }
+
+  private static toMonthClose(r: Record<string, unknown>): MonthCloseDto {
+    return {
+      id: Number(r.id), month: String(r.year_month),
+      closedAt: new Date(r.closed_at as string).toISOString(), closedBy: String(r.closed_by),
+      reopenedAt: r.reopened_at ? new Date(r.reopened_at as string).toISOString() : null,
+      reopenedBy: (r.reopened_by as string | null) ?? null,
+      reopenReason: (r.reopen_reason as string | null) ?? null,
+    };
+  }
+
+  /** 「N월 마감하기」 — 대표 전용. 이미 마감이면 409 `MONTH_ALREADY_CLOSED`, 아직 시작 안 한 달은 400 */
+  async closeMonth(userId: number, canCloseMonth: boolean, dto: MonthCloseWriteDto): Promise<MonthCloseDto> {
+    if (!canCloseMonth) throw new ForbiddenException({ code: 'FORBIDDEN', message: '월 마감은 대표만 할 수 있습니다' });
+    if (`${dto.month}-01` > todayKst()) {
+      throw new BadRequestException({ code: 'MONTH_NOT_STARTED', message: '아직 시작하지 않은 달은 마감할 수 없습니다' });
+    }
+    return this.inv.manager.transaction(async (m) => {
+      // 같은 달의 마감 두 번을 직렬화한다 — 부분 유니크가 최종 방어선이다
+      await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`month_close:${dto.month}`]);
+      if (await this.currentClose(m, dto.month)) {
+        throw new ConflictException({ code: 'MONTH_ALREADY_CLOSED', message: '이미 마감된 달입니다' });
+      }
+      const [row] = (await m.query(
+        `INSERT INTO month_close (year_month, closed_by) VALUES ($1, $2) RETURNING id`,
+        [dto.month, userId],
+      )) as Array<{ id: string }>;
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'MONTH_CLOSE',$2,'close',$3::jsonb)`,
+        [userId, Number(row.id), JSON.stringify({ month: dto.month })],
+      );
+      return (await this.currentClose(m, dto.month))!;
+    });
+  }
+
+  /** 「마감 해제」 — 대표 전용 · 사유 필수. 행은 남고 `reopened_*` 가 채워진다 (N-140 「흔적 없이 고쳐지면 실패」) */
+  async reopenMonth(userId: number, canCloseMonth: boolean, dto: MonthReopenWriteDto): Promise<MonthCloseDto> {
+    if (!canCloseMonth) throw new ForbiddenException({ code: 'FORBIDDEN', message: '마감 해제는 대표만 할 수 있습니다' });
+    const reason = dto.reason.trim();
+    if (!reason) throw new BadRequestException({ code: 'REASON_REQUIRED', message: '해제 사유를 적어 주세요' });
+    return this.inv.manager.transaction(async (m) => {
+      await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`month_close:${dto.month}`]);
+      const open = await this.currentClose(m, dto.month);
+      if (!open) throw new ConflictException({ code: 'MONTH_NOT_CLOSED', message: '마감되지 않은 달입니다' });
+      await m.query(
+        `UPDATE month_close SET reopened_by = $2, reopened_at = now(), reopen_reason = $3 WHERE id = $1`,
+        [open.id, userId, reason],
+      );
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'MONTH_CLOSE',$2,'reopen',$3::jsonb,$4::jsonb)`,
+        [userId, open.id, JSON.stringify({ month: dto.month, closedAt: open.closedAt }), JSON.stringify({ month: dto.month, reason })],
+      );
+      const [row] = (await m.query(
+        `SELECT c.id, c.year_month, c.closed_at, cb.name AS closed_by, c.reopened_at, rb.name AS reopened_by, c.reopen_reason
+           FROM month_close c JOIN staff cb ON cb.id = c.closed_by LEFT JOIN staff rb ON rb.id = c.reopened_by
+          WHERE c.id = $1`,
+        [open.id],
+      )) as Array<Record<string, unknown>>;
+      return AccountingService.toMonthClose(row!);
+    });
   }
 
   /**
@@ -973,6 +1062,8 @@ export class AccountingService {
    */
   async carryTuition(userId: number, dto: TuitionCarryDto): Promise<CarryRowDto> {
     return this.inv.manager.transaction(async (m) => {
+      // 마감 달의 이월 확정분은 바뀌지 않는다 (L-123) — 넘기는 달도, 받는 달도 열려 있어야 한다
+      await assertMonthOpen(m, dto.month);
       const [inv] = (await m.query(
         `SELECT id FROM inv
           WHERE student_id = $1 AND year_month = $2 AND inv_type = 'tuition' AND state = 'paid'

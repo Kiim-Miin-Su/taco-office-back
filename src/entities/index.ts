@@ -78,6 +78,7 @@ export * from './vers.entity';
 export * from './wage.entity';
 export * from './wrep.entity';
 export * from './stu-pause.entity';
+export * from './month-close.entity';
 export * from './zacc.entity';
 export * from './zassign.entity';
 export * from './zlog.entity';
@@ -86,6 +87,7 @@ import {
   Att,
   Carry,
   StuPause,
+  MonthClose,
   Autorep,
   Chreq,
   Cons,
@@ -162,6 +164,7 @@ import {
 export const ENTITIES = [
   Carry,
   StuPause,
+  MonthClose,
   Att,
   Autorep,
   Chreq,

@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-51 C92-d 월 마감 (2026-09-18): MONTH_CLOSE 표 하나 — 마감 달의 회차·휴강·출결·청구서·이월·휴원 쓰기는 409 MONTH_CLOSED(lib/month-close 한 곳 · 스케줄은 마감 달 회차·예외 스냅숏 앞뒤 비교). 해제는 대표 전용·사유 필수·행을 지우지 않는다(N-140).
 // TBO-51 C92-c 휴원·복귀 (2026-09-18): STU_PAUSE 표 하나 — 기간 안의 회차는 시간표·§54·청구서가 「그날만 빠짐」과 같은 것으로 읽는다(lib/sql.stuPausedOn 한 곳). 회차를 지우지 않고 복귀는 to_date 를 당길 뿐이라 기간이 이력으로 남는다. 겹침은 EXCLUDE.
 // TBO-51 C92-b 보강·이월 청구 (2026-09-18): EXC.makeup_ser_id 로 보강 회차를 잇고(원래 회차는 세지 않는다) 지난달 carry 를 이 달 청구서의 음수 줄로 뺀다.
 // TBO-51 C92-a 휴강 정책 (2026-09-18): EXC 에 휴강 사유·처리(이월/차감/보강 이관)를 적고 exc_cancel_policy CHECK 로 「차감은 학생 결석에만」을 DB 가 지킨다. 회계 §54·청구서는 처리로 회차를 가른다.
@@ -385,6 +386,25 @@ Table EXC_STU_OUT {
   v2 §79·§80 — 「이 회차만 빼기」. 소스의 EXC[id|date].stuOut 이다.
   「아주 빼기」는 여기가 아니라 SER_STU 에서 지운다 (D-R21).
   학생에 「향후」 범위를 줄지는 결정 안건 N-15.
+  '''
+}
+
+Table MONTH_CLOSE {
+  id            bigserial   [pk]
+  year_month    text        [not null, note: 'YYYY-MM · month_close_shape CHECK']
+  closed_by     bigint      [not null, ref: > STAFF.id, note: '마감한 대표']
+  closed_at     timestamptz [not null, default: `now()`]
+  reopened_by   bigint      [ref: > STAFF.id, note: '해제한 대표 — reopened_at·reopen_reason 과 짝 (month_close_reopen_pair CHECK)']
+  reopened_at   timestamptz
+  reopen_reason text        [note: '해제 사유 — 필수. 흔적 없이 고치지 않는다 (N-140)']
+  indexes { (year_month) [unique, note: 'month_close_open_once — WHERE reopened_at IS NULL partial unique · 열린 마감은 달마다 하나. 조회용 month_close_year_month 도 따로 있다'] }
+  Note: '''
+  v4.29 · C92-d — 테스트 시나리오 C-39 「월 마감」 · L-123 「마감 후 과거 수정」 · N-140 「마감 후 잘못 발견」.
+  마감 달의 쓰기는 409 MONTH_CLOSED — 판정은 lib/month-close 한 곳: 날짜 하나(출결)·달(청구서 발행·이월 처리)·
+  기간(휴원·복귀)은 assertMonthOpen/assertRangeOpen, 스케줄 쓰기는 마감 달에 놓인 SER_OCC·EXC 의 모양을
+  persist/project 앞뒤로 찍어 달라졌으면 통째로 되돌린다(규칙 전체를 고치면 투영이 지난 달까지 다시 쓰므로 날짜 하나로는 못 막는다).
+  명단(SER_STU)은 날짜가 없어 마감이 못 막는다 — N-50. 입금(PAY)은 들어온 사실이라 막지 않는다.
+  해제는 행을 지우지 않고 reopened_* 를 채우며 다시 마감하면 새 행이 선다 — 한 달의 마감·해제가 전부 이력이다. 기존 행 0.
   '''
 }
 
@@ -1440,6 +1460,10 @@ Table SER_OCC {
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
 //
+// v4.28 → v4.29 (2026-09-18 · TBO-51 C92-d 월 마감) — 새 표 MONTH_CLOSE (year_month · closed_by/at · reopened_by/at · reopen_reason).
+//   「마감 후에도 자유롭게 고쳐지면 실패」를 표 하나와 판정 한 곳(lib/month-close)으로 — 스케줄·출결·청구·이월·휴원이 같은 409 를 던진다.
+//   해제는 대표 전용·사유 필수·행 보존(N-140). month_close_shape · month_close_reopen_pair CHECK · month_close_open_once 부분 유니크.
+//   새 표 1 · 마이그레이션 1 (1760800000000-month-close) · 기존 행 보정 0. 추가 수업(C-38)은 KIND+rate 데이터라 C94 단가 쓰기로 넘긴다.
 // v4.27 → v4.28 (2026-09-18 · TBO-51 C92-c 휴원·복귀) — 새 표 STU_PAUSE (student_id · from_date · to_date · reason · by_id · at · resumed_by · resumed_at).
 //   장기 휴원은 회차를 지우는 일이 아니다 — 기간 하나를 적고 시간표·§54·청구서·명단이 그 기간을 「그날만 빠짐」과 같이 읽는다
 //   (lib/sql.stuPausedOn 한 곳). 복귀는 to_date 를 복귀 전날로 당길 뿐이라 회차는 그대로 돌아오고 기간은 이력이다.
