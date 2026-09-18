@@ -84,6 +84,9 @@ export const canCeoCloseMonth = (r: Role): boolean => r === 'ceo';
  */
 export const canCeoVoidInvoice = (r: Role): boolean => r === 'ceo';
 
+/** §57 강사료 **지급 확정** — 대표 전용 (테스트 시나리오 O-148 「회계 → 강사료 → 지급 확정」). 같은 이유로 줄을 나눈다 */
+export const canCeoConfirmPayout = (r: Role): boolean => r === 'ceo';
+
 /**
  * §75 중앙 결재 흐름의 서버 projection 범위.
  *

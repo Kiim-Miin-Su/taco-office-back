@@ -16,6 +16,8 @@ import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { kstAt, kstMonthOf, sqlWordList, stuPausedOn } from '../../lib/sql';
 import { assertMonthOpen } from '../../lib/month-close';
+import { TEACHER_OF_OCC, payoutSheet } from '../../lib/payout-sheet';
+import { nowMinKst } from '../../lib/kst';
 import {
   EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED,
   INV_BOARD_COLUMNS, INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_ROW, INV_TYPE_SUB,
@@ -30,6 +32,7 @@ import type {
   TuitionDto, TuitionRowDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
   InvoiceBatchDto, InvoiceBatchResultDto, InvoiceBatchSkipDto, InvoiceVoidDto,
+  PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto,
 } from './accounting.dto';
 
 
@@ -932,6 +935,123 @@ export class AccountingService {
       canClose: canCloseMonth && close === null && today >= span.first,
       canReopen: canCloseMonth && close !== null,
     };
+  }
+
+  /* ── §57 강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43) ──────────────
+     세는 것은 `lib/payout-sheet` 한 곳 — 강사 히스토리(§57 강사 화면)가 같은 함수를 쓴다.
+     「리포트를 썼는가」만 본다(D-R7) · 미작성은 빠지고 얼마가 빠지는지 센다(D-43) · 휴강은 시수에 안 든다(H-82).
+     확정은 **그 순간의 계산을 굳힌다** — 저장된 초안이 있어도 계산이 이긴다(초안과 다르면 줄에 함께 보인다).
+     `payout_line` 은 쓰지 않는다 — N-36(빈 표 넷) 결정 전이다.                                  */
+
+  private async payoutSheetRow(
+    m: { query: EntityManager['query'] }, staff: { id: number; name: string }, month: string,
+    today: string, nowMin: number, canSeeAmounts: boolean, canConfirmPayout: boolean, monthEnded: boolean,
+  ): Promise<PayoutSheetRowDto> {
+    const sheet = await payoutSheet(m, staff.id, month, today, nowMin);
+    const [po] = (await m.query(
+      `SELECT po.net, po.confirmed_by, po.confirmed_at, cb.name AS confirmed_name
+         FROM payout po LEFT JOIN staff cb ON cb.id = po.confirmed_by
+        WHERE po.staff_id = $1 AND po.year_month = $2`,
+      [staff.id, month],
+    )) as Array<{ net: number; confirmed_by: string | null; confirmed_at: Date | null; confirmed_name: string | null }>;
+    const money = (v: number): number | null => (canSeeAmounts ? v : null);
+    const confirmed = po ? payoutConfirmed(po.confirmed_by) : false;
+    const { agg } = sheet;
+    return {
+      staffId: staff.id, staffName: staff.name, yearMonth: month,
+      writtenCount: agg.writtenCount, writtenMinutes: agg.writtenMinutes,
+      unwrittenCount: agg.unwrittenCount, unwrittenMinutes: agg.unwrittenMinutes,
+      canceledCount: agg.canceledCount, naCount: agg.naCount, noRateCount: agg.noRateCount,
+      gross: money(agg.gross), lateCut: money(agg.lateCut), incomeTax: money(sheet.incomeTax), localTax: money(sheet.localTax),
+      net: money(sheet.net), unwrittenAmount: money(agg.unwrittenAmount),
+      saved: !!po, savedDiffers: !!po && Number(po.net) !== sheet.net, savedNet: po ? money(Number(po.net)) : null,
+      confirmed,
+      confirmedAt: po?.confirmed_at ? new Date(po.confirmed_at).toISOString() : null,
+      confirmedBy: po?.confirmed_name ?? null,
+      canConfirm: canConfirmPayout && monthEnded && !confirmed && agg.noRateCount === 0 && agg.writtenCount > 0,
+    };
+  }
+
+  /** 그 달의 강사 — 활동 중인 강사 전부 + 그 달 회차를 맡은 사람(강사가 아니어도) */
+  private async payoutStaff(m: { query: EntityManager['query'] }, month: string): Promise<Array<{ id: number; name: string }>> {
+    const rows = (await m.query(
+      `SELECT DISTINCT st.id, st.name
+         FROM staff st
+        WHERE (st.role = 'teacher' AND st.active)
+           OR st.id IN (
+             SELECT ${TEACHER_OF_OCC} FROM ser_occ o JOIN ser s ON s.id = o.ser_id
+              WHERE o.on_date >= $1::date AND o.on_date < $1::date + interval '1 month'
+                AND ${TEACHER_OF_OCC} IS NOT NULL)
+        ORDER BY st.name, st.id`,
+      [`${month}-01`],
+    )) as Array<{ id: string; name: string }>;
+    return rows.map((r) => ({ id: Number(r.id), name: r.name }));
+  }
+
+  async payoutSheetOf(month: string, canSeeAmounts: boolean, canConfirmPayout: boolean): Promise<PayoutSheetDto> {
+    const today = todayKst();
+    const nowMin = nowMinKst();
+    const monthEnded = today.slice(0, 7) > month;
+    const staff = await this.payoutStaff(this.inv.manager, month);
+    const rows: PayoutSheetRowDto[] = [];
+    for (const st of staff) rows.push(await this.payoutSheetRow(this.inv.manager, st, month, today, nowMin, canSeeAmounts, canConfirmPayout, monthEnded));
+    return {
+      month, today, monthEnded, rows,
+      unwrittenCount: rows.reduce((n, r) => n + r.unwrittenCount, 0),
+      netTotal: canSeeAmounts ? rows.reduce((n, r) => n + (r.net ?? 0), 0) : null,
+      canSeeAmounts,
+    };
+  }
+
+  /**
+   * 「지급 확정」 — 대표 전용 (O-148). 그 순간의 시트를 payout 행으로 굳히고 누가·언제를 남긴다.
+   * 달이 끝나기 전에는 안 된다(끝나기 전 리포트가 더 들어온다) · 시급 없는 수업이 있으면 안 된다(0원으로 굳히면 조용히 틀린 정산) ·
+   * 이미 확정이면 409. LOG `PAYOUT confirm`. `payout_line` 은 쓰지 않는다(N-36).
+   */
+  async confirmPayout(userId: number, canConfirmPayout: boolean, month: string, dto: PayoutConfirmDto, canSeeAmounts: boolean): Promise<PayoutSheetRowDto> {
+    if (!canConfirmPayout) throw new ForbiddenException({ code: 'FORBIDDEN', message: '지급 확정은 대표만 할 수 있습니다' });
+    const today = todayKst();
+    const nowMin = nowMinKst();
+    if (!(today.slice(0, 7) > month)) {
+      throw new BadRequestException({ code: 'PAYOUT_MONTH_OPEN', message: '아직 끝나지 않은 달은 확정할 수 없습니다 — 리포트가 더 들어옵니다' });
+    }
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`payout:${dto.staffId}:${month}`]);
+      const [st] = (await m.query(`SELECT id, name FROM staff WHERE id = $1`, [dto.staffId])) as Array<{ id: string; name: string }>;
+      if (!st) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '강사를 찾을 수 없습니다' });
+      const sheet = await payoutSheet(m, dto.staffId, month, today, nowMin);
+      const [before] = (await m.query(
+        `SELECT id, hours, gross, late_rep_cut, income_tax, local_tax, net, confirmed_by FROM payout WHERE staff_id = $1 AND year_month = $2 FOR UPDATE`,
+        [dto.staffId, month],
+      )) as Array<Record<string, unknown>>;
+      if (before && payoutConfirmed(before.confirmed_by as string | null)) {
+        throw new ConflictException({ code: 'PAYOUT_ALREADY_CONFIRMED', message: '이미 확정한 정산입니다' });
+      }
+      if (sheet.agg.noRateCount > 0) {
+        throw new ConflictException({ code: 'PAYOUT_NO_RATE', message: `시급이 없는 수업이 ${sheet.agg.noRateCount}건 있습니다 — 시급을 먼저 등록하세요` });
+      }
+      if (sheet.agg.writtenCount === 0) {
+        throw new ConflictException({ code: 'PAYOUT_NOTHING', message: '리포트를 쓴 수업이 없습니다 — 확정할 것이 없습니다' });
+      }
+      const hours = (sheet.agg.writtenMinutes / 60).toFixed(2);
+      await m.query(
+        `INSERT INTO payout (staff_id, year_month, hours, gross, late_rep_cut, income_tax, local_tax, net, state, confirmed_by, confirmed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', $9, now())
+         ON CONFLICT (staff_id, year_month) DO UPDATE
+           SET hours = EXCLUDED.hours, gross = EXCLUDED.gross, late_rep_cut = EXCLUDED.late_rep_cut,
+               income_tax = EXCLUDED.income_tax, local_tax = EXCLUDED.local_tax, net = EXCLUDED.net,
+               state = 'confirmed', confirmed_by = EXCLUDED.confirmed_by, confirmed_at = now()`,
+        [dto.staffId, month, hours, sheet.agg.gross, sheet.agg.lateCut, sheet.incomeTax, sheet.localTax, sheet.net, userId],
+      );
+      const [row] = (await m.query(`SELECT id FROM payout WHERE staff_id = $1 AND year_month = $2`, [dto.staffId, month])) as Array<{ id: string }>;
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'PAYOUT',$2,'confirm',$3::jsonb,$4::jsonb)`,
+        [userId, Number(row.id),
+          before ? JSON.stringify({ hours: String(before.hours), gross: Number(before.gross), net: Number(before.net) }) : null,
+          JSON.stringify({ month, hours, gross: sheet.agg.gross, lateCut: sheet.agg.lateCut, net: sheet.net, written: sheet.agg.writtenCount, unwritten: sheet.agg.unwrittenCount, canceled: sheet.agg.canceledCount, na: sheet.agg.naCount })],
+      );
+      return this.payoutSheetRow(m, { id: Number(st.id), name: st.name }, month, today, nowMin, canSeeAmounts, canConfirmPayout, true);
+    });
   }
 
   /* ── 월 마감 (C92-d · 테스트 시나리오 C-39 · L-123 · N-140) ─────────────

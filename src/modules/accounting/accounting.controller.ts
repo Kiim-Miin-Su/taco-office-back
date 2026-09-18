@@ -11,12 +11,13 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
-import { Perm, canCeoCloseMonth, canCeoVoidInvoice, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { Perm, canCeoCloseMonth, canCeoConfirmPayout, canCeoVoidInvoice, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AccountingDto, CarryRowDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
   OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
   InvoiceBatchDto, InvoiceBatchResultDto, InvoiceVoidDto,
+  PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto, PayoutMonthParamsDto,
   type IncomeSpan,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
@@ -59,6 +60,36 @@ export class AccountingController {
   async tuition(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<TuitionDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.tuition(query.month ?? todayKst().slice(0, 7), canSee, isRole(user.role) && canCeoCloseMonth(user.role));
+  }
+
+  @Get('payouts')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '강사료 시트 — 강사별 한 달 (§57 · 테스트 시나리오 H-82 · D-43)',
+    description: '세는 것은 lib/payout-sheet 한 곳(강사 히스토리와 같다). 리포트를 쓴 수업만 시수·금액에 들고, 미작성은 빠지며 얼마가 빠지는지 센다. '
+      + '휴강은 시수에 잡히지 않는다. 저장된 초안이 계산과 다르면 줄에 함께 보인다.',
+  })
+  @ApiOkResponse({ type: PayoutSheetDto })
+  async payoutSheet(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<PayoutSheetDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    const month = query.month ?? todayKst().slice(0, 7);
+    return this.svc.payoutSheetOf(month, canSee, isRole(user.role) && canCeoConfirmPayout(user.role));
+  }
+
+  @Post('payouts/:month/confirm')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '지급 확정 — 대표 전용 (O-148). 그 순간의 시트를 payout 행으로 굳힌다',
+    description: '달이 끝나기 전에는 400 PAYOUT_MONTH_OPEN · 시급 없는 수업이 있으면 409 PAYOUT_NO_RATE · 쓴 수업 0 이면 409 PAYOUT_NOTHING · '
+      + '이미 확정이면 409 PAYOUT_ALREADY_CONFIRMED. payout_line 은 쓰지 않는다(N-36 결정 전).',
+  })
+  @ApiCreatedResponse({ type: PayoutSheetRowDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: '대표 아님' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'PAYOUT_MONTH_OPEN' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'PAYOUT_ALREADY_CONFIRMED | PAYOUT_NO_RATE | PAYOUT_NOTHING' })
+  confirmPayout(@CurrentUser() user: RequestUser, @Param() params: PayoutMonthParamsDto, @Body() dto: PayoutConfirmDto): Promise<PayoutSheetRowDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.confirmPayout(user.id, isRole(user.role) && canCeoConfirmPayout(user.role), params.month, dto, canSee);
   }
 
   @Post('tuition/close')

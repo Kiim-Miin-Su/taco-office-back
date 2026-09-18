@@ -3721,6 +3721,204 @@
         ]
       }
     },
+    "/accounting/payouts": {
+      "get": {
+        "description": "세는 것은 lib/payout-sheet 한 곳(강사 히스토리와 같다). 리포트를 쓴 수업만 시수·금액에 들고, 미작성은 빠지며 얼마가 빠지는지 센다. 휴강은 시수에 잡히지 않는다. 저장된 초안이 계산과 다르면 줄에 함께 보인다.",
+        "operationId": "AccountingController_payoutSheet",
+        "parameters": [
+          {
+            "name": "month",
+            "required": false,
+            "in": "query",
+            "description": "YYYY-MM — 없으면 이번 달(KST)",
+            "schema": {
+              "example": "2026-08",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutSheetDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사료 시트 — 강사별 한 달 (§57 · 테스트 시나리오 H-82 · D-43)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/payouts/{month}/confirm": {
+      "post": {
+        "description": "달이 끝나기 전에는 400 PAYOUT_MONTH_OPEN · 시급 없는 수업이 있으면 409 PAYOUT_NO_RATE · 쓴 수업 0 이면 409 PAYOUT_NOTHING · 이미 확정이면 409 PAYOUT_ALREADY_CONFIRMED. payout_line 은 쓰지 않는다(N-36 결정 전).",
+        "operationId": "AccountingController_confirmPayout",
+        "parameters": [
+          {
+            "name": "month",
+            "required": true,
+            "in": "path",
+            "description": "YYYY-MM",
+            "schema": {
+              "example": "2026-08",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutConfirmDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutSheetRowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "PAYOUT_MONTH_OPEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "대표 아님",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PAYOUT_ALREADY_CONFIRMED | PAYOUT_NO_RATE | PAYOUT_NOTHING",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "지급 확정 — 대표 전용 (O-148). 그 순간의 시트를 payout 행으로 굳힌다",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/tuition/close": {
       "post": {
         "description": "마감된 달은 회차·휴강·출결·청구서 발행·이월·휴원 쓰기가 409 MONTH_CLOSED 로 막힌다 (L-123). 판정은 lib/month-close 한 곳. 해제 전까지는 아무도 못 고친다 — 화면이 단추를 숨기는 것과 별개로 서버가 막는다.",
@@ -16398,6 +16596,175 @@
           "canSeeAmounts",
           "canClose",
           "canReopen"
+        ]
+      },
+      "PayoutSheetRowDto": {
+        "type": "object",
+        "properties": {
+          "staffId": {
+            "type": "number"
+          },
+          "staffName": {
+            "type": "string"
+          },
+          "yearMonth": {
+            "type": "string",
+            "description": "YYYY-MM"
+          },
+          "writtenCount": {
+            "type": "number",
+            "description": "리포트 쓴 수업 수 — 이것만 시수·금액에 든다 (D-R7)"
+          },
+          "writtenMinutes": {
+            "type": "number"
+          },
+          "unwrittenCount": {
+            "type": "number",
+            "description": "끝났는데 리포트를 안 쓴 수업 — 강사료에서 빠진다 (D-43)"
+          },
+          "unwrittenMinutes": {
+            "type": "number"
+          },
+          "canceledCount": {
+            "type": "number",
+            "description": "휴강 — 시수에 잡히지 않는다 (H-82)"
+          },
+          "naCount": {
+            "type": "number",
+            "description": "리포트 대상이 아닌 종류(자습·회의 …)의 회차 — 정산에 들지 않는다"
+          },
+          "noRateCount": {
+            "type": "number",
+            "description": "시급이 없어 못 센 수업 — 0 이 아니면 확정할 수 없다"
+          },
+          "gross": {
+            "type": "number",
+            "nullable": true,
+            "description": "지급 총액 — 금액 권한 없으면 null"
+          },
+          "lateCut": {
+            "type": "number",
+            "nullable": true,
+            "description": "지각 차감 (D-R32)"
+          },
+          "incomeTax": {
+            "type": "number",
+            "nullable": true
+          },
+          "localTax": {
+            "type": "number",
+            "nullable": true
+          },
+          "net": {
+            "type": "number",
+            "nullable": true,
+            "description": "실지급"
+          },
+          "unwrittenAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "미작성으로 빠진 돈 — 「이만큼 안 나간다」"
+          },
+          "saved": {
+            "type": "boolean",
+            "description": "저장된 정산 행이 있는가 (payout)"
+          },
+          "savedDiffers": {
+            "type": "boolean",
+            "description": "저장값이 지금 계산과 다른가 — 확정은 지금 계산을 굳힌다"
+          },
+          "savedNet": {
+            "type": "number",
+            "nullable": true,
+            "description": "저장된 실지급 — 다를 때 나란히 보인다"
+          },
+          "confirmed": {
+            "type": "boolean",
+            "description": "확정됐는가 — confirmed_by 로 본다 (N-27)"
+          },
+          "confirmedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "confirmedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "canConfirm": {
+            "type": "boolean",
+            "description": "「지급 확정」을 누를 수 있는가 — 대표 · 달이 끝남 · 미확정 · 시급 없는 수업 0 · 쓴 수업 1 이상 (D-R39)"
+          }
+        },
+        "required": [
+          "staffId",
+          "staffName",
+          "yearMonth",
+          "writtenCount",
+          "writtenMinutes",
+          "unwrittenCount",
+          "unwrittenMinutes",
+          "canceledCount",
+          "naCount",
+          "noRateCount",
+          "saved",
+          "savedDiffers",
+          "confirmed",
+          "canConfirm"
+        ]
+      },
+      "PayoutSheetDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "description": "YYYY-MM"
+          },
+          "today": {
+            "type": "string"
+          },
+          "monthEnded": {
+            "type": "boolean",
+            "description": "달이 끝났는가 — 끝나기 전에는 확정할 수 없다 (O-148 「전월 종료」)"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutSheetRowDto"
+            }
+          },
+          "unwrittenCount": {
+            "type": "number",
+            "description": "전체 미작성 수업 수 — 「미작성 N건은 강사료에서 빠집니다」"
+          },
+          "netTotal": {
+            "type": "number",
+            "nullable": true,
+            "description": "실지급 합 — 줄의 합. 화면이 더하지 않는다"
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "금액을 볼 수 있는가 (D-R39)"
+          }
+        },
+        "required": [
+          "month",
+          "today",
+          "monthEnded",
+          "rows",
+          "unwrittenCount",
+          "canSeeAmounts"
+        ]
+      },
+      "PayoutConfirmDto": {
+        "type": "object",
+        "properties": {
+          "staffId": {
+            "type": "number",
+            "description": "어느 강사"
+          }
+        },
+        "required": [
+          "staffId"
         ]
       },
       "MonthCloseWriteDto": {

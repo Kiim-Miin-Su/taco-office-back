@@ -9,15 +9,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ser } from '../../entities';
 import {
-  ATTENDANCE_CANCEL_REASON_LABEL, REPORT_UNWRITTEN_CANDIDATE_DB, REPORT_WRITTEN_DB,
-  latePenalty, minutesSinceEnd, payoutConfirmed, tierFor, withholding, type AttendanceCancelReason, type SessionLike,
+  ATTENDANCE_CANCEL_REASON_LABEL, REPORT_UNWRITTEN_CANDIDATE_DB, payoutConfirmed, type AttendanceCancelReason,
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
+import { payoutSheet } from '../../lib/payout-sheet';
 import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
 import type {
   TeacherDiagCreateDto, TeacherGuideDiagDto, TeacherGuideStudentDto, TeacherGuidesDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
-  TeacherHistoryDto, TeacherHistoryLessonDto, TeacherHomeDto, TeacherLessonDto,
+  TeacherHistoryDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
 } from './teacher.dto';
@@ -292,89 +292,11 @@ export class TeacherService {
     const today = todayKst();
     const nowMin = nowMinKst();
     const ym = month ?? today.slice(0, 7);
-    const first = `${ym}-01`;
 
-    const rows = await this.q(
-      `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, o.canceled,
-              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
-              (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
-              s.kind_key, s.sub_key, s.mode, s.title,
-              COALESCE(r.state::text,'none') AS rep_state,
-              to_char(r.submitted_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI') AS submitted_at,
-              (SELECT string_agg(st.name, ', ' ORDER BY st.name)
-                 FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
-                WHERE ss.ser_id = o.ser_id) AS students,
-              (SELECT COUNT(*)::int FROM ser_stu ss WHERE ss.ser_id = o.ser_id) AS student_count,
-              w.rate AS wage_rate
-         FROM ser_occ o
-         JOIN ser s      ON s.id = o.ser_id
-         LEFT JOIN rep r ON r.ser_id = o.ser_id AND r.on_date = o.on_date
-         LEFT JOIN LATERAL (
-                SELECT rate FROM wage
-                 WHERE staff_id = $1 AND from_date <= o.on_date
-                 ORDER BY from_date DESC LIMIT 1
-              ) w ON true
-        WHERE ${TEACHER_OF} = $1
-          AND o.on_date >= $2::date
-          AND o.on_date < $2::date + interval '1 month'
-        ORDER BY o.on_date DESC, start_min`,
-      [teacherId, first],
-    );
-
-    const written = new Set(REPORT_WRITTEN_DB as readonly string[]);
-    /** 시급×분 — 항상 정수 절사. 60분 격자 밖 길이도 원 단위가 흔들리지 않게 한 번만 버린다. */
-    const payOf = (rate: number, min: number): number => Math.floor((rate * min) / 60);
-
-    const lessons: TeacherHistoryLessonDto[] = [];
-    const agg = {
-      doneCount: 0, doneMinutes: 0, writtenCount: 0, writtenMinutes: 0,
-      unwrittenCount: 0, unwrittenMinutes: 0, gross: 0, lateCut: 0,
-      unwrittenAmount: 0, remainingCount: 0, remainingMinutes: 0, remainingAmount: 0,
-    };
-
-    for (const r of rows) {
-      const onDate = String(r.on_date);
-      const startMin = Number(r.start_min);
-      const durMin = Number(r.dur_min);
-      const canceled = Boolean(r.canceled);
-      const repState = String(r.rep_state);
-      const submittedAt = (r.submitted_at as string) ?? null;
-      const rate = r.wage_rate === null || r.wage_rate === undefined ? null : Number(r.wage_rate);
-
-      const s: SessionLike = { date: onDate, startMin, durationMin: durMin, canceled, submittedAt };
-      const ended = minutesSinceEnd(s, today, nowMin) > 0;
-      const isWritten = !canceled && written.has(repState);
-      const isUnwritten = !canceled && ended && !isWritten;
-
-      let pay: number | null = null;
-      let lateCut: number | null = null;
-      let penaltyIfNow: number | null = null;
-      if (isWritten && rate !== null) {
-        pay = payOf(rate, durMin);
-        lateCut = latePenalty(s);
-        agg.writtenCount += 1; agg.writtenMinutes += durMin;
-        agg.gross += pay; agg.lateCut += lateCut;
-      } else if (isUnwritten) {
-        const after = minutesSinceEnd(s, today, nowMin);
-        penaltyIfNow = tierFor(after).amount;
-        agg.unwrittenCount += 1; agg.unwrittenMinutes += durMin;
-        if (rate !== null) agg.unwrittenAmount += payOf(rate, durMin);
-      } else if (!canceled && !ended) {
-        agg.remainingCount += 1; agg.remainingMinutes += durMin;
-        if (rate !== null) agg.remainingAmount += payOf(rate, durMin);
-      }
-      if (!canceled && ended) { agg.doneCount += 1; agg.doneMinutes += durMin; }
-
-      lessons.push({
-        serId: Number(r.ser_id), onDate, startMin, durMin,
-        kindKey: String(r.kind_key), subKey: (r.sub_key as string) ?? null,
-        mode: r.mode === 'online' ? 'online' : 'offline',
-        title: (r.title as string) ?? null,
-        students: (r.students as string) ?? null,
-        studentCount: Number(r.student_count ?? 0),
-        repState, canceled, submittedAt, pay, lateCut, penaltyIfNow,
-      });
-    }
+    // 세는 일은 `lib/payout-sheet` 한 곳이다 — 대표의 §57 지급 확정(C94-b)이 같은 함수를 부른다.
+    // 여기서 따로 세면 H-82 「미작성분이 포함되면 실패」가 한쪽에서만 지켜진다.
+    const sheet = await payoutSheet({ query: (sql, p) => this.q(sql, p) }, teacherId, ym, today, nowMin);
+    const { lessons, agg } = sheet;
 
     const [me] = await this.q(
       `SELECT w.rate AS wage_rate, to_char(w.from_date,'YYYY-MM-DD') AS wage_from
@@ -396,8 +318,6 @@ export class TeacherService {
       [teacherId, ym],
     );
 
-    const base = agg.gross - agg.lateCut;
-    const tax = withholding(base);
     const settlement = po
       ? {
           yearMonth: ym, confirmed: payoutConfirmed(po.confirmed_by as string | null), saved: true,
@@ -411,7 +331,7 @@ export class TeacherService {
           yearMonth: ym, confirmed: false, saved: false,
           writtenMinutes: agg.writtenMinutes,
           gross: agg.gross, lateCut: agg.lateCut,
-          incomeTax: tax.income, localTax: tax.local, net: base - tax.total,
+          incomeTax: sheet.incomeTax, localTax: sheet.localTax, net: sheet.net,
           unwrittenCount: agg.unwrittenCount, unwrittenMinutes: agg.unwrittenMinutes, unwrittenAmount: agg.unwrittenAmount,
           remainingCount: agg.remainingCount, remainingMinutes: agg.remainingMinutes, remainingAmount: agg.remainingAmount,
         };

@@ -497,6 +497,56 @@ export class InvoiceVoidDto {
   @IsString() @MinLength(1) @MaxLength(200) reason!: string;
 }
 
+/* ── §57 강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43) ──────────────── */
+
+/** `GET /accounting/payouts?month=` 의 한 줄 — 강사 한 사람 한 달. 세는 것은 `lib/payout-sheet` 한 곳(강사 히스토리와 같다) */
+export class PayoutSheetRowDto {
+  @ApiProperty() staffId!: number;
+  @ApiProperty() staffName!: string;
+  @ApiProperty({ description: 'YYYY-MM' }) yearMonth!: string;
+  @ApiProperty({ description: '리포트 쓴 수업 수 — 이것만 시수·금액에 든다 (D-R7)' }) writtenCount!: number;
+  @ApiProperty() writtenMinutes!: number;
+  @ApiProperty({ description: '끝났는데 리포트를 안 쓴 수업 — 강사료에서 빠진다 (D-43)' }) unwrittenCount!: number;
+  @ApiProperty() unwrittenMinutes!: number;
+  @ApiProperty({ description: '휴강 — 시수에 잡히지 않는다 (H-82)' }) canceledCount!: number;
+  @ApiProperty({ description: '리포트 대상이 아닌 종류(자습·회의 …)의 회차 — 정산에 들지 않는다' }) naCount!: number;
+  @ApiProperty({ description: '시급이 없어 못 센 수업 — 0 이 아니면 확정할 수 없다' }) noRateCount!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '지급 총액 — 금액 권한 없으면 null' }) gross?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '지각 차감 (D-R32)' }) lateCut?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true }) incomeTax?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true }) localTax?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '실지급' }) net?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '미작성으로 빠진 돈 — 「이만큼 안 나간다」' }) unwrittenAmount?: number | null;
+  @ApiProperty({ description: '저장된 정산 행이 있는가 (payout)' }) saved!: boolean;
+  @ApiProperty({ description: '저장값이 지금 계산과 다른가 — 확정은 지금 계산을 굳힌다' }) savedDiffers!: boolean;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '저장된 실지급 — 다를 때 나란히 보인다' }) savedNet?: number | null;
+  @ApiProperty({ description: '확정됐는가 — confirmed_by 로 본다 (N-27)' }) confirmed!: boolean;
+  @ApiPropertyOptional({ type: String, nullable: true }) confirmedAt?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) confirmedBy?: string | null;
+  @ApiProperty({ description: '「지급 확정」을 누를 수 있는가 — 대표 · 달이 끝남 · 미확정 · 시급 없는 수업 0 · 쓴 수업 1 이상 (D-R39)' }) canConfirm!: boolean;
+}
+
+export class PayoutSheetDto {
+  @ApiProperty({ description: 'YYYY-MM' }) month!: string;
+  @ApiProperty() today!: string;
+  @ApiProperty({ description: '달이 끝났는가 — 끝나기 전에는 확정할 수 없다 (O-148 「전월 종료」)' }) monthEnded!: boolean;
+  @ApiProperty({ type: [PayoutSheetRowDto] }) rows!: PayoutSheetRowDto[];
+  @ApiProperty({ description: '전체 미작성 수업 수 — 「미작성 N건은 강사료에서 빠집니다」' }) unwrittenCount!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '실지급 합 — 줄의 합. 화면이 더하지 않는다' }) netTotal?: number | null;
+  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+}
+
+/** `POST /accounting/payouts/{month}/confirm` — 대표 전용 */
+export class PayoutConfirmDto {
+  @ApiProperty({ description: '어느 강사' }) @IsInt() @Min(1) staffId!: number;
+}
+
+export class PayoutMonthParamsDto {
+  @ApiProperty({ description: 'YYYY-MM', example: '2026-08' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month!: string;
+}
+
 /** `POST /accounting/tuition/close` — 대표 전용 */
 export class MonthCloseWriteDto {
   @ApiProperty({ description: '마감할 달 — YYYY-MM', example: '2026-08' })
