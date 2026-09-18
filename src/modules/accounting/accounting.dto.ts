@@ -60,6 +60,11 @@ export class InvoiceDto {
   @ApiProperty({ type: Number, nullable: true, description: '청구액 − 확정 누계. 다음 입금의 placeholder 다 (A-D2)' }) remaining!: number | null;
   @ApiProperty({ description: '예정일이 지났는데 안 들어온 날 수. 0이면 연체 아님' }) overdueDays!: number;
   @ApiProperty({ type: [InvoiceLineDto] }) lines!: InvoiceLineDto[];
+  /* C94-a — 전달 · 취소 (테스트 시나리오 H-76 · N-139). 단추가 서는지는 서버가 정한다 (D-R39) */
+  @ApiPropertyOptional({ type: String, nullable: true, description: '학부모께 전달한 시각 (ISO) — 전달 전이면 null' }) sentAt?: string | null;
+  @ApiProperty({ description: '「전달」을 누를 수 있는가 — 초안·미전달만' }) canDeliver!: boolean;
+  @ApiProperty({ description: '「취소」를 누를 수 있는가 — 대표 · 취소 전 · 입금 0' }) canVoid!: boolean;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '취소 사유 — 취소된 청구서에만 (N-139 「이력에 남는다」)' }) voidReason?: string | null;
 }
 
 /**
@@ -460,6 +465,36 @@ export class MonthCloseDto {
   @ApiPropertyOptional({ type: String, nullable: true, description: '해제 시각 (ISO) — 열려 있는 마감이면 null' }) reopenedAt?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) reopenedBy?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true, description: '해제 사유 — 흔적 없이 고치지 않는다 (N-140)' }) reopenReason?: string | null;
+}
+
+/* ── 청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · O-147 · H-76 · N-139) ──────── */
+
+/** `POST /accounting/invoices/batch` — 그 달 수업이 있는 학생 전부에게 한 번에 */
+export class InvoiceBatchDto {
+  @ApiProperty({ description: '어느 달 — YYYY-MM', example: '2026-09' })
+  @IsString() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  yearMonth!: string;
+}
+
+export class InvoiceBatchSkipDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ description: 'INV_DUPLICATE | INV_NO_LESSONS | INV_NO_RATE | INV_CARRY_EXCEEDS — 낱장 발행과 같은 코드' }) code!: string;
+  @ApiProperty() message!: string;
+}
+
+export class InvoiceBatchResultDto {
+  @ApiProperty() yearMonth!: string;
+  @ApiProperty({ description: '수업이 있는 학생 수 — 발행 + 건너뜀' }) candidates!: number;
+  @ApiProperty({ type: [InvoiceDto], description: '이번에 발행한 청구서 — 줄까지' }) issued!: InvoiceDto[];
+  @ApiProperty({ type: [InvoiceBatchSkipDto], description: '건너뛴 학생과 이유 — 이미 있음 · 단가 없음 · 이월 초과' }) skipped!: InvoiceBatchSkipDto[];
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '발행한 금액 합 — 금액 권한 없으면 null' }) issuedAmount?: number | null;
+}
+
+/** `POST /accounting/invoices/{id}/void` — 대표 전용 · 사유 필수 */
+export class InvoiceVoidDto {
+  @ApiProperty({ description: '취소 사유 — 잘못 낸 이유', minLength: 1, maxLength: 200 })
+  @IsString() @MinLength(1) @MaxLength(200) reason!: string;
 }
 
 /** `POST /accounting/tuition/close` — 대표 전용 */

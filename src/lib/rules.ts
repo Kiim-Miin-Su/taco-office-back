@@ -587,6 +587,9 @@ export const INV_BILLABLE = ['sent', 'unpaid', 'partial', 'paid'] as const;
 /** 아직 안 끝난 청구서 — 「기한 지남」과 대표 보고 회계 배지가 함께 보는 집합 */
 export const INV_OPEN = ['sent', 'unpaid', 'partial'] as const;
 
+/** 「전달」할 수 있는 청구서 — 아직 학부모께 안 간 것 (C94-a · H-76). `unpaid` 는 이 저장소에서 「발행했지만 아직 안 보냈다」다 (C69) */
+export const INV_DELIVERABLE = ['draft', 'unpaid'] as const;
+
 /** 서버 문구의 금액 표기 — 대표 지시(ACCOUNTING §1): 금액은 **언제나 천 단위 콤마**다. 한 벌만 둔다 */
 export const won = (n: number): string => `${n.toLocaleString('ko-KR')}원`;
 

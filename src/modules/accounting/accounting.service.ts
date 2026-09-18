@@ -5,7 +5,7 @@
  */
 
 import {
-  BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -13,7 +13,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { Inv } from '../../entities';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
-import { INV_BILLABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
+import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { kstAt, kstMonthOf, sqlWordList, stuPausedOn } from '../../lib/sql';
 import { assertMonthOpen } from '../../lib/month-close';
 import {
@@ -29,6 +29,7 @@ import type {
   TuitionCarryDto,
   TuitionDto, TuitionRowDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
+  InvoiceBatchDto, InvoiceBatchResultDto, InvoiceBatchSkipDto, InvoiceVoidDto,
 } from './accounting.dto';
 
 
@@ -95,6 +96,7 @@ const INV_SELECT = `
          to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
          to_char(i.due_on,'YYYY-MM-DD') AS due_on,
          to_char(i.paid_at,'YYYY-MM-DD') AS paid_at,
+         i.sent_at, i.detail->'void'->>'reason' AS void_reason,
          COALESCE((SELECT json_agg(json_build_object(
             'subKey', l.sub_key, 'label', l.label, 'count', l.count,
             'unitPrice', l.unit_price, 'amount', l.amount) ORDER BY l.seq)
@@ -165,11 +167,17 @@ export class AccountingService {
    *   서버가 아예 null 로 내려보낸다. 화면에서만 감추면 네트워크 탭에 그대로 보인다.
    */
   /** 목록과 쓰기 응답이 같은 모양을 쓰도록 한 행의 변환도 한 곳에 둔다 */
-  private invoiceRow(r: Record<string, unknown>, canSeeAmounts: boolean, today: string): InvoiceDto {
+  private invoiceRow(r: Record<string, unknown>, canSeeAmounts: boolean, today: string, canVoidInvoice = false): InvoiceDto {
     const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
     const due = r.due_on as string | null;
     const unpaid = r.state === 'unpaid' || r.state === 'partial' || r.state === 'sent';
+    const state = String(r.state);
     return {
+      // C94-a — 단추가 서는지는 여기서 정한다 (D-R39). 전달은 초안·미전달만, 취소는 대표 · 취소 전 · 입금 0
+      sentAt: r.sent_at ? new Date(r.sent_at as string).toISOString() : null,
+      canDeliver: (INV_DELIVERABLE as readonly string[]).includes(state),
+      canVoid: canVoidInvoice && state !== 'void' && Number(r.paid_amount) === 0,
+      voidReason: (r.void_reason as string | null) ?? null,
       id: Number(r.id), studentId: Number(r.student_id), studentName: String(r.student_name),
       grade: (r.grade as string | null) ?? null,
       yearMonth: String(r.year_month), title: String(r.title),
@@ -187,7 +195,7 @@ export class AccountingService {
     };
   }
 
-  async all(canSeeAmounts: boolean): Promise<AccountingDto> {
+  async all(canSeeAmounts: boolean, canVoidInvoice = false): Promise<AccountingDto> {
     // PAY의 NULL은 아직 확인하지 않은 값이다. 권한이 있어도 0원으로 채우지 않는다.
     const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
     const today = todayKst();
@@ -196,7 +204,7 @@ export class AccountingService {
       `${INV_SELECT} ORDER BY i.year_month DESC, i.id`,
     )) as Array<Record<string, unknown>>;
 
-    const invoices: InvoiceDto[] = invRows.map((r) => this.invoiceRow(r, canSeeAmounts, today));
+    const invoices: InvoiceDto[] = invRows.map((r) => this.invoiceRow(r, canSeeAmounts, today, canVoidInvoice));
 
     /*
      * §55 의 **분류**는 저장된 칸이 아니라 **읽어서 만드는 값**이다 (대표 결정 N-37 ③ —
@@ -354,15 +362,123 @@ export class AccountingService {
    * 한 학생의 한 달에 **같은 종류를 두 번** 내지 않는다. 두 장이 되면 「보낸 청구서」 합계가
    * 두 번 더해지고 §52 머리의 등식이 깨진다.
    */
-  async issueInvoice(userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
+  async issueInvoice(userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceDto> {
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      // 마감 달에는 새 청구서를 내지 않는다 (C92-d · L-123) — 마감을 풀고 낸다
+      await assertMonthOpen(m, dto.yearMonth);
+      return this.issueOne(m, userId, dto, canSeeAmounts, canVoidInvoice);
+    });
+  }
+
+  /**
+   * §53 「청구서 일괄 발행」 — 그 달 수업이 있는 학생 전부 (C94-a · 테스트 시나리오 H-75 · O-147).
+   *
+   * **낱장 발행과 같은 함수**(`issueOne`)를 학생마다 부른다 — 이월(음수 줄)·단가 구간·「그날만 빠짐」·휴원이
+   * 그대로 반영된다(「이월이 반영 안 되거나 금액이 틀리면 실패」). 한 학생이 막혀도(단가 없음 · 이미 있음 ·
+   * 이월 초과) 나머지는 낸다 — SAVEPOINT 로 그 학생만 되돌리고 이유를 돌려준다. **건너뛴 학생을 숨기지 않는다.**
+   * 마감 달은 통째로 409 — 마감을 풀고 낸다.
+   */
+  async issueBatch(userId: number, dto: InvoiceBatchDto, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceBatchResultDto> {
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      await assertMonthOpen(m, dto.yearMonth);
+      // §54 와 같은 집합 — 그 달에 회차가 하나라도 있는 학생
+      const students = (await m.query(
+        `SELECT DISTINCT st.id, st.name
+           FROM ser_occ o
+           JOIN ser_stu ss ON ss.ser_id = o.ser_id
+           JOIN stu st     ON st.id = ss.student_id
+          WHERE ${kstMonthOf('lower(o.span)')} = $1
+          ORDER BY st.name, st.id`,
+        [dto.yearMonth],
+      )) as Array<{ id: string; name: string }>;
+      const issued: InvoiceDto[] = [];
+      const skipped: InvoiceBatchSkipDto[] = [];
+      for (const [i, st] of students.entries()) {
+        const sp = `inv_batch_${i}`;
+        await m.query(`SAVEPOINT ${sp}`);
+        try {
+          issued.push(await this.issueOne(m, userId, { studentId: Number(st.id), yearMonth: dto.yearMonth, invType: 'tuition' }, canSeeAmounts, canVoidInvoice));
+          await m.query(`RELEASE SAVEPOINT ${sp}`);
+        } catch (e) {
+          await m.query(`ROLLBACK TO SAVEPOINT ${sp}`);
+          if (e instanceof HttpException) {
+            const body = e.getResponse() as { code?: string; message?: string };
+            skipped.push({ studentId: Number(st.id), studentName: st.name, code: body.code ?? 'ERROR', message: body.message ?? e.message });
+          } else {
+            throw e;
+          }
+        }
+      }
+      return {
+        yearMonth: dto.yearMonth, candidates: students.length, issued, skipped,
+        issuedAmount: canSeeAmounts ? issued.reduce((n, inv) => n + (inv.amount ?? 0), 0) : null,
+      };
+    });
+  }
+
+  /** 「전달」 — 학부모께 보냈다 (H-76). 초안·미전달만 된다. 입금이 시작된 청구서는 이미 보낸 것이다 */
+  async deliverInvoice(userId: number, id: number, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceDto> {
     const today = todayKst();
     return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [inv] = (await m.query(`SELECT id, state::text AS state, year_month FROM inv WHERE id = $1 FOR UPDATE`, [id])) as Array<{ id: string; state: string; year_month: string }>;
+      if (!inv) throw new NotFoundException({ code: 'INV_NOT_FOUND', message: '청구서를 찾을 수 없습니다' });
+      if (!(INV_DELIVERABLE as readonly string[]).includes(inv.state)) {
+        throw new ConflictException({ code: 'INV_NOT_DELIVERABLE', message: `이미 ${INV_STATE_LABEL[inv.state] ?? inv.state} 상태입니다 — 초안만 전달할 수 있습니다` });
+      }
+      await m.query(`UPDATE inv SET state = 'sent', sent_at = now() WHERE id = $1`, [id]);
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'INV',$2,'deliver',$3::jsonb,$4::jsonb)`,
+        [userId, id, JSON.stringify({ state: inv.state }), JSON.stringify({ state: 'sent' })],
+      );
+      const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [id])) as Array<Record<string, unknown>>;
+      return this.invoiceRow(row, canSeeAmounts, today, canVoidInvoice);
+    });
+  }
+
+  /**
+   * 「취소」 — 잘못 낸 청구서 (N-139 「대표 권한으로 수정 또는 삭제 · 직원이 지울 수 있으면 실패 · 이력에 남는다 · 미수가 다시 계산된다」).
+   * 지우지 않는다 — `state = void` 로 접고 사유를 `detail.void` 에 남긴다(줄·발행일은 그대로). 입금이 있으면 먼저 입금을 지운다.
+   * 미수 집계(`INV_BILLABLE`·`INV_OPEN`)는 void 를 이미 빼므로 다시 계산할 것이 없다.
+   */
+  async voidInvoice(userId: number, canVoidInvoice: boolean, id: number, dto: InvoiceVoidDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
+    if (!canVoidInvoice) throw new ForbiddenException({ code: 'FORBIDDEN', message: '청구서 취소는 대표만 할 수 있습니다' });
+    const reason = dto.reason.trim();
+    if (!reason) throw new BadRequestException({ code: 'REASON_REQUIRED', message: '취소 사유를 적어 주세요' });
+    const today = todayKst();
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [inv] = (await m.query(
+        `SELECT id, state::text AS state, year_month, amount, paid_amount FROM inv WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; state: string; year_month: string; amount: number; paid_amount: number }>;
+      if (!inv) throw new NotFoundException({ code: 'INV_NOT_FOUND', message: '청구서를 찾을 수 없습니다' });
+      if (inv.state === 'void') throw new ConflictException({ code: 'INV_ALREADY_VOID', message: '이미 취소된 청구서입니다' });
+      await assertMonthOpen(m, inv.year_month);
+      const [{ n }] = (await m.query(`SELECT count(*)::int AS n FROM pay WHERE inv_id = $1`, [id])) as Array<{ n: number }>;
+      if (n > 0 || Number(inv.paid_amount) > 0) {
+        throw new ConflictException({ code: 'INV_HAS_PAYMENTS', message: '입금이 붙은 청구서는 취소할 수 없습니다 — 입금을 먼저 지우세요' });
+      }
+      await m.query(
+        `UPDATE inv SET state = 'void',
+                        detail = COALESCE(detail, '{}'::jsonb) || jsonb_build_object('void', jsonb_build_object('reason', $2::text, 'by', $3::bigint, 'at', now()))
+          WHERE id = $1`,
+        [id, reason, userId],
+      );
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'INV',$2,'void',$3::jsonb,$4::jsonb)`,
+        [userId, id, JSON.stringify({ state: inv.state, amount: Number(inv.amount) }), JSON.stringify({ state: 'void', reason })],
+      );
+      const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [id])) as Array<Record<string, unknown>>;
+      return this.invoiceRow(row, canSeeAmounts, today, canVoidInvoice);
+    });
+  }
+
+  /** 청구서 한 장 — 낱장 발행과 일괄 발행이 같은 줄·같은 거절을 쓴다 */
+  private async issueOne(m: EntityManager, userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceDto> {
+    const today = todayKst();
+    {
       const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1`, [dto.studentId])) as Array<{
         id: string; name: string;
       }>;
       if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
-      // 마감 달에는 새 청구서를 내지 않는다 (C92-d · L-123) — 마감을 풀고 낸다
-      await assertMonthOpen(m, dto.yearMonth);
 
       const dup = (await m.query(
         `SELECT id FROM inv
@@ -466,8 +582,8 @@ export class AccountingService {
       }
 
       const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [invId])) as Array<Record<string, unknown>>;
-      return this.invoiceRow(row, canSeeAmounts, today);
-    });
+      return this.invoiceRow(row, canSeeAmounts, today, canVoidInvoice);
+    }
   }
 
   async addPayment(userId: number, dto: PaymentCreateDto, canSeeAmounts: boolean): Promise<InvoiceDto> {

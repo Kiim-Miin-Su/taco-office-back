@@ -4253,6 +4253,292 @@
         ]
       }
     },
+    "/accounting/invoices/batch": {
+      "post": {
+        "description": "낱장 발행과 같은 계산이다 — 이월 음수 줄·단가 구간·그날만 빠짐·휴원이 그대로 든다. 막힌 학생(이미 있음 · 단가 없음 · 이월 초과)은 건너뛰고 이유를 돌려준다. 마감 달은 통째로 409 MONTH_CLOSED.",
+        "operationId": "AccountingController_issueBatch",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceBatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceBatchResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MONTH_CLOSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구서 일괄 발행 — 그 달 수업이 있는 학생 전부 (§54 「청구서 발행」 · 테스트 시나리오 H-75 · O-147)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/invoices/{id}/deliver": {
+      "post": {
+        "operationId": "AccountingController_deliverInvoice",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "INV_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INV_NOT_DELIVERABLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구서 전달 — 학부모께 보냈다 (§53 ③ · H-76). 초안·미전달만",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/invoices/{id}/void": {
+      "post": {
+        "description": "지우지 않고 void 로 접는다 — 줄·발행일·사유가 남고 미수 집계에서 빠진다. 입금이 붙어 있으면 입금을 먼저 지운다. 마감 달은 409.",
+        "operationId": "AccountingController_voidInvoice",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceVoidDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "대표 아님",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INV_ALREADY_VOID | INV_HAS_PAYMENTS | MONTH_CLOSED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구서 취소 — 대표 전용 · 사유 필수 (N-139)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/payments": {
       "post": {
         "description": "누계·상태 전이(partial/paid)·초과 거절은 서버 한 곳에서 한다. 화면은 잔여를 placeholder 로만 쓴다.",
@@ -15526,6 +15812,24 @@
             "items": {
               "$ref": "#/components/schemas/InvoiceLineDto"
             }
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "학부모께 전달한 시각 (ISO) — 전달 전이면 null"
+          },
+          "canDeliver": {
+            "type": "boolean",
+            "description": "「전달」을 누를 수 있는가 — 초안·미전달만"
+          },
+          "canVoid": {
+            "type": "boolean",
+            "description": "「취소」를 누를 수 있는가 — 대표 · 취소 전 · 입금 0"
+          },
+          "voidReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "취소 사유 — 취소된 청구서에만 (N-139 「이력에 남는다」)"
           }
         },
         "required": [
@@ -15540,7 +15844,9 @@
           "stateLabel",
           "remaining",
           "overdueDays",
-          "lines"
+          "lines",
+          "canDeliver",
+          "canVoid"
         ]
       },
       "PaymentDto": {
@@ -16511,6 +16817,94 @@
           "studentId",
           "yearMonth",
           "invType"
+        ]
+      },
+      "InvoiceBatchDto": {
+        "type": "object",
+        "properties": {
+          "yearMonth": {
+            "type": "string",
+            "description": "어느 달 — YYYY-MM",
+            "example": "2026-09"
+          }
+        },
+        "required": [
+          "yearMonth"
+        ]
+      },
+      "InvoiceBatchSkipDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "INV_DUPLICATE | INV_NO_LESSONS | INV_NO_RATE | INV_CARRY_EXCEEDS — 낱장 발행과 같은 코드"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName",
+          "code",
+          "message"
+        ]
+      },
+      "InvoiceBatchResultDto": {
+        "type": "object",
+        "properties": {
+          "yearMonth": {
+            "type": "string"
+          },
+          "candidates": {
+            "type": "number",
+            "description": "수업이 있는 학생 수 — 발행 + 건너뜀"
+          },
+          "issued": {
+            "description": "이번에 발행한 청구서 — 줄까지",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceDto"
+            }
+          },
+          "skipped": {
+            "description": "건너뛴 학생과 이유 — 이미 있음 · 단가 없음 · 이월 초과",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceBatchSkipDto"
+            }
+          },
+          "issuedAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "발행한 금액 합 — 금액 권한 없으면 null"
+          }
+        },
+        "required": [
+          "yearMonth",
+          "candidates",
+          "issued",
+          "skipped"
+        ]
+      },
+      "InvoiceVoidDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "취소 사유 — 잘못 낸 이유",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "reason"
         ]
       },
       "PaymentCreateDto": {

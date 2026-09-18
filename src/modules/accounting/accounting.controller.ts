@@ -11,11 +11,12 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
-import { Perm, canCeoCloseMonth, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { Perm, canCeoCloseMonth, canCeoVoidInvoice, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AccountingDto, CarryRowDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
   OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
+  InvoiceBatchDto, InvoiceBatchResultDto, InvoiceVoidDto,
   type IncomeSpan,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
@@ -40,7 +41,7 @@ export class AccountingController {
   @ApiOkResponse({ type: AccountingDto })
   async all(@CurrentUser() user: RequestUser): Promise<AccountingDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.all(canSee);
+    return this.svc.all(canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
   }
 
 
@@ -163,7 +164,46 @@ export class AccountingController {
   @ApiNotFoundResponse({ description: '학생 없음' })
   async issueInvoice(@CurrentUser() user: RequestUser, @Body() dto: InvoiceIssueDto): Promise<InvoiceDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.issueInvoice(user.id, dto, canSee);
+    return this.svc.issueInvoice(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
+  }
+
+  @Post('invoices/batch')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '청구서 일괄 발행 — 그 달 수업이 있는 학생 전부 (§54 「청구서 발행」 · 테스트 시나리오 H-75 · O-147)',
+    description: '낱장 발행과 같은 계산이다 — 이월 음수 줄·단가 구간·그날만 빠짐·휴원이 그대로 든다. 막힌 학생(이미 있음 · 단가 없음 · '
+      + '이월 초과)은 건너뛰고 이유를 돌려준다. 마감 달은 통째로 409 MONTH_CLOSED.',
+  })
+  @ApiCreatedResponse({ type: InvoiceBatchResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_CLOSED' })
+  async issueBatch(@CurrentUser() user: RequestUser, @Body() dto: InvoiceBatchDto): Promise<InvoiceBatchResultDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.issueBatch(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
+  }
+
+  @Post('invoices/:id/deliver')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '청구서 전달 — 학부모께 보냈다 (§53 ③ · H-76). 초안·미전달만' })
+  @ApiCreatedResponse({ type: InvoiceDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'INV_NOT_DELIVERABLE' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'INV_NOT_FOUND' })
+  async deliverInvoice(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<InvoiceDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.deliverInvoice(user.id, id, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
+  }
+
+  @Post('invoices/:id/void')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '청구서 취소 — 대표 전용 · 사유 필수 (N-139)',
+    description: '지우지 않고 void 로 접는다 — 줄·발행일·사유가 남고 미수 집계에서 빠진다. 입금이 붙어 있으면 입금을 먼저 지운다. 마감 달은 409.',
+  })
+  @ApiCreatedResponse({ type: InvoiceDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: '대표 아님' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'INV_ALREADY_VOID | INV_HAS_PAYMENTS | MONTH_CLOSED' })
+  async voidInvoice(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: InvoiceVoidDto): Promise<InvoiceDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.voidInvoice(user.id, isRole(user.role) && canCeoVoidInvoice(user.role), id, dto, canSee);
   }
 
   @Post('payments')

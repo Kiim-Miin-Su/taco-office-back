@@ -79,6 +79,12 @@ export const canCeoApprovePlan = (r: Role): boolean => r === 'ceo';
 export const canCeoCloseMonth = (r: Role): boolean => r === 'ceo';
 
 /**
+ * 잘못 발행한 청구서의 **취소** — 대표 전용 (테스트 시나리오 N-139 「대표 권한으로 수정 또는 삭제 · 직원이 지울 수 있으면 실패」).
+ * 회계 탭(`canMoney`)에 금액 예외로 들어온 매니저가 장부를 지울 수 있으면 안 된다 — 같은 값이라도 줄을 나눈다.
+ */
+export const canCeoVoidInvoice = (r: Role): boolean => r === 'ceo';
+
+/**
  * §75 중앙 결재 흐름의 서버 projection 범위.
  *
  * 역할 문자열 비교를 drawer controller에 복제하지 않고 이 결과만 소비한다.
