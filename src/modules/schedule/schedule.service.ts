@@ -17,7 +17,7 @@ import { isRecurring, type Ser } from '../../lib/recurrence';
 import type {
   LessonPrepRowDto, LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, TrackedReportDto, TrackedStudentDto,
 } from './schedule.dto';
-import { START_MIN, END_MIN, kstDateOf, spanOf, stuPausedOn } from '../../lib/sql';
+import { START_MIN, END_MIN, kstDateOf, serStuEndedOn, serStuOn, spanOf, stuPausedOn } from '../../lib/sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
 import { progressPercent } from '../../lib/book';
 
@@ -76,6 +76,8 @@ export class ScheduleService {
            )
            -- 휴원 기간의 회차도 그 학생 시간표에서 빠진다 (C92-c · C-36)
            AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+           -- 수강 종료 뒤의 회차도 (C94-c · H-80) — 명단 행은 남고 기간이 끝난 것이다
+           AND ${serStuOn('ss', 'o.on_date')}
       )`);
     }
 
@@ -115,7 +117,8 @@ export class ScheduleService {
                          'paused', ${stuPausedOn('st.id', 'o.on_date')}
                        ) ORDER BY st.id)
                 FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
-                WHERE ss.ser_id = o.ser_id
+                -- 수강 종료 뒤의 회차에는 그 학생이 없다 — 블록의 인원·이름은 그날 명단이다 (C94-c)
+                WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
               ), '[]'::json) AS students
          FROM ser_occ o
          JOIN ser s   ON s.id = o.ser_id
@@ -287,6 +290,9 @@ export class ScheduleService {
                      WHERE e.ser_id = s.id AND e.on_date = $2::date AND xo.student_id = st.id
                   ),
                   'paused', ${stuPausedOn('st.id', '$2::date')},
+                  -- 수강 종료 (C94-c · H-80) — 명단 행은 남고 to_date 가 끝났다. 카드는 「종료 M/D」로 보이고 인원·단가에서 빠진다
+                  'ended', ${serStuEndedOn('ss', '$2::date')},
+                  'endedOn', to_char(ss.to_date, 'YYYY-MM-DD'),
                   -- 학생 카드의 「휴원」 — 지금 진행 중이거나 앞으로 잡힌 기간 하나 (C92-c · C-36/C-37)
                   'pause', (SELECT json_build_object('id', sp.id, 'fromDate', to_char(sp.from_date,'YYYY-MM-DD'),
                                                      'toDate', to_char(sp.to_date,'YYYY-MM-DD'), 'reason', sp.reason,
@@ -310,10 +316,11 @@ export class ScheduleService {
 
     const roster = (head.students ?? []) as Array<{
       id: number; name: string; grade: string | null; droppedOnce: boolean; paused: boolean;
+      ended: boolean; endedOn: string | null;
       pause: { id: number; fromDate: string; toDate: string | null; reason: string | null; resumed: boolean } | null;
     }>;
-    // 그날 빠졌거나 휴원 중이면 그날 명단이 아니다 — 정원·단가도 그 수로 센다
-    const active = roster.filter((r) => !r.droppedOnce && !r.paused);
+    // 그날 빠졌거나 휴원 중이거나 수강 종료 뒤면 그날 명단이 아니다 — 정원·단가도 그 수로 센다 (N-136 「남은 학생 단가가 다시 계산된다」)
+    const active = roster.filter((r) => !r.droppedOnce && !r.paused && !r.ended);
     const ids = roster.map((r) => r.id);
     const cap = Number(head.cap);
     const count = active.length;
@@ -367,14 +374,14 @@ export class ScheduleService {
                 ) AS guided,
                 -- 30일 출결: **확정된 것만** 센다. 그날 빠진 회차는 분모에도 없다
                 (SELECT count(*) FROM att a
-                   JOIN ser_stu ss2 ON ss2.ser_id = a.ser_id AND ss2.student_id = st.id
+                   JOIN ser_stu ss2 ON ss2.ser_id = a.ser_id AND ss2.student_id = st.id AND ${serStuOn('ss2', 'a.on_date')}
                   WHERE a.on_date > $4::date - 30 AND a.on_date <= $4::date
                     AND NOT EXISTS (
                       SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
                        WHERE e.ser_id = a.ser_id AND e.on_date = a.on_date AND xo.student_id = st.id
                     )) AS att_total,
                 (SELECT count(*) FROM att a
-                   JOIN ser_stu ss2 ON ss2.ser_id = a.ser_id AND ss2.student_id = st.id
+                   JOIN ser_stu ss2 ON ss2.ser_id = a.ser_id AND ss2.student_id = st.id AND ${serStuOn('ss2', 'a.on_date')}
                   WHERE a.on_date > $4::date - 30 AND a.on_date <= $4::date
                     AND a.result = 'completed'
                     AND NOT EXISTS (

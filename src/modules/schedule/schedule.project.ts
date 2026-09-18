@@ -19,6 +19,7 @@ import type { QueryRunner } from 'typeorm';
 import { addD, occ, ruleHits, type IsoDate, type State } from '../../lib/recurrence';
 import { todayKst } from '../../lib/kst';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
+import { serStuOn } from '../../lib/sql';
 
 /**
  * 펼쳐 두는 기간.
@@ -90,7 +91,8 @@ async function projectReports(q: QueryRunner, serIds: number[]): Promise<void> {
      SELECT r.id, ss.student_id, true
        FROM rep r
        JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
-       JOIN ser_stu ss ON ss.ser_id = r.ser_id
+       -- 수강 종료 뒤의 회차에는 그 학생의 리포트 발송 대상도 없다 (C94-c)
+       JOIN ser_stu ss ON ss.ser_id = r.ser_id AND ${serStuOn('ss', 'o.on_date')}
        LEFT JOIN exc e ON e.ser_id = o.ser_id AND e.on_date = o.on_date
       WHERE r.ser_id = ANY($1)
         AND r.state = ANY($2::rep_state_t[])

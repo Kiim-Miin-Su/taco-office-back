@@ -29,7 +29,7 @@ function areaMemos(memo: unknown): ExecAreaMemoDto[] {
     memo: typeof m[key] === 'string' ? (m[key] as string) : '',
   }));
 }
-import { kstAt } from '../../lib/sql';
+import { kstAt, serStuOn } from '../../lib/sql';
 
 type R = Record<string, unknown>;
 
@@ -360,7 +360,7 @@ export class ExecService {
                 WHERE o.on_date BETWEEN $1::date AND $2::date
                   AND (o.canceled OR a.result='canceled')`, [from, to]),
       this.one(`SELECT count(DISTINCT ss.student_id)::text n FROM ser_occ o
-                 JOIN ser_stu ss ON ss.ser_id = o.ser_id
+                 JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
                  LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
                 WHERE o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
                   AND COALESCE(a.result,'completed') <> 'canceled'`, [from, to]),

@@ -19,14 +19,16 @@ import {
   InvoiceBatchDto, InvoiceBatchResultDto, InvoiceVoidDto,
   PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto, PayoutMonthParamsDto,
   type IncomeSpan,
+  StudentWithdrawDto, WithdrawResultDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService } from './accounting.service';
+import { StudentWithdrawService } from './withdraw.service';
 
 @ApiTags('accounting')
 @Controller('accounting')
 export class AccountingController {
-  constructor(private readonly svc: AccountingService) {}
+  constructor(private readonly svc: AccountingService, private readonly withdrawSvc: StudentWithdrawService) {}
 
   /**
    * ⚠️ 2026-09-12 (C36-a) 교정 — 종전 `canCrudAll` 은 **원문과 달랐다.**
@@ -90,6 +92,35 @@ export class AccountingController {
   confirmPayout(@CurrentUser() user: RequestUser, @Param() params: PayoutMonthParamsDto, @Body() dto: PayoutConfirmDto): Promise<PayoutSheetRowDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.confirmPayout(user.id, isRole(user.role) && canCeoConfirmPayout(user.role), params.month, dto, canSee);
+  }
+
+  @Post('withdrawals/preview')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '수강 종료·환불 미리보기 — 쓰기 0 (C94-c · H-80 · N-136)',
+    description: '같은 트랜잭션을 끝까지 돌리고 되돌린다 — 잔여 회차·청구서 변화·환불액이 실제 처리와 한 원도 다르지 않다. '
+      + '종료할 수강이 없으면 409 WITHDRAW_NOTHING · 마감 달 409 MONTH_CLOSED · 단가 없는 과목 409 WITHDRAW_NO_RATE.',
+  })
+  @ApiCreatedResponse({ type: WithdrawResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | MONTH_CLOSED' })
+  withdrawPreview(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.withdrawSvc.preview(user.id, dto, canSee);
+  }
+
+  @Post('withdrawals')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '수강 종료 · 중도 환불 — 한 트랜잭션 (C94-c · H-80 · N-135 · N-136)',
+    description: '명단에 종료일(SER_STU.to_date · 행은 남는다) → 종료일 뒤 회차 값을 청구서에서 음수 줄로 빼고 받은 돈이 넘치면 PAY 음수 줄(환불) · '
+      + '금액 0 이면 void → ENR.ended_on → LOG. 그룹 수업의 남은 학생 단가는 그 날짜의 인원으로 다시 잡힌다. 되돌리는 길은 없다.',
+  })
+  @ApiCreatedResponse({ type: WithdrawResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'WITHDRAW_BAD_SERIES · 입력 검증' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | MONTH_CLOSED' })
+  withdraw(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.withdrawSvc.withdraw(user.id, dto, canSee);
   }
 
   @Post('tuition/close')

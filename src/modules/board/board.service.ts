@@ -10,7 +10,7 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { GUIDE_PENDING_DB, REPORT_WRITTEN_DB } from '../../lib/rules';
 import type { BoardDto, CheckMarkDto } from './board.dto';
-import { hhmmOf, kstDateOf } from '../../lib/sql';
+import { hhmmOf, kstDateOf, serStuOn } from '../../lib/sql';
 import { boardSummary } from './board.rules';
 
 type R = Record<string, unknown>;
@@ -57,6 +57,7 @@ export class BoardService {
               COALESCE((SELECT array_agg(st.name ORDER BY st.name)
                           FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
                          WHERE ss.ser_id = o.ser_id
+                           AND ${serStuOn('ss', 'o.on_date')}
                            AND NOT EXISTS (
                                  SELECT 1 FROM exc e
                                    JOIN exc_stu_out eo ON eo.exc_id = e.id
@@ -65,7 +66,7 @@ export class BoardService {
               /* 교재 — 이 수업 학생 중 배부받은 사람이 하나라도 있는가 */
               EXISTS (SELECT 1 FROM issue i
                        WHERE i.state = 'ok'
-                         AND i.student_id IN (SELECT ss.student_id FROM ser_stu ss WHERE ss.ser_id = o.ser_id)
+                         AND i.student_id IN (SELECT ss.student_id FROM ser_stu ss WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')})
                      ) AS book_done,
               /* 안내 — 이 수업에 아직 안 보낸 안내가 남아 있는가 */
               NOT EXISTS (SELECT 1 FROM guide g WHERE g.ser_id = o.ser_id AND g.state = ANY($4)) AS guide_done,

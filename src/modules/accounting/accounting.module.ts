@@ -9,10 +9,11 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Inv } from '../../entities';
 import { AccountingController } from './accounting.controller';
 import { AccountingService } from './accounting.service';
+import { StudentWithdrawService } from './withdraw.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Inv])],
   controllers: [AccountingController],
-  providers: [AccountingService],
+  providers: [AccountingService, StudentWithdrawService],
 })
 export class AccountingModule {}

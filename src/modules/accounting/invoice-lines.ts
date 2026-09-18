@@ -32,7 +32,7 @@
  *   · `dropped` — 휴강·결강만               → 「다음 달로 넘길 돈」
  * 세 토막의 합(`done + 남은 것`)은 `month` 와 정확히 같다 — 회귀가 그것을 증명한다.
  */
-import { kstMonthOf, stuPausedOn } from '../../lib/sql';
+import { kstMonthOf, serStuOn, stuPausedOn } from '../../lib/sql';
 
 export interface InvoiceLineRow {
   sub_key: string | null;
@@ -69,6 +69,8 @@ const DROPPED = `((o.canceled AND COALESCE(${TREAT}, 'carry') = 'carry')
 export type LineSlice =
   | { kind: 'month' }
   | { kind: 'done'; upto: string }
+  /** `after` 뒤에 남은 살아 있는 회차만 — 수강 종료의 「잔여 회차 × 회당 단가」(C94-c · H-80). serIds 로 규칙을 좁힌다 */
+  | { kind: 'after'; after: string; serIds?: number[] }
   | { kind: 'dropped' }
   /** 차감(소진)으로 처리된 휴강만 — §54 「차감 N」 표시용. `month` 안에 이미 들어 있다 */
   | { kind: 'deducted' };
@@ -87,7 +89,8 @@ const sqlFor = (slice: LineSlice): string => `
              (SELECT r.unit_price FROM rate r
                WHERE r.kind_key = se.kind_key
                  AND (r.sub_key IS NULL OR r.sub_key = se.sub_key)
-                 AND r.heads <= (SELECT count(*) FROM ser_stu x WHERE x.ser_id = se.id)
+                 -- 인원은 **그 날짜의 명단**이다 — 수강 종료한 학생이 빠지면 남은 학생의 구간이 다시 잡힌다 (C94-c · N-136)
+                 AND r.heads <= (SELECT count(*) FROM ser_stu x WHERE x.ser_id = se.id AND ${serStuOn('x', 'o.on_date')})
                  AND r.from_date <= o.on_date
                ORDER BY r.sub_key NULLS LAST, r.heads DESC, r.from_date DESC
                LIMIT 1)
@@ -96,10 +99,13 @@ const sqlFor = (slice: LineSlice): string => `
       JOIN ser se     ON se.id = o.ser_id
       JOIN kind k     ON k.key = se.kind_key
       LEFT JOIN sub sb ON sb.key = se.sub_key
-      JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1
+      -- 수강 종료 뒤의 회차는 그 학생의 것이 아니다 — 청구도 넘길 돈도 아니다 (C94-c · H-80)
+      JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1 AND ${serStuOn('ss', 'o.on_date')}
      WHERE ${slice.kind === 'dropped' ? DROPPED : slice.kind === 'deducted' ? `o.canceled AND ${TREAT} = 'deduct' AND NOT ${STU_OUT}` : LIVE}
        AND ${kstMonthOf('lower(o.span)')} = $2
        ${slice.kind === 'done' ? 'AND o.on_date <= $3::date' : ''}
+       ${slice.kind === 'after' ? 'AND o.on_date > $3::date' : ''}
+       ${slice.kind === 'after' && slice.serIds ? 'AND se.id = ANY($4::bigint[])' : ''}
   )
   SELECT sub_key, label, count(*)::int AS n, unit_price
     FROM priced
@@ -116,6 +122,7 @@ export async function invoiceLines(
 ): Promise<InvoiceLineRow[]> {
   const params: unknown[] = [studentId, yearMonth];
   if (slice.kind === 'done') params.push(slice.upto);
+  if (slice.kind === 'after') { params.push(slice.after); if (slice.serIds) params.push(slice.serIds); }
   return (await m.query(sqlFor(slice), params)) as InvoiceLineRow[];
 }
 

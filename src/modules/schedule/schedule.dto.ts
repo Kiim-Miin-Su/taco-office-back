@@ -503,6 +503,9 @@ export class TrackedStudentDto {
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
   @ApiProperty({ description: '그날만 빠진 학생인가 (D-R21)' }) droppedOnce!: boolean;
   @ApiProperty({ description: '그날 휴원 중인가 (C92-c)' }) paused!: boolean;
+  @ApiProperty({ description: '그날은 수강 종료 뒤인가 — 명단 행은 남고 to_date 가 끝났다 (C94-c · H-80). 인원·단가에서 빠진다' }) ended!: boolean;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '수강 종료일(YYYY-MM-DD) — 이 규칙의 명단에서 마지막으로 있는 날. 없으면 null' })
+  endedOn?: string | null;
   @ApiPropertyOptional({ type: () => StudentPauseDto, nullable: true, description: '진행 중이거나 앞으로 잡힌 휴원 — 「휴원 9/1~9/30」 · 「복귀」 단추의 근거' })
   pause?: StudentPauseDto | null;
 

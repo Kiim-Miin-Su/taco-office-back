@@ -14,7 +14,7 @@ import type {
   GuideBodyDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto, GuideHistorySpan,
   GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
 } from './guides.dto';
-import { END_MIN, kstAt, kstDateOf, START_MIN, writtenRows } from '../../lib/sql';
+import { END_MIN, kstAt, kstDateOf, START_MIN, serStuOn, writtenRows } from '../../lib/sql';
 import { addDays, isIsoDate, overdueDays as overdue, todayKst } from '../../lib/kst';
 
 type R = Record<string, unknown>;
@@ -36,7 +36,7 @@ const GUIDE_EVENT_CTE = `WITH rostered AS (
          lag(o.teacher_id) OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY o.on_date,o.id) AS previous_teacher_id
     FROM ser_occ o
     JOIN ser s ON s.id=o.ser_id
-    JOIN ser_stu ss ON ss.ser_id=o.ser_id
+    JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
     JOIN stu st ON st.id=ss.student_id
     LEFT JOIN staff t ON t.id=o.teacher_id
     LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
@@ -132,7 +132,7 @@ export class GuidesService {
          FROM ser_occ o
          JOIN ser r ON r.id=o.ser_id AND r.mode='online'::class_mode_t
          JOIN kind k ON k.key=r.kind_key
-         JOIN ser_stu ss ON ss.ser_id=o.ser_id
+         JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
          JOIN stu st ON st.id=ss.student_id
          LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
          LEFT JOIN staff t ON t.id=o.teacher_id

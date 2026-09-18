@@ -79,7 +79,14 @@ export interface Ser {
 export interface SerStu {
   serId: number;
   studentId: number;
+  /** 명단 기간 (C94-c · N-50 ①) — 없으면 처음부터/끝까지. 수강 종료가 toDate 를 적는다 */
+  fromDate?: IsoDate | null;
+  toDate?: IsoDate | null;
 }
+
+/** 그 날짜에 유효한 명단 행인가 — DB 의 `lib/sql.serStuOn` 과 같은 판정 */
+export const serStuOnDate = (r: SerStu, date: IsoDate): boolean =>
+  (!r.fromDate || date >= r.fromDate) && (!r.toDate || date <= r.toDate);
 
 /** 그날 하루치 예외. 시간 예외와 학생 제외가 같은 행에 함께 산다. */
 export interface Exc {
@@ -309,7 +316,8 @@ export function occ(date: IsoDate, state: Partial<State>): Occurrence[] {
   });
 
   out.forEach((o) => {
-    const roster = (state.SER_STU || []).filter((r) => r.serId === o.serId).map((r) => r.studentId);
+    // 명단 기간 밖(수강 종료 뒤)의 학생은 그 회차에 없다 — 규칙상 날짜(onDate)로 본다 (DB 조각 serStuOn 과 같다)
+    const roster = (state.SER_STU || []).filter((r) => r.serId === o.serId && serStuOnDate(r, o.onDate)).map((r) => r.studentId);
     const e = excs.find((x) => x.serId === o.serId && x.onDate === o.onDate);
     const outIds = (e && e.stuOut) || [];
     o.students = roster.filter((id) => !outIds.includes(id));
@@ -498,7 +506,8 @@ export function applyEdit(
     (S.SER_STU || [])
       .filter((r) => r.serId === ser.id)
       .slice()
-      .forEach((r) => S.SER_STU.push({ serId: copy.id, studentId: r.studentId }));
+      // 기간도 함께 옮긴다 — 종료한 학생이 갈라진 규칙에서 되살아나면 안 된다 (C94-c)
+      .forEach((r) => S.SER_STU.push({ ...r, serId: copy.id }));
     S.EXC.filter((e) => e.serId === ser.id && e.onDate >= onDate).forEach((e) => {
       e.serId = copy.id;
     });
@@ -875,7 +884,7 @@ export const ROSTER_LABEL: Record<RosterOp, string> = {
 
 /** 그날 명단 — occ() 와 같은 규칙을 쓴다. 두 곳으로 갈라지면 어긋난다. */
 export function rosterAt(state: Partial<State>, serId: number, date: IsoDate): number[] {
-  const roster = (state.SER_STU || []).filter((r) => r.serId === serId).map((r) => r.studentId);
+  const roster = (state.SER_STU || []).filter((r) => r.serId === serId && serStuOnDate(r, date)).map((r) => r.studentId);
   const e = (state.EXC || []).find((x) => x.serId === serId && x.onDate === date);
   const outIds = (e && e.stuOut) || [];
   return roster.filter((id) => !outIds.includes(id));
@@ -888,10 +897,12 @@ export function rosterScopes(
   studentId: number,
   onDate: IsoDate,
 ): RosterOp[] {
-  const inRoster = (state.SER_STU || []).some(
+  const row = (state.SER_STU || []).find(
     (r) => r.serId === serId && r.studentId === studentId,
   );
-  if (!inRoster) return ['add'];
+  if (!row) return ['add'];
+  // 수강 종료 뒤의 회차 — 이 학생에게 열 수 있는 것이 없다. 다시 넣으려면 새 규칙으로 등록한다 (C94-c)
+  if (row.toDate && onDate > row.toDate) return [];
   return rosterAt(state, serId, onDate).includes(studentId)
     ? ['dropOnce', 'dropAll']
     : ['undoOnce', 'dropAll'];
@@ -918,7 +929,10 @@ export function applyRoster(
   const log: string[] = [];
 
   if (op === 'add') {
-    if (!S.SER_STU.some((r) => r.serId === serId && r.studentId === studentId)) {
+    const row = S.SER_STU.find((r) => r.serId === serId && r.studentId === studentId);
+    // 수강 종료한 학생은 같은 규칙에 다시 넣지 않는다 — 기간을 풀면 종료 뒤 회차가 지난달 청구까지 되살아난다 (C94-c). 새 규칙으로 등록한다
+    if (row && row.toDate) throw new Error('ROSTER_ENDED');
+    if (!row) {
       S.SER_STU.push({ serId, studentId });
       log.push(`SER_STU += ${studentId}`);
     }

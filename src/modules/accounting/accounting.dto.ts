@@ -5,7 +5,8 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
+import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 
 /** 입금 수단 — 지금 저장되는 두 가지뿐이다. 코드표 확장은 원문 근거가 생길 때 한다 (발명 금지) */
 export const PAY_METHODS = ['transfer', 'cash'] as const;
@@ -545,6 +546,61 @@ export class PayoutMonthParamsDto {
   @ApiProperty({ description: 'YYYY-MM', example: '2026-08' })
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
   month!: string;
+}
+
+/* ── 수강 종료 · 환불 (C94-c · 테스트 시나리오 H-80 · N-135 · N-136) ─────────────────────
+   「잔여 회차 × 회당 단가로 산출 · 환불 기록이 장부에 남는다 · 수강이 종료 처리된다 · 이후 일정이 정리된다 ·
+   그룹 수업이면 남은 학생 단가가 다시 계산된다」. 화면은 날짜·범위·사유만 보내고 잔여 회차·환불액은 서버가 센다(D-R37).
+   미리보기(preview)는 같은 트랜잭션을 돌리고 되돌린 결과라 실제와 한 원도 다르지 않다.                     */
+
+export class StudentWithdrawDto {
+  @ApiProperty({ description: '누구' }) @IsInt() @Min(1) studentId!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '마지막으로 수업이 있는 날(포함) — 이 날 뒤의 회차가 정리된다' })
+  @IsCalendarDate() endedOn!: string;
+
+  @ApiPropertyOptional({ type: [Number], description: '이 규칙(들)만 종료 — 비우면 그 학생이 든 모든 규칙(학생이 그만둠 · N-136)' })
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true })
+  serIds?: number[];
+
+  @ApiPropertyOptional({ maxLength: 200, description: '사유 — 장부(환불 줄)와 이력에 남는다' })
+  @IsOptional() @IsString() @MaxLength(200) reason?: string;
+}
+
+export class WithdrawSeriesDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty() kindKey!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) subKey?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
+  @ApiProperty({ description: '이미 있던 명단 종료일 — 이번에 적히는 값' }) endedOn!: string;
+  @ApiProperty({ description: '종료일 뒤에 남아 있던 회차(투영 지평선 안 · 휴강 제외) — 서버가 센다' }) remainingCount!: number;
+}
+
+export class WithdrawInvoiceDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() yearMonth!: string;
+  @ApiProperty() title!: string;
+  @ApiProperty({ description: '청구서 상태 — 처리 뒤' }) state!: string;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '처리 전 금액 — 금액 권한 없으면 null' }) amountBefore?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '처리 뒤 금액 — 잔여 회차 줄을 뺀 값' }) amountAfter?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '받은 돈' }) paidAmount?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '돌려줄 돈 — 받은 돈이 새 금액보다 많은 만큼 (PAY 음수 줄)' }) refund?: number | null;
+  @ApiProperty({ description: '잔여 회차 수 — 이 청구서에서 빠진 회차' }) removedCount!: number;
+  @ApiProperty({ description: '금액이 0 이 되어 취소(void)로 접혔는가' }) voided!: boolean;
+}
+
+export class WithdrawResultDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty() endedOn!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) reason?: string | null;
+  @ApiProperty({ description: '미리보기인가 — true 면 아무것도 쓰지 않았다' }) preview!: boolean;
+  @ApiProperty({ type: [WithdrawSeriesDto] }) series!: WithdrawSeriesDto[];
+  @ApiProperty({ type: [WithdrawInvoiceDto], description: '종료일 뒤 회차가 들어 있던 청구서 — 줄이 빠지고 넘친 돈은 환불 줄로' }) invoices!: WithdrawInvoiceDto[];
+  @ApiProperty({ description: '정리된 회차 수(규칙 합)' }) remainingCount!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '환불 합계 — 금액 권한 없으면 null' }) refundTotal?: number | null;
+  @ApiProperty({ description: '수강(ENR) 행에 종료일이 적힌 수 — 등록 행이 없으면 0' }) enrollmentsEnded!: number;
+  @ApiProperty() canSeeAmounts!: boolean;
 }
 
 /** `POST /accounting/tuition/close` — 대표 전용 */

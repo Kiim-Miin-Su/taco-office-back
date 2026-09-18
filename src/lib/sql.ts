@@ -118,3 +118,17 @@ export function parseCheckConstraint(sql: string): CheckConstraintSql | null {
 export const stuPausedOn = (student: string, date: string): string =>
   `EXISTS (SELECT 1 FROM stu_pause sp WHERE sp.student_id = ${student}
              AND ${date} >= sp.from_date AND (sp.to_date IS NULL OR ${date} <= sp.to_date))`;
+
+/**
+ * 명단 행(SER_STU)이 **그 날짜에 유효**한가 (C94-c · H-80 · N-136 · N-50 ①). 기간이 없으면(둘 다 NULL) 언제나 유효 —
+ * 지금까지의 명단과 같다. 수강 종료는 `to_date` 를 적을 뿐 행을 지우지 않으므로, 지난 회차의 명단·청구는 그대로고
+ * 그 뒤 회차에서만 빠진다. 시간표·§54·청구서·단가 구간(인원)이 이 한 조각을 읽는다.
+ * @param alias SER_STU 별칭 (예: `ss`) · @param date 날짜 표현식 (예: `o.on_date`)
+ */
+export const serStuOn = (alias: string, date: string): string =>
+  `((${alias}.from_date IS NULL OR ${date} >= ${alias}.from_date)
+    AND (${alias}.to_date IS NULL OR ${date} <= ${alias}.to_date))`;
+
+/** 그 날짜에 이미 **수강 종료**된 명단 행인가 — 카드·명단 칩용 (유효 판정은 `serStuOn`) */
+export const serStuEndedOn = (alias: string, date: string): string =>
+  `(${alias}.to_date IS NOT NULL AND ${date} > ${alias}.to_date)`;

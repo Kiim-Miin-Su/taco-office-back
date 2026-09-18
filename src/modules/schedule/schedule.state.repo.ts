@@ -61,7 +61,7 @@ export async function loadState(
   if (!serIds.length) return { SER: [], SER_STU: [], EXC: [] };
 
   const stus = (await q.query(
-    `SELECT ser_id, student_id FROM ser_stu WHERE ser_id = ANY($1)`,
+    `SELECT ser_id, student_id, from_date::text AS from_date, to_date::text AS to_date FROM ser_stu WHERE ser_id = ANY($1)`,
     [serIds],
   )) as Row[];
 
@@ -92,7 +92,10 @@ export async function loadState(
       fromDate: String(r.from_date),
       toDate: str(r.to_date),
     })),
-    SER_STU: stus.map<SerStu>((r) => ({ serId: Number(r.ser_id), studentId: Number(r.student_id) })),
+    SER_STU: stus.map<SerStu>((r) => ({
+      serId: Number(r.ser_id), studentId: Number(r.student_id),
+      fromDate: (r.from_date as string | null) ?? null, toDate: (r.to_date as string | null) ?? null,
+    })),
     EXC: excs.map<Exc>((r) => ({
       id: Number(r.id),
       serId: Number(r.ser_id),
@@ -175,9 +178,10 @@ export async function persist(q: QueryRunner, before: State, after: State): Prom
   const afterStu = new Set(after.SER_STU.map(keyOf));
   for (const r of after.SER_STU) {
     if (beforeStu.has(`${r.serId}|${r.studentId}`)) continue;
+    // 기간(수강 종료)도 함께 쓴다 — 규칙이 갈라질 때 복사된 행이 기간을 잃으면 종료한 학생이 되살아난다 (C94-c)
     await q.query(
-      `INSERT INTO ser_stu (ser_id, student_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
-      [real(r.serId), r.studentId],
+      `INSERT INTO ser_stu (ser_id, student_id, from_date, to_date) VALUES ($1,$2,$3::date,$4::date) ON CONFLICT DO NOTHING`,
+      [real(r.serId), r.studentId, r.fromDate ?? null, r.toDate ?? null],
     );
     touched.add(real(r.serId));
   }

@@ -14,7 +14,7 @@ import { Inv } from '../../entities';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
-import { kstAt, kstMonthOf, sqlWordList, stuPausedOn } from '../../lib/sql';
+import { kstAt, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
 import { assertMonthOpen } from '../../lib/month-close';
 import { TEACHER_OF_OCC, payoutSheet } from '../../lib/payout-sheet';
 import { nowMinKst } from '../../lib/kst';
@@ -388,7 +388,7 @@ export class AccountingService {
       const students = (await m.query(
         `SELECT DISTINCT st.id, st.name
            FROM ser_occ o
-           JOIN ser_stu ss ON ss.ser_id = o.ser_id
+           JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
            JOIN stu st     ON st.id = ss.student_id
           WHERE ${kstMonthOf('lower(o.span)')} = $1
           ORDER BY st.name, st.id`,
@@ -787,7 +787,8 @@ export class AccountingService {
     const students = (await this.inv.query(
       `SELECT DISTINCT st.id, st.name, st.grade
          FROM ser_occ o
-         JOIN ser_stu ss ON ss.ser_id = o.ser_id
+         -- 수강 종료 뒤의 회차는 그 학생의 것이 아니다 (C94-c) — 그 달에 유효한 회차가 하나라도 있는 학생만
+         JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
          JOIN stu st     ON st.id = ss.student_id
         WHERE ${kstMonthOf('lower(o.span)')} = $1
         ORDER BY st.name, st.id`,
@@ -813,7 +814,7 @@ export class AccountingService {
                   WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = ss.student_id
                ) OR ${stuPausedOn('ss.student_id', 'o.on_date')}) AS stu_out
          FROM ser_occ o
-         JOIN ser_stu ss ON ss.ser_id = o.ser_id
+         JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
         WHERE ${kstMonthOf('lower(o.span)')} = $1
           AND ss.student_id = ANY($2::bigint[])`,
       [month, students.map((s) => Number(s.id))],

@@ -13,6 +13,7 @@ import {
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import { payoutSheet } from '../../lib/payout-sheet';
+import { serStuOn } from '../../lib/sql';
 import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
 import type {
   TeacherDiagCreateDto, TeacherGuideDiagDto, TeacherGuideStudentDto, TeacherGuidesDto,
@@ -64,7 +65,7 @@ export class TeacherService {
               (SELECT e.cancel_kind FROM exc e WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date) AS cancel_kind,
               (SELECT string_agg(st.name, ', ' ORDER BY st.name)
                  FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
-                WHERE ss.ser_id = o.ser_id) AS students
+                WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}) AS students
          FROM ser_occ o
          JOIN ser s        ON s.id = o.ser_id
          LEFT JOIN room rm ON rm.id = COALESCE(o.room_id, s.room_id)
@@ -372,7 +373,7 @@ export class TeacherService {
               s.sub_key, s.title
          FROM ser_occ o
          JOIN ser s      ON s.id = o.ser_id
-         JOIN ser_stu ss ON ss.ser_id = o.ser_id
+         JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
          JOIN stu st     ON st.id = ss.student_id
          CROSS JOIN wk
         WHERE ${TEACHER_OF} = $1

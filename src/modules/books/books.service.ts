@@ -10,7 +10,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { HIST_ACTIONS, histLabel, histSql } from '../../lib/history';
 import { todayKst } from '../../lib/kst';
-import { kstAt } from '../../lib/sql';
+import { kstAt, serStuOn } from '../../lib/sql';
 import {
   ISSUE_STATE_LABEL, PACK_STATE_LABEL, PACK_TYPE_LABEL, issueTransitionIssue, packTransitionIssue,
   progressIssue, progressPercent, type IssueState, type PackState, type PackType,
@@ -428,7 +428,7 @@ export class BooksService {
               (SELECT st.name FROM ser_stu ss JOIN ser sr ON sr.id=ss.ser_id JOIN staff st ON st.id=sr.teacher_id
                 WHERE ss.student_id=s.id ORDER BY sr.id LIMIT 1) AS teacher_name,
               (SELECT to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI')
-                 FROM ser_stu ss JOIN ser_occ o ON o.ser_id=ss.ser_id
+                 FROM ser_stu ss JOIN ser_occ o ON o.ser_id=ss.ser_id AND ${serStuOn('ss', 'o.on_date')}
                 WHERE ss.student_id=s.id AND o.canceled=false AND lower(o.span) >= now()
                 ORDER BY lower(o.span) LIMIT 1) AS next_lesson,
               (SELECT g.state::text FROM guide g WHERE g.student_id=s.id ORDER BY g.id DESC LIMIT 1) AS guide_state

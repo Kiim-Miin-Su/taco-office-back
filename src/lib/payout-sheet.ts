@@ -19,6 +19,7 @@
 import {
   REPORT_WRITTEN_DB, effectiveRepStateFromEnded, latePenalty, minutesSinceEnd, tierFor, withholding, type SessionLike,
 } from './rules';
+import { serStuOn } from './sql';
 
 export interface Queryable { query(sql: string, params?: unknown[]): Promise<unknown> }
 
@@ -72,8 +73,8 @@ export async function payoutSheet(
             to_char(r.submitted_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI') AS submitted_at,
             (SELECT string_agg(st.name, ', ' ORDER BY st.name)
                FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
-              WHERE ss.ser_id = o.ser_id) AS students,
-            (SELECT COUNT(*)::int FROM ser_stu ss WHERE ss.ser_id = o.ser_id) AS student_count,
+              WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}) AS students,
+            (SELECT COUNT(*)::int FROM ser_stu ss WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}) AS student_count,
             w.rate AS wage_rate
        FROM ser_occ o
        JOIN ser s      ON s.id = o.ser_id
