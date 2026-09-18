@@ -7,12 +7,18 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Lead } from '../../entities';
+import { AccountingModule } from '../accounting/accounting.module';
+import { BooksModule } from '../books/books.module';
+import { GuidesModule } from '../guides/guides.module';
+import { ScheduleModule } from '../schedule/schedule.module';
+import { LeadEnrollService } from './enroll.service';
 import { OpsController } from './ops.controller';
 import { OpsService } from './ops.service';
 
+/** 등록 확정(C91)은 시간표·청구서·교재·안내의 **기존 쓰기**를 한 트랜잭션에서 부른다 — 네 모듈을 들여온다 */
 @Module({
-  imports: [TypeOrmModule.forFeature([Lead])],
+  imports: [TypeOrmModule.forFeature([Lead]), ScheduleModule, AccountingModule, BooksModule, GuidesModule],
   controllers: [OpsController],
-  providers: [OpsService],
+  providers: [OpsService, LeadEnrollService],
 })
 export class OpsModule {}

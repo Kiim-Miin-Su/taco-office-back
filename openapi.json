@@ -5775,6 +5775,182 @@
         ]
       }
     },
+    "/ops/leads/{id}/enroll/preview": {
+      "post": {
+        "description": "같은 트랜잭션을 끝까지 돌리고 되돌린다 — 겹침(409)·강사 불가 시간·첫 수업일·청구액이 실제와 같다. 화면이 짓지 않는다 (D-R37).",
+        "operationId": "OpsController_enrollPreview",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadEnrollDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LEAD_NOT_FOUND | STUDENT_NOT_FOUND | 교재 없음"
+          },
+          "409": {
+            "description": "code ALREADY_ENROLLED | LEAD_FAILED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "등록 확정 미리보기 — 쓰기 0 (C91 · A-05 · A-06 · A-07)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/leads/{id}/enroll": {
+      "post": {
+        "description": "STU(동명이인은 학년·학교로) → ENR → SER+SER_STU(시간표 쓰기 그대로 · 겹치면 409 로 전부 되돌린다) → 첫 달 청구서(§53 · 단가 없으면 건너뛰고 이유) → 교재 요청(wait) 또는 「교재 배정이 필요합니다」 알림 → 첫 수업 안내 초안 → 강사·관리자 알림 → LEAD enrolled + 도달 기록 + LOG.",
+        "operationId": "OpsController_enroll",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadEnrollDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnrollResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LEAD_NOT_FOUND | STUDENT_NOT_FOUND | 교재 없음"
+          },
+          "409": {
+            "description": "code ALREADY_ENROLLED | LEAD_FAILED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · 테스트 시나리오 A-05)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/marketing/{id}/comments": {
       "post": {
         "description": "「대표가 코멘트를 남기면 관리자 전원에게 알림이 갑니다」. 쓸 때의 종류를 kind 로 적는다 — 쓴 사람의 지금 역할로 되짚지 않는다.",
@@ -6580,1560 +6756,6 @@
         "summary": "할 일 배정 — TODO 와 담당자 알림을 한 트랜잭션에서 (원문 §66 연동)",
         "tags": [
           "ops"
-        ]
-      }
-    },
-    "/consulting": {
-      "post": {
-        "description": "stage=contract, contractStep=1은 서버가 정한다. amount는 이 계약 작성 화면의 입력값이며 생성 권한은 canMoney와 분리한다.",
-        "operationId": "create",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsultingCreateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingDetailDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "code CONS_PICK_REQUIRED · CONS_PICK_FORBIDDEN · CONS_DATE_ORDER"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "컨설팅 시작 — §29",
-        "tags": [
-          "consulting"
-        ]
-      },
-      "get": {
-        "description": "최종 canAdminPage와 canCrudAll이 모두 필요하다. 공개 범위로 투영된 items의 stage(contract/running/done)를 클라이언트에서 필터링하며 추가 GET은 0이다. 전체/단계 건수는 같은 items에서 파생하고 금액·상세 공개 권한을 변경하지 않는다.",
-        "operationId": "ConsultingController_all",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingListDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "컨설팅 — 단계 보드 · 목록 · 회차 기록 (§26 · §27 · §31)",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/items/{itemId}": {
-      "patch": {
-        "description": "공개 범위(csCanFull)·종료 잠금은 서버가 판정한다. 진행률 숫자는 저장하지 않는다 — 원장 행만 바뀐다.",
-        "operationId": "ConsultingController_toggleItem",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          },
-          {
-            "name": "itemId",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsItemToggleDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsItemDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "내용이 공개 범위 밖 (수납만 공개 등)"
-          },
-          "404": {
-            "description": "보이지 않는 건·없는 항목 — 존재를 누출하지 않는다"
-          },
-          "409": {
-            "description": "code ITEM_LOCKED — 종료된 건"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "진행 항목 체크/해제 — 47D-B 유일 쓰기 (N-18 §4-17)",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/accounting": {
-      "get": {
-        "description": "머리 세 칸과 줄의 「남음」을 **서버가 뺀다** (D-R37). 화면이 계약 − 받음을 다시 하면 가려진 줄에서 합계가 갈린다. 원문 규칙 「수납만 공개(vis='pay')여도 이 화면의 금액은 보입니다」는 새 판정이 아니라 csCanAmount 그대로다.",
-        "operationId": "ConsultingController_accounting",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsAccountingDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "컨설팅 회계 — 계약 금액 · 받은 돈 · 남은 돈 (§28)",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/students": {
-      "get": {
-        "description": "원문 규칙 「**csCan() 으로 볼 수 있는 것만 집계합니다**」 그대로다 — 안 보이는 건은 건수에도 합계에도 안 들어간다. 기록 회차·끝낸 항목·받은 돈·건수를 **서버가 센다** (D-R37). 화면이 배열 길이를 세면 내용이 잠긴 건에서 「항목 0/0」이 된다. 한 건에 학생이 여럿이면 그 학생들 모두의 줄에 걸린다(슬라이드 29 「학생 여러 명」).",
-        "operationId": "ConsultingController_students",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsStudentsDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "컨설팅 학생별 — CONS 를 학생 기준으로 재구성 (§27)",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}": {
-      "get": {
-        "operationId": "detail",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingDetailDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "계약 5단계 상세 — §30",
-        "tags": [
-          "consulting"
-        ]
-      },
-      "delete": {
-        "operationId": "archive",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "컨설팅 안전 보관 — 물리 삭제 없음",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/share": {
-      "patch": {
-        "operationId": "updateShare",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsultingShareUpdateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingDetailDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "계약 공개 범위 변경 — §29·§30",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/contract-files": {
-      "post": {
-        "operationId": "addContractFile",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsultingFileCreateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingFileDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "계약서 초안/수정본 추가 — §30, 전체 파일 최대 10개",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/contract-files/{fileId}": {
-      "delete": {
-        "operationId": "removeContractFile",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          },
-          {
-            "name": "fileId",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": ""
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "계약서 초안/수정본 제거 — §30",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/feedback": {
-      "post": {
-        "operationId": "addFeedback",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsultingFeedbackCreateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingFeedbackDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "계약서 피드백 추가 — §30",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/feedback/{feedbackId}/resolve": {
-      "post": {
-        "operationId": "markFeedbackResolved",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          },
-          {
-            "name": "feedbackId",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingFeedbackDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "피드백 수정 완료 표시 — §30",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/deliver": {
-      "post": {
-        "operationId": "deliverContract",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingDetailDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "학부모 전달 완료 기록 — §30",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/signed-files": {
-      "post": {
-        "operationId": "addSignedFile",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsultingFileCreateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsultingFileDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "학부모 서명본 등록 — §30",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/payments": {
-      "post": {
-        "description": "cons_pay 원장에 한 줄 더한다. 받은 합은 저장하지 않는다 — 읽을 때 원장을 더한다 (D-R37).",
-        "operationId": "ConsultingController_addPayment",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConsPaymentCreateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "바뀐 줄 하나 — 화면이 숫자를 다시 만들지 않게",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsAccountRowDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "금액이 공개 범위 밖"
-          },
-          "404": {
-            "description": "보이지 않는 건 — 존재를 누출하지 않는다"
-          },
-          "409": {
-            "description": "code CONS_PAY_LOCKED(종료된 건) | CONS_PAY_NOT_READY(서명 전) | OVERPAY(남은 금액 초과)"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "납부 넣기 — §28 동작 ①",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/consulting/{id}/invoice": {
-      "post": {
-        "description": "**남은 돈으로** 청구서를 낸다. 계약 전액으로 내면 이미 받은 돈이 §53 미수금에 한 번 더 얹힌다. 전환 뒤에도 납부 기록은 cons_pay 에 그대로 남는다 — cs_id 는 연결이지 소유가 아니다.",
-        "operationId": "ConsultingController_toInvoice",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConsAccountRowDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "금액이 공개 범위 밖"
-          },
-          "404": {
-            "description": "보이지 않는 건"
-          },
-          "409": {
-            "description": "code CONS_INV_EXISTS · CONS_INV_NOT_PAID_STEP · CONS_INV_NOTHING_DUE · CONS_INV_STUDENT_AMBIGUOUS"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "청구서로 전환 — §28 동작 ② · 연동 「INV 에 csid 로 연결」",
-        "tags": [
-          "consulting"
-        ]
-      }
-    },
-    "/board": {
-      "get": {
-        "operationId": "BoardController_range",
-        "parameters": [
-          {
-            "name": "from",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "example": "2026-08-01",
-              "type": "string"
-            }
-          },
-          {
-            "name": "to",
-            "required": true,
-            "in": "query",
-            "schema": {
-              "example": "2026-08-31",
-              "type": "string"
-            }
-          },
-          {
-            "name": "teacherId",
-            "required": false,
-            "in": "query",
-            "description": "매니저 이상용 강사 필터. 강사는 본인 id로 강제한다",
-            "schema": {
-              "minimum": 1,
-              "type": "number"
-            }
-          },
-          {
-            "name": "subKey",
-            "required": false,
-            "in": "query",
-            "description": "SUB.key 과목 필터",
-            "schema": {
-              "maxLength": 20,
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/BoardDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "수업 현황판 — 회차·강사×요일·주차별 4마크를 매번 계산한다 (§34~§36 · D-R4)",
-        "tags": [
-          "board"
         ]
       }
     },
@@ -10336,6 +8958,1560 @@
         "summary": "안내 작성 — 쓰면 보낼 준비가 된다 (§43)",
         "tags": [
           "guides"
+        ]
+      }
+    },
+    "/consulting": {
+      "post": {
+        "description": "stage=contract, contractStep=1은 서버가 정한다. amount는 이 계약 작성 화면의 입력값이며 생성 권한은 canMoney와 분리한다.",
+        "operationId": "create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code CONS_PICK_REQUIRED · CONS_PICK_FORBIDDEN · CONS_DATE_ORDER"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 시작 — §29",
+        "tags": [
+          "consulting"
+        ]
+      },
+      "get": {
+        "description": "최종 canAdminPage와 canCrudAll이 모두 필요하다. 공개 범위로 투영된 items의 stage(contract/running/done)를 클라이언트에서 필터링하며 추가 GET은 0이다. 전체/단계 건수는 같은 items에서 파생하고 금액·상세 공개 권한을 변경하지 않는다.",
+        "operationId": "ConsultingController_all",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingListDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 — 단계 보드 · 목록 · 회차 기록 (§26 · §27 · §31)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/items/{itemId}": {
+      "patch": {
+        "description": "공개 범위(csCanFull)·종료 잠금은 서버가 판정한다. 진행률 숫자는 저장하지 않는다 — 원장 행만 바뀐다.",
+        "operationId": "ConsultingController_toggleItem",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "itemId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsItemToggleDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsItemDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "내용이 공개 범위 밖 (수납만 공개 등)"
+          },
+          "404": {
+            "description": "보이지 않는 건·없는 항목 — 존재를 누출하지 않는다"
+          },
+          "409": {
+            "description": "code ITEM_LOCKED — 종료된 건"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "진행 항목 체크/해제 — 47D-B 유일 쓰기 (N-18 §4-17)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/accounting": {
+      "get": {
+        "description": "머리 세 칸과 줄의 「남음」을 **서버가 뺀다** (D-R37). 화면이 계약 − 받음을 다시 하면 가려진 줄에서 합계가 갈린다. 원문 규칙 「수납만 공개(vis='pay')여도 이 화면의 금액은 보입니다」는 새 판정이 아니라 csCanAmount 그대로다.",
+        "operationId": "ConsultingController_accounting",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsAccountingDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 회계 — 계약 금액 · 받은 돈 · 남은 돈 (§28)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/students": {
+      "get": {
+        "description": "원문 규칙 「**csCan() 으로 볼 수 있는 것만 집계합니다**」 그대로다 — 안 보이는 건은 건수에도 합계에도 안 들어간다. 기록 회차·끝낸 항목·받은 돈·건수를 **서버가 센다** (D-R37). 화면이 배열 길이를 세면 내용이 잠긴 건에서 「항목 0/0」이 된다. 한 건에 학생이 여럿이면 그 학생들 모두의 줄에 걸린다(슬라이드 29 「학생 여러 명」).",
+        "operationId": "ConsultingController_students",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsStudentsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 학생별 — CONS 를 학생 기준으로 재구성 (§27)",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}": {
+      "get": {
+        "operationId": "detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약 5단계 상세 — §30",
+        "tags": [
+          "consulting"
+        ]
+      },
+      "delete": {
+        "operationId": "archive",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "컨설팅 안전 보관 — 물리 삭제 없음",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/share": {
+      "patch": {
+        "operationId": "updateShare",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingShareUpdateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약 공개 범위 변경 — §29·§30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/contract-files": {
+      "post": {
+        "operationId": "addContractFile",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingFileCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약서 초안/수정본 추가 — §30, 전체 파일 최대 10개",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/contract-files/{fileId}": {
+      "delete": {
+        "operationId": "removeContractFile",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "fileId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": ""
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약서 초안/수정본 제거 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/feedback": {
+      "post": {
+        "operationId": "addFeedback",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingFeedbackCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFeedbackDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약서 피드백 추가 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/feedback/{feedbackId}/resolve": {
+      "post": {
+        "operationId": "markFeedbackResolved",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "feedbackId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFeedbackDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "피드백 수정 완료 표시 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/deliver": {
+      "post": {
+        "operationId": "deliverContract",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학부모 전달 완료 기록 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/signed-files": {
+      "post": {
+        "operationId": "addSignedFile",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingFileCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingFileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학부모 서명본 등록 — §30",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/payments": {
+      "post": {
+        "description": "cons_pay 원장에 한 줄 더한다. 받은 합은 저장하지 않는다 — 읽을 때 원장을 더한다 (D-R37).",
+        "operationId": "ConsultingController_addPayment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsPaymentCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "바뀐 줄 하나 — 화면이 숫자를 다시 만들지 않게",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsAccountRowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "금액이 공개 범위 밖"
+          },
+          "404": {
+            "description": "보이지 않는 건 — 존재를 누출하지 않는다"
+          },
+          "409": {
+            "description": "code CONS_PAY_LOCKED(종료된 건) | CONS_PAY_NOT_READY(서명 전) | OVERPAY(남은 금액 초과)"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "납부 넣기 — §28 동작 ①",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/{id}/invoice": {
+      "post": {
+        "description": "**남은 돈으로** 청구서를 낸다. 계약 전액으로 내면 이미 받은 돈이 §53 미수금에 한 번 더 얹힌다. 전환 뒤에도 납부 기록은 cons_pay 에 그대로 남는다 — cs_id 는 연결이지 소유가 아니다.",
+        "operationId": "ConsultingController_toInvoice",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsAccountRowDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "금액이 공개 범위 밖"
+          },
+          "404": {
+            "description": "보이지 않는 건"
+          },
+          "409": {
+            "description": "code CONS_INV_EXISTS · CONS_INV_NOT_PAID_STEP · CONS_INV_NOTHING_DUE · CONS_INV_STUDENT_AMBIGUOUS"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구서로 전환 — §28 동작 ② · 연동 「INV 에 csid 로 연결」",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/board": {
+      "get": {
+        "operationId": "BoardController_range",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "example": "2026-08-31",
+              "type": "string"
+            }
+          },
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "description": "매니저 이상용 강사 필터. 강사는 본인 id로 강제한다",
+            "schema": {
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "subKey",
+            "required": false,
+            "in": "query",
+            "description": "SUB.key 과목 필터",
+            "schema": {
+              "maxLength": 20,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 현황판 — 회차·강사×요일·주차별 4마크를 매번 계산한다 (§34~§36 · D-R4)",
+        "tags": [
+          "board"
         ]
       }
     },
@@ -19300,6 +19476,461 @@
           }
         }
       },
+      "EnrollStudentDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "비우면 상담 카드의 이름",
+            "maxLength": 40
+          },
+          "grade": {
+            "type": "string",
+            "maxLength": 10,
+            "description": "학년 — 동명이인을 가르는 칸 (N-137)"
+          },
+          "school": {
+            "type": "string",
+            "maxLength": 60,
+            "description": "비우면 상담 카드의 학교"
+          },
+          "targetExam": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "guidance": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "지도 강도 낱말 — STU.guidance"
+          },
+          "lang": {
+            "type": "string",
+            "maxLength": 20,
+            "description": "수업 언어 — STU.lang"
+          }
+        }
+      },
+      "EnrollLineDto": {
+        "type": "object",
+        "properties": {
+          "kindKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ]
+          },
+          "rrule": {
+            "type": "string",
+            "description": "ONCE | DAILY[/n] | WEEKLY:MO,WE[/n] — 시작일 이후 첫 요일이 첫 수업이다 (A-14)",
+            "maxLength": 80
+          },
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439
+          },
+          "endMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true,
+            "description": "등록 회차 수 — ENR.sessions (비우면 정하지 않음)"
+          },
+          "libId": {
+            "type": "number",
+            "nullable": true,
+            "description": "교재 — 서가(LIB) id. 있으면 배부 요청(wait)이 남고, 없으면 「교재 배정이 필요합니다」 알림이 간다"
+          }
+        },
+        "required": [
+          "kindKey",
+          "mode",
+          "rrule",
+          "startMin",
+          "endMin"
+        ]
+      },
+      "LeadEnrollDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number",
+            "nullable": true,
+            "description": "이미 있는 학생에게 붙일 때 — 형제·재등록. 비우면 새 학생을 만든다"
+          },
+          "student": {
+            "description": "새 학생 칸 — studentId 가 있으면 무시",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnrollStudentDto"
+              }
+            ]
+          },
+          "startedOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "시작일 — ENR.started_on · STU.started_on · 각 줄의 첫 회차 하한"
+          },
+          "lines": {
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "배치안 줄 — 줄마다 시간표 규칙 하나(SER+SER_STU)와 ENR 한 줄",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnrollLineDto"
+            }
+          },
+          "issueInvoice": {
+            "type": "boolean",
+            "description": "첫 달 수업료 청구서를 함께 낸다 (기본 true · §53 발행 그대로 — 단가 없으면 건너뛰고 이유를 돌려준다)",
+            "default": true
+          },
+          "memo": {
+            "type": "string",
+            "description": "메모 — LEAD.reason 에 남는다",
+            "maxLength": 300
+          },
+          "allowSameName": {
+            "type": "boolean",
+            "description": "이미 있는 학생과 이름이 같아도 새 학생으로 만든다 (동명이인 · N-137) — 학년·학교가 같으면 그래도 409"
+          }
+        },
+        "required": [
+          "startedOn",
+          "lines"
+        ]
+      },
+      "EnrollEnrollmentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true
+          },
+          "startedOn": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kindKey",
+          "startedOn"
+        ]
+      },
+      "EnrollSeriesDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "subName": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string"
+          },
+          "ruleLabel": {
+            "type": "string",
+            "description": "규칙 — 「매주 월·수」 같은 사람 말"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "firstLessonOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "첫 수업일 — 시작일 이후 첫 회차 (A-14). 투영 범위 안에 없으면 null"
+          },
+          "monthCount": {
+            "type": "number",
+            "description": "이번 달(첫 수업이 든 달)의 회차 수"
+          }
+        },
+        "required": [
+          "serId",
+          "kindKey",
+          "title",
+          "ruleLabel",
+          "startMin",
+          "endMin",
+          "monthCount"
+        ]
+      },
+      "EnrollSkipDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "BookIssueDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "libId": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "versId": {
+            "type": "number",
+            "nullable": true
+          },
+          "edition": {
+            "type": "string",
+            "nullable": true
+          },
+          "fileUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "seFileId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teFileId": {
+            "type": "number",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "wait",
+              "auto",
+              "ok",
+              "returned"
+            ]
+          },
+          "stateLabel": {
+            "type": "string"
+          },
+          "issuedOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "returnedOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "progressPage": {
+            "type": "number",
+            "nullable": true
+          },
+          "progressPercent": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "libId",
+          "studentId",
+          "state",
+          "stateLabel"
+        ]
+      },
+      "EnrollMissingBookDto": {
+        "type": "object",
+        "properties": {
+          "kindKey": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "label": {
+            "type": "string",
+            "description": "과목 이름(없으면 종류 이름)"
+          }
+        },
+        "required": [
+          "kindKey",
+          "label"
+        ]
+      },
+      "EnrollResultDto": {
+        "type": "object",
+        "properties": {
+          "leadId": {
+            "type": "number"
+          },
+          "preview": {
+            "type": "boolean",
+            "description": "미리보기였는가 — true 면 아무것도 쓰지 않았다"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "studentCreated": {
+            "type": "boolean",
+            "description": "새로 만든 학생인가 (false 면 있는 학생에게 붙였다)"
+          },
+          "startedOn": {
+            "type": "string"
+          },
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnrollEnrollmentDto"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnrollSeriesDto"
+            }
+          },
+          "invoice": {
+            "nullable": true,
+            "description": "첫 달 청구서 — 안 냈으면 null 이고 invoiceSkipped 가 이유",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InvoiceDto"
+              }
+            ]
+          },
+          "invoiceSkipped": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnrollSkipDto"
+              }
+            ]
+          },
+          "bookIssues": {
+            "description": "교재 요청(wait) — 줄에 libId 가 있던 것",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookIssueDto"
+            }
+          },
+          "booksMissing": {
+            "description": "교재가 정해지지 않은 줄 — 「교재 배정이 필요합니다」 알림이 갔다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnrollMissingBookDto"
+            }
+          },
+          "guideDrafts": {
+            "type": "number",
+            "description": "남긴 첫 수업 안내 초안 수"
+          },
+          "notifiedTeachers": {
+            "type": "number",
+            "description": "알림을 받은 강사 수"
+          },
+          "notifiedStaff": {
+            "type": "number",
+            "description": "알림을 받은 관리자 수"
+          },
+          "unavailable": {
+            "description": "강사 불가 시간에 걸친 회차 — 막지 않고 알린다 (A-07)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnavWarnDto"
+            }
+          },
+          "stage": {
+            "type": "string",
+            "description": "상담 단계 — 언제나 enrolled"
+          }
+        },
+        "required": [
+          "leadId",
+          "preview",
+          "studentId",
+          "studentName",
+          "studentCreated",
+          "startedOn",
+          "enrollments",
+          "series",
+          "bookIssues",
+          "booksMissing",
+          "guideDrafts",
+          "notifiedTeachers",
+          "notifiedStaff",
+          "unavailable",
+          "stage"
+        ]
+      },
       "MfbCommentWriteDto": {
         "type": "object",
         "properties": {
@@ -19718,6 +20349,1688 @@
         "required": [
           "title",
           "toId"
+        ]
+      },
+      "BookDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "교재 코드 — 카드에 그대로 보인다"
+          },
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "subName": {
+            "type": "string",
+            "nullable": true
+          },
+          "level": {
+            "type": "string",
+            "nullable": true
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "pages": {
+            "type": "number",
+            "nullable": true
+          },
+          "seTe": {
+            "type": "string",
+            "nullable": true,
+            "description": "SE 학생용 · TE 교사용"
+          },
+          "edition": {
+            "type": "string",
+            "nullable": true,
+            "description": "지금 쓰는 판 (예: v2026.03)"
+          },
+          "latestEdition": {
+            "type": "string",
+            "nullable": true,
+            "description": "가장 나중 판"
+          },
+          "hasNewer": {
+            "type": "boolean",
+            "description": "더 나중 판이 있는가 — 판단은 서버가 한다"
+          },
+          "versId": {
+            "type": "number",
+            "nullable": true,
+            "description": "지금 쓰는 판의 id"
+          },
+          "latestVersId": {
+            "type": "number",
+            "nullable": true,
+            "description": "가장 나중 판의 id — ⇧ 가 가는 곳"
+          },
+          "hasFile": {
+            "type": "boolean",
+            "description": "지금 쓰는 판에 파일이 붙어 있는가"
+          },
+          "seFileId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teFileId": {
+            "type": "number",
+            "nullable": true
+          },
+          "issueCount": {
+            "type": "number",
+            "description": "회수 완료를 포함한 누적 배부 횟수"
+          }
+        },
+        "required": [
+          "code",
+          "id",
+          "title",
+          "hasNewer",
+          "hasFile",
+          "issueCount"
+        ]
+      },
+      "NamedCountDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ]
+      },
+      "BooksDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookDto"
+            }
+          },
+          "bySub": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "description": "과목별 권수 — 필터 칩에 쓴다"
+          },
+          "newerCount": {
+            "type": "number",
+            "description": "더 나중 판이 있는 교재 수"
+          },
+          "noFileCount": {
+            "type": "number",
+            "description": "현재 판에 교사용 TE 파일이 없는 교재 수"
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "grades": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "levelCounts": {
+            "description": "레벨별 교재 수 — 필터 칩 SSOT",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "gradeCounts": {
+            "description": "학년별 교재 수 — 필터 칩 SSOT",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "versionUploadMaxBytes": {
+            "type": "number",
+            "description": "새 판 SE+TE 원본 파일 합계 상한. 화면은 이 서버 값을 그대로 쓴다"
+          }
+        },
+        "required": [
+          "items",
+          "bySub",
+          "newerCount",
+          "noFileCount",
+          "levels",
+          "grades",
+          "levelCounts",
+          "gradeCounts",
+          "versionUploadMaxBytes"
+        ]
+      },
+      "BookWriteDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "subKey": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "level": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "grade": {
+            "type": "string",
+            "maxLength": 10
+          },
+          "pages": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 32767
+          }
+        },
+        "required": [
+          "code",
+          "title"
+        ]
+      },
+      "BookWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "title"
+        ]
+      },
+      "BookPatchDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 30
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "subKey": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "level": {
+            "type": "string",
+            "maxLength": 20
+          },
+          "grade": {
+            "type": "string",
+            "maxLength": 10
+          },
+          "pages": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 32767
+          }
+        }
+      },
+      "BookTrackingStudentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "nextLesson": {
+            "type": "string",
+            "nullable": true
+          },
+          "issues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookIssueDto"
+            }
+          },
+          "todos": {
+            "description": "행에 보일 할 일 칩 — 분류·건수는 서버가 계산",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "todoLabel": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "issues",
+          "todos",
+          "todoLabel"
+        ]
+      },
+      "BookProgressStudentDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "percent": {
+            "type": "number",
+            "nullable": true
+          },
+          "elapsedDays": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "studentId",
+          "name"
+        ]
+      },
+      "BookProgressDto": {
+        "type": "object",
+        "properties": {
+          "libId": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "studentCount": {
+            "type": "number"
+          },
+          "minPercent": {
+            "type": "number",
+            "nullable": true
+          },
+          "maxPercent": {
+            "type": "number",
+            "nullable": true
+          },
+          "averagePercent": {
+            "type": "number",
+            "nullable": true
+          },
+          "pages": {
+            "type": "number",
+            "nullable": true
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookProgressStudentDto"
+            }
+          }
+        },
+        "required": [
+          "libId",
+          "title",
+          "studentCount",
+          "students"
+        ]
+      },
+      "BookChangeRequestDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "requesterName": {
+            "type": "string"
+          },
+          "studentId": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "requesterName",
+          "message"
+        ]
+      },
+      "BookTrackingDto": {
+        "type": "object",
+        "properties": {
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookTrackingStudentDto"
+            }
+          },
+          "books": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookProgressDto"
+            }
+          },
+          "states": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "teacherRequests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookChangeRequestDto"
+            }
+          }
+        },
+        "required": [
+          "students",
+          "books",
+          "states",
+          "teacherRequests"
+        ]
+      },
+      "BookIssueCreateDto": {
+        "type": "object",
+        "properties": {
+          "libId": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "wait",
+              "auto",
+              "ok"
+            ],
+            "default": "ok"
+          },
+          "issuedOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-09-14"
+          },
+          "progressPage": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "libId",
+          "studentId"
+        ]
+      },
+      "BookIssueTransitionDto": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "ok"
+            ]
+          }
+        },
+        "required": [
+          "state"
+        ]
+      },
+      "BookIssueProgressDto": {
+        "type": "object",
+        "properties": {
+          "progressPage": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "progressPage"
+        ]
+      },
+      "BookIssueReturnDto": {
+        "type": "object",
+        "properties": {
+          "returnedOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-09-14"
+          }
+        }
+      },
+      "BookHistoryRowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "book_issue",
+              "book_upload",
+              "book_swap",
+              "book_drop",
+              "guide_write",
+              "guide_send",
+              "guide_ack",
+              "teacher_req",
+              "teacher_swap"
+            ]
+          },
+          "actionLabel": {
+            "type": "string",
+            "description": "칩과 줄에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)"
+          },
+          "entity": {
+            "type": "string",
+            "description": "어느 표를 가리키는가"
+          },
+          "refId": {
+            "type": "number"
+          },
+          "subject": {
+            "type": "string",
+            "nullable": true,
+            "description": "무엇에 대한 일인가 — 읽을 때 원본 표에서 이어 붙인다"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true
+          },
+          "memo": {
+            "type": "string",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentId": {
+            "type": "number",
+            "nullable": true
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true
+          },
+          "at": {
+            "type": "string",
+            "description": "KST ISO"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "actionLabel",
+          "entity",
+          "refId",
+          "at"
+        ]
+      },
+      "BookHistoryDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookHistoryRowDto"
+            }
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "byStudent": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "byDay": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "bookCount": {
+            "type": "number"
+          },
+          "guideCount": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "actions",
+          "byStudent",
+          "byDay",
+          "total",
+          "bookCount",
+          "guideCount"
+        ]
+      },
+      "BookPackStudentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "BookPackLibDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "versId": {
+            "type": "number",
+            "nullable": true
+          },
+          "seFileId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teFileId": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "title"
+        ]
+      },
+      "BookPackDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "packType": {
+            "type": "string",
+            "enum": [
+              "exam",
+              "self"
+            ]
+          },
+          "packTypeLabel": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "memo": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "delivered",
+              "received"
+            ]
+          },
+          "stateLabel": {
+            "type": "string"
+          },
+          "effectiveOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "coordinatorId": {
+            "type": "number",
+            "nullable": true
+          },
+          "coordinatorName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "deliveredAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "receivedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "students": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookPackStudentDto"
+            }
+          },
+          "books": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookPackLibDto"
+            }
+          },
+          "canDeliver": {
+            "type": "boolean",
+            "description": "pending 자료를 전달해도 되는가 — 필수 링크 판정은 서버가 한다"
+          },
+          "canReceive": {
+            "type": "boolean",
+            "description": "현재 사용자가 delivered 자료의 지정 코디네이터라 수령 확인할 수 있는가"
+          },
+          "deliveryBlockers": {
+            "description": "전달 전에 채워야 할 항목",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "packType",
+          "packTypeLabel",
+          "title",
+          "state",
+          "stateLabel",
+          "students",
+          "books",
+          "canDeliver",
+          "canReceive",
+          "deliveryBlockers"
+        ]
+      },
+      "BookPacksDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookPackDto"
+            }
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          },
+          "coordinators": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamedCountDto"
+            }
+          }
+        },
+        "required": [
+          "items",
+          "types",
+          "coordinators"
+        ]
+      },
+      "BookPackWriteDto": {
+        "type": "object",
+        "properties": {
+          "packType": {
+            "type": "string",
+            "enum": [
+              "exam",
+              "self"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "effectiveOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-09-14"
+          },
+          "coordinatorId": {
+            "type": "number"
+          },
+          "studentIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "libIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "packType",
+          "title",
+          "effectiveOn",
+          "coordinatorId",
+          "studentIds",
+          "libIds"
+        ]
+      },
+      "BookPackPatchDto": {
+        "type": "object",
+        "properties": {
+          "packType": {
+            "type": "string",
+            "enum": [
+              "exam",
+              "self"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "effectiveOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "example": "2026-09-14"
+          },
+          "coordinatorId": {
+            "type": "number"
+          },
+          "studentIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "libIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "BookVersionCreateDto": {
+        "type": "object",
+        "properties": {
+          "edition": {
+            "type": "string",
+            "description": "판 이름 — 원본 배지 모양 그대로 (예: v2026.08)",
+            "example": "v2026.08"
+          },
+          "seFile": {
+            "description": "이 판과 같은 트랜잭션에 저장할 SE 파일",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FileUploadDto"
+              }
+            ]
+          },
+          "teFile": {
+            "description": "이 판과 같은 트랜잭션에 저장할 TE 파일",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FileUploadDto"
+              }
+            ]
+          },
+          "fromDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "이 판을 언제부터 쓰는가 — 비우면 오늘부터"
+          }
+        },
+        "required": [
+          "edition"
+        ]
+      },
+      "BookVersionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "libId": {
+            "type": "number"
+          },
+          "edition": {
+            "type": "string"
+          },
+          "fileUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "seFileId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teFileId": {
+            "type": "number",
+            "nullable": true
+          },
+          "fromDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "inUse": {
+            "type": "boolean",
+            "description": "지금 쓰는 판인가 — 판단은 서버가 한다"
+          }
+        },
+        "required": [
+          "id",
+          "libId",
+          "edition",
+          "inUse"
+        ]
+      },
+      "GuideDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "serId": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "description": "new(첫 수업) | teacher_change(강사 교체)"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "ready",
+              "sent",
+              "read"
+            ],
+            "description": "draft·ready 가 아직 안 보낸 것"
+          },
+          "pending": {
+            "type": "boolean",
+            "description": "아직 안 보냄 (GUIDE_PENDING_DB 파생) — 화면은 이 값만 읽는다"
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "serTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "body": {
+            "type": "string",
+            "nullable": true
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "eventOn": {
+            "type": "string",
+            "nullable": true,
+            "format": "date",
+            "description": "첫 수업·강사 교체가 실제로 일어난 KST 회차일. 레거시 행은 null"
+          },
+          "sourceOccurrenceId": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 SER_OCC 투영 id. 재투영 때 바뀔 수 있으므로 GUIDE에는 저장하지 않는다"
+          },
+          "createdBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "createdByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "sentBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "sentByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "HIST guide_send의 최초 시각. 없으면 null"
+          },
+          "acknowledgedBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "acknowledgedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "acknowledgedAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "HIST guide_ack의 최초 시각. 없으면 null"
+          },
+          "overdueDays": {
+            "type": "number",
+            "description": "기한이 지난 날 수. 0이면 안 지남"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "reason",
+          "state",
+          "pending",
+          "createdAt",
+          "overdueDays"
+        ]
+      },
+      "PerLessonNoticeRecordDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "sms",
+              "kakao",
+              "email",
+              "app"
+            ]
+          },
+          "body": {
+            "type": "string",
+            "nullable": true
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "PNOTI 발송 기록이 없으면 null"
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName"
+        ]
+      },
+      "PerLessonNoticeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "sourceOccurrenceId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439
+          },
+          "endMin": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "kindName": {
+            "type": "string",
+            "nullable": true
+          },
+          "zaccId": {
+            "type": "number",
+            "nullable": true
+          },
+          "zaccLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "zoomAssigned": {
+            "type": "boolean"
+          },
+          "notices": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PerLessonNoticeRecordDto"
+            }
+          },
+          "parentDeliveryRecorded": {
+            "type": "boolean",
+            "description": "명단 학생 모두에게 PNOTI.sent_at이 있을 때만 true"
+          },
+          "teacherDeliveryRecorded": {
+            "type": "boolean",
+            "description": "강사 독립 발송 원장이 없어 현재 false"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "sms",
+              "kakao",
+              "email",
+              "app"
+            ]
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "serTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "body": {
+            "type": "string"
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "아직 안 보냈으면 null"
+          }
+        },
+        "required": [
+          "id",
+          "sourceOccurrenceId",
+          "serId",
+          "onDate",
+          "startMin",
+          "endMin",
+          "zoomAssigned",
+          "notices",
+          "parentDeliveryRecorded",
+          "teacherDeliveryRecorded",
+          "channel",
+          "body"
+        ]
+      },
+      "GuideStatsDto": {
+        "type": "object",
+        "properties": {
+          "monitoring": {
+            "type": "number"
+          },
+          "overdue": {
+            "type": "number"
+          },
+          "drafting": {
+            "type": "number"
+          },
+          "sendPending": {
+            "type": "number"
+          },
+          "teacherUnconfirmed": {
+            "type": "number"
+          },
+          "repeatedTeacherChange": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "monitoring",
+          "overdue",
+          "drafting",
+          "sendPending",
+          "teacherUnconfirmed",
+          "repeatedTeacherChange"
+        ]
+      },
+      "GuideDeliveryCapabilitiesDto": {
+        "type": "object",
+        "properties": {
+          "parentExternal": {
+            "type": "boolean",
+            "default": false
+          },
+          "teacherExternal": {
+            "type": "boolean",
+            "default": false
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "parentExternal",
+          "teacherExternal"
+        ]
+      },
+      "GuidesDto": {
+        "type": "object",
+        "properties": {
+          "guides": {
+            "description": "한 번만 나가는 안내",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideDto"
+            }
+          },
+          "perLesson": {
+            "description": "회차마다 나가는 안내",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PerLessonNoticeDto"
+            }
+          },
+          "todoCount": {
+            "type": "number",
+            "description": "아직 안 보낸 안내 수"
+          },
+          "scopedTeacherId": {
+            "type": "number",
+            "nullable": true,
+            "description": "강사 전용 service 재사용 시 자기 것만 본 그 강사 id. 관리자 API는 null"
+          },
+          "stats": {
+            "description": "§43 머리 6칸. 화면이 배열을 다시 세지 않는다",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GuideStatsDto"
+              }
+            ]
+          },
+          "deliveryCapabilities": {
+            "$ref": "#/components/schemas/GuideDeliveryCapabilitiesDto"
+          }
+        },
+        "required": [
+          "guides",
+          "perLesson",
+          "todoCount",
+          "stats",
+          "deliveryCapabilities"
+        ]
+      },
+      "GuideBookDto": {
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "number"
+          },
+          "libId": {
+            "type": "number"
+          },
+          "versId": {
+            "type": "number",
+            "nullable": true
+          },
+          "code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "edition": {
+            "type": "string",
+            "nullable": true
+          },
+          "seTe": {
+            "type": "string",
+            "nullable": true
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "issueId",
+          "libId",
+          "code",
+          "title"
+        ]
+      },
+      "GuideDiagnosticDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "levelSummary": {
+            "type": "string"
+          },
+          "strengths": {
+            "type": "string",
+            "nullable": true
+          },
+          "weaknesses": {
+            "type": "string",
+            "nullable": true
+          },
+          "curriculum": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "levelSummary",
+          "createdAt"
+        ]
+      },
+      "GuideStudentDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "guidance": {
+            "type": "string",
+            "nullable": true
+          },
+          "lang": {
+            "type": "string",
+            "nullable": true
+          },
+          "guideCount": {
+            "type": "number"
+          },
+          "latestGuide": {
+            "$ref": "#/components/schemas/GuideDto"
+          },
+          "books": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideBookDto"
+            }
+          },
+          "diagnostic": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GuideDiagnosticDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName",
+          "guideCount",
+          "latestGuide",
+          "books"
+        ]
+      },
+      "GuideStudentsDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "GUIDE가 있는 학생과 최신 유효 안내",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideStudentDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "GuideMissingDto": {
+        "type": "object",
+        "properties": {
+          "sourceOccurrenceId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "eventOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "serTitle": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "new",
+              "teacher_change"
+            ]
+          }
+        },
+        "required": [
+          "sourceOccurrenceId",
+          "eventOn",
+          "serId",
+          "studentId",
+          "studentName",
+          "reason"
+        ]
+      },
+      "GuideHistoryDayDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideDto"
+            }
+          }
+        },
+        "required": [
+          "date",
+          "items"
+        ]
+      },
+      "GuideHistoryCountsDto": {
+        "type": "object",
+        "properties": {
+          "created": {
+            "type": "number"
+          },
+          "sent": {
+            "type": "number"
+          },
+          "missing": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "created",
+          "sent",
+          "missing"
+        ]
+      },
+      "GuideHistoryDto": {
+        "type": "object",
+        "properties": {
+          "span": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ]
+          },
+          "anchor": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideMissingDto"
+            }
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideHistoryDayDto"
+            }
+          },
+          "counts": {
+            "$ref": "#/components/schemas/GuideHistoryCountsDto"
+          }
+        },
+        "required": [
+          "span",
+          "anchor",
+          "from",
+          "to",
+          "missing",
+          "days",
+          "counts"
+        ]
+      },
+      "GuideDraftCreateDto": {
+        "type": "object",
+        "properties": {
+          "sourceOccurrenceId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "sourceOccurrenceId",
+          "studentId"
+        ]
+      },
+      "GuideTemplateDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "body"
+        ]
+      },
+      "GuideTemplateWriteDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "무엇에 쓰는 틀인지 — 목록에서 이 이름으로 고른다"
+          },
+          "body": {
+            "type": "string",
+            "description": "문구 본문"
+          }
+        },
+        "required": [
+          "name",
+          "body"
+        ]
+      },
+      "GuideBodyDto": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "안내 본문"
+          }
+        },
+        "required": [
+          "body"
         ]
       },
       "ConsultingCreateDto": {
@@ -21150,1761 +23463,6 @@
           "teacherRows",
           "weeks",
           "computedAt"
-        ]
-      },
-      "BookDto": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "description": "교재 코드 — 카드에 그대로 보인다"
-          },
-          "id": {
-            "type": "number"
-          },
-          "title": {
-            "type": "string"
-          },
-          "subKey": {
-            "type": "string",
-            "nullable": true
-          },
-          "subName": {
-            "type": "string",
-            "nullable": true
-          },
-          "level": {
-            "type": "string",
-            "nullable": true
-          },
-          "grade": {
-            "type": "string",
-            "nullable": true
-          },
-          "pages": {
-            "type": "number",
-            "nullable": true
-          },
-          "seTe": {
-            "type": "string",
-            "nullable": true,
-            "description": "SE 학생용 · TE 교사용"
-          },
-          "edition": {
-            "type": "string",
-            "nullable": true,
-            "description": "지금 쓰는 판 (예: v2026.03)"
-          },
-          "latestEdition": {
-            "type": "string",
-            "nullable": true,
-            "description": "가장 나중 판"
-          },
-          "hasNewer": {
-            "type": "boolean",
-            "description": "더 나중 판이 있는가 — 판단은 서버가 한다"
-          },
-          "versId": {
-            "type": "number",
-            "nullable": true,
-            "description": "지금 쓰는 판의 id"
-          },
-          "latestVersId": {
-            "type": "number",
-            "nullable": true,
-            "description": "가장 나중 판의 id — ⇧ 가 가는 곳"
-          },
-          "hasFile": {
-            "type": "boolean",
-            "description": "지금 쓰는 판에 파일이 붙어 있는가"
-          },
-          "seFileId": {
-            "type": "number",
-            "nullable": true
-          },
-          "teFileId": {
-            "type": "number",
-            "nullable": true
-          },
-          "issueCount": {
-            "type": "number",
-            "description": "회수 완료를 포함한 누적 배부 횟수"
-          }
-        },
-        "required": [
-          "code",
-          "id",
-          "title",
-          "hasNewer",
-          "hasFile",
-          "issueCount"
-        ]
-      },
-      "NamedCountDto": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "count": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "key",
-          "label",
-          "count"
-        ]
-      },
-      "BooksDto": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookDto"
-            }
-          },
-          "bySub": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "number"
-            },
-            "description": "과목별 권수 — 필터 칩에 쓴다"
-          },
-          "newerCount": {
-            "type": "number",
-            "description": "더 나중 판이 있는 교재 수"
-          },
-          "noFileCount": {
-            "type": "number",
-            "description": "현재 판에 교사용 TE 파일이 없는 교재 수"
-          },
-          "levels": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "grades": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "levelCounts": {
-            "description": "레벨별 교재 수 — 필터 칩 SSOT",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "gradeCounts": {
-            "description": "학년별 교재 수 — 필터 칩 SSOT",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "versionUploadMaxBytes": {
-            "type": "number",
-            "description": "새 판 SE+TE 원본 파일 합계 상한. 화면은 이 서버 값을 그대로 쓴다"
-          }
-        },
-        "required": [
-          "items",
-          "bySub",
-          "newerCount",
-          "noFileCount",
-          "levels",
-          "grades",
-          "levelCounts",
-          "gradeCounts",
-          "versionUploadMaxBytes"
-        ]
-      },
-      "BookWriteDto": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 30
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "subKey": {
-            "type": "string",
-            "maxLength": 20
-          },
-          "level": {
-            "type": "string",
-            "maxLength": 20
-          },
-          "grade": {
-            "type": "string",
-            "maxLength": 10
-          },
-          "pages": {
-            "type": "number",
-            "minimum": 1,
-            "maximum": 32767
-          }
-        },
-        "required": [
-          "code",
-          "title"
-        ]
-      },
-      "BookWriteResultDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "code": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "code",
-          "title"
-        ]
-      },
-      "BookPatchDto": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 30
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "subKey": {
-            "type": "string",
-            "maxLength": 20
-          },
-          "level": {
-            "type": "string",
-            "maxLength": 20
-          },
-          "grade": {
-            "type": "string",
-            "maxLength": 10
-          },
-          "pages": {
-            "type": "number",
-            "minimum": 1,
-            "maximum": 32767
-          }
-        }
-      },
-      "BookIssueDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "libId": {
-            "type": "number"
-          },
-          "studentId": {
-            "type": "number"
-          },
-          "versId": {
-            "type": "number",
-            "nullable": true
-          },
-          "edition": {
-            "type": "string",
-            "nullable": true
-          },
-          "fileUrl": {
-            "type": "string",
-            "nullable": true
-          },
-          "seFileId": {
-            "type": "number",
-            "nullable": true
-          },
-          "teFileId": {
-            "type": "number",
-            "nullable": true
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "wait",
-              "auto",
-              "ok",
-              "returned"
-            ]
-          },
-          "stateLabel": {
-            "type": "string"
-          },
-          "issuedOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true
-          },
-          "returnedOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true
-          },
-          "progressPage": {
-            "type": "number",
-            "nullable": true
-          },
-          "progressPercent": {
-            "type": "number",
-            "nullable": true
-          }
-        },
-        "required": [
-          "id",
-          "libId",
-          "studentId",
-          "state",
-          "stateLabel"
-        ]
-      },
-      "BookTrackingStudentDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "grade": {
-            "type": "string",
-            "nullable": true
-          },
-          "teacherName": {
-            "type": "string",
-            "nullable": true
-          },
-          "nextLesson": {
-            "type": "string",
-            "nullable": true
-          },
-          "issues": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookIssueDto"
-            }
-          },
-          "todos": {
-            "description": "행에 보일 할 일 칩 — 분류·건수는 서버가 계산",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "todoLabel": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "issues",
-          "todos",
-          "todoLabel"
-        ]
-      },
-      "BookProgressStudentDto": {
-        "type": "object",
-        "properties": {
-          "studentId": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "percent": {
-            "type": "number",
-            "nullable": true
-          },
-          "elapsedDays": {
-            "type": "number",
-            "nullable": true
-          }
-        },
-        "required": [
-          "studentId",
-          "name"
-        ]
-      },
-      "BookProgressDto": {
-        "type": "object",
-        "properties": {
-          "libId": {
-            "type": "number"
-          },
-          "title": {
-            "type": "string"
-          },
-          "studentCount": {
-            "type": "number"
-          },
-          "minPercent": {
-            "type": "number",
-            "nullable": true
-          },
-          "maxPercent": {
-            "type": "number",
-            "nullable": true
-          },
-          "averagePercent": {
-            "type": "number",
-            "nullable": true
-          },
-          "pages": {
-            "type": "number",
-            "nullable": true
-          },
-          "students": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookProgressStudentDto"
-            }
-          }
-        },
-        "required": [
-          "libId",
-          "title",
-          "studentCount",
-          "students"
-        ]
-      },
-      "BookChangeRequestDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "requesterName": {
-            "type": "string"
-          },
-          "studentId": {
-            "type": "number",
-            "nullable": true
-          },
-          "studentName": {
-            "type": "string",
-            "nullable": true
-          },
-          "message": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "requesterName",
-          "message"
-        ]
-      },
-      "BookTrackingDto": {
-        "type": "object",
-        "properties": {
-          "students": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookTrackingStudentDto"
-            }
-          },
-          "books": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookProgressDto"
-            }
-          },
-          "states": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "teacherRequests": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookChangeRequestDto"
-            }
-          }
-        },
-        "required": [
-          "students",
-          "books",
-          "states",
-          "teacherRequests"
-        ]
-      },
-      "BookIssueCreateDto": {
-        "type": "object",
-        "properties": {
-          "libId": {
-            "type": "number"
-          },
-          "studentId": {
-            "type": "number"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "wait",
-              "auto",
-              "ok"
-            ],
-            "default": "ok"
-          },
-          "issuedOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "example": "2026-09-14"
-          },
-          "progressPage": {
-            "type": "number",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "libId",
-          "studentId"
-        ]
-      },
-      "BookIssueTransitionDto": {
-        "type": "object",
-        "properties": {
-          "state": {
-            "type": "string",
-            "enum": [
-              "auto",
-              "ok"
-            ]
-          }
-        },
-        "required": [
-          "state"
-        ]
-      },
-      "BookIssueProgressDto": {
-        "type": "object",
-        "properties": {
-          "progressPage": {
-            "type": "number",
-            "minimum": 0
-          }
-        },
-        "required": [
-          "progressPage"
-        ]
-      },
-      "BookIssueReturnDto": {
-        "type": "object",
-        "properties": {
-          "returnedOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "example": "2026-09-14"
-          }
-        }
-      },
-      "BookHistoryRowDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "action": {
-            "type": "string",
-            "enum": [
-              "book_issue",
-              "book_upload",
-              "book_swap",
-              "book_drop",
-              "guide_write",
-              "guide_send",
-              "guide_ack",
-              "teacher_req",
-              "teacher_swap"
-            ]
-          },
-          "actionLabel": {
-            "type": "string",
-            "description": "칩과 줄에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)"
-          },
-          "entity": {
-            "type": "string",
-            "description": "어느 표를 가리키는가"
-          },
-          "refId": {
-            "type": "number"
-          },
-          "subject": {
-            "type": "string",
-            "nullable": true,
-            "description": "무엇에 대한 일인가 — 읽을 때 원본 표에서 이어 붙인다"
-          },
-          "code": {
-            "type": "string",
-            "nullable": true
-          },
-          "memo": {
-            "type": "string",
-            "nullable": true
-          },
-          "teacherName": {
-            "type": "string",
-            "nullable": true
-          },
-          "studentId": {
-            "type": "number",
-            "nullable": true
-          },
-          "byName": {
-            "type": "string",
-            "nullable": true
-          },
-          "at": {
-            "type": "string",
-            "description": "KST ISO"
-          }
-        },
-        "required": [
-          "id",
-          "action",
-          "actionLabel",
-          "entity",
-          "refId",
-          "at"
-        ]
-      },
-      "BookHistoryDto": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookHistoryRowDto"
-            }
-          },
-          "actions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "byStudent": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "byDay": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "total": {
-            "type": "number"
-          },
-          "bookCount": {
-            "type": "number"
-          },
-          "guideCount": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "items",
-          "actions",
-          "byStudent",
-          "byDay",
-          "total",
-          "bookCount",
-          "guideCount"
-        ]
-      },
-      "BookPackStudentDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "grade": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "id",
-          "name"
-        ]
-      },
-      "BookPackLibDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "code": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "versId": {
-            "type": "number",
-            "nullable": true
-          },
-          "seFileId": {
-            "type": "number",
-            "nullable": true
-          },
-          "teFileId": {
-            "type": "number",
-            "nullable": true
-          }
-        },
-        "required": [
-          "id",
-          "code",
-          "title"
-        ]
-      },
-      "BookPackDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "packType": {
-            "type": "string",
-            "enum": [
-              "exam",
-              "self"
-            ]
-          },
-          "packTypeLabel": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "memo": {
-            "type": "string",
-            "nullable": true
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "delivered",
-              "received"
-            ]
-          },
-          "stateLabel": {
-            "type": "string"
-          },
-          "effectiveOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true
-          },
-          "coordinatorId": {
-            "type": "number",
-            "nullable": true
-          },
-          "coordinatorName": {
-            "type": "string",
-            "nullable": true
-          },
-          "createdByName": {
-            "type": "string",
-            "nullable": true
-          },
-          "deliveredAt": {
-            "type": "string",
-            "nullable": true
-          },
-          "receivedAt": {
-            "type": "string",
-            "nullable": true
-          },
-          "students": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookPackStudentDto"
-            }
-          },
-          "books": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookPackLibDto"
-            }
-          },
-          "canDeliver": {
-            "type": "boolean",
-            "description": "pending 자료를 전달해도 되는가 — 필수 링크 판정은 서버가 한다"
-          },
-          "canReceive": {
-            "type": "boolean",
-            "description": "현재 사용자가 delivered 자료의 지정 코디네이터라 수령 확인할 수 있는가"
-          },
-          "deliveryBlockers": {
-            "description": "전달 전에 채워야 할 항목",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "id",
-          "packType",
-          "packTypeLabel",
-          "title",
-          "state",
-          "stateLabel",
-          "students",
-          "books",
-          "canDeliver",
-          "canReceive",
-          "deliveryBlockers"
-        ]
-      },
-      "BookPacksDto": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BookPackDto"
-            }
-          },
-          "types": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          },
-          "coordinators": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/NamedCountDto"
-            }
-          }
-        },
-        "required": [
-          "items",
-          "types",
-          "coordinators"
-        ]
-      },
-      "BookPackWriteDto": {
-        "type": "object",
-        "properties": {
-          "packType": {
-            "type": "string",
-            "enum": [
-              "exam",
-              "self"
-            ]
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "memo": {
-            "type": "string",
-            "maxLength": 2000
-          },
-          "effectiveOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "example": "2026-09-14"
-          },
-          "coordinatorId": {
-            "type": "number"
-          },
-          "studentIds": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            }
-          },
-          "libIds": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            }
-          }
-        },
-        "required": [
-          "packType",
-          "title",
-          "effectiveOn",
-          "coordinatorId",
-          "studentIds",
-          "libIds"
-        ]
-      },
-      "BookPackPatchDto": {
-        "type": "object",
-        "properties": {
-          "packType": {
-            "type": "string",
-            "enum": [
-              "exam",
-              "self"
-            ]
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "memo": {
-            "type": "string",
-            "maxLength": 2000
-          },
-          "effectiveOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "example": "2026-09-14"
-          },
-          "coordinatorId": {
-            "type": "number"
-          },
-          "studentIds": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            }
-          },
-          "libIds": {
-            "type": "array",
-            "items": {
-              "type": "number"
-            }
-          }
-        }
-      },
-      "BookVersionCreateDto": {
-        "type": "object",
-        "properties": {
-          "edition": {
-            "type": "string",
-            "description": "판 이름 — 원본 배지 모양 그대로 (예: v2026.08)",
-            "example": "v2026.08"
-          },
-          "seFile": {
-            "description": "이 판과 같은 트랜잭션에 저장할 SE 파일",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/FileUploadDto"
-              }
-            ]
-          },
-          "teFile": {
-            "description": "이 판과 같은 트랜잭션에 저장할 TE 파일",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/FileUploadDto"
-              }
-            ]
-          },
-          "fromDate": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "이 판을 언제부터 쓰는가 — 비우면 오늘부터"
-          }
-        },
-        "required": [
-          "edition"
-        ]
-      },
-      "BookVersionDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "libId": {
-            "type": "number"
-          },
-          "edition": {
-            "type": "string"
-          },
-          "fileUrl": {
-            "type": "string",
-            "nullable": true
-          },
-          "seFileId": {
-            "type": "number",
-            "nullable": true
-          },
-          "teFileId": {
-            "type": "number",
-            "nullable": true
-          },
-          "fromDate": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true
-          },
-          "inUse": {
-            "type": "boolean",
-            "description": "지금 쓰는 판인가 — 판단은 서버가 한다"
-          }
-        },
-        "required": [
-          "id",
-          "libId",
-          "edition",
-          "inUse"
-        ]
-      },
-      "GuideDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "serId": {
-            "type": "number",
-            "nullable": true
-          },
-          "studentId": {
-            "type": "number"
-          },
-          "teacherId": {
-            "type": "number",
-            "nullable": true
-          },
-          "reason": {
-            "type": "string",
-            "description": "new(첫 수업) | teacher_change(강사 교체)"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "draft",
-              "ready",
-              "sent",
-              "read"
-            ],
-            "description": "draft·ready 가 아직 안 보낸 것"
-          },
-          "pending": {
-            "type": "boolean",
-            "description": "아직 안 보냄 (GUIDE_PENDING_DB 파생) — 화면은 이 값만 읽는다"
-          },
-          "studentName": {
-            "type": "string",
-            "nullable": true
-          },
-          "teacherName": {
-            "type": "string",
-            "nullable": true
-          },
-          "serTitle": {
-            "type": "string",
-            "nullable": true
-          },
-          "body": {
-            "type": "string",
-            "nullable": true
-          },
-          "dueOn": {
-            "type": "string",
-            "nullable": true
-          },
-          "eventOn": {
-            "type": "string",
-            "nullable": true,
-            "format": "date",
-            "description": "첫 수업·강사 교체가 실제로 일어난 KST 회차일. 레거시 행은 null"
-          },
-          "sourceOccurrenceId": {
-            "type": "number",
-            "nullable": true,
-            "description": "현재 SER_OCC 투영 id. 재투영 때 바뀔 수 있으므로 GUIDE에는 저장하지 않는다"
-          },
-          "createdBy": {
-            "type": "number",
-            "nullable": true
-          },
-          "createdByName": {
-            "type": "string",
-            "nullable": true
-          },
-          "createdAt": {
-            "type": "string"
-          },
-          "sentBy": {
-            "type": "number",
-            "nullable": true
-          },
-          "sentByName": {
-            "type": "string",
-            "nullable": true
-          },
-          "sentAt": {
-            "type": "string",
-            "nullable": true,
-            "description": "HIST guide_send의 최초 시각. 없으면 null"
-          },
-          "acknowledgedBy": {
-            "type": "number",
-            "nullable": true
-          },
-          "acknowledgedByName": {
-            "type": "string",
-            "nullable": true
-          },
-          "acknowledgedAt": {
-            "type": "string",
-            "nullable": true,
-            "description": "HIST guide_ack의 최초 시각. 없으면 null"
-          },
-          "overdueDays": {
-            "type": "number",
-            "description": "기한이 지난 날 수. 0이면 안 지남"
-          }
-        },
-        "required": [
-          "id",
-          "studentId",
-          "reason",
-          "state",
-          "pending",
-          "createdAt",
-          "overdueDays"
-        ]
-      },
-      "PerLessonNoticeRecordDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number",
-            "nullable": true
-          },
-          "studentId": {
-            "type": "number"
-          },
-          "studentName": {
-            "type": "string"
-          },
-          "channel": {
-            "type": "string",
-            "nullable": true,
-            "enum": [
-              "sms",
-              "kakao",
-              "email",
-              "app"
-            ]
-          },
-          "body": {
-            "type": "string",
-            "nullable": true
-          },
-          "sentAt": {
-            "type": "string",
-            "nullable": true,
-            "description": "PNOTI 발송 기록이 없으면 null"
-          }
-        },
-        "required": [
-          "studentId",
-          "studentName"
-        ]
-      },
-      "PerLessonNoticeDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "sourceOccurrenceId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "serId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "onDate": {
-            "type": "string"
-          },
-          "startMin": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 1439
-          },
-          "endMin": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 1440
-          },
-          "teacherId": {
-            "type": "number",
-            "nullable": true
-          },
-          "teacherName": {
-            "type": "string",
-            "nullable": true
-          },
-          "kindName": {
-            "type": "string",
-            "nullable": true
-          },
-          "zaccId": {
-            "type": "number",
-            "nullable": true
-          },
-          "zaccLabel": {
-            "type": "string",
-            "nullable": true
-          },
-          "zoomAssigned": {
-            "type": "boolean"
-          },
-          "notices": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PerLessonNoticeRecordDto"
-            }
-          },
-          "parentDeliveryRecorded": {
-            "type": "boolean",
-            "description": "명단 학생 모두에게 PNOTI.sent_at이 있을 때만 true"
-          },
-          "teacherDeliveryRecorded": {
-            "type": "boolean",
-            "description": "강사 독립 발송 원장이 없어 현재 false"
-          },
-          "channel": {
-            "type": "string",
-            "enum": [
-              "sms",
-              "kakao",
-              "email",
-              "app"
-            ]
-          },
-          "studentName": {
-            "type": "string",
-            "nullable": true
-          },
-          "serTitle": {
-            "type": "string",
-            "nullable": true
-          },
-          "body": {
-            "type": "string"
-          },
-          "sentAt": {
-            "type": "string",
-            "nullable": true,
-            "description": "아직 안 보냈으면 null"
-          }
-        },
-        "required": [
-          "id",
-          "sourceOccurrenceId",
-          "serId",
-          "onDate",
-          "startMin",
-          "endMin",
-          "zoomAssigned",
-          "notices",
-          "parentDeliveryRecorded",
-          "teacherDeliveryRecorded",
-          "channel",
-          "body"
-        ]
-      },
-      "GuideStatsDto": {
-        "type": "object",
-        "properties": {
-          "monitoring": {
-            "type": "number"
-          },
-          "overdue": {
-            "type": "number"
-          },
-          "drafting": {
-            "type": "number"
-          },
-          "sendPending": {
-            "type": "number"
-          },
-          "teacherUnconfirmed": {
-            "type": "number"
-          },
-          "repeatedTeacherChange": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "monitoring",
-          "overdue",
-          "drafting",
-          "sendPending",
-          "teacherUnconfirmed",
-          "repeatedTeacherChange"
-        ]
-      },
-      "GuideDeliveryCapabilitiesDto": {
-        "type": "object",
-        "properties": {
-          "parentExternal": {
-            "type": "boolean",
-            "default": false
-          },
-          "teacherExternal": {
-            "type": "boolean",
-            "default": false
-          },
-          "reason": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "parentExternal",
-          "teacherExternal"
-        ]
-      },
-      "GuidesDto": {
-        "type": "object",
-        "properties": {
-          "guides": {
-            "description": "한 번만 나가는 안내",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GuideDto"
-            }
-          },
-          "perLesson": {
-            "description": "회차마다 나가는 안내",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PerLessonNoticeDto"
-            }
-          },
-          "todoCount": {
-            "type": "number",
-            "description": "아직 안 보낸 안내 수"
-          },
-          "scopedTeacherId": {
-            "type": "number",
-            "nullable": true,
-            "description": "강사 전용 service 재사용 시 자기 것만 본 그 강사 id. 관리자 API는 null"
-          },
-          "stats": {
-            "description": "§43 머리 6칸. 화면이 배열을 다시 세지 않는다",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/GuideStatsDto"
-              }
-            ]
-          },
-          "deliveryCapabilities": {
-            "$ref": "#/components/schemas/GuideDeliveryCapabilitiesDto"
-          }
-        },
-        "required": [
-          "guides",
-          "perLesson",
-          "todoCount",
-          "stats",
-          "deliveryCapabilities"
-        ]
-      },
-      "GuideBookDto": {
-        "type": "object",
-        "properties": {
-          "issueId": {
-            "type": "number"
-          },
-          "libId": {
-            "type": "number"
-          },
-          "versId": {
-            "type": "number",
-            "nullable": true
-          },
-          "code": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "edition": {
-            "type": "string",
-            "nullable": true
-          },
-          "seTe": {
-            "type": "string",
-            "nullable": true
-          },
-          "subKey": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "issueId",
-          "libId",
-          "code",
-          "title"
-        ]
-      },
-      "GuideDiagnosticDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "levelSummary": {
-            "type": "string"
-          },
-          "strengths": {
-            "type": "string",
-            "nullable": true
-          },
-          "weaknesses": {
-            "type": "string",
-            "nullable": true
-          },
-          "curriculum": {
-            "type": "string",
-            "nullable": true
-          },
-          "createdAt": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "levelSummary",
-          "createdAt"
-        ]
-      },
-      "GuideStudentDto": {
-        "type": "object",
-        "properties": {
-          "studentId": {
-            "type": "number"
-          },
-          "studentName": {
-            "type": "string"
-          },
-          "grade": {
-            "type": "string",
-            "nullable": true
-          },
-          "guidance": {
-            "type": "string",
-            "nullable": true
-          },
-          "lang": {
-            "type": "string",
-            "nullable": true
-          },
-          "guideCount": {
-            "type": "number"
-          },
-          "latestGuide": {
-            "$ref": "#/components/schemas/GuideDto"
-          },
-          "books": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GuideBookDto"
-            }
-          },
-          "diagnostic": {
-            "nullable": true,
-            "type": "object",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/GuideDiagnosticDto"
-              }
-            ]
-          }
-        },
-        "required": [
-          "studentId",
-          "studentName",
-          "guideCount",
-          "latestGuide",
-          "books"
-        ]
-      },
-      "GuideStudentsDto": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "description": "GUIDE가 있는 학생과 최신 유효 안내",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GuideStudentDto"
-            }
-          }
-        },
-        "required": [
-          "items"
-        ]
-      },
-      "GuideMissingDto": {
-        "type": "object",
-        "properties": {
-          "sourceOccurrenceId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "eventOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-          },
-          "serId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "studentName": {
-            "type": "string"
-          },
-          "teacherId": {
-            "type": "number",
-            "nullable": true
-          },
-          "teacherName": {
-            "type": "string",
-            "nullable": true
-          },
-          "serTitle": {
-            "type": "string",
-            "nullable": true
-          },
-          "reason": {
-            "type": "string",
-            "enum": [
-              "new",
-              "teacher_change"
-            ]
-          }
-        },
-        "required": [
-          "sourceOccurrenceId",
-          "eventOn",
-          "serId",
-          "studentId",
-          "studentName",
-          "reason"
-        ]
-      },
-      "GuideHistoryDayDto": {
-        "type": "object",
-        "properties": {
-          "date": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GuideDto"
-            }
-          }
-        },
-        "required": [
-          "date",
-          "items"
-        ]
-      },
-      "GuideHistoryCountsDto": {
-        "type": "object",
-        "properties": {
-          "created": {
-            "type": "number"
-          },
-          "sent": {
-            "type": "number"
-          },
-          "missing": {
-            "type": "number"
-          }
-        },
-        "required": [
-          "created",
-          "sent",
-          "missing"
-        ]
-      },
-      "GuideHistoryDto": {
-        "type": "object",
-        "properties": {
-          "span": {
-            "type": "string",
-            "enum": [
-              "day",
-              "week",
-              "month"
-            ]
-          },
-          "anchor": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-          },
-          "from": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-          },
-          "to": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-          },
-          "missing": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GuideMissingDto"
-            }
-          },
-          "days": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GuideHistoryDayDto"
-            }
-          },
-          "counts": {
-            "$ref": "#/components/schemas/GuideHistoryCountsDto"
-          }
-        },
-        "required": [
-          "span",
-          "anchor",
-          "from",
-          "to",
-          "missing",
-          "days",
-          "counts"
-        ]
-      },
-      "GuideDraftCreateDto": {
-        "type": "object",
-        "properties": {
-          "sourceOccurrenceId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          }
-        },
-        "required": [
-          "sourceOccurrenceId",
-          "studentId"
-        ]
-      },
-      "GuideTemplateDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "body": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "body"
-        ]
-      },
-      "GuideTemplateWriteDto": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "무엇에 쓰는 틀인지 — 목록에서 이 이름으로 고른다"
-          },
-          "body": {
-            "type": "string",
-            "description": "문구 본문"
-          }
-        },
-        "required": [
-          "name",
-          "body"
-        ]
-      },
-      "GuideBodyDto": {
-        "type": "object",
-        "properties": {
-          "body": {
-            "type": "string",
-            "description": "안내 본문"
-          }
-        },
-        "required": [
-          "body"
         ]
       },
       "TeacherLessonDto": {

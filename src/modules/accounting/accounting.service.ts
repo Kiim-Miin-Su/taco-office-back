@@ -478,6 +478,12 @@ export class AccountingService {
   }
 
   /** 청구서 한 장 — 낱장 발행과 일괄 발행이 같은 줄·같은 거절을 쓴다 */
+  /** 바깥 트랜잭션 안에서 한 장 — 등록 확정(C91)이 시간표와 같은 트랜잭션에서 첫 달 청구서를 낸다. 마감 달 판정은 같다 */
+  async issueWithin(m: EntityManager, userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
+    await assertMonthOpen(m, dto.yearMonth);
+    return this.issueOne(m, userId, dto, canSeeAmounts, false);
+  }
+
   private async issueOne(m: EntityManager, userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceDto> {
     const today = todayKst();
     {

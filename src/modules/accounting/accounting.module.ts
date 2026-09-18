@@ -14,6 +14,7 @@ import { StudentWithdrawService } from './withdraw.service';
 @Module({
   imports: [TypeOrmModule.forFeature([Inv])],
   controllers: [AccountingController],
+  exports: [AccountingService],
   providers: [AccountingService, StudentWithdrawService],
 })
 export class AccountingModule {}

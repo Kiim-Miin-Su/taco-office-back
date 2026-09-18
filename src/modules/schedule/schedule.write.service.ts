@@ -168,11 +168,39 @@ export class ScheduleWriteService {
     enrich?: (q: QueryRunner, fresh: State, base: WriteResultDto) => Promise<T>,
     actorId?: number,
     undoable = true,
+    /**
+     * 바깥 트랜잭션 안에서 부를 때 (C91 등록 확정 — STU·ENR·SER·INV·ISSUE·GUIDE·NOTI 가 한 트랜잭션).
+     * 주어지면 여기서 열지도 닫지도 않는다 — 실패는 그대로 던져 바깥이 통째로 되돌린다.
+     */
+    outer?: QueryRunner,
   ): Promise<T> {
+    if (outer) return this.txBody(outer, serIds, reduce, enrich, actorId, undoable);
     const q = this.ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
     try {
+      const result = await this.txBody(q, serIds, reduce, enrich, actorId, undoable);
+      await q.commitTransaction();
+      return result;
+    } catch (e) {
+      await q.rollbackTransaction();
+      throw e;
+    } finally {
+      await q.release();
+    }
+  }
+
+  private async txBody<T extends WriteResultDto = WriteResultDto>(
+    q: QueryRunner,
+    serIds: number[],
+    reduce: (before: State, q: QueryRunner) =>
+      { after: State; log: string[]; effScope: string } |
+      Promise<{ after: State; log: string[]; effScope: string }>,
+    enrich?: (q: QueryRunner, fresh: State, base: WriteResultDto) => Promise<T>,
+    actorId?: number,
+    undoable = true,
+  ): Promise<T> {
+    {
       // D-R43: 같은 SER의 모든 쓰기를 최초 snapshot 전에 직렬화한다. 자식만 바꾸는
       // 명단/회차 예외도 이 잠금을 공유하며 persist/project/commit까지 유지한다.
       const before = await loadState(q, serIds, { forWrite: true });
@@ -214,17 +242,11 @@ export class ScheduleWriteService {
         unavailable: await unavailableOverlaps(q, touched),
       };
       const result = enrich ? await enrich(q, fresh, base) : base as T;
-      await q.commitTransaction();
       return result;
-    } catch (e) {
-      await q.rollbackTransaction();
-      throw e;
-    } finally {
-      await q.release();
     }
   }
 
-  async create(dto: OccurrenceCreateDto, actorId?: number): Promise<WriteResultDto> {
+  async create(dto: OccurrenceCreateDto, actorId?: number, outer?: QueryRunner): Promise<WriteResultDto> {
     if (!isIsoDate(dto.fromDate) || (dto.toDate != null && !isIsoDate(dto.toDate))) {
       throw new BadRequestException({ code: 'BAD_RANGE', message: '시작일·종료일은 실제 YYYY-MM-DD 날짜여야 합니다' });
     }
@@ -255,7 +277,7 @@ export class ScheduleWriteService {
         },
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, undefined, actorId);
+    }, undefined, actorId, true, outer);
   }
 
   /**

@@ -13,6 +13,7 @@ import { BooksService } from './books.service';
 @Module({
   imports: [TypeOrmModule.forFeature([Lead])],
   controllers: [BooksController],
+  exports: [BooksService],
   providers: [BooksService],
 })
 export class BooksModule {}

@@ -13,6 +13,7 @@ import { GuidesService } from './guides.service';
 @Module({
   imports: [TypeOrmModule.forFeature([Lead])],
   controllers: [GuidesController],
+  exports: [GuidesService],
   providers: [GuidesService],
 })
 export class GuidesModule {}

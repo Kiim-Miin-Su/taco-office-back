@@ -14,11 +14,13 @@ import {
   MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
+import { EnrollResultDto, LeadEnrollDto } from './enroll.dto';
+import { LeadEnrollService } from './enroll.service';
 
 @ApiTags('ops')
 @Controller('ops')
 export class OpsController {
-  constructor(private readonly svc: OpsService) {}
+  constructor(private readonly svc: OpsService, private readonly enrollSvc: LeadEnrollService) {}
 
   @Get()
   @Perm('canAdminPage', 'canCrudAll')
@@ -67,6 +69,37 @@ export class OpsController {
     @Body() dto: LeadResumeDto,
   ): Promise<LeadDto> {
     return this.svc.resumeLead(user.id, id, dto);
+  }
+
+  /* ══ 등록 확정 (C91 · A-05) ═══════════════════════════════════════════════ */
+
+  @Post('leads/:id/enroll/preview')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '등록 확정 미리보기 — 쓰기 0 (C91 · A-05 · A-06 · A-07)',
+    description: '같은 트랜잭션을 끝까지 돌리고 되돌린다 — 겹침(409)·강사 불가 시간·첫 수업일·청구액이 실제와 같다. 화면이 짓지 않는다 (D-R37).',
+  })
+  @ApiCreatedResponse({ type: EnrollResultDto })
+  @ApiConflictResponse({ description: 'code ALREADY_ENROLLED | LEAD_FAILED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED' })
+  @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND | STUDENT_NOT_FOUND | 교재 없음' })
+  enrollPreview(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadEnrollDto): Promise<EnrollResultDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.enrollSvc.preview(user.id, id, dto, canSee);
+  }
+
+  @Post('leads/:id/enroll')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · 테스트 시나리오 A-05)',
+    description: 'STU(동명이인은 학년·학교로) → ENR → SER+SER_STU(시간표 쓰기 그대로 · 겹치면 409 로 전부 되돌린다) → 첫 달 청구서(§53 · 단가 없으면 건너뛰고 이유) '
+      + '→ 교재 요청(wait) 또는 「교재 배정이 필요합니다」 알림 → 첫 수업 안내 초안 → 강사·관리자 알림 → LEAD enrolled + 도달 기록 + LOG.',
+  })
+  @ApiCreatedResponse({ type: EnrollResultDto })
+  @ApiConflictResponse({ description: 'code ALREADY_ENROLLED | LEAD_FAILED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED' })
+  @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND | STUDENT_NOT_FOUND | 교재 없음' })
+  enroll(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadEnrollDto): Promise<EnrollResultDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.enrollSvc.enroll(user.id, id, dto, canSee);
   }
 
   /* ══ §60 대표 피드백 ═══════════════════════════════════════════════════ */

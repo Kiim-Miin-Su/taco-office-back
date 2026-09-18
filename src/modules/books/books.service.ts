@@ -530,7 +530,12 @@ export class BooksService {
   }
 
   async createIssue(userId: number, dto: BookIssueCreateDto): Promise<BookIssueDto> {
-    return this.anyRepo.manager.transaction(async (m) => {
+    return this.anyRepo.manager.transaction(async (m) => this.createIssueWithin(m, userId, dto));
+  }
+
+  /** 바깥 트랜잭션 안에서 한 건 — 등록 확정(C91)이 교재 요청(wait)을 같은 트랜잭션에서 남긴다 */
+  async createIssueWithin(m: EntityManager, userId: number, dto: BookIssueCreateDto): Promise<BookIssueDto> {
+    {
       const [lib] = await m.query(`SELECT id,pages FROM lib WHERE id=$1 FOR UPDATE`, [dto.libId]) as R[];
       if (!lib) throw new NotFoundException('교재를 찾을 수 없습니다');
       const stu = await m.query(`SELECT id FROM stu WHERE id=$1 FOR KEY SHARE`, [dto.studentId]);
@@ -574,7 +579,7 @@ export class BooksService {
         if ((e as { code?: string }).code === '23505') throw new ConflictException({ code: 'BOOK_ALREADY_ACTIVE', message: '이 학생에게 이미 배부 중인 교재입니다' });
         throw e;
       }
-    });
+    }
   }
 
   async transitionIssue(userId: number, id: number, target: 'auto' | 'ok'): Promise<BookIssueDto> {

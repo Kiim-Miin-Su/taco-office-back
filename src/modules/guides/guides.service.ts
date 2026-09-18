@@ -409,6 +409,31 @@ export class GuidesService {
     return guide;
   }
 
+  /**
+   * 등록 확정(C91)이 같은 트랜잭션에서 부른다 — 방금 만든 규칙의 **첫 수업 안내 초안**을 그 학생에게 남긴다.
+   * 판정은 §45 누락 카드와 같은 `candidateRows`(첫 수업·강사 교체) 이고 이미 있는 것은 건너뛴다. 만든 id 를 돌려준다.
+   */
+  async draftsForStudent(manager: EntityManager, userId: number, studentId: number): Promise<number[]> {
+    const candidates = await this.candidateRows(null, null, null, studentId, false, manager);
+    const made: number[] = [];
+    for (const c of candidates) {
+      const [source] = await manager.query(
+        `SELECT on_date FROM ser_occ WHERE id=$1 AND ser_id=$2`, [c.sourceOccurrenceId, c.serId],
+      ) as Array<{ on_date: string }>;
+      if (!source) continue;
+      const rows = await manager.query(
+        `INSERT INTO guide (ser_id,student_id,teacher_id,reason,state,due_on,event_on,created_by)
+         VALUES ($1,$2,$3,$4,'draft'::guide_state_t,$5::date,$6::date,$7)
+         ON CONFLICT (ser_id,event_on,student_id,reason)
+           WHERE ser_id IS NOT NULL AND event_on IS NOT NULL DO NOTHING
+         RETURNING id`,
+        [c.serId, c.studentId, c.teacherId, c.reason, c.eventOn, source.on_date, userId],
+      ) as Array<{ id: string }>;
+      if (rows[0]) made.push(Number(rows[0].id));
+    }
+    return made;
+  }
+
   /* ══ §43 머리의 「문구 관리」 — 문구 틀 (C51) ═══════════════════════════════ */
 
   async templates(): Promise<GuideTemplateDto[]> {
