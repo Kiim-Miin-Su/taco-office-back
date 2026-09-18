@@ -25,6 +25,8 @@ export class TeacherLessonDto {
   @ApiPropertyOptional({ ...S, description: '온라인이면 줌 계정 라벨' }) zaccLabel?: string | null;
   @ApiPropertyOptional({ ...S, description: '수강 학생 이름 (·, 구분)' }) students?: string | null;
   @ApiProperty() canceled!: boolean;
+  @ApiPropertyOptional({ ...S, description: '휴강 사유 낱말 — 「학생 결석」 「학원 사정」 … (C92 · C-31). 옛 휴강은 null' })
+  cancelKindLabel?: string | null;
   @ApiProperty({ enum: [...REP_STATE_T_VALUES], description: '리포트 상태 — rep 행이 없으면 none' })
   repState!: string;
 }

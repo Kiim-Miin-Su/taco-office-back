@@ -640,6 +640,60 @@ export const ATTENDANCE_CANCEL_REASONS = [
 ] as const;
 export type AttendanceCancelReason = (typeof ATTENDANCE_CANCEL_REASONS)[number];
 
+/** 사유의 낱말 — 서버 한 곳 (D-R18). 화면의 `AttendanceControl` 이 들고 있던 표와 같은 다섯이다 */
+export const ATTENDANCE_CANCEL_REASON_LABEL: Record<AttendanceCancelReason, string> = {
+  teacher_absent: '강사 결강',
+  student_absent: '학생 결석',
+  academy: '학원 사정',
+  holiday: '공휴일',
+  other: '기타',
+};
+
+/* ══ 휴강 처리 — 이월 · 차감 · 보강 (C92 · 테스트 시나리오 C-30~C-34) ═══════
+   이 학원의 기본 정책은 **이월**이다 — 빠진 회차는 차감하지 않고 다음 달 청구에서 뺀다.
+   「차감」은 학생 쪽 사정으로 빠진 회차를 **이번 달 소진으로 세는** 예외이고,
+   학원 사정·공휴일·강사 결강으로 쉬는 날은 **정책상 절대 차감하지 않는다**(C-32).
+   「보강 이관」은 원래 회차를 세지 않고 보강 회차 하나만 센다 — 원래 1 + 보강 1 = 2 가 아니라 1(C-34).
+
+   저장되는 낱말은 `exc.cancel_treat` 이고 `exc_cancel_policy` CHECK 가 같은 규칙을 표에서 지킨다.
+   옛 휴강 행은 `cancel_treat` 가 NULL 이며 **기본 정책(이월)** 으로 읽는다 — 보정하지 않는다(N-25). */
+
+export const CANCEL_TREATS = ['carry', 'deduct', 'makeup'] as const;
+export type CancelTreat = (typeof CANCEL_TREATS)[number];
+export const CANCEL_TREAT_LABEL: Record<CancelTreat, string> = {
+  carry: '이월',
+  deduct: '차감',
+  makeup: '보강 이관',
+};
+/** 칸 아래 한 줄 — **무엇이 일어나는지** (§23·§61·§67 의 칸 부제와 같은 규약) */
+export const CANCEL_TREAT_SUB: Record<CancelTreat, string> = {
+  carry: '이번 달 청구에서 빼고 다음 달로 넘깁니다 (기본)',
+  deduct: '이번 달 회차로 소진합니다 — 학생 결석에만',
+  makeup: '보강 회차를 잡습니다 — 원래 회차는 세지 않습니다',
+};
+/** 차감이 허용되는 사유 — 학생 쪽 사정뿐이다 */
+export const DEDUCTIBLE_CANCEL_REASONS: readonly AttendanceCancelReason[] = ['student_absent'];
+
+export type CancelPolicyIssue = 'CANCEL_REASON_REQUIRED' | 'CANCEL_DEDUCT_FORBIDDEN' | 'CANCEL_TREAT_INVALID';
+
+/** DTO 와 DB CHECK 가 공유하는 관계 — 사유 없는 휴강 처리, 학원 사정의 차감은 없다 */
+export function cancelPolicyIssue(input: {
+  kind?: AttendanceCancelReason | null;
+  treat?: CancelTreat | null;
+}): CancelPolicyIssue | null {
+  if (input.treat == null) return null;
+  if (!(CANCEL_TREATS as readonly string[]).includes(input.treat)) return 'CANCEL_TREAT_INVALID';
+  if (!input.kind) return 'CANCEL_REASON_REQUIRED';
+  if (input.treat === 'deduct' && !DEDUCTIBLE_CANCEL_REASONS.includes(input.kind)) return 'CANCEL_DEDUCT_FORBIDDEN';
+  return null;
+}
+
+export const CANCEL_POLICY_MESSAGE: Record<CancelPolicyIssue, string> = {
+  CANCEL_REASON_REQUIRED: '휴강 사유를 골라야 처리(이월·차감)를 정할 수 있습니다',
+  CANCEL_DEDUCT_FORBIDDEN: '학원 사정·공휴일·강사 결강은 차감할 수 없습니다 — 정책상 이월입니다 (C-32)',
+  CANCEL_TREAT_INVALID: '처리는 이월 · 차감 · 보강 이관 중 하나입니다',
+};
+
 export type AttendanceMode = 'unavailable' | 'readonly' | 'manage';
 
 export function canEditAttendance(

@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-51 C92-a 휴강 정책 (2026-09-18): EXC 에 휴강 사유·처리(이월/차감/보강 이관)를 적고 exc_cancel_policy CHECK 로 「차감은 학생 결석에만」을 DB 가 지킨다. 회계 §54·청구서는 처리로 회차를 가른다.
 // TBO-50 C81 제품 정합 (2026-09-14): 내부 리포트 독촉의 UUID 요청키와 대상 강사를 NOTI에 nullable로 보존하고, request_key가 있을 때만 수신자와 partial unique로 멱등성을 강제한다. 외부 메시지/주간 트래킹 정책 저장은 만들지 않는다.
 // TBO-50 C79 제품 정합 (2026-09-14): 컨설팅 시작일·요청자·소프트 보관과 계약 파일/피드백/이벤트 원장을 추가한다. 기존 CONS_STU/PICK/SESS 참조는 실제 FK로 승격하며 §30 단계와 누적 수납 자동 전이는 Nest 트랜잭션이 소유한다.
 // TBO-50 C78 제품 정합 (2026-09-14): 안내 §43~§45의 사건일·작성자·학생/상태 조회 인덱스와 GUIDE/PNOTI/GTPL 최종 방어를 entity·migration·OpenAPI에 맞춰 기록한다. SER_OCC 식별자는 재투영용 응답 키이며 영속 FK가 아니다.
@@ -351,13 +352,18 @@ Table EXC {
   teacher_id  bigint      [ref: > STAFF.id, note: 'teacher_set=true일 때 강사 교체 또는 null=미지정']
   room_set    boolean     [not null, default: false, note: 'false=SER 강의실 상속, true=room_id(null 포함) 사용']
   room_id     bigint      [ref: > ROOM.id, note: 'room_set=true일 때 강의실 교체 또는 null=미지정']
-  reason      text
+  reason      text        [note: '휴강 메모 — C92 부터 휴강 창의 「메모」가 여기 적힌다']
+  cancel_kind  varchar(16) [note: 'teacher_absent | student_absent | academy | holiday | other — 휴강 사유 (v4.26 · C92)']
+  cancel_treat varchar(8)  [note: 'carry | deduct | makeup — 이월 · 차감 · 보강 이관 (v4.26 · C92). null = 옛 휴강 = 이월로 읽는다']
   by_id       bigint      [ref: > STAFF.id]
   at          timestamptz [not null, default: `now()`]
 
   indexes { (ser_id, on_date) [unique] }
   Note: '''
   그날만 다른 것. 시드 7건 (강사 교체 실측 시 7→19).
+  exc_cancel_policy (v4.26 · C92 · NOT VALID): 사유·처리는 낱말 안에서만, 처리는 취소 회차에만(사유와 짝),
+  **차감은 학생 결석에만** — 학원 사정·공휴일·강사 결강은 이월이고 강사료에도 안 든다 (테스트 시나리오 C-30~C-34).
+  cancel_treat 가 null 인 옛 휴강은 이월로 센다 — 기존 행 보정 0 (N-25). 판정은 lib/rules.cancelPolicyIssue 한 곳.
   nullable FK만으로는 상속과 명시적 미지정을 구분할 수 없어 *_set 플래그를 함께 쓴다 (TBO-44D-2).
   CHECK: teacher_set OR teacher_id IS NULL · room_set OR room_id IS NULL.
   exc_time_check: 명시 start/end 범위 및 양쪽 명시 시 길이10~480분. null 상속 결과는 API 최종 상태 검사, DB 직접 부모 변경 보장은 별도.
@@ -1005,14 +1011,19 @@ Table CPL {
   id          bigserial   [pk]
   area        cpl_area_t  [not null]
   student_id  bigint      [ref: > STU.id]
-  stage       varchar(12) [not null, note: 'open | acting | done']
+  stage       varchar(12) [not null, note: 'received | acting | closed — CHECK cpl_stage_words (v4.25)']
   body        text        [not null]
   action      text
   result      text
   teacher_changed boolean [not null, default: false]
   owner_id    bigint      [ref: > STAFF.id]
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 3건. 접수 → 대응 → 결과.'
+  Note: '''시드 8건. 접수 → 대응 → 결과.
+    v4.25 (C86-d) — 이 줄은 한동안 「open | acting | done」이라 선언돼 있었고 표에는 제약이 없었다.
+    저장되는 말은 처음부터 received | acting | closed 였는데, lib/exec-areas 의 컴플레인 판정이
+    선언을 믿고 stage <> 'done' 으로 세는 바람에 **끝난 건까지 전부 세어** 대표 보고 배지가 8 이었다
+    (열린 건은 5). 선언과 데이터가 다르면 그 차이를 읽은 쪽이 조용히 틀린다 — 이제 CHECK 가 막는다.
+    기존 행 보정 0 (N-25): 다른 낱말이 있으면 마이그레이션이 **세어서 멈춘다**.'''
 }
 
 Table PLAN {
@@ -1401,6 +1412,13 @@ Table SER_OCC {
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
 //
+// v4.25 → v4.26 (2026-09-18 · TBO-51 C92-a 휴강 사유·처리) — EXC.cancel_kind · EXC.cancel_treat + exc_cancel_policy CHECK.
+//   휴강이 「취소」 한 가지였고 회계 §54 는 취소 회차를 전부 「넘길 돈」으로 읽었다. 테스트 시나리오 C-30~C-34 가
+//   이월·차감·보강 이관을 가르므로 회차 예외에 사유·처리를 적는다. 차감은 학생 결석에만(CHECK 이중 방어).
+//   새 표 0 · 컬럼 2 · 마이그레이션 1 (1760500000000-cancel-policy) · 기존 행 보정 0 — null 은 이월로 읽는다.
+// v4.24 → v4.25 (2026-09-14 · TBO-50 C86-d 컴플레인 낱말) — CPL.stage 에 cpl_stage_words CHECK 를 새긴다.
+//   선언(open|acting|done)과 저장값(received|acting|closed)이 달랐고 대표 보고 배지가 그 선언을 읽어
+//   끝난 건까지 전부 세고 있었다. 새 표·컬럼 0 · 마이그레이션 1 · 기존 행 보정 0.
 // v4.23 → v4.24 (2026-09-14 · TBO-50 C85-a 대표 보고 쓰기)
 //   RPT    + sent_by · reviewed_by (STAFF · ON DELETE RESTRICT) — 원본 §69 아래 서명줄 두 칸
 //          + CHECK rpt_sign_pair — 시각이 있으면 사람이 있고, 사람이 있으면 시각이 있다 (NOT VALID)

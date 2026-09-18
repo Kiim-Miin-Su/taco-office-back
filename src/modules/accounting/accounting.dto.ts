@@ -369,8 +369,10 @@ export class TuitionRowDto {
   @ApiProperty({ description: '이번 달에 **이미 한** 수업 수' }) done!: number;
   @ApiProperty({ description: '이번 달 전체 수업 수 (결강 제외)' }) total!: number;
   @ApiProperty({ description: '얼마나 갔나 — 0~100. 화면이 나누지 않는다' }) percent!: number;
-  @ApiProperty({ description: '결강·휴강 수 — 취소된 회차와 「그날만 빠진」 것을 합쳐 센다 (D-R21)' })
+  @ApiProperty({ description: '결강·휴강 수 — 이월·보강 이관으로 처리된 휴강과 「그날만 빠진」 것을 합쳐 센다 (D-R21). 차감은 여기 안 든다' })
   canceled!: number;
+  @ApiProperty({ description: '차감(소진)으로 처리된 휴강 수 — 이번 달 회차로 세어 청구한다 (C92 · C-31)' })
+  deducted!: number;
 
   @ApiPropertyOptional({ type: Number, nullable: true, description: '대표 단가 — 가장 많이 쓰인 1회 단가. 못 보면 null' })
   unitPrice?: number | null;
@@ -428,7 +430,8 @@ export class TuitionDto {
   /* 머리 다섯 칸 — 줄의 합이다. 화면이 더하지 않는다 (D-R37) */
   @ApiProperty({ description: '한 수업 (전체 학생 합)' }) doneCount!: number;
   @ApiProperty({ description: '이번 달 전체' }) totalCount!: number;
-  @ApiProperty({ description: '결강 · 휴강' }) canceledCount!: number;
+  @ApiProperty({ description: '결강 · 휴강 (이월·보강 이관·그날만 빠짐)' }) canceledCount!: number;
+  @ApiProperty({ description: '차감(소진) 처리한 휴강 — 청구에 들어 있다 (C92)' }) deductedCount!: number;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '지금까지 금액' }) doneAmount?: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '다음 달로 넘길 돈' }) carryAmount?: number | null;
 

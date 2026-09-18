@@ -26,7 +26,10 @@ import {
   lessonTimeIssue, parseRuleInput, pasteIssue, rosterAt, rosterScopes, ruleHits, scheduleTimeIssue,
   type Patch as OccurrencePatch, type Scope, type State,
 } from '../../lib/recurrence';
-import { rosterPricing, GUIDE_DONE_DB } from '../../lib/rules';
+import {
+  rosterPricing, GUIDE_DONE_DB, cancelPolicyIssue, CANCEL_POLICY_MESSAGE, CANCEL_TREAT_LABEL,
+  type AttendanceCancelReason, type CancelTreat,
+} from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
 import { loadState, persist } from './schedule.state.repo';
@@ -34,9 +37,65 @@ import { issueScheduleUndo, readScheduleUndo, sameScheduleState } from './schedu
 import { assertScheduleReferences } from './schedule.references';
 import { horizon, project } from './schedule.project';
 import type {
+  DayCancelDto, DayCancelResultDto,
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto,
   RosterPatchDto, RosterResultDto, UnavWarnDto, WriteResultDto,
 } from './schedule.dto';
+
+/**
+ * 휴강의 사유·처리 — DTO 의 두 칸을 정책으로 판정한다 (C92 · lib/rules 한 곳).
+ * 둘 다 비우면 옛 방식(취소만) 이고, 하나만 오면 400 이다 — 반쪽 기록은 「이월인지 차감인지」를 나중에 못 읽는다.
+ */
+function cancelArgs(dto: { cancelKind?: AttendanceCancelReason; cancelTreat?: CancelTreat; memo?: string }) {
+  if (dto.cancelKind === undefined && dto.cancelTreat === undefined) return undefined;
+  const issue = cancelPolicyIssue({ kind: dto.cancelKind ?? null, treat: dto.cancelTreat ?? 'carry' });
+  if (issue) throw new BadRequestException({ code: issue, message: CANCEL_POLICY_MESSAGE[issue] });
+  return { kind: dto.cancelKind as string, treat: (dto.cancelTreat ?? 'carry') as string, memo: dto.memo?.trim() || null };
+}
+
+/**
+ * 휴강 알림 두 건 (테스트 시나리오 M-125) — 같은 트랜잭션에서 남긴다 (D-R43).
+ *   ① 「{과목} 결강 — {학생들} → 스케줄」   그 회차의 강사와 관리자 전원(본인 제외)
+ *   ② 「{과목} 이월 1회 발생 — {학생들} → 회계」   이월일 때만, 회계를 보는 대표에게 — 다음 달 청구에서 빠진다는 문구를 함께
+ * **회차마다 한 건**이다 — 학생마다 남기면 네 명 반의 휴강 하나가 수신함에 넉 줄로 서고, 「알림 2건」이 여덟이 된다.
+ * 낱말은 서버가 만든다 (D-R18). 화면은 body 를 그대로 보여 준다.
+ */
+async function notifyCancel(
+  q: QueryRunner, actorId: number | undefined, serId: number, onDate: string, fresh: State, treat: string,
+): Promise<void> {
+  const ser = fresh.SER.find((s) => s.id === serId);
+  if (!ser) return;
+  const exc = fresh.EXC.find((e) => e.serId === serId && e.onDate === onDate);
+  const teacherId = exc?.teacherSet ? exc.teacherId : ser.teacherId;
+  const studentIds = rosterAt(fresh, serId, onDate);
+  const [head] = await q.query(
+    `SELECT COALESCE(sb.name, k.name) AS subject,
+            (SELECT string_agg(st.name, ' · ' ORDER BY st.name) FROM stu st WHERE st.id = ANY($2::bigint[])) AS students
+       FROM ser s
+       JOIN kind k ON k.key = s.kind_key
+       LEFT JOIN sub sb ON sb.key = s.sub_key
+      WHERE s.id = $1`,
+    [serId, studentIds],
+  ) as Array<{ subject: string; students: string | null }>;
+  if (!head) return;
+  const who = head.students ?? '학생 없음';
+  const month = onDate.slice(0, 7);
+  const treatLabel = CANCEL_TREAT_LABEL[treat as CancelTreat] ?? '이월';
+  await q.query(
+    `INSERT INTO noti (to_id, from_id, body, link, category)
+     SELECT id, $1, $2, $3, 'schedule' FROM staff
+      WHERE active AND (id = $4 OR role <> 'teacher') AND ($1::bigint IS NULL OR id <> $1)`,
+    [actorId ?? null, `${head.subject} 결강 — ${who} (${onDate} · ${treatLabel})`, `/schedule?date=${onDate}`, teacherId ?? -1],
+  );
+  if (treat === 'carry') {
+    await q.query(
+      `INSERT INTO noti (to_id, from_id, body, link, category)
+       SELECT id, $1, $2, $3, 'schedule' FROM staff
+        WHERE active AND role = 'ceo' AND ($1::bigint IS NULL OR id <> $1)`,
+      [actorId ?? null, `${head.subject} 이월 1회 발생 — ${who} · 다음 달 청구에서 빠집니다 (${onDate})`, `/accounting?tab=tuition&month=${month}`],
+    );
+  }
+}
 
 /**
  * 강사 불가 시간과 겹친 회차 — **막지 않고 알린다** (원본 §15·§16).
@@ -343,6 +402,20 @@ export class ScheduleWriteService {
   async remove(
     serId: number, dto: OccurrenceDeleteDto, inside?: (q: QueryRunner) => Promise<void>, actorId?: number,
   ): Promise<WriteResultDto> {
+    // 사유·처리는 휴강(이번만)에만 붙는다. 향후·모두는 수업 종료라 정책이 없다 (C92)
+    const cancel = dto.scope === 'this' ? cancelArgs(dto) : undefined;
+    if (dto.scope !== 'this' && (dto.cancelKind !== undefined || dto.cancelTreat !== undefined)) {
+      throw new BadRequestException({
+        code: 'CANCEL_SCOPE', message: '휴강 사유·처리는 이번 회차에만 붙습니다 — 향후·모두는 수업 종료입니다',
+      });
+    }
+    const after = cancel
+      ? async (q: QueryRunner, fresh: State, base: WriteResultDto): Promise<WriteResultDto> => {
+        await notifyCancel(q, actorId, serId, dto.onDate, fresh, cancel.treat);
+        if (inside) await inside(q);
+        return base;
+      }
+      : this.withInside(inside);
     return this.tx([serId], async (before, q) => {
       this.requireOccurrence(before, serId, dto.onDate);
       // ATT를 포함한 이력 원장은 SER_OCC와 달리 재투영해 지울 수 없다. 전 회차 삭제 요청이어도
@@ -367,9 +440,54 @@ export class ScheduleWriteService {
         onDate: dto.onDate,
         scope: dto.scope as Scope,
         hasRefs: refs[0]?.has_refs === true,
+        cancel,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, this.withInside(inside), actorId, false);
+    }, after, actorId, false);
+  }
+
+  /**
+   * 그날 전체 휴강 (테스트 시나리오 C-33 공휴일 · N-133 태풍·감염병) — 한 트랜잭션이다.
+   * 「일부만 처리되면 실패」가 판정이라, 회차 하나가 막히면 전부 되돌아간다.
+   * 이미 휴강인 회차는 건너뛰고 세어서 돌려준다 — 두 번 접지 않는다.
+   */
+  async dayCancel(dto: DayCancelDto, actorId?: number): Promise<DayCancelResultDto> {
+    const cancel = cancelArgs(dto);
+    if (!cancel) throw new BadRequestException({ code: 'CANCEL_REASON_REQUIRED', message: CANCEL_POLICY_MESSAGE.CANCEL_REASON_REQUIRED });
+    const q0 = this.ds.createQueryRunner();
+    await q0.connect();
+    let serIds: number[];
+    try {
+      serIds = ((await q0.query(
+        `SELECT DISTINCT ser_id FROM ser_occ WHERE ${kstDateOf('lower(span)')} = $1::date ORDER BY ser_id`, [dto.date],
+      )) as Array<{ ser_id: string }>).map((r) => Number(r.ser_id));
+    } finally { await q0.release(); }
+    if (!serIds.length) {
+      throw new NotFoundException({ code: 'NO_OCCURRENCES', message: `${dto.date} 에는 회차가 없습니다` });
+    }
+    let count = 0;
+    let skipped = 0;
+    const targets: Array<{ serId: number; onDate: string }> = [];
+    return this.tx<DayCancelResultDto>(serIds, (before) => {
+      let current = before;
+      const log: string[] = [];
+      // occ() 는 표시용이라 휴강을 그리지 않는다 — 이미 접힌 회차는 투영(project)과 같은 판정으로 센다:
+      // 규칙에 맞는 날인데 그 날짜의 EXC 가 취소인 것
+      skipped = before.SER.filter((s) => ruleHits(s, dto.date)
+        && before.EXC.some((e) => e.serId === s.id && e.onDate === dto.date && e.canceled)).length;
+      for (const o of occ(dto.date, before)) {
+        if (o.canceled) { skipped += 1; continue; }
+        const a = applyDelete(current, { serId: o.serId, onDate: o.onDate, scope: 'this', cancel });
+        current = a;
+        log.push(...a.__log);
+        targets.push({ serId: o.serId, onDate: o.onDate });
+        count += 1;
+      }
+      return { after: current, log, effScope: 'this' };
+    }, async (q, fresh, base) => {
+      for (const t of targets) await notifyCancel(q, actorId, t.serId, t.onDate, fresh, cancel.treat);
+      return { ...base, count, skipped };
+    }, actorId, false);
   }
 
   /** §12 · §79 — 학생 넣고 빼기. 「그날만 빼기」가 D-R21 이다. */

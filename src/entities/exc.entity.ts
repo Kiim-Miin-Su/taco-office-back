@@ -20,6 +20,8 @@ import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey, Check } from
 @ForeignKey('staff', ['byId'], ['id'], { name: 'exc_by_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 // D3-d2 수동 CHECK metadata: migration14와 함께 보존/검증한다.
 @Check('exc_time_check', "(start_min IS NULL OR start_min BETWEEN 0 AND 1439) AND (end_min IS NULL OR end_min BETWEEN 1 AND 1440) AND (start_min IS NULL OR end_min IS NULL OR end_min - start_min BETWEEN 10 AND 480)")
+// C92 수동 CHECK metadata: migration 1760500000000 과 함께 보존/검증한다 — lib/rules.cancelPolicyIssue 와 같은 규칙.
+@Check('exc_cancel_policy', "(cancel_kind IS NULL OR cancel_kind IN ('teacher_absent','student_absent','academy','holiday','other')) AND (cancel_treat IS NULL OR cancel_treat IN ('carry','deduct','makeup')) AND (cancel_treat IS NULL OR (canceled AND cancel_kind IS NOT NULL)) AND (cancel_treat IS DISTINCT FROM 'deduct' OR cancel_kind = 'student_absent')")
 @Entity({ name: 'exc' })
 export class Exc {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -63,6 +65,20 @@ export class Exc {
 
   @Column({ type: 'text', nullable: true })
   reason: string | null;
+
+  /**
+   * 휴강 사유 — 출결 취소 사유와 같은 다섯 낱말 (`lib/rules.ATTENDANCE_CANCEL_REASONS` · C92).
+   * 휴강(canceled)일 때만 값이 있고, 옛 휴강 행은 NULL 로 남는다 — 보정하지 않는다 (N-25).
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  cancelKind: string | null;
+
+  /**
+   * 휴강 처리 — carry(이월) · deduct(차감) · makeup(보강 이관) (`lib/rules.CANCEL_TREATS`).
+   * NULL 은 기본 정책(이월)으로 읽는다. 차감은 학생 결석에만 허용된다 — `exc_cancel_policy` CHECK.
+   */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  cancelTreat: string | null;
 
   @Column({ type: 'bigint', nullable: true })
   byId: number | null;

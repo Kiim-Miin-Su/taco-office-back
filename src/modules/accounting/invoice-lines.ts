@@ -44,22 +44,32 @@ export interface InvoiceLineRow {
 /** 질의 하나를 실행할 수 있는 것 — EntityManager 든 QueryRunner 든 받는다 */
 export type Queryer = { query: (sql: string, params?: unknown[]) => Promise<unknown> };
 
-/** 살아 있는 회차 — 휴강도 아니고 그 학생이 그날만 빠진 것도 아닌 것 (D-R21) */
-const LIVE = `NOT o.canceled
-       AND NOT EXISTS (
+/*
+ * ── 휴강의 처리 (C92 · 테스트 시나리오 C-30 ~ C-34) ─────────────────────────
+ * `exc.cancel_treat` 가 갈래를 정한다. 옛 휴강 행(NULL)은 **기본 정책 = 이월**이다 (N-25 · 보정 0).
+ *   · carry  (이월)      안 한 수업 — 이번 달에 청구하지 않고 「넘길 돈」으로 선다
+ *   · deduct (차감)      학생 결석 — **이번 달 소진으로 센다** (청구한다 · 넘기지 않는다)
+ *   · makeup (보강 이관) 원래 회차는 세지 않는다 — 보강 회차(단발 SER)가 대신 청구된다 (1 + 1 = 1)
+ * 「그날만 빠진」 학생(D-R21)은 처리가 없으므로 이월과 같다.
+ */
+const TREAT = `(SELECT e.cancel_treat FROM exc e WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date)`;
+const STU_OUT = `EXISTS (
              SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
               WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1)`;
-/** 결강 — 휴강(회차 통째로)이거나 그 학생만 빠진 날. 둘 다 「안 한 수업」이다 */
-const DROPPED = `(o.canceled
-        OR EXISTS (
-             SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
-              WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = $1))`;
+/** 청구하는 회차 — 살아 있거나, 휴강이어도 **차감(소진)** 으로 처리된 것. 그날만 빠진 학생은 아니다 */
+const LIVE = `(NOT o.canceled OR ${TREAT} = 'deduct')
+       AND NOT ${STU_OUT}`;
+/** 넘길 회차 — 이월로 처리된(또는 옛 방식의) 휴강이거나 그 학생만 빠진 날. 차감·보강 이관은 아니다 */
+const DROPPED = `((o.canceled AND COALESCE(${TREAT}, 'carry') = 'carry')
+        OR ${STU_OUT})`;
 
 /** 한 달을 어디까지 셀 것인가 — 위 주석의 세 토막 */
 export type LineSlice =
   | { kind: 'month' }
   | { kind: 'done'; upto: string }
-  | { kind: 'dropped' };
+  | { kind: 'dropped' }
+  /** 차감(소진)으로 처리된 휴강만 — §54 「차감 N」 표시용. `month` 안에 이미 들어 있다 */
+  | { kind: 'deducted' };
 
 const sqlFor = (slice: LineSlice): string => `
   WITH priced AS (
@@ -85,7 +95,7 @@ const sqlFor = (slice: LineSlice): string => `
       JOIN kind k     ON k.key = se.kind_key
       LEFT JOIN sub sb ON sb.key = se.sub_key
       JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1
-     WHERE ${slice.kind === 'dropped' ? DROPPED : LIVE}
+     WHERE ${slice.kind === 'dropped' ? DROPPED : slice.kind === 'deducted' ? `o.canceled AND ${TREAT} = 'deduct' AND NOT ${STU_OUT}` : LIVE}
        AND ${kstMonthOf('lower(o.span)')} = $2
        ${slice.kind === 'done' ? 'AND o.on_date <= $3::date' : ''}
   )

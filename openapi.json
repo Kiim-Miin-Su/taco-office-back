@@ -1480,6 +1480,99 @@
         ]
       }
     },
+    "/schedule/day-cancel": {
+      "post": {
+        "description": "그날의 취소 아닌 회차 전부를 같은 사유·처리로 접는다. 한 트랜잭션이라 하나가 막히면 전부 되돌아간다. 학원 사정·공휴일·강사 결강은 차감할 수 없다 (CANCEL_DEDUCT_FORBIDDEN). 알림은 M-125 규칙 그대로 남긴다.",
+        "operationId": "ScheduleController_dayCancel",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DayCancelDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DayCancelResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "code NO_OCCURRENCES — 그날 회차가 없다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "그날 전체 휴강 — 공휴일·학원 전체 휴원 (테스트 시나리오 C-33 · N-133)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule/undo": {
       "post": {
         "description": "서명된10분 토큰의 직후 스냅숏과 현재 DB가 같을 때만 직전 스냅숏을 복원한다. 토큰의 actor와 현재 사용자가 달라도 거절한다.",
@@ -1677,6 +1770,7 @@
         ]
       },
       "delete": {
+        "description": "scope=this 가 휴강이다 (§12 「휴강 · 수정」). cancelKind·cancelTreat 를 함께 보내면 사유와 처리(이월·차감·보강 이관)를 EXC 에 새기고 M-125 알림을 남긴다. 학원 사정·공휴일·강사 결강은 차감할 수 없다(CANCEL_DEDUCT_FORBIDDEN). 둘 다 비우면 옛 방식(취소만 · 기본 정책 이월)이다. future·all 은 수업 종료라 사유를 받지 않는다(CANCEL_SCOPE).",
         "operationId": "ScheduleController_remove",
         "parameters": [
           {
@@ -1712,7 +1806,7 @@
             }
           },
           "400": {
-            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "description": "code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED | CANCEL_SCOPE",
             "content": {
               "application/json": {
                 "schema": {
@@ -12431,6 +12525,60 @@
           "other"
         ]
       },
+      "CancelReasonDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "teacher_absent",
+              "student_absent",
+              "academy",
+              "holiday",
+              "other"
+            ],
+            "description": "저장되는 코드값 — ATT.reason 과 같은 다섯"
+          },
+          "label": {
+            "type": "string"
+          },
+          "deductible": {
+            "type": "boolean",
+            "description": "이 사유로 차감(소진) 처리를 고를 수 있는가 — 학생 결석만 true"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "deductible"
+        ]
+      },
+      "CancelTreatDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "carry",
+              "deduct",
+              "makeup"
+            ],
+            "description": "carry | deduct | makeup"
+          },
+          "label": {
+            "type": "string"
+          },
+          "sub": {
+            "type": "string",
+            "description": "칸 아래 한 줄 — 무엇이 일어나는지"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "sub"
+        ]
+      },
       "MetaDto": {
         "type": "object",
         "properties": {
@@ -12476,6 +12624,20 @@
             "items": {
               "$ref": "#/components/schemas/InvTypeDto"
             }
+          },
+          "cancelReasons": {
+            "description": "휴강 사유 다섯과 차감 가능 여부 (C92)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CancelReasonDto"
+            }
+          },
+          "cancelTreats": {
+            "description": "휴강 처리 셋 — 이월 · 차감 · 보강 이관 (C92)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CancelTreatDto"
+            }
           }
         },
         "required": [
@@ -12485,7 +12647,9 @@
           "zaccs",
           "staff",
           "students",
-          "invTypes"
+          "invTypes",
+          "cancelReasons",
+          "cancelTreats"
         ]
       },
       "AttendanceDto": {
@@ -12624,6 +12788,38 @@
           },
           "canceled": {
             "type": "boolean"
+          },
+          "cancelKind": {
+            "type": "string",
+            "enum": [
+              "teacher_absent",
+              "student_absent",
+              "academy",
+              "holiday",
+              "other"
+            ],
+            "nullable": true,
+            "description": "휴강 사유 코드 — 취소된 회차만"
+          },
+          "cancelKindLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "휴강 사유 이름"
+          },
+          "cancelTreat": {
+            "type": "string",
+            "enum": [
+              "carry",
+              "deduct",
+              "makeup"
+            ],
+            "nullable": true,
+            "description": "carry 이월 · deduct 차감 · makeup 보강 이관"
+          },
+          "cancelTreatLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "처리 이름 — 「이월」 「차감」 「보강 이관」"
           },
           "hasException": {
             "type": "boolean",
@@ -13386,6 +13582,101 @@
           "scope"
         ]
       },
+      "DayCancelDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "휴강할 날짜 (실제 달력 날짜)"
+          },
+          "cancelKind": {
+            "type": "string",
+            "enum": [
+              "teacher_absent",
+              "student_absent",
+              "academy",
+              "holiday",
+              "other"
+            ],
+            "description": "학원 사정 · 공휴일 … (차감은 학생 결석에만)"
+          },
+          "cancelTreat": {
+            "type": "string",
+            "enum": [
+              "carry",
+              "deduct",
+              "makeup"
+            ],
+            "description": "비우면 이월 (기본) — 회차 하나의 휴강과 같은 규칙"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "date",
+          "cancelKind"
+        ]
+      },
+      "DayCancelResultDto": {
+        "type": "object",
+        "properties": {
+          "effScope": {
+            "type": "string",
+            "description": "실제로 적용된 범위 — 「향후」가 「모두」로 강등되면 여기서 드러난다 (D-R17)"
+          },
+          "log": {
+            "description": "사람이 읽는 변경 기록. 화면이 그대로 보여 준다",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "projected": {
+            "type": "number",
+            "description": "다시 펼친 회차 수"
+          },
+          "serIds": {
+            "description": "영향받은 규칙 — 화면은 이 범위만 다시 읽으면 된다",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "undoToken": {
+            "type": "string",
+            "nullable": true,
+            "description": "직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다."
+          },
+          "unavailable": {
+            "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnavWarnDto"
+            }
+          },
+          "count": {
+            "type": "number",
+            "description": "이번에 휴강 처리한 회차 수"
+          },
+          "skipped": {
+            "type": "number",
+            "description": "이미 휴강이라 건너뛴 회차 수"
+          }
+        },
+        "required": [
+          "effScope",
+          "log",
+          "projected",
+          "serIds",
+          "unavailable",
+          "count",
+          "skipped"
+        ]
+      },
       "ScheduleUndoDto": {
         "type": "object",
         "properties": {
@@ -13471,6 +13762,31 @@
             "type": "string",
             "format": "date",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "cancelKind": {
+            "type": "string",
+            "enum": [
+              "teacher_absent",
+              "student_absent",
+              "academy",
+              "holiday",
+              "other"
+            ],
+            "description": "휴강 사유 — 처리를 보내면 필수"
+          },
+          "cancelTreat": {
+            "type": "string",
+            "enum": [
+              "carry",
+              "deduct",
+              "makeup"
+            ],
+            "description": "carry 이월(기본) · deduct 차감(학생 결석만) · makeup 보강 이관"
+          },
+          "memo": {
+            "type": "string",
+            "description": "메모 — 「아침에 발열로 연락」 (500자)",
+            "maxLength": 500
           }
         },
         "required": [
@@ -14970,7 +15286,11 @@
           },
           "canceled": {
             "type": "number",
-            "description": "결강·휴강 수 — 취소된 회차와 「그날만 빠진」 것을 합쳐 센다 (D-R21)"
+            "description": "결강·휴강 수 — 이월·보강 이관으로 처리된 휴강과 「그날만 빠진」 것을 합쳐 센다 (D-R21). 차감은 여기 안 든다"
+          },
+          "deducted": {
+            "type": "number",
+            "description": "차감(소진)으로 처리된 휴강 수 — 이번 달 회차로 세어 청구한다 (C92 · C-31)"
           },
           "unitPrice": {
             "type": "number",
@@ -15024,6 +15344,7 @@
           "total",
           "percent",
           "canceled",
+          "deducted",
           "unitPriceOverride",
           "priceCount",
           "carryable",
@@ -15059,7 +15380,11 @@
           },
           "canceledCount": {
             "type": "number",
-            "description": "결강 · 휴강"
+            "description": "결강 · 휴강 (이월·보강 이관·그날만 빠짐)"
+          },
+          "deductedCount": {
+            "type": "number",
+            "description": "차감(소진) 처리한 휴강 — 청구에 들어 있다 (C92)"
           },
           "doneAmount": {
             "type": "number",
@@ -15090,6 +15415,7 @@
           "doneCount",
           "totalCount",
           "canceledCount",
+          "deductedCount",
           "items",
           "canSeeAmounts"
         ]
@@ -20134,6 +20460,11 @@
           },
           "canceled": {
             "type": "boolean"
+          },
+          "cancelKindLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "휴강 사유 낱말 — 「학생 결석」 「학원 사정」 … (C92 · C-31). 옛 휴강은 null"
           },
           "repState": {
             "type": "string",

@@ -10,8 +10,8 @@
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  ATTENDANCE_CANCEL_REASONS, ATTENDANCE_RESULTS,
-  type AttendanceCancelReason, type AttendanceResult,
+  ATTENDANCE_CANCEL_REASONS, ATTENDANCE_RESULTS, CANCEL_TREATS,
+  type AttendanceCancelReason, type AttendanceResult, type CancelTreat,
 } from '../../lib/rules';
 
 export class AttendanceDto {
@@ -54,6 +54,14 @@ export class OccurrenceDto {
   @ApiPropertyOptional({ type: Number, nullable: true }) zaccId?: number | null;
   @ApiProperty({ enum: ['offline', 'online'] }) mode!: string;
   @ApiProperty() canceled!: boolean;
+  /* 휴강의 사유와 처리 — 낱말은 서버가 만든다 (D-R18 · C92). 옛 휴강 행은 넷 다 null 이며 기본 정책(이월)이다 */
+  @ApiPropertyOptional({ enum: ATTENDANCE_CANCEL_REASONS, nullable: true, description: '휴강 사유 코드 — 취소된 회차만' })
+  cancelKind?: AttendanceCancelReason | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '휴강 사유 이름' }) cancelKindLabel?: string | null;
+  @ApiPropertyOptional({ enum: CANCEL_TREATS, nullable: true, description: 'carry 이월 · deduct 차감 · makeup 보강 이관' })
+  cancelTreat?: CancelTreat | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '처리 이름 — 「이월」 「차감」 「보강 이관」' })
+  cancelTreatLabel?: string | null;
   @ApiProperty({ description: '이 회차에 예외가 붙었는가' }) hasException!: boolean;
 
   @ApiProperty({
@@ -290,11 +298,46 @@ export class OccurrenceMoveDto {
   scope!: 'this' | 'future' | 'all';
 }
 
+/**
+ * 휴강 · 취소 (§12 「휴강 · 수정」 · 테스트 시나리오 C-30 ~ C-32).
+ *
+ * `scope='this'` 가 휴강이다. 사유와 처리를 함께 보내면 서버가 정책(학원 사정은 차감 불가)을
+ * 판정하고 EXC 에 새긴다. 둘 다 비우면 옛 방식 그대로 취소만 남긴다(기본 정책 = 이월).
+ * `future`·`all` 은 휴강이 아니라 **수업 종료**라 사유·처리를 받지 않는다.
+ */
 export class OccurrenceDeleteDto {
   @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';
 
   @ApiProperty(DATE_SCHEMA) @IsCalendarDate() onDate!: string;
+
+  @ApiPropertyOptional({ enum: ATTENDANCE_CANCEL_REASONS, description: '휴강 사유 — 처리를 보내면 필수' })
+  @IsOptional() @IsIn(ATTENDANCE_CANCEL_REASONS as unknown as string[])
+  cancelKind?: AttendanceCancelReason;
+
+  @ApiPropertyOptional({ enum: CANCEL_TREATS, description: 'carry 이월(기본) · deduct 차감(학생 결석만) · makeup 보강 이관' })
+  @IsOptional() @IsIn(CANCEL_TREATS as unknown as string[])
+  cancelTreat?: CancelTreat;
+
+  @ApiPropertyOptional({ description: '메모 — 「아침에 발열로 연락」 (500자)', maxLength: 500 })
+  @IsOptional() @IsString() @MaxLength(500)
+  memo?: string;
+}
+
+/** 그날 전체 휴강 (테스트 시나리오 C-33 · N-133) — 그날의 취소 아닌 회차 전부를 같은 사유·처리로 */
+export class DayCancelDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '휴강할 날짜 (실제 달력 날짜)' }) @IsCalendarDate() date!: string;
+
+  @ApiProperty({ enum: ATTENDANCE_CANCEL_REASONS, description: '학원 사정 · 공휴일 … (차감은 학생 결석에만)' })
+  @IsIn(ATTENDANCE_CANCEL_REASONS as unknown as string[])
+  cancelKind!: AttendanceCancelReason;
+
+  @ApiPropertyOptional({ enum: CANCEL_TREATS, description: '비우면 이월 (기본) — 회차 하나의 휴강과 같은 규칙' })
+  @IsOptional() @IsIn(CANCEL_TREATS as unknown as string[])
+  cancelTreat?: CancelTreat;
+
+  @ApiPropertyOptional({ maxLength: 500 }) @IsOptional() @IsString() @MaxLength(500)
+  memo?: string;
 }
 
 /** §12 수강 학생 — 넣고 빼기도 3범위다 (D-R21) */
@@ -348,6 +391,12 @@ export class WriteResultDto {
     description: '강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄',
   })
   unavailable!: UnavWarnDto[];
+}
+
+/** 그날 전체 휴강의 결과 — 몇 회차를 접었는지 서버가 센다 (D-R37) */
+export class DayCancelResultDto extends WriteResultDto {
+  @ApiProperty({ description: '이번에 휴강 처리한 회차 수' }) count!: number;
+  @ApiProperty({ description: '이미 휴강이라 건너뛴 회차 수' }) skipped!: number;
 }
 
 export class ScheduleUndoDto {

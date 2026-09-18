@@ -99,6 +99,14 @@ export interface Exc {
   roomSet: boolean;
   roomId: number | null;
   reason: string | null;
+  /**
+   * 휴강의 사유와 처리 (C92 · 테스트 시나리오 C-30~C-34).
+   * `cancelKind` 는 출결 취소 사유와 같은 다섯 낱말, `cancelTreat` 는 이월·차감·보강 이관이다.
+   * 옛 휴강 행은 둘 다 null 이며 기본 정책(이월)으로 읽는다 — 보정하지 않는다 (N-25).
+   * `canceled` 가 아니면 둘 다 null 이다 — 복원(applyEdit) 이 함께 지운다.
+   */
+  cancelKind: string | null;
+  cancelTreat: string | null;
   /** 이 회차만 빠지는 학생 (D-R21) */
   stuOut: number[];
 }
@@ -467,6 +475,9 @@ export function applyEdit(
     }
     if (patch.date !== undefined) e.newDate = patch.date && patch.date !== onDate ? patch.date : null;
     e.canceled = false;
+    // 복원된 회차에 휴강 사유·처리가 남으면 청구 계산이 「이월」로 읽는다 — 함께 지운다 (C92)
+    e.cancelKind = null;
+    e.cancelTreat = null;
     log.push(`EXC upsert (${serId}, ${onDate})`);
     S.EXC = S.EXC.filter(hasExcEffect);
     return { ...S, __log: log, __effScope: eff };
@@ -541,9 +552,13 @@ function shiftSer(ser: Ser, days: number): Ser {
 
 export function applyDelete(
   state: State,
-  args: { serId: number; onDate: IsoDate; scope: Scope; nextId?: IdGen; hasRefs?: boolean },
+  args: {
+    serId: number; onDate: IsoDate; scope: Scope; nextId?: IdGen; hasRefs?: boolean;
+    /** 휴강(이번만)의 사유·처리·메모 — 없으면 옛 방식 그대로 취소만 남긴다 (C92) */
+    cancel?: { kind: string; treat: string; memo?: string | null };
+  },
 ): Applied {
-  const { serId, onDate, scope, nextId, hasRefs } = args;
+  const { serId, onDate, scope, nextId, hasRefs, cancel } = args;
   const S = clone(state);
   const ser = S.SER.find((s) => s.id === serId);
   if (!ser) throw new Error('SER not found: ' + serId);
@@ -554,7 +569,14 @@ export function applyDelete(
   if (eff === 'this') {
     const e = upsertExc(S, serId, onDate, genId);
     e.canceled = true;
-    log.push(`EXC (${serId}, ${onDate}) canceled=true`);
+    if (cancel) {
+      e.cancelKind = cancel.kind;
+      e.cancelTreat = cancel.treat;
+      if (cancel.memo !== undefined) e.reason = cancel.memo;
+      log.push(`EXC (${serId}, ${onDate}) canceled=true kind=${cancel.kind} treat=${cancel.treat}`);
+    } else {
+      log.push(`EXC (${serId}, ${onDate}) canceled=true`);
+    }
   } else if (eff === 'future') {
     ser.toDate = addD(onDate, -1);
     S.EXC = S.EXC.filter((e) => !(e.serId === serId && e.onDate >= onDate));
@@ -1050,6 +1072,8 @@ function upsertExc(S: State, serId: number, onDate: IsoDate, genId: IdGen): Exc 
       roomSet: false,
       roomId: null,
       reason: null,
+      cancelKind: null,
+      cancelTreat: null,
       stuOut: [],
     };
     S.EXC.push(e);

@@ -15,6 +15,7 @@ import {
   WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto, ScheduleUndoDto,
   LessonTrackingDto, LessonTrackingQueryDto,
   ConflictPreviewDto, ConflictQueryDto,
+  DayCancelDto, DayCancelResultDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
 import { ScheduleWriteService } from './schedule.write.service';
@@ -195,6 +196,20 @@ export class ScheduleController {
     return user ? this.write.moveMany(dto, user.id) : this.write.moveMany(dto);
   }
 
+  @Post('day-cancel')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '그날 전체 휴강 — 공휴일·학원 전체 휴원 (테스트 시나리오 C-33 · N-133)',
+    description: '그날의 취소 아닌 회차 전부를 같은 사유·처리로 접는다. 한 트랜잭션이라 하나가 막히면 전부 되돌아간다. '
+      + '학원 사정·공휴일·강사 결강은 차감할 수 없다 (CANCEL_DEDUCT_FORBIDDEN). 알림은 M-125 규칙 그대로 남긴다.',
+  })
+  @ApiCreatedResponse({ type: DayCancelResultDto })
+  @ApiNotFoundResponse({ description: 'code NO_OCCURRENCES — 그날 회차가 없다', type: ApiErrorDto })
+  @ApiBadRequestResponse({ description: 'code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED', type: ApiErrorDto })
+  dayCancel(@CurrentUser() user: RequestUser | undefined, @Body() dto: DayCancelDto): Promise<DayCancelResultDto> {
+    return this.write.dayCancel(dto, user?.id);
+  }
+
   @Post('undo')
   @Perm('canCrudAll')
   @ApiOperation({
@@ -228,7 +243,13 @@ export class ScheduleController {
   @Delete(':serId')
   @Perm('canCrudAll')
   @ApiNotFoundResponse(missingOccurrenceResponse)
-  @ApiOperation({ summary: '수업 취소·휴강 — 참조가 있으면 지우지 않고 기간을 마감한다' })
+  @ApiOperation({
+    summary: '수업 취소·휴강 — 참조가 있으면 지우지 않고 기간을 마감한다',
+    description: 'scope=this 가 휴강이다 (§12 「휴강 · 수정」). cancelKind·cancelTreat 를 함께 보내면 사유와 처리(이월·차감·보강 이관)를 '
+      + 'EXC 에 새기고 M-125 알림을 남긴다. 학원 사정·공휴일·강사 결강은 차감할 수 없다(CANCEL_DEDUCT_FORBIDDEN). '
+      + '둘 다 비우면 옛 방식(취소만 · 기본 정책 이월)이다. future·all 은 수업 종료라 사유를 받지 않는다(CANCEL_SCOPE).',
+  })
+  @ApiBadRequestResponse({ description: 'code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED | CANCEL_SCOPE', type: ApiErrorDto })
   @ApiOkResponse({ type: WriteResultDto })
   remove(
     @CurrentUser() user: RequestUser | undefined,

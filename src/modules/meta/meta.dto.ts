@@ -9,6 +9,7 @@
  * 프론트에 KIND/SUB 배열을 복사해 두면 명세서와 조용히 어긋난다 (D-R18).
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ATTENDANCE_CANCEL_REASONS, CANCEL_TREATS, type AttendanceCancelReason, type CancelTreat } from '../../lib/rules';
 
 export class KindDto {
   @ApiProperty() key!: string;
@@ -68,6 +69,24 @@ export class InvTypeDto {
   @ApiProperty({ description: '수업료가 아닌 돈인가 — §57 이 세는 것' }) other!: boolean;
 }
 
+/**
+ * 휴강 사유 한 줄 — §12 「휴강 · 수정」 창의 select (C92). 낱말과 **차감 가능 여부**를 서버가 준다.
+ * 화면이 「학원 사정은 차감 불가」를 다시 판정하면 서버 정책과 갈린다 (D-R39).
+ */
+export class CancelReasonDto {
+  // 코드값을 enum 으로 내려보낸다 — 생성 타입이 곧 휴강 DTO 의 입력 타입이 되어 화면이 캐스팅하지 않는다
+  @ApiProperty({ enum: ATTENDANCE_CANCEL_REASONS, description: '저장되는 코드값 — ATT.reason 과 같은 다섯' })
+  key!: AttendanceCancelReason;
+  @ApiProperty() label!: string;
+  @ApiProperty({ description: '이 사유로 차감(소진) 처리를 고를 수 있는가 — 학생 결석만 true' }) deductible!: boolean;
+}
+
+export class CancelTreatDto {
+  @ApiProperty({ enum: CANCEL_TREATS, description: 'carry | deduct | makeup' }) key!: CancelTreat;
+  @ApiProperty() label!: string;
+  @ApiProperty({ description: '칸 아래 한 줄 — 무엇이 일어나는지' }) sub!: string;
+}
+
 export class MetaDto {
   @ApiProperty({ type: [KindDto] }) kinds!: KindDto[];
   @ApiProperty({ type: [SubDto] }) subs!: SubDto[];
@@ -76,4 +95,6 @@ export class MetaDto {
   @ApiProperty({ type: [StaffBriefDto] }) staff!: StaffBriefDto[];
   @ApiProperty({ type: [StudentBriefDto] }) students!: StudentBriefDto[];
   @ApiProperty({ type: [InvTypeDto], description: '청구 종류 넷 — 낱말은 서버가 만든다 (D-R18)' }) invTypes!: InvTypeDto[];
+  @ApiProperty({ type: [CancelReasonDto], description: '휴강 사유 다섯과 차감 가능 여부 (C92)' }) cancelReasons!: CancelReasonDto[];
+  @ApiProperty({ type: [CancelTreatDto], description: '휴강 처리 셋 — 이월 · 차감 · 보강 이관 (C92)' }) cancelTreats!: CancelTreatDto[];
 }

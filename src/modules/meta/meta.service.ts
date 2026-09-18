@@ -16,6 +16,10 @@ import { Repository } from 'typeorm';
 import { Kind, Room, Staff, Stu, Sub, Zacc } from '../../entities';
 import { INV_TYPES, INV_TYPE_LABEL, INV_TYPE_SUB } from '../accounting/accounting.dto';
 import { permsOf } from '../../common/perm';
+import {
+  ATTENDANCE_CANCEL_REASONS, ATTENDANCE_CANCEL_REASON_LABEL, DEDUCTIBLE_CANCEL_REASONS,
+  CANCEL_TREATS, CANCEL_TREAT_LABEL, CANCEL_TREAT_SUB,
+} from '../../lib/rules';
 import type { MetaDto } from './meta.dto';
 
 @Injectable()
@@ -59,6 +63,11 @@ export class MetaService {
       invTypes: INV_TYPES.map((key) => ({
         key, label: INV_TYPE_LABEL[key], sub: INV_TYPE_SUB[key], other: key !== 'tuition',
       })),
+      // 휴강 창의 낱말과 정책 — 화면은 select 를 채우고 판정은 서버가 한다 (C92 · D-R39)
+      cancelReasons: ATTENDANCE_CANCEL_REASONS.map((key) => ({
+        key, label: ATTENDANCE_CANCEL_REASON_LABEL[key], deductible: DEDUCTIBLE_CANCEL_REASONS.includes(key),
+      })),
+      cancelTreats: CANCEL_TREATS.map((key) => ({ key, label: CANCEL_TREAT_LABEL[key], sub: CANCEL_TREAT_SUB[key] })),
     };
   }
 }

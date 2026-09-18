@@ -9,8 +9,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ser } from '../../entities';
 import {
-  REPORT_UNWRITTEN_CANDIDATE_DB, REPORT_WRITTEN_DB,
-  latePenalty, minutesSinceEnd, payoutConfirmed, tierFor, withholding, type SessionLike,
+  ATTENDANCE_CANCEL_REASON_LABEL, REPORT_UNWRITTEN_CANDIDATE_DB, REPORT_WRITTEN_DB,
+  latePenalty, minutesSinceEnd, payoutConfirmed, tierFor, withholding, type AttendanceCancelReason, type SessionLike,
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
@@ -61,6 +61,7 @@ export class TeacherService {
               s.kind_key, s.sub_key, s.mode, s.title,
               rm.name AS room_name, rm.branch AS room_branch, z.label AS zacc_label,
               COALESCE(r.state::text,'none') AS rep_state,
+              (SELECT e.cancel_kind FROM exc e WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date) AS cancel_kind,
               (SELECT string_agg(st.name, ', ' ORDER BY st.name)
                  FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
                 WHERE ss.ser_id = o.ser_id) AS students
@@ -87,6 +88,8 @@ export class TeacherService {
       zaccLabel: (r.zacc_label as string) ?? null,
       students: (r.students as string) ?? null,
       canceled: Boolean(r.canceled),
+      // 휴강 사유는 서버의 낱말이다 (D-R18) — 옛 휴강(사유 없음)은 null 그대로
+      cancelKindLabel: r.cancel_kind ? ATTENDANCE_CANCEL_REASON_LABEL[r.cancel_kind as AttendanceCancelReason] ?? null : null,
       repState: String(r.rep_state),
     }));
 

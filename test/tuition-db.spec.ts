@@ -183,6 +183,63 @@ d('§54 수업료 계산 (C65)', () => {
     expect(me.carryAmount).toBe(0);
   });
 
+  /* ── 휴강의 처리 — 이월 · 차감 · 보강 이관 (C92 · C-30 ~ C-34) ──────── */
+
+  /** 휴강 회차에 처리를 적는다 — 회차 예외(EXC)가 정본이고 투영(ser_occ)은 취소 여부만 든다 */
+  const cancelWith = async (onDate: string, kind: string, treat: string) => {
+    await q.query(
+      `INSERT INTO exc (ser_id, on_date, canceled, cancel_kind, cancel_treat, by_id, at)
+       VALUES ($1, $2::date, true, $3, $4, 91, now())`,
+      [serId, onDate, kind, treat],
+    );
+    await occ(onDate, true);
+  };
+
+  it('**차감**은 이번 달 회차로 소진된다 — 금액에 들고 넘길 돈이 생기지 않는다 (C-31)', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1]);
+    await cancelWith(PAST[2], 'student_absent', 'deduct');
+    const { me, all } = await row();
+    expect(me.done).toBe(3);
+    expect(me.total).toBe(3);
+    expect(me.deducted).toBe(1);
+    expect(me.canceled).toBe(0);
+    expect(me.doneAmount).toBe(150_000);
+    expect(me.carryAmount).toBe(0);
+    expect(all.deductedCount).toBe(1);
+    // 청구서도 같은 값이다 — 차감한 회차가 청구에 든다 (D-R22)
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    expect(inv.amount).toBe(150_000);
+  });
+
+  it('**이월**은 처리를 적었어도 옛 휴강과 같다 — 금액에서 빠지고 넘길 돈이 된다 (C-30)', async () => {
+    await occ(PAST[0]);
+    await cancelWith(PAST[1], 'student_absent', 'carry');
+    await occ(PAST[2], true); // 처리를 안 적은 옛 휴강 = 이월 (N-25 · 기존 행 보정 0)
+    const { me } = await row();
+    expect(me.done).toBe(1);
+    expect(me.canceled).toBe(2);
+    expect(me.deducted).toBe(0);
+    expect(me.doneAmount).toBe(50_000);
+    expect(me.carryAmount).toBe(100_000);
+  });
+
+  it('**보강 이관**은 원래 회차를 세지 않는다 — 보강 회차가 대신 선다 (C-34 「두 번 세어지면 실패」)', async () => {
+    await occ(PAST[0]);
+    await cancelWith(PAST[1], 'student_absent', 'makeup');
+    const { me } = await row();
+    expect(me.done).toBe(1);
+    expect(me.deducted).toBe(0);
+    expect(me.doneAmount).toBe(50_000);
+    // 보강 이관은 이월이 아니다 — 넘길 돈에도 들지 않는다 (보강 회차가 이번·다음 달 어디든 제 자리에서 선다)
+    expect(me.canceled).toBe(1);
+    expect(me.carryAmount).toBe(0);
+  });
+
+  it('학원 사정·공휴일 휴강은 처리와 무관하게 이월이다 — DB 가 차감을 막는다 (C-32)', async () => {
+    await expect(cancelWith(PAST[0], 'academy', 'deduct')).rejects.toThrow(/exc_cancel_policy/);
+  });
+
   /* ── 안분을 쓰지 않는다 ──────────────────────────────────────────── */
 
   /*

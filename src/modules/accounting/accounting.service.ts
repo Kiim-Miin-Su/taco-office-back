@@ -645,25 +645,36 @@ export class AccountingService {
      * 회차 한 줄 = 한 학생의 한 수업. 금액이 붙는 단위라 여기서 한 번만 읽는다.
      * `state` 는 세 가지다 — 이미 한 것 · 아직 안 한 것 · 결강(취소 또는 그날만 빠짐).
      */
+    /*
+     * 휴강의 처리가 갈래를 정한다 (C92 · invoice-lines.ts 와 같은 낱말) —
+     *   차감(deduct)  → 소진: 한 수업·이번 달 전체에 들어가고 「차감 N」으로 따로 센다
+     *   이월·보강 이관·그날만 빠짐 → 결강: 청구하지 않는다 (보강 이관은 넘길 돈에서도 빠진다)
+     */
     const occRows = students.length ? (await this.inv.query(
       `SELECT ss.student_id,
               to_char(o.on_date,'YYYY-MM-DD') AS on_date,
-              (o.canceled OR EXISTS (
+              o.canceled,
+              (SELECT e.cancel_treat FROM exc e WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date) AS treat,
+              EXISTS (
                  SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id = e.id
                   WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = ss.student_id
-               )) AS dropped
+               ) AS stu_out
          FROM ser_occ o
          JOIN ser_stu ss ON ss.ser_id = o.ser_id
         WHERE ${kstMonthOf('lower(o.span)')} = $1
           AND ss.student_id = ANY($2::bigint[])`,
       [month, students.map((s) => Number(s.id))],
-    )) as Array<{ student_id: string; on_date: string; dropped: boolean }> : [];
+    )) as Array<{ student_id: string; on_date: string; canceled: boolean; treat: string | null; stu_out: boolean }> : [];
 
-    const counts = new Map<number, { done: number; total: number; canceled: number }>();
+    const counts = new Map<number, { done: number; total: number; canceled: number; deducted: number }>();
     for (const r of occRows) {
       const k = Number(r.student_id);
-      const c = counts.get(k) ?? { done: 0, total: 0, canceled: 0 };
-      if (r.dropped) c.canceled += 1;
+      const c = counts.get(k) ?? { done: 0, total: 0, canceled: 0, deducted: 0 };
+      const deducted = r.canceled && r.treat === 'deduct' && !r.stu_out;
+      if (deducted) {
+        // 소진 — 안 한 수업이지만 이번 달 회차로 센다 (C-31)
+        c.total += 1; c.done += 1; c.deducted += 1;
+      } else if (r.canceled || r.stu_out) c.canceled += 1;
       else {
         c.total += 1;
         if (r.on_date <= today) c.done += 1;
@@ -696,11 +707,11 @@ export class AccountingService {
 
     const money = (v: number): number | null => (canSeeAmounts ? v : null);
     const items: TuitionRowDto[] = [];
-    let doneCount = 0, totalCount = 0, canceledCount = 0, doneAmount = 0, carryAmount = 0;
+    let doneCount = 0, totalCount = 0, canceledCount = 0, deductedCount = 0, doneAmount = 0, carryAmount = 0;
 
     for (const s of students) {
       const id = Number(s.id);
-      const c = counts.get(id) ?? { done: 0, total: 0, canceled: 0 };
+      const c = counts.get(id) ?? { done: 0, total: 0, canceled: 0, deducted: 0 };
       // 청구서와 **같은 함수**다 — 미리 본 금액과 청구한 금액이 갈리지 않는다
       const lines = await invoiceLines(this.inv, id, month);
       const priced = lines.filter((l) => l.unit_price !== null);
@@ -723,7 +734,7 @@ export class AccountingService {
         [id, today],
       )) as Array<{ hit: number }>;
 
-      doneCount += c.done; totalCount += c.total; canceledCount += c.canceled;
+      doneCount += c.done; totalCount += c.total; canceledCount += c.canceled; deductedCount += c.deducted;
       doneAmount += done; carryAmount += carry;
       items.push({
         studentId: id, name: s.name, grade: s.grade ?? null,
@@ -731,6 +742,7 @@ export class AccountingService {
         // 나누는 것도 서버다 — 화면이 다시 나누면 머리 칸과 갈린다 (D-R37)
         percent: c.total > 0 ? Math.round((c.done / c.total) * 100) : 0,
         canceled: c.canceled,
+        deducted: c.deducted,
         unitPrice: money(top?.unit ?? 0),
         unitPriceOverride: override !== undefined,
         // 단가가 둘 이상이면 화면이 하나를 적지 않는다 — 곱해서 안 맞는 숫자를 세우지 않는다
@@ -755,7 +767,7 @@ export class AccountingService {
 
     return {
       month, today, daysPast, daysLeft,
-      doneCount, totalCount, canceledCount,
+      doneCount, totalCount, canceledCount, deductedCount,
       doneAmount: money(doneAmount), carryAmount: money(carryAmount),
       items, canSeeAmounts,
     };

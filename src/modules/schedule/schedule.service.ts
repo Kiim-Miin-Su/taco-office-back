@@ -9,9 +9,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
 import {
-  GUIDE_DONE_DB, REPORT_WRITTEN_DB, guideLabel,
+  ATTENDANCE_CANCEL_REASON_LABEL, CANCEL_TREAT_LABEL, GUIDE_DONE_DB, REPORT_WRITTEN_DB, guideLabel,
   canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState, rosterPricing, tierFor,
-  type AttendanceCancelReason, type AttendanceResult,
+  type AttendanceCancelReason, type AttendanceResult, type CancelTreat,
 } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
 import type {
@@ -33,6 +33,7 @@ interface Row {
   teacher_id: string | null; teacher_name: string | null;
   room_id: string | null; room_name: string | null;
   zacc_id: string | null; mode: string; canceled: boolean;
+  cancel_kind: AttendanceCancelReason | null; cancel_treat: CancelTreat | null;
   has_exception: boolean; reportable: boolean; rep_state: string | null;
   attendance_id: string | null; attendance_result: AttendanceResult | null;
   attendance_reason: AttendanceCancelReason | null; attendance_confirmed_by: string | null;
@@ -88,6 +89,7 @@ export class ScheduleService {
               to_char(s.to_date, 'YYYY-MM-DD') AS ser_to,
               o.teacher_id, t.name AS teacher_name,
               o.room_id, rm.name AS room_name, o.zacc_id, o.canceled,
+              e.cancel_kind, e.cancel_treat,
               (e.id IS NOT NULL) AS has_exception,
               r.state AS rep_state,
               a.id AS attendance_id, a.result AS attendance_result, a.reason AS attendance_reason,
@@ -154,6 +156,11 @@ export class ScheduleService {
         zaccId: r.zacc_id ? Number(r.zacc_id) : null,
         mode: r.mode,
         canceled: r.canceled,
+        // 휴강의 사유·처리와 그 낱말 — 취소된 회차만, 옛 휴강은 null (기본 정책 이월 · C92)
+        cancelKind: r.canceled ? (r.cancel_kind ?? null) : null,
+        cancelKindLabel: r.canceled && r.cancel_kind ? ATTENDANCE_CANCEL_REASON_LABEL[r.cancel_kind] ?? null : null,
+        cancelTreat: r.canceled ? (r.cancel_treat ?? null) : null,
+        cancelTreatLabel: r.canceled && r.cancel_treat ? CANCEL_TREAT_LABEL[r.cancel_treat] ?? null : null,
         hasException: r.has_exception,
         // 「물어야 하는가」는 규칙이 정한다 — 화면은 이 값만 본다 (§5A.0). 남은 회차는
         // **이 회차의 날짜부터** 센다: 마지막 한 회만 남은 반복은 단발처럼 바로 저장한다.

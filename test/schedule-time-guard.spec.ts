@@ -9,7 +9,7 @@ import { ApiErrorFilter } from '../src/common/filters/api-error.filter';
 const state = (): State => ({SER:[{id:1,kind:'meeting',sub:null,mode:'offline',title:'',teacherId:null,roomId:null,
   startMin:621,endMin:660,rrule:'DAILY',fromDate:'2026-09-11',toDate:null}],SER_STU:[],EXC:[{
   id:1,serId:1,onDate:'2028-09-11',canceled:false,newDate:null,startMin:null,endMin:630,
-  teacherSet:false,teacherId:null,roomSet:false,roomId:null,reason:null,stuOut:[]} ]});
+  teacherSet:false,teacherId:null,roomSet:false,roomId:null,reason:null,cancelKind:null,cancelTreat:null,stuOut:[]} ]});
 describe('최종 상태 시간 상속 및 공용 오류',()=>{
   it('투영 horizon 밖 예외도 원본과 합쳐 검사하며 상태는 변경하지 않는다',()=>{
     const s=state(); const before=JSON.stringify(s); expect(scheduleTimeIssue(s)).not.toBeNull(); expect(JSON.stringify(s)).toBe(before);
