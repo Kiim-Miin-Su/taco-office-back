@@ -288,5 +288,21 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     const onBehalf = (await api('post', '/accounting/expenses').send({ spendOn: kst(), category: 'book', requestedAmount: 12000, requesterId: MANAGER }).expect(201)).body;
     expect(onBehalf).toMatchObject({ state: 'pending', requesterId: MANAGER, requestedAmount: 12000 });
     expect((await api('post', '/accounting/expenses').send({ spendOn: kst(), category: 'book', requestedAmount: 12000, requesterId: 999999 }).expect(404)).body.code).toBe('STAFF_NOT_FOUND');
+
+    /**
+     * **반려는 올린 사람에게 돌아간다** (H-84) — 등록할 때는 대표에게 갔는데 돌아오는 길이 없어서,
+     * 올린 사람은 자기 신청이 왜 멈췄는지 알 길이 없었다. 사유가 문장에 실린다(사유 없이는 반려가 막힌다).
+     */
+    const rejectMe = (await api('post', '/accounting/expenses', managerToken)
+      .send({ spendOn: kst(), category: 'supply', merchant: '문구점', purpose: '반려용', requestedAmount: 9000 }).expect(201)).body;
+    expect((await api('post', `/accounting/expenses/${rejectMe.id}/review`).send({ decision: 'reject' }).expect(400)).body.code)
+      .toBe('AMOUNT_REASON_REQUIRED');
+    const backNotisBefore = await q(`SELECT 1 FROM noti WHERE to_id = $1 AND from_id = $2`, [MANAGER, CEO]);
+    await api('post', `/accounting/expenses/${rejectMe.id}/review`).send({ decision: 'reject', reason: '영수증 첨부 필요' }).expect(201);
+    const backNotis = await q<{ body: string; link: string; category: string }>(
+      `SELECT body, link, category FROM noti WHERE to_id = $1 AND from_id = $2`, [MANAGER, CEO]);
+    expect(backNotis).toHaveLength(backNotisBefore.length + 1);
+    expect(backNotis.at(-1)).toMatchObject({ link: '/accounting?tab=out', category: 'request' });
+    expect(backNotis.at(-1)!.body).toContain('영수증 첨부 필요');
   });
 });

@@ -117,8 +117,10 @@ export class DrawerService {
 
     for (const r of await this.q(
       `SELECT r.id, r.rpt_type, to_char(r.on_date,'YYYY-MM-DD') AS on_date, r.state, r.reject_reason,
+              r.sent_by, sb.name AS sent_by_name,
               ${kstAt(`COALESCE(r.sent_at, r.on_date::timestamptz)`)} AS at
          FROM rpt r
+         LEFT JOIN staff sb ON sb.id = r.sent_by
         -- 아직 안 낸 초안은 아무도 기다리지 않는다.
         -- 한동안 <> 'na' 였는데 rpt 에 'na' 라는 낱말이 없어서 이 줄이 **아무 일도 안 했다** —
         -- 초안이 승인 대기함에 떠서 배지 숫자를 올리고 있었다.
@@ -127,7 +129,14 @@ export class DrawerService {
       rows.push({
         kind: 'rpt', id: Number(r.id),
         title: `${labelOf(RPT_TYPE_LABEL, String(r.rpt_type))} 보고`,
-        sub: String(r.on_date), byId: null, byName: null, at: String(r.at),
+        /**
+         * **올린 사람을 싣는다.** 여기는 오래 `byId: null, byName: null` 이었고 주석이
+         * 「RPT 에는 아직 제출자 FK 가 없다」라 적어 두었는데, **C85-a 가 `rpt.sent_by` 를 만들었다**
+         * (서명줄에 이름이 이미 뜬다). 주석이 낡은 채로 남아 세 가지가 조용히 죽어 있었다 —
+         * §75 의 「되돌아온 것」·「내가 올린 것」은 `byId === viewerId` 로 고르므로 **보고가 한 건도
+         * 못 들어갔고**, 줄마다 올린 사람이 「알 수 없음」이었다. 옛 보고는 도장이 없어 여전히 null 이다 (N-25).
+         */
+        sub: String(r.on_date), byId: num(r.sent_by), byName: str(r.sent_by_name), at: String(r.at),
         state: toApState(str(r.state)), why: str(r.reject_reason),
         go: `/exec?view=${String(r.rpt_type)}&date=${String(r.on_date)}&rpt=${Number(r.id)}`,
       });

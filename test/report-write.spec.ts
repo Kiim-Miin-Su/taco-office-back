@@ -261,7 +261,8 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       const result = (await get(teacherToken).expect(200)).body;
       expect(result).toMatchObject({ date, onDate: DATE, startMin: start, endMin: end });
       expect(result.exportFiles[0].plainText).toContain(`② 수업: ${date} · AP Chem · ${label}`);
-      expect(result.exportFiles[0].fileName).toBe(`${date.replaceAll('-', '')}_리포트학생_고2_AP Chem_${start === null ? '시간미정' : label.slice(0, 5)}.png`);
+      // 파일 이름의 시각은 콜론을 쓸 수 없다 — 이름·학년·과목과 같은 소독기를 지난다 (QA-b · G-71)
+      expect(result.exportFiles[0].fileName).toBe(`${date.replaceAll('-', '')}_리포트학생_고2_AP Chem_${start === null ? '시간미정' : label.slice(0, 5).replace(':', '-')}.png`);
       const list = await request(app.getHttpServer()).get('/reports').query({ from: date, to: date })
         .set('Authorization', `Bearer ${teacherToken}`).expect(200);
       expect(list.body.items.find((item: { id: number }) => item.id === repId))
@@ -471,11 +472,11 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       exportFiles: [
         {
           studentId: STUDENT,
-          fileName: `${DATE.replaceAll('-', '')}_리포트학생_고2_AP Chem_09:00.png`,
+          fileName: `${DATE.replaceAll('-', '')}_리포트학생_고2_AP Chem_09-00.png`,
         },
         {
           studentId: STUDENT2,
-          fileName: `${DATE.replaceAll('-', '')}_학년없는학생_학년미정_AP Chem_09:00.png`,
+          fileName: `${DATE.replaceAll('-', '')}_학년없는학생_학년미정_AP Chem_09-00.png`,
         },
       ],
     });

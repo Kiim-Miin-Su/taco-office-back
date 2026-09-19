@@ -11,7 +11,7 @@ import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import { EXEC_AREA_KEYS, EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
 import { INTAKE_FUNNEL_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
-import { toApState } from '../../lib/approval';
+import { labelOf, RPT_TYPE_LABEL, toApState } from '../../lib/approval';
 import { BoardService } from '../board/board.service';
 import type {
   ExecAreaDto, ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto, ExecMonthlyDto,
@@ -229,6 +229,23 @@ export class ExecService {
       [found.id, actorId],
     );
     await this.log(actorId, Number(found.id), 'submit', { state: 'sent' });
+    /**
+     * **올리면 대표가 안다** (원문 K-104 · O-145 「제출 후 대표에게 알림」).
+     *
+     * 지금까지 올리기는 행만 바꾸고 아무도 부르지 않았다 — 대표는 결재함을 **직접 열어야** 올라온 줄
+     * 알았다. 받는 사람은 이미 정해져 있다(`lib/approval` 의 `APPROVAL_FLOW_RECIPIENT.rpt = 'ceo'`)
+     * 이고 갈 곳도 결재 흐름이 쓰는 링크 그대로다. **자기에게는 보내지 않는다** — 대표가 제 보고를
+     * 제가 올리는 일이 흔하고, 그때 제 수신함에 제 글이 쌓이면 읽지 않게 된다 (C38 · C99 와 같은 규약).
+     */
+    await this.q(
+      `INSERT INTO noti (to_id, from_id, body, link, category)
+       SELECT id, $1, $2, $3, 'request' FROM staff WHERE active AND role = 'ceo' AND id <> $1`,
+      [
+        actorId,
+        `${labelOf(RPT_TYPE_LABEL, dto.rptType)} 보고가 올라왔습니다 — ${key}`,
+        `/exec?view=${dto.rptType}&date=${key}&rpt=${Number(found.id)}`,
+      ],
+    );
     return this.writeResult(Number(found.id));
   }
 
@@ -407,6 +424,7 @@ export class ExecService {
     // 금액 — 권한이 없으면 아예 세지 않는다. 세어 두고 지우면 실수로 흘린다.
     let revenue: number | null = null;
     let expense: number | null = null;
+    let payout: number | null = null;
     if (canSeeAmounts) {
       revenue = await this.one(
         `SELECT COALESCE(sum(amount),0)::text n FROM pay WHERE paid_on BETWEEN $1::date AND $2::date`, [from, to]);
@@ -414,6 +432,26 @@ export class ExecService {
       expense = await this.one(
         `SELECT COALESCE(sum(amount),0)::text n FROM expense
           WHERE state = 'approved' AND spend_on BETWEEN $1::date AND $2::date`, [from, to]);
+      /**
+       * **강사료** — 원본 §71 컷과 테스트 시나리오 H-86 이 같은 식을 적는다:
+       * 「매출(입금) − **강사료** − 지출 = 이익」. 이 칸이 없어 **이익이 인건비만큼 부풀어** 있었다.
+       *
+       * 세는 것은 **확정된 정산의 과세표준**(`gross − 지각 차감`)이다 — 지출과 같은 규약으로
+       * **확정된 것만** 세고(작성 중인 정산은 나간 돈이 아니다 · `confirmed_by`), 원천징수는 빼지 않는다:
+       * 떼어 둔 세금도 학원이 내보내는 돈이라 강사에게 간 `net` 만 빼면 그만큼 이익이 또 부풀어 오른다
+       * (`lib/payout-sheet` 가 이 값을 「과세표준」이라 부른다).
+       *
+       * 달이 아니라 **기간**으로 묻는 화면이라, 그 기간에 **온전히 들어오는 달**의 정산만 센다 —
+       * 8월 정산을 8/1~8/15 에 절반만 얹을 방법이 없고, 나눠 적으면 없는 정밀도를 지어내는 것이다.
+       */
+      payout = await this.one(
+        `SELECT COALESCE(sum(gross - late_rep_cut - late_cls_cut),0)::text n
+           FROM payout
+          WHERE confirmed_by IS NOT NULL
+            AND to_date(year_month,'YYYY-MM') >= date_trunc('month', $1::date)
+            AND (to_date(year_month,'YYYY-MM') + interval '1 month - 1 day')::date <= $2::date`,
+        [from, to],
+      );
     }
 
     const stats: ExecStatDto[] = [
@@ -424,9 +462,20 @@ export class ExecService {
       { key: 'enrolled', label: '등록',          value: enrolled, unit: '건', money: false },
       { key: 'unwritten',label: '안 쓴 리포트',  value: unwritten,unit: '건', money: false },
       { key: 'revenue',  label: '수입',          value: revenue,  unit: '원', money: true },
+      { key: 'payout',   label: '강사료',        value: payout,   unit: '원', money: true },
       { key: 'expense',  label: '지출',          value: expense,  unit: '원', money: true },
       { key: 'profit',   label: '이익',
-        value: revenue !== null && expense !== null ? revenue - expense : null, unit: '원', money: true },
+        value: revenue !== null && expense !== null && payout !== null
+          ? revenue - payout - expense : null,
+        unit: '원', money: true },
+      /**
+       * 이익률 — 원본 §71 이 이익 옆에 「−268%」를 적는다. 나누는 것은 **수입**이고,
+       * 수입이 0 이면 비율이 없다(0% 라 적으면 「본전」으로 읽힌다).
+       */
+      { key: 'margin',   label: '이익률',
+        value: revenue !== null && expense !== null && payout !== null && revenue > 0
+          ? Math.round(((revenue - payout - expense) / revenue) * 100) : null,
+        unit: '%', money: true },
     ];
 
     const reports = (await this.q(

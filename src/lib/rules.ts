@@ -235,13 +235,22 @@ function reportFilePart(value: string | null | undefined, fallback: string): str
   return safe || fallback;
 }
 
-/** `<YYYYMMDD>_<학생이름>_<학생학년>_<과목명>_<HH:mm>.png`의 서버 단일 정본 (D-R33). */
+/**
+ * `<YYYYMMDD>_<학생이름>_<학생학년>_<과목명>_<HH-mm>.png`의 서버 단일 정본 (D-R33).
+ *
+ * **시각도 같은 소독기를 지난다.** 이름·학년·과목만 `reportFilePart` 를 지나고 시각은 `fromMin`
+ * 그대로 붙어 `16:00` 의 **콜론이 파일 이름에 남아 있었다** — 세 칸을 소독하면서 네 번째만 빠뜨린
+ * 자리다. 콜론은 파일 이름에 쓸 수 없는 글자다: 브라우저가 `_` 로 **바꿔서** 저장하므로 학부모가
+ * 받는 파일은 `…_16_00.png` 인데 원장(Blob 경로 `reports/…/{fileName}` · 발송 이력)은 `…_16:00.png`
+ * 라 **같은 파일이 두 이름을 갖는다.** Windows 는 아예 거절한다 (QA-b · G-71 에서 실측).
+ */
 export function reportPngFileName(input: ReportPngFileNameInput): string {
   const date = input.date.replaceAll('-', '');
   const name = reportFilePart(input.studentName, '학생미정');
   const grade = reportFilePart(input.studentGrade, '학년미정');
   const subject = reportFilePart(input.subjectName, '과목미정');
-  return `${date}_${name}_${grade}_${subject}_${input.startMin === null ? '시간미정' : fromMin(input.startMin)}.png`;
+  const time = input.startMin === null ? '시간미정' : reportFilePart(fromMin(input.startMin), '시간미정');
+  return `${date}_${name}_${grade}_${subject}_${time}.png`;
 }
 
 export interface ReportPlainTextInput extends ReportPngFileNameInput {

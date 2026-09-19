@@ -132,8 +132,13 @@ export const GPAPACK_TYPE_LABEL: Record<string, string> = {
   exam: '시험 대비', self: '자습',
 };
 
+/**
+ * 보고 주기의 이름 — 원문 §69 의 탭이 「**일일** · 주간 · 월간」이다.
+ * 한동안 이 표만 「일간」이라 적어, §73 결재함과 §75 결재 흐름의 줄이 **탭과 다른 낱말**을 썼다
+ * (화면은 제 표로 「일일」을 그린다 · QA-e 에서 드러났다). 낱말은 한 벌이어야 한다 (D-R18).
+ */
 export const RPT_TYPE_LABEL: Record<string, string> = {
-  day: '일간', week: '주간', month: '월간',
+  day: '일일', week: '주간', month: '월간',
 };
 
 /** 표에 없는 낱말은 감추지 않고 그대로 보여 준다 */

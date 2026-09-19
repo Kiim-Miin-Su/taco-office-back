@@ -306,6 +306,20 @@ d('우측 서랍 — §14~§21', () => {
     ])));
   });
 
+  /**
+   * 보고 줄은 **올린 사람을 들고 온다** — 이 자리는 오래 `byId: null` 이었고 주석이 「RPT 에는 아직
+   * 제출자 FK 가 없다」라 적어 두었는데 C85-a 가 `rpt.sent_by` 를 만들었다. 그래서 §75 의
+   * 「되돌아온 것」·「내가 올린 것」에 보고가 한 건도 못 들어가고 이름이 「알 수 없음」이었다 (QA-e · K-105).
+   */
+  it('§75 보고 줄에는 올린 사람이 있다 — 「알 수 없음」이 아니다', async () => {
+    const { approvals: a } = (await get('/drawer', MANAGER).expect(200)).body;
+    const reports = [...a.back, ...a.waiting, ...a.mine]
+      .filter((row: { kind: string }) => row.kind === 'rpt');
+    expect(reports.length).toBeGreaterThan(0);
+    // 도장이 찍힌 보고는 이름이 있다. 도장이 없는 옛 행은 그대로 둔다 (N-25)
+    expect(reports.some((row: { byName: string | null }) => row.byName && row.byName !== '알 수 없음')).toBe(true);
+  });
+
   /* ── ③ D-R39 — 감추는 게 아니라 없다 ───────────────────────────── */
 
   it('강사에게는 남의 결재가 목록에서 빠진다 — 「있다」는 사실도 안 흘린다', async () => {

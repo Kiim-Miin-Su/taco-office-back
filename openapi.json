@@ -17843,7 +17843,7 @@
           },
           "fileName": {
             "type": "string",
-            "example": "20260827_김민준_고2_수학_16:30.png"
+            "example": "20260827_김민준_고2_수학_16-30.png"
           },
           "plainText": {
             "type": "string",

@@ -170,7 +170,7 @@ export class ReportFieldDto {
 
 export class ReportExportFileDto {
   @ApiProperty() studentId!: number;
-  @ApiProperty({ example: '20260827_김민준_고2_수학_16:30.png' }) fileName!: string;
+  @ApiProperty({ example: '20260827_김민준_고2_수학_16-30.png' }) fileName!: string;
   @ApiProperty({ description: '클립보드와 RSEND.body가 공유하는 서버 생성 5섹션 본문' }) plainText!: string;
   @ApiProperty(EXPORT_REVISION_SCHEMA) revision!: string;
 }

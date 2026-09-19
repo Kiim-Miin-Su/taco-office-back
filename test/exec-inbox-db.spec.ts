@@ -193,6 +193,26 @@ d('§69 6영역 · §73 결재함 — 판정 한 곳, 이동만 (C37)', () => {
       .rejects.toMatchObject({ response: { code: 'RPT_LOCKED' } });
   });
 
+  /**
+   * **올리면 대표가 안다** (원문 K-104 · O-145). 올리기는 오래 행만 바꾸고 아무도 부르지 않아,
+   * 대표는 결재함을 직접 열어야 올라온 줄 알았다. 자기에게는 보내지 않는다 (C38 의 규약).
+   */
+  it('올리면 대표에게 알림이 간다 — 올린 사람 자신에게는 안 간다', async () => {
+    const writer = await actor('알림작성자');
+    const boss = await actor('알림대표');
+    await svc().saveMemo({ rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'money', memo: '한 줄' }] }, writer);
+    const sent = await svc().submit({ rptType: 'day', onDate: '2026-08-21' }, writer);
+
+    const got = (await q.query(
+      `SELECT to_id, body, link, category FROM noti WHERE from_id = $1`, [writer],
+    )) as Array<{ to_id: string; body: string; link: string; category: string }>;
+    expect(got.map((n) => Number(n.to_id))).toContain(boss);
+    expect(got.map((n) => Number(n.to_id))).not.toContain(writer);
+    expect(got[0]).toMatchObject({ category: 'request' });
+    expect(got[0]!.link).toContain(`rpt=${sent.id}`);
+    expect(got[0]!.body).toContain('일일 보고가 올라왔습니다');
+  });
+
   it('반려는 사유가 있어야 하고, 반려된 보고는 다시 적어 올릴 수 있다 (D-R13)', async () => {
     const writer = await actor('작성자');
     const ceo = await actor('결재자');

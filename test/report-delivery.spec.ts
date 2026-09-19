@@ -62,7 +62,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     requestKey, onDate: DATE, studentId: STUDENT_READY,
     files: [rep1, rep2].map((repId) => ({
       repId,
-      fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chem_${repId === rep1 ? '09:00' : '10:00'}.png`,
+      fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chem_${repId === rep1 ? '09-00' : '10-00'}.png`,
       revision: revisions.get(repId)!,
       pngDataUrl: png,
     })),
@@ -517,7 +517,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
         ...base,
         files: [rep1, rep2].map((repId) => ({
           repId,
-          fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chem_${repId === rep1 ? '09:00' : '10:00'}.png`,
+          fileName: `${DATE.replaceAll('-', '')}_준비학생_고2_AP Chem_${repId === rep1 ? '09-00' : '10-00'}.png`,
           revision: revisions.get(repId),
           pngDataUrl: 'data:image/png;base64,ZmFrZQ==',
         })),

@@ -73,7 +73,16 @@ describe('리포트 상태 — 캘린더 색상의 단일 진실원', () => {
       studentGrade: null,
       subjectName: 'AP/Chemistry',
       startMin: 16 * 60 + 30,
-    })).toBe('20260827_김-민준_학년미정_AP-Chemistry_16:30.png');
+    })).toBe('20260827_김-민준_학년미정_AP-Chemistry_16-30.png');
+  });
+
+  // 콜론이 남으면 브라우저가 `_` 로 바꿔 저장해 파일 이름과 원장 이름이 갈린다 (QA-b · G-71)
+  it('파일 이름에는 Windows 가 거절하는 글자가 하나도 남지 않는다', () => {
+    const made = reportPngFileName({
+      date: '2026-08-27', studentName: '김민준', studentGrade: '고2', subjectName: 'AP Chemistry', startMin: 990,
+    });
+    expect(/[<>:"/\\|?*]/.test(made)).toBe(false);
+    expect(made.endsWith('.png')).toBe(true);
   });
 
   it('미래 수업은 예정(plan)이다', () => {

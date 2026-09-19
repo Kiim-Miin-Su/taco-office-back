@@ -761,6 +761,21 @@ export class AccountingService {
           [id, amount, reason, userId],
         );
       }
+      /**
+       * **반려는 올린 사람에게 간다** (원문 H-84 「올린 사람에게 알림」).
+       *
+       * 지금까지 반려는 행만 바꾸고 아무도 부르지 않았다 — 올린 사람은 자기 신청이 왜 멈췄는지
+       * 알 길이 없었다(등록할 때는 대표에게 알림이 갔는데 돌아오는 길이 없었다 · C94-d).
+       * **사유를 문장에 싣는다** — 사유 없이는 반려 자체가 막히므로(위) 늘 있는 말이고,
+       * 그 말이 곧 다시 올릴 때 고쳐야 할 것이다. 승인은 원문이 알림을 말하지 않아 만들지 않았다.
+       */
+      if (dto.decision === 'reject' && row.requester_id != null && Number(row.requester_id) !== userId) {
+        await m.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category)
+           SELECT $1, $2, $3, '/accounting?tab=out', 'request' FROM staff WHERE id = $1 AND active`,
+          [Number(row.requester_id), userId, `지출 반려 — ${reason}`],
+        );
+      }
       const [out] = (await m.query(`${EXPENSE_SELECT} WHERE e.id = $1`, [id])) as Array<Record<string, unknown>>;
       return this.expenseRow(out, canSeeAmounts);
     });
