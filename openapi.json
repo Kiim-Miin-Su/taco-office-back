@@ -5704,7 +5704,46 @@
       "get": {
         "description": "§24 FQ는 leads의 name, school, ownerName, reason을 검색한다. 받은 목록의 클라이언트 검색/필터 전환 시 추가 GET은 0회이며 별도 검색 query 계약은 없다.",
         "operationId": "OpsController_all",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "description": "이 날부터 — `to` 와 짝이다",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "description": "이 날까지",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "area",
+            "required": false,
+            "in": "query",
+            "description": "§67 갈래로 좁히기",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "lesson",
+                "intake",
+                "book",
+                "schedule",
+                "teacher"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -5778,6 +5817,185 @@
           }
         },
         "summary": "운영 — 상담 · 컴플레인 · 할 일 · 기획 · 회의 · 마케팅 · 건의",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/meetings": {
+      "post": {
+        "description": "시각·강의실·온라인을 MTREC 에 적지 않는다. SER(ONCE · kind=meeting · sub=회의 종류)를 한 트랜잭션에서 만들고 mtrec.ser_id 로 잇는다 — 그래야 「11:00–12:00」도 「1호」도 「온라인 TN」도 한 곳에서 나오고 겹침을 ser_occ 의 EXCLUDE 가 막는다(C95 컨설팅 회차와 같은 길). 줌 계정은 기존 assignIn 이 붙이고 다시 투영해 그때 겹침이 판정된다. 참석자는 답하기 전까지 「응답 대기」(confirmed NULL · C57)이고 그것이 §63 의 「대기 4」다. 주관자는 시간표의 「강사」 자리라 그 사람이 겹치면 막힌다.",
+        "operationId": "OpsController_createMeeting",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeetingCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingCreateResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "RESOURCE_CONFLICT(같은 시간에 주관자·강의실·줌) · BAD_RANGE · MEETING_PLACE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§63 「+ 회의 잡기」 — 시간표에 회차를 만들고 그 회차에 회의를 건다",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/plans": {
+      "post": {
+        "description": "단계를 받지 않는다(올린 기획은 언제나 첫 단계 · 옮기는 길은 §61 보드와 결재다 — 화면이 정하면 전이표가 두 벌이 된다). 기한은 제안일 뿐이라 due_approved_at 은 비어 있고 대표가 승인해야 최종 승인이 열린다(C56).",
+        "operationId": "OpsController_createPlan",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanCreateResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§61 「+ 기획 올리기」 — 언제나 첫 단계",
         "tags": [
           "ops"
         ]
@@ -9886,6 +10104,364 @@
         "summary": "줌 안내 — 온라인 회차의 강사에게 보낸다 (§43 · §12 준비 · F-63)",
         "tags": [
           "guides"
+        ]
+      }
+    },
+    "/zoom": {
+      "get": {
+        "description": "점유는 `ser_occ` 에서 센다 — 「지금 가능」·「만석 시간대」도 같은 배열에서 센다.",
+        "operationId": "ZoomController_board",
+        "parameters": [
+          {
+            "name": "onDate",
+            "required": false,
+            "in": "query",
+            "description": "기준일 YYYY-MM-DD (KST). 없으면 오늘",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoomBoardDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "줌 계정과 하루 점유 격자 (§21)",
+        "tags": [
+          "zoom"
+        ]
+      }
+    },
+    "/zoom/accounts": {
+      "post": {
+        "operationId": "ZoomController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZoomAccountCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoomAcctDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code ZACC_LABEL_TAKEN"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "줌 계정 추가 — 비밀은 암호화해 저장하고 응답에 싣지 않는다",
+        "tags": [
+          "zoom"
+        ]
+      }
+    },
+    "/zoom/accounts/{id}": {
+      "patch": {
+        "operationId": "ZoomController_patch",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZoomAccountPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoomAcctDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "code ZACC_NOT_FOUND"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "줌 계정 고치기 — 끄면 새 배정에서 빠지고, 이미 붙은 회차는 건드리지 않는다",
+        "tags": [
+          "zoom"
+        ]
+      }
+    },
+    "/zoom/assign": {
+      "post": {
+        "description": "정본은 ZASSIGN 이고 `ser_occ.zacc_id` 는 투영이다. 겹치면 EXCLUDE 가 막고 통째로 되돌아간다.",
+        "operationId": "ZoomController_assign",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ZoomAssignDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoomAssignResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code ZACC_INACTIVE | 겹침(EXCLUDE)"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "줌 계정 배정 — 회차 하나 또는 규칙 전체 (§43 「계정 배정 →」 · §19 「강의실 바꾸기」의 줌 모양)",
+        "tags": [
+          "zoom"
         ]
       }
     },
@@ -14529,364 +15105,6 @@
         "summary": "§19 변경 요청 넣기 — 겹치면 **누구와** 겹치는지 돌려주고 넣지 않는다",
         "tags": [
           "drawer"
-        ]
-      }
-    },
-    "/zoom": {
-      "get": {
-        "description": "점유는 `ser_occ` 에서 센다 — 「지금 가능」·「만석 시간대」도 같은 배열에서 센다.",
-        "operationId": "ZoomController_board",
-        "parameters": [
-          {
-            "name": "onDate",
-            "required": false,
-            "in": "query",
-            "description": "기준일 YYYY-MM-DD (KST). 없으면 오늘",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ZoomBoardDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "줌 계정과 하루 점유 격자 (§21)",
-        "tags": [
-          "zoom"
-        ]
-      }
-    },
-    "/zoom/accounts": {
-      "post": {
-        "operationId": "ZoomController_create",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ZoomAccountCreateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ZoomAcctDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "code ZACC_LABEL_TAKEN"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "줌 계정 추가 — 비밀은 암호화해 저장하고 응답에 싣지 않는다",
-        "tags": [
-          "zoom"
-        ]
-      }
-    },
-    "/zoom/accounts/{id}": {
-      "patch": {
-        "operationId": "ZoomController_patch",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ZoomAccountPatchDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ZoomAcctDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "code ZACC_NOT_FOUND"
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "줌 계정 고치기 — 끄면 새 배정에서 빠지고, 이미 붙은 회차는 건드리지 않는다",
-        "tags": [
-          "zoom"
-        ]
-      }
-    },
-    "/zoom/assign": {
-      "post": {
-        "description": "정본은 ZASSIGN 이고 `ser_occ.zacc_id` 는 투영이다. 겹치면 EXCLUDE 가 막고 통째로 되돌아간다.",
-        "operationId": "ZoomController_assign",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ZoomAssignDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ZoomAssignResultDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "code ZACC_INACTIVE | 겹침(EXCLUDE)"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "줌 계정 배정 — 회차 하나 또는 규칙 전체 (§43 「계정 배정 →」 · §19 「강의실 바꾸기」의 줌 모양)",
-        "tags": [
-          "zoom"
         ]
       }
     },
@@ -20741,6 +20959,30 @@
           "hasMinutes": {
             "type": "boolean",
             "description": "속기록을 썼는가 — 안 쓰면 회의가 끝난 것이 아니다"
+          },
+          "serId": {
+            "type": "number",
+            "nullable": true,
+            "description": "시간표 회차 — 옛 회의는 null (C96)"
+          },
+          "startMin": {
+            "type": "number",
+            "nullable": true,
+            "description": "시작 분 — 회차가 있을 때만"
+          },
+          "endMin": {
+            "type": "number",
+            "nullable": true,
+            "description": "끝 분 — 회차가 있을 때만"
+          },
+          "placeLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "자리 — 「1호」 또는 「온라인 TN Zoom」. 낱말은 서버가 만든다 (D-R18)"
+          },
+          "waiting": {
+            "type": "number",
+            "description": "아직 답 안 한 사람 — 「대기 4」 (원본 §63 · confirmed IS NULL · C57)"
           }
         },
         "required": [
@@ -20749,7 +20991,8 @@
           "mtTypeLabel",
           "attendees",
           "confirmed",
-          "hasMinutes"
+          "hasMinutes",
+          "waiting"
         ]
       },
       "MarketingDto": {
@@ -21173,6 +21416,65 @@
           "followUpSoon"
         ]
       },
+      "OpsRangeDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "nullable": true,
+            "description": "없으면 전체"
+          },
+          "to": {
+            "type": "string",
+            "nullable": true
+          },
+          "label": {
+            "type": "string",
+            "description": "「전체」 · 「2026-09-19」 · 「2026-09-14 ~ 2026-09-20」 · 「2026년 9월」"
+          }
+        },
+        "required": [
+          "label"
+        ]
+      },
+      "OpsAreaCountDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ]
+      },
+      "OpsCountDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ]
+      },
       "OpsDto": {
         "type": "object",
         "properties": {
@@ -21283,6 +21585,50 @@
                 "$ref": "#/components/schemas/IntakeHeadDto"
               }
             ]
+          },
+          "range": {
+            "description": "지금 보고 있는 기간 — 낱말도 서버가 만든다 (C96 · D-R18)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpsRangeDto"
+              }
+            ]
+          },
+          "areaCounts": {
+            "description": "§67 갈래 칩 줄의 건수 — 서버가 센다. 0건 갈래도 선다(어휘이지 데이터가 아니다 · C66)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsAreaCountDto"
+            }
+          },
+          "mtTypeCounts": {
+            "description": "§63 회의 종류 칩 줄의 건수 — 서버가 센다 (D-R37)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsCountDto"
+            }
+          },
+          "todoOwnerCounts": {
+            "description": "§64 담당 칩 줄의 건수 — 열린 할 일만. 담당 없는 것은 「담당 없음」 (D-R37)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsCountDto"
+            }
+          },
+          "mtTypes": {
+            "description": "회의 종류 다섯 — 「+ 회의 잡기」 폼의 낱말 (D-R18 · C96)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CplWordDto"
+            }
+          },
+          "canCreateMeeting": {
+            "type": "boolean",
+            "description": "「+ 회의 잡기」가 서는가 — 단추도 서버가 정한다 (D-R39)"
+          },
+          "canCreatePlan": {
+            "type": "boolean",
+            "description": "「+ 기획 올리기」가 서는가 (D-R39)"
           }
         },
         "required": [
@@ -21303,7 +21649,187 @@
           "canComment",
           "suggestions",
           "canSeeAmounts",
-          "intakeHead"
+          "intakeHead",
+          "range",
+          "areaCounts",
+          "mtTypeCounts",
+          "todoOwnerCounts",
+          "mtTypes",
+          "canCreateMeeting",
+          "canCreatePlan"
+        ]
+      },
+      "MeetingCreateDto": {
+        "type": "object",
+        "properties": {
+          "mtType": {
+            "type": "string",
+            "enum": [
+              "plan",
+              "consulting",
+              "marketing",
+              "dev",
+              "general"
+            ],
+            "description": "회의 종류 다섯 — 낱말은 GET /ops.mtTypes"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 120,
+            "description": "제목 — 없으면 종류 이름으로 부른다"
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "언제"
+          },
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440,
+            "description": "시작 분 (0~1440)"
+          },
+          "endMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440,
+            "description": "끝 분 — 시작보다 뒤"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ],
+            "description": "현장이면 강의실, 온라인이면 줌 계정"
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true,
+            "description": "강의실 — 현장일 때"
+          },
+          "zaccId": {
+            "type": "number",
+            "nullable": true,
+            "description": "줌 계정 — 온라인일 때. 겹치면 시간표가 막는다"
+          },
+          "ownerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "주관자 — 없으면 나. 시간표의 「강사」 자리라 이 사람이 겹치면 막힌다"
+          },
+          "attendeeIds": {
+            "description": "참석자 — 답하기 전에는 「응답 대기」다 (C57)",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "mtType",
+          "onDate",
+          "startMin",
+          "endMin",
+          "mode"
+        ]
+      },
+      "UnavWarnLiteDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string"
+          },
+          "teacherName": {
+            "type": "string"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "date",
+          "teacherName",
+          "startMin",
+          "endMin",
+          "reason"
+        ]
+      },
+      "MeetingCreateResultDto": {
+        "type": "object",
+        "properties": {
+          "meeting": {
+            "$ref": "#/components/schemas/MeetingDto"
+          },
+          "attendees": {
+            "type": "number",
+            "description": "만든 참석자 줄 수 — 전부 「응답 대기」다"
+          },
+          "unavailable": {
+            "description": "막지 않고 알린다 — 주관자가 못 한다고 적어 둔 시간에 걸쳤다 (C84-c)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnavWarnLiteDto"
+            }
+          }
+        },
+        "required": [
+          "meeting",
+          "attendees",
+          "unavailable"
+        ]
+      },
+      "PlanCreateDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "goal": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "무엇을 이루려는가"
+          },
+          "ask": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "무엇이 필요한가"
+          },
+          "ownerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "담당 — 없으면 나"
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "기한 제안 — 대표가 승인해야 최종 승인이 열린다 (C56)"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "PlanCreateResultDto": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/PlanDto"
+          }
+        },
+        "required": [
+          "plan"
         ]
       },
       "LeadCreateDto": {
@@ -24591,6 +25117,251 @@
           "lesson",
           "teacherNotices",
           "parentNotices"
+        ]
+      },
+      "ZoomAcctDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string",
+            "description": "화면에 보이는 짧은 이름 — Boarding · Consulting · TN · Study …"
+          },
+          "loginEmail": {
+            "type": "string"
+          },
+          "joinUrl": {
+            "type": "string"
+          },
+          "meetingId": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean",
+            "description": "지금 쓰는 계정인가 — 끄면 새 배정에서 빠진다"
+          },
+          "usedCount": {
+            "type": "number",
+            "description": "이 계정이 붙어 있는 회차 수 (기준일)"
+          },
+          "hasSecret": {
+            "type": "boolean",
+            "description": "비밀이 저장돼 있는가 — 값 자체는 내려보내지 않는다"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "loginEmail",
+          "joinUrl",
+          "active",
+          "usedCount",
+          "hasSecret"
+        ]
+      },
+      "ZoomSlotDto": {
+        "type": "object",
+        "properties": {
+          "hour": {
+            "type": "number",
+            "description": "시(0~23)"
+          },
+          "busy": {
+            "type": "number",
+            "description": "이 시간에 이 계정을 쓰는 회차 수"
+          }
+        },
+        "required": [
+          "hour",
+          "busy"
+        ]
+      },
+      "ZoomRowDto": {
+        "type": "object",
+        "properties": {
+          "zaccId": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string"
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoomSlotDto"
+            }
+          }
+        },
+        "required": [
+          "zaccId",
+          "label",
+          "slots"
+        ]
+      },
+      "ZoomBoardDto": {
+        "type": "object",
+        "properties": {
+          "onDate": {
+            "type": "string",
+            "description": "기준일 YYYY-MM-DD (KST)"
+          },
+          "fromHour": {
+            "type": "number",
+            "description": "격자가 보여 주는 첫 시"
+          },
+          "toHour": {
+            "type": "number",
+            "description": "격자가 보여 주는 끝 시 (포함)"
+          },
+          "accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoomAcctDto"
+            }
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoomRowDto"
+            }
+          },
+          "nowHour": {
+            "type": "number",
+            "nullable": true,
+            "description": "이 셈이 선 시각(KST 시). 오늘이 아니면 null"
+          },
+          "freeNow": {
+            "type": "number",
+            "description": "지금 이 시각에 비어 있는 계정 수 — §21 머리의 「지금 가능」"
+          },
+          "freeLabels": {
+            "description": "지금 쓸 수 있는 계정 이름 — §21 아래줄",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fullHours": {
+            "type": "number",
+            "description": "한 칸도 안 남은 시간대 수 — §21 머리의 「만석 시간대」"
+          }
+        },
+        "required": [
+          "onDate",
+          "fromHour",
+          "toHour",
+          "accounts",
+          "rows",
+          "nowHour",
+          "freeNow",
+          "freeLabels",
+          "fullHours"
+        ]
+      },
+      "ZoomAccountCreateDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "loginEmail": {
+            "type": "string"
+          },
+          "joinUrl": {
+            "type": "string"
+          },
+          "meetingId": {
+            "type": "string"
+          },
+          "loginSecret": {
+            "type": "string",
+            "description": "줌 로그인 비밀 — 평문으로 두지 않는다. 넣으면 암호화해 저장한다"
+          },
+          "meetingPw": {
+            "type": "string",
+            "description": "회의 비밀번호 — 같은 방식으로 저장한다"
+          }
+        },
+        "required": [
+          "label",
+          "loginEmail",
+          "joinUrl"
+        ]
+      },
+      "ZoomAccountPatchDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "loginEmail": {
+            "type": "string"
+          },
+          "joinUrl": {
+            "type": "string"
+          },
+          "meetingId": {
+            "type": "string"
+          },
+          "loginSecret": {
+            "type": "string"
+          },
+          "meetingPw": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "끄면 새 배정에서 빠진다. 이미 붙은 회차는 건드리지 않는다"
+          }
+        }
+      },
+      "ZoomAssignDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "description": "어느 수업 규칙인가"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "YYYY-MM-DD. 주면 그 회차만, 안 주면 규칙 전체"
+          },
+          "zaccId": {
+            "type": "number",
+            "nullable": true,
+            "description": "붙일 계정. null 이면 뗀다"
+          }
+        },
+        "required": [
+          "serId"
+        ]
+      },
+      "ZoomAssignResultDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "zaccId": {
+            "type": "number",
+            "nullable": true
+          },
+          "projected": {
+            "type": "number",
+            "description": "다시 그린 회차 수"
+          }
+        },
+        "required": [
+          "serId",
+          "zaccId",
+          "projected"
         ]
       },
       "ConsultingCreateDto": {
@@ -29744,251 +30515,6 @@
         },
         "required": [
           "conflicts"
-        ]
-      },
-      "ZoomAcctDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "label": {
-            "type": "string",
-            "description": "화면에 보이는 짧은 이름 — Boarding · Consulting · TN · Study …"
-          },
-          "loginEmail": {
-            "type": "string"
-          },
-          "joinUrl": {
-            "type": "string"
-          },
-          "meetingId": {
-            "type": "string",
-            "nullable": true
-          },
-          "active": {
-            "type": "boolean",
-            "description": "지금 쓰는 계정인가 — 끄면 새 배정에서 빠진다"
-          },
-          "usedCount": {
-            "type": "number",
-            "description": "이 계정이 붙어 있는 회차 수 (기준일)"
-          },
-          "hasSecret": {
-            "type": "boolean",
-            "description": "비밀이 저장돼 있는가 — 값 자체는 내려보내지 않는다"
-          }
-        },
-        "required": [
-          "id",
-          "label",
-          "loginEmail",
-          "joinUrl",
-          "active",
-          "usedCount",
-          "hasSecret"
-        ]
-      },
-      "ZoomSlotDto": {
-        "type": "object",
-        "properties": {
-          "hour": {
-            "type": "number",
-            "description": "시(0~23)"
-          },
-          "busy": {
-            "type": "number",
-            "description": "이 시간에 이 계정을 쓰는 회차 수"
-          }
-        },
-        "required": [
-          "hour",
-          "busy"
-        ]
-      },
-      "ZoomRowDto": {
-        "type": "object",
-        "properties": {
-          "zaccId": {
-            "type": "number"
-          },
-          "label": {
-            "type": "string"
-          },
-          "slots": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ZoomSlotDto"
-            }
-          }
-        },
-        "required": [
-          "zaccId",
-          "label",
-          "slots"
-        ]
-      },
-      "ZoomBoardDto": {
-        "type": "object",
-        "properties": {
-          "onDate": {
-            "type": "string",
-            "description": "기준일 YYYY-MM-DD (KST)"
-          },
-          "fromHour": {
-            "type": "number",
-            "description": "격자가 보여 주는 첫 시"
-          },
-          "toHour": {
-            "type": "number",
-            "description": "격자가 보여 주는 끝 시 (포함)"
-          },
-          "accounts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ZoomAcctDto"
-            }
-          },
-          "rows": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ZoomRowDto"
-            }
-          },
-          "nowHour": {
-            "type": "number",
-            "nullable": true,
-            "description": "이 셈이 선 시각(KST 시). 오늘이 아니면 null"
-          },
-          "freeNow": {
-            "type": "number",
-            "description": "지금 이 시각에 비어 있는 계정 수 — §21 머리의 「지금 가능」"
-          },
-          "freeLabels": {
-            "description": "지금 쓸 수 있는 계정 이름 — §21 아래줄",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "fullHours": {
-            "type": "number",
-            "description": "한 칸도 안 남은 시간대 수 — §21 머리의 「만석 시간대」"
-          }
-        },
-        "required": [
-          "onDate",
-          "fromHour",
-          "toHour",
-          "accounts",
-          "rows",
-          "nowHour",
-          "freeNow",
-          "freeLabels",
-          "fullHours"
-        ]
-      },
-      "ZoomAccountCreateDto": {
-        "type": "object",
-        "properties": {
-          "label": {
-            "type": "string"
-          },
-          "loginEmail": {
-            "type": "string"
-          },
-          "joinUrl": {
-            "type": "string"
-          },
-          "meetingId": {
-            "type": "string"
-          },
-          "loginSecret": {
-            "type": "string",
-            "description": "줌 로그인 비밀 — 평문으로 두지 않는다. 넣으면 암호화해 저장한다"
-          },
-          "meetingPw": {
-            "type": "string",
-            "description": "회의 비밀번호 — 같은 방식으로 저장한다"
-          }
-        },
-        "required": [
-          "label",
-          "loginEmail",
-          "joinUrl"
-        ]
-      },
-      "ZoomAccountPatchDto": {
-        "type": "object",
-        "properties": {
-          "label": {
-            "type": "string"
-          },
-          "loginEmail": {
-            "type": "string"
-          },
-          "joinUrl": {
-            "type": "string"
-          },
-          "meetingId": {
-            "type": "string"
-          },
-          "loginSecret": {
-            "type": "string"
-          },
-          "meetingPw": {
-            "type": "string"
-          },
-          "active": {
-            "type": "boolean",
-            "description": "끄면 새 배정에서 빠진다. 이미 붙은 회차는 건드리지 않는다"
-          }
-        }
-      },
-      "ZoomAssignDto": {
-        "type": "object",
-        "properties": {
-          "serId": {
-            "type": "number",
-            "description": "어느 수업 규칙인가"
-          },
-          "onDate": {
-            "type": "string",
-            "description": "YYYY-MM-DD. 주면 그 회차만, 안 주면 규칙 전체"
-          },
-          "zaccId": {
-            "type": "number",
-            "nullable": true,
-            "description": "붙일 계정. null 이면 뗀다"
-          }
-        },
-        "required": [
-          "serId"
-        ]
-      },
-      "ZoomAssignResultDto": {
-        "type": "object",
-        "properties": {
-          "serId": {
-            "type": "number"
-          },
-          "onDate": {
-            "type": "string",
-            "nullable": true
-          },
-          "zaccId": {
-            "type": "number",
-            "nullable": true
-          },
-          "projected": {
-            "type": "number",
-            "description": "다시 그린 회차 수"
-          }
-        },
-        "required": [
-          "serId",
-          "zaccId",
-          "projected"
         ]
       },
       "KindRowsDto": {

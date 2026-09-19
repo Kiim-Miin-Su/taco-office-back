@@ -9,7 +9,7 @@ import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { BoardService } from '../src/modules/board/board.service';
 import { ExecService } from '../src/modules/exec/exec.service';
-import { OpsService } from '../src/modules/ops/ops.service';
+import { makeOpsService } from './ops-svc';
 import { todayKst, addDays } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
 
@@ -25,7 +25,7 @@ d('C90 상담 입구 — 신규 문의 · 단계 이동 · 접촉 원장 · §71
   let q: QueryRunner;
   const TODAY = todayKst();
 
-  const svc = () => new OpsService(q.manager.getRepository(Lead));
+  const svc = () => makeOpsService(q.manager.getRepository(Lead));
   const exec = () => { const repo = q.manager.getRepository(Lead); return new ExecService(repo, new BoardService(repo)); };
 
   beforeAll(async () => {

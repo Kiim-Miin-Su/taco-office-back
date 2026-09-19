@@ -5,12 +5,13 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { CPL_AREAS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
 import { INTAKE_FUNNEL_STAGES, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
 import { MFB_STATES } from '../../lib/marketing-words';
 import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_STAGES } from '../../lib/plan-words';
 import { MINUTES_TEMPLATES, MT_ATTEND_STATES, MT_TYPES } from '../../lib/meeting-words';
+import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -335,6 +336,18 @@ export class MeetingDto {
   @ApiProperty() attendees!: number;
   @ApiProperty() confirmed!: number;
   @ApiProperty({ description: '속기록을 썼는가 — 안 쓰면 회의가 끝난 것이 아니다' }) hasMinutes!: boolean;
+  /*
+   * 시각·자리는 **시간표가 갖는다** (C96) — `mtrec` 에 칸을 새기면 같은 사실이 두 곳에 살고
+   * 겹침(`ser_occ` EXCLUDE)의 판정 밖이 된다. 옛 회의는 어느 회차였는지 아무도 모르므로
+   * 셋 다 null 이고, 화면은 그 사실을 「시각 없음」으로 말한다 (N-25).
+   */
+  @ApiPropertyOptional({ ...N, description: '시간표 회차 — 옛 회의는 null (C96)' }) serId?: number | null;
+  @ApiPropertyOptional({ ...N, description: '시작 분 — 회차가 있을 때만' }) startMin?: number | null;
+  @ApiPropertyOptional({ ...N, description: '끝 분 — 회차가 있을 때만' }) endMin?: number | null;
+  @ApiPropertyOptional({ ...S, description: '자리 — 「1호」 또는 「온라인 TN Zoom」. 낱말은 서버가 만든다 (D-R18)' })
+  placeLabel?: string | null;
+  @ApiProperty({ description: '아직 답 안 한 사람 — 「대기 4」 (원본 §63 · confirmed IS NULL · C57)' })
+  waiting!: number;
 }
 
 /** §59 마케팅 트래킹 */
@@ -583,6 +596,34 @@ export class IntakeHeadDto {
   funnelSince?: string | null;
 }
 
+/* ══ C96 — 운영에 만드는 길 (N-46 ②③ · J-102) ═══════════════════════════════ */
+
+/** 지금 보고 있는 기간 — 화면이 「최근 두 달」 같은 말을 만들지 않는다 (D-R18) */
+export class OpsRangeDto {
+  @ApiPropertyOptional({ ...S, description: '없으면 전체' }) from?: string | null;
+  @ApiPropertyOptional(S) to?: string | null;
+  @ApiProperty({ description: '「전체」 · 「2026-09-19」 · 「2026-09-14 ~ 2026-09-20」 · 「2026년 9월」' })
+  label!: string;
+}
+
+/** 칩 하나 — 키 · 이름 · 건수 */
+export class OpsCountDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() count!: number;
+}
+
+export class OpsAreaCountDto extends OpsCountDto {}
+
+/** 시간표 쓰기가 돌려주는 불가 시간 줄 — 모양은 schedule 모듈의 것과 같다 */
+export class UnavWarnLiteDto {
+  @ApiProperty() date!: string;
+  @ApiProperty() teacherName!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() endMin!: number;
+  @ApiProperty() reason!: string;
+}
+
 export class OpsDto {
   @ApiProperty({ type: [LeadDto] }) leads!: LeadDto[];
   @ApiProperty({ type: [ComplaintDto] }) complaints!: ComplaintDto[];
@@ -608,4 +649,126 @@ export class OpsDto {
   @ApiProperty({ description: '집행 비용을 볼 수 있는가' }) canSeeAmounts!: boolean;
   @ApiProperty({ type: IntakeHeadDto, description: '§23 상담 머리 — 퍼널 · 담당 · 경고. 화면은 세지 않는다 (D-R37)' })
   intakeHead!: IntakeHeadDto;
+  @ApiProperty({ type: OpsRangeDto, description: '지금 보고 있는 기간 — 낱말도 서버가 만든다 (C96 · D-R18)' })
+  range!: OpsRangeDto;
+  @ApiProperty({ type: [OpsAreaCountDto], description: '§67 갈래 칩 줄의 건수 — 서버가 센다. 0건 갈래도 선다(어휘이지 데이터가 아니다 · C66)' })
+  areaCounts!: OpsAreaCountDto[];
+  @ApiProperty({ type: [OpsCountDto], description: '§63 회의 종류 칩 줄의 건수 — 서버가 센다 (D-R37)' })
+  mtTypeCounts!: OpsCountDto[];
+  @ApiProperty({ type: [OpsCountDto], description: '§64 담당 칩 줄의 건수 — 열린 할 일만. 담당 없는 것은 「담당 없음」 (D-R37)' })
+  todoOwnerCounts!: OpsCountDto[];
+  @ApiProperty({ type: [CplWordDto], description: '회의 종류 다섯 — 「+ 회의 잡기」 폼의 낱말 (D-R18 · C96)' })
+  mtTypes!: CplWordDto[];
+  @ApiProperty({ description: '「+ 회의 잡기」가 서는가 — 단추도 서버가 정한다 (D-R39)' }) canCreateMeeting!: boolean;
+  @ApiProperty({ description: '「+ 기획 올리기」가 서는가 (D-R39)' }) canCreatePlan!: boolean;
+}
+
+/**
+ * 「+ 회의 잡기」 (원본 §63 · N-46 ①).
+ *
+ * 시각·자리를 `mtrec` 에 적지 않는다 — 서버가 **시간표에 하루짜리 회차를 만들고** 그 회차에 회의를 건다.
+ * 그래야 「11:00–12:00」도 「1호」도 「온라인 TN」도 한 곳에서 나오고, 겹침을 `ser_occ` 의 EXCLUDE 가 막는다.
+ */
+export class MeetingCreateDto {
+  @ApiProperty({ enum: [...MT_TYPES], description: '회의 종류 다섯 — 낱말은 GET /ops.mtTypes' })
+  @IsIn([...MT_TYPES], { message: '회의 종류는 기획 · 컨설팅 · 마케팅 · 개발 · 일반 중 하나입니다' })
+  mtType!: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 120, description: '제목 — 없으면 종류 이름으로 부른다' })
+  @IsOptional() @IsString() @MaxLength(120)
+  title?: string | null;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '언제' })
+  @IsCalendarDate()
+  onDate!: string;
+
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1440, description: '시작 분 (0~1440)' })
+  @IsInt() @Min(0) @Max(1440)
+  startMin!: number;
+
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1440, description: '끝 분 — 시작보다 뒤' })
+  @IsInt() @Min(0) @Max(1440)
+  endMin!: number;
+
+  @ApiProperty({ enum: ['offline', 'online'], description: '현장이면 강의실, 온라인이면 줌 계정' })
+  @IsIn(['offline', 'online'], { message: '현장 또는 온라인입니다' })
+  mode!: string;
+
+  @ApiPropertyOptional({ ...N, description: '강의실 — 현장일 때' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  roomId?: number | null;
+
+  @ApiPropertyOptional({ ...N, description: '줌 계정 — 온라인일 때. 겹치면 시간표가 막는다' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  zaccId?: number | null;
+
+  @ApiPropertyOptional({ ...N, description: '주관자 — 없으면 나. 시간표의 「강사」 자리라 이 사람이 겹치면 막힌다' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId?: number | null;
+
+  @ApiPropertyOptional({ type: [Number], description: '참석자 — 답하기 전에는 「응답 대기」다 (C57)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(50)
+  @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  attendeeIds?: number[];
+}
+
+/**
+ * 「+ 기획 올리기」 (원본 §61 · N-46 ①).
+ *
+ * **단계를 받지 않는다** — 올린 기획은 언제나 첫 단계다. 화면이 단계를 정하면 전이표가 두 벌이 되고,
+ * 기한도 **제안**일 뿐이라 `due_approved_at` 은 비어 있다(대표가 승인해야 최종 승인이 열린다 · C56).
+ */
+export class PlanCreateDto {
+  @ApiProperty({ maxLength: 120 })
+  @IsString() @MinLength(1, { message: '제목을 적어 주세요' }) @MaxLength(120)
+  title!: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 2000, description: '무엇을 이루려는가' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  goal?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 2000, description: '무엇이 필요한가' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  ask?: string | null;
+
+  @ApiPropertyOptional({ ...N, description: '담당 — 없으면 나' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId?: number | null;
+
+  @ApiPropertyOptional({ ...S, description: '기한 제안 — 대표가 승인해야 최종 승인이 열린다 (C56)' })
+  @IsOptional() @IsCalendarDate()
+  dueOn?: string | null;
+}
+
+/**
+ * `GET /ops` 의 기간·갈래 (N-46 ② · J-102).
+ *
+ * **검색 인자는 두지 않는다** — §24 FQ 는 받은 목록에서 거르고 추가 GET 이 0회라는 규약 그대로다.
+ * 여기서 받는 것은 **얼마나 가져올지**뿐이다.
+ */
+export class OpsQueryDto {
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '이 날부터 — `to` 와 짝이다' })
+  @IsOptional() @IsCalendarDate()
+  from?: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '이 날까지' })
+  @IsOptional() @IsCalendarDate()
+  to?: string;
+
+  @ApiPropertyOptional({ enum: [...CPL_AREAS], description: '§67 갈래로 좁히기' })
+  @IsOptional() @IsIn([...CPL_AREAS], { message: '갈래는 수업 · 상담 · 교재 · 스케줄 · 선생님 중 하나입니다' })
+  area?: string;
+}
+
+/** 회의를 잡은 결과 — 시간표에 생긴 회차까지 함께 돌려준다 */
+export class MeetingCreateResultDto {
+  @ApiProperty({ type: MeetingDto }) meeting!: MeetingDto;
+  @ApiProperty({ description: '만든 참석자 줄 수 — 전부 「응답 대기」다' }) attendees!: number;
+  @ApiProperty({ type: [UnavWarnLiteDto], description: '막지 않고 알린다 — 주관자가 못 한다고 적어 둔 시간에 걸쳤다 (C84-c)' })
+  unavailable!: UnavWarnLiteDto[];
+}
+
+/** 기획을 올린 결과 */
+export class PlanCreateResultDto {
+  @ApiProperty({ type: PlanDto }) plan!: PlanDto;
 }

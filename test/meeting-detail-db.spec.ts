@@ -16,7 +16,7 @@
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
-import { OpsService } from '../src/modules/ops/ops.service';
+import { makeOpsService } from './ops-svc';
 import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
 
@@ -49,7 +49,7 @@ d('§66 회의 상세 (C57)', () => {
   let q: QueryRunner;
   let mtId: number;
 
-  const svc = () => new OpsService(q.manager.getRepository(Lead));
+  const svc = () => makeOpsService(q.manager.getRepository(Lead));
 
   beforeAll(async () => { ds = scratchDataSource(); await ds.initialize(); });
   beforeEach(async () => {

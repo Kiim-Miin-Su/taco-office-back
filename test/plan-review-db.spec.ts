@@ -17,7 +17,7 @@
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
-import { OpsService } from '../src/modules/ops/ops.service';
+import { makeOpsService } from './ops-svc';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
@@ -49,7 +49,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
   let q: QueryRunner;
   let planId: number;
 
-  const svc = () => new OpsService(q.manager.getRepository(Lead));
+  const svc = () => makeOpsService(q.manager.getRepository(Lead));
 
   beforeAll(async () => { ds = scratchDataSource(); await ds.initialize(); });
   beforeEach(async () => {

@@ -31,6 +31,27 @@ export const MT_TYPE_LABEL: Record<MtType, string> = {
 /** 모르는 코드값이면 코드값을 그대로 보인다 — 비어 보이느니 낯설게 보이는 편이 낫다 */
 export const mtTypeLabel = (t: string): string => MT_TYPE_LABEL[t as MtType] ?? t;
 
+/**
+ * **두 벌을 잇는 표** (C96).
+ *
+ * 바로 위 주석이 「같은 다섯 갈래를 두 표가 각자 부른다」고 적어 두었지만 **잇는 표는 없었다.**
+ * 회의를 시간표에 올리려면(`POST /ops/meetings` 가 `kind='meeting'` 회차를 만든다) 과목 키가 필요하고,
+ * 그것을 부르는 쪽마다 적으면 다섯 갈래가 화면마다 다른 색·다른 이름이 된다(색은 `sub.color` 다).
+ *
+ * 이름은 여전히 지어낸 것이 아니다 — 슬라이드 89 의 과목 표가 다섯을 그대로 적어 둔 그 짝이다.
+ */
+export const MT_TYPE_SUB: Record<MtType, string> = {
+  plan: 'mt-pl',
+  consulting: 'mt-cs',
+  marketing: 'mt-mk',
+  dev: 'mt-dv',
+  general: 'mt-pg',
+};
+
+/** 화면이 고르는 다섯 — 낱말은 서버가 준다 (D-R18) */
+export const mtTypeOptions = (): Array<{ key: MtType; label: string }> =>
+  MT_TYPES.map((key) => ({ key, label: MT_TYPE_LABEL[key] }));
+
 /* ── 참석 (MTATTD) ─────────────────────────────────────────────────────── */
 
 /**

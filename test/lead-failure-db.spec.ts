@@ -7,7 +7,7 @@
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
-import { OpsService } from '../src/modules/ops/ops.service';
+import { makeOpsService } from './ops-svc';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -18,7 +18,7 @@ d('§24 상담 실패 이력 — 명시값·도달 기록·미분류 (N-25 채�
   let q: QueryRunner;
   let id: number;
 
-  const svc = () => new OpsService(q.manager.getRepository(Lead));
+  const svc = () => makeOpsService(q.manager.getRepository(Lead));
 
   beforeAll(async () => {
     const url = assertScratch(TEST_URL);

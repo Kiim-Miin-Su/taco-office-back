@@ -12,13 +12,14 @@ import { Test } from '@nestjs/testing';
 import type { NextFunction, Request, Response } from 'express';
 import request from 'supertest';
 import type { Repository } from 'typeorm';
-import { Staff, type Lead } from '../src/entities';
+import { Staff } from '../src/entities';
 import { AuthService } from '../src/auth/auth.service';
 import { JwtStrategy, type JwtPayload } from '../src/auth/jwt.strategy';
 import { PERM_KEY, PermGuard, ROLES, permsOf, type RequestUser, type Role } from '../src/common/perm';
 import { OpsController } from '../src/modules/ops/ops.controller';
 import { LeadDto, type OpsDto } from '../src/modules/ops/ops.dto';
 import { OpsService } from '../src/modules/ops/ops.service';
+import { makeOpsService } from './ops-svc';
 import { LeadEnrollService } from '../src/modules/ops/enroll.service';
 import { TeacherChangeService } from '../src/modules/ops/teacher-change.service';
 import { buildOpenApi } from '../src/openapi';
@@ -34,7 +35,7 @@ const row = (over: Row = {}): Row => ({
 function service(rows: Row[], marketingRows: Row[] = []) {
   const query = jest.fn().mockResolvedValueOnce(rows)
     .mockImplementation((sql: string) => Promise.resolve(/\bFROM mkt\b/.test(sql) ? marketingRows : []));
-  return { svc: new OpsService({ query } as unknown as Repository<Lead>), query };
+  return { svc: makeOpsService({ query }), query };
 }
 
 describe('§23·§24 LEAD 응답 projection', () => {
@@ -57,7 +58,8 @@ describe('§23·§24 LEAD 응답 projection', () => {
     // 7 고정 목록 + 접촉 원장 1회(lead_id = ANY — 건마다 묻지 않는다 · C90) + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
     // + §60 대표 피드백 글타래 1회 (C53) + §62 기획 기한 1회 (C56)
     // + §23 경고 셋을 **한 문장으로 묶은** 1회 (C86-a — 따로 물으면 왕복이 셋 는다) + 도달 기록 시작일 1회 (C90 · funnelSince)
-    expect(query).toHaveBeenCalledTimes(13);
+    // + C96 갈래 칩 둘 — 컴플레인 영역·회의 종류를 **서버가 센다**(D-R37). 화면이 목록을 다시 세지 않는다
+    expect(query).toHaveBeenCalledTimes(15);
   });
 
   it.each(['ownerId', 'studentId'])('%s는 Swagger에서 optional·nullable number다', (field) => {
@@ -181,6 +183,10 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     leads: [], complaints: [], todos: [], plans: [], meetings: [], marketing: [], suggestions: [],
     feedback: [], feedbackNeedsFix: 0, canComment: false, canSeeAmounts: false,
     planDues: [], planOverdue: 0, planStages: [], cplStages: [], cplAreas: [], cplSeverities: [],
+    // C96 — 기간·갈래는 **서버가 말한다**(D-R18·D-R37). 빈 응답도 그 모양을 갖춰야 계약이다
+    range: { from: null, to: null, label: '전체' },
+    areaCounts: [], mtTypeCounts: [], todoOwnerCounts: [], mtTypes: [],
+    canCreateMeeting: false, canCreatePlan: false,
     intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [], sources: [], touchKinds: [], followUpSoon: 0, funnelSince: null },
   };
 
@@ -244,6 +250,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     // — C32 consulting-contract 갱신과 같은 선례. 검색 GET·query 계약이 늘지 않는 것은 그대로 지킨다.
     expect(Object.keys(openApi.paths)).toEqual([
       '/ops',
+      // 「+ 회의 잡기」 · 「+ 기획 올리기」 (C96 · N-46 ②③). 검색 GET·query 계약은 여전히 0이다
+      '/ops/meetings', '/ops/plans',
       // 「+ 신규 문의」 · 단계 이동 · 접촉 기록 (C90 · N-45 · N-44). 검색 GET·query 계약은 여전히 0이다
       '/ops/leads', '/ops/leads/{id}/stage', '/ops/leads/{id}/touches',
       '/ops/leads/{id}/fail', '/ops/leads/{id}/resume',
@@ -261,7 +269,15 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     expect(Object.keys(path)).toEqual(['get']);
     expect(path.get?.description).toMatch(/name.*school.*ownerName.*reason/);
     expect(path.get?.description).toMatch(/클라이언트.*추가 GET.*0/);
-    expect(path.get?.parameters ?? []).toEqual([]);
+    /*
+     * C96 — `/ops` 가 query 를 **셋** 받는다(`from`·`to`·`area`). 이 가드가 지키던 것은
+     * 「**검색**을 서버로 보내지 않는다」이지 「query 가 0 이다」가 아니다 — §24 FQ 는 받은 목록에서 거르고,
+     * 기간·갈래는 **무엇을 받을지**를 정한다(J-102 「지난달 컴플레인만」). 세는 일도 거기 딸려 서버가 한다(D-R37).
+     * 그래서 이름을 못 박아 둔다 — 자유 문자열 검색 인자가 하나라도 늘면 여기서 걸린다.
+     */
+    expect((path.get?.parameters ?? []).map((prm) => (prm as { name: string }).name))
+      .toEqual(['from', 'to', 'area']);
+    expect((path.get?.parameters ?? []).every((prm) => (prm as { required?: boolean }).required !== true)).toBe(true);
     expect(path.get?.requestBody).toBeUndefined();
   });
 
@@ -336,7 +352,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     user = { id: 1, name: '권한 테스트', role };
     const flags = permsOf(role);
     await checkAccess(flags.canAdminPage && flags.canCrudAll);
-    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(1, flags.canMoney, role === 'ceo');
+    // 네 번째는 기간·갈래다 — 아무것도 안 보내면 빈 객체 (C96)
+    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(1, flags.canMoney, role === 'ceo', {});
   });
 
   const overrides = [true, false, null, undefined] as const;
@@ -373,7 +390,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       const res = await request(app.getHttpServer()).get('/ops')
         .timeout({ response: 2000, deadline: 4000 }).expect(200);
       expect(all).toHaveBeenCalledTimes(1);
-      expect(all).toHaveBeenCalledWith(1, canMoney, role === 'ceo');
+      expect(all).toHaveBeenCalledWith(1, canMoney, role === 'ceo', {});
       expect(res.body.canSeeAmounts).toBe(canMoney);
       expect(res.body.marketing).toEqual(samples.map((sample, index) => ({
         id: index + 1, channel: 'naver', item: 'ads', url: null,
@@ -388,7 +405,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       expect(res.body.leads).toMatchObject([{ id: 1, name: '상담 계약 테스트' }]);
       expect(Object.keys(res.body).sort()).toEqual(Object.keys(empty).sort());
       // 7 목록 + 접촉 원장 1회 (C90) + N-25 도달 기록 + §60 피드백 + §62 기한 (C53·C56) + §23 경고 묶음 1회 (C86-a) + 도달 기록 시작일 1회 (C90)
-      expect(query).toHaveBeenCalledTimes(13);
+      // + C96 갈래 칩 둘 — 컴플레인 영역·회의 종류를 **서버가 센다**(D-R37). 화면이 목록을 다시 세지 않는다
+    expect(query).toHaveBeenCalledTimes(15);
       expect(query.mock.calls.every(([sql]) => /^SELECT\b/.test(sql))).toBe(true);
       expect(marketingRows).toEqual(before);
     },
@@ -408,7 +426,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
 describe('§23 상담 머리 (C86-a)', () => {
   type Touch = { kind: string; nextOn: string | null };
   const head = (leads: Array<{ stage: string; ownerId?: number | null; ownerName?: string | null; source?: string | null; touches?: Touch[] }>) => {
-    const svc = new OpsService({ query: jest.fn().mockResolvedValue([]) } as never);
+    const svc = makeOpsService({ query: jest.fn().mockResolvedValue([]) });
     return (svc as unknown as {
       intakeHead: (l: unknown, m: boolean, today?: string) => Promise<{
         funnel: Array<{ key: string; label: string; count: number; funnel: boolean; sub: string }>;
@@ -499,11 +517,11 @@ describe('§23 상담 머리 (C86-a)', () => {
   });
 
   it('금액을 못 보는 사람에게는 금액이 null 이고 문장에도 안 실린다 (D-R39)', async () => {
-    const svc = new OpsService({ query: jest.fn().mockResolvedValue([
+    const svc = makeOpsService({ query: jest.fn().mockResolvedValue([
       { key: 'unpaid', n: 6, amount: '4006600' },
       { key: 'noSchedule', n: 9, amount: '0' },
       { key: 'noInvoice', n: 2, amount: '0' },
-    ]) } as never);
+    ]) });
     const call = (money: boolean) => (svc as unknown as {
       intakeHead: (l: unknown, m: boolean) => Promise<{ alerts: Array<{ key: string; label: string; amount: number | null }> }>;
     }).intakeHead([], money);

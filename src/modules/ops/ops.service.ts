@@ -8,6 +8,8 @@ import { ConflictException, Injectable, InternalServerErrorException, NotFoundEx
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
+import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import { ZoomService } from '../zoom/zoom.service';
 import { daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { kstAt } from '../../lib/sql';
 import {
@@ -31,7 +33,8 @@ import {
   type PlanDueState,
 } from '../../lib/plan-words';
 import {
-  MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, mtAttendState, mtTypeLabel,
+  MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, MT_TYPES, MT_TYPE_LABEL, MT_TYPE_SUB,
+  mtAttendState, mtTypeLabel, mtTypeOptions, type MtType,
 } from '../../lib/meeting-words';
 import type {
   IntakeAlertDto, IntakeHeadDto,
@@ -40,6 +43,8 @@ import type {
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanReviewDto, PlanTaskDto,
   MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
+  MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
+  PlanCreateDto, PlanCreateResultDto,
 } from './ops.dto';
 
 type R = Record<string, unknown>;
@@ -55,26 +60,91 @@ function leadId(value: unknown, nullable = false): number | null {
   return id;
 }
 
+/**
+ * 지금 보고 있는 기간의 **낱말** — 화면이 「최근 두 달」 같은 말을 만들지 않는다 (D-R18 · C96).
+ *
+ * 컷 §63 의 머리가 「일간 주간 월간 **전체**」 옆에 「최근 두 달 54회」라 적는다. 그 문장은
+ * 기간을 아는 쪽이 만들어야 한다 — 화면이 만들면 탭마다 다른 말이 된다.
+ */
+export function opsRangeLabel(from?: string | null, to?: string | null): string {
+  if (!from && !to) return '전체';
+  if (from && to && from === to) return from;
+  if (from && to) {
+    // 같은 달의 1일 ~ 말일이면 「2026년 9월」이라 부르는 편이 읽기 쉽다
+    const [fy, fm, fd] = from.split('-');
+    const [ty, tm] = to.split('-');
+    const lastOfMonth = new Date(Date.UTC(Number(ty), Number(tm), 0)).getUTCDate();
+    if (fy === ty && fm === tm && fd === '01' && to.endsWith(String(lastOfMonth).padStart(2, '0'))) {
+      return `${fy}년 ${Number(fm)}월`;
+    }
+    return `${from} ~ ${to}`;
+  }
+  return from ? `${from} 부터` : `${to} 까지`;
+}
+
+/**
+ * 기간으로 자르는 `WHERE` 한 조각.
+ *
+ * **날짜가 없는 줄은 가르지 않는다** — 기한 없는 할 일, 날짜 없는 옛 회의가 그렇다.
+ * 없는 날짜를 「범위 밖」이라 하면 고른 달에서 그 줄이 조용히 사라진다. 모르는 것은 남긴다(N-25 의 결).
+ */
+function rangeClause(col: string, from: string | undefined, to: string | undefined, params: unknown[]): string {
+  if (!from && !to) return '';
+  const parts: string[] = [];
+  if (from) { params.push(from); parts.push(`${col} >= $${params.length}::date`); }
+  if (to) { params.push(to); parts.push(`${col} <= $${params.length}::date`); }
+  return `(${col} IS NULL OR (${parts.join(' AND ')}))`;
+}
+
 @Injectable()
 export class OpsService {
-  constructor(@InjectRepository(Lead) private readonly lead: Repository<Lead>) {}
+  constructor(
+    @InjectRepository(Lead) private readonly lead: Repository<Lead>,
+    /** 회의를 잡으면 **시간표에 회차가 생긴다** — 겹침·투영·불가 시간이 전부 거기 있다 (C96 · C95 와 같은 길) */
+    private readonly schedule: ScheduleWriteService,
+    /** 온라인 회의의 줌 배정도 **있는 길**을 탄다 — `assignIn` 이 다시 투영하고 EXCLUDE 가 겹침을 막는다 (C48) */
+    private readonly zoom: ZoomService,
+  ) {}
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.lead.query(sql, p) as Promise<T[]>;
   }
 
-  async all(viewerId: number, canSeeAmounts: boolean, canComment: boolean): Promise<OpsDto> {
+  /**
+   * @param query 기간·갈래 (C96 · N-46 ②). **검색 인자는 없다** — §24 FQ 는 받은 목록에서 거른다.
+   *   목록마다 시간으로 삼는 날짜가 다르다: 상담·컴플레인은 **들어온 날**(`created_at`),
+   *   회의는 **회의 날**(`on_date`), 할 일·기획은 **기한**(`due_on`). 날짜가 없는 줄은 가르지 않는다.
+   */
+  async all(viewerId: number, canSeeAmounts: boolean, canComment: boolean, query: OpsQueryDto = {}): Promise<OpsDto> {
     const today = todayKst();
+    const { from, to, area } = query;
+    if (from && to && to < from) {
+      throw new ConflictException({ code: 'BAD_RANGE', message: '끝 날짜가 시작 날짜보다 앞설 수 없습니다' });
+    }
+    /** `WHERE` 하나를 만든다 — 갈래는 컴플레인에만 붙는다(§67 칩 줄이다) */
+    const scoped = (col: string, extra?: { sql: string; value: unknown }) => {
+      const params: unknown[] = [];
+      const parts = [rangeClause(col, from, to, params)].filter(Boolean);
+      if (extra) { params.push(extra.value); parts.push(extra.sql.replace('$?', `$${params.length}`)); }
+      return { where: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params };
+    };
 
     // 한 줄의 모양은 leadRows 한 곳 — GET /ops 와 쓰기 응답이 같은 SELECT·같은 판정을 쓴다 (C90)
-    const leads = await this.leadRows('', [], today);
+    const leadScope = scoped('l.created_at');
+    const leads = await this.leadRows(leadScope.where, leadScope.params, today);
 
-    const complaints = await this.complaintRows('', [], today);
+    const cplScope = scoped('c.created_at', area ? { sql: 'c.area = $?', value: area } : undefined);
+    const complaints = await this.complaintRows(cplScope.where, cplScope.params, today);
+    // 칩 줄의 건수는 **갈래 필터를 빼고** 센다 — 「수업 1」을 고른 뒤에도 다른 갈래의 수가 보여야 고를 수 있다
+    const cplCountScope = scoped('c.created_at');
+    const areaCounts = await this.areaCounts(cplCountScope.where, cplCountScope.params);
 
+    const todoScope = scoped('t.due_on');
     const todos = (await this.q(
       `SELECT t.id, t.title, t.done, t.src, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name
          FROM todo t LEFT JOIN staff s ON s.id = t.to_id
-        ORDER BY t.done, t.due_on NULLS LAST, t.id`,
+        ${todoScope.where}
+        ORDER BY t.done, t.due_on NULLS LAST, t.id`, todoScope.params,
     )).map((r) => {
       const due = (r.due_on as string) ?? null;
       return {
@@ -84,10 +154,13 @@ export class OpsService {
       };
     });
 
+    const planScope = scoped('p.due_on');
     const plans = (await this.q(
       `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
               p.due_approved_at, s.name AS owner_name
-         FROM plan p LEFT JOIN staff s ON s.id = p.owner_id ORDER BY p.due_on NULLS LAST, p.id`,
+         FROM plan p LEFT JOIN staff s ON s.id = p.owner_id
+        ${planScope.where}
+        ORDER BY p.due_on NULLS LAST, p.id`, planScope.params,
     )).map((r) => {
       const due = (r.due_on as string) ?? null;
       const stage = String(r.stage);
@@ -105,20 +178,10 @@ export class OpsService {
 
     const { planDues, planOverdue } = await this.planDeadlines(today);
 
-    const meetings = (await this.q(
-      `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date, m.minutes,
-              (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id)::int AS attendees,
-              (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed)::int AS confirmed
-         FROM mtrec m ORDER BY m.on_date DESC NULLS LAST, m.id DESC`,
-    )).map((r) => ({
-      id: Number(r.id), mtType: String(r.mt_type),
-      // 낱말은 서버가 만든다 — 한동안 이 표가 「general」 「plan」을 그대로 찍고 있었다 (D-R18 · C57)
-      mtTypeLabel: mtTypeLabel(String(r.mt_type)),
-      title: (r.title as string) ?? null,
-      onDate: (r.on_date as string) ?? null,
-      attendees: Number(r.attendees), confirmed: Number(r.confirmed),
-      hasMinutes: Boolean(r.minutes),
-    }));
+    const mtScope = scoped('m.on_date');
+    const meetings = await this.meetingRows(mtScope.where, mtScope.params);
+    const mtCountScope = scoped('m.on_date');
+    const mtTypeCounts = await this.mtTypeCounts(mtCountScope.where, mtCountScope.params);
 
     const marketing = (await this.q(
       `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.by_id, b.name AS by_name
@@ -169,6 +232,234 @@ export class OpsService {
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
       intakeHead: await this.intakeHead(leads, canSeeAmounts, today),
+      range: { from: from ?? null, to: to ?? null, label: opsRangeLabel(from, to) },
+      areaCounts, mtTypeCounts,
+      // §64 담당 칩 줄 — 열린 할 일만 센다(끝난 것은 고를 일이 없다) · 담당 없는 것도 제 줄을 갖는다
+      todoOwnerCounts: OpsService.ownerCounts(todos),
+      mtTypes: mtTypeOptions().map((o) => ({ key: o.key, label: o.label })),
+      // 단추가 서는지도 서버다 (D-R39) — 지금은 이 화면을 볼 수 있으면 만들 수 있다
+      canCreateMeeting: true, canCreatePlan: true,
+    };
+  }
+
+  /** 분을 「11:00」으로 — 알림 한 줄에만 쓴다 */
+  private static hm(min: number): string {
+    return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+  }
+
+  /** §64 담당 칩 — 「전체 3 · Hoon 1 · Lauren 1 · 김범준 1」 (D-R37 · 화면이 세지 않는다) */
+  private static ownerCounts(todos: Array<{ toName: string | null; done: boolean }>): OpsCountDto[] {
+    const open = todos.filter((t) => !t.done);
+    const byName = new Map<string, number>();
+    for (const t of open) {
+      const key = t.toName ?? '';
+      byName.set(key, (byName.get(key) ?? 0) + 1);
+    }
+    return [...byName.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([key, count]) => ({ key: key || '__none__', label: key || '담당 없음', count }));
+  }
+
+  /** §67 갈래 칩 — **0건 갈래도 선다**(어휘이지 데이터가 아니다 · C66) */
+  private async areaCounts(where: string, params: unknown[]): Promise<OpsCountDto[]> {
+    const rows = await this.q<{ area: string; n: string }>(
+      `SELECT c.area, count(*)::text AS n FROM cpl c ${where} GROUP BY c.area`, params,
+    );
+    const got = new Map(rows.map((r) => [String(r.area), Number(r.n)]));
+    return CPL_AREAS.map((key) => ({ key, label: CPL_AREA_LABEL[key], count: got.get(key) ?? 0 }));
+  }
+
+  /** §63 회의 종류 칩 — 같은 규약으로 0건도 선다 */
+  private async mtTypeCounts(where: string, params: unknown[]): Promise<OpsCountDto[]> {
+    const rows = await this.q<{ mt_type: string; n: string }>(
+      `SELECT m.mt_type, count(*)::text AS n FROM mtrec m ${where} GROUP BY m.mt_type`, params,
+    );
+    const got = new Map(rows.map((r) => [String(r.mt_type), Number(r.n)]));
+    return MT_TYPES.map((key) => ({ key, label: MT_TYPE_LABEL[key], count: got.get(key) ?? 0 }));
+  }
+
+  /**
+   * §63 회의 한 줄 — 목록과 쓰기 응답이 **같은 SELECT** 를 쓴다 (C90 `leadRows` 와 같은 규약).
+   *
+   * 시각·자리는 `mtrec` 이 아니라 **이어진 회차**에서 읽는다 — 옛 회의는 이어진 것이 없어 셋 다 null 이고,
+   * 화면은 그 사실을 그대로 말한다(지어내지 않는다 · N-25).
+   */
+  private async meetingRows(where: string, params: unknown[]): Promise<MeetingDto[]> {
+    return (await this.q(
+      `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date, m.minutes, m.ser_id,
+              s.start_min, s.end_min, s.mode, r.name AS room_name, z.label AS zoom_label,
+              (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id)::int AS attendees,
+              (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed)::int AS confirmed,
+              (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed IS NULL)::int AS waiting
+         FROM mtrec m
+         LEFT JOIN ser s ON s.id = m.ser_id
+         LEFT JOIN room r ON r.id = s.room_id
+         LEFT JOIN zassign za ON za.ser_id = s.id
+         LEFT JOIN zacc z ON z.id = za.zacc_id
+        ${where}
+        ORDER BY m.on_date DESC NULLS LAST, m.id DESC`, params,
+    )).map((r) => ({
+      id: Number(r.id), mtType: String(r.mt_type),
+      // 낱말은 서버가 만든다 — 한동안 이 표가 「general」 「plan」을 그대로 찍고 있었다 (D-R18 · C57)
+      mtTypeLabel: mtTypeLabel(String(r.mt_type)),
+      title: (r.title as string) ?? null,
+      onDate: (r.on_date as string) ?? null,
+      attendees: Number(r.attendees), confirmed: Number(r.confirmed), waiting: Number(r.waiting),
+      hasMinutes: Boolean(r.minutes),
+      serId: leadId(r.ser_id, true),
+      startMin: r.start_min == null ? null : Number(r.start_min),
+      endMin: r.end_min == null ? null : Number(r.end_min),
+      placeLabel: r.ser_id == null ? null
+        : r.mode === 'online' ? `온라인${r.zoom_label ? ` ${String(r.zoom_label)}` : ''}`
+        : (r.room_name as string) ?? null,
+    }));
+  }
+
+  /* ══ C96 — 「+ 회의 잡기」 · 「+ 기획 올리기」 (N-46 ①) ═══════════════════════ */
+
+  /**
+   * 회의를 잡는다 — **시간표에 하루짜리 회차를 만들고** 그 회차에 회의 기록을 건다 (원본 §63).
+   *
+   * 시각·강의실·온라인을 `mtrec` 에 적지 않는 이유는 두 가지다. ① 같은 사실이 두 곳에 살면
+   * 시간표에서 옮겼을 때 갈린다(D-R22) ② **겹침을 아무도 안 막는다** — `ser_occ` 의 EXCLUDE 가
+   * 강사·강의실·줌을 지키는데 `mtrec` 의 칸은 그 판정 밖이라, 회의가 수업이 쓰는 줌을 조용히 겹쳐 잡는다.
+   * C95 가 컨설팅 회차에서 낸 길 그대로다.
+   *
+   * 참석자는 **답하기 전까지 「응답 대기」**(`confirmed NULL` · C57 의 세 값)이고, 그 사실이 곧
+   * 컷 §63 의 「대기 4」다.
+   */
+  async createMeeting(viewerId: number, dto: MeetingCreateDto): Promise<MeetingCreateResultDto> {
+    const timeIssue = dto.endMin <= dto.startMin
+      ? '끝나는 시각이 시작보다 뒤여야 합니다' : null;
+    if (timeIssue) throw new ConflictException({ code: 'BAD_RANGE', message: timeIssue });
+    if (dto.mode === 'online' && dto.roomId != null) {
+      throw new ConflictException({ code: 'MEETING_PLACE', message: '온라인 회의에는 강의실을 고르지 않습니다' });
+    }
+    if (dto.mode === 'offline' && dto.zaccId != null) {
+      throw new ConflictException({ code: 'MEETING_PLACE', message: '현장 회의에는 줌 계정을 고르지 않습니다' });
+    }
+    const owner = await this.activeStaff(dto.ownerId ?? viewerId);
+    const attendeeIds = [...new Set((dto.attendeeIds ?? []).filter((id) => id !== owner.id))];
+    const title = dto.title?.trim() || null;
+
+    // 트랜잭션은 **있는 길**로 연다 — `createPlan` 이 이미 `this.lead.manager` 를 타고 있어
+    // `DataSource` 를 따로 주입하면 같은 연결로 가는 길이 두 벌이 된다 (D-R22)
+    const q = this.lead.manager.connection.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      let serId: number;
+      let unavailable: MeetingCreateResultDto['unavailable'];
+      try {
+        const written = await this.schedule.create({
+          kindKey: 'meeting', subKey: MT_TYPE_SUB[dto.mtType as MtType], mode: dto.mode,
+          fromDate: dto.onDate, toDate: dto.onDate, rrule: 'ONCE',
+          startMin: dto.startMin, endMin: dto.endMin,
+          // 시간표의 「강사」 자리가 곧 **주관자**다 — 그래서 주관자가 겹치면 EXCLUDE 가 막는다
+          teacherId: owner.id, roomId: dto.roomId ?? null,
+          title: title ?? mtTypeLabel(dto.mtType), studentIds: [],
+        }, viewerId, q);
+        serId = written.serIds[0]!;
+        /*
+         * 줌 계정은 **있는 길**로 붙인다 — `assignIn` 이 `zassign` 을 쓰고 **다시 투영**하므로
+         * 그때 `ser_occ` 의 EXCLUDE 가 「그 시간에 그 계정이 비었는가」를 판정한다 (C48).
+         * 여기서 직접 INSERT 하면 투영이 이미 끝나 **겹침을 아무도 안 본다.**
+         */
+        if (dto.zaccId != null) await this.zoom.assignIn(q.manager, viewerId, { serId, zaccId: dto.zaccId });
+        unavailable = written.unavailable.map((u) => ({
+          date: u.date, teacherName: u.teacherName, startMin: u.startMin, endMin: u.endMin, reason: u.reason,
+        }));
+      } catch (e) {
+        // 겹침은 시간표(EXCLUDE · pg 23P01)가 막는다 — **무엇과** 부딪혔는지만 문장에 보탠다 (C93·C95 와 같은 자리)
+        const pg = (e as { driverError?: { code?: string; constraint?: string }; code?: string }) ?? {};
+        if ((pg.driverError?.code ?? pg.code) === '23P01') {
+          throw new ConflictException({
+            code: 'RESOURCE_CONFLICT',
+            message: `같은 시간에 주관자·강의실·줌이 이미 잡혀 있습니다 — ${mtTypeLabel(dto.mtType)} · ${dto.onDate} · ${owner.name}`,
+          });
+        }
+        throw e;
+      }
+      const [row] = (await q.query(
+        `INSERT INTO mtrec (mt_type, title, on_date, ser_id) VALUES ($1,$2,$3::date,$4) RETURNING id`,
+        [dto.mtType, title, dto.onDate, serId],
+      )) as Array<{ id: string }>;
+      const mtId = Number(row.id);
+      // 주관자도 참석자다 — 만든 사람이 명단에서 빠지면 「대기 4」의 분모가 사람마다 다르다
+      const everyone = [owner.id, ...attendeeIds];
+      for (const staffId of everyone) {
+        await q.query(
+          `INSERT INTO mtattd (mt_id, staff_id) SELECT $1, $2 FROM staff WHERE id = $2 AND active ON CONFLICT DO NOTHING`,
+          [mtId, staffId],
+        );
+      }
+      const [{ n }] = (await q.query(
+        `SELECT count(*)::text AS n FROM mtattd WHERE mt_id = $1`, [mtId],
+      )) as Array<{ n: string }>;
+      await q.query(
+        `INSERT INTO noti (to_id, from_id, body, link, category)
+         SELECT id, $1, $2, '/ops', 'schedule' FROM staff WHERE active AND id = ANY($3::bigint[]) AND id <> $1`,
+        [viewerId, `${title ?? mtTypeLabel(dto.mtType)} — ${dto.onDate} ${OpsService.hm(dto.startMin)} 회의에 초대됐습니다`, everyone],
+      );
+      await q.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'MTREC',$2,'create',$3::jsonb)`,
+        [viewerId, mtId, JSON.stringify({ mtType: dto.mtType, onDate: dto.onDate, serId, attendees: Number(n) })],
+      );
+      await q.commitTransaction();
+      const [meeting] = await this.meetingRows('WHERE m.id = $1', [mtId]);
+      return { meeting, attendees: Number(n), unavailable };
+    } catch (e) {
+      await q.rollbackTransaction();
+      throw e;
+    } finally {
+      await q.release();
+    }
+  }
+
+  /**
+   * 기획을 올린다 (원본 §61 「+ 기획 올리기」).
+   *
+   * **단계를 받지 않는다** — 올린 기획은 언제나 첫 단계이고, 옮기는 길은 §61 보드와 결재다.
+   * 화면이 단계를 정하면 전이표가 두 벌이 된다(C90 의 상담 유입과 같은 규약).
+   * 기한도 **제안**이다 — `due_approved_at` 은 비어 있고 대표가 승인해야 최종 승인이 열린다(C56).
+   */
+  async createPlan(viewerId: number, dto: PlanCreateDto): Promise<PlanCreateResultDto> {
+    const title = dto.title.trim();
+    if (!title) throw new ConflictException({ code: 'PLAN_TITLE_REQUIRED', message: '제목을 적어 주세요' });
+    const owner = await this.activeStaff(dto.ownerId ?? viewerId);
+    const id = await this.lead.manager.transaction(async (em) => {
+      const [row] = (await em.query(
+        `INSERT INTO plan (title, stage, goal, ask, due_on, owner_id)
+         VALUES ($1, $2, $3, $4, $5::date, $6) RETURNING id`,
+        [title, PLAN_STAGES[0], dto.goal?.trim() || null, dto.ask?.trim() || null, dto.dueOn ?? null, owner.id],
+      )) as Array<{ id: string }>;
+      const planId = Number(row.id);
+      if (owner.id !== viewerId) {
+        await em.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category)
+           SELECT id, $1, $2, '/ops', 'request' FROM staff WHERE id = $3 AND active`,
+          [viewerId, `기획 「${title}」 담당이 됐습니다`, owner.id],
+        );
+      }
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'PLAN',$2,'create',$3::jsonb)`,
+        [viewerId, planId, JSON.stringify({ title, stage: PLAN_STAGES[0], ownerId: owner.id, dueOn: dto.dueOn ?? null })],
+      );
+      return planId;
+    });
+    const [plan] = (await this.q(
+      `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
+              p.due_approved_at, s.name AS owner_name
+         FROM plan p LEFT JOIN staff s ON s.id = p.owner_id WHERE p.id = $1`, [id],
+    ));
+    const due = (plan.due_on as string) ?? null;
+    return {
+      plan: {
+        id, title, stage: String(plan.stage), stageLabel: planStageLabel(String(plan.stage)),
+        goal: (plan.goal as string) ?? null, ask: (plan.ask as string) ?? null,
+        dueOn: due, ownerName: (plan.owner_name as string) ?? null,
+        overdueDays: 0, dueState: planDueState(due, plan.due_approved_at) as string,
+      },
     };
   }
 

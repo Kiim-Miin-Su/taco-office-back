@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
@@ -14,6 +14,7 @@ import {
   MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanReviewDto,
   MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
+  MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
 import { EnrollResultDto, LeadEnrollDto } from './enroll.dto';
@@ -33,12 +34,46 @@ export class OpsController {
     description: '§24 FQ는 leads의 name, school, ownerName, reason을 검색한다. 받은 목록의 클라이언트 검색/필터 전환 시 추가 GET은 0회이며 별도 검색 query 계약은 없다.',
   })
   @ApiOkResponse({ type: OpsDto })
-  async all(@CurrentUser() user: RequestUser): Promise<OpsDto> {
+  async all(@CurrentUser() user: RequestUser, @Query() query: OpsQueryDto): Promise<OpsDto> {
     return this.svc.all(
       user.id,
       isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms),
       isRole(user.role) && canCeoComment(user.role),
+      query,
     );
+  }
+
+  /* ══ 「+ 회의 잡기」 · 「+ 기획 올리기」 (C96 · N-46 ① 나머지) ═══════════════ */
+
+  @Post('meetings')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§63 「+ 회의 잡기」 — 시간표에 회차를 만들고 그 회차에 회의를 건다',
+    description:
+      '시각·강의실·온라인을 MTREC 에 적지 않는다. SER(ONCE · kind=meeting · sub=회의 종류)를 한 트랜잭션에서 만들고 '
+      + 'mtrec.ser_id 로 잇는다 — 그래야 「11:00–12:00」도 「1호」도 「온라인 TN」도 한 곳에서 나오고 '
+      + '겹침을 ser_occ 의 EXCLUDE 가 막는다(C95 컨설팅 회차와 같은 길). '
+      + '줌 계정은 기존 assignIn 이 붙이고 다시 투영해 그때 겹침이 판정된다. '
+      + '참석자는 답하기 전까지 「응답 대기」(confirmed NULL · C57)이고 그것이 §63 의 「대기 4」다. '
+      + '주관자는 시간표의 「강사」 자리라 그 사람이 겹치면 막힌다.',
+  })
+  @ApiCreatedResponse({ type: MeetingCreateResultDto })
+  @ApiConflictResponse({ description: 'RESOURCE_CONFLICT(같은 시간에 주관자·강의실·줌) · BAD_RANGE · MEETING_PLACE' })
+  createMeeting(@CurrentUser() user: RequestUser, @Body() dto: MeetingCreateDto): Promise<MeetingCreateResultDto> {
+    return this.svc.createMeeting(user.id, dto);
+  }
+
+  @Post('plans')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§61 「+ 기획 올리기」 — 언제나 첫 단계',
+    description:
+      '단계를 받지 않는다(올린 기획은 언제나 첫 단계 · 옮기는 길은 §61 보드와 결재다 — 화면이 정하면 전이표가 두 벌이 된다). '
+      + '기한은 제안일 뿐이라 due_approved_at 은 비어 있고 대표가 승인해야 최종 승인이 열린다(C56).',
+  })
+  @ApiCreatedResponse({ type: PlanCreateResultDto })
+  createPlan(@CurrentUser() user: RequestUser, @Body() dto: PlanCreateDto): Promise<PlanCreateResultDto> {
+    return this.svc.createPlan(user.id, dto);
   }
 
   /* ══ 「+ 신규 문의」 · 단계 이동 · 접촉 기록 (C90 · N-45 · N-44 · A-01 · A-02 · A-03) ═══ */

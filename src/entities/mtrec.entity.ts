@@ -44,4 +44,15 @@ export class Mtrec {
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
+
+  /**
+   * 그 회의가 놓인 **시간표의 회차** (C96 · v4.35).
+   *
+   * 시각·강의실·온라인은 여기 담지 않는다 — `SER` 가 이미 갖고 있고 `ser_occ` 의 EXCLUDE 가
+   * 겹침을 막는다. 네 칸을 여기 새기면 같은 사실이 두 곳에 살고(D-R22) 겹침은 아무도 안 막는다.
+   * `ON DELETE SET NULL` — 회차가 사라져도 속기록·참석은 「그 회의가 있었다」는 기록으로 남는다.
+   * 옛 행은 NULL 이다(N-25 — 어느 회차였는지 아무도 모른다).
+   */
+  @Column({ type: 'bigint', nullable: true })
+  serId: number | null;
 }

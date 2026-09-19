@@ -16,7 +16,7 @@
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
-import { OpsService } from '../src/modules/ops/ops.service';
+import { makeOpsService } from './ops-svc';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -41,7 +41,7 @@ d('§60 대표 피드백 (C53)', () => {
   let q: QueryRunner;
   let mktId: number;
 
-  const svc = () => new OpsService(q.manager.getRepository(Lead));
+  const svc = () => makeOpsService(q.manager.getRepository(Lead));
   const thread = async (viewer = CEO) =>
     (await svc().all(viewer, false, viewer === CEO)).feedback.find((t) => t.mktId === mktId)!;
   const notis = async (): Promise<Array<{ to_id: string; body: string }>> =>
