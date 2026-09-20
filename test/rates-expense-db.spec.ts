@@ -27,6 +27,9 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 
+/** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
+const DUE = '2026-12-31';
+
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
 
@@ -156,7 +159,7 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     made.push(id);
     return id;
   }
-  const issue = (studentId: number) => api('post', '/accounting/invoices').send({ studentId, yearMonth: NEXT, invType: 'tuition' });
+  const issue = (studentId: number) => api('post', '/accounting/invoices').send({ studentId, yearMonth: NEXT, invType: 'tuition', dueOn: DUE });
 
   /* ── ① C-38 추가 수업 ────────────────────────────────────────────────── */
   it('추가 수업은 KIND 한 줄(extra)이다 — 단가를 두면 회차 「추가」·§54 「추가 수업 N」·청구서 제 줄로 든다 (C-38)', async () => {

@@ -26,6 +26,9 @@ import { AppModule } from '../src/app.module';
 import { invoiceLines } from '../src/modules/accounting/invoice-lines';
 import { DEV_URL } from './db';
 
+/** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
+const DUE = '2026-12-31';
+
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
 
@@ -151,7 +154,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
   }
   /** 다음 달 청구서를 내고 전달하고 전액 받는다 */
   async function paidInvoice(studentId: number) {
-    const inv = (await api('post', '/accounting/invoices').send({ studentId, yearMonth: NEXT, invType: 'tuition' }).expect(201)).body;
+    const inv = (await api('post', '/accounting/invoices').send({ studentId, yearMonth: NEXT, invType: 'tuition', dueOn: DUE }).expect(201)).body;
     await api('post', `/accounting/invoices/${inv.id}/deliver`).expect(201);
     await api('post', '/accounting/payments').send({ invId: inv.id, amount: inv.amount, paidOn: kst(), method: 'cash' }).expect(201);
     return inv as { id: number; amount: number; lines: Array<{ count: number; unitPrice: number; amount: number }> };
@@ -327,7 +330,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     // 1일차 ONCE 는 종료일에 이미 끝나 있어 그대로, 나머지 넷에 종료일
     expect(await q(`SELECT 1 FROM ser_stu WHERE student_id = $1 AND ser_id = ANY($2) AND to_date = $3::date`, [STU_A, ids, DAYS[0]])).toHaveLength(4);
     // 이제 내는 청구서는 종료일까지의 회차만 — 1회 × 2인 단가 (B 도 그날은 둘이었다)
-    const inv = (await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: NEXT, invType: 'tuition' }).expect(201)).body;
+    const inv = (await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: NEXT, invType: 'tuition', dueOn: DUE }).expect(201)).body;
     expect(inv.lines).toEqual([expect.objectContaining({ count: 1, unitPrice: DUO })]);
   });
 });

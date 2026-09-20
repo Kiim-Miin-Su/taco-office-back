@@ -16,7 +16,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString,
-  Max, MaxLength, Min, MinLength, ValidateNested,
+  Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { InvoiceDto } from '../accounting/accounting.dto';
@@ -92,6 +92,15 @@ export class LeadEnrollDto {
   @ApiPropertyOptional({ description: '첫 달 수업료 청구서를 함께 낸다 (기본 true · §53 발행 그대로 — 단가 없으면 건너뛰고 이유를 돌려준다)', default: true })
   @IsOptional() @IsBoolean()
   issueInvoice?: boolean;
+
+  /**
+   * 함께 내는 청구서의 **납부 기한** — 낱장 발행과 같은 규약이다(기본값 없음 · 대표 결정 2026-09-20 · S3).
+   * 청구서를 안 낼 때(`issueInvoice: false`)는 받지 않는다 — 없는 청구서의 기한을 물을 이유가 없다.
+   */
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '납부 기한 — YYYY-MM-DD. issueInvoice 가 false 가 아니면 필수' })
+  @ValidateIf((o: LeadEnrollDto) => o.issueInvoice !== false)
+  @IsCalendarDate()
+  dueOn?: string;
 
   @ApiPropertyOptional({ description: '메모 — LEAD.reason 에 남는다', maxLength: 300 })
   @IsOptional() @IsString() @MaxLength(300)

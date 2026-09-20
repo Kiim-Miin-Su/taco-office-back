@@ -410,7 +410,7 @@ export class AccountingService {
         const sp = `inv_batch_${i}`;
         await m.query(`SAVEPOINT ${sp}`);
         try {
-          issued.push(await this.issueOne(m, userId, { studentId: Number(st.id), yearMonth: dto.yearMonth, invType: 'tuition' }, canSeeAmounts, canVoidInvoice));
+          issued.push(await this.issueOne(m, userId, { studentId: Number(st.id), yearMonth: dto.yearMonth, invType: 'tuition', dueOn: dto.dueOn }, canSeeAmounts, canVoidInvoice));
           await m.query(`RELEASE SAVEPOINT ${sp}`);
         } catch (e) {
           await m.query(`ROLLBACK TO SAVEPOINT ${sp}`);
@@ -578,7 +578,7 @@ export class AccountingService {
                           issued_on, due_on, created_by)
          VALUES ($1, $2, $3, $4, $5, 'draft', $6::date, $7::date, $8)
          RETURNING id`,
-        [dto.studentId, dto.yearMonth, dto.invType, title, total, today, dto.dueOn ?? null, userId],
+        [dto.studentId, dto.yearMonth, dto.invType, title, total, today, dto.dueOn, userId],
       )) as Array<{ id: string }>;
       const invId = Number(made.id);
 

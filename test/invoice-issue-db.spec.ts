@@ -18,6 +18,9 @@ import { AccountingService } from '../src/modules/accounting/accounting.service'
 import { rosterPricing } from '../src/lib/rules';
 import { assertScratch, TEST_URL } from './db';
 
+/** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
+const DUE = '2026-12-31';
+
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
 const url = TEST_URL ? assertScratch(TEST_URL) : '';
@@ -97,7 +100,7 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
   });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
-  const issue = () => svc().issueInvoice(71, { studentId: stuId, yearMonth: '2026-08', invType: 'tuition' }, true);
+  const issue = () => svc().issueInvoice(71, { studentId: stuId, yearMonth: '2026-08', invType: 'tuition', dueOn: DUE }, true);
 
   it('취소된 회차는 세지 않는다 — 화면이 세면 이 한 건이 청구서에 남는다', async () => {
     await occ('2026-08-03');
@@ -331,5 +334,21 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
     expect(inv.lines).toHaveLength(2);
     expect(inv.lines.map((l) => l.unitPrice).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual([50000, 70000]);
     expect(inv.amount).toBe(120000);
+  });
+
+  /**
+   * **납부 기한은 발행할 때 사람이 고른다** — 기본값을 두지 않는다 (대표 결정 2026-09-20 · S3).
+   *
+   * 이 칸이 비어 있던 동안 연체 합계·「기한 지남」·§69 회계 배지가 **구조적으로 0** 이었다 —
+   * 서버는 받아서 쓰는데 **보내는 화면이 하나도 없었다**(2026-09-20 전수 검수 §2 ③).
+   * 서버가 「발행일 + N일」을 지어내면 원문에 없는 업무 규칙이 생기므로(D-R44) **필수로 받되 짓지 않는다.**
+   * 안 보내면 400 인 것은 DTO 가 하는 일이라 HTTP 스위트가 본다(`invoice-batch-db.spec.ts`).
+   */
+  it('기한은 고른 날 그대로 장부에 들어간다 — 서버가 날짜를 짓지 않는다 (S3)', async () => {
+    await occ('2026-08-03');
+    const inv = await svc().issueInvoice(71, { studentId: stuId, yearMonth: '2026-08', invType: 'tuition', dueOn: '2026-08-25' }, true);
+    expect(inv.dueOn).toBe('2026-08-25');
+    const [row] = (await q.query(`SELECT to_char(due_on,'YYYY-MM-DD') AS d FROM inv WHERE id = $1`, [inv.id])) as Array<{ d: string }>;
+    expect(row.d).toBe('2026-08-25'); // 화면이 보낸 날이 그대로 장부에 있다
   });
 });

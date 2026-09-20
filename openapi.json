@@ -19939,13 +19939,16 @@
           },
           "dueOn": {
             "type": "string",
-            "description": "납기일 — YYYY-MM-DD"
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "납부 기한 — YYYY-MM-DD. 발행할 때 고른다(기본값 없음 · S3)"
           }
         },
         "required": [
           "studentId",
           "yearMonth",
-          "invType"
+          "invType",
+          "dueOn"
         ]
       },
       "InvoiceBatchDto": {
@@ -19955,10 +19958,17 @@
             "type": "string",
             "description": "어느 달 — YYYY-MM",
             "example": "2026-09"
+          },
+          "dueOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "납부 기한 — YYYY-MM-DD. 이 달 청구서 전부에 같은 기한이 붙는다"
           }
         },
         "required": [
-          "yearMonth"
+          "yearMonth",
+          "dueOn"
         ]
       },
       "InvoiceBatchSkipDto": {
@@ -22125,6 +22135,12 @@
             "type": "boolean",
             "description": "첫 달 수업료 청구서를 함께 낸다 (기본 true · §53 발행 그대로 — 단가 없으면 건너뛰고 이유를 돌려준다)",
             "default": true
+          },
+          "dueOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "납부 기한 — YYYY-MM-DD. issueInvoice 가 false 가 아니면 필수"
           },
           "memo": {
             "type": "string",

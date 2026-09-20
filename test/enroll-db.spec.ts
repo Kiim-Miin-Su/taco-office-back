@@ -25,6 +25,9 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 
+/** 함께 내는 첫 달 청구서의 기한 — 기한 자체를 보지 않는 시험들이 쓰는 값 (S3) */
+const DUE = '2026-12-31';
+
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
 
@@ -151,7 +154,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
   /* ── ① A-05 · A-12 · A-14 ────────────────────────────────────────────── */
   it('보류 건을 등록 확정하면 한 트랜잭션에 일곱 가지가 남는다 — 학생·등록·시간표·첫 달 청구서·교재 요청/배정 알림·안내 초안·알림 · 첫 수업일은 시작일 이후 첫 요일 (A-05 · A-12 · A-14)', async () => {
     const res = await api('post', `/ops/leads/${LEADS.hold}/enroll`).send({
-      student: { grade: '11' }, startedOn: START, memo: '보류 뒤 등록',
+      student: { grade: '11' }, startedOn: START, dueOn: DUE, memo: '보류 뒤 등록',
       lines: [line({ libId: LIB, sessions: 8 }), line({ subKey: null, rrule: 'WEEKLY:FR', startMin: 840, endMin: 900, title: '등록 보충' })],
     }).expect(201);
     const r = res.body;
@@ -206,16 +209,16 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(occ[0]).toMatchObject({ serId: r.series[0].serId, startMin: 600 });
 
     // 두 번은 409 · 실패 건은 409 · 강사는 403
-    expect((await api('post', `/ops/leads/${LEADS.hold}/enroll`).send({ startedOn: START, lines: [line()] }).expect(409)).body.code).toBe('ALREADY_ENROLLED');
-    expect((await api('post', `/ops/leads/${LEADS.failed}/enroll`).send({ startedOn: START, lines: [line()] }).expect(409)).body.code).toBe('LEAD_FAILED');
-    await api('post', `/ops/leads/${LEADS.first}/enroll`, teacherToken).send({ startedOn: START, lines: [line()] }).expect(403);
+    expect((await api('post', `/ops/leads/${LEADS.hold}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(409)).body.code).toBe('ALREADY_ENROLLED');
+    expect((await api('post', `/ops/leads/${LEADS.failed}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(409)).body.code).toBe('LEAD_FAILED');
+    await api('post', `/ops/leads/${LEADS.first}/enroll`, teacherToken).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(403);
   });
 
   /* ── ② A-06 · A-07 · 미리보기 ───────────────────────────────────────── */
   it('겹치면 시간표가 409 로 막고 학생도 등록도 남지 않는다 · 미리보기는 같은 값을 주고 아무것도 쓰지 않으며 불가 시간을 알린다 (A-06 · A-07)', async () => {
     // 같은 강사의 같은 시각 — 첫 시험이 월·수 10:00 을 잡아 두었다 → 겹침
     const before = await q(`SELECT count(*)::int AS n FROM stu WHERE name = '등록C'`);
-    const dup = await api('post', `/ops/leads/${LEADS.first}/enroll`).send({ startedOn: START, lines: [line({ rrule: 'WEEKLY:MO', startMin: 630, endMin: 690 })] }).expect(409);
+    const dup = await api('post', `/ops/leads/${LEADS.first}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:MO', startMin: 630, endMin: 690 })] }).expect(409);
     expect(dup.body.code).toBe('RESOURCE_CONFLICT');
     expect(await q(`SELECT count(*)::int AS n FROM stu WHERE name = '등록C'`)).toEqual(before);
     expect(await q(`SELECT 1 FROM lead WHERE id = $1 AND stage = 'first' AND student_id IS NULL`, [LEADS.first])).toHaveLength(1);
@@ -223,7 +226,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
 
     // 강사 불가 시간 — 첫 수요일 11:00~12:00 에 걸치는 규칙을 미리 본다 → 막지 않고 알린다 (A-07)
     await q(`INSERT INTO unav (staff_id, on_date, dow, start_min, end_min, reason) VALUES ($1, $2::date, $3, 660, 720, '병원')`, [TEACHER, FIRST_WED, dow(FIRST_WED)]);
-    const pre = await api('post', `/ops/leads/${LEADS.first}/enroll/preview`).send({ startedOn: START, lines: [line({ rrule: 'WEEKLY:WE', startMin: 690, endMin: 750 })] }).expect(201);
+    const pre = await api('post', `/ops/leads/${LEADS.first}/enroll/preview`).send({ startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:WE', startMin: 690, endMin: 750 })] }).expect(201);
     expect(pre.body).toMatchObject({ preview: true, studentName: '등록C', studentCreated: true, stage: 'enrolled', guideDrafts: 1 });
     expect(pre.body.series[0]).toMatchObject({ firstLessonOn: FIRST_WED, ruleLabel: '매주 수' });
     expect(pre.body.unavailable).toEqual([expect.objectContaining({ date: FIRST_WED, teacherId: TEACHER, teacherName: '등록강사', startMin: 660, endMin: 720, reason: '병원' })]);
@@ -236,7 +239,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(await q(`SELECT 1 FROM log WHERE entity = 'LEAD' AND entity_id = $1`, [LEADS.first])).toEqual([]);
 
     // 실제 등록 — 미리 본 것과 같은 첫 수업일·불가 시간 경고
-    const real = await api('post', `/ops/leads/${LEADS.first}/enroll`).send({ startedOn: START, lines: [line({ rrule: 'WEEKLY:WE', startMin: 690, endMin: 750 })] }).expect(201);
+    const real = await api('post', `/ops/leads/${LEADS.first}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:WE', startMin: 690, endMin: 750 })] }).expect(201);
     expect(real.body.series[0].firstLessonOn).toBe(FIRST_WED);
     expect(real.body.unavailable).toHaveLength(1);
     expect(real.body.preview).toBe(false);
@@ -245,11 +248,11 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
   /* ── ③ N-137 · 있는 학생에게 붙이기 · 단가 없음 ─────────────────────── */
   it('동명이인 — 학년·학교가 같으면 409 · 다르면 allowSameName 으로 새 학생 · studentId 로 있는 학생에게 붙인다 · 단가가 없으면 청구서만 건너뛴다 (N-137)', async () => {
     // 등록A · 10 · 테스트고 가 이미 있다 — 같은 학년·학교면 막는다
-    const twin = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ student: { grade: '10' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
+    const twin = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ dueOn: DUE, student: { grade: '10' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
     expect(twin.body.code).toBe('STUDENT_DUPLICATE');
     expect(twin.body.message).toContain(`#${STU_EXISTING}`);
     // 학년이 다르면 — 그래도 한 번 묻는다
-    const ask = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ student: { grade: '11' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
+    const ask = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ dueOn: DUE, student: { grade: '11' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
     expect(ask.body.code).toBe('STUDENT_SAME_NAME');
     expect(ask.body.message).toContain(`#${STU_EXISTING} 10 · 테스트고`);
     expect(await q(`SELECT 1 FROM lead WHERE id = $1 AND stage = 'second'`, [LEADS.same])).toHaveLength(1);
@@ -260,7 +263,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(await q(`SELECT student_id::int AS sid FROM lead WHERE id = $1 AND stage = 'enrolled'`, [LEADS.same])).toEqual([{ sid: STU_EXISTING }]);
 
     // 단가 없는 종류 — 등록은 되고 청구서만 건너뛴다(이유와 함께)
-    const norate = await api('post', `/ops/leads/${LEADS.norate}/enroll`).send({ startedOn: START, lines: [line({ kindKey: KIND_NORATE, subKey: null, rrule: 'WEEKLY:TH', startMin: 600, endMin: 660 })] }).expect(201);
+    const norate = await api('post', `/ops/leads/${LEADS.norate}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line({ kindKey: KIND_NORATE, subKey: null, rrule: 'WEEKLY:TH', startMin: 600, endMin: 660 })] }).expect(201);
     expect(norate.body.invoice).toBeNull();
     expect(norate.body.invoiceSkipped).toMatchObject({ code: 'INV_NO_RATE' });
     expect(norate.body.studentCreated).toBe(true);

@@ -26,6 +26,9 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 
+/** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
+const DUE = '2026-12-31';
+
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
 
@@ -216,7 +219,7 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
     await expectClosed(await api('put', `/schedule/${ser.id}/${prevDate}/attendance`).send({ result: 'canceled', reason: 'student_absent' }), 'attendance');
     await expectClosed(await api('delete', `/schedule/${ser.id}/${prevDate}/attendance`), 'attendance clear');
     // 청구서 발행 · 이월 처리
-    await expectClosed(await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: PREV, invType: 'tuition' }), 'invoice');
+    await expectClosed(await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: PREV, invType: 'tuition', dueOn: DUE }), 'invoice');
     await expectClosed(await api('post', '/accounting/tuition/carry').send({ studentId: STU_A, month: PREV }), 'carry');
     // 휴원 — 기간이 마감 달에 걸친다
     await expectClosed(await api('post', `/schedule/students/${STU_A}/pause`).send({ fromDate: prevDate }), 'pause');

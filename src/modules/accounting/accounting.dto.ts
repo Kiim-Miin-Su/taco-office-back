@@ -156,9 +156,18 @@ export class InvoiceIssueDto {
   @ApiPropertyOptional({ description: '제목 — 비우면 서버가 「2026년 8월 수업료」처럼 짓는다' })
   @IsOptional() @IsString() @MaxLength(80) title?: string;
 
-  @ApiPropertyOptional({ description: '납기일 — YYYY-MM-DD', type: String })
-  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '납기일은 YYYY-MM-DD 입니다' })
-  dueOn?: string;
+  /**
+   * **납부 기한 — 발행할 때 사람이 고른다** (대표 결정 2026-09-20 · 기본값을 두지 않는다).
+   *
+   * 원문 §53 은 카드마다 「11일 지남」·「D-21」을 보여 주지만 **기한을 어떻게 정하는지는 보여 주지 않는다.**
+   * 서버가 「발행일 + N일」 같은 규칙을 지어내면 그것은 원문에 없는 업무 규칙이다(D-R44). 그래서 필수로
+   * 받되 값은 짓지 않는다 — 안 보내면 400 이고, 화면도 비어 있으면 단추가 잠긴다.
+   *
+   * 이 칸이 비어 있던 동안 **연체 합계·「기한 지남」·§69 회계 배지가 구조적으로 0** 이었다(S3).
+   */
+  @ApiProperty({ ...DATE_SCHEMA, description: '납부 기한 — YYYY-MM-DD. 발행할 때 고른다(기본값 없음 · S3)' })
+  @IsCalendarDate()
+  dueOn!: string;
 }
 
 /**
@@ -492,6 +501,11 @@ export class InvoiceBatchDto {
   @ApiProperty({ description: '어느 달 — YYYY-MM', example: '2026-09' })
   @IsString() @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
   yearMonth!: string;
+
+  /** 한 번에 내는 청구서들의 **납부 기한 하나** — 낱장 발행과 같은 규약이다(기본값 없음 · S3) */
+  @ApiProperty({ ...DATE_SCHEMA, description: '납부 기한 — YYYY-MM-DD. 이 달 청구서 전부에 같은 기한이 붙는다' })
+  @IsCalendarDate()
+  dueOn!: string;
 }
 
 export class InvoiceBatchSkipDto {

@@ -15,7 +15,7 @@
  * 하나라도 실패하면 전부 되돌린다 — 「학생은 생겼는데 시간표가 없다」가 생기지 않는다(D-R43).
  * 미리보기는 같은 트랜잭션을 끝까지 돌리고 되돌린다(D-R37 · C94-c 와 같은 모양) — 화면이 겹침·불가 시간·청구액을 짓지 않는다.
  */
-import { ConflictException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { ruleLabel } from '../../lib/recurrence';
 import { AccountingService } from '../accounting/accounting.service';
@@ -163,9 +163,12 @@ export class LeadEnrollService {
     let invoice: InvoiceDto | null = null;
     let invoiceSkipped: EnrollResultDto['invoiceSkipped'] = null;
     if (dto.issueInvoice !== false) {
+      // DTO 가 `issueInvoice !== false` 일 때 기한을 필수로 받는다 — 여기 오면 값이 있다
+      const dueOn = dto.dueOn;
+      if (!dueOn) throw new BadRequestException({ code: 'INV_DUE_REQUIRED', message: '청구서를 함께 내려면 납부 기한을 골라 주세요' });
       await m.query('SAVEPOINT enroll_invoice');
       try {
-        invoice = await this.accounting.issueWithin(m, userId, { studentId, yearMonth: invoiceMonth, invType: 'tuition' }, canSeeAmounts);
+        invoice = await this.accounting.issueWithin(m, userId, { studentId, yearMonth: invoiceMonth, invType: 'tuition', dueOn }, canSeeAmounts);
         await m.query('RELEASE SAVEPOINT enroll_invoice');
       } catch (e) {
         await m.query('ROLLBACK TO SAVEPOINT enroll_invoice');

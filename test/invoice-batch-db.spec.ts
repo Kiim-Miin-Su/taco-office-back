@@ -26,6 +26,9 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 
+/** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
+const DUE = '2026-12-31';
+
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
 
@@ -144,7 +147,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     made.push(res.body.serIds[0]);
     return res.body.serIds[0] as number;
   }
-  const batch = (yearMonth = THIS, t = token) => api('post', '/accounting/invoices/batch', t).send({ yearMonth });
+  const batch = (yearMonth = THIS, t = token) => api('post', '/accounting/invoices/batch', t).send({ yearMonth, dueOn: DUE });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mine = (b: { issued: any[] }, sid: number): any => b.issued.find((i) => i.studentId === sid);
 
@@ -162,6 +165,8 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     const b = mine(res.body, STU_B)!;
     expect(a).toBeDefined();
     expect(b).toBeDefined();
+    // 한 번에 낸 청구서들은 **같은 기한**을 나눠 갖는다 — 낱장과 같은 규약이다 (S3)
+    expect(res.body.issued.every((i: { dueOn: string | null }) => i.dueOn === DUE)).toBe(true);
     // 낱장과 같은 줄 — 2인 수업이라도 구간 단가는 1인 줄뿐이라 50,000 (구간 없으면 그 이하 가장 큰 구간)
     expect(b.lines).toEqual([expect.objectContaining({ count: 1, unitPrice: 50000, amount: 50000 })]);
     expect(b.amount).toBe(50000);
@@ -256,10 +261,23 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     expect(after.summary.sent).toBe(before.summary.sent - 50000);
     expect(after.summary.unpaid).toBe(before.summary.unpaid - 50000);
     // 같은 달에 새로 낼 수 있다 — 취소한 장은 중복으로 세지 않는다
-    const re = await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: THIS, invType: 'tuition' }).expect(201);
+    const re = await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: THIS, invType: 'tuition', dueOn: DUE }).expect(201);
     expect(re.body.state).toBe('draft');
     const logs = await q<{ action: string; after: { reason?: string } }>(`SELECT action, after FROM log WHERE entity = 'INV' AND entity_id = $1 AND actor_id = $2 ORDER BY id`, [inv.id, CEO]);
     expect(logs.map((l) => l.action)).toEqual(['deliver', 'void']);
     expect(logs[1]!.after.reason).toBe('단가를 잘못 넣어 다시 낸다');
+  });
+
+  /**
+   * **납부 기한을 안 보내면 발행 자체가 막힌다** (대표 결정 2026-09-20 · S3 · 기본값 없음).
+   *
+   * 서버가 「발행일 + N일」을 지어내면 원문에 없는 업무 규칙이 생긴다(D-R44). 그래서 필수로 받고
+   * 값은 짓지 않는다 — 화면도 비어 있으면 단추가 잠긴다(단추와 서버가 같은 질문을 한다 · D-R39).
+   */
+  it('기한 없이 내려 하면 400 — 낱장도 일괄도 같다 · 달력에 없는 날도 막는다 (S3)', async () => {
+    await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: THIS, invType: 'tuition' }).expect(400);
+    await api('post', '/accounting/invoices/batch').send({ yearMonth: THIS }).expect(400);
+    // 2026-02-30 은 달력에 없는 날이다 — 형식만 맞다고 통과시키지 않는다
+    await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: THIS, invType: 'tuition', dueOn: '2026-02-30' }).expect(400);
   });
 });

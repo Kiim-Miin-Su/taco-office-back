@@ -21,6 +21,9 @@ import { Inv } from '../src/entities';
 import { AccountingService } from '../src/modules/accounting/accounting.service';
 import { assertScratch, TEST_URL } from './db';
 
+/** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
+const DUE = '2026-12-31';
+
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
 const url = TEST_URL ? assertScratch(TEST_URL) : '';
@@ -132,7 +135,7 @@ d('§54 수업료 계산 (C65)', () => {
   it('청구서와 **같은 금액**이 나온다 — 미리 본 값과 청구한 값이 갈리면 안 된다 (D-R22)', async () => {
     for (const day of PAST) await occ(day);
     const { me } = await row();
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
     expect(me.doneAmount).toBe(inv.amount);
     expect(me.lines).toEqual(inv.lines);
   });
@@ -208,7 +211,7 @@ d('§54 수업료 계산 (C65)', () => {
     expect(me.carryAmount).toBe(0);
     expect(all.deductedCount).toBe(1);
     // 청구서도 같은 값이다 — 차감한 회차가 청구에 든다 (D-R22)
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
     expect(inv.amount).toBe(150_000);
   });
 
@@ -257,7 +260,7 @@ d('§54 수업료 계산 (C65)', () => {
     expect(me.canceled).toBe(1);   // 5/11 원래 회차는 결강으로 적히되
     expect(me.carryAmount).toBe(0); // 넘길 돈에는 들지 않는다 — 보강이 대신 섰다
     expect(me.doneAmount).toBe(100_000);
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
     expect(inv.amount).toBe(100_000);
   });
 
@@ -284,7 +287,7 @@ d('§54 수업료 계산 (C65)', () => {
     expect(me.carriedInSessions).toBe(2);
     expect(all.carriedInCount).toBe(2);
     expect(all.carriedInAmount).toBe(100_000);
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
     expect(inv.amount).toBe(50_000);
     const carryLine = inv.lines.find((l) => l.count < 0)!;
     expect(carryLine).toMatchObject({ count: -2, amount: -100_000, unitPrice: 50_000 });
@@ -296,7 +299,7 @@ d('§54 수업료 계산 (C65)', () => {
   it('이월분이 이 달 수업보다 많으면 청구서를 내지 않는다 — 음수 청구서 대신 409 INV_CARRY_EXCEEDS', async () => {
     await occ(PAST[0]); // 50,000
     await carryIn('2026-04', 120_000, 3);
-    await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true))
+    await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true))
       .rejects.toMatchObject({ response: { code: 'INV_CARRY_EXCEEDS' } });
     expect(await q.query(`SELECT id FROM inv WHERE student_id = $1 AND year_month = $2`, [stuId, MONTH])).toEqual([]);
   });
@@ -304,7 +307,7 @@ d('§54 수업료 계산 (C65)', () => {
   it('이월은 수업료 청구서에만 붙는다 — 다른 종류는 넘어온 돈을 빼지 않는다', async () => {
     await occ(PAST[0]);
     await carryIn('2026-04', 20_000, 1);
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'exam_fee' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'exam_fee', dueOn: DUE }, true);
     expect(inv.amount).toBe(50_000);
     expect(inv.lines.every((l) => l.count > 0)).toBe(true);
   });
@@ -332,7 +335,7 @@ d('§54 수업료 계산 (C65)', () => {
     expect(me.doneAmount).toBe(50_000);
     expect(all.canceledCount).toBe(2);
     // 청구서도 같은 값이다 — 휴원한 회차는 줄에 없다 (D-R22)
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
     expect(inv.amount).toBe(50_000);
     expect(inv.lines).toHaveLength(1);
     expect(inv.lines[0]!.count).toBe(1);
@@ -351,7 +354,7 @@ d('§54 수업료 계산 (C65)', () => {
     expect(me.done).toBe(2);
     expect(me.canceled).toBe(1);
     expect(me.doneAmount).toBe(100_000);
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
     expect(inv.amount).toBe(100_000);
   });
 
@@ -394,7 +397,7 @@ d('§54 수업료 계산 (C65)', () => {
     // 안분이면 (100,000 + 60,000) × 2/4 = 80,000 — 어느 수업의 값도 아니다
     expect(me.doneAmount).not.toBe(80_000);
     // 달 전체는 청구서가 낼 값 그대로다 — 토막을 내도 합이 어긋나지 않는다
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: NOW, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: NOW, invType: 'tuition', dueOn: DUE }, true);
     expect(inv.amount).toBe(160_000);
   });
 
@@ -494,7 +497,7 @@ d('§54 수업료 계산 (C65)', () => {
    * 그래서 증명하는 것은 **받아 놓고 못 해 준 수업만 넘어간다**는 것이다.
    */
   const payInvoice = async (state: 'paid' | 'sent') => {
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition' }, true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
     await q.query(`UPDATE inv SET state = $2::inv_state_t, paid_amount = CASE WHEN $2 = 'paid' THEN amount ELSE 0 END WHERE id = $1`,
       [inv.id, state]);
     return inv.id;
