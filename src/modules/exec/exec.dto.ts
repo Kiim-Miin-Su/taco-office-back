@@ -58,6 +58,12 @@ export class ExecReportDto {
 
   @ApiPropertyOptional({ ...S, description: '원본 §69 서명줄 「대표 승인」' })
   reviewedByName?: string | null;
+
+  @ApiProperty({
+    description: '§73 결재 단추가 열리는가 — 올라온(sent) 보고이고, 결재 권한이 있고, '
+      + '**내가 올린 보고가 아닐 때**(rpt_no_self_review). 화면이 역할을 다시 조합하지 않는다 (D-R39)',
+  })
+  canReview!: boolean;
 }
 
 /** 숫자 한 칸 — 저장하지 않고 매번 센다 (D-R4) */

@@ -8,7 +8,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { GpaCycle } from '../src/entities';
 import { GpaService } from '../src/modules/gpa/gpa.service';
-import { assertScratch, TEST_URL } from './db';
+import { assertScratch, blockedBy, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -31,6 +31,8 @@ d('§4.5·§82 GPA 4표 — 잔여 계산과 사이클 잠금 (N-13 채택 · C3
     await q.connect();
     await q.startTransaction();
     await q.query(`INSERT INTO staff (id,name,email,role) VALUES (41,'코디','gpa41@t.kr','manager') ON CONFLICT (id) DO NOTHING`);
+    // 승인자는 기록자와 다른 사람이어야 한다 (S1 자기 승인 금지 · gpa_use_no_self_approve)
+    await q.query(`INSERT INTO staff (id,name,email,role) VALUES (43,'승인자','gpa43@t.kr','manager') ON CONFLICT (id) DO NOTHING`);
     await q.query(`INSERT INTO stu (id,name) VALUES (91,'지파일'),(92,'지파이') ON CONFLICT (id) DO NOTHING`);
     await q.query(`INSERT INTO gpasvc (key,name,point,sort) VALUES ('hw','숙제 지원',1,1),('test','Test 대비',4,4)
                    ON CONFLICT (key) DO NOTHING`);
@@ -119,14 +121,53 @@ d('§4.5·§82 GPA 4표 — 잔여 계산과 사이클 잠금 (N-13 채택 · C3
   it('승인·되돌림이 잔여에 그대로 반영되고, 승인분 삭제는 USE_APPROVED 로 거절된다', async () => {
     await q.query(`INSERT INTO gpa_alloc (cycle_id,student_id,coord_id,points) VALUES ($1,91,41,8)`, [cycleId]);
     const made = await svc().createUse(41, { cycleId, studentId: 91, svcKey: 'test', onDate: '2026-10-06' });
-    const ok = await svc().setUseState(made.id, { state: 'ok' });
-    expect(ok.state).toBe('ok');
+    const ok = await svc().setUseState(made.id, 43, { state: 'ok' });
+    expect(ok).toMatchObject({ state: 'ok', approvedByName: '승인자' });
     await expect(svc().deleteUse(made.id)).rejects.toMatchObject({ response: { code: 'USE_APPROVED' } });
-    const back = await svc().setUseState(made.id, { state: 'wait' });
+    const back = await svc().setUseState(made.id, 43, { state: 'wait' });
     expect(back.state).toBe('wait');
+    // 되돌리면 도장도 지워진다 — 승인자가 남아 있으면 거짓말이 된다
+    expect(back.approvedByName).toBeNull();
     await expect(svc().deleteUse(made.id)).resolves.toEqual({ ok: true });
     const b = await svc().board('2026-10-06');
     expect(b.students.find((s) => s.studentId === 91)).toMatchObject({ used: 0, wait: 0, remain: 8 });
+  });
+
+  it('기록한 사람은 자기 기록을 승인하지 못한다 — 서버가 거절하고 DB 도 막는다 (S1)', async () => {
+    const made = await svc().createUse(41, { cycleId, studentId: 91, svcKey: 'hw', onDate: '2026-10-06' });
+    // 41 이 적었으므로 41 은 승인할 수 없다
+    await expect(svc().setUseState(made.id, 41, { state: 'ok' }))
+      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
+    // 되돌림(wait)은 자기도 할 수 있다 — 승인이 아니라 취소다
+    await expect(svc().setUseState(made.id, 41, { state: 'wait' })).resolves.toMatchObject({ state: 'wait' });
+    // 서비스를 우회해도 DB 가 막는다
+    expect(await blockedBy(q,
+      `UPDATE gpa_use SET state='ok', approved_by = 41, approved_at = now() WHERE id = $1`, [made.id],
+    )).toMatch(/gpa_use_no_self_approve/);
+    // 남이면 통과하고 도장이 남는다
+    const ok = await svc().setUseState(made.id, 43, { state: 'ok' });
+    expect(ok).toMatchObject({ state: 'ok', approvedByName: '승인자', coordName: '코디' });
+    expect(ok.approvedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  /**
+   * 쓰기만 막으면 기록한 사람에게는 「승인」 단추가 열린 채 눌렀을 때만 거절당한다.
+   * 단추가 열리는지도 서버가 정한다 — 화면은 `canApprove` 한 줄만 읽는다 (S1 · D-R39).
+   */
+  it('승인 단추는 서버가 연다 — 기록한 사람에게는 닫히고 남에게는 열린다 (S1)', async () => {
+    const made = await svc().createUse(41, { cycleId, studentId: 91, svcKey: 'hw', onDate: '2026-10-06' });
+    expect(made.canApprove).toBe(false); // 방금 적은 사람에게는 닫힌다
+
+    const rowFor = async (viewerId?: number) =>
+      (await svc().board('2026-10-06', viewerId)).uses.find((u) => u.id === made.id)!;
+    expect((await rowFor(41)).canApprove).toBe(false);
+    expect((await rowFor(43)).canApprove).toBe(true);
+    // 보는 사람을 모르면 닫는다 — 모르는 쪽으로 열면 그 자리가 다음 불일치가 된다
+    expect((await rowFor()).canApprove).toBe(false);
+
+    // 승인되고 나면 더 승인할 것이 없다
+    await svc().setUseState(made.id, 43, { state: 'ok' });
+    expect((await rowFor(43)).canApprove).toBe(false);
   });
 
   it('배정 upsert — (사이클, 학생) 하나·0 은 회수, DB UNIQUE 가 이중 배정을 막는다', async () => {

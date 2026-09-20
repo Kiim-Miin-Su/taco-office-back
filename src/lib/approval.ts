@@ -19,6 +19,52 @@
 
 import type { ApprovalFlowScope } from '../common/perm';
 
+/**
+ * **올린 사람은 결재하지 못한다.** 결재라는 제도가 성립하는 유일한 조건이다.
+ *
+ * 이 규칙은 원래 지출에만 있었다 — `expense_no_self_review` DB CHECK(ACCOUNTING §4.3 A-5)와
+ * REQ·CHREQ 의 `SELF_APPROVAL_FORBIDDEN`. 그런데 **리포트·대표 보고·기획·GPA 넷에는 한 줄도 없어서**
+ * 자기가 쓴 것을 자기가 승인할 수 있었다 (2026-09-20 전수 검수). 규칙을 정해 놓고 한 곳에만 적용하면
+ * 다음 사람도 똑같이 빠뜨리므로 **판정을 여기 하나로 모은다.**
+ *
+ * 왜 「없으면 통과」인가 — 올린 사람이 **누구인지 모르는** 옛 행이 있다(RPT 의 `sent_by` 는 C85-a 에서
+ * 생겼고 그 전 행은 NULL 이다 · N-25 기존 행 보정 0). 모르는 것을 「같은 사람이 아니다」로도
+ * 「같은 사람이다」로도 단정하지 않는다 — DB CHECK 도 같은 규약을 쓴다(`a IS NULL OR b IS NULL OR a <> b`).
+ *
+ * `authorId` 를 `unknown` 으로 받는 것은 **raw SQL 행에서 바로 오기 때문**이다 — pg 드라이버가
+ * `bigint` 를 문자열로 주므로 호출부마다 캐스팅을 흩뿌리는 대신 여기서 한 번 좁힌다.
+ * 숫자로 못 읽는 값은 **막지 않는다**(모르는 것을 같다고 단정하지 않는다).
+ *
+ * @param authorId 올린·쓴 사람 (REP teacher_id · RPT sent_by · PLAN owner_id · GPA coord_id)
+ * @param actorId  지금 결재하려는 사람
+ */
+export function isSelfReview(authorId: unknown, actorId: number): boolean {
+  if (authorId === null || authorId === undefined) return false;
+  if (typeof authorId !== 'number' && typeof authorId !== 'string') return false;
+  const n = Number(authorId);
+  return Number.isFinite(n) && n === actorId;
+}
+
+/** 자기 결재 거절의 공통 코드. 예외 종류(409/403)는 각 도메인이 기존 규약대로 고른다. */
+export const SELF_APPROVAL_CODE = 'SELF_APPROVAL_FORBIDDEN' as const;
+
+/**
+ * 자기 결재를 막는 자리 전부. **여기에 이름이 있는 것은 서버가 반드시 거절한다** —
+ * 회귀(`test/self-approval.spec.ts`)가 이 목록을 돌며 확인하므로, 결재 갈래를 새로 만들 때
+ * 여기 한 줄을 더하면 그 회귀가 빠진 방어를 바로 잡는다.
+ */
+export const SELF_APPROVAL_GUARDED = [
+  'rep',      // 리포트 승인·반려      — reports.service.review
+  'rpt',      // 대표 보고 결재        — exec.service.review
+  'plan-due', // 기획 기한 승인        — ops.service.decidePlanDue
+  'plan',     // 기획 최종 승인        — ops.service.reviewPlan
+  'gpa-use',  // GPA 포인트 승인       — gpa.service.setUseState
+  'req',      // 강사 요청 결재        — drawer.service.reviewRequest
+  'chreq',    // 변경 요청 반영        — drawer.service.reviewChangeRequest
+  'expense',  // 지출 심사             — accounting.service.reviewExpense (+ DB CHECK)
+] as const;
+export type SelfApprovalGuarded = (typeof SELF_APPROVAL_GUARDED)[number];
+
 /** §75 공통 다섯 갈래 + §14 강사 리포트 (D-R26 · D-R34) */
 export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing'] as const;
 export type ApKind = (typeof AP_KINDS)[number];

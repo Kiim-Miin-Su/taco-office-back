@@ -85,6 +85,27 @@ describe('리포트 상태 — 캘린더 색상의 단일 진실원', () => {
     expect(made.endsWith('.png')).toBe(true);
   });
 
+  /**
+   * C86-g 의 교훈 — **제약을 새긴 뒤에는 시드를 다시 돌려 봐야 한다.** 표가 맞는 것과 데이터가
+   * 들어가는 것은 다른 일이고, `NOT VALID` 는 기존 행만 봐주지 **새 INSERT 인 시드는 그대로 검사한다.**
+   * 이 검사는 **DB 없이** 돈다 — 시드가 만든 값을 직접 세어 `rep_no_self_review` 를 미리 잡는다.
+   */
+  it('시드가 만든 리포트 중 쓴 사람이 결재한 것은 하나도 없다 (rep_no_self_review)', () => {
+    // 김범준(3)은 결재자이면서 강사이기도 하다 — 그가 맡은 회차가 자기 결재가 되면 안 된다
+    const days = Array.from({ length: 30 }, (_, i) => addD(SEED_TODAY, -(i + 1)));
+    const occs = days.flatMap((onDate, i) => [
+      occurrence({ serId: 100 + i, onDate, teacherId: 3 }),
+      occurrence({ serId: 200 + i, onDate, teacherId: 7 }),
+    ]);
+    const reports = buildReports(occs, () => 'ko', 23 * 60);
+
+    const reviewed = reports.filter((r) => r.reviewerId !== null);
+    expect(reviewed.length).toBeGreaterThan(0);           // 결재된 표본이 실제로 있어야 의미가 있다
+    expect(reviewed.filter((r) => r.reviewerId === r.teacherId)).toEqual([]);
+    // 김범준이 맡은 회차도 결재는 되어야 한다 — 「막느라 아예 안 함」이 아니다
+    expect(reviewed.some((r) => r.teacherId === 3)).toBe(true);
+  });
+
   it('미래 수업은 예정(plan)이다', () => {
     const [report] = buildReports(
       [occurrence({ onDate: addD(SEED_TODAY, 1) })],

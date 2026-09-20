@@ -25,6 +25,7 @@
 
 import type { IsoDate, Minutes } from './recurrence';
 import { addD, diffD } from './recurrence';
+import { isSelfReview } from './approval';
 
 /* ── 회차 ─────────────────────────────────────────────────────────────── */
 
@@ -358,17 +359,30 @@ export interface ReportReviewContext {
   state: RepStateDb;
   decision: ReportReviewDecision;
   reason?: string | null;
+  /** 이 리포트를 쓴 사람 (`rep.teacher_id`). 모르면 null — 옛 행이 그렇다 */
+  teacherId?: number | string | null;
+  /** 지금 결재하려는 사람. 넘기지 않으면 자기 결재 판정을 건너뛴다(화면의 `canReview` 미리보기가 그렇다) */
+  actorId?: number | null;
 }
 
 export type ReportReviewIssue =
   | 'REPORT_REVIEW_FORBIDDEN'
+  | 'SELF_APPROVAL_FORBIDDEN'
   | 'REPORT_NOT_WAITING'
   | 'APPROVE_REASON_FORBIDDEN'
   | 'REJECT_REASON_REQUIRED';
 
-/** 승인·반려의 유일한 전이 방어. 화면은 `canReview` 결과만 읽는다 (D-R13 · D-R34). */
+/**
+ * 승인·반려의 유일한 전이 방어. 화면은 `canReview` 결과만 읽는다 (D-R13 · D-R34).
+ *
+ * **자기가 쓴 리포트는 자기가 승인하지 못한다** — `isSelfReview` 한 곳이 그 판정을 갖는다
+ * (2026-09-20 검수: 지출에는 DB CHECK 까지 있는데 여기엔 한 줄도 없었다). `actorId` 를 안 넘기면
+ * 그 검사를 건너뛴다 — 화면의 `canReview` 는 「이 사람이 결재 자체를 할 수 있나」를 묻는 자리라
+ * 특정 리포트의 작성자를 모른 채 부를 수 있기 때문이고, **막는 것은 쓰기 경로**다.
+ */
 export function reportReviewIssue(c: ReportReviewContext): ReportReviewIssue | null {
   if (!c.canApprove) return 'REPORT_REVIEW_FORBIDDEN';
+  if (c.actorId != null && isSelfReview(c.teacherId, c.actorId)) return 'SELF_APPROVAL_FORBIDDEN';
   if (c.state !== 'wait') return 'REPORT_NOT_WAITING';
   if (c.decision === 'approve' && c.reason !== undefined) return 'APPROVE_REASON_FORBIDDEN';
   if (c.decision === 'reject' && !c.reason?.trim()) return 'REJECT_REASON_REQUIRED';

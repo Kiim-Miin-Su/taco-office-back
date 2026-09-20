@@ -67,6 +67,15 @@ export class GpaUseDto {
   @ApiPropertyOptional(S) coordName?: string | null;
   @ApiPropertyOptional(S) noteUrl?: string | null;
   @ApiProperty({ enum: ['wait', 'ok'], description: 'wait 는 점선 — 승인되면 ok' }) state!: string;
+  @ApiPropertyOptional({ ...S, description: '승인한 사람 — 기록한 사람과 다르다(gpa_use_no_self_approve). 되돌리면 지워진다' })
+  approvedByName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '승인한 날 YYYY-MM-DD (KST)' })
+  approvedOn?: string | null;
+  @ApiProperty({
+    description: '이 기록에 승인 단추가 열리는가 — 대기 상태이고 **기록한 사람이 내가 아닐 때**. '
+      + '사이클 잠금은 cycle.closed 가 따로 말한다 (D-R39 · 화면이 다시 조합하지 않는다)',
+  })
+  canApprove!: boolean;
 }
 
 export class GpaBoardQueryDto {

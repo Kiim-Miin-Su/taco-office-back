@@ -74,3 +74,31 @@ export function assertScratch(url: string | undefined): string {
   if (/prod|production/i.test(name)) throw new Error(`운영 DB 로 보인다: '${name}'`);
   return url;
 }
+
+/**
+ * 「막히는지」와 「막힌 뒤에도 되는지」를 한 트랜잭션에서 본다.
+ *
+ * PostgreSQL 은 제약 위반 하나로 **트랜잭션 전체를 abort** 시킨다 — 그 뒤 문장은 실제 내용과
+ * 무관하게 `current transaction is aborted` 로 떨어진다. 그래서 `rejects.toThrow()` 로 위반을
+ * 확인한 다음 줄에서 정상 경로를 확인하면, 통과해야 할 쪽이 엉뚱한 이유로 실패한다.
+ *
+ * 세이브포인트로 감싸 위반만 되돌리고 트랜잭션은 살려 둔다. 막혀야 할 SQL 이 **통과하면**
+ * 그 자리에서 던진다 — 제약이 빠진 것을 조용히 초록으로 넘기지 않는다.
+ *
+ * @returns 붙잡은 오류 메시지 — 호출부가 제약 이름을 확인한다.
+ */
+export async function blockedBy(
+  q: { query(sql: string, params?: unknown[]): Promise<unknown> },
+  sql: string,
+  params: unknown[] = [],
+): Promise<string> {
+  await q.query('SAVEPOINT blocked_probe');
+  try {
+    await q.query(sql, params);
+  } catch (e) {
+    await q.query('ROLLBACK TO SAVEPOINT blocked_probe');
+    return e instanceof Error ? e.message : String(e);
+  }
+  await q.query('RELEASE SAVEPOINT blocked_probe');
+  throw new Error(`막혀야 하는 SQL 이 통과했습니다 — 제약이 빠졌습니다: ${sql.trim().split('\n')[0]}`);
+}

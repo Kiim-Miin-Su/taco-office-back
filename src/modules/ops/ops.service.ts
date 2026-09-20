@@ -26,6 +26,7 @@ import {
   LEAD_TOUCH_KINDS, LEAD_TOUCH_KIND_LABEL, intakeStageLabel, leadNextStages, leadSourceLabel, leadTouchKindLabel,
   type LeadSource,
 } from '../../lib/intake-words';
+import { isSelfReview, SELF_APPROVAL_CODE } from '../../lib/approval';
 import { INV_OPEN } from '../../lib/rules';
 import { sqlWordList } from '../../lib/sql';
 import {
@@ -1140,11 +1141,16 @@ export class OpsService {
     return { planDues, planOverdue: planDues.filter((d) => d.overdueDays > 0).length };
   }
 
-  /** §65 기획 보고서 — 목표 → 과제 → 리서치 → 결정 요청 */
-  async planDetail(id: number, canApprove: boolean): Promise<PlanDetailDto | null> {
+  /**
+   * §65 기획 보고서 — 목표 → 과제 → 리서치 → 결정 요청
+   *
+   * `viewerId` 는 **자기 결재를 단추에서도 닫기 위해** 받는다. 쓰기 경로만 막으면 담당자에게는
+   * 단추가 열려 보이고 누르면 거절당한다 — 화면과 서버가 같은 질문을 해야 한다 (D-R39).
+   */
+  async planDetail(id: number, canApprove: boolean, viewerId: number): Promise<PlanDetailDto | null> {
     const today = todayKst();
     const [p] = await this.q(
-      `SELECT p.id, p.title, p.stage, p.goal, p.research, p.ask,
+      `SELECT p.id, p.title, p.stage, p.goal, p.research, p.ask, p.owner_id,
               to_char(p.due_on,'YYYY-MM-DD') AS due_on, p.due_approved_at,
               to_char(p.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS created_on,
               o.name AS owner_name, a.name AS due_by_name
@@ -1179,12 +1185,15 @@ export class OpsService {
     /* 원문 §61·§65: 「대표는 **기한을 먼저 승인해야** 최종 승인이 열립니다」.
        판정은 여기 한 곳이고, 막힌 이유까지 서버가 문장으로 내려보낸다 — 화면이 역할과
        기한 상태를 다시 조합하면 단추 모양과 서버의 답이 갈린다 (D-R39). */
-    const canDecideDue = canApprove && dueState === 'proposed';
+    /* 담당자 자신은 기한도 최종 승인도 못 한다 — 쓰기 경로(`decidePlanDue`·`reviewPlan`)와 같은 판정이다 */
+    const isOwner = isSelfReview(p.owner_id, viewerId);
+    const canDecideDue = canApprove && dueState === 'proposed' && !isOwner;
     const reviewBlockedReason =
       !canApprove ? '기획 결재는 대표만 합니다'
-        : !open ? '이미 끝난 기획입니다'
-          : dueState !== 'approved' ? '기한부터 승인하세요'
-            : null;
+        : isOwner ? '자기가 담당인 기획은 자기가 결재할 수 없습니다'
+          : !open ? '이미 끝난 기획입니다'
+            : dueState !== 'approved' ? '기한부터 승인하세요'
+              : null;
 
     return {
       id: leadId(p.id), title: String(p.title), stage, stageLabel: planStageLabel(stage),
@@ -1210,9 +1219,17 @@ export class OpsService {
       throw new ConflictException({ code: 'CEO_ONLY', message: '기한 승인은 대표만 합니다 (원문 §61·§65)' });
     }
     const [row] = await this.q(
-      `SELECT id, due_on, due_approved_at FROM plan WHERE id = $1`, [id],
+      `SELECT id, due_on, due_approved_at, owner_id FROM plan WHERE id = $1`, [id],
     );
     if (!row) throw new NotFoundException('기획이 없습니다');
+    // 올린 사람은 자기 기한을 스스로 승인하지 못한다 — `createPlan` 이 담당 기본값을 호출자로 박으므로
+    // 이 검사가 없으면 「올리고 내가 승인」이 한 사람 안에서 닫힌다 (2026-09-20 검수)
+    if (isSelfReview(row.owner_id, viewerId)) {
+      throw new ConflictException({
+        code: SELF_APPROVAL_CODE,
+        message: '자기가 담당인 기획의 기한은 자기가 승인할 수 없습니다 — 내는 사람과 승인하는 사람은 다릅니다',
+      });
+    }
     if (!row.due_on) {
       throw new ConflictException({ code: 'NO_DUE', message: '제안된 기한이 없습니다' });
     }
@@ -1220,18 +1237,37 @@ export class OpsService {
       throw new ConflictException({ code: 'DUE_ALREADY_APPROVED', message: '이미 승인된 기한입니다' });
     }
 
-    if (dto.approve) {
-      await this.q(`UPDATE plan SET due_approved_at = now(), due_approved_by = $2 WHERE id = $1`, [id, viewerId]);
-    } else {
-      await this.q(`UPDATE plan SET due_on = NULL, due_approved_at = NULL, due_approved_by = NULL WHERE id = $1`, [id]);
-    }
-    return (await this.planDetail(id, canApprove))!;
+    const beforeDue = { dueOn: row.due_on, approvedAt: row.due_approved_at };
+    await this.lead.manager.transaction(async (em) => {
+      if (dto.approve) {
+        await em.query(`UPDATE plan SET due_approved_at = now(), due_approved_by = $2 WHERE id = $1`, [id, viewerId]);
+      } else {
+        await em.query(`UPDATE plan SET due_on = NULL, due_approved_at = NULL, due_approved_by = NULL WHERE id = $1`, [id]);
+      }
+      // 반려는 날짜를 지우는 파괴적 쓰기다 — 흔적이 없으면 무엇이 지워졌는지 아무도 모른다
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1, 'plan', $2, $3, $4::jsonb, $5::jsonb)`,
+        [viewerId, id, dto.approve ? 'due_approve' : 'due_reject',
+          JSON.stringify(beforeDue),
+          JSON.stringify(dto.approve ? { dueOn: row.due_on, approvedBy: viewerId } : { dueOn: null })],
+      );
+    });
+    return (await this.planDetail(id, canApprove, viewerId))!;
   }
 
   /** 최종 승인 · 보완 요청 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65) */
   async reviewPlan(viewerId: number, canApprove: boolean, id: number, dto: PlanReviewDto): Promise<PlanDetailDto> {
-    const before = await this.planDetail(id, canApprove);
+    const before = await this.planDetail(id, canApprove, viewerId);
     if (!before) throw new NotFoundException('기획이 없습니다');
+    const [ownerRow] = await this.q(`SELECT owner_id FROM plan WHERE id = $1`, [id]);
+    // 기한과 같은 규칙 — 올린 사람은 최종 승인도 하지 못한다
+    if (isSelfReview(ownerRow?.owner_id, viewerId)) {
+      throw new ConflictException({
+        code: SELF_APPROVAL_CODE,
+        message: '자기가 담당인 기획은 자기가 결재할 수 없습니다 — 내는 사람과 결재하는 사람은 다릅니다',
+      });
+    }
     if (!before.canReview) {
       throw new ConflictException({
         code: before.dueState === 'approved' ? 'NOT_REVIEWABLE' : 'DUE_NOT_APPROVED',
@@ -1253,7 +1289,7 @@ export class OpsService {
           JSON.stringify({ stage: next, reason: dto.reason?.trim() ?? null })],
       );
     });
-    return (await this.planDetail(id, canApprove))!;
+    return (await this.planDetail(id, canApprove, viewerId))!;
   }
 
   /* ══ §66 회의 상세 (C57) ═══════════════════════════════════════════════ */

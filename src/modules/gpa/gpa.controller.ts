@@ -28,8 +28,8 @@ export class GpaController {
     description: '배정 − 사용(ok) − 대기(wait) = 잔여는 서버 한 곳이 계산한다. 학부모 비공개(D-R30) — 발송 경로에 싣지 않는다.',
   })
   @ApiOkResponse({ type: GpaBoardDto })
-  async board(@Query() query: GpaBoardQueryDto): Promise<GpaBoardDto> {
-    return this.svc.board(query.anchor);
+  async board(@CurrentUser() user: RequestUser, @Query() query: GpaBoardQueryDto): Promise<GpaBoardDto> {
+    return this.svc.board(query.anchor, user.id);
   }
 
   @Post('uses')
@@ -43,12 +43,18 @@ export class GpaController {
 
   @Patch('uses/:id')
   @Perm('canAdminPage', 'canCrudAll')
-  @ApiOperation({ summary: '기록 승인(ok)·되돌림(wait) — 닫힌 사이클은 잠긴다' })
+  @ApiOperation({ summary: '기록 승인(ok)·되돌림(wait) — 기록한 사람은 승인하지 못한다 · 닫힌 사이클은 잠긴다' })
   @ApiOkResponse({ type: GpaUseDto })
-  @ApiConflictResponse({ description: 'code CYCLE_CLOSED' })
+  @ApiConflictResponse({ description: 'code CYCLE_CLOSED | SELF_APPROVAL_FORBIDDEN' })
   @ApiNotFoundResponse({ description: '기록 없음' })
-  async setUseState(@Param('id', ParseIntPipe) id: number, @Body() dto: GpaUseStateDto): Promise<GpaUseDto> {
-    return this.svc.setUseState(id, dto);
+  async setUseState(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: GpaUseStateDto,
+  ): Promise<GpaUseDto> {
+    // 승인자를 서버가 고정한다 — 이 경로는 2026-09-20 전까지 actor 를 받지도 않았고,
+    // 그래서 누가 승인했는지 남지도 자기 기록을 막지도 못했다
+    return this.svc.setUseState(id, user.id, dto);
   }
 
   @Delete('uses/:id')

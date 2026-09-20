@@ -77,7 +77,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
   it('기한이 아직 승인 전이면 최종 승인 단추가 닫히고 이유가 문장으로 온다', async () => {
-    const v = (await svc().planDetail(planId, true))!;
+    const v = (await svc().planDetail(planId, true, CEO))!;
     expect(v.dueState).toBe('proposed');
     expect(v.dueStateLabel).toBe('기한 제안');
     expect(v.canDecideDue).toBe(true);
@@ -117,7 +117,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
   it('대표가 아니면 기한도 결재도 못 한다 — 매니저가 자기 기획을 스스로 승인할 수 없다', async () => {
     await expect(svc().decidePlanDue(MGR, false, planId, { approve: true }))
       .rejects.toMatchObject({ response: { code: 'CEO_ONLY' } });
-    const v = (await svc().planDetail(planId, false))!;
+    const v = (await svc().planDetail(planId, false, MGR))!;
     expect(v.canDecideDue).toBe(false);
     expect(v.reviewBlockedReason).toBe('기획 결재는 대표만 합니다');
   });
@@ -188,8 +188,24 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
        VALUES ('가',${MGR},$1,true,'plan',$2),('나',${MGR},$1,false,'plan',$2),('다',${MGR},$1,false,'plan',$2)`,
       [day(3), planId],
     );
-    const v = (await svc().planDetail(planId, true))!;
+    const v = (await svc().planDetail(planId, true, CEO))!;
     expect({ done: v.taskDone, all: v.tasks.length }).toEqual({ done: 1, all: 3 });
+  });
+
+  it('담당자 자신에게는 단추가 열리지 않는다 — 쓰기 거절과 단추가 같은 질문을 한다 (S1)', async () => {
+    // 대표가 자기 이름으로 올린 기획이라면, 대표여도 자기 기한을 승인하지 못한다
+    await q.query(`UPDATE plan SET owner_id = ${CEO} WHERE id = $1`, [planId]);
+    const v = (await svc().planDetail(planId, true, CEO))!;
+    expect(v.canDecideDue).toBe(false);
+    expect(v.canReview).toBe(false);
+    expect(v.reviewBlockedReason).toBe('자기가 담당인 기획은 자기가 결재할 수 없습니다');
+    await expect(svc().decidePlanDue(CEO, true, planId, { approve: true }))
+      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
+    await expect(svc().reviewPlan(CEO, true, planId, { decision: 'approve' }))
+      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
+    // 남이 하면 그대로 열린다
+    const other = (await svc().planDetail(planId, true, MGR))!;
+    expect(other.canDecideDue).toBe(true);
   });
 
   it('표가 반쪽 승인을 거부한다 — 승인 시각만 있고 누가 했는지 없을 수 없다', async () => {

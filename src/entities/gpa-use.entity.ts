@@ -49,4 +49,15 @@ export class GpaUse {
   /** wait | ok — 대기는 타임라인에 점선 */
   @Column({ type: 'varchar', length: 8, default: 'wait' })
   state: string;
+
+  /**
+   * 승인 도장 — 누가·언제 (migration 1761500000000).
+   * `coord_id`(기록자)와 **같을 수 없다**: `gpa_use_no_self_approve`.
+   * 시각과 사람은 짝이다: `gpa_use_approve_pair`. 옛 행은 둘 다 NULL(N-25 보정 0).
+   */
+  @Column({ type: 'bigint', nullable: true })
+  approvedBy: number | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  approvedAt: Date | null;
 }

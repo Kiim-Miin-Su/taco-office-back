@@ -50,6 +50,13 @@ const BODY_EN = {
 const UNWRITTEN_EVERY = 6;
 const REPORTABLE_KIND = new Map<string, boolean>(KINDS.map(({ key, rep }) => [key, rep]));
 
+/**
+ * 리포트 결재자 — 기본은 매니저 김범준(3)이고, **그가 쓴 리포트는 관리자 김민수(2)가 결재한다.**
+ * 「올린 사람은 결재하지 못한다」를 DB 가 막으므로(`rep_no_self_review`) 시드도 그 규칙을 지킨다.
+ */
+const REVIEWER_ID = 3;
+const REVIEWER_ALT_ID = 2;
+
 export function buildReports(
   occs: OccSeed[],
   langOf: (id: number) => string,
@@ -66,6 +73,9 @@ export function buildReports(
       let state: RepState;
       let writtenAt: string | null = null, submittedAt: string | null = null;
       let reviewedAt: string | null = null, reviewerId: number | null = null, rejectReason: string | null = null;
+      // 결재자는 **쓴 사람과 달라야 한다** — 김범준(3)은 강사로도 수업을 맡으므로 자기 결재가 된다.
+      // DB `rep_no_self_review` 가 막고 시드는 언제나 새 INSERT 라 여기서 걸린다 (C86-g 와 같은 자리).
+      const reviewer = o.teacherId === REVIEWER_ID ? REVIEWER_ALT_ID : REVIEWER_ID;
 
       if (past_ <= 0) {
         state = effectiveRepState(
@@ -82,7 +92,7 @@ export function buildReports(
         } else if (past % 11 === 0) {
           state = 'rej';                    // 반려도 「썼다」로 센다 (D-R7)
           writtenAt = `${o.onDate}T12:10:00Z`; submittedAt = `${o.onDate}T12:20:00Z`;
-          reviewedAt = `${addD(o.onDate, 1)}T00:30:00Z`; reviewerId = 3;
+          reviewedAt = `${addD(o.onDate, 1)}T00:30:00Z`; reviewerId = reviewer;
           rejectReason = '진도 칸이 비어 있습니다. 어디까지 나갔는지 적어 주세요.';
         } else if (past % 5 === 0) {
           state = 'wait';                   // 제출됨 · 승인 대기 (D-R34)
@@ -90,7 +100,7 @@ export function buildReports(
         } else {
           state = 'ok';
           writtenAt = `${o.onDate}T11:40:00Z`; submittedAt = `${o.onDate}T11:55:00Z`;
-          reviewedAt = `${addD(o.onDate, 1)}T00:10:00Z`; reviewerId = 3;
+          reviewedAt = `${addD(o.onDate, 1)}T00:10:00Z`; reviewerId = reviewer;
         }
       }
       // 한 수업에 여러 학생이면 언어는 첫 학생 기준이다. 섞인 그룹은 시드에 두지 않는다.

@@ -11,8 +11,16 @@ import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import { EXEC_AREA_KEYS, EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
 import { INTAKE_FUNNEL_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
-import { labelOf, RPT_TYPE_LABEL, toApState } from '../../lib/approval';
+import { isSelfReview, labelOf, RPT_TYPE_LABEL, SELF_APPROVAL_CODE, toApState } from '../../lib/approval';
 import { BoardService } from '../board/board.service';
+
+/**
+ * §73 결재 단추를 서버가 판정하기 위해 필요한 「보는 사람」.
+ *
+ * 선택 인자인 이유는 이 서비스를 직접 새로 만들어 쓰는 DB 스위트가 여럿이라서다.
+ * **안 주면 단추를 닫는다** — 모르는 쪽으로 열면 눌렀을 때 서버가 거절해 그 자리가 다음 불일치가 된다.
+ */
+export type ExecViewer = { id: number; canApprove: boolean };
 import type {
   ExecAreaDto, ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto, ExecMonthlyDto,
   ExecReportWriteResultDto, ExecReviewDto, ExecStatDto, ExecSubmitDto,
@@ -264,10 +272,22 @@ export class ExecService {
               -- 같은 파라미터를 varchar 와 비교 두 곳에 쓰면 타입을 못 정한다 — 한 번만 캐스팅한다
               reject_reason = CASE WHEN $2::text = 'rej' THEN $4::text ELSE NULL END
         WHERE id = $1 AND state = 'sent'
+          -- 올린 사람은 결재하지 못한다. 막는 것은 이 줄과 DB CHECK 이고 아래는 설명이다 (C84-b 와 같은 자리)
+          AND (sent_by IS NULL OR sent_by <> $3)
        RETURNING id`,
       [id, dto.action, actorId, reason],
     );
     if (!row) {
+      // 왜 안 됐는지는 한 번 더 읽어서 말한다 — 「올라온 보고만」과 「자기 보고」는 고치는 방법이 다르다
+      const why = await this.row<{ state: string; sent_by: string | null }>(
+        'SELECT state, sent_by FROM rpt WHERE id = $1', [id],
+      );
+      if (why && isSelfReview(why.sent_by, actorId)) {
+        throw new ConflictException({
+          code: SELF_APPROVAL_CODE,
+          message: '자기가 올린 보고는 자기가 결재할 수 없습니다 — 올리는 사람과 결재하는 사람은 다릅니다',
+        });
+      }
       throw new ConflictException({
         code: 'RPT_NOT_SENT',
         message: '올라온 보고만 결재할 수 있습니다',
@@ -387,7 +407,7 @@ export class ExecService {
     return { leads, lost: lostRows.reduce((a, r) => a + r.count, 0), lostRows, funnel, funnelSince };
   }
 
-  async range(from: string, to: string, canSeeAmounts: boolean): Promise<ExecDto> {
+  async range(from: string, to: string, canSeeAmounts: boolean, viewer?: ExecViewer): Promise<ExecDto> {
     const [lessons, canceled, students, newLeads, enrolled, unwritten] = await Promise.all([
       this.one(`SELECT count(*)::text n FROM ser_occ o
                  LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
@@ -485,7 +505,7 @@ export class ExecService {
               r.memo AS memo_json,
               ${kstAt(`r.sent_at`)}     AS sent_at,
               ${kstAt(`r.reviewed_at`)} AS reviewed_at,
-              r.reject_reason,
+              r.reject_reason, r.sent_by,
               sb.name AS sent_by_name, rb.name AS reviewed_by_name
          FROM rpt r
          LEFT JOIN staff sb ON sb.id = r.sent_by
@@ -504,6 +524,10 @@ export class ExecService {
       rejectReason: (r.reject_reason as string) ?? null,
       sentByName: (r.sent_by_name as string) ?? null,
       reviewedByName: (r.reviewed_by_name as string) ?? null,
+      /* 단추 판정은 여기 한 곳이다 — 보는 사람을 모르면 닫는다 (모르는 쪽으로 열면 눌렀을 때 거절당한다) */
+      canReview: String(r.state) === 'sent' && canSeeAmounts
+        && viewer !== undefined && viewer.canApprove
+        && !isSelfReview(r.sent_by, viewer.id),
     }));
 
     const areas = await this.areaCounts(from, to);

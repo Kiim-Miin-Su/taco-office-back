@@ -16,6 +16,7 @@ import { Repository } from 'typeorm';
 import { GpaCycle } from '../../entities';
 import { addDays, todayKst } from '../../lib/kst';
 import { kstAt, writtenRows } from '../../lib/sql';
+import { isSelfReview, SELF_APPROVAL_CODE } from '../../lib/approval';
 import type {
   GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
 } from './gpa.dto';
@@ -69,7 +70,7 @@ export class GpaService {
     };
   }
 
-  async board(anchor?: string): Promise<GpaBoardDto> {
+  async board(anchor?: string, viewerId?: number): Promise<GpaBoardDto> {
     const services = (await this.q(
       `SELECT key, name, point FROM gpasvc ORDER BY sort NULLS LAST, key`,
     )).map((r) => ({ key: String(r.key), name: String(r.name), point: Number(r.point) }));
@@ -87,8 +88,10 @@ export class GpaService {
 
     const uses = await this.q(
       `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date,
-              u.start_min, u.ser_id, u.note_url, u.state, co.name AS coord_name
+              u.start_min, u.ser_id, u.note_url, u.state, u.coord_id, co.name AS coord_name, ap.name AS approved_by_name,
+              to_char(u.approved_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS approved_on
          FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id
+         LEFT JOIN staff ap ON ap.id = u.approved_by
         WHERE u.cycle_id = $1
         ORDER BY u.on_date, u.start_min NULLS LAST, u.id`, [cycleId]);
 
@@ -160,11 +163,16 @@ export class GpaService {
       // 「N회 진행」 — 기록이 있다는 것은 회차가 있었다는 뜻이다 (승인 대기도 센다)
       totalUses: uses.length,
       students: rows,
-      uses: uses.map((r) => this.useRow(r)),
+      uses: uses.map((r) => this.useRow(r, viewerId)),
     };
   }
 
-  private useRow(r: R): GpaUseDto {
+  /**
+   * `viewerId` 를 주면 **승인 단추가 열리는지도 서버가 정한다** — 기록한 사람은 승인하지 못하므로
+   * (`gpa_use_no_self_approve`) 화면이 단추만 열어 두면 눌렀을 때 거절당한다 (D-R39).
+   * 누가 보는지 모르면 닫는다 — 모르는 쪽으로 열면 그 자리가 다음 불일치가 된다.
+   */
+  private useRow(r: R, viewerId?: number): GpaUseDto {
     return {
       id: Number(r.id), studentId: Number(r.student_id), svcKey: String(r.svc_key),
       points: Number(r.points), onDate: String(r.on_date),
@@ -173,6 +181,12 @@ export class GpaService {
       coordName: (r.coord_name as string) ?? null,
       noteUrl: (r.note_url as string) ?? null,
       state: String(r.state),
+      // 승인 도장 — 목록 질의가 아직 안 읽는 자리에서는 undefined 가 아니라 null 로 내려간다
+      approvedByName: (r.approved_by_name as string) ?? null,
+      approvedOn: (r.approved_on as string) ?? null,
+      canApprove: String(r.state) === 'wait'
+        && viewerId !== undefined
+        && !isSelfReview(r.coord_id, viewerId),
     };
   }
 
@@ -205,24 +219,59 @@ export class GpaService {
     );
     const [row] = await this.q(
       `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date, u.start_min, u.ser_id,
-              u.note_url, u.state, co.name AS coord_name
+              u.note_url, u.state, u.coord_id, co.name AS coord_name, ap.name AS approved_by_name,
+              to_char(u.approved_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS approved_on
          FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id
+         LEFT JOIN staff ap ON ap.id = u.approved_by
         WHERE u.cycle_id = $1 AND u.student_id = $2 ORDER BY u.id DESC LIMIT 1`,
       [dto.cycleId, dto.studentId]);
-    return this.useRow(row);
+    return this.useRow(row, coordId);
   }
 
-  /** 승인(ok)·되돌림(wait) — 닫힌 사이클은 잠긴다. */
-  async setUseState(id: number, dto: GpaUseStateDto): Promise<GpaUseDto> {
-    const [row] = await this.q(`SELECT cycle_id FROM gpa_use WHERE id = $1`, [id]);
+  /**
+   * 승인(ok)·되돌림(wait) — 닫힌 사이클은 잠긴다.
+   *
+   * **기록한 사람은 승인하지 못한다.** 2026-09-20 검수 전까지 이 경로는 `@CurrentUser` 를 **받지도 않아**
+   * 누가 승인했는지 어디에도 안 남았고 자기 기록을 자기가 승인할 수 있었다. 판정은 `isSelfReview`
+   * 한 곳이고 DB 도 `gpa_use_no_self_approve` 로 한 번 더 막는다.
+   *
+   * 승인은 도장을 찍고 **되돌림은 도장을 지운다** — 되돌린 기록에 승인자가 남아 있으면 거짓말이 된다.
+   */
+  async setUseState(id: number, actorId: number, dto: GpaUseStateDto): Promise<GpaUseDto> {
+    const [row] = await this.q(`SELECT cycle_id, coord_id, state FROM gpa_use WHERE id = $1`, [id]);
     if (!row) throw new NotFoundException('기록을 찾을 수 없습니다');
     await this.openCycle(Number(row.cycle_id));
-    await this.q(`UPDATE gpa_use SET state = $2 WHERE id = $1`, [id, dto.state]);
+    if (dto.state === 'ok' && isSelfReview(row.coord_id, actorId)) {
+      throw new ConflictException({
+        code: SELF_APPROVAL_CODE,
+        message: '자기가 기록한 포인트는 자기가 승인할 수 없습니다 — 적는 사람과 승인하는 사람은 다릅니다',
+      });
+    }
+    await this.anyRepo.manager.transaction(async (em) => {
+      await em.query(
+        `UPDATE gpa_use
+            SET state = $2::text,
+                approved_by = CASE WHEN $2::text = 'ok' THEN $3::bigint ELSE NULL END,
+                approved_at = CASE WHEN $2::text = 'ok' THEN now() ELSE NULL END
+          WHERE id = $1`,
+        [id, dto.state, actorId],
+      );
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1, 'GPA_USE', $2, $3, $4::jsonb, $5::jsonb)`,
+        [actorId, id, dto.state === 'ok' ? 'approve' : 'revert',
+          JSON.stringify({ state: row.state }), JSON.stringify({ state: dto.state })],
+      );
+    });
     const [out] = await this.q(
       `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date, u.start_min, u.ser_id,
-              u.note_url, u.state, co.name AS coord_name
-         FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id WHERE u.id = $1`, [id]);
-    return this.useRow(out);
+              u.note_url, u.state, u.coord_id, co.name AS coord_name, ap.name AS approved_by_name,
+              to_char(u.approved_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS approved_on
+         FROM gpa_use u
+         LEFT JOIN staff co ON co.id = u.coord_id
+         LEFT JOIN staff ap ON ap.id = u.approved_by
+        WHERE u.id = $1`, [id]);
+    return this.useRow(out, actorId);
   }
 
   /** 잘못 기록한 wait 만 지운다 — 승인분은 불변, 닫힌 사이클은 잠긴다. */

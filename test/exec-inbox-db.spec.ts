@@ -241,6 +241,36 @@ d('§69 6영역 · §73 결재함 — 판정 한 곳, 이동만 (C37)', () => {
     expect(after.reviewed_at).toBeNull();
   });
 
+  /**
+   * 화면이 `canApprove && canSeeProfit` 를 스스로 조합하고 있었다. 2026-09-20 에 서버가
+   * **자기 결재**까지 거절하기 시작했으므로, 그 조합만으로는 올린 사람에게 단추가 열린 채
+   * 눌렀을 때만 거절당한다. 판정을 서버 한 줄(`canReview`)로 옮긴 자리의 회귀다 (S1 · D-R39).
+   */
+  it('§73 결재 단추는 서버가 연다 — 올린 사람에게는 닫히고 남에게는 열린다 (S1)', async () => {
+    const writer = await actor('단추작성자');
+    const boss = await actor('단추결재자');
+    await svc().saveMemo({ rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'money', memo: '한 줄' }] }, writer);
+    const sent = await svc().submit({ rptType: 'day', onDate: '2026-08-21' }, writer);
+
+    const rowFor = async (viewer?: { id: number; canApprove: boolean }) =>
+      (await svc().range('2026-08-01', '2026-08-31', true, viewer)).reports.find((r) => r.id === sent.id)!;
+
+    expect((await rowFor({ id: writer, canApprove: true })).canReview).toBe(false);
+    expect((await rowFor({ id: boss, canApprove: true })).canReview).toBe(true);
+    // 결재 권한이 없으면 남의 보고여도 닫힌다
+    expect((await rowFor({ id: boss, canApprove: false })).canReview).toBe(false);
+    // 금액을 못 보면 §69 를 결재하지 않는다 — 숫자를 안 보고 서명할 수 없다
+    expect((await svc().range('2026-08-01', '2026-08-31', false, { id: boss, canApprove: true }))
+      .reports.find((r) => r.id === sent.id)!.canReview).toBe(false);
+    // 보는 사람을 아예 모르면 닫는다
+    expect((await rowFor()).canReview).toBe(false);
+
+    // 단추가 말하는 것과 서버가 하는 것이 같다
+    await expect(svc().review(sent.id, { action: 'ok' }, writer))
+      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
+    expect((await svc().review(sent.id, { action: 'ok' }, boss)).state).toBe('ok');
+  });
+
   it('올라오지 않은 보고는 결재할 수 없다', async () => {
     const me = await actor('성급한결재');
     const draft = await svc().saveMemo(

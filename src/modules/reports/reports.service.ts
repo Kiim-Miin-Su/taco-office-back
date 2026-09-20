@@ -116,6 +116,10 @@ const WRITE_ERRORS: Record<ReportWriteIssue, { message: string; status: 'bad' | 
 
 const REVIEW_ERRORS: Record<ReportReviewIssue, { message: string; status: 'bad' | 'forbidden' | 'conflict' }> = {
   REPORT_REVIEW_FORBIDDEN: { message: '리포트 승인 권한이 필요합니다', status: 'forbidden' },
+  SELF_APPROVAL_FORBIDDEN: {
+    message: '자기가 쓴 리포트는 자기가 승인할 수 없습니다 — 쓰는 사람과 결재하는 사람은 다릅니다',
+    status: 'conflict',
+  },
   REPORT_NOT_WAITING: { message: '승인 대기 중인 리포트만 검토할 수 있습니다', status: 'conflict' },
   APPROVE_REASON_FORBIDDEN: { message: '승인할 때는 반려 사유를 보낼 수 없습니다', status: 'bad' },
   REJECT_REASON_REQUIRED: { message: '반려 사유를 입력해야 합니다', status: 'bad' },
@@ -262,8 +266,9 @@ export class ReportsService {
       body,
       fields: REPORT_FIELDS.map((field) => ({ ...field })),
       canEdit: this.canEdit(r, actorId, canCrudAll),
+      // 자기가 쓴 리포트에는 승인 단추가 서지 않는다 — 쓰기 경로와 같은 판정을 쓴다(D-R39)
       canReview: reportReviewIssue({
-        canApprove, state: r.state, decision: 'approve',
+        canApprove, state: r.state, decision: 'approve', teacherId: r.teacher_id, actorId,
       }) === null,
       canExport,
       exportFiles: canExport ? row.students.map((student) => {
@@ -955,6 +960,8 @@ export class ReportsService {
 
       const issue = reportReviewIssue({
         canApprove, state: row.state, decision: dto.decision, reason: dto.reason,
+        // 자기 결재 금지 — 쓴 사람은 잠근 행에서 읽는다(요청이 보낸 값을 믿지 않는다)
+        teacherId: row.teacher_id, actorId,
       });
       if (issue) this.throwReviewIssue(issue);
 

@@ -300,7 +300,7 @@ export class OpsController {
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<PlanDetailDto> {
-    const out = await this.svc.planDetail(id, isRole(user.role) && canCeoApprovePlan(user.role));
+    const out = await this.svc.planDetail(id, isRole(user.role) && canCeoApprovePlan(user.role), user.id);
     if (!out) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
     return out;
   }
