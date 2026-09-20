@@ -88,6 +88,13 @@ export const canCeoVoidInvoice = (r: Role): boolean => r === 'ceo';
 export const canCeoConfirmPayout = (r: Role): boolean => r === 'ceo';
 
 /**
+ * §56 지출을 **남의 이름으로** 올리는 것 — 대표 전용 (컨트롤러가 처음부터 「대표가 직원 대신 올릴 때만」이라
+ * 적어 두었는데 **서버가 그 「대표만」을 검사하지 않고 있었다** · 2026-09-20 전수 검수).
+ * 자기 이름으로 올리는 것은 `canAdminPage` 누구나 한다 — 여기서 가르는 것은 대리 등록 하나다.
+ */
+export const canCeoFileExpenseForOther = (r: Role): boolean => r === 'ceo';
+
+/**
  * §75 중앙 결재 흐름의 서버 projection 범위.
  *
  * 역할 문자열 비교를 drawer controller에 복제하지 않고 이 결과만 소비한다.

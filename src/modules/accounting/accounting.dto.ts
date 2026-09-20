@@ -267,6 +267,13 @@ export class ExpenseDto {
   @ApiProperty({ description: '영수증 없이는 승인할 수 없다 (A-4)' }) hasReceipt!: boolean;
   @ApiPropertyOptional({ type: String, nullable: true }) requesterName?: string | null;
   @ApiProperty({ type: Number, nullable: true, description: '본인 신청은 본인이 승인할 수 없다 (A-5)' }) requesterId!: number | null;
+  @ApiProperty({
+    type: Number, nullable: true,
+    description: '**실제로 올린 사람** — 대표가 대신 올리면 requesterId 와 갈린다. 이 사람도 심사하지 못한다 (S2 · 옛 행은 null)',
+  })
+  filedById!: number | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '대신 올린 사람 이름 — 본인이 올렸으면 requesterName 과 같다' })
+  filedByName?: string | null;
   @ApiProperty({ enum: ['pending', 'approved', 'rejected'] }) state!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) reviewerName?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) reviewedAt?: string | null;
@@ -597,6 +604,8 @@ export class WithdrawInvoiceDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '돌려줄 돈 — 받은 돈이 새 금액보다 많은 만큼 (PAY 음수 줄)' }) refund?: number | null;
   @ApiProperty({ description: '잔여 회차 수 — 이 청구서에서 빠진 회차' }) removedCount!: number;
   @ApiProperty({ description: '금액이 0 이 되어 취소(void)로 접혔는가' }) voided!: boolean;
+  @ApiProperty({ description: '취소가 걸리는데 **대표가 아니라서** 막히는가 — 미리보기에서만 true 가 될 수 있다 (N-139)' })
+  needsCeoVoid!: boolean;
 }
 
 export class WithdrawResultDto {
@@ -611,6 +620,13 @@ export class WithdrawResultDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '환불 합계 — 금액 권한 없으면 null' }) refundTotal?: number | null;
   @ApiProperty({ description: '수강(ENR) 행에 종료일이 적힌 수 — 등록 행이 없으면 0' }) enrollmentsEnded!: number;
   @ApiProperty() canSeeAmounts!: boolean;
+  @ApiProperty({
+    description: '이 종료를 실제로 확정할 수 있는가 — **청구서가 통째로 비어 취소(void)되는 경우는 대표만**(N-139). '
+      + '화면이 역할을 다시 조합하지 않는다 (D-R39)',
+  })
+  canConfirm!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '확정이 막힌 이유 — 열려 있으면 null' })
+  confirmBlockedReason!: string | null;
 }
 
 /** `POST /accounting/tuition/close` — 대표 전용 */

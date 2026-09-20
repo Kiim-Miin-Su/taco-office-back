@@ -105,16 +105,22 @@ d('§53·§55 분납 입금 — 누계·전이·거절은 서버 한 곳 (A-D2 �
   it('부분 납부는 줄을 지워 정정할 수 있고, 마지막 줄을 지우면 발행 사실(전달)로 돌아간다', async () => {
     await svc().addPayment(61, { invId, amount: 120000, paidOn: '2026-09-10' }, true);
     const [pay] = (await q.query(`SELECT id FROM pay WHERE inv_id = $1 ORDER BY id DESC LIMIT 1`, [invId])) as { id: string }[];
-    await expect(svc().removePayment(Number(pay.id))).resolves.toEqual({ ok: true });
+    await expect(svc().removePayment(61, Number(pay.id))).resolves.toEqual({ ok: true });
     const after = await row();
     expect(after).toMatchObject({ paid_amount: 0, state: 'sent' });
     expect(await payCount()).toBe(0);
+    // 지운 줄은 흔적이 남는다 — 지운 뒤에는 무엇이 있었는지 아무도 모른다 (S2)
+    const [trace] = (await q.query(
+      `SELECT actor_id, before FROM log WHERE entity = 'PAY' AND entity_id = $1 AND action = 'delete'`, [Number(pay.id)],
+    )) as Array<{ actor_id: string; before: { amount: number; paidOn: string } }>;
+    expect(Number(trace.actor_id)).toBe(61);
+    expect(trace.before).toMatchObject({ amount: 120000, paidOn: '2026-09-10' });
   });
 
   it('완납된 청구서의 줄은 지울 수 없다 — 되돌리기가 없다 (erd INV Note)', async () => {
     await svc().addPayment(61, { invId, amount: 500000, paidOn: '2026-09-10' }, true);
     const [pay] = (await q.query(`SELECT id FROM pay WHERE inv_id = $1 ORDER BY id DESC LIMIT 1`, [invId])) as { id: string }[];
-    await expect(svc().removePayment(Number(pay.id)))
+    await expect(svc().removePayment(61, Number(pay.id)))
       .rejects.toMatchObject({ response: { code: 'INV_PAID_LOCKED' } });
     expect(await payCount()).toBe(1);
   });

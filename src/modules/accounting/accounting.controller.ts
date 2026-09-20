@@ -11,7 +11,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
-import { Perm, canCeoCloseMonth, canCeoConfirmPayout, canCeoVoidInvoice, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { Perm, canCeoCloseMonth, canCeoConfirmPayout, canCeoFileExpenseForOther, canCeoVoidInvoice, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AccountingDto, CarryRowDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
   OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
@@ -107,7 +107,7 @@ export class AccountingController {
   @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | MONTH_CLOSED' })
   withdrawPreview(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.withdrawSvc.preview(user.id, dto, canSee);
+    return this.withdrawSvc.preview(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
   }
 
   @Post('withdrawals')
@@ -119,10 +119,10 @@ export class AccountingController {
   })
   @ApiCreatedResponse({ type: WithdrawResultDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'WITHDRAW_BAD_SERIES · 입력 검증' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | MONTH_CLOSED' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_NEEDS_CEO_VOID | MONTH_CLOSED' })
   withdraw(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.withdrawSvc.withdraw(user.id, dto, canSee);
+    return this.withdrawSvc.withdraw(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
   }
 
   @Post('tuition/close')
@@ -286,12 +286,15 @@ export class AccountingController {
 
   @Delete('payments/:id')
   @Perm('canMoney')
-  @ApiOperation({ summary: '입금 줄 삭제 — 부분 납부(partial) 정정일 때만. 완납은 되돌리지 않는다' })
+  @ApiOperation({
+    summary: '입금 줄 삭제 — 부분 납부(partial) 정정일 때만. 완납은 되돌리지 않는다',
+    description: '지우기 전에 그 줄을 통째로 LOG(PAY delete)에 남긴다 — 장부의 입금 줄이 흔적 없이 사라지면 안 된다 (S2).',
+  })
   @ApiOkResponse({ type: OkDto })
   @ApiConflictResponse({ description: 'code INV_PAID_LOCKED' })
   @ApiNotFoundResponse({ description: '입금 기록 없음' })
-  async removePayment(@Param('id', ParseIntPipe) id: number): Promise<OkDto> {
-    return this.svc.removePayment(id);
+  async removePayment(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<OkDto> {
+    return this.svc.removePayment(user.id, id);
   }
 
   @Post('expenses/:id/review')
@@ -400,9 +403,10 @@ export class AccountingController {
   @ApiCreatedResponse({ type: ExpenseDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'EXPENSE_RECEIPT_KIND · 입력 검증' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND | FILE_NOT_FOUND' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'EXPENSE_PROXY_FORBIDDEN — 남의 이름으로 올리는 것은 대표만' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'EXPENSE_RECEIPT_USED' })
   createExpense(@CurrentUser() user: RequestUser, @Body() dto: ExpenseCreateDto): Promise<ExpenseDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.createExpense(user.id, dto, canSee);
+    return this.svc.createExpense(user.id, dto, canSee, isRole(user.role) && canCeoFileExpenseForOther(user.role));
   }
 }

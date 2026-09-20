@@ -34,10 +34,12 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
   let ds: DataSource;
   let token = '';
   let managerToken = '';
+  let moneyMgrToken = '';
   const PW = 'withdraw-1234';
   const CEO = 981;
   const TEACHER = 982;
   const MANAGER = 983; // 금액 예외 없는 매니저 — 회계 403
+  const MONEY_MGR = 984; // **금액 예외로 회계에 들어온 매니저** — 장부를 접는 것은 여전히 대표만이다 (S2)
   const STU_A = 9981; // 그만두는 학생
   const STU_B = 9982; // 남는 학생 — 단가가 다시 잡힌다
   const KIND = 'wd_kind';
@@ -65,15 +67,16 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     ds = app.get(DataSource);
 
     await q(`DELETE FROM month_close WHERE closed_by = $1`, [CEO]);
-    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
-    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
+    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER, MONEY_MGR]]);
+    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER, MONEY_MGR]]);
     const hash = await bcrypt.hash(PW, 4);
     await q(
       `INSERT INTO staff (id, name, email, role, password_hash, active, can_money) VALUES
          ($1,'종료대표','wd-ceo@t.kr','ceo',$4,true,null),
          ($2,'종료강사','wd-t@t.kr','teacher',$4,true,null),
-         ($3,'종료매니저','wd-m@t.kr','manager',$4,true,null)`,
-      [CEO, TEACHER, MANAGER, hash],
+         ($3,'종료매니저','wd-m@t.kr','manager',$4,true,null),
+         ($5,'종료금액매니저','wd-mm@t.kr','manager',$4,true,true)`,
+      [CEO, TEACHER, MANAGER, hash, MONEY_MGR],
     );
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'종료A','10'), ($2,'종료B','10')`, [STU_A, STU_B]);
@@ -90,6 +93,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     };
     token = await login('wd-ceo@t.kr');
     managerToken = await login('wd-m@t.kr');
+    moneyMgrToken = await login('wd-mm@t.kr');
   });
 
   afterAll(async () => {
@@ -98,8 +102,8 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
         await q(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
         await q(`DELETE FROM sub WHERE key = $1`, [SUB]);
         await q(`DELETE FROM kind WHERE key = $1`, [KIND]);
-        await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
-        await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
+        await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER, MONEY_MGR]]);
+        await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER, MONEY_MGR]]);
         await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
       }
     } finally {
@@ -267,6 +271,48 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     // 잘못된 규칙 id 가 섞이면 400 · 없는 학생 404
     await withdraw({ studentId: STU_B, endedOn, serIds: [solo[0]] }).expect(400);
     await withdraw({ studentId: 99999999, endedOn }).expect(404);
+  });
+
+  /**
+   * 같은 일에 문이 둘 있었는데 **한쪽만 잠겨 있었다** (S2 · 2026-09-20 전수 검수).
+   *
+   * 전용 경로 `POST /invoices/{id}/void` 는 `canMoney` **위에** `canCeoVoidInvoice` 를 걸어 두었다 —
+   * 「회계 탭에 금액 예외로 들어온 매니저가 장부를 지울 수 있으면 안 된다」. 그런데 수강 종료는
+   * `canMoney` 만으로 같은 상태(`void` + `detail.void`)에 닿고 있었다.
+   */
+  it('청구서가 통째로 비는 종료는 대표만 한다 — 금액 예외 매니저는 미리보기에서 막히고 이유가 온다 (S2)', async () => {
+    await fiveLessons([STU_A]);
+    const invA = await paidInvoice(STU_A);
+    expect(invA.amount).toBe(SOLO * 5);
+    const endedOn = plus(NEXT_FIRST, -1);
+
+    // 미리보기는 던지지 않는다 — 화면이 「왜 못 누르는지」를 먼저 말해야 한다
+    const pv = await preview({ studentId: STU_A, endedOn }, moneyMgrToken).expect(201);
+    expect(pv.body.canConfirm).toBe(false);
+    expect(pv.body.confirmBlockedReason).toContain('대표만');
+    expect(pv.body.invoices).toEqual([expect.objectContaining({ id: invA.id, voided: true, needsCeoVoid: true })]);
+
+    // 눌러도 서버가 거절한다 — 단추와 서버가 같은 질문을 한다
+    const blocked = await withdraw({ studentId: STU_A, endedOn }, moneyMgrToken).expect(409);
+    expect(blocked.body.code).toBe('WITHDRAW_NEEDS_CEO_VOID');
+    const [untouched] = await q<{ state: string }>(`SELECT state::text AS state FROM inv WHERE id = $1`, [invA.id]);
+    expect(untouched.state).toBe('paid'); // 아무것도 남지 않았다
+    expect(await q(`SELECT 1 FROM ser_stu WHERE student_id = $1 AND to_date IS NOT NULL`, [STU_A])).toHaveLength(0);
+
+    // 대표는 그대로 된다
+    const done = await withdraw({ studentId: STU_A, endedOn }).expect(201);
+    expect(done.body).toMatchObject({ canConfirm: true, confirmBlockedReason: null });
+    expect(done.body.invoices).toEqual([expect.objectContaining({ id: invA.id, voided: true, needsCeoVoid: false, state: 'void' })]);
+  });
+
+  it('청구서가 남는 종료는 금액 예외 매니저도 한다 — 막는 것은 취소 하나뿐이다 (S2)', async () => {
+    const ids = await fiveLessons([STU_A, STU_B]);
+    const invA = await paidInvoice(STU_A);
+    // 첫날 뒤로 종료 — 1회는 청구에 남는다(0 원이 되지 않는다)
+    // 첫날 ONCE 는 종료일에 이미 끝나 있어 대상이 아니다(WITHDRAW_BAD_SERIES) — 나머지 넷만 고른다
+    const res = await withdraw({ studentId: STU_A, endedOn: DAYS[0], serIds: ids.slice(1) }, moneyMgrToken).expect(201);
+    expect(res.body).toMatchObject({ canConfirm: true, confirmBlockedReason: null });
+    expect(res.body.invoices).toEqual([expect.objectContaining({ id: invA.id, voided: false, needsCeoVoid: false })]);
   });
 
   it('마감 달의 종료일은 409 MONTH_CLOSED · 금액 권한 없는 매니저는 403 · 청구서가 없으면 환불 없이 명단만 정리된다', async () => {

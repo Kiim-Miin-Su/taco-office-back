@@ -36,10 +36,12 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
   let token = '';
   let managerToken = '';
   let teacherToken = '';
+  let ceo2Token = '';
   const PW = 'rates-1234';
   const CEO = 991;
   const MANAGER = 992; // 금액 예외 없는 매니저 — 회계 403 · 지출 등록은 된다
   const TEACHER = 993;
+  const CEO2 = 994; // 둘째 대표 — 대신 올린 사람 말고 다른 사람이 심사하면 통과하는 것을 본다 (S2)
   const STU_A = 9991;
   const STU_B = 9992;
   const KIND = 're_kind';
@@ -66,17 +68,18 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     await app.listen(0, '127.0.0.1');
     ds = app.get(DataSource);
 
-    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-    await q(`DELETE FROM expense WHERE requester_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-    await q(`DELETE FROM file WHERE uploaded_by = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
+    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+    await q(`DELETE FROM expense WHERE requester_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+    await q(`DELETE FROM file WHERE uploaded_by = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
     const hash = await bcrypt.hash(PW, 4);
     await q(
       `INSERT INTO staff (id, name, email, role, password_hash, active, can_money) VALUES
          ($1,'단가대표','re-ceo@t.kr','ceo',$4,true,null),
          ($2,'단가매니저','re-m@t.kr','manager',$4,true,null),
-         ($3,'단가강사','re-t@t.kr','teacher',$4,true,null)`,
-      [CEO, MANAGER, TEACHER, hash],
+         ($3,'단가강사','re-t@t.kr','teacher',$4,true,null),
+         ($5,'단가대표둘','re-ceo2@t.kr','ceo',$4,true,null)`,
+      [CEO, MANAGER, TEACHER, hash, CEO2],
     );
     await q(`DELETE FROM sturate WHERE student_id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
@@ -95,6 +98,7 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     token = await login('re-ceo@t.kr');
     managerToken = await login('re-m@t.kr');
     teacherToken = await login('re-t@t.kr');
+    ceo2Token = await login('re-ceo2@t.kr');
   });
 
   afterAll(async () => {
@@ -104,11 +108,11 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
         await q(`DELETE FROM sturate WHERE student_id = ANY($1)`, [[STU_A, STU_B]]);
         await q(`DELETE FROM sub WHERE key = $1`, [SUB]);
         await q(`DELETE FROM kind WHERE key = ANY($1)`, [[KIND, EXTRA]]);
-        await q(`DELETE FROM expense WHERE requester_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-        await q(`DELETE FROM file WHERE uploaded_by = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-        await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-        await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-        await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
+        await q(`DELETE FROM expense WHERE requester_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+        await q(`DELETE FROM file WHERE uploaded_by = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+        await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+        await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+        await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
         await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
       }
     } finally {
@@ -124,9 +128,9 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     await q(`DELETE FROM inv WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM sturate WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM rate WHERE kind_key = $1`, [EXTRA]);
-    await q(`DELETE FROM expense WHERE requester_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
-    await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, TEACHER]]);
+    await q(`DELETE FROM expense WHERE requester_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
+    await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, TEACHER, CEO2]]);
     if (!made.length) return;
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [made]);
     await q(`DELETE FROM rep WHERE ser_id = ANY($1)`, [made]);
@@ -284,10 +288,32 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     expect(mine).toMatchObject({ state: 'pending', amount: null, requesterId: CEO, hasReceipt: false });
     expect((await api('post', `/accounting/expenses/${mine.id}/review`).send({ decision: 'approve', amount: 80000 }).expect(403)).body.code).toBe('SELF_APPROVAL_FORBIDDEN');
     expect(await q(`SELECT 1 FROM noti WHERE from_id = $1 AND to_id = $1`, [CEO])).toEqual([]);
-    // 대표가 직원 대신 올린다 — requesterId 가 그 직원이고 대표가 심사할 수 있다
+    // 대표가 직원 대신 올린다 — requesterId 가 그 직원이고 **올린 사람은 대표로 남는다** (S2)
     const onBehalf = (await api('post', '/accounting/expenses').send({ spendOn: kst(), category: 'book', requestedAmount: 12000, requesterId: MANAGER }).expect(201)).body;
-    expect(onBehalf).toMatchObject({ state: 'pending', requesterId: MANAGER, requestedAmount: 12000 });
+    expect(onBehalf).toMatchObject({ state: 'pending', requesterId: MANAGER, requestedAmount: 12000, filedById: CEO, filedByName: '단가대표' });
     expect((await api('post', '/accounting/expenses').send({ spendOn: kst(), category: 'book', requestedAmount: 12000, requesterId: 999999 }).expect(404)).body.code).toBe('STAFF_NOT_FOUND');
+
+    /**
+     * **남의 이름으로 올린 뒤 자기가 승인하는 길**이 열려 있었다 (S2 · 2026-09-20 전수 검수).
+     *
+     * `requesterId` 는 누가 보내든 그대로 들어갔고(컨트롤러 주석만 「대표가 대신 올릴 때만」이라 적었다)
+     * 심사 쪽은 `requester_id` 하나만 봤다 — **A-5 가 통째로 비켜간다.** 둘 다 닫는다:
+     * 대리 등록은 대표만 · 실제로 올린 사람(`filed_by`)도 심사하지 못한다.
+     */
+    expect((await api('post', '/accounting/expenses', managerToken)
+      .send({ spendOn: kst(), category: 'book', requestedAmount: 5000, requesterId: TEACHER }).expect(403)).body.code)
+      .toBe('EXPENSE_PROXY_FORBIDDEN');
+    // 자기 이름으로 보내는 것은 대리가 아니다 — 막지 않는다
+    await api('post', '/accounting/expenses', managerToken)
+      .send({ spendOn: kst(), category: 'book', requestedAmount: 5000, requesterId: MANAGER }).expect(201);
+    // 대표가 대신 올린 건은 **그 대표가** 심사하지 못한다 — 다른 사람은 한다
+    expect((await api('post', `/accounting/expenses/${onBehalf.id}/review`).send({ decision: 'reject', reason: '내가 올렸다' }).expect(403)).body.code)
+      .toBe('SELF_APPROVAL_FORBIDDEN');
+    expect((await api('post', `/accounting/expenses/${onBehalf.id}/review`, ceo2Token)
+      .send({ decision: 'reject', reason: '영수증 없음' }).expect(201)).body).toMatchObject({ state: 'rejected', reviewerName: '단가대표둘' });
+    // 서비스를 우회해도 표가 막는다
+    await expect(q(`UPDATE expense SET reviewer_id = $2, reviewed_at = now() WHERE id = $1`, [onBehalf.id, CEO]))
+      .rejects.toThrow(/expense_no_self_file_review/);
 
     /**
      * **반려는 올린 사람에게 돌아간다** (H-84) — 등록할 때는 대표에게 갔는데 돌아오는 길이 없어서,

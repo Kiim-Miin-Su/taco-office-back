@@ -11,6 +11,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Inv } from '../../entities';
+import { isSelfReview, SELF_APPROVAL_CODE } from '../../lib/approval';
 import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
@@ -160,10 +161,12 @@ const EXPENSE_SELECT = `
   SELECT e.id, to_char(e.spend_on,'YYYY-MM-DD') AS spend_on, e.category, e.merchant, e.purpose,
          e.requested_amount, e.amount, e.reason, (e.receipt_url IS NOT NULL) AS has_receipt,
          e.requester_id, rq.name AS requester_name, e.state, rv.name AS reviewer_name,
+         e.filed_by, fb.name AS filed_by_name,
          to_char(e.reviewed_at,'YYYY-MM-DD') AS reviewed_at
     FROM expense e
     LEFT JOIN staff rq ON rq.id = e.requester_id
-    LEFT JOIN staff rv ON rv.id = e.reviewer_id`;
+    LEFT JOIN staff rv ON rv.id = e.reviewer_id
+    LEFT JOIN staff fb ON fb.id = e.filed_by`;
 
 @Injectable()
 export class AccountingService {
@@ -340,6 +343,8 @@ export class AccountingService {
       hasReceipt: r.has_receipt === true,
       requesterId: r.requester_id == null ? null : Number(r.requester_id),
       requesterName: (r.requester_name as string | null) ?? null,
+      filedById: r.filed_by == null ? null : Number(r.filed_by),
+      filedByName: (r.filed_by_name as string | null) ?? null,
       state: String(r.state),
       reviewerName: (r.reviewer_name as string | null) ?? null,
       reviewedAt: (r.reviewed_at as string | null) ?? null,
@@ -653,16 +658,35 @@ export class AccountingService {
    * 완납으로 굳은 청구서는 되돌리지 않는다 (erd INV Note: 「상태 전이는 unpaid → partial → paid 와 → void 뿐이며
    * 되돌리기가 없다」). 정정·환불은 별도 승인 경로다. 마지막 줄을 지우면 발행 사실(sent_at)이 있는 청구서는
    * 「전달」로, 없으면 「미납」으로 돌아간다 — 발행 이력을 지우지 않는다.
+   *
+   * **누가 지웠는지 남긴다** (S2 · 2026-09-20). 이 경로는 저장소의 쓰기 중 유일하게 `@CurrentUser` 를
+   * 받지도 않아 **장부의 입금 줄이 흔적 없이 사라지고 있었다.** 지우기 전에 그 줄을 통째로 `log.before`
+   * 에 적는다 — 지운 뒤에는 무엇이 있었는지 아무도 모른다.
    */
-  async removePayment(payId: number): Promise<{ ok: true }> {
+  async removePayment(actorId: number, payId: number): Promise<{ ok: true }> {
     return this.inv.manager.transaction(async (m: EntityManager) => {
-      const [pay] = (await m.query(`SELECT id, inv_id FROM pay WHERE id = $1`, [payId])) as Array<{
-        id: string; inv_id: string | null;
+      const [pay] = (await m.query(
+        `SELECT id, inv_id, student_id, amount, to_char(paid_on,'YYYY-MM-DD') AS paid_on, method, reason
+           FROM pay WHERE id = $1`, [payId],
+      )) as Array<{
+        id: string; inv_id: string | null; student_id: string | null; amount: number | null;
+        paid_on: string | null; method: string | null; reason: string | null;
       }>;
       if (!pay) throw new NotFoundException('입금 기록을 찾을 수 없습니다');
+      const before = JSON.stringify({
+        invId: pay.inv_id == null ? null : Number(pay.inv_id),
+        studentId: pay.student_id == null ? null : Number(pay.student_id),
+        amount: pay.amount == null ? null : Number(pay.amount),
+        paidOn: pay.paid_on, method: pay.method, reason: pay.reason,
+      });
+      const trace = (invId: number | null): Promise<unknown> => m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'PAY',$2,'delete',$3::jsonb,$4::jsonb)`,
+        [actorId, payId, before, JSON.stringify({ invId })],
+      );
       if (pay.inv_id == null) {
         // 청구서 없는 직접 입력 건 (A-D1) — 누계를 되돌릴 청구서가 없다
         await m.query(`DELETE FROM pay WHERE id = $1`, [payId]);
+        await trace(null);
         return { ok: true as const };
       }
       const invId = Number(pay.inv_id);
@@ -691,6 +715,7 @@ export class AccountingService {
           WHERE id = $1`,
         [invId, left, inv?.was_sent === true],
       );
+      await trace(invId);
       return { ok: true as const };
     });
   }
@@ -709,9 +734,12 @@ export class AccountingService {
   async reviewExpense(userId: number, id: number, dto: ExpenseReviewDto, canSeeAmounts: boolean): Promise<ExpenseDto> {
     return this.inv.manager.transaction(async (m: EntityManager) => {
       const [row] = (await m.query(
-        `SELECT id, requested_amount, requester_id, state, (receipt_url IS NOT NULL) AS has_receipt
+        `SELECT id, requested_amount, requester_id, filed_by, state, (receipt_url IS NOT NULL) AS has_receipt
            FROM expense WHERE id = $1 FOR UPDATE`, [id],
-      )) as Array<{ id: string; requested_amount: number | null; requester_id: string | null; state: string; has_receipt: boolean }>;
+      )) as Array<{
+        id: string; requested_amount: number | null; requester_id: string | null;
+        filed_by: string | null; state: string; has_receipt: boolean;
+      }>;
       if (!row) throw new NotFoundException('지출 건을 찾을 수 없습니다');
       if (row.state !== 'pending') {
         throw new ConflictException({
@@ -719,10 +747,14 @@ export class AccountingService {
           message: `이미 ${row.state === 'approved' ? '승인' : '반려'}된 건입니다 — 다시 심사하지 않습니다`,
         });
       }
-      if (row.requester_id != null && Number(row.requester_id) === userId) {
+      /* 판정은 `lib/approval.isSelfReview` 한 곳이다 (S1). **올린 사람과 대신 올려 준 사람 둘 다** 본다 —
+         `filed_by` 가 없던 동안에는 대표가 남의 이름으로 올린 뒤 자기가 승인할 수 있었다 (S2). */
+      if (isSelfReview(row.requester_id, userId) || isSelfReview(row.filed_by, userId)) {
         throw new ForbiddenException({
-          code: 'SELF_APPROVAL_FORBIDDEN',
-          message: '본인이 올린 신청은 본인이 심사할 수 없습니다 — 금액을 제안하는 사람과 확정하는 사람은 다릅니다',
+          code: SELF_APPROVAL_CODE,
+          message: isSelfReview(row.requester_id, userId)
+            ? '본인이 올린 신청은 본인이 심사할 수 없습니다 — 금액을 제안하는 사람과 확정하는 사람은 다릅니다'
+            : '본인이 대신 올린 신청은 본인이 심사할 수 없습니다 — 올린 사람과 확정하는 사람은 다릅니다',
         });
       }
 
@@ -1523,9 +1555,15 @@ export class AccountingService {
    * 영수증은 `file`(kind expense-receipt) 한 건을 가리키고, 한 파일은 한 지출에만 붙는다.
    * 대표(canMoney)에게 알림 한 건 — 심사는 그쪽 화면(`/accounting?tab=out`)에서 한다.
    */
-  async createExpense(userId: number, dto: ExpenseCreateDto, canSeeAmounts: boolean): Promise<ExpenseDto> {
+  async createExpense(userId: number, dto: ExpenseCreateDto, canSeeAmounts: boolean, canFileForOther: boolean): Promise<ExpenseDto> {
     return this.inv.manager.transaction(async (m: EntityManager) => {
       const requesterId = dto.requesterId ?? userId;
+      if (requesterId !== userId && !canFileForOther) {
+        throw new ForbiddenException({
+          code: 'EXPENSE_PROXY_FORBIDDEN',
+          message: '남의 이름으로 지출을 올리는 것은 대표만 합니다 — 본인 이름으로 올리세요',
+        });
+      }
       const [who] = (await m.query(`SELECT id, name FROM staff WHERE id = $1 AND active`, [requesterId])) as Array<{ id: string; name: string }>;
       if (!who) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 직원을 찾을 수 없습니다' });
       let receiptUrl: string | null = null;
@@ -1540,14 +1578,14 @@ export class AccountingService {
         if (used) throw new ConflictException({ code: 'EXPENSE_RECEIPT_USED', message: `그 영수증은 이미 지출 #${used.id} 에 붙어 있습니다` });
       }
       const [made] = (await m.query(
-        `INSERT INTO expense (spend_on, category, merchant, purpose, requested_amount, receipt_url, requester_id, state)
-         VALUES ($1::date, $2, $3, $4, $5, $6, $7, 'pending') RETURNING id`,
-        [dto.spendOn, dto.category, dto.merchant?.trim() || null, dto.purpose?.trim() || null, dto.requestedAmount, receiptUrl, requesterId],
+        `INSERT INTO expense (spend_on, category, merchant, purpose, requested_amount, receipt_url, requester_id, filed_by, state)
+         VALUES ($1::date, $2, $3, $4, $5, $6, $7, $8, 'pending') RETURNING id`,
+        [dto.spendOn, dto.category, dto.merchant?.trim() || null, dto.purpose?.trim() || null, dto.requestedAmount, receiptUrl, requesterId, userId],
       )) as Array<{ id: string }>;
       const id = Number(made.id);
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'EXPENSE',$2,'create',$3::jsonb)`,
-        [userId, id, JSON.stringify({ spendOn: dto.spendOn, category: dto.category, requestedAmount: dto.requestedAmount, requesterId, hasReceipt: receiptUrl !== null })],
+        [userId, id, JSON.stringify({ spendOn: dto.spendOn, category: dto.category, requestedAmount: dto.requestedAmount, requesterId, filedBy: userId, hasReceipt: receiptUrl !== null })],
       );
       // 심사할 사람에게 — 대표 전원. 올린 사람 자신이 대표면 자기에게는 보내지 않는다 (자기 심사는 막혀 있다 · A-5)
       await m.query(

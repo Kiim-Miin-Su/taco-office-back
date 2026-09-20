@@ -55,6 +55,15 @@ export class Expense {
   requesterId: number | null;
 
   /**
+   * **실제로 올린 사람** — 대표가 직원 대신 올릴 때 `requesterId` 와 갈린다 (S2 · 2026-09-20).
+   *
+   * 이 칸이 없던 동안 「본인이 올린 신청은 본인이 심사할 수 없다」(A-5)가 **남의 이름으로 올리면 뚫렸다** —
+   * 심사 쪽이 `requester_id` 하나만 봤기 때문이다. 옛 행은 NULL 이다(누가 올렸는지 모른다 · 보정 0 · N-25).
+   */
+  @Column({ type: 'bigint', nullable: true })
+  filedBy: number | null;
+
+  /**
    * pending | approved | rejected — **DB 기본값은 `pending`** 이다
    * (migration 1756800000000 이 낱말을 옮겼고 1758500000000 이 CHECK 로 굳혔다).
    * 여기에 `'submitted'` 가 남아 있던 동안 새 행이 대표 보고의 지출 집계(`state='approved'`)에서

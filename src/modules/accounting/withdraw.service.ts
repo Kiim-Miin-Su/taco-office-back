@@ -41,9 +41,9 @@ export class StudentWithdrawService {
   constructor(@InjectDataSource() private readonly ds: DataSource) {}
 
   /** 미리보기 — 쓰기 0. 같은 트랜잭션을 돌리고 되돌린다 */
-  async preview(userId: number, dto: StudentWithdrawDto, canSeeAmounts: boolean): Promise<WithdrawResultDto> {
+  async preview(userId: number, dto: StudentWithdrawDto, canSeeAmounts: boolean, canVoidInvoice: boolean): Promise<WithdrawResultDto> {
     try {
-      await this.ds.transaction(async (m) => { await this.run(m, userId, dto, canSeeAmounts, true); });
+      await this.ds.transaction(async (m) => { await this.run(m, userId, dto, canSeeAmounts, canVoidInvoice, true); });
     } catch (e) {
       if (e instanceof PreviewRollback) return e.result;
       throw e;
@@ -52,11 +52,24 @@ export class StudentWithdrawService {
     throw new Error('withdraw preview did not roll back');
   }
 
-  async withdraw(userId: number, dto: StudentWithdrawDto, canSeeAmounts: boolean): Promise<WithdrawResultDto> {
-    return this.ds.transaction((m) => this.run(m, userId, dto, canSeeAmounts, false));
+  async withdraw(userId: number, dto: StudentWithdrawDto, canSeeAmounts: boolean, canVoidInvoice: boolean): Promise<WithdrawResultDto> {
+    return this.ds.transaction((m) => this.run(m, userId, dto, canSeeAmounts, canVoidInvoice, false));
   }
 
-  private async run(m: EntityManager, userId: number, dto: StudentWithdrawDto, canSeeAmounts: boolean, preview: boolean): Promise<WithdrawResultDto> {
+  /**
+   * `canVoidInvoice` — **청구서를 `void` 로 접는 것은 대표만 한다**(N-139 · `canCeoVoidInvoice`).
+   *
+   * 전용 경로 `POST /invoices/{id}/void` 는 `canMoney` **위에** 그 줄을 따로 걸어 두었는데
+   * (「회계 탭에 금액 예외로 들어온 매니저가 장부를 지울 수 있으면 안 된다」) 이 경로는 `canMoney` 만으로
+   * 같은 상태에 닿고 있었다 — **같은 일에 두 문이 있고 한쪽만 잠겨 있었다**(2026-09-20 전수 검수).
+   *
+   * 환불 자체는 막지 않는다. 막는 것은 **금액이 0 이 되어 청구서를 접는 경우** 하나뿐이고,
+   * 미리보기가 그 사실을 먼저 말한다(`canConfirm`·`confirmBlockedReason` · D-R39).
+   */
+  private async run(
+    m: EntityManager, userId: number, dto: StudentWithdrawDto,
+    canSeeAmounts: boolean, canVoidInvoice: boolean, preview: boolean,
+  ): Promise<WithdrawResultDto> {
     const today = todayKst();
     const reason = dto.reason?.trim() || null;
     const money = (v: number): number | null => (canSeeAmounts ? v : null);
@@ -120,6 +133,8 @@ export class StudentWithdrawService {
     /* ── ③ 청구서 — 잔여 회차 줄을 빼고 넘친 돈은 환불 줄로 ── */
     const invOut: WithdrawInvoiceDto[] = [];
     let refundTotal = 0;
+    /** 대표만 할 수 있는 취소가 걸리는 청구서 — 미리보기가 그 달을 이름으로 말한다 */
+    const needsCeoVoid: string[] = [];
     for (const inv of invoices) {
       const invId = Number(inv.id);
       const lines = afterLines.get(invId) ?? [];
@@ -157,6 +172,16 @@ export class StudentWithdrawService {
       }
       const paidAfter = paid - refund;
       const voided = amountAfter === 0;
+      if (voided && !canVoidInvoice) {
+        // 미리보기는 던지지 않는다 — 화면이 「왜 못 누르는지」를 먼저 말해야 한다
+        if (!preview) {
+          throw new ConflictException({
+            code: 'WITHDRAW_NEEDS_CEO_VOID',
+            message: `${inv.year_month} 청구서가 통째로 비어 취소(void)됩니다 — 청구서 취소는 대표만 할 수 있습니다`,
+          });
+        }
+        needsCeoVoid.push(inv.year_month);
+      }
       await m.query(
         `UPDATE inv
             SET amount = $2::int, paid_amount = $3::int,
@@ -183,7 +208,7 @@ export class StudentWithdrawService {
       invOut.push({
         id: invId, yearMonth: inv.year_month, title: inv.title, state: after.state,
         amountBefore: money(amountBefore), amountAfter: money(amountAfter), paidAmount: money(paidAfter), refund: money(refund),
-        removedCount: removed, voided,
+        removedCount: removed, voided, needsCeoVoid: voided && !canVoidInvoice,
       });
     }
 
@@ -213,6 +238,9 @@ export class StudentWithdrawService {
     const result: WithdrawResultDto = {
       studentId: Number(stu.id), studentName: stu.name, endedOn: dto.endedOn, reason, preview,
       series: seriesOut, invoices: invOut, remainingCount, refundTotal: money(refundTotal), enrollmentsEnded, canSeeAmounts,
+      canConfirm: needsCeoVoid.length === 0,
+      confirmBlockedReason: needsCeoVoid.length === 0 ? null
+        : `${needsCeoVoid.join(' · ')} 청구서가 통째로 비어 취소됩니다 — 청구서 취소는 대표만 할 수 있습니다`,
     };
     if (preview) throw new PreviewRollback(result);
     return result;
