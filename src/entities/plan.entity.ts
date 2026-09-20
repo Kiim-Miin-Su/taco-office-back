@@ -20,7 +20,13 @@ export class Plan {
   @Column({ type: 'varchar', length: 120 })
   title: string;
 
-  /** draft | review | rework | ok | done */
+  /**
+   * `draft | review | rework | approved | done` — 표의 `plan_stage_words` CHECK 가 막는다 (S6).
+   *
+   * 한동안 이 주석과 `erd.dbml` 의 note 가 **둘 다 `ok`** 라 적고 있었다. 마이그레이션
+   * `1756700000000` 이 `ok`·`done` 을 `approved` 로 접은 뒤였고, 코드가 쓰는 낱말은 줄곧
+   * `approved` 였다 — **선언과 데이터가 다르면 그 차이를 읽은 쪽이 조용히 틀린다** (C86-d).
+   */
   @Column({ type: 'varchar', length: 12 })
   stage: string;
 
@@ -50,6 +56,15 @@ export class Plan {
   /** 기한을 승인한 사람 (C56) */
   @Column({ type: 'bigint', nullable: true })
   dueApprovedBy: number | null;
+
+  /**
+   * 보완 요청 사유 — **다시 올리면 지워진다** (S6).
+   *
+   * 지난 반려 사유가 남아 있으면 지금 상태를 속인다(C85-a 가 RPT 에서 정한 것과 같다).
+   * 그래서 이것은 감사 줄이 아니라 **업무 상태**이고, `log` 에서 되짚지 않는다.
+   */
+  @Column({ type: 'text', nullable: true })
+  reworkReason: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;

@@ -271,8 +271,10 @@ d('C96 — 회의 잡기 · 기획 올리기 · 기간/갈래 (N-46 ②③ · J-
   });
 
   it('날짜가 없는 줄은 기간으로 가르지 않는다 — 없는 날짜를 범위 밖이라 할 수 없다', async () => {
+    // 단계는 이 시험의 관심사가 아니다 — 제품이 실제로 쓰는 첫 칸을 쓴다.
+    // 전에는 'idea' 라는, 어디에도 없는 낱말이었다 (S6 의 plan_stage_words CHECK 가 잡았다).
     const [plan] = (await q<{ id: string }>(
-      `INSERT INTO plan (title, stage, owner_id) VALUES ('C96 기한없음','idea',$1) RETURNING id`, [CEO],
+      `INSERT INTO plan (title, stage, owner_id) VALUES ('C96 기한없음','draft',$1) RETURNING id`, [CEO],
     ));
     const res = await api('get', '/ops?from=2026-01-01&to=2026-01-31').expect(200);
     expect(res.body.plans.some((p: { id: number }) => p.id === Number(plan.id))).toBe(true);

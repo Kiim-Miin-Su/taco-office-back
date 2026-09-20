@@ -256,6 +256,16 @@ export class PlanDto {
   /** 기한이 대표를 지나왔는가 — 「최종 승인」이 열리는 조건이다 (원문 §61·§65) */
   @ApiProperty({ enum: PLAN_DUE_STATES, description: '기한 상태 — due_on 과 due_approved_at 에서 파생' })
   dueState!: string;
+  /**
+   * 원본 §61 rework 카드의 **「보완 N」** 칩 — 사유가 아니라 **횟수**다.
+   *
+   * 세는 칸을 파지 않고 `log`(entity='plan' · action='rework')를 센다. `reviewPlan` 이
+   * 처음부터 그 줄을 남기고 있었고 append-only 라 어긋날 수가 없다 (S6 · D-R22 · D-R37).
+   * 시드가 손으로 박은 `rework` 건은 그 줄이 없어 **0 이다** — 누가 언제 반려했는지 정말로
+   * 모르기 때문이고, 「보완 1」이라 적으면 없는 사실을 지어내는 것이다 (N-25).
+   */
+  @ApiProperty({ description: '보완 요청을 받은 횟수 — 0 이면 칩이 서지 않는다 (LOG 에서 센다)' })
+  reworkCount!: number;
 }
 
 /** §62 기획 기한 한 줄 — 기획 마감과 과제 기한이 **한 표에** 섞인다 */
@@ -286,6 +296,12 @@ export class PlanTaskDto {
   @ApiProperty({ description: '지난 날 수 — 끝난 과제는 0' }) overdueDays!: number;
 }
 
+/** 갈 수 있는 다음 단계 한 칸 — 낱말은 서버가 만든다 (D-R18 · C90 `LeadDto.nextStages` 와 같은 모양) */
+export class PlanNextStageDto {
+  @ApiProperty({ description: '저장값' }) key!: string;
+  @ApiProperty({ description: '사람이 읽는 이름' }) label!: string;
+}
+
 /** §65 기획 보고서 — 목표 → 과제 → 리서치 → 결정 요청 */
 export class PlanDetailDto {
   @ApiProperty() id!: number;
@@ -314,6 +330,70 @@ export class PlanDetailDto {
   canReview!: boolean;
   @ApiProperty({ description: '단추가 닫혀 있는 이유 — 열려 있으면 null', nullable: true, type: String })
   reviewBlockedReason!: string | null;
+
+  /* ── S6 「기획이 결재까지 간다」 ────────────────────────────────────── */
+
+  /**
+   * 왜 반려됐나 — 그동안 `log.after->>'reason'` 에만 들어가 **담당자가 볼 방법이 없었다**.
+   * **다시 올리면 지워진다**(지난 사유가 남아 있으면 지금 상태를 속인다 · C85-a).
+   *
+   * **필수 nullable 이다** — 선택으로 두면 생성 타입에 `?` 가 붙어 시험 표본이 이 칸을
+   * 빠뜨린 채 조용히 낡는다 (S5 에서 배운 것).
+   */
+  @ApiProperty({ description: '보완 요청 사유 — rework 가 아니면 null', nullable: true, type: String })
+  reworkReason!: string | null;
+
+  @ApiProperty({ description: '본문(목표·리서치·결정 요청·제목·기한)을 고칠 수 있는가 — draft·rework 일 때만' })
+  canEdit!: boolean;
+  /** 쓰기가 409 로 내는 **그 문장**이다 (D-R22 · D-R39) */
+  @ApiProperty({ description: '못 고치는 이유 — 고칠 수 있으면 null', nullable: true, type: String })
+  editBlockedReason!: string | null;
+
+  /**
+   * 옮길 수 있는 단계 — 화면은 이 배열만 보고 단추를 세운다 (D-R18 · D-R39).
+   * **결재(review → approved|rework)는 여기 없다** — 그것은 위의 `canReview` 가 여는 길이다.
+   */
+  @ApiProperty({ type: [PlanNextStageDto], description: '갈 수 있는 다음 단계 — 비면 옮길 곳이 없다' })
+  nextStages!: PlanNextStageDto[];
+}
+
+/**
+ * 기획 본문 고치기 — §65 의 「1 · 목표」「3 · 리서치」「4 · 결정 요청」 (S6).
+ *
+ * **보낸 칸만 고친다** — 대표 보고 `PATCH /exec/report` 와 같다. 안 보낸 칸을 지우면
+ * §65 를 나눠 쓰는 자리에서 남의 줄이 사라진다.
+ */
+export class PlanPatchDto {
+  @ApiPropertyOptional({ maxLength: 120 })
+  @IsOptional() @IsString() @MinLength(1, { message: '제목을 적어 주세요' }) @MaxLength(120)
+  title?: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 2000, description: '1 · 목표' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  goal?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 4000, description: '3 · 리서치 — 이 칸을 쓰는 API 가 S6 전에는 없었다' })
+  @IsOptional() @IsString() @MaxLength(4000)
+  research?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 2000, description: '4 · 결정 요청' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  ask?: string | null;
+
+  /**
+   * 기한 제안 — **승인된 뒤에는 못 옮긴다**(409 `PLAN_DUE_APPROVED`). 담당이 옮길 수 있으면
+   * 대표의 승인이 거짓이 된다. 기한 반려로 지워진 뒤 새 날짜를 내는 길이 이것이다.
+   */
+  @ApiPropertyOptional({ ...S, description: '기한 제안 — 승인 전에만. null 이면 지운다' })
+  @IsOptional() @IsCalendarDate()
+  dueOn?: string | null;
+}
+
+/** 단계 이동 (S6) — 받아 주는 값은 `PlanDetailDto.nextStages` 뿐. 결재는 `:id/review` 가 옮긴다 */
+export class PlanStageMoveDto {
+  @ApiProperty({ enum: [...PLAN_STAGES], description: '옮길 단계 — 전이표 밖이면 409 PLAN_STAGE_INVALID · 옮길 곳이 없으면 409 PLAN_STAGE_LOCKED' })
+  @IsIn([...PLAN_STAGES], { message: '옮길 단계는 작성 중 · 검토 요청 · 보완 요청 · 승인 · 완료 중 하나입니다' })
+  to!: string;
 }
 
 /** 기한 승인 · 반려 — 원문 §65 의 「기한 승인」 「기한 반려」 */

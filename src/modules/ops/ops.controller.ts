@@ -12,7 +12,7 @@ import {
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
   LeadCreateDto, LeadDto, LeadFailDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
-  PlanDetailDto, PlanDueDecisionDto, PlanReviewDto,
+  PlanDetailDto, PlanDueDecisionDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
   MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto,
 } from './ops.dto';
@@ -304,6 +304,46 @@ export class OpsController {
     const out = await this.svc.planDetail(id, isRole(user.role) && canCeoApprovePlan(user.role), user.id);
     if (!out) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
     return out;
+  }
+
+  @Patch('plans/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§65 본문 고치기 — 목표 · 리서치 · 결정 요청 · 제목 · 기한 (S6)',
+    description:
+      'research 를 쓰는 길은 이것뿐이다 — 그전에는 읽기와 화면 칸만 있고 시드 말고는 아무도 못 채워 §65 「3 · 리서치」가 영원히 「—」였다. '
+      + '보낸 칸만 고친다(null 은 지우고 없는 키는 그대로 둔다). 고칠 수 있는 단계는 draft·rework 뿐이고 막힌 문장은 읽기의 editBlockedReason 과 같다. '
+      + '기한은 승인 전에만 바꾼다 — 승인된 날짜를 담당이 옮기면 대표의 승인이 거짓이 된다.',
+  })
+  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiConflictResponse({ description: 'code PLAN_LOCKED | PLAN_DUE_APPROVED | PLAN_TITLE_REQUIRED' })
+  @ApiNotFoundResponse({ description: 'PLAN_NOT_FOUND' })
+  async patchPlan(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PlanPatchDto,
+  ): Promise<PlanDetailDto> {
+    return this.svc.patchPlan(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
+  }
+
+  @Patch('plans/:id/stage')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§61 단계 이동 — 왼쪽에서 오른쪽으로 올립니다 (S6)',
+    description:
+      "stage='review' 로 가는 길이 여기서 처음 생긴다 — 그전에는 createPlan(draft)과 reviewPlan(approved|rework) 둘뿐이라 API 로 만든 기획은 §69 「결재 대기」에 영영 안 잡혔다. "
+      + '전이표(PLAN_NEXT_STAGES)는 draft·rework → review · approved → done 이고 **결재는 여기 없다**(:id/review 가 자기 결재 금지·기한 승인 선행·사유 필수를 지나서 옮긴다). '
+      + '다시 올리면 지난 보완 요청 사유를 지운다.',
+  })
+  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiConflictResponse({ description: 'code PLAN_STAGE_LOCKED | PLAN_STAGE_INVALID' })
+  @ApiNotFoundResponse({ description: 'PLAN_NOT_FOUND' })
+  async movePlanStage(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PlanStageMoveDto,
+  ): Promise<PlanDetailDto> {
+    return this.svc.movePlanStage(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
   }
 
   @Post('plans/:id/due')

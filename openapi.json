@@ -7296,6 +7296,180 @@
         "tags": [
           "ops"
         ]
+      },
+      "patch": {
+        "description": "research 를 쓰는 길은 이것뿐이다 — 그전에는 읽기와 화면 칸만 있고 시드 말고는 아무도 못 채워 §65 「3 · 리서치」가 영원히 「—」였다. 보낸 칸만 고친다(null 은 지우고 없는 키는 그대로 둔다). 고칠 수 있는 단계는 draft·rework 뿐이고 막힌 문장은 읽기의 editBlockedReason 과 같다. 기한은 승인 전에만 바꾼다 — 승인된 날짜를 담당이 옮기면 대표의 승인이 거짓이 된다.",
+        "operationId": "OpsController_patchPlan",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PLAN_NOT_FOUND"
+          },
+          "409": {
+            "description": "code PLAN_LOCKED | PLAN_DUE_APPROVED | PLAN_TITLE_REQUIRED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§65 본문 고치기 — 목표 · 리서치 · 결정 요청 · 제목 · 기한 (S6)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/plans/{id}/stage": {
+      "patch": {
+        "description": "stage='review' 로 가는 길이 여기서 처음 생긴다 — 그전에는 createPlan(draft)과 reviewPlan(approved|rework) 둘뿐이라 API 로 만든 기획은 §69 「결재 대기」에 영영 안 잡혔다. 전이표(PLAN_NEXT_STAGES)는 draft·rework → review · approved → done 이고 **결재는 여기 없다**(:id/review 가 자기 결재 금지·기한 승인 선행·사유 필수를 지나서 옮긴다). 다시 올리면 지난 보완 요청 사유를 지운다.",
+        "operationId": "OpsController_movePlanStage",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlanStageMoveDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PLAN_NOT_FOUND"
+          },
+          "409": {
+            "description": "code PLAN_STAGE_LOCKED | PLAN_STAGE_INVALID"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§61 단계 이동 — 왼쪽에서 오른쪽으로 올립니다 (S6)",
+        "tags": [
+          "ops"
+        ]
       }
     },
     "/ops/plans/{id}/due": {
@@ -20844,6 +21018,10 @@
               "approved"
             ],
             "description": "기한 상태 — due_on 과 due_approved_at 에서 파생"
+          },
+          "reworkCount": {
+            "type": "number",
+            "description": "보완 요청을 받은 횟수 — 0 이면 칩이 서지 않는다 (LOG 에서 센다)"
           }
         },
         "required": [
@@ -20852,7 +21030,8 @@
           "stage",
           "stageLabel",
           "overdueDays",
-          "dueState"
+          "dueState",
+          "reworkCount"
         ]
       },
       "PlanStageDto": {
@@ -22990,6 +23169,23 @@
           "overdueDays"
         ]
       },
+      "PlanNextStageDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "저장값"
+          },
+          "label": {
+            "type": "string",
+            "description": "사람이 읽는 이름"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
       "PlanDetailDto": {
         "type": "object",
         "properties": {
@@ -23082,6 +23278,27 @@
             "type": "string",
             "description": "단추가 닫혀 있는 이유 — 열려 있으면 null",
             "nullable": true
+          },
+          "reworkReason": {
+            "type": "string",
+            "description": "보완 요청 사유 — rework 가 아니면 null",
+            "nullable": true
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "본문(목표·리서치·결정 요청·제목·기한)을 고칠 수 있는가 — draft·rework 일 때만"
+          },
+          "editBlockedReason": {
+            "type": "string",
+            "description": "못 고치는 이유 — 고칠 수 있으면 null",
+            "nullable": true
+          },
+          "nextStages": {
+            "description": "갈 수 있는 다음 단계 — 비면 옮길 곳이 없다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanNextStageDto"
+            }
           }
         },
         "required": [
@@ -23097,7 +23314,62 @@
           "overdueDays",
           "canDecideDue",
           "canReview",
-          "reviewBlockedReason"
+          "reviewBlockedReason",
+          "reworkReason",
+          "canEdit",
+          "editBlockedReason",
+          "nextStages"
+        ]
+      },
+      "PlanPatchDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "goal": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "1 · 목표"
+          },
+          "research": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 4000,
+            "description": "3 · 리서치 — 이 칸을 쓰는 API 가 S6 전에는 없었다"
+          },
+          "ask": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "4 · 결정 요청"
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "기한 제안 — 승인 전에만. null 이면 지운다"
+          }
+        }
+      },
+      "PlanStageMoveDto": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "review",
+              "rework",
+              "approved",
+              "done"
+            ],
+            "description": "옮길 단계 — 전이표 밖이면 409 PLAN_STAGE_INVALID · 옮길 곳이 없으면 409 PLAN_STAGE_LOCKED"
+          }
+        },
+        "required": [
+          "to"
         ]
       },
       "PlanDueDecisionDto": {

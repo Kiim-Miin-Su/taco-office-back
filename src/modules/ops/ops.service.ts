@@ -18,6 +18,7 @@ import {
 } from '../../lib/marketing-words';
 import {
   PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL, PLAN_STAGE_SUB,
+  PLAN_WRITABLE_STAGES, planLockedMessage, planNextStages,
 } from '../../lib/plan-words';
 import { CPL_AREAS, CPL_AREA_LABEL, CPL_OPEN_STAGES, CPL_SEVERITIES, CPL_SEVERITY_LABEL, CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel, cplSeverityLabel } from '../../lib/complaint-words';
 import {
@@ -42,13 +43,25 @@ import type {
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
   LeadCreateDto, LeadDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
-  PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanReviewDto, PlanTaskDto,
+  PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
+  PlanStageMoveDto, PlanTaskDto,
   MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
   PlanCreateDto, PlanCreateResultDto,
 } from './ops.dto';
 
 type R = Record<string, unknown>;
+
+/**
+ * 원본 §61 rework 카드의 **「보완 N」** — 세는 칸을 파지 않고 **감사 줄을 센다** (S6 · D-R22).
+ *
+ * `reviewPlan` 은 처음부터 `entity='plan' · action='rework'` 한 줄을 남기고 있었고, `log` 는
+ * append-only 라 그 수가 어긋날 수가 없다. 사유(`plan.rework_reason`)는 다시 올릴 때 지워지는
+ * **업무 상태**라 행에 두지만, 횟수는 **지워지지 않는 역사**라 여기서 센다.
+ * 시드가 손으로 박은 `rework` 건은 이 줄이 없어 0 이다 — 정말로 모르기 때문이다 (N-25).
+ */
+const PLAN_REWORK_COUNT_SQL =
+  `(SELECT count(*)::int FROM log l WHERE l.entity = 'plan' AND l.entity_id = p.id AND l.action = 'rework')`;
 
 /** pg bigint의 숫자 문자열만 변환한다. 연결 없음과 ID 0/정밀도 손실은 구분한다. */
 function leadId(value: unknown): number;
@@ -158,7 +171,8 @@ export class OpsService {
     const planScope = scoped('p.due_on');
     const plans = (await this.q(
       `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
-              p.due_approved_at, s.name AS owner_name
+              p.due_approved_at, s.name AS owner_name,
+              ${PLAN_REWORK_COUNT_SQL} AS rework_count
          FROM plan p LEFT JOIN staff s ON s.id = p.owner_id
         ${planScope.where}
         ORDER BY p.due_on NULLS LAST, p.id`, planScope.params,
@@ -174,6 +188,7 @@ export class OpsService {
         dueOn: due, ownerName: (r.owner_name as string) ?? null,
         overdueDays: open && due && due < today ? daysSince(due) : 0,
         dueState: planDueState(due, r.due_approved_at) as string,
+        reworkCount: Number(r.rework_count ?? 0),
       };
     });
 
@@ -460,6 +475,8 @@ export class OpsService {
         goal: (plan.goal as string) ?? null, ask: (plan.ask as string) ?? null,
         dueOn: due, ownerName: (plan.owner_name as string) ?? null,
         overdueDays: 0, dueState: planDueState(due, plan.due_approved_at) as string,
+        // 방금 만든 기획은 반려된 적이 없다 — 세어 봐야 언제나 0 이다
+        reworkCount: 0,
       },
     };
   }
@@ -1161,7 +1178,7 @@ export class OpsService {
   async planDetail(id: number, canApprove: boolean, viewerId: number): Promise<PlanDetailDto | null> {
     const today = todayKst();
     const [p] = await this.q(
-      `SELECT p.id, p.title, p.stage, p.goal, p.research, p.ask, p.owner_id,
+      `SELECT p.id, p.title, p.stage, p.goal, p.research, p.ask, p.owner_id, p.rework_reason,
               to_char(p.due_on,'YYYY-MM-DD') AS due_on, p.due_approved_at,
               to_char(p.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS created_on,
               o.name AS owner_name, a.name AS due_by_name
@@ -1199,12 +1216,18 @@ export class OpsService {
     /* 담당자 자신은 기한도 최종 승인도 못 한다 — 쓰기 경로(`decidePlanDue`·`reviewPlan`)와 같은 판정이다 */
     const isOwner = isSelfReview(p.owner_id, viewerId);
     const canDecideDue = canApprove && dueState === 'proposed' && !isOwner;
+    /* S6 — 「검토 요청」이 결재의 전제다. 전에는 `open`(draft·review·rework)이면 다 열려서
+       **draft 를 review 를 건너뛰고 바로 승인**할 수 있었다: 올려도 그만 안 올려도 그만인 칸이었다. */
     const reviewBlockedReason =
       !canApprove ? '기획 결재는 대표만 합니다'
         : isOwner ? '자기가 담당인 기획은 자기가 결재할 수 없습니다'
           : !open ? '이미 끝난 기획입니다'
-            : dueState !== 'approved' ? '기한부터 승인하세요'
-              : null;
+            : stage !== 'review' ? '아직 검토 요청이 올라오지 않았습니다'
+              : dueState !== 'approved' ? '기한부터 승인하세요'
+                : null;
+
+    /* 고칠 수 있는지도 **쓰기와 같은 집합**을 본다 — 막힌 문장은 `PATCH` 가 409 로 내는 그 문장이다 */
+    const canEdit = PLAN_WRITABLE_STAGES.includes(stage);
 
     return {
       id: leadId(p.id), title: String(p.title), stage, stageLabel: planStageLabel(stage),
@@ -1216,6 +1239,9 @@ export class OpsService {
       dueApprovedByName: (p.due_by_name as string) ?? null,
       overdueDays: open && due && due < today ? daysSince(due) : 0,
       canDecideDue, canReview: reviewBlockedReason === null, reviewBlockedReason,
+      reworkReason: (p.rework_reason as string) ?? null,
+      canEdit, editBlockedReason: canEdit ? null : planLockedMessage(stage),
+      nextStages: planNextStages(stage).map((key) => ({ key, label: PLAN_STAGE_LABEL[key] })),
     };
   }
 
@@ -1290,14 +1316,135 @@ export class OpsService {
     }
 
     const next = dto.decision === 'approve' ? 'approved' : 'rework';
+    const reason = dto.reason?.trim() || null;
     await this.lead.manager.transaction(async (em) => {
-      await em.query(`UPDATE plan SET stage = $2 WHERE id = $1`, [id, next]);
+      /* S6 — 사유를 **행에** 남긴다. 그동안 `log` 에만 들어가 담당자가 볼 방법이 없었다.
+         승인이면 지운다: 지난 반려 사유가 승인된 기획에 남아 있으면 지금 상태를 속인다. */
+      await em.query(
+        `UPDATE plan SET stage = $2, rework_reason = $3 WHERE id = $1`,
+        [id, next, next === 'rework' ? reason : null],
+      );
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
          VALUES ($1, 'plan', $2, $3, $4::jsonb, $5::jsonb)`,
         [viewerId, id, dto.decision,
           JSON.stringify({ stage: before.stage }),
           JSON.stringify({ stage: next, reason: dto.reason?.trim() ?? null })],
+      );
+    });
+    return (await this.planDetail(id, canApprove, viewerId))!;
+  }
+
+  /* ══ S6 — 기획이 결재까지 간다 (전수 검수 §5) ═════════════════════════ */
+
+  /**
+   * §65 본문 고치기 — 「1 · 목표」「3 · 리서치」「4 · 결정 요청」과 제목·기한.
+   *
+   * **`research` 를 쓰는 API 가 이것뿐이다.** 그전에는 읽기와 화면 칸만 있고 `createPlan` 의
+   * INSERT 에도 없어 시드 말고는 아무도 채우지 못했다 — §65 「3 · 리서치」가 영원히 「—」였다.
+   *
+   * **보낸 칸만 고친다**(대표 보고 `PATCH /exec/report` 와 같다) — 안 보낸 칸을 지우면 §65 를
+   * 나눠 쓰는 자리에서 남의 줄이 사라진다. 그래서 「비운다」와 「안 보낸다」가 다른 뜻이다:
+   * `null` 은 지우고, 없는 키는 그대로 둔다.
+   *
+   * **잠그는 집합은 `PLAN_WRITABLE_STAGES` 하나**이고 화면의 `canEdit` 도 그것을 본다 (D-R39).
+   * 잠근 채 읽고 고친다 — 두 사람이 동시에 올리고 고치면 뒤 사람이 409 다.
+   */
+  async patchPlan(viewerId: number, canApprove: boolean, id: number, dto: PlanPatchDto): Promise<PlanDetailDto> {
+    const title = dto.title?.trim();
+    if (dto.title !== undefined && !title) {
+      throw new ConflictException({ code: 'PLAN_TITLE_REQUIRED', message: '제목을 적어 주세요' });
+    }
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(
+        `SELECT id, stage, due_approved_at FROM plan WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; stage: string; due_approved_at: Date | null }>;
+      if (!cur) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
+      if (!PLAN_WRITABLE_STAGES.includes(cur.stage)) {
+        // 읽기의 editBlockedReason 과 **같은 함수**에서 나온 같은 문장이다 (D-R22 · S5)
+        throw new ConflictException({ code: 'PLAN_LOCKED', message: planLockedMessage(cur.stage) });
+      }
+      /* 승인된 기한을 담당이 옮길 수 있으면 **대표의 승인이 거짓이 된다**. 반려로 지워진 뒤
+         새 날짜를 내는 길이 이것이다 — 그전에는 그 길이 아예 없었다. */
+      if (dto.dueOn !== undefined && cur.due_approved_at) {
+        throw new ConflictException({
+          code: 'PLAN_DUE_APPROVED',
+          message: '승인된 기한은 바꿀 수 없습니다 — 대표가 기한을 반려한 뒤에 새로 내세요',
+        });
+      }
+
+      const sets: string[] = [];
+      const params: unknown[] = [id];
+      const put = (col: string, value: unknown, cast = ''): void => {
+        params.push(value);
+        sets.push(`${col} = $${params.length}${cast}`);
+      };
+      if (title !== undefined) put('title', title);
+      if (dto.goal !== undefined) put('goal', dto.goal?.trim() || null);
+      if (dto.research !== undefined) put('research', dto.research?.trim() || null);
+      if (dto.ask !== undefined) put('ask', dto.ask?.trim() || null);
+      if (dto.dueOn !== undefined) put('due_on', dto.dueOn ?? null, '::date');
+      if (!sets.length) return;
+
+      await em.query(`UPDATE plan SET ${sets.join(', ')} WHERE id = $1`, params);
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'plan',$2,'edit',$3::jsonb)`,
+        // 무엇을 고쳤는지만 남긴다 — 본문 전체를 감사 줄에 복사하면 같은 글이 두 곳에 산다
+        [viewerId, id, JSON.stringify({ fields: sets.map((x) => x.split(' ')[0]) })],
+      );
+    });
+    return (await this.planDetail(id, canApprove, viewerId))!;
+  }
+
+  /**
+   * 단계 이동 — 원문 §61 「기획 결재 — 왼쪽에서 오른쪽으로 올립니다」.
+   *
+   * **`stage='review'` 로 가는 길이 여기서 처음 생긴다.** 그전에는 stage 쓰기가 `createPlan`
+   * (=draft)과 `reviewPlan`(=approved|rework) 둘뿐이라 **API 로 만든 기획은 §69 「결재 대기」에
+   * 영영 안 잡혔다**(전수 검수 §5).
+   *
+   * 전이표는 `PLAN_NEXT_STAGES` 한 벌이고 **결재는 여기 없다** — `review → approved|rework` 를
+   * 넣으면 자기 결재 금지(S1)·기한 승인 선행(C56)·사유 필수를 지나지 않는 **두 번째 승인 경로**가
+   * 생긴다 (C90 `moveLeadStage` 와 같은 규약).
+   *
+   * 다시 올릴 때 **보완 요청 사유를 지운다** — 남겨 두면 고쳐서 올린 기획에 지난 반려 사유가
+   * 붙어 있다 (C85-a 가 RPT 에서 정한 것과 같다). 잠근 채 판정한다.
+   */
+  async movePlanStage(viewerId: number, canApprove: boolean, id: number, dto: PlanStageMoveDto): Promise<PlanDetailDto> {
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(
+        `SELECT id, stage FROM plan WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; stage: string }>;
+      if (!cur) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
+      const allowed = planNextStages(cur.stage);
+      if (!allowed.length) {
+        throw new ConflictException({
+          code: 'PLAN_STAGE_LOCKED',
+          message: cur.stage === 'review'
+            ? '올라온 기획입니다 — 대표의 결재가 다음 단계를 정합니다'
+            : `${planStageLabel(cur.stage)} 기획은 단계를 옮길 수 없습니다`,
+        });
+      }
+      if (!(allowed as readonly string[]).includes(dto.to)) {
+        throw new ConflictException({
+          code: 'PLAN_STAGE_INVALID',
+          message: `${planStageLabel(cur.stage)}에서는 ${allowed.map((k) => planStageLabel(k)).join(' · ')}(으)로만 옮길 수 있습니다`,
+        });
+      }
+      await em.query(
+        /* 검토 요청으로 다시 올라가면 지난 보완 요청 사유는 사라진다.
+           **한 파라미터를 대입과 비교에 같이 쓰면** PostgreSQL 이 `inconsistent types deduced
+           for parameter` 로 거절한다 (varchar 대입 ↔ text 비교 · S1 에서 배운 자리). `::text` 로 굳힌다. */
+        `UPDATE plan
+            SET stage = $2::text,
+                rework_reason = CASE WHEN $2::text = 'review' THEN NULL ELSE rework_reason END
+          WHERE id = $1`,
+        [id, dto.to],
+      );
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1,'plan',$2,'stage',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify({ stage: cur.stage }), JSON.stringify({ stage: dto.to })],
       );
     });
     return (await this.planDetail(id, canApprove, viewerId))!;

@@ -41,6 +41,46 @@ export const PLAN_STAGE_SUB: Record<PlanStage, string> = {
 
 export const PLAN_OPEN_STAGES: readonly string[] = ['draft', 'review', 'rework'];
 
+/**
+ * 단계를 옮기는 표 **한 벌** — 원문 §61 「기획 결재 — 왼쪽에서 오른쪽으로 올립니다」.
+ *
+ * C90 의 `LEAD_NEXT_STAGES` 와 같은 규약이다: **제 길이 따로 있는 전이는 여기서 `[]`** 다.
+ * 그래서 `review → approved | rework` 가 이 표에 없다 — 그것은 **대표의 결재**이고
+ * `reviewPlan` 이 자기 결재 금지(S1)·기한 승인 선행(C56)·사유 필수를 지나서 옮긴다.
+ * 여기에 넣으면 그 셋을 지나지 않는 **두 번째 승인 경로**가 생긴다 (D-R22).
+ *
+ * 나머지 셋은 **올린 쪽이 하는 일**이다 — 올리고(draft·rework → review), 다 하고(approved → done).
+ * `done` 은 오래 아무도 안 쓰던 낱말이다: 마이그레이션 `1756700000000` 이 `ok`·`done` 을
+ * 통째로 `approved` 로 접은 뒤 쓰는 코드가 0 이었다. §61 컷의 다섯째 칸이므로 길을 돌려준다.
+ */
+export const PLAN_NEXT_STAGES: Record<PlanStage, readonly PlanStage[]> = {
+  draft: ['review'],
+  review: [],
+  rework: ['review'],
+  approved: ['done'],
+  done: [],
+};
+
+export const planNextStages = (stage: string): readonly PlanStage[] =>
+  PLAN_NEXT_STAGES[stage as PlanStage] ?? [];
+
+/**
+ * 본문을 고칠 수 있는 단계 — RPT 의 `WRITABLE_RPT_STATES` 와 같은 모양이다.
+ *
+ * 올린 뒤(`review`)에 고치면 **대표가 보고 있는 것과 저장된 것이 갈리고**, 결재된 뒤
+ * (`approved`·`done`)에 고치면 **승인 도장이 다른 글에 찍힌 것**이 된다.
+ */
+export const PLAN_WRITABLE_STAGES: readonly string[] = ['draft', 'rework'];
+
+/**
+ * 왜 못 고치는가 — **쓰기가 409 로 내는 그 문장**이 읽기의 `editBlockedReason` 으로도 간다
+ * (S5 · D-R39 · D-R22). 단계마다 **다음에 할 일이 달라** 문장이 둘이다.
+ */
+export const planLockedMessage = (stage: string): string =>
+  (stage === 'review'
+    ? '대표 확인을 기다리는 중입니다 — 보완 요청을 받은 뒤에 고칠 수 있습니다'
+    : '결재가 끝난 기획은 고칠 수 없습니다');
+
 /* ── §62 기획 기한 ──────────────────────────────────────────────────── */
 
 /**
