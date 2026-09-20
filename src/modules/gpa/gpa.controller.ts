@@ -62,8 +62,9 @@ export class GpaController {
   @ApiOperation({ summary: '대기(wait) 기록 삭제 — 승인분은 USE_APPROVED 로 거절' })
   @ApiOkResponse({ type: OkDto })
   @ApiConflictResponse({ description: 'code CYCLE_CLOSED | USE_APPROVED' })
-  async deleteUse(@Param('id', ParseIntPipe) id: number): Promise<OkDto> {
-    return this.svc.deleteUse(id);
+  async deleteUse(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<OkDto> {
+    // 지운 사람을 서버가 고정한다 — 이 경로도 actor 를 받지 않아 하드 삭제가 흔적 없이 지나갔다 (S7)
+    return this.svc.deleteUse(id, user.id);
   }
 
   @Put('allocs')

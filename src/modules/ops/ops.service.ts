@@ -27,7 +27,7 @@ import {
   LEAD_TOUCH_KINDS, LEAD_TOUCH_KIND_LABEL, intakeStageLabel, leadNextStages, leadSourceLabel, leadTouchKindLabel,
   type LeadSource,
 } from '../../lib/intake-words';
-import { isSelfReview, SELF_APPROVAL_CODE } from '../../lib/approval';
+import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
 import { INV_OPEN } from '../../lib/rules';
 import { sqlWordList } from '../../lib/sql';
 import {
@@ -1113,14 +1113,31 @@ export class OpsService {
     return this.feedbackThreads(viewerId);
   }
 
-  /** 답 고치기 — 원문 §60 「답 고치기」. **자기가 쓴 글만** 고친다 */
+  /**
+   * 답 고치기 — 원문 §60 「답 고치기」. **자기가 쓴 글만** 고친다.
+   *
+   * **고치기 전의 말이 안 남던 자리다** (S7 · 전수 검수 §7). 하는 일은 `mfb.body` 한 칸 덮어쓰기라
+   * 대표 코멘트든 담당자 답변이든 **원래 무엇이라 적었는지가 그 자리에서 사라졌다.** §60 은 그 글로
+   * 「고쳐야 할 것 N건」을 세고 답변이 코멘트에 걸리는 화면이라, 앞말이 바뀌면 뒷말의 뜻도 바뀐다.
+   *
+   * 지난 글은 되살리지 않는다 — 고친 글이 지금의 참이다. 다만 **무엇이 무엇으로 바뀌었는지**는
+   * `log` 에 남는다(append-only). 판정을 잠금 안에서 다시 보는 것은 두 창에서 동시에 고칠 때
+   * 마지막 글과 원장의 before 가 어긋나지 않게 하기 위해서다.
+   */
   async editPost(viewerId: number, postId: number, dto: MfbEditDto): Promise<MfbThreadDto[]> {
-    const [row] = await this.q(`SELECT id, by_id FROM mfb WHERE id = $1`, [postId]);
-    if (!row) throw new NotFoundException('글이 없습니다');
-    if (leadId(row.by_id) !== viewerId) {
-      throw new ConflictException({ code: 'NOT_AUTHOR', message: '자기가 쓴 글만 고칠 수 있습니다' });
-    }
-    await this.q(`UPDATE mfb SET body = $2 WHERE id = $1`, [postId, dto.body.trim()]);
+    const body = dto.body.trim();
+    await this.lead.manager.transaction(async (em) => {
+      const [row] = (await em.query(`SELECT id, by_id, body FROM mfb WHERE id = $1 FOR UPDATE`, [postId])) as R[];
+      if (!row) throw new NotFoundException('글이 없습니다');
+      if (leadId(row.by_id) !== viewerId) {
+        throw new ConflictException({ code: 'NOT_AUTHOR', message: '자기가 쓴 글만 고칠 수 있습니다' });
+      }
+      await em.query(`UPDATE mfb SET body = $2 WHERE id = $1`, [postId, body]);
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'MFB',$2,'edit',$3::jsonb,$4::jsonb)`,
+        [viewerId, postId, JSON.stringify({ body: row.body ?? null }), JSON.stringify({ body })],
+      );
+    });
     return this.feedbackThreads(viewerId);
   }
 
@@ -1214,13 +1231,15 @@ export class OpsService {
        판정은 여기 한 곳이고, 막힌 이유까지 서버가 문장으로 내려보낸다 — 화면이 역할과
        기한 상태를 다시 조합하면 단추 모양과 서버의 답이 갈린다 (D-R39). */
     /* 담당자 자신은 기한도 최종 승인도 못 한다 — 쓰기 경로(`decidePlanDue`·`reviewPlan`)와 같은 판정이다 */
-    const isOwner = isSelfReview(p.owner_id, viewerId);
-    const canDecideDue = canApprove && dueState === 'proposed' && !isOwner;
+    /* 기한과 최종은 **서로 다른 자리**다 — 한쪽만 다시 막는 날 따로 물을 수 있어야 한다 */
+    const ownerBlocksDue = blocksSelfApproval('plan-due', p.owner_id, viewerId);
+    const ownerBlocksReview = blocksSelfApproval('plan', p.owner_id, viewerId);
+    const canDecideDue = canApprove && dueState === 'proposed' && !ownerBlocksDue;
     /* S6 — 「검토 요청」이 결재의 전제다. 전에는 `open`(draft·review·rework)이면 다 열려서
        **draft 를 review 를 건너뛰고 바로 승인**할 수 있었다: 올려도 그만 안 올려도 그만인 칸이었다. */
     const reviewBlockedReason =
       !canApprove ? '기획 결재는 대표만 합니다'
-        : isOwner ? '자기가 담당인 기획은 자기가 결재할 수 없습니다'
+        : ownerBlocksReview ? '자기가 담당인 기획은 자기가 결재할 수 없습니다'
           : !open ? '이미 끝난 기획입니다'
             : stage !== 'review' ? '아직 검토 요청이 올라오지 않았습니다'
               : dueState !== 'approved' ? '기한부터 승인하세요'
@@ -1261,7 +1280,7 @@ export class OpsService {
     if (!row) throw new NotFoundException('기획이 없습니다');
     // 올린 사람은 자기 기한을 스스로 승인하지 못한다 — `createPlan` 이 담당 기본값을 호출자로 박으므로
     // 이 검사가 없으면 「올리고 내가 승인」이 한 사람 안에서 닫힌다 (2026-09-20 검수)
-    if (isSelfReview(row.owner_id, viewerId)) {
+    if (blocksSelfApproval('plan-due', row.owner_id, viewerId)) {
       throw new ConflictException({
         code: SELF_APPROVAL_CODE,
         message: '자기가 담당인 기획의 기한은 자기가 승인할 수 없습니다 — 내는 사람과 승인하는 사람은 다릅니다',
@@ -1299,7 +1318,7 @@ export class OpsService {
     if (!before) throw new NotFoundException('기획이 없습니다');
     const [ownerRow] = await this.q(`SELECT owner_id FROM plan WHERE id = $1`, [id]);
     // 기한과 같은 규칙 — 올린 사람은 최종 승인도 하지 못한다
-    if (isSelfReview(ownerRow?.owner_id, viewerId)) {
+    if (blocksSelfApproval('plan', ownerRow?.owner_id, viewerId)) {
       throw new ConflictException({
         code: SELF_APPROVAL_CODE,
         message: '자기가 담당인 기획은 자기가 결재할 수 없습니다 — 내는 사람과 결재하는 사람은 다릅니다',

@@ -16,7 +16,7 @@ import { Repository } from 'typeorm';
 import { GpaCycle } from '../../entities';
 import { addDays, todayKst } from '../../lib/kst';
 import { kstAt, writtenRows } from '../../lib/sql';
-import { isSelfReview, SELF_APPROVAL_CODE } from '../../lib/approval';
+import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
 import type {
   GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
 } from './gpa.dto';
@@ -186,7 +186,7 @@ export class GpaService {
       approvedOn: (r.approved_on as string) ?? null,
       canApprove: String(r.state) === 'wait'
         && viewerId !== undefined
-        && !isSelfReview(r.coord_id, viewerId),
+        && !blocksSelfApproval('gpa-use', r.coord_id, viewerId),
     };
   }
 
@@ -232,7 +232,7 @@ export class GpaService {
    * 승인(ok)·되돌림(wait) — 닫힌 사이클은 잠긴다.
    *
    * **기록한 사람은 승인하지 못한다.** 2026-09-20 검수 전까지 이 경로는 `@CurrentUser` 를 **받지도 않아**
-   * 누가 승인했는지 어디에도 안 남았고 자기 기록을 자기가 승인할 수 있었다. 판정은 `isSelfReview`
+   * 누가 승인했는지 어디에도 안 남았고 자기 기록을 자기가 승인할 수 있었다. 판정은 `blocksSelfApproval`
    * 한 곳이고 DB 도 `gpa_use_no_self_approve` 로 한 번 더 막는다.
    *
    * 승인은 도장을 찍고 **되돌림은 도장을 지운다** — 되돌린 기록에 승인자가 남아 있으면 거짓말이 된다.
@@ -241,7 +241,7 @@ export class GpaService {
     const [row] = await this.q(`SELECT cycle_id, coord_id, state FROM gpa_use WHERE id = $1`, [id]);
     if (!row) throw new NotFoundException('기록을 찾을 수 없습니다');
     await this.openCycle(Number(row.cycle_id));
-    if (dto.state === 'ok' && isSelfReview(row.coord_id, actorId)) {
+    if (dto.state === 'ok' && blocksSelfApproval('gpa-use', row.coord_id, actorId)) {
       throw new ConflictException({
         code: SELF_APPROVAL_CODE,
         message: '자기가 기록한 포인트는 자기가 승인할 수 없습니다 — 적는 사람과 승인하는 사람은 다릅니다',
@@ -274,17 +274,44 @@ export class GpaService {
     return this.useRow(out, actorId);
   }
 
-  /** 잘못 기록한 wait 만 지운다 — 승인분은 불변, 닫힌 사이클은 잠긴다. */
-  async deleteUse(id: number): Promise<{ ok: true }> {
-    const [row] = await this.q<{ cycle_id: string; state: string }>(
-      `SELECT cycle_id, state FROM gpa_use WHERE id = $1`, [id]);
-    if (!row) throw new NotFoundException('기록을 찾을 수 없습니다');
-    await this.openCycle(Number(row.cycle_id));
-    if (row.state !== 'wait') {
-      throw new ConflictException({ code: 'USE_APPROVED', message: '승인된 기록은 지울 수 없습니다 — 되돌림(wait) 후 처리하세요' });
-    }
-    await this.q(`DELETE FROM gpa_use WHERE id = $1 AND state = 'wait'`, [id]);
-    return { ok: true };
+  /**
+   * 잘못 기록한 wait 만 지운다 — 승인분은 불변, 닫힌 사이클은 잠긴다.
+   *
+   * **지운 사람이 안 남던 자리다** (S7 · 전수 검수 §7). 이 경로는 `@CurrentUser` 를 받지도 않았고
+   * 하는 일은 하드 삭제라, 누가 언제 **무엇을** 지웠는지가 통째로 사라졌다. 소비 기록은 포인트 잔여의
+   * 근거라 한 줄이 없어지면 배정과 잔여의 차이를 설명할 수 없다. 지우기 전에 그 줄을 통째로
+   * `log.before` 에 적는다 — S2 가 입금 줄에서 한 것과 같은 자리·같은 모양이다.
+   *
+   * 판정을 **잠금 안에서 다시** 본다 — 밖에서 읽고 지우면 그 사이 남이 승인한 기록이 지워진다.
+   * 거절 차례는 그대로다(404 → `CYCLE_CLOSED` → `USE_APPROVED`).
+   */
+  async deleteUse(id: number, actorId: number): Promise<{ ok: true }> {
+    const [pre] = await this.q<{ cycle_id: string }>(`SELECT cycle_id FROM gpa_use WHERE id = $1`, [id]);
+    if (!pre) throw new NotFoundException('기록을 찾을 수 없습니다');
+    await this.openCycle(Number(pre.cycle_id));
+    return this.anyRepo.manager.transaction(async (em) => {
+      const [row] = (await em.query(
+        `SELECT cycle_id, student_id, svc_key, points, on_date::text AS on_date, start_min, ser_id,
+                note_url, state, coord_id
+           FROM gpa_use WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<Record<string, unknown>>;
+      if (!row) throw new NotFoundException('기록을 찾을 수 없습니다');
+      if (row.state !== 'wait') {
+        throw new ConflictException({ code: 'USE_APPROVED', message: '승인된 기록은 지울 수 없습니다 — 되돌림(wait) 후 처리하세요' });
+      }
+      const num = (v: unknown): number | null => (v == null ? null : Number(v));
+      await em.query(`DELETE FROM gpa_use WHERE id = $1`, [id]);
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'GPA_USE',$2,'delete',$3::jsonb,NULL)`,
+        [actorId, id, JSON.stringify({
+          cycleId: num(row.cycle_id), studentId: num(row.student_id), svcKey: row.svc_key ?? null,
+          points: num(row.points), onDate: row.on_date ?? null, startMin: num(row.start_min),
+          serId: num(row.ser_id), noteUrl: row.note_url ?? null, state: row.state ?? null,
+          coordId: num(row.coord_id),
+        })],
+      );
+      return { ok: true as const };
+    });
   }
 
   /** 배정 upsert — (cycle, student) 하나. 0 은 배정 회수. 닫힌 사이클은 잠긴다. */

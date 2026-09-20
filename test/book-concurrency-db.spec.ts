@@ -92,8 +92,8 @@ d('C77 교재 LIB-first 동시성', () => {
     const issue = await svc.createIssue(owner, { libId, studentId, state: 'ok', progressPage: 0 });
 
     const settled = await Promise.allSettled([
-      svc.patchBook(libId, { pages: 50 }),
-      svc.updateIssueProgress(issue.id, 80),
+      svc.patchBook(owner, libId, { pages: 50 }),
+      svc.updateIssueProgress(owner, issue.id, 80),
     ]);
     expect(settled.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(settled.filter((result) => result.status === 'rejected')).toHaveLength(1);

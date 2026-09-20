@@ -123,12 +123,12 @@ d('§4.5·§82 GPA 4표 — 잔여 계산과 사이클 잠금 (N-13 채택 · C3
     const made = await svc().createUse(41, { cycleId, studentId: 91, svcKey: 'test', onDate: '2026-10-06' });
     const ok = await svc().setUseState(made.id, 43, { state: 'ok' });
     expect(ok).toMatchObject({ state: 'ok', approvedByName: '승인자' });
-    await expect(svc().deleteUse(made.id)).rejects.toMatchObject({ response: { code: 'USE_APPROVED' } });
+    await expect(svc().deleteUse(made.id, 43)).rejects.toMatchObject({ response: { code: 'USE_APPROVED' } });
     const back = await svc().setUseState(made.id, 43, { state: 'wait' });
     expect(back.state).toBe('wait');
     // 되돌리면 도장도 지워진다 — 승인자가 남아 있으면 거짓말이 된다
     expect(back.approvedByName).toBeNull();
-    await expect(svc().deleteUse(made.id)).resolves.toEqual({ ok: true });
+    await expect(svc().deleteUse(made.id, 43)).resolves.toEqual({ ok: true });
     const b = await svc().board('2026-10-06');
     expect(b.students.find((s) => s.studentId === 91)).toMatchObject({ used: 0, wait: 0, remain: 8 });
   });

@@ -42,8 +42,8 @@ export class BooksController {
   @Perm('canCrudAll')
   @ApiOperation({ summary: '교재 기본 정보 수정 (§39)' })
   @ApiOkResponse({ type: BookWriteResultDto, description: '수정된 교재 식별자·코드·이름' })
-  async patch(@Param('id', ParseIntPipe) id: number, @Body() dto: BookPatchDto): Promise<BookWriteResultDto> {
-    return this.svc.patchBook(id, dto);
+  async patch(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: BookPatchDto): Promise<BookWriteResultDto> {
+    return this.svc.patchBook(user.id, id, dto);
   }
 
   @Get('tracking')
@@ -76,8 +76,8 @@ export class BooksController {
   @Perm('canCrudAll')
   @ApiOperation({ summary: '숙제 페이지 기준 교재 진도 갱신 (§38)' })
   @ApiOkResponse({ type: BookIssueDto })
-  async progress(@Param('id', ParseIntPipe) id: number, @Body() dto: BookIssueProgressDto): Promise<BookIssueDto> {
-    return this.svc.updateIssueProgress(id, dto.progressPage);
+  async progress(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: BookIssueProgressDto): Promise<BookIssueDto> {
+    return this.svc.updateIssueProgress(user.id, id, dto.progressPage);
   }
 
   @Post('issues/:id/return')

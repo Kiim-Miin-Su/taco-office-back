@@ -67,8 +67,8 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     const issue = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'ok' });
     await expect(svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'ok' }))
       .rejects.toMatchObject({ response: { code: 'BOOK_ALREADY_ACTIVE' } });
-    expect(await svc().updateIssueProgress(issue.id, 55)).toMatchObject({ progressPage: 55, progressPercent: 55 });
-    await expect(svc().updateIssueProgress(issue.id, 101)).rejects.toThrow(/100쪽/);
+    expect(await svc().updateIssueProgress(owner, issue.id, 55)).toMatchObject({ progressPage: 55, progressPercent: 55 });
+    await expect(svc().updateIssueProgress(owner, issue.id, 101)).rejects.toThrow(/100쪽/);
     const tracking = await svc().tracking();
     expect(tracking.students.find((student) => student.id === studentA)?.todos)
       .toEqual(expect.arrayContaining([expect.objectContaining({ key: 'guide_missing', label: '안내 없음' })]));
@@ -96,7 +96,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     await expect(svc().transitionIssue(owner, issue.id, 'ok'))
       .rejects.toMatchObject({ response: { code: 'ISSUE_INVALID_TRANSITION' } });
     expect(await svc().transitionIssue(owner, issue.id, 'auto')).toMatchObject({ state: 'auto' });
-    await expect(svc().updateIssueProgress(issue.id, 1))
+    await expect(svc().updateIssueProgress(owner, issue.id, 1))
       .rejects.toMatchObject({ response: { code: 'BOOK_NOT_DELIVERED' } });
 
     await svc().addVersion(owner, libA, {

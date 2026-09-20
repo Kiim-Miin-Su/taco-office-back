@@ -161,7 +161,21 @@ export class BooksService {
     }
   }
 
-  async patchBook(id: number, dto: BookPatchDto) {
+  /**
+   * 교재 기본 정보 수정 — **고친 사람이 안 남던 자리다** (S7 · 전수 검수 §7).
+   *
+   * 이 경로는 `@CurrentUser` 를 받지도 않았다. 코드·이름·과목·레벨·학년·쪽수를 바꿔도 누가 언제
+   * 무엇을 무엇으로 바꿨는지 어디에도 없었고, **쪽수는 진도 퍼센트의 분모**라 조용히 내려가면
+   * §38 트래킹의 모든 줄이 함께 움직인다.
+   *
+   * **`hist` 가 아니라 `log` 다.** `HIST_ACTIONS` 는 원문 §40 의 필터 칩 목록 그대로라
+   * 「교재 정보 수정」이라는 낱말이 없고, 없는 칩을 새로 지으면 그 줄은 「전체」에만 걸린다(D-R44).
+   * 게다가 `hist` 에는 before/after 칸이 아예 없어 **무엇이 무엇으로 바뀌었는지**를 담지 못한다.
+   * 두 원장은 일이 다르다 — `hist` 는 §40 화면의 낱말, `log` 는 before/after 감사다. 합치지 않는다.
+   *
+   * 남기는 칸은 **보낸 칸만**이다(PATCH 규약) — 안 보낸 칸까지 적으면 안 바뀐 값이 바뀐 것처럼 읽힌다.
+   */
+  async patchBook(userId: number, id: number, dto: BookPatchDto) {
     const keys = Object.entries(dto).filter(([, v]) => v !== undefined);
     if (!keys.length) throw new BadRequestException('바꿀 교재 값을 하나 이상 보내 주세요');
     const col: Record<string, string> = { code: 'code', title: 'title', subKey: 'sub_key', level: 'level', grade: 'grade', pages: 'pages' };
@@ -171,7 +185,7 @@ export class BooksService {
     }
     try {
       return await this.anyRepo.manager.transaction(async (m) => {
-        const [book] = await m.query(`SELECT id FROM lib WHERE id=$1 FOR UPDATE`, [id]);
+        const [book] = await m.query(`SELECT * FROM lib WHERE id=$1 FOR UPDATE`, [id]) as R[];
         if (!book) throw new NotFoundException('교재를 찾을 수 없습니다');
         if (dto.subKey) {
           const [subject] = await m.query(`SELECT key FROM sub WHERE key = $1`, [dto.subKey]);
@@ -188,7 +202,14 @@ export class BooksService {
             });
           }
         }
-        const rows = await m.query(`UPDATE lib SET ${sets} WHERE id = $1 RETURNING id,code,title`, [id, ...keys.map(([, v]) => typeof v === 'string' ? v.trim() : v)]);
+        const next = keys.map(([k, v]) => [k, typeof v === 'string' ? v.trim() : v] as const);
+        const rows = await m.query(`UPDATE lib SET ${sets} WHERE id = $1 RETURNING id,code,title`, [id, ...next.map(([, v]) => v)]);
+        await m.query(
+          `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LIB',$2,'edit',$3::jsonb,$4::jsonb)`,
+          [userId, id,
+            JSON.stringify(Object.fromEntries(next.map(([k]) => [k, book[col[k]] ?? null]))),
+            JSON.stringify(Object.fromEntries(next))],
+        );
         return { id: Number(rows[0].id), code: String(rows[0].code), title: String(rows[0].title) };
       });
     } catch (e) {
@@ -609,7 +630,16 @@ export class BooksService {
     });
   }
 
-  async updateIssueProgress(id: number, page: number): Promise<BookIssueDto> {
+  /**
+   * 진도 갱신 — **적은 사람이 안 남던 자리다** (S7 · 전수 검수 §7).
+   *
+   * 이 경로도 `@CurrentUser` 를 받지 않았고, 쓰는 것은 `issue.progress_page` **한 칸 덮어쓰기**라
+   * 이전 쪽수가 그 자리에서 사라졌다. 진도는 §38 트래킹의 퍼센트이자 `patchBook` 의 쪽수 하한
+   * (`BOOK_PAGES_BELOW_PROGRESS`)이라 되짚을 수 없으면 두 화면이 왜 그 값인지 아무도 모른다.
+   *
+   * `hist` 가 아닌 이유는 `patchBook` 과 같다 — 원문 §40 칩에 없는 낱말이고 before/after 칸도 없다.
+   */
+  async updateIssueProgress(userId: number, id: number, page: number): Promise<BookIssueDto> {
     return this.anyRepo.manager.transaction(async (m) => {
       const [ref] = await m.query(`SELECT lib_id FROM issue WHERE id=$1`, [id]) as R[];
       if (!ref) throw new NotFoundException('배부 내역을 찾을 수 없습니다');
@@ -622,6 +652,12 @@ export class BooksService {
       const why = progressIssue(page, lib.pages == null ? null : Number(lib.pages));
       if (why) throw new BadRequestException(why);
       await m.query(`UPDATE issue SET progress_page=$2 WHERE id=$1`, [id, page]);
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'ISSUE',$2,'progress',$3::jsonb,$4::jsonb)`,
+        [userId, id,
+          JSON.stringify({ progressPage: r.progress_page == null ? null : Number(r.progress_page) }),
+          JSON.stringify({ progressPage: page })],
+      );
       return this.issueDto({ ...r, pages: lib.pages, progress_page: page });
     });
   }

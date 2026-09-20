@@ -629,42 +629,54 @@ export class ConsultingService {
   /**
    * §31 항목 체크/해제 — 47D-B 의 유일한 쓰기. 공개 범위(csCanFull)와 종료 잠금은 서버가 판정한다.
    * 보이지 않는 건은 404(존재 누출 금지), 내용 잠김은 403, 종료 건은 409 ITEM_LOCKED.
+   *
+   * **해제가 지우개였다 — 이제 원장에 남는다** (S7 · 전수 검수 §7). 끄는 갈래는 `done_by`·`done_at` 을
+   * NULL 로 되돌려 **누가 언제 끝냈다고 했는지가 행에서 통째로 사라지는데** 어느 원장에도 줄이 없었다.
+   * 필수 항목은 컨설팅 종료를 막는 조건(`CONS_ITEMS_LEFT`)이라 그 체크는 업무 판단이고, 지워지면
+   * 나중에 「왜 종료가 열렸나」를 되짚을 데가 없다.
+   *
+   * 남기는 자리는 이 파일의 다른 열한 쓰기와 **같은 원장**이다 — `cons_event` · `ref_id` 는 항목 id ·
+   * 낱말 둘(`item_done`·`item_undone` · 마이그레이션 55). 켬과 끔을 한 낱말로 접으면 append-only 원장의
+   * 마지막 줄이 지금 상태를 말하지 못한다. 한 자리만 `log` 로 보내지 않은 이유는 「이 건에 누가 무엇을
+   * 했나」의 답이 두 표로 갈리기 때문이다.
+   *
+   * **같은 트랜잭션이다** — 밖에서 남기면 쓰기는 되돌아가고 줄만 남아 「하지도 않은 일」이 찍힌다.
+   * 문은 `lockFull` 하나를 지난다(손으로 적고 있던 같은 판정을 지웠다 — 두 벌이면 한쪽만 낡는다).
+   * 항목 행도 잠근다: 안 잠그면 두 사람이 같은 항목을 동시에 눌렀을 때 행의 상태와 원장의 마지막 줄이 갈린다.
    */
   async toggleItem(viewerId: number, canHide: boolean, consId: number, itemId: number, dto: ConsItemToggleDto): Promise<ConsItemDto> {
-    const [c] = await this.q(
-      `SELECT c.id, c.stage, c.share, c.owner_id,
-              EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $2) AS is_picked
-         FROM cons c WHERE c.id = $1 AND c.deleted_at IS NULL`, [consId, viewerId]);
-    if (!c) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
-    const share = String(c.share) as ConsShare;
-    const viewer: ConsViewer = {
-      isOwner: c.owner_id !== null && Number(c.owner_id) === viewerId,
-      isPicked: c.is_picked === true, canHide, canMoney: false,
-    };
-    if (!csCan(share, viewer)) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
-    if (!csCanFull(share, viewer)) throw new ForbiddenException('이 건의 내용은 공개 범위 밖입니다');
-    if (String(c.stage) === 'done') {
-      throw new ConflictException({ code: 'ITEM_LOCKED', message: '종료된 컨설팅의 항목은 바꿀 수 없습니다' });
-    }
-    const [exists] = await this.q(`SELECT id FROM cons_item WHERE id = $1 AND cons_id = $2`, [itemId, consId]);
-    if (!exists) throw new NotFoundException('항목을 찾을 수 없습니다');
-    // UPDATE 의 RETURNING 은 드라이버가 [rows, count] 로 감싼다 — 갱신과 조회를 분리해 모양 의존을 없앤다
-    await this.q(
-      dto.done
-        ? `UPDATE cons_item SET done = true, done_by = $3, done_at = now() WHERE id = $1 AND cons_id = $2`
-        : `UPDATE cons_item SET done = false, done_by = NULL, done_at = NULL WHERE id = $1 AND cons_id = $2`,
-      dto.done ? [itemId, consId, viewerId] : [itemId, consId],
-    );
-    const [r] = await this.q(
-      `SELECT i.id, i.seq, i.label, i.required, i.done, i.source,
-              to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
-         FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
-        WHERE i.id = $1`, [itemId]);
-    return {
-      id: Number(r.id), seq: Number(r.seq), label: String(r.label),
-      required: r.required === true, done: r.done === true, source: String(r.source),
-      doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
-    };
+    return this.anyRepo.manager.transaction(async (m) => {
+      const c = await this.lockFull(m, viewerId, canHide, consId);
+      if (String(c.stage) === 'done') {
+        throw new ConflictException({ code: 'ITEM_LOCKED', message: '종료된 컨설팅의 항목은 바꿀 수 없습니다' });
+      }
+      const [exists] = (await m.query(
+        `SELECT id FROM cons_item WHERE id = $1 AND cons_id = $2 FOR UPDATE`, [itemId, consId],
+      )) as R[];
+      if (!exists) throw new NotFoundException('항목을 찾을 수 없습니다');
+      // UPDATE 의 RETURNING 은 드라이버가 [rows, count] 로 감싼다 — 갱신과 조회를 분리해 모양 의존을 없앤다
+      await m.query(
+        dto.done
+          ? `UPDATE cons_item SET done = true, done_by = $3, done_at = now() WHERE id = $1 AND cons_id = $2`
+          : `UPDATE cons_item SET done = false, done_by = NULL, done_at = NULL WHERE id = $1 AND cons_id = $2`,
+        dto.done ? [itemId, consId, viewerId] : [itemId, consId],
+      );
+      await m.query(
+        `INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,$2,$3,$4)`,
+        [consId, dto.done ? 'item_done' : 'item_undone', itemId, viewerId],
+      );
+      const [r] = (await m.query(
+        `SELECT i.id, i.seq, i.label, i.required, i.done, i.source,
+                to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
+           FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
+          WHERE i.id = $1`, [itemId],
+      )) as R[];
+      return {
+        id: Number(r.id), seq: Number(r.seq), label: String(r.label),
+        required: r.required === true, done: r.done === true, source: String(r.source),
+        doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
+      };
+    });
   }
 
   /* ══ §28 컨설팅 회계 (C58) ═════════════════════════════════════════════
