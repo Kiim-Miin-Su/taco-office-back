@@ -75,6 +75,23 @@ export class ConsultingService {
     return [...picked];
   }
 
+  /**
+   * **비공개 「지정」은 대표만** — §76 원문과 `perm.ts` 의 `canHide` 주석이 「비공개 **지정**·열람은 대표 전용」
+   * 이라 적는데 코드는 **열람만** 막고 있었다(S4). 그래서 자기가 담당인 건이면 매니저도 숨길 수 있었고,
+   * 숨긴 뒤에는 `csCan('private')` 이 담당을 통과시켜 **본인에게는 그대로 보였다** — 대표에게만 보이도록
+   * 정한 상태를 대표가 아닌 사람이 만들 수 있었다는 뜻이다.
+   *
+   * 막는 것은 **지정 하나**다(D-R44) — 이미 비공개인 건을 여는 판정(`csCan`·`csCanFull`)은 그대로다.
+   */
+  private assertCanSetPrivate(share: ConsShare, canHide: boolean): void {
+    if (share === 'private' && !canHide) {
+      throw new ForbiddenException({
+        code: 'CONS_PRIVATE_FORBIDDEN',
+        message: '비공개로 지정하는 것은 대표만 할 수 있습니다 — §76',
+      });
+    }
+  }
+
   /** 쓰기 성공 뒤 호출자 자신이 방금 만든/바꾼 건에서 잠기는 실패를 커밋 전에 막는다. */
   private assertNoSelfLockout(
     share: ConsShare, ownerId: number | null, picked: readonly number[], viewerId: number, canHide: boolean,
@@ -136,6 +153,7 @@ export class ConsultingService {
 
   async create(viewerId: number, canMoney: boolean, canHide: boolean, dto: ConsultingCreateDto): Promise<ConsultingDetailDto> {
     const picked = this.assertPicked(dto.share, dto.pickedStaffIds);
+    this.assertCanSetPrivate(dto.share, canHide);
     this.assertNoSelfLockout(dto.share, dto.ownerId, picked, viewerId, canHide);
     if (dto.startOn > dto.endOn) {
       throw new BadRequestException({ code: 'CONS_DATE_ORDER', message: '종료일은 시작일보다 빠를 수 없습니다' });
@@ -285,6 +303,8 @@ export class ConsultingService {
       capabilities: {
         canEdit: mutable,
         canChangeShare: mutable,
+        // 범위를 바꾸는 것과 **비공개를 고르는 것**은 다른 층이다 — §76 대표 전용 (S4)
+        canSetPrivate: canHide,
         canAddContractFile: mutable && (step === 1 || step === 2 || step === 4) && files.length < CONSULTING_FILE_MAX,
         canRemoveContractFile: mutable && (step === 1 || step === 2) && feedback.length === 0 && contractFiles.length > 0,
         canAddFeedback: mutable && step === 2 && contractFiles.length > 0,
@@ -315,6 +335,7 @@ export class ConsultingService {
 
   async updateShare(viewerId: number, canMoney: boolean, canHide: boolean, consId: number, dto: ConsultingShareUpdateDto): Promise<ConsultingDetailDto> {
     const picked = this.assertPicked(dto.share, dto.pickedStaffIds);
+    this.assertCanSetPrivate(dto.share, canHide);
     await this.anyRepo.manager.transaction(async (m) => {
       const c = await this.lockFull(m, viewerId, canHide, consId);
       if (String(c.stage) !== 'contract') {
@@ -591,6 +612,8 @@ export class ConsultingService {
     return {
       items,
       canSeeAmounts: canMoney,
+      // 「비공개」를 고를 수 있는가 — 단추와 서버가 같은 질문을 한다 (D-R39 · S4)
+      canSetPrivate: canHide,
       // 빈 칸도 이름과 한 줄을 갖는다 — 화면이 칸을 만들면 순서와 낱말이 갈린다 (D-R18 · D-R25)
       stages: CONSULTING_STAGES.map((key) => ({
         key, label: CONSULTING_STAGE_LABEL[key], sub: CONSULTING_STAGE_SUB[key],

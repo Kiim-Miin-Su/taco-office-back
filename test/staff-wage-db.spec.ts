@@ -179,7 +179,7 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     expect(await q(`SELECT id FROM staff WHERE email IN ('mars-c97@t.kr','ceo2-c97@t.kr','adm2-c97@t.kr','short-c97@t.kr','t-c97@t.kr')`)).toEqual([]);
     // 서비스로 곧장 불러도 역할 밖은 DTO 가 아니라 표(role_t)가 막는다 — 값이 enum 밖이면 22P02
     const svc = new DrawerService(ds.getRepository(Lead));
-    await expect(svc.createStaff(MANAGER, { name: 'x', email: 'x-c97@t.kr', password: 'another-pw-1', role: 'nope' })).rejects.toBeTruthy();
+    await expect(svc.createStaff(MANAGER, true, { name: 'x', email: 'x-c97@t.kr', password: 'another-pw-1', role: 'nope' })).rejects.toBeTruthy();
     expect(await q(`SELECT id FROM staff WHERE email = 'x-c97@t.kr'`)).toEqual([]);
   });
 

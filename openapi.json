@@ -14309,14 +14309,7 @@
             }
           },
           "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
+            "description": "code WAGE_SET_FORBIDDEN — 시급을 적었는데 canWage 가 없다 (S4)"
           },
           "404": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -14543,8 +14536,19 @@
     },
     "/drawer/todos/completed": {
       "delete": {
+        "description": "화면이 지금 「끝난 것」으로 세고 있는 id 들을 받는다. 서버는 그중 아직 끝나 있고 이 사람이 볼 수 있는 행만 지우고 그 줄을 통째로 log 에 남긴다. 단추의 숫자와 지워지는 수가 같다 (D-R39).",
         "operationId": "DrawerController_clearDoneTodos",
         "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoClearRequestDto"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -14617,7 +14621,7 @@
             }
           }
         },
-        "summary": "§15 끝난 것 지우기 — 내가 볼 수 있는 완료 할 일만",
+        "summary": "§15 끝난 것 지우기 — **화면이 보여 준 그것만** (S4)",
         "tags": [
           "drawer"
         ]
@@ -25537,6 +25541,10 @@
           "canChangeShare": {
             "type": "boolean"
           },
+          "canSetPrivate": {
+            "type": "boolean",
+            "description": "「비공개」로 지정할 수 있는가 — §76 대표 전용(S4). canChangeShare 와 다른 층이다: 범위를 바꿀 수는 있어도 비공개는 못 고를 수 있다"
+          },
           "canAddContractFile": {
             "type": "boolean"
           },
@@ -25589,6 +25597,7 @@
         "required": [
           "canEdit",
           "canChangeShare",
+          "canSetPrivate",
           "canAddContractFile",
           "canRemoveContractFile",
           "canAddFeedback",
@@ -26186,6 +26195,10 @@
             "type": "boolean",
             "description": "금액을 볼 수 있는가 (D-R39)"
           },
+          "canSetPrivate": {
+            "type": "boolean",
+            "description": "「비공개」로 지정할 수 있는가 — §76 대표 전용. 화면의 공개 범위 고르개가 이 값으로 그 칸을 뺀다 (S4 · D-R39)"
+          },
           "stages": {
             "description": "§26 칸 셋 — 빈 칸도 이름과 한 줄을 갖는다",
             "type": "array",
@@ -26197,6 +26210,7 @@
         "required": [
           "items",
           "canSeeAmounts",
+          "canSetPrivate",
           "stages"
         ]
       },
@@ -30463,6 +30477,26 @@
           "id"
         ]
       },
+      "TodoClearRequestDto": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "minItems": 1,
+            "maxItems": 500,
+            "uniqueItems": true,
+            "description": "화면이 지금 「끝난 것」으로 세고 있는 할 일 id 들 — 이 목록 밖은 지우지 않는다",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ]
+      },
       "TodoClearDto": {
         "type": "object",
         "properties": {
@@ -30471,7 +30505,7 @@
           },
           "deleted": {
             "type": "number",
-            "description": "이번에 삭제된 완료 할 일 수"
+            "description": "이번에 삭제된 완료 할 일 수 — 보낸 id 중 아직 끝나 있고 볼 수 있는 것만"
           }
         },
         "required": [

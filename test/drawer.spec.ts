@@ -387,9 +387,11 @@ d('우측 서랍 — §14~§21', () => {
       .patch(`/drawer/todos/${id}`).set('Authorization', auth(TEACHER))
       .send({ done: true }).expect(200);
 
+    // 「끝난 것 지우기」는 **화면이 보여 준 그 줄**만 보낸다 (S4 · 대표 결정 2026-09-20)
     const cleared = await request(app.getHttpServer())
-      .delete('/drawer/todos/completed').set('Authorization', auth(TEACHER)).expect(200);
-    expect(cleared.body.deleted).toBeGreaterThanOrEqual(1);
+      .delete('/drawer/todos/completed').set('Authorization', auth(TEACHER))
+      .send({ ids: [id] }).expect(200);
+    expect(cleared.body.deleted).toBe(1);
     const [{ n }] = await ds.query('SELECT count(*)::int n FROM todo WHERE id = $1', [id]);
     expect(n).toBe(0);
   });

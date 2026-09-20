@@ -127,6 +127,8 @@ export class ConsultingStageDto {
 export class ConsultingListDto {
   @ApiProperty({ type: [ConsultingDto] }) items!: ConsultingDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+  @ApiProperty({ description: '「비공개」로 지정할 수 있는가 — §76 대표 전용. 화면의 공개 범위 고르개가 이 값으로 그 칸을 뺀다 (S4 · D-R39)' })
+  canSetPrivate!: boolean;
   @ApiProperty({ type: [ConsultingStageDto], description: '§26 칸 셋 — 빈 칸도 이름과 한 줄을 갖는다' })
   stages!: ConsultingStageDto[];
 }
@@ -203,6 +205,8 @@ export class ConsultingTypeCapabilityDto {
 export class ConsultingCapabilitiesDto {
   @ApiProperty() canEdit!: boolean;
   @ApiProperty() canChangeShare!: boolean;
+  @ApiProperty({ description: '「비공개」로 지정할 수 있는가 — §76 대표 전용(S4). canChangeShare 와 다른 층이다: 범위를 바꿀 수는 있어도 비공개는 못 고를 수 있다' })
+  canSetPrivate!: boolean;
   @ApiProperty() canAddContractFile!: boolean;
   @ApiProperty() canRemoveContractFile!: boolean;
   @ApiProperty() canAddFeedback!: boolean;

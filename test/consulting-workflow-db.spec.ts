@@ -80,8 +80,9 @@ d('§29·§30 컨설팅 계약 워크플로 (C79-product)', () => {
 
   it('생성 결과에서 호출자 자신을 잠그는 공개 범위는 행을 만들기 전에 거절한다', async () => {
     const [{ before }] = await q.query(`SELECT count(*)::int AS before FROM cons`);
+    // 비공개는 **지정 자체가 대표 전용**이라 자기 잠금보다 먼저 걸린다 — 권한이 먼저다 (S4 · §76)
     await expect(svc().create(picked, false, false, input({ share: 'private' })))
-      .rejects.toMatchObject({ response: { code: 'CONS_SELF_LOCKOUT' } });
+      .rejects.toMatchObject({ response: { code: 'CONS_PRIVATE_FORBIDDEN' } });
     await expect(svc().create(picked, false, false, input({ share: 'picked', pickedStaffIds: [owner] })))
       .rejects.toMatchObject({ response: { code: 'CONS_SELF_LOCKOUT' } });
     const [{ after }] = await q.query(`SELECT count(*)::int AS after FROM cons`);
@@ -90,8 +91,9 @@ d('§29·§30 컨설팅 계약 워크플로 (C79-product)', () => {
 
   it('공개 범위 변경으로 호출자 자신이 잠기면 기존 share와 지정 목록을 보존한다', async () => {
     const made = await svc().create(owner, false, false, input({ studentIds: [studentA], share: 'all' }));
+    // 여기서도 권한이 먼저다 (S4) — 자기 잠금은 아래 「지정 공개」 줄이 그대로 본다
     await expect(svc().updateShare(picked, false, false, made.id, { share: 'private' }))
-      .rejects.toMatchObject({ response: { code: 'CONS_SELF_LOCKOUT' } });
+      .rejects.toMatchObject({ response: { code: 'CONS_PRIVATE_FORBIDDEN' } });
     await expect(svc().updateShare(picked, false, false, made.id, { share: 'picked', pickedStaffIds: [owner] }))
       .rejects.toMatchObject({ response: { code: 'CONS_SELF_LOCKOUT' } });
     const [row] = await q.query(`SELECT share,(SELECT count(*)::int FROM cons_pick WHERE cons_id=c.id) AS picks FROM cons c WHERE id=$1`, [made.id]);
@@ -119,7 +121,8 @@ d('§29·§30 컨설팅 계약 워크플로 (C79-product)', () => {
     expect((await svc().addPayment(owner, true, false, made.id, { amount: 600_000, paidOn: todayKst() })).stage).toBe('running');
     await expect(svc().addPayment(owner, true, false, made.id, { amount: 1, paidOn: todayKst() }))
       .rejects.toMatchObject({ response: { code: 'OVERPAY' } });
-    await expect(svc().updateShare(owner, true, false, made.id, { share: 'private' }))
+    // 단계 잠금을 보는 줄이므로 **비공개 지정 권한은 주고**(canHide=true) 부른다 — S4 가 그 앞에 문을 하나 세웠다
+    await expect(svc().updateShare(owner, true, true, made.id, { share: 'private' }))
       .rejects.toMatchObject({ response: { code: 'CONS_LOCKED' } });
     const [paymentState] = await q.query(
       `SELECT COALESCE(sum(amount),0)::int AS paid,count(*)::int AS count FROM cons_pay WHERE cons_id=$1`, [made.id],

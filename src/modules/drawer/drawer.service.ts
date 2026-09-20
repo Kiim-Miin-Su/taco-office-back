@@ -429,9 +429,21 @@ export class DrawerService {
    * 역할은 강사·매니저뿐(DTO enum · 대표·관리자 계정은 이 길로 만들지 않는다 — 권한 상승 경로를 두지 않는다).
    * 이메일은 유일(표 UNIQUE 가 마지막에 막는다 · 먼저 읽어 409 문장을 준다) · 시간대는 `tzg` 에 있는 값만(C41 과 같은 낱말 `TZ_UNKNOWN`).
    * 비밀번호는 bcryptjs 해시로만 저장하고 어느 응답에도 싣지 않는다. 시급을 적었으면 **같은 트랜잭션**에 `insertWage`(입사일 또는 오늘부터 · 소급 없음).
+   *
+   * **시급을 적으려면 `canWage` 여야 한다**(S4). `insertWage` 를 타는 다른 두 경로 — `POST /accounting/wages`
+   * (`@Perm('canAdminPage','canWage')`)와 §14 시급 요청 승인(`reviewRequest` 의 `WAGE_REVIEW_FORBIDDEN`) — 는 둘 다
+   * 요구하는데 이 자리만 안 물었다. `can_wage=false` 예외가 걸린 매니저가 「+ 구성원」으로 시급을 세우면
+   * **그 예외가 존재하는 이유 자체를 우회한다.** 구성원을 만드는 것과 시급을 정하는 것은 다른 권한이므로
+   * 만들기 자체는 막지 않고 **시급 칸만** 막는다 — 시급을 비우면 그대로 만들어진다.
    */
-  async createStaff(viewerId: number, dto: StaffCreateDto): Promise<MemberDto> {
+  async createStaff(viewerId: number, canWage: boolean, dto: StaffCreateDto): Promise<MemberDto> {
     const today = todayKst();
+    if (dto.wageRate != null && !canWage) {
+      throw new ForbiddenException({
+        code: 'WAGE_SET_FORBIDDEN',
+        message: '시급을 다룰 권한이 필요합니다 — 시급을 비우고 만든 뒤 시급 담당자가 「시급 수정」으로 세울 수 있습니다',
+      });
+    }
     const tz = dto.tz?.trim() || KST;
     const [known] = (await this.q(`SELECT tz FROM tzg WHERE tz = $1`, [tz])) as Array<{ tz: string }>;
     if (!known) {
@@ -461,7 +473,8 @@ export class DrawerService {
       );
       return staffId;
     });
-    return this.memberOne(id, true);
+    // 만든 줄의 시급도 **볼 수 있는 사람에게만** 싣는다 — 여기서만 true 를 박으면 목록과 응답이 갈린다 (D-R39)
+    return this.memberOne(id, canWage);
   }
 
   /** 구성원 한 줄 — `all()` 의 members 와 같은 모양(시급은 canWage 일 때만) */
@@ -500,15 +513,44 @@ export class DrawerService {
     return { id: Number(row.id) };
   }
 
-  /** §15 「끝난 것 지우기」 — 화면에서 볼 수 있는 완료 행만 삭제한다. */
-  async clearDoneTodos(viewerId: number, canSeeAll: boolean): Promise<number> {
-    const rows = await this.q(
-      `DELETE FROM todo
-        WHERE done AND ($2::boolean OR to_id = $1 OR from_id = $1)
-        RETURNING id`,
-      [viewerId, canSeeAll],
-    );
-    return writtenRows(rows).length;
+  /**
+   * §15 「끝난 것 지우기」 — **화면이 보여 준 그것만** (대표 결정 2026-09-20 · S4).
+   *
+   * 전에는 `WHERE done AND ($2::boolean OR …)` 이라 `canSeeAll` 이면 조건이 **통째로 사라져**
+   * 전사 하드 삭제였다. 화면의 단추는 **지금 보이는 필터**의 끝난 것 수로 열리는데(수신함/발신함/전체 ·
+   * 일·주·월) 서버는 남의 것·지난 달 것까지 지웠다 — **단추의 숫자와 지워지는 수가 달랐다**(D-R39).
+   *
+   * 이제 화면이 세고 있는 id 를 그대로 받고, 서버는 그중 **아직 끝나 있고 이 사람이 볼 수 있는** 행만
+   * 지운다. 기간·묶음 규칙을 서버에 다시 쓰지 않는다(D-R22) — 그러면 두 벌이 되어 또 갈린다.
+   * 사이에 누가 체크를 풀었으면 그 줄은 안 지워지고, 응답의 `deleted` 가 실제 수다.
+   *
+   * **지운 것은 흔적을 남긴다** — 하드 삭제라 지운 뒤에는 무엇이 있었는지 아무도 모른다
+   * (S2 의 입금 줄 삭제와 같은 자리). 같은 트랜잭션에서 `log` 한 줄에 지운 줄을 통째로 적는다.
+   */
+  async clearDoneTodos(viewerId: number, canSeeAll: boolean, ids: readonly number[]): Promise<number> {
+    return this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const gone = (await m.query(
+        `DELETE FROM todo
+          WHERE id = ANY($3::bigint[]) AND done AND ($2::boolean OR to_id = $1 OR from_id = $1)
+          RETURNING id, title, src, to_id, from_id, to_char(due_on,'YYYY-MM-DD') AS due_on`,
+        [viewerId, canSeeAll, [...ids]],
+      )) as Array<Record<string, unknown>>;
+      const rows = writtenRows<Record<string, unknown>>(gone);
+      if (rows.length === 0) return 0;
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1,'TODO',$2,'clear',$3::jsonb,'{}'::jsonb)`,
+        [
+          viewerId,
+          Number(rows[0]!.id),
+          JSON.stringify(rows.map((r) => ({
+            id: Number(r.id), title: String(r.title), src: String(r.src),
+            toId: num(r.to_id), fromId: num(r.from_id), dueOn: str(r.due_on),
+          }))),
+        ],
+      );
+      return rows.length;
+    });
   }
 
   /** §15 할 일 체크. 강사는 **자기가 주고받은 것만** 건드린다 (D-R39) */

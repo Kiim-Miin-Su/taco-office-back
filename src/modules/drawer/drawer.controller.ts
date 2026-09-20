@@ -19,7 +19,7 @@ import {
   Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import {
-  ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
+  ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { OkDto } from '../../common/http.dto';
@@ -29,7 +29,7 @@ import { ScheduleService } from '../schedule/schedule.service';
 import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
   ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
-  StaffCreateDto, TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoCreateDto, TodoCreateResultDto,
+  StaffCreateDto, TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
   TodoDoneDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
@@ -76,8 +76,10 @@ export class DrawerController {
   })
   @ApiCreatedResponse({ type: MemberDto })
   @ApiConflictResponse({ description: 'code STAFF_EMAIL_TAKEN | TZ_UNKNOWN | WAGE_SAME_DAY' })
+  @ApiForbiddenResponse({ description: 'code WAGE_SET_FORBIDDEN — 시급을 적었는데 canWage 가 없다 (S4)' })
   createStaff(@CurrentUser() user: RequestUser, @Body() dto: StaffCreateDto): Promise<MemberDto> {
-    return this.svc.createStaff(user.id, dto);
+    // 만들기는 canCrudAll, **시급은 canWage** — 다른 권한이므로 따로 넘긴다 (S4)
+    return this.svc.createStaff(user.id, this.gate(user).canWage, dto);
   }
 
   @Patch('todos/:id')
@@ -106,10 +108,13 @@ export class DrawerController {
   }
 
   @Delete('todos/completed')
-  @ApiOperation({ summary: '§15 끝난 것 지우기 — 내가 볼 수 있는 완료 할 일만' })
+  @ApiOperation({
+    summary: '§15 끝난 것 지우기 — **화면이 보여 준 그것만** (S4)',
+    description: '화면이 지금 「끝난 것」으로 세고 있는 id 들을 받는다. 서버는 그중 아직 끝나 있고 이 사람이 볼 수 있는 행만 지우고 그 줄을 통째로 log 에 남긴다. 단추의 숫자와 지워지는 수가 같다 (D-R39).',
+  })
   @ApiOkResponse({ type: TodoClearDto })
-  async clearDoneTodos(@CurrentUser() user: RequestUser): Promise<TodoClearDto> {
-    return { ok: true, deleted: await this.svc.clearDoneTodos(user.id, this.gate(user).canSeeAll) };
+  async clearDoneTodos(@CurrentUser() user: RequestUser, @Body() dto: TodoClearRequestDto): Promise<TodoClearDto> {
+    return { ok: true, deleted: await this.svc.clearDoneTodos(user.id, this.gate(user).canSeeAll, dto.ids) };
   }
 
   @Patch('notis/:id/read')

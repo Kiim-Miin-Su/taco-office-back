@@ -13,7 +13,11 @@ import {
   APPROVAL_FLOW_RECIPIENT_NAMES, APPROVAL_FLOW_RECIPIENTS,
 } from '../../lib/approval';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import {
+  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional,
+  IsString, Matches, Max, MaxLength, Min, MinLength,
+} from 'class-validator';
+import { ID_SCHEMA } from '../../common/validation';
 
 /** §14 처리의 두 갈래 — 낱말의 출처는 여기 하나다 */
 export const REQ_DECISIONS = ['approve', 'reject'] as const;
@@ -402,9 +406,29 @@ export class TodoCreateResultDto {
   @ApiProperty() id!: number;
 }
 
+/**
+ * §15 「끝난 것 지우기」 — **화면이 보여 준 그것만** 지운다 (대표 결정 2026-09-20 · S4).
+ *
+ * 전에는 본문이 없었고 서버가 「내가 볼 수 있는 완료 행 전부」를 지웠다. `canCrudAll` 이면 그 조건이
+ * 통째로 사라져 **전사 하드 삭제**였는데, 화면의 단추는 **지금 보이는 필터(수신함/발신함/전체 · 일·주·월)**
+ * 의 끝난 것 수로 열린다 — 「1건」을 보고 눌렀는데 남의 지난달 것까지 사라졌다.
+ *
+ * 그래서 **범위를 화면이 말한다.** 기간·묶음 규칙을 서버에 한 벌 더 쓰지 않는다(D-R22) — 화면이 세고 있는
+ * 그 줄들의 id 를 그대로 보내고, 서버는 그중 **아직 끝나 있고 내가 볼 수 있는** 행만 지운다. 그래서
+ * 단추의 숫자와 실제로 지워지는 수가 언제나 같다(D-R39). 그 사이 누가 체크를 풀었으면 그 줄은 안 지워진다.
+ */
+export class TodoClearRequestDto {
+  @ApiProperty({
+    type: [Number], items: ID_SCHEMA, minItems: 1, maxItems: 500, uniqueItems: true,
+    description: '화면이 지금 「끝난 것」으로 세고 있는 할 일 id 들 — 이 목록 밖은 지우지 않는다',
+  })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true })
+  ids!: number[];
+}
+
 export class TodoClearDto {
   @ApiProperty() ok!: true;
-  @ApiProperty({ description: '이번에 삭제된 완료 할 일 수' }) deleted!: number;
+  @ApiProperty({ description: '이번에 삭제된 완료 할 일 수 — 보낸 id 중 아직 끝나 있고 볼 수 있는 것만' }) deleted!: number;
 }
 
 /** 종류별 Swagger 모델이 공유하는 회차 대상. 실제 검증도 ChangeReqCreateDto가 같은 필드를 쓴다. */
