@@ -99,7 +99,8 @@ describe('변경 요청 회차 소유권 — DB 독립', () => {
 
 describe('§75 역할별 projection 위임 — DB 독립', () => {
   it.each([
-    ['teacher', 'none'], ['manager', 'head'], ['admin', 'head'], ['ceo', 'all'],
+    // 대표 결정 2026-09-21 — 관리자급도 'all' 이다(원래 'head'). 강사의 'none' 은 그대로다
+    ['teacher', 'none'], ['manager', 'all'], ['admin', 'all'], ['ceo', 'all'],
   ] as const)('%s는 공용 perm selector의 %s 범위를 service에 전달한다', (role, scope) => {
     const svc = { all: jest.fn().mockResolvedValue({}) };
     const controller = new DrawerController(
@@ -291,16 +292,23 @@ d('우측 서랍 — §14~§21', () => {
     ['rpt', 'plan', 'req', 'chreq', 'gpapack'].forEach((k) => expect([...kinds]).toContain(k));
   });
 
-  it('§75 매니저 projection은 exact 5종 타일·실장 수신 대기·deep link만 내린다', async () => {
+  /**
+   * 대표 결정 2026-09-21 로 매니저 범위가 `head` → `all` 이 됐다 —
+   * **실장에게 오는 것만 보던 화면이 대표에게 오는 것(RPT·PLAN)까지 본다.**
+   * 타일 다섯과 deep link 규약은 그대로라 거기만 계속 센다.
+   */
+  it('§75 매니저 projection은 exact 5종 타일·deep link를 내리고, 이제 대표 수신분까지 본다', async () => {
     const { approvalFlow: flow } = (await get('/drawer', MANAGER).expect(200)).body;
     expect(flow.canView).toBe(true);
     expect(flow.tiles.map((tile: { kind: string }) => tile.kind))
       .toEqual(['rpt', 'plan', 'req', 'chreq', 'gpapack']);
     expect(flow.total).toBe(flow.waiting.length);
     expect(flow.backCount).toBe(flow.back.length);
-    expect(flow.waiting.every((item: { to: string }) => item.to === 'head')).toBe(true);
+    // 수신처는 여전히 갈래가 정한다(rpt·plan 은 대표에게) — 달라진 것은 **누가 그것을 보는가**다
+    expect(flow.waiting.every((item: { to: string }) => ['head', 'ceo'].includes(item.to))).toBe(true);
+    // §75 는 다섯 갈래만 — REP·건의·누락은 §14 의 것이라 여기 섞이지 않는다
     expect(flow.waiting.map((item: { kind: string }) => item.kind))
-      .not.toEqual(expect.arrayContaining(['rpt', 'plan', 'rep', 'suggestion', 'missing']));
+      .not.toEqual(expect.arrayContaining(['rep', 'suggestion', 'missing']));
     REQ_IDS.forEach((id) => expect(flow.waiting).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'req', id, toName: '실장', toLabel: '실장에게', go: `/ops?tab=todo&request=${id}` }),
     ])));

@@ -200,10 +200,10 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
     const study = h.lessons.find((l: { kindKey: string }) => l.kindKey === 'study');
     expect(study).toMatchObject({ repState: 'na', pay: null, penaltyIfNow: null });
 
-    // 금액 예외 매니저 — 시트는 보지만 확정 단추는 서지 않는다
+    // 매니저 — 시트도 보고 확정 단추도 선다 (대표 결정 2026-09-21 · 원문 §76 은 「확정은 대표만」이었다)
     const asManager = await sheet(PREV, managerToken);
     expect(asManager.canSeeAmounts).toBe(true);
-    expect(rowOf(asManager, TEACHER)).toMatchObject({ net: row.net, canConfirm: false });
+    expect(rowOf(asManager, TEACHER)).toMatchObject({ net: row.net, canConfirm: true });
 
     // 이번 달은 아직 끝나지 않았다 — 단추가 서지 않는다
     const cur = await sheet(THIS);
@@ -213,12 +213,13 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
   });
 
   /* ── ③ 거절 ───────────────────────────────────────────────────────────── */
-  it('확정은 대표만 · 끝나지 않은 달 400 · 시급 없는 수업 409 · 쓴 수업 0 이면 409 · 없는 강사 404 (O-148)', async () => {
+  it('확정은 강사만 막힌다 · 끝나지 않은 달 400 · 시급 없는 수업 409 · 쓴 수업 0 이면 409 · 없는 강사 404 (O-148 · 원문은 「대표만」)', async () => {
     await threeLessons();
     const t2 = await lesson(TEACHER2, 540);
     await submit(t2, teacher2Token).expect(201);
 
-    await confirm(PREV, TEACHER, managerToken).expect(403);
+    // 강사는 회계 자체가 닫힌다 — 남은 역할 경계는 이 하나다 (`ceoGate` 의 `r !== 'teacher'`)
+    await confirm(PREV, TEACHER, teacherToken).expect(403);
     const open = await confirm(THIS, TEACHER).expect(400);
     expect(open.body.code).toBe('PAYOUT_MONTH_OPEN');
     const noRate = await confirm(PREV, TEACHER2).expect(409);
@@ -232,6 +233,27 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
     // 아무것도 굳지 않았다
     expect(await q(`SELECT id FROM payout WHERE staff_id = ANY($1)`, [[TEACHER, TEACHER2, MANAGER]])).toEqual([]);
     expect(await q(`SELECT id FROM log WHERE entity = 'PAYOUT' AND actor_id = $1`, [CEO])).toEqual([]);
+  });
+
+  /**
+   * ⭐ **대표 결정 2026-09-21 「우선은 매니저에게도 모든 권한」** — `canCeoConfirmPayout` 이 `ceoGate` 를 부른다.
+   * 원문 §76(테스트 시나리오 O-148)은 「지급 확정은 대표만」이고 그 줄은 `perm.ts` 에 그대로 남아 있다.
+   * 되돌리려면 `ceoGate` 한 줄이며, 그때 이 시험이 먼저 빨개진다.
+   */
+  it('⭐ 지급 확정은 이제 매니저도 한다 — 굳는 값도 확정자도 대표가 한 것과 같다 (원문은 「대표만」)', async () => {
+    await threeLessons();
+    const before = rowOf(await sheet(PREV, managerToken), TEACHER)!;
+    expect(before.canConfirm).toBe(true);
+
+    const res = await confirm(PREV, TEACHER, managerToken).expect(201);
+    expect(res.body).toMatchObject({ staffId: TEACHER, confirmed: true, net: before.net });
+    const [saved] = await q<{ confirmed_by: string; net: string }>(
+      `SELECT confirmed_by, net FROM payout WHERE staff_id = $1 AND year_month = $2`, [TEACHER, PREV],
+    );
+    expect(Number(saved.confirmed_by)).toBe(MANAGER);
+    expect(Number(saved.net)).toBe(before.net);
+    // 두 번은 그대로 409 — 판정이 한 곳이라 확정자가 누구든 같다
+    await confirm(PREV, TEACHER, managerToken).expect(409);
   });
 
   /* ── ④ 확정 ───────────────────────────────────────────────────────────── */

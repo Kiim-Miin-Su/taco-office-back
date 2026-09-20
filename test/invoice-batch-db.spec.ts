@@ -37,6 +37,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
   let ds: DataSource;
   let token = '';
   let managerToken = '';
+  let teacherToken = '';
   const PW = 'invoice-batch-1234';
   const CEO = 961;
   const TEACHER = 962;
@@ -98,6 +99,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     };
     token = await login('ib-ceo@t.kr');
     managerToken = await login('ib-m@t.kr');
+    teacherToken = await login('ib-t@t.kr');
   });
 
   afterAll(async () => {
@@ -229,15 +231,21 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
   });
 
   /* ── ⑤ 취소 ───────────────────────────────────────────────────────────── */
-  it('취소는 대표만 · 사유 필수 · 입금 붙으면 409 · void 로 남고 사유가 응답에 · 미수에서 빠진다 (N-139)', async () => {
+  it('취소는 강사만 막힌다 · 사유 필수 · 입금 붙으면 409 · void 로 남고 사유가 응답에 · 미수에서 빠진다 (N-139 · 원문은 「대표만」)', async () => {
     await lesson([STU_A], SUB_OK, 900);
     const { body } = await batch().expect(201);
     const inv = mine(body, STU_A)!;
     expect(inv.canVoid).toBe(true);
-    // 금액 예외 매니저 — 단추도 없고 서버도 403
+    /**
+     * ⭐ **대표 결정 2026-09-21 「우선은 매니저에게도 모든 권한」** — `canCeoVoidInvoice` 가 `ceoGate` 를 부른다.
+     * 원문 §76(테스트 시나리오 N-139)은 「청구서 취소는 대표만」이었고 그 줄은 `perm.ts` 에 그대로 남아 있다.
+     * **단추와 서버가 같은 답을 하는지**는 그대로 본다 — 답만 「된다」로 바뀌었다.
+     */
     const asManager = await (await api('get', '/accounting', managerToken).expect(200)).body;
-    expect(asManager.invoices.find((i: { id: number }) => i.id === inv.id).canVoid).toBe(false);
-    await api('post', `/accounting/invoices/${inv.id}/void`, managerToken).send({ reason: '매니저 시도' }).expect(403);
+    expect(asManager.invoices.find((i: { id: number }) => i.id === inv.id).canVoid).toBe(true);
+    // 강사는 회계 자체가 닫힌다 — 남은 역할 경계는 이 하나다
+    await api('get', '/accounting', teacherToken).expect(403);
+    await api('post', `/accounting/invoices/${inv.id}/void`, teacherToken).send({ reason: '강사 시도' }).expect(403);
     await api('post', `/accounting/invoices/${inv.id}/void`).send({ reason: '   ' }).expect(400);
 
     // 입금이 붙으면 못 지운다 — 입금을 먼저 지운다
@@ -266,6 +274,15 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     const logs = await q<{ action: string; after: { reason?: string } }>(`SELECT action, after FROM log WHERE entity = 'INV' AND entity_id = $1 AND actor_id = $2 ORDER BY id`, [inv.id, CEO]);
     expect(logs.map((l) => l.action)).toEqual(['deliver', 'void']);
     expect(logs[1]!.after.reason).toBe('단가를 잘못 넣어 다시 낸다');
+
+    // ⭐ 열린 자리는 실제로 통과한다 — 단추가 섰으니 눌러 본다 (누가 취소했는지도 남는다)
+    const byManager = await api('post', `/accounting/invoices/${re.body.id}/void`, managerToken)
+      .send({ reason: '매니저가 취소한다' }).expect(201);
+    expect(byManager.body).toMatchObject({ state: 'void', voidReason: '매니저가 취소한다' });
+    const mgrLog = await q<{ action: string }>(
+      `SELECT action FROM log WHERE entity = 'INV' AND entity_id = $1 AND actor_id = $2`, [re.body.id, MANAGER],
+    );
+    expect(mgrLog.map((l) => l.action)).toEqual(['void']);
   });
 
   /**

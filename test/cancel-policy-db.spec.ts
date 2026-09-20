@@ -306,10 +306,23 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     // 하나는 미리 휴강해 둔다
     await api('delete', `/schedule/${a.id}`).send({ scope: 'this', onDate: a.from, cancelKind: 'holiday' }).expect(200);
 
+    /**
+     * **그날 전체 휴강은 학원 전체를 센다** — 이 스위트가 만든 셋만 세는 것이 아니다.
+     * 그래서 기대값을 숫자로 박으면 **시드에 그날 휴강이 있는 주**에 깨진다(2026-09-21 실측:
+     * 대상일 2026-09-28 에 시드 휴강 여섯 · `skipped` 가 1 이 아니라 7 이었다).
+     * 그날의 실제 상태를 먼저 세어 견준다 — 보는 것은 「전부 접히고 이미 접힌 것은 건너뛴다」이지 숫자가 아니다.
+     */
+    const dayCount = async (where: string) => Number((await q<{ n: string }>(
+      `SELECT count(*)::int AS n FROM ser_occ WHERE on_date = $1::date${where}`, [a.from],
+    ))[0]!.n);
+    const already = await dayCount(' AND canceled');
+    const open = await dayCount(' AND NOT canceled');
+    expect(open).toBeGreaterThanOrEqual(2); // b·c 는 아직 열려 있다
+
     const res = await api('post', '/schedule/day-cancel')
       .send({ date: a.from, cancelKind: 'holiday', cancelTreat: 'carry', memo: '추석' })
       .expect(201);
-    expect(res.body).toMatchObject({ count: 2, skipped: 1 });
+    expect(res.body).toMatchObject({ count: open, skipped: already });
     // serIds 는 「화면이 다시 읽을 범위」라 건너뛴 규칙도 든다 — 접힌 둘은 반드시 든다
     expect(res.body.serIds).toEqual(expect.arrayContaining([b.id, c.id]));
 

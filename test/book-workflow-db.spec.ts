@@ -9,10 +9,19 @@ import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { BooksService } from '../src/modules/books/books.service';
 import { BookWorkflow1759700000000 } from '../src/migrations/1759700000000-book-workflow';
+import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 const url = TEST_URL ? assertScratch(TEST_URL) : '';
+/**
+ * 자료 묶음의 적용일 — **오늘(KST)로 잡는다.**
+ *
+ * `replacePackBooks` 는 「적용일에 유효한 판」을 고르는데(`from_date <= 적용일`) `addVersion` 은
+ * `from_date` 를 **오늘**로 새긴다. 고정 날짜를 적어 두면 그날이 지나는 순간 판이 하나도 안 잡혀
+ * `versId`·`seFileId` 가 조용히 null 이 된다(2026-09-21 실측). 달력 때문에 깨지는 시험을 남기지 않는다.
+ */
+const EFFECTIVE_ON = todayKst();
 jest.setTimeout(60_000);
 
 function scratchDataSource(): DataSource {
@@ -120,9 +129,9 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     });
     const made = await svc().createPack(owner, {
       packType: 'exam', title: '중간고사 자료', coordinatorId: coordinator,
-      studentIds: [studentA, studentB], libIds: [libA, libB], effectiveOn: '2026-09-20',
+      studentIds: [studentA, studentB], libIds: [libA, libB], effectiveOn: EFFECTIVE_ON,
     });
-    expect(made.effectiveOn).toBe('2026-09-20');
+    expect(made.effectiveOn).toBe(EFFECTIVE_ON);
     expect(made.students).toHaveLength(2); expect(made.books).toHaveLength(2);
     expect(made.books.find((book) => book.id === libA)).toMatchObject({ versId: v1.id, seFileId: v1.seFileId });
     await svc().addVersion(owner, libA, {
@@ -158,7 +167,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
       edition: 'se-only', seFile: { kind: 'lib-se', name: 'se.pdf', base64: Buffer.from('se').toString('base64') },
     });
     const made = await svc().createPack(owner, {
-      packType: 'self', title: '미완성 묶음', effectiveOn: '2026-09-20', coordinatorId: coordinator,
+      packType: 'self', title: '미완성 묶음', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA], libIds: [libA],
     });
     expect(made.canDeliver).toBe(false);
@@ -170,7 +179,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
 
   it('매니저 역할이어도 개인 canGpaPack=false이면 코디네이터가 될 수 없다', async () => {
     await expect(svc().createPack(owner, {
-      packType: 'self', title: '권한 방어 묶음', effectiveOn: '2026-09-20',
+      packType: 'self', title: '권한 방어 묶음', effectiveOn: EFFECTIVE_ON,
       coordinatorId: deniedCoordinator, studentIds: [studentA], libIds: [libA],
     })).rejects.toThrow('자료를 받을 권한이 있는 활성 코디네이터');
     expect(Number((await q.query(`SELECT count(*)::int AS n FROM gpapack WHERE title='권한 방어 묶음'`))[0].n)).toBe(0);
@@ -187,7 +196,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     await q.query('ROLLBACK TO SAVEPOINT issue_fk');
 
     const pack = await svc().createPack(owner, {
-      packType: 'self', title: '복합키 검사', effectiveOn: '2026-09-20', coordinatorId: coordinator,
+      packType: 'self', title: '복합키 검사', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA], libIds: [libA],
     });
     expect(a.libId).toBe(libA);
@@ -235,11 +244,11 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     await expect(svc().createBook(owner, { code: 'C77-TRIM', title: '중복' }))
       .rejects.toMatchObject({ response: { code: 'BOOK_CODE_DUPLICATE' } });
     await expect(svc().createPack(owner, {
-      packType: 'self', title: '중복 학생', effectiveOn: '2026-09-20', coordinatorId: coordinator,
+      packType: 'self', title: '중복 학생', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA, studentA], libIds: [libA],
     })).rejects.toThrow('학생을 중복 선택');
     await expect(svc().createPack(owner, {
-      packType: 'self', title: '중복 교재', effectiveOn: '2026-09-20', coordinatorId: coordinator,
+      packType: 'self', title: '중복 교재', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA], libIds: [libA, libA],
     })).rejects.toThrow('교재를 중복 선택');
   });

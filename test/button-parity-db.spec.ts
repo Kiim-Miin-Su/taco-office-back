@@ -203,16 +203,37 @@ d('S5 단추와 서버가 같은 질문 — can* 과 실제 거절이 맞는가'
 
   /* ── ⑤ 컴플레인 「수강 종료 · 환불」 ──────────────────────────────── */
 
-  it('⑤ 환불 단추는 돈 권한을 본다 — 매니저에게는 닫히고 그 사람이 부르면 실제로 403 이다', async () => {
+  /**
+   * **이 시험이 묻는 것은 「돈 권한을 보는가」이지 「누가 대표인가」가 아니다.**
+   *
+   * 대표 결정 2026-09-21 로 역할 파생 `canMoney` 가 관리자급까지 열려, 이제 매니저에게도 단추가 선다.
+   * 그래서 경계를 **사람별 예외 칸**(`STAFF.can_money=false`)으로 옮겨 같은 것을 본다 — 판정은 여전히
+   * `canMoney` 한 곳이고, 단추와 서버가 같은 답을 하는지가 이 스위트의 내용이다.
+   * 시드 값을 잠깐 끄므로 **끝에 반드시 되돌린다**(끄는 데 실패했으면 통과로 적지 않는다).
+   */
+  it('⑤ 환불 단추는 돈 권한을 본다 — 예외로 끈 사람에게는 닫히고 그 사람이 부르면 실제로 403 이다', async () => {
     const asCeo = (await api('get', '/ops').expect(200)).body.complaints as Json[];
-    const asHead = (await api('get', '/ops', head).expect(200)).body.complaints as Json[];
     const open = asCeo.find((c) => c.canWithdraw === true);
     if (!open) throw new Error('환불을 걸 수 있는 컴플레인이 시드에 없습니다');
-    expect(asHead.find((c) => c.id === open.id)!.canWithdraw).toBe(false);
 
-    // 화면이 닫은 이유가 진짜다 — 그 사람이 그 창을 열면 미리보기부터 403 이다
-    await api('post', '/accounting/withdrawals/preview', head)
-      .send({ studentId: open.studentId, endedOn: '2026-09-30' }).expect(403);
+    // 권한이 열려 있는 동안에는 단추가 선다 — 열린 자리도 함께 본다
+    const opened = (await api('get', '/ops', head).expect(200)).body.complaints as Json[];
+    expect(opened.find((c) => c.id === open.id)!.canWithdraw).toBe(true);
+
+    await q(`UPDATE staff SET can_money = false WHERE id = 3`);
+    try {
+      const [row] = await q<{ can_money: boolean }>(`SELECT can_money FROM staff WHERE id = 3`);
+      expect(row!.can_money).toBe(false); // 걸렸는지부터 확인한다
+
+      const asHead = (await api('get', '/ops', head).expect(200)).body.complaints as Json[];
+      expect(asHead.find((c) => c.id === open.id)!.canWithdraw).toBe(false);
+
+      // 화면이 닫은 이유가 진짜다 — 그 사람이 그 창을 열면 미리보기부터 403 이다
+      await api('post', '/accounting/withdrawals/preview', head)
+        .send({ studentId: open.studentId, endedOn: '2026-09-30' }).expect(403);
+    } finally {
+      await q(`UPDATE staff SET can_money = NULL WHERE id = 3`);
+    }
   });
 
   /* ── ⑥ 발송 이력 「다시 보내기」 ──────────────────────────────────── */

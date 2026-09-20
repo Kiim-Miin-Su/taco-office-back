@@ -10,6 +10,11 @@
  * "매니저: 이 이상부터는 모든 항목에 대해 CRUD 가능 (관리자 페이지 열어줌)"
  * "대표: 지출 및 총 수입만 대표만 볼 수 있음"
  *
+ * **대표 결정 2026-09-21 「우선은 매니저에게도 모든 권한」** — 원문의 마지막 줄(대표 전용)을
+ * 지금은 적용하지 않는다. 판정은 `perm.ts` 의 `ceoGate` 한 줄이고, 되돌리면 이 표가 먼저
+ * 빨개진다. **원문이 무엇이었는지는 위 두 줄에 그대로 남겨 둔다** — 지금 값이 원문이라고
+ * 읽히면 다음 사람이 결정을 사실로 착각한다.
+ *
  * 이 표가 곧 계약이다. 한 칸이라도 바뀌면 여기가 먼저 빨개져야 한다.
  */
 import {
@@ -34,10 +39,10 @@ describe('권한 3줄 파생 (D-R39)', () => {
   });
 
   it.each<[Role, boolean, boolean, boolean]>([
-    // role,      관리자페이지, 전항목CRUD, 지출·총수입
+    // role,      관리자페이지, 전항목CRUD, 지출·총수입(대표 결정 2026-09-21 로 관리자급까지)
     ['teacher', false, false, false],
-    ['manager', true, true, false],
-    ['admin', true, true, false],
+    ['manager', true, true, true],
+    ['admin', true, true, true],
     ['ceo', true, true, true],
   ])('%s — 진입 %s · CRUD %s · 지출/총수입 %s', (role, page, crud, profit) => {
     expect(canAdminPage(role)).toBe(page);
@@ -50,9 +55,14 @@ describe('권한 3줄 파생 (D-R39)', () => {
     expect(blocked).toEqual(['teacher']);
   });
 
-  it('지출·총수입은 대표만 본다', () => {
+  /**
+   * 원문 §76 은 「대표만」이지만 대표 결정 2026-09-21 로 관리자급까지 열었다.
+   * **경계가 사라진 것이 아니라 옮겨졌다** — 강사는 그대로 막힌다. 그 사실을 계속 센다.
+   */
+  it('지출·총수입은 이제 강사만 못 본다 — 원문은 「대표만」이었다 (대표 결정 2026-09-21)', () => {
     const allowed = ROLES.filter((r) => canSeeProfit(r));
-    expect(allowed).toEqual(['ceo']);
+    expect(allowed).toEqual(['manager', 'admin', 'ceo']);
+    expect(canSeeProfit('teacher')).toBe(false);
   });
 
   it('관리자와 매니저는 권한이 같다 — 직함만 다르다', () => {
@@ -67,8 +77,8 @@ describe('권한 3줄 파생 (D-R39)', () => {
     }
   });
 
-  it('§75 projection은 대표=all, 관리자=매니저=head, 강사=none 한 곳에서 파생한다', () => {
-    expect(ROLES.map((role) => approvalFlowScope(role))).toEqual(['none', 'head', 'head', 'all']);
+  it('§75 projection은 강사=none, 나머지=all 한 곳에서 파생한다 (대표 결정 2026-09-21 · 원래 관리자급은 head)', () => {
+    expect(ROLES.map((role) => approvalFlowScope(role))).toEqual(['none', 'all', 'all', 'all']);
     expect(approvalFlowScope('admin', { canAdminPage: false })).toBe('none');
     expect(approvalFlowScope('teacher', { canAdminPage: true })).toBe('none');
   });
@@ -90,14 +100,13 @@ describe('명세서 v2 §76 플래그 5개도 같은 세 줄에서 나온다', (
     });
   });
 
-  it('매니저는 돈만 닫혀 있다', () => {
+  it('매니저도 대표와 같다 — 대표 결정 2026-09-21 (원래는 돈과 비공개가 닫혀 있었다)', () => {
+    expect(permsOf('manager')).toEqual(permsOf('ceo'));
     const p = permsOf('manager');
-    expect(p.canMoney).toBe(false);
-    expect(p.canSeeProfit).toBe(false);
-    // 비공개 층은 대표 전용이다 — 27N5 채택 (§4-17 · §76 원문)
-    expect(p.canHide).toBe(false);
-    // 나머지는 전부 열린다 — "매니저부터 모든 항목 CRUD"
-    expect(p.canWage && p.canApprove && p.canGpaPack).toBe(true);
+    expect(p.canMoney).toBe(true);
+    expect(p.canSeeProfit).toBe(true);
+    // 비공개 층도 열렸다 — 원문 §76 은 「비공개 컨설팅 열람 — 대표만」이다 (27N5 · §4-17)
+    expect(p.canHide).toBe(true);
   });
 
   it('강사는 전부 닫혀 있다', () => {
@@ -119,10 +128,17 @@ describe('사람별 예외 — 평소에는 쓰지 않는다', () => {
     expect(permsOf('manager', null)).toEqual(permsOf('manager'));
   });
 
-  it('true/false 만 파생 결과를 덮어쓴다', () => {
-    const p = permsOf('manager', { canMoney: true });
-    expect(p.canMoney).toBe(true);
-    expect(p.canSeeProfit).toBe(false); // 덮어쓴 칸만 바뀐다
+  /**
+   * 역할이 전부 열린 뒤로 **예외 칸은 끄는 쪽으로 쓰인다** — 「이 매니저에게는 금액을 닫는다」.
+   * 덮어쓰는 칸만 바뀌는 성질은 그대로다(`canSeeProfit` 은 예외 칸이 없어 파생값 그대로).
+   */
+  it('true/false 만 파생 결과를 덮어쓴다 — 이제는 끄는 쪽이 많다', () => {
+    const off = permsOf('manager', { canMoney: false });
+    expect(off.canMoney).toBe(false);
+    expect(off.canSeeProfit).toBe(true); // 덮어쓴 칸만 바뀐다
+    const on = permsOf('teacher', { canMoney: true });
+    expect(on.canMoney).toBe(true);
+    expect(on.canSeeProfit).toBe(false);
   });
 
   it('강사에게 한 칸만 열어 줄 수 있다', () => {
@@ -133,8 +149,10 @@ describe('사람별 예외 — 평소에는 쓰지 않는다', () => {
 
   it('hasPerm 이 같은 판정을 쓴다', () => {
     expect(hasPerm('ceo', 'canSeeProfit')).toBe(true);
-    expect(hasPerm('admin', 'canSeeProfit')).toBe(false);
-    expect(hasPerm('admin', 'canSeeProfit', { canSeeProfit: true })).toBe(true);
+    expect(hasPerm('admin', 'canSeeProfit')).toBe(true);
+    expect(hasPerm('teacher', 'canSeeProfit')).toBe(false);
+    expect(hasPerm('teacher', 'canSeeProfit', { canSeeProfit: true })).toBe(true);
+    expect(hasPerm('admin', 'canSeeProfit', { canSeeProfit: false })).toBe(false);
   });
 });
 

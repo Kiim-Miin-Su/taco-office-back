@@ -170,9 +170,10 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
 
   describe('/auth/me — 플래그를 서버가 내려준다 (D-R39)', () => {
     it.each([
+      // 대표 결정 2026-09-21 — 지출·총수입이 관리자급까지 열렸다(원문 §76 은 「대표만」)
       ['teacher@t.kr', false, false, false],
-      ['manager@t.kr', true, true, false],
-      ['admin@t.kr', true, true, false],
+      ['manager@t.kr', true, true, true],
+      ['admin@t.kr', true, true, true],
       ['ceo@t.kr', true, true, true],
     ])('%s → 진입 %s · CRUD %s · 지출 %s', async (email, page, crud, profit) => {
       const t = await token(email);
@@ -224,17 +225,22 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
       }
     });
 
-    it('⭐ 지출·총수입은 대표만 — 관리자도 막힌다', async () => {
-      for (const email of ['teacher@t.kr', 'manager@t.kr', 'admin@t.kr']) {
+    /**
+     * 원문 §76 은 「지출·총수입은 대표만」이고 이 줄은 **관리자도 막히는지**를 보던 자리였다.
+     * 대표 결정 2026-09-21 로 관리자급까지 열렸다 — **가드가 사라진 것이 아니라 경계가 옮겨졌다.**
+     * 그래서 여전히 가드를 통과해야 하는 쪽과 막혀야 하는 쪽을 **둘 다** 센다.
+     */
+    it('⭐ 지출·총수입은 이제 강사만 막힌다 — 원문은 「대표만」이었다 (대표 결정 2026-09-21)', async () => {
+      await request(app.getHttpServer())
+        .get('/probe/profit')
+        .set('Authorization', `Bearer ${await token('teacher@t.kr')}`)
+        .expect(403);
+      for (const email of ['manager@t.kr', 'admin@t.kr', 'ceo@t.kr']) {
         await request(app.getHttpServer())
           .get('/probe/profit')
           .set('Authorization', `Bearer ${await token(email)}`)
-          .expect(403);
+          .expect(200);
       }
-      await request(app.getHttpServer())
-        .get('/probe/profit')
-        .set('Authorization', `Bearer ${await token('ceo@t.kr')}`)
-        .expect(200);
     });
 
     it('옛 역할 이름(head · coord)이 든 토큰은 통과하지 못한다', async () => {

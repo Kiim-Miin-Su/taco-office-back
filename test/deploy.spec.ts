@@ -148,25 +148,38 @@ describe('DB 대상 판정 — 옛 안전벨트가 Neon 을 못 잡았다', () =
  * 오류도 안 나므로 「권한을 줬는데 왜 안 보이지」로만 드러난다.
  */
 describe('금액 권한 — 사람별 예외가 실제로 먹히는가', () => {
-  it('기본값은 대표만', () => {
+  /**
+   * ⭐ **대표 결정 2026-09-21 「우선은 매니저에게도 모든 권한」** — 역할 파생 기본값이 뒤집혔다.
+   * 원문 §76 은 「지출·총수입은 대표만」이고 `perm.ts` 의 `ceoGate` 한 줄이 그 결정을 소유한다.
+   * **이 파일이 못 박는 것은 「사람별 예외가 실제로 먹히는가」이지 기본값이 아니다** —
+   * 예외를 켜는 쪽은 이제 쓸 자리가 줄었고, 대신 **끄는 쪽**이 남은 경계다.
+   */
+  it('기본값은 강사만 막힌다 (원문 §76 은 「대표만」 · 대표 결정 2026-09-21)', () => {
     expect(hasPerm('ceo', 'canMoney')).toBe(true);
-    expect(hasPerm('manager', 'canMoney')).toBe(false);
+    expect(hasPerm('admin', 'canMoney')).toBe(true);
+    expect(hasPerm('manager', 'canMoney')).toBe(true);
     expect(hasPerm('teacher', 'canMoney')).toBe(false);
   });
 
-  it('★ 매니저에게 열어 주면 열린다', () => {
-    expect(hasPerm('manager', 'canMoney', { canMoney: true })).toBe(true);
+  it('★ 강사에게 열어 주면 열린다', () => {
+    expect(hasPerm('teacher', 'canMoney', { canMoney: true })).toBe(true);
   });
 
   it('★ 대표에게 닫으면 닫힌다', () => {
     expect(hasPerm('ceo', 'canMoney', { canMoney: false })).toBe(false);
   });
 
+  it('★ 매니저에게 닫으면 닫힌다 — 역할이 열린 뒤에는 이 방향이 남은 경계다', () => {
+    expect(hasPerm('manager', 'canMoney', { canMoney: false })).toBe(false);
+  });
+
   it('canSeeProfit 은 예외가 없는 **원본**이다 — 그래서 가리는 판정에 쓰면 안 된다', () => {
     // 이 줄이 이 파일의 요점이다. 두 이름이 같은 답을 주는 것처럼 보이지만
-    // 예외가 들어오는 순간 갈린다.
-    expect(hasPerm('manager', 'canSeeProfit', { canMoney: true })).toBe(false);
-    expect(hasPerm('manager', 'canMoney', { canMoney: true })).toBe(true);
+    // 예외가 들어오는 순간 갈린다. 열어 주는 쪽이든 닫는 쪽이든 마찬가지다.
+    expect(hasPerm('manager', 'canSeeProfit', { canMoney: false })).toBe(true);
+    expect(hasPerm('manager', 'canMoney', { canMoney: false })).toBe(false);
+    expect(hasPerm('teacher', 'canSeeProfit', { canMoney: true })).toBe(false);
+    expect(hasPerm('teacher', 'canMoney', { canMoney: true })).toBe(true);
   });
 
   it('예외가 없으면 둘은 같은 답을 준다', () => {

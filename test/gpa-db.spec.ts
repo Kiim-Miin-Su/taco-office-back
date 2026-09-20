@@ -8,7 +8,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { GpaCycle } from '../src/entities';
 import { GpaService } from '../src/modules/gpa/gpa.service';
-import { assertScratch, blockedBy, TEST_URL } from './db';
+import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -133,39 +133,49 @@ d('§4.5·§82 GPA 4표 — 잔여 계산과 사이클 잠금 (N-13 채택 · C3
     expect(b.students.find((s) => s.studentId === 91)).toMatchObject({ used: 0, wait: 0, remain: 8 });
   });
 
-  it('기록한 사람은 자기 기록을 승인하지 못한다 — 서버가 거절하고 DB 도 막는다 (S1)', async () => {
+  /**
+   * ⭐ **대표 결정 2026-09-21 「자기 결재 금지도 함께 푼다」** — S1 이 GPA 사용에 건 자기 결재 금지가 꺼졌다.
+   * 켜고 끄는 자리는 `lib/approval.SELF_APPROVAL_GUARDED` 배열 하나이고, **DB 의 `gpa_use_no_self_approve`
+   * CHECK 도 마이그레이션 54 가 함께 걷었다** — 판정만 열고 제약을 두면 단추는 서는데 표가 거절한다(S5 결함).
+   *
+   * 그래서 시험도 **자리를 그대로 두고 답만 뒤집는다**: 적은 사람이 스스로 승인해도 통과하고,
+   * **도장은 그대로 남는다**(누가 승인했는지는 여전히 행에 적힌다 — 그것은 자기 결재 금지와 다른 일이다).
+   */
+  it('⭐ 기록한 사람도 자기 기록을 승인한다 — 도장은 그대로 남는다 (대표 결정 2026-09-21 · 원문 S1 은 금지)', async () => {
     const made = await svc().createUse(41, { cycleId, studentId: 91, svcKey: 'hw', onDate: '2026-10-06' });
-    // 41 이 적었으므로 41 은 승인할 수 없다
-    await expect(svc().setUseState(made.id, 41, { state: 'ok' }))
-      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
-    // 되돌림(wait)은 자기도 할 수 있다 — 승인이 아니라 취소다
+    const self = await svc().setUseState(made.id, 41, { state: 'ok' });
+    expect(self).toMatchObject({ state: 'ok', approvedByName: '코디', coordName: '코디' });
+    expect(self.approvedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // 표도 더 이상 막지 않는다 — 판정과 제약이 같이 움직였다 (마이그레이션 54 가 CHECK 를 걷었다).
+    // 한쪽만 열면 단추는 서는데 표가 거절한다 — 그래서 직접 SQL 로 한 번 더 확인한다.
+    await q.query(`UPDATE gpa_use SET approved_by = 41 WHERE id = $1`, [made.id]);
+
+    // 되돌림은 그대로 자기도 한다 — 승인이 아니라 취소다
     await expect(svc().setUseState(made.id, 41, { state: 'wait' })).resolves.toMatchObject({ state: 'wait' });
-    // 서비스를 우회해도 DB 가 막는다
-    expect(await blockedBy(q,
-      `UPDATE gpa_use SET state='ok', approved_by = 41, approved_at = now() WHERE id = $1`, [made.id],
-    )).toMatch(/gpa_use_no_self_approve/);
-    // 남이면 통과하고 도장이 남는다
+    // 남이 승인하는 길도 그대로다
     const ok = await svc().setUseState(made.id, 43, { state: 'ok' });
     expect(ok).toMatchObject({ state: 'ok', approvedByName: '승인자', coordName: '코디' });
-    expect(ok.approvedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
   /**
-   * 쓰기만 막으면 기록한 사람에게는 「승인」 단추가 열린 채 눌렀을 때만 거절당한다.
-   * 단추가 열리는지도 서버가 정한다 — 화면은 `canApprove` 한 줄만 읽는다 (S1 · D-R39).
+   * **단추가 열리는지도 서버가 정한다** — 화면은 `canApprove` 한 줄만 읽는다 (D-R39). 그 규약은 그대로고,
+   * 대표 결정 2026-09-21 로 **자기 기록에도 단추가 선다**(쓰기가 실제로 통과하므로 그래야 한다 —
+   * 닫아 두면 「서버는 받는데 단추가 없는」 반대 방향의 S5 결함이 된다).
    */
-  it('승인 단추는 서버가 연다 — 기록한 사람에게는 닫히고 남에게는 열린다 (S1)', async () => {
+  it('승인 단추는 서버가 연다 — 이제 기록한 사람에게도 열리고, 쓰기와 같은 답이다 (D-R39)', async () => {
     const made = await svc().createUse(41, { cycleId, studentId: 91, svcKey: 'hw', onDate: '2026-10-06' });
-    expect(made.canApprove).toBe(false); // 방금 적은 사람에게는 닫힌다
+    expect(made.canApprove).toBe(true); // 방금 적은 사람에게도 열린다
 
     const rowFor = async (viewerId?: number) =>
       (await svc().board('2026-10-06', viewerId)).uses.find((u) => u.id === made.id)!;
-    expect((await rowFor(41)).canApprove).toBe(false);
+    expect((await rowFor(41)).canApprove).toBe(true);
     expect((await rowFor(43)).canApprove).toBe(true);
-    // 보는 사람을 모르면 닫는다 — 모르는 쪽으로 열면 그 자리가 다음 불일치가 된다
+    // **보는 사람을 모르면 여전히 닫는다** — 자기 결재 금지와 별개의 규약이다(모르는 쪽으로 열면
+    // 그 자리가 다음 불일치가 된다). 컨트롤러는 언제나 채워 보내고, 되돌릴 때 이 줄이 다시 경계가 된다.
     expect((await rowFor()).canApprove).toBe(false);
 
-    // 승인되고 나면 더 승인할 것이 없다
+    // 승인되고 나면 더 승인할 것이 없다 — 상태가 가르는 것은 그대로다
     await svc().setUseState(made.id, 43, { state: 'ok' });
     expect((await rowFor(43)).canApprove).toBe(false);
   });

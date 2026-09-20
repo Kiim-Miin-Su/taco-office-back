@@ -11,7 +11,9 @@ import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import { EXEC_AREA_KEYS, EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
 import { INTAKE_FUNNEL_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
-import { isSelfReview, labelOf, RPT_TYPE_LABEL, SELF_APPROVAL_CODE, toApState } from '../../lib/approval';
+import {
+  blocksSelfApproval, labelOf, RPT_TYPE_LABEL, SELF_APPROVAL_CODE, selfApprovalSqlGuard, toApState,
+} from '../../lib/approval';
 import { BoardService } from '../board/board.service';
 
 /**
@@ -302,8 +304,9 @@ export class ExecService {
               -- 같은 파라미터를 varchar 와 비교 두 곳에 쓰면 타입을 못 정한다 — 한 번만 캐스팅한다
               reject_reason = CASE WHEN $2::text = 'rej' THEN $4::text ELSE NULL END
         WHERE id = $1 AND state = 'sent'
-          -- 올린 사람은 결재하지 못한다. 막는 것은 이 줄과 DB CHECK 이고 아래는 설명이다 (C84-b 와 같은 자리)
-          AND (sent_by IS NULL OR sent_by <> $3)
+          -- 올린 사람이 결재할 수 있는지는 lib/approval 의 목록이 정한다. 조각을 손으로 적으면
+          -- 목록에서 이름을 빼도 여기만 계속 막아 단추와 서버가 어긋난다 (S5 · 실제로 한 번 그랬다).
+          AND ${selfApprovalSqlGuard('rpt', 'sent_by', '$3')}
        RETURNING id`,
       [id, dto.action, actorId, reason],
     );
@@ -312,7 +315,7 @@ export class ExecService {
       const why = await this.row<{ state: string; sent_by: string | null }>(
         'SELECT state, sent_by FROM rpt WHERE id = $1', [id],
       );
-      if (why && isSelfReview(why.sent_by, actorId)) {
+      if (why && blocksSelfApproval('rpt', why.sent_by, actorId)) {
         throw new ConflictException({
           code: SELF_APPROVAL_CODE,
           message: '자기가 올린 보고는 자기가 결재할 수 없습니다 — 올리는 사람과 결재하는 사람은 다릅니다',
@@ -557,7 +560,7 @@ export class ExecService {
       /* 단추 판정은 여기 한 곳이다 — 보는 사람을 모르면 닫는다 (모르는 쪽으로 열면 눌렀을 때 거절당한다) */
       canReview: String(r.state) === 'sent' && canSeeAmounts
         && viewer !== undefined && viewer.canApprove
-        && !isSelfReview(r.sent_by, viewer.id),
+        && !blocksSelfApproval('rpt', r.sent_by, viewer.id),
       /*
        * 「작성 중 저장」·「대표께 올리기」도 여기서 정한다 (S5 · D-R39).
        *

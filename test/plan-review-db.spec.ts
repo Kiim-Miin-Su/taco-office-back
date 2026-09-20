@@ -21,6 +21,7 @@ import { makeOpsService } from './ops-svc';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
+import { SELF_APPROVAL_GUARDED, blocksSelfApproval } from '../src/lib/approval';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -114,7 +115,13 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
     expect(planDues.filter((r) => r.planId === planId && r.kind === 'plan')).toHaveLength(0);
   });
 
-  it('대표가 아니면 기한도 결재도 못 한다 — 매니저가 자기 기획을 스스로 승인할 수 없다', async () => {
+  /**
+   * 서비스는 **결재 권한 플래그를 받아서** 판단한다 — 그 플래그를 만드는 곳이 `canCeoApprovePlan` 하나다.
+   * 대표 결정 2026-09-21 로 그 함수가 관리자급까지 참을 돌려주므로, 지금 `false` 가 들어오는 역할은
+   * 강사뿐이고 강사는 `@Perm('canAdminPage')` 에서 먼저 403 이다. 그래도 **서비스가 그 플래그를 실제로
+   * 보는지**는 계속 봐야 한다 — 되돌릴 때 이 줄이 다시 제품의 경계가 된다.
+   */
+  it('결재 권한이 없으면 기한도 결재도 못 한다 — 서비스가 플래그를 실제로 본다 (원문 §61·§65 「대표만」)', async () => {
     await expect(svc().decidePlanDue(MGR, false, planId, { approve: true }))
       .rejects.toMatchObject({ response: { code: 'CEO_ONLY' } });
     const v = (await svc().planDetail(planId, false, MGR))!;
@@ -192,20 +199,42 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
     expect({ done: v.taskDone, all: v.tasks.length }).toEqual({ done: 1, all: 3 });
   });
 
-  it('담당자 자신에게는 단추가 열리지 않는다 — 쓰기 거절과 단추가 같은 질문을 한다 (S1)', async () => {
-    // 대표가 자기 이름으로 올린 기획이라면, 대표여도 자기 기한을 승인하지 못한다
+  /**
+   * ⭐ **대표 결정 2026-09-21 「자기 결재 금지도 함께 푼다」** — S1 이 기획의 두 자리(기한·최종)에 건
+   * 자기 결재 금지가 꺼졌다. 끄고 켜는 자리는 `lib/approval.SELF_APPROVAL_GUARDED` **배열 하나**이고
+   * 지금 그 배열은 `['req','chreq','expense']` 다(지출·요청·변경요청은 S1 이전부터 막던 자리라 그대로 둔다).
+   * DB 의 `plan_due_no_self_approve` CHECK 도 마이그레이션 54 가 함께 걷었다 —
+   * **판정과 제약이 같이 움직이지 않으면 단추는 서는데 표가 거절하는 S5 결함이 된다.**
+   *
+   * 그래서 이 시험은 **자리를 그대로 두고 답만 뒤집는다** — 「단추와 서버가 같은 질문을 한다」는
+   * S1 의 본체는 살아 있고, 그 답이 이제 둘 다 「된다」일 뿐이다.
+   */
+  it('⭐ 담당자 자신도 결재한다 — 단추와 쓰기가 여전히 같은 답이다 (대표 결정 2026-09-21 · 원문 S1 은 금지)', async () => {
     await q.query(`UPDATE plan SET owner_id = ${CEO} WHERE id = $1`, [planId]);
     const v = (await svc().planDetail(planId, true, CEO))!;
-    expect(v.canDecideDue).toBe(false);
-    expect(v.canReview).toBe(false);
-    expect(v.reviewBlockedReason).toBe('자기가 담당인 기획은 자기가 결재할 수 없습니다');
-    await expect(svc().decidePlanDue(CEO, true, planId, { approve: true }))
-      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
-    await expect(svc().reviewPlan(CEO, true, planId, { decision: 'approve' }))
-      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
-    // 남이 하면 그대로 열린다
+    expect(v.canDecideDue).toBe(true);
+    expect(v.canReview).toBe(false); // 기한이 먼저다 — C56 의 선행 조건은 그대로 산다
+    expect(v.reviewBlockedReason).toBe('기한부터 승인하세요');
+
+    // 단추가 섰으니 실제로 눌러 본다 — 열린 자리가 정말 통과하는지까지 본다
+    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    const afterDue = (await svc().planDetail(planId, true, CEO))!;
+    expect(afterDue.canReview).toBe(true);
+    expect(afterDue.reviewBlockedReason).toBeNull();
+    await svc().reviewPlan(CEO, true, planId, { decision: 'approve' });
+    const done = (await svc().planDetail(planId, true, CEO))!;
+    expect(done.stage).toBe('approved');
+
+    // 남이 보는 화면도 같다 — 자기냐 남이냐가 더 이상 답을 가르지 않는다
     const other = (await svc().planDetail(planId, true, MGR))!;
-    expect(other.canDecideDue).toBe(true);
+    expect(other.canDecideDue).toBe(false); // 이미 승인된 기한이라 닫힌다 (자기 결재 때문이 아니다)
+  });
+
+  it('막는 자리 목록에서 기획 둘이 빠졌다 — 지출·요청·변경요청은 그대로 막는다 (되돌릴 자리는 이 배열 하나)', () => {
+    expect([...SELF_APPROVAL_GUARDED].sort()).toEqual(['chreq', 'expense', 'req']);
+    expect(blocksSelfApproval('plan-due', CEO, CEO)).toBe(false);
+    expect(blocksSelfApproval('plan', CEO, CEO)).toBe(false);
+    expect(blocksSelfApproval('expense', CEO, CEO)).toBe(true);
   });
 
   it('표가 반쪽 승인을 거부한다 — 승인 시각만 있고 누가 했는지 없을 수 없다', async () => {

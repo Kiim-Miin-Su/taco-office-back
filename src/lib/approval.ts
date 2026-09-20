@@ -48,22 +48,67 @@ export function isSelfReview(authorId: unknown, actorId: number): boolean {
 /** 자기 결재 거절의 공통 코드. 예외 종류(409/403)는 각 도메인이 기존 규약대로 고른다. */
 export const SELF_APPROVAL_CODE = 'SELF_APPROVAL_FORBIDDEN' as const;
 
-/**
- * 자기 결재를 막는 자리 전부. **여기에 이름이 있는 것은 서버가 반드시 거절한다** —
- * 회귀(`test/self-approval.spec.ts`)가 이 목록을 돌며 확인하므로, 결재 갈래를 새로 만들 때
- * 여기 한 줄을 더하면 그 회귀가 빠진 방어를 바로 잡는다.
- */
-export const SELF_APPROVAL_GUARDED = [
-  'rep',      // 리포트 승인·반려      — reports.service.review
+/** 자기 결재를 막을 수 있는 자리 전부 — 지금 막는 것은 아래 `SELF_APPROVAL_GUARDED` 다 */
+export const SELF_APPROVAL_PLACES = [
+  'rep',      // 리포트 승인·반려      — lib/rules.reportReviewIssue
   'rpt',      // 대표 보고 결재        — exec.service.review
   'plan-due', // 기획 기한 승인        — ops.service.decidePlanDue
   'plan',     // 기획 최종 승인        — ops.service.reviewPlan
   'gpa-use',  // GPA 포인트 승인       — gpa.service.setUseState
   'req',      // 강사 요청 결재        — drawer.service.reviewRequest
   'chreq',    // 변경 요청 반영        — drawer.service.reviewChangeRequest
-  'expense',  // 지출 심사             — accounting.service.reviewExpense (+ DB CHECK)
+  'expense',  // 지출 심사             — accounting.service.reviewExpense (+ DB CHECK 둘)
 ] as const;
-export type SelfApprovalGuarded = (typeof SELF_APPROVAL_GUARDED)[number];
+export type SelfApprovalGuarded = (typeof SELF_APPROVAL_PLACES)[number];
+
+/**
+ * **지금 실제로 막는 자리.** 여기에 이름이 있는 것만 서버가 거절한다.
+ *
+ * ⚠️ **켜고 끄는 자리는 이 배열 하나다** — 호출부는 `blocksSelfApproval(kind, …)` 만 부르므로
+ * 이름을 도로 넣으면 그 자리가 다시 막힌다. 한동안 이 목록이 **여덟을 선언해 두고 판정에는
+ * 쓰이지 않는 장식**이었다(회귀가 순회할 뿐이었다). 목록과 판정이 갈리면 **목록을 읽은 사람이
+ * 조용히 틀린다** — CPL·PLAN 의 낱말에서 두 번 겪은 그 모양이라(C86-d · S6) 이번에 이었다.
+ *
+ * **대표 결정 2026-09-21 「우선은 매니저에게도 모든 권한」** 으로 **S1 의 넷을 뺐다** —
+ * 리포트 · 대표 보고 · 기획 기한 · 기획 최종 · GPA(다섯 자리, 넷 갈래). 마이그레이션 54 가 짝이 되는
+ * DB CHECK 넷도 함께 내렸다. 코드만 풀고 CHECK 를 남기면 **단추는 서는데 DB 가 거절하는**
+ * 자리가 된다(S5 가 고친 그 결함이라, 둘은 언제나 같이 움직인다).
+ *
+ * 남긴 셋은 **S1 이 만든 것이 아니다** — 지출(A-5 · `expense_no_self_review` ·
+ * `expense_no_self_file_review`)과 요청·변경요청은 처음부터 있던 규칙이라 이번 결정의 범위 밖이다.
+ * 셋 다 풀려면 이 배열을 비우고 그 CHECK 둘도 함께 내린다.
+ */
+export const SELF_APPROVAL_GUARDED: readonly SelfApprovalGuarded[] = ['req', 'chreq', 'expense'];
+
+/**
+ * 이 자리에서 **지금** 자기 결재를 막는가 — 목록과 판정을 한 번에 묻는다.
+ *
+ * 호출부가 `isSelfReview` 를 직접 부르면 목록이 다시 장식이 된다. 언제나 이쪽을 부른다.
+ */
+export function blocksSelfApproval(
+  kind: SelfApprovalGuarded, authorId: unknown, actorId: number,
+): boolean {
+  return SELF_APPROVAL_GUARDED.includes(kind) && isSelfReview(authorId, actorId);
+}
+
+/**
+ * **SQL 안에서 같은 목록을 묻는다.**
+ *
+ * 쓰기 하나(대표 보고 결재)는 판정을 `WHERE` 절에 넣어 **고친 행이 0 이면 거절**하는 모양이다 —
+ * 읽고 나서 쓰면 그 사이에 남이 결재할 수 있어서다. 그런데 그 조건을 손으로 적어 두면
+ * 위 배열에서 이름을 빼도 **SQL 만 계속 막는다**: 읽기의 `canReview` 는 열려 있는데 쓰기가 0행을
+ * 돌려주는, 단추와 서버가 어긋나는 바로 그 자리다(S5). 실제로 2026-09-21 에 한 번 그렇게 됐고
+ * 회귀가 잡았다. 그래서 **조각도 이 파일이 만든다.**
+ *
+ * 컬럼 이름과 파라미터 자리는 **호출부가 적는 리터럴**이다 — 사용자 입력이 들어오는 길이 아니다.
+ */
+export function selfApprovalSqlGuard(
+  kind: SelfApprovalGuarded, authorColumn: string, actorParam: string,
+): string {
+  return SELF_APPROVAL_GUARDED.includes(kind)
+    ? `(${authorColumn} IS NULL OR ${authorColumn} <> ${actorParam})`
+    : 'TRUE';
+}
 
 /** §75 공통 다섯 갈래 + §14 강사 리포트 (D-R26 · D-R34) */
 export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing'] as const;

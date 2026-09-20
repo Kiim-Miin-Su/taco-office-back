@@ -66,6 +66,15 @@ describe('FILE kind별 중앙 권한표', () => {
   const teacher = { id: 10, name: '강사', role: 'teacher' };
   const manager = { id: 20, name: '매니저', role: 'manager' };
   const ceo = { id: 30, name: '대표', role: 'ceo' };
+  /**
+   * **금액·비공개를 사람별 예외로 끈 매니저.**
+   *
+   * 이 표가 묻는 것은 「`canMoney`/`canHide` 를 보는가」이지 「누가 대표인가」가 아니다.
+   * 대표 결정 2026-09-21 로 역할 파생이 관리자급까지 열려, 역할만으로는 그 경계를 세울 수 없다 —
+   * 바로 위 `canGpaPack` 줄이 이미 쓰던 방식(예외 칸을 끈다)을 그대로 쓴다.
+   */
+  const noMoney = { ...manager, perms: { canMoney: false } };
+  const noHide = { ...manager, perms: { canHide: false } };
 
   it('교재 파일은 실제 판 연결과 관리자 화면·자료 권한을 모두 요구한다', () => {
     expect(canReadStoredFile(manager, 'lib-te', facts)).toBe(false);
@@ -76,11 +85,14 @@ describe('FILE kind별 중앙 권한표', () => {
 
   it('영수증은 연결 원장의 요청자 또는 canMoney만, 컨설팅은 업로더 또는 canHide만 연다', () => {
     expect(canReadStoredFile(teacher, 'expense-receipt', { ...facts, expenseLinked: true, expenseRequester: true })).toBe(true);
-    expect(canReadStoredFile(manager, 'expense-receipt', { ...facts, expenseLinked: true })).toBe(false);
+    expect(canReadStoredFile(noMoney, 'expense-receipt', { ...facts, expenseLinked: true })).toBe(false);
+    expect(canReadStoredFile(teacher, 'expense-receipt', { ...facts, expenseLinked: true })).toBe(false);
+    // 역할 파생이 열린 뒤에는 매니저도 연다 — 판정은 여전히 canMoney 한 곳이다
+    expect(canReadStoredFile(manager, 'expense-receipt', { ...facts, expenseLinked: true })).toBe(true);
     expect(canReadStoredFile(ceo, 'expense-receipt', { ...facts, expenseLinked: true })).toBe(true);
-    expect(canReadStoredFile(manager, 'cons-contract', facts)).toBe(false);
+    expect(canReadStoredFile(noHide, 'cons-contract', facts)).toBe(false);
     expect(canReadStoredFile(teacher, 'cons-contract', facts)).toBe(false);
-    expect(canReadStoredFile({ ...manager, id: 10 }, 'cons-contract', facts)).toBe(true);
+    expect(canReadStoredFile({ ...noHide, id: 10 }, 'cons-contract', facts)).toBe(true);
     expect(canReadStoredFile(ceo, 'cons-contract', facts)).toBe(true);
   });
 
@@ -88,7 +100,8 @@ describe('FILE kind별 중앙 권한표', () => {
     const linked = { ...facts, consultingLinked: true, consultingActive: true, consultingFullAccess: true };
     expect(canReadStoredFile(manager, 'cons-contract', linked)).toBe(true);
     expect(canReadStoredFile(teacher, 'cons-contract', linked)).toBe(false);
-    expect(canReadStoredFile(manager, 'cons-contract', { ...linked, consultingFullAccess: false })).toBe(false);
+    expect(canReadStoredFile(noHide, 'cons-contract', { ...linked, consultingFullAccess: false })).toBe(false);
+    expect(canReadStoredFile(teacher, 'cons-contract', { ...linked, consultingFullAccess: false })).toBe(false);
     expect(canReadStoredFile(ceo, 'cons-contract', { ...linked, consultingFullAccess: false })).toBe(true);
     expect(canReadStoredFile(ceo, 'cons-contract', { ...linked, consultingActive: false })).toBe(false);
   });

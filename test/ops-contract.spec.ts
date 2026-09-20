@@ -15,7 +15,7 @@ import type { Repository } from 'typeorm';
 import { Staff } from '../src/entities';
 import { AuthService } from '../src/auth/auth.service';
 import { JwtStrategy, type JwtPayload } from '../src/auth/jwt.strategy';
-import { PERM_KEY, PermGuard, ROLES, permsOf, type RequestUser, type Role } from '../src/common/perm';
+import { PERM_KEY, PermGuard, ROLES, canCeoComment, permsOf, type RequestUser, type Role } from '../src/common/perm';
 import { OpsController } from '../src/modules/ops/ops.controller';
 import { LeadDto, type OpsDto } from '../src/modules/ops/ops.dto';
 import { OpsService } from '../src/modules/ops/ops.service';
@@ -355,7 +355,9 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     const flags = permsOf(role);
     await checkAccess(flags.canAdminPage && flags.canCrudAll);
     // 네 번째는 기간·갈래다 — 아무것도 안 보내면 빈 객체 (C96)
-    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(1, flags.canMoney, role === 'ceo', {});
+    // 셋째는 **코멘트 권한**이다. `role === 'ceo'` 를 박아 두면 그 판정이 움직일 때(대표 결정
+    // 2026-09-21) 이 줄이 무엇을 지키던 것인지 알 수 없다 — 컨트롤러가 **그 selector 에 위임하는지**를 센다
+    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(1, flags.canMoney, canCeoComment(role), {});
   });
 
   const overrides = [true, false, null, undefined] as const;
@@ -392,7 +394,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       const res = await request(app.getHttpServer()).get('/ops')
         .timeout({ response: 2000, deadline: 4000 }).expect(200);
       expect(all).toHaveBeenCalledTimes(1);
-      expect(all).toHaveBeenCalledWith(1, canMoney, role === 'ceo', {});
+      expect(all).toHaveBeenCalledWith(1, canMoney, canCeoComment(role), {});
       expect(res.body.canSeeAmounts).toBe(canMoney);
       expect(res.body.marketing).toEqual(samples.map((sample, index) => ({
         id: index + 1, channel: 'naver', item: 'ads', url: null,

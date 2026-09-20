@@ -37,10 +37,13 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
   let ds: DataSource;
   let token = '';
   let managerToken = '';
+  let teacherToken = '';
+  let noMoneyToken = '';
   const PW = 'month-close-1234';
   const CEO = 951;
   const TEACHER = 952;
   const MANAGER = 953;
+  const NOMONEY = 954;   // 매니저인데 can_money=false 예외 — 회계 자체가 닫힌다
   const STU_A = 9951;
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> =>
@@ -72,16 +75,17 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
     await app.listen(0, '127.0.0.1');
     ds = app.get(DataSource);
 
-    await q(`DELETE FROM month_close WHERE closed_by = ANY($1)`, [[CEO, MANAGER]]);
-    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
-    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
+    await q(`DELETE FROM month_close WHERE closed_by = ANY($1)`, [[CEO, MANAGER, NOMONEY]]);
+    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER, NOMONEY]]);
+    await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER, NOMONEY]]);
     const hash = await bcrypt.hash(PW, 4);
     await q(
       `INSERT INTO staff (id, name, email, role, password_hash, active, can_money) VALUES
-         ($1,'마감대표','close-ceo@t.kr','ceo',$4,true,null),
-         ($2,'마감강사','close-t@t.kr','teacher',$4,true,null),
-         ($3,'마감매니저','close-m@t.kr','manager',$4,true,true)`,
-      [CEO, TEACHER, MANAGER, hash],
+         ($1,'마감대표','close-ceo@t.kr','ceo',$5,true,null),
+         ($2,'마감강사','close-t@t.kr','teacher',$5,true,null),
+         ($3,'마감매니저','close-m@t.kr','manager',$5,true,true),
+         ($4,'금액없는매니저','close-nm@t.kr','manager',$5,true,false)`,
+      [CEO, TEACHER, MANAGER, NOMONEY, hash],
     );
     await q(`DELETE FROM stu WHERE id = $1`, [STU_A]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'마감학생','10')`, [STU_A]);
@@ -93,15 +97,17 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
     };
     token = await login('close-ceo@t.kr');
     managerToken = await login('close-m@t.kr');
+    teacherToken = await login('close-t@t.kr');
+    noMoneyToken = await login('close-nm@t.kr');
   });
 
   afterAll(async () => {
     try {
       if (ds?.isInitialized) {
-        await q(`DELETE FROM month_close WHERE closed_by = ANY($1)`, [[CEO, MANAGER]]);
-        await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER]]);
-        await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
-        await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
+        await q(`DELETE FROM month_close WHERE closed_by = ANY($1)`, [[CEO, MANAGER, NOMONEY]]);
+        await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, NOMONEY]]);
+        await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER, NOMONEY]]);
+        await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER, NOMONEY]]);
         await q(`DELETE FROM stu WHERE id = $1`, [STU_A]);
       }
     } finally {
@@ -111,13 +117,13 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
 
   const made: number[] = [];
   afterEach(async () => {
-    await q(`DELETE FROM month_close WHERE closed_by = ANY($1)`, [[CEO, MANAGER]]);
+    await q(`DELETE FROM month_close WHERE closed_by = ANY($1)`, [[CEO, MANAGER, NOMONEY]]);
     await q(`DELETE FROM stu_pause WHERE student_id = $1`, [STU_A]);
     await q(`DELETE FROM carry WHERE student_id = $1`, [STU_A]);
     await q(`DELETE FROM pay WHERE inv_id IN (SELECT id FROM inv WHERE student_id = $1)`, [STU_A]);
     await q(`DELETE FROM inv_line WHERE inv_id IN (SELECT id FROM inv WHERE student_id = $1)`, [STU_A]);
     await q(`DELETE FROM inv WHERE student_id = $1`, [STU_A]);
-    await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER]]);
+    await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, NOMONEY]]);
     if (!made.length) return;
     await q(`DELETE FROM noti WHERE from_id = $1`, [CEO]);
     await q(`DELETE FROM att WHERE ser_id = ANY($1)`, [made]);
@@ -151,7 +157,12 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
       `SELECT to_char(on_date,'YYYY-MM-DD') AS on_date FROM ser_occ WHERE ser_id = $1 ORDER BY on_date`, [id],
     );
     const inPrev = occ.map((o) => o.on_date).filter((x) => x.startsWith(PREV));
-    const inThis = occ.map((o) => o.on_date).filter((x) => x.startsWith(THIS) && x > kst());
+    /**
+     * **이번 달 회차는 지난 날짜도 센다** — 이 스위트가 묻는 것은 「그 달이 열려 있는가」이지
+     * 「그 날이 아직 안 왔는가」가 아니다. 앞으로 올 날만 세면 **달 말일에 가까울수록 회차가 줄어**
+     * 21일에는 남은 월요일이 하나뿐이라 시험이 달력 때문에 깨진다(2026-09-21 실측).
+     */
+    const inThis = occ.map((o) => o.on_date).filter((x) => x.startsWith(THIS));
     return { id, inPrev, inThis };
   }
   const close = (month: string, t = token) => api('post', '/accounting/tuition/close', t).send({ month });
@@ -292,15 +303,35 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
   });
 
   /* ── ⑤ 권한 ───────────────────────────────────────────────────────────── */
-  it('금액을 열어 준 매니저도 마감·해제는 못 한다 — 대표 전용 (canCeoCloseMonth)', async () => {
-    // 매니저는 can_money 예외로 §54 를 볼 수 있다 — 그래도 단추가 서지 않고 서버가 403 이다
+  /**
+   * ⭐ **대표 결정 2026-09-21 「우선은 매니저에게도 모든 권한」으로 이 자리의 역할 경계가 사라졌다.**
+   * 원문 §76 은 「마감은 대표만」이라 적고 C92-d 가 그대로 새겼는데(`canCeoCloseMonth`), 지금은 그 판정이
+   * `ceoGate`(= 강사가 아닌 사람)를 부른다. **막는 쪽이 옮겨 갔을 뿐 판정은 여전히 한 곳이다** —
+   * 그래서 시험도 「누가 막히는가」만 바꾸고 「단추와 서버가 같은 답을 하는가」는 그대로 본다.
+   * 되돌리려면 `perm.ts` 의 `ceoGate` 한 줄이고, 그때 이 시험은 다시 빨개진다.
+   */
+  it('⭐ 마감·해제는 이제 매니저도 한다 — 단추와 서버가 같은 답이다 (대표 결정 2026-09-21 · 원문은 「대표만」)', async () => {
     const t = await (await api('get', `/accounting/tuition?month=${PREV}`, managerToken).expect(200)).body;
-    expect(t.canClose).toBe(false);
-    await close(PREV, managerToken).expect(403);
-    await close(PREV).expect(201);
+    expect(t.canClose).toBe(true);
+    const made = await close(PREV, managerToken).expect(201);
+    expect(made.body).toMatchObject({ month: PREV, closedBy: '마감매니저' });
+
     const t2 = await (await api('get', `/accounting/tuition?month=${PREV}`, managerToken).expect(200)).body;
-    expect(t2.close).not.toBeNull();
-    expect(t2.canReopen).toBe(false);
-    await reopen(PREV, '매니저 시도', managerToken).expect(403);
+    expect(t2.canClose).toBe(false);
+    expect(t2.canReopen).toBe(true);
+    await reopen(PREV, '매니저가 해제한다', managerToken).expect(201);
+  });
+
+  it('남은 경계 둘 — 강사는 회계 자체가 닫히고, 금액 예외를 끈 매니저도 그대로 막힌다', async () => {
+    // 강사 — 역할이 가른다 (`ceoGate` 의 `r !== \'teacher\'` · @Perm(canMoney) 가 먼저 잡는다)
+    await api('get', `/accounting/tuition?month=${PREV}`, teacherToken).expect(403);
+    await close(PREV, teacherToken).expect(403);
+    // 사람별 예외 — 역할이 열려도 이 칸이 닫으면 못 한다
+    await api('get', `/accounting/tuition?month=${PREV}`, noMoneyToken).expect(403);
+    await close(PREV, noMoneyToken).expect(403);
+    await reopen(PREV, '예외 매니저 시도', noMoneyToken).expect(403);
+    // 아무것도 안 남았다
+    const [{ n }] = await q<{ n: string }>(`SELECT count(*) AS n FROM month_close WHERE year_month = $1`, [PREV]);
+    expect(Number(n)).toBe(0);
   });
 });

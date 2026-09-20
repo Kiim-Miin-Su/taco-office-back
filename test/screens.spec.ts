@@ -37,10 +37,17 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   const RECURRING_SER = 9_111_002;
   const SCREEN_DATE = '2099-01-01';
   const SCREEN_MOVED_DATE = '2099-01-03';
+  /**
+   * 매니저는 **금액 예외를 꺼 둔다**(`can_money=false`).
+   *
+   * 이 스위트가 보는 것은 「금액을 못 보는 관리자급에게 응답에서 금액이 빠지는가」(D-R39)와
+   * 「회계 탭은 통째로 닫히는가」(D-R9)다. 대표 결정 2026-09-21 로 역할 파생 `canMoney` 가
+   * 관리자급까지 열려, 역할만으로는 그 사람을 세울 수 없다 — 경계는 사람별 예외 칸으로 남아 있다.
+   */
   const PEOPLE = [
-    { id: 911, name: '강사스크린', email: 'scr-teacher@t.kr', role: 'teacher' },
-    { id: 912, name: '매니저스크린', email: 'scr-manager@t.kr', role: 'manager' },
-    { id: 913, name: '대표스크린', email: 'scr-ceo@t.kr', role: 'ceo' },
+    { id: 911, name: '강사스크린', email: 'scr-teacher@t.kr', role: 'teacher', canMoney: null },
+    { id: 912, name: '매니저스크린', email: 'scr-manager@t.kr', role: 'manager', canMoney: false },
+    { id: 913, name: '대표스크린', email: 'scr-ceo@t.kr', role: 'ceo', canMoney: null },
   ];
 
   beforeAll(async () => {
@@ -55,8 +62,8 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     await ds.query('DELETE FROM staff WHERE id BETWEEN 911 AND 913');
     for (const p of PEOPLE) {
       await ds.query(
-        `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,$4,$5,true)`,
-        [p.id, p.name, p.email, p.role, hash],
+        `INSERT INTO staff (id, name, email, role, password_hash, active, can_money) VALUES ($1,$2,$3,$4,$5,true,$6)`,
+        [p.id, p.name, p.email, p.role, hash, p.canMoney],
       );
     }
     await ds.query('DELETE FROM ser_occ WHERE ser_id = ANY($1)', [[ONCE_SER, RECURRING_SER]]);

@@ -7,19 +7,26 @@
 /**
  * **올린 사람은 결재하지 못한다** — 결재 갈래 전부에서.
  *
- * 이 회귀가 있는 이유: 2026-09-20 전수 검수에서 같은 규칙이 **일곱 자리 중 셋에만** 있었다.
+ * 이 회귀가 생긴 이유: 2026-09-20 전수 검수에서 같은 규칙이 **일곱 자리 중 셋에만** 있었다.
  * 지출에는 DB CHECK 까지 있는데(`expense_no_self_review` · A-5) 리포트·대표 보고·기획·GPA 넷에는
  * 한 줄도 없었다. **규칙을 정해 놓고 한 곳에만 적용하면 다음 사람도 똑같이 빠뜨린다.**
  *
- * 그래서 여기서는 두 가지를 한다:
- * ① `SELF_APPROVAL_GUARDED` 목록에 있는 이름이 **전부 실제로 막히는지** 확인한다 —
- *    결재 갈래를 새로 만들면서 목록에 한 줄을 더하면 이 회귀가 빠진 방어를 바로 잡는다.
- * ② **DB CHECK** 가 서비스를 우회한 직접 SQL 도 막는지 확인한다. 서비스만 막으면
- *    다음 경로가 생길 때 또 뚫린다.
+ * **대표 결정 2026-09-21 「우선은 매니저에게도 모든 권한」으로 S1 의 넷을 열었다** —
+ * 리포트 · 대표 보고 · 기획 기한 · 기획 최종 · GPA. 남은 것은 지출(A-5)과 요청·변경요청 셋이고,
+ * 그 셋은 S1 이 만든 것이 아니라 처음부터 있던 규칙이다.
+ *
+ * 그래서 이 회귀의 일이 하나 바뀌었다 — **목록이 곧 판정임을 지킨다.**
+ * ① `SELF_APPROVAL_GUARDED` 에 **있는 것은 막히고 없는 것은 안 막힌다**를 같은 입력으로 나란히 본다.
+ *    한동안 이 목록은 여덟을 선언해 두고 판정에는 안 쓰이는 **장식**이었다(이 회귀가 순회만 했다).
+ *    이제 `blocksSelfApproval` 이 목록을 실제로 읽으므로, 배열에 이름을 도로 넣으면 그 자리가 다시 막힌다.
+ * ② **DB CHECK 와 코드가 같은 말을 하는지** 확인한다 — 연 자리는 직접 SQL 도 통과해야 하고
+ *    (CHECK 를 남겨 두면 단추는 서는데 DB 가 거절한다 · S5), 남긴 자리는 여전히 막혀야 한다.
  */
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
-import { isSelfReview, SELF_APPROVAL_CODE, SELF_APPROVAL_GUARDED } from '../src/lib/approval';
+import {
+  blocksSelfApproval, isSelfReview, SELF_APPROVAL_GUARDED, SELF_APPROVAL_PLACES,
+} from '../src/lib/approval';
 import { reportReviewIssue } from '../src/lib/rules';
 import { assertScratch, blockedBy, TEST_URL } from './db';
 
@@ -37,18 +44,33 @@ describe('isSelfReview — 모르는 것은 막지 않는다', () => {
     expect(isSelfReview('nope', 7)).toBe(false);
   });
 
-  it('막는 자리 목록에 여덟이 있다 — 결재 갈래를 늘리면 여기도 는다', () => {
-    expect([...SELF_APPROVAL_GUARDED].sort()).toEqual(
+  it('막을 수 있는 자리는 여덟 그대로다 — 연 자리도 목록에서 지우지 않는다', () => {
+    expect([...SELF_APPROVAL_PLACES].sort()).toEqual(
       ['chreq', 'expense', 'gpa-use', 'plan', 'plan-due', 'rep', 'req', 'rpt'],
     );
+  });
+
+  it('지금 막는 자리는 셋이다 — 대표 결정 2026-09-21 로 S1 의 넷을 열었다', () => {
+    expect([...SELF_APPROVAL_GUARDED].sort()).toEqual(['chreq', 'expense', 'req']);
+  });
+
+  /**
+   * **목록이 곧 판정이다.** 같은 사람·같은 입력을 여덟 자리에 똑같이 넣어 보고,
+   * 목록에 있는 것만 막히는지 본다 — 목록과 판정이 갈리면 여기가 빨개진다.
+   */
+  it('같은 입력을 여덟 자리에 넣으면 목록에 있는 셋만 막는다', () => {
+    const blocked = SELF_APPROVAL_PLACES.filter((kind) => blocksSelfApproval(kind, 7, 7));
+    expect([...blocked].sort()).toEqual(['chreq', 'expense', 'req']);
+    // 남이면 어느 자리도 막지 않는다
+    expect(SELF_APPROVAL_PLACES.filter((kind) => blocksSelfApproval(kind, 8, 7))).toEqual([]);
   });
 });
 
 describe('리포트 승인 — 쓴 사람은 결재하지 못한다 (순수 규칙)', () => {
   const base = { canApprove: true, state: 'wait' as const, decision: 'approve' as const };
 
-  it('자기가 쓴 리포트면 SELF_APPROVAL_FORBIDDEN', () => {
-    expect(reportReviewIssue({ ...base, teacherId: 7, actorId: 7 })).toBe(SELF_APPROVAL_CODE);
+  it('자기가 쓴 리포트도 이제 통과한다 — `rep` 이 목록에서 빠졌다 (대표 결정 2026-09-21)', () => {
+    expect(reportReviewIssue({ ...base, teacherId: 7, actorId: 7 })).toBeNull();
   });
 
   it('남이 쓴 리포트면 통과한다', () => {
@@ -107,33 +129,50 @@ d('DB 가 마지막으로 막는다 — 서비스를 우회한 직접 SQL', () =
   });
   afterAll(async () => { await ds?.destroy(); });
 
-  it('rpt — 올린 사람이 결재하면 rpt_no_self_review 가 막고, 남이면 통과한다', async () => {
+  /**
+   * **연 자리는 DB 도 함께 열려 있어야 한다** (마이그레이션 54).
+   * CHECK 를 남겨 두면 서비스는 통과시키는데 DB 가 마지막에 거절한다 — S5 가 아홉 자리에서
+   * 고친 그 모양이다. 그래서 여기서는 **막히는지가 아니라 통과하는지**를 본다.
+   */
+  it('rpt — 올린 사람이 결재해도 이제 통과한다 (마이그레이션 54 로 CHECK 를 내렸다)', async () => {
     const [row] = await q.query(
       `INSERT INTO rpt (rpt_type, on_date, memo, state, sent_at, sent_by)
-       VALUES ('day','2026-09-20','{}'::jsonb,'sent', now(), $1) RETURNING id`, [a],
+       VALUES ('day','2026-11-03','{}'::jsonb,'sent', now(), $1) RETURNING id`, [a],
     ) as Array<{ id: string }>;
-    expect(await blockedBy(q,
-      `UPDATE rpt SET state='ok', reviewed_at=now(), reviewed_by=$2 WHERE id=$1`, [row.id, a],
-    )).toMatch(/rpt_no_self_review/);
     await expect(q.query(
-      `UPDATE rpt SET state='ok', reviewed_at=now(), reviewed_by=$2 WHERE id=$1`, [row.id, b],
+      `UPDATE rpt SET state='ok', reviewed_at=now(), reviewed_by=$2 WHERE id=$1`, [row.id, a],
     )).resolves.toBeDefined();
   });
 
-  it('plan — 담당이 자기 기한을 승인하면 plan_due_no_self_approve 가 막는다', async () => {
+  it('plan — 담당이 자기 기한을 승인해도 이제 통과한다', async () => {
     const [row] = await q.query(
       `INSERT INTO plan (title, stage, owner_id, due_on) VALUES ('자기결재 기획','draft',$1,'2026-10-01') RETURNING id`,
       [a],
     ) as Array<{ id: string }>;
-    expect(await blockedBy(q,
-      `UPDATE plan SET due_approved_at=now(), due_approved_by=$2 WHERE id=$1`, [row.id, a],
-    )).toMatch(/plan_due_no_self_approve/);
     await expect(q.query(
-      `UPDATE plan SET due_approved_at=now(), due_approved_by=$2 WHERE id=$1`, [row.id, b],
+      `UPDATE plan SET due_approved_at=now(), due_approved_by=$2 WHERE id=$1`, [row.id, a],
     )).resolves.toBeDefined();
   });
 
-  it('올린 사람을 모르는 옛 행은 막지 않는다 — 기존 행 보정 0 (N-25)', async () => {
+  /**
+   * **남긴 셋은 표도 그대로다.** 지출은 이번 결정의 범위 밖이라(A-5 · 처음부터 있던 규칙)
+   * 코드(`SELF_APPROVAL_GUARDED` 의 `expense`)와 표가 **여전히 같은 말**을 한다.
+   * 이 줄이 빨개지면 둘 중 하나만 움직인 것이다.
+   */
+  it('expense — 자기 신청을 자기가 심사하면 표가 막는다 (A-5 · 이번 결정의 범위 밖)', async () => {
+    const [row] = await q.query(
+      `INSERT INTO expense (spend_on, category, purpose, requested_amount, state, requester_id)
+       VALUES ('2026-09-20', 'etc', '자기심사 표본', 10000, 'pending', $1) RETURNING id`, [a],
+    ) as Array<{ id: string }>;
+    expect(await blockedBy(q,
+      `UPDATE expense SET state='approved', reviewer_id=$2 WHERE id=$1`, [row.id, a],
+    )).toMatch(/expense_no_self_review/);
+    await expect(q.query(
+      `UPDATE expense SET state='approved', reviewer_id=$2 WHERE id=$1`, [row.id, b],
+    )).resolves.toBeDefined();
+  });
+
+  it('올린 사람을 모르는 옛 행은 막지 않는다 — 기존 행 보정 0 (N-25 · 지출에 남은 규약)', async () => {
     const [row] = await q.query(
       `INSERT INTO rpt (rpt_type, on_date, memo, state)
        VALUES ('day','2026-09-21','{}'::jsonb,'sent') RETURNING id`,

@@ -39,7 +39,12 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
   const PW = 'enroll-1234';
   const CEO = 961;
   const TEACHER = 962;
-  const ADMIN = 963; // 관리자 — 등록 확정을 하는 사람 (돈 권한 없음)
+  /**
+   * 관리자 — 등록 확정을 하는 사람. **금액 예외를 꺼 둔다**: 이 스위트가 보는 것은
+   * 「금액을 못 보는 사람에게는 amount 가 null 로 간다」이고, 대표 결정 2026-09-21 로
+   * 역할 파생 `canMoney` 가 관리자급까지 열려 역할만으로는 그 경계를 세울 수 없다.
+   */
+  const ADMIN = 963;
   const STU_EXISTING = 9961; // 이미 있는 「등록A · 10 · 테스트고」
   const LEADS = { hold: 8801, first: 8802, same: 8803, failed: 8804, norate: 8805 };
   const KIND = 'en_kind';
@@ -78,7 +83,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
       `INSERT INTO staff (id, name, email, role, password_hash, active, can_money) VALUES
          ($1,'등록대표','en-ceo@t.kr','ceo',$4,true,null),
          ($2,'등록강사','en-t@t.kr','teacher',$4,true,null),
-         ($3,'등록관리자','en-a@t.kr','admin',$4,true,null)`,
+         ($3,'등록관리자','en-a@t.kr','admin',$4,true,false)`,
       [CEO, TEACHER, ADMIN, hash],
     );
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'등록A','10','테스트고')`, [STU_EXISTING]);

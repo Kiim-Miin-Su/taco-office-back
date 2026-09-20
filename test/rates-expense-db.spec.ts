@@ -42,7 +42,12 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
   let ceo2Token = '';
   const PW = 'rates-1234';
   const CEO = 991;
-  const MANAGER = 992; // 금액 예외 없는 매니저 — 회계 403 · 지출 등록은 된다
+  /**
+   * **금액 예외를 꺼 둔** 매니저 — 회계 403 · 지출 등록은 된다(그 경로는 `canAdminPage` 다).
+   * 역할 파생 `canMoney` 는 대표 결정 2026-09-21 로 관리자급까지 열려, 역할만으로는
+   * 「회계 밖에 있는 사람」을 세울 수 없다(D-R9 의 경계 자체는 사람별 예외 칸으로 남아 있다).
+   */
+  const MANAGER = 992;
   const TEACHER = 993;
   const CEO2 = 994; // 둘째 대표 — 대신 올린 사람 말고 다른 사람이 심사하면 통과하는 것을 본다 (S2)
   const STU_A = 9991;
@@ -79,7 +84,7 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     await q(
       `INSERT INTO staff (id, name, email, role, password_hash, active, can_money) VALUES
          ($1,'단가대표','re-ceo@t.kr','ceo',$4,true,null),
-         ($2,'단가매니저','re-m@t.kr','manager',$4,true,null),
+         ($2,'단가매니저','re-m@t.kr','manager',$4,true,false),
          ($3,'단가강사','re-t@t.kr','teacher',$4,true,null),
          ($5,'단가대표둘','re-ceo2@t.kr','ceo',$4,true,null)`,
       [CEO, MANAGER, TEACHER, hash, CEO2],
@@ -300,12 +305,19 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
      * **남의 이름으로 올린 뒤 자기가 승인하는 길**이 열려 있었다 (S2 · 2026-09-20 전수 검수).
      *
      * `requesterId` 는 누가 보내든 그대로 들어갔고(컨트롤러 주석만 「대표가 대신 올릴 때만」이라 적었다)
-     * 심사 쪽은 `requester_id` 하나만 봤다 — **A-5 가 통째로 비켜간다.** 둘 다 닫는다:
+     * 심사 쪽은 `requester_id` 하나만 봤다 — **A-5 가 통째로 비켜간다.** S2 는 둘 다 닫았다:
      * 대리 등록은 대표만 · 실제로 올린 사람(`filed_by`)도 심사하지 못한다.
+     *
+     * ⭐ **대표 결정 2026-09-21 로 앞의 절반(역할 경계)이 열렸다** — `canCeoFileExpenseForOther` 가
+     * `ceoGate` 를 부르므로 매니저도 남의 이름으로 올린다. **뒤의 절반은 그대로다**: 올린 사람은
+     * 자기가 심사하지 못하고(`SELF_APPROVAL_GUARDED` 에 `expense` 가 남아 있다) DB CHECK 둘도 그대로다.
+     * 「누가 올릴 수 있는가」와 「올린 사람이 스스로 승인할 수 있는가」는 다른 질문이고, 이번 결정은 앞만 건드렸다.
      */
-    expect((await api('post', '/accounting/expenses', managerToken)
-      .send({ spendOn: kst(), category: 'book', requestedAmount: 5000, requesterId: TEACHER }).expect(403)).body.code)
-      .toBe('EXPENSE_PROXY_FORBIDDEN');
+    const mgrProxy = (await api('post', '/accounting/expenses', managerToken)
+      .send({ spendOn: kst(), category: 'book', requestedAmount: 5000, requesterId: TEACHER }).expect(201)).body;
+    expect(mgrProxy).toMatchObject({ state: 'pending', requesterId: TEACHER, filedById: MANAGER });
+    // 뒤 절반(올린 사람은 자기가 심사하지 못한다)은 바로 아래 대표 건이 그대로 증명한다 —
+    // 이 매니저는 금액 예외가 꺼져 있어 심사 화면 자체에 못 들어간다(그것은 다른 경계다).
     // 자기 이름으로 보내는 것은 대리가 아니다 — 막지 않는다
     await api('post', '/accounting/expenses', managerToken)
       .send({ spendOn: kst(), category: 'book', requestedAmount: 5000, requesterId: MANAGER }).expect(201);

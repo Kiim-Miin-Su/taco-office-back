@@ -380,25 +380,43 @@ d('§54 수업료 계산 (C65)', () => {
    * 그래서 일부러 **값이 둘인 학생**을 세운다.
    */
 
+  /**
+   * 이 스위트의 다른 시험은 **지난 달**을 써서 오늘이 언제든 흔들리지 않는데, 이것만은
+   * 「지금까지 / 아직」의 **경계가 달 안에** 있어야 성립한다. 그래서 날짜를 박아 두었더니
+   * 그날이 오는 순간 깨졌다 — 2026-09-21 에 「아직」으로 적어 둔 9/21 회차가 「했다」로 넘어와
+   * `done` 이 2 → 3 이 됐다. 날짜만 미루면 다음에 또 같은 일이 생기므로 **시계를 고정한다**
+   * (가짜로 쓰는 것은 `Date` 뿐이다 — 타이머를 가짜로 쓰면 DB 드라이버가 멈춘다).
+   */
   it('「지금까지」는 나눈 값이 아니라 **이미 한 수업의 값**이다 — 값이 둘이면 안분이 틀린다', async () => {
-    const NOW = '2026-09'; // 오늘(2026-09-13)을 사이에 둔다
-    await occ('2026-09-01'); // 5만 · 했다
-    await occ('2026-09-08'); // 5만 · 했다
-    const cheap = await otherSubject(30_000);
-    await occOn(cheap, '2026-09-21'); // 3만 · 아직
-    await occOn(cheap, '2026-09-28'); // 3만 · 아직
+    jest.useFakeTimers({
+      now: new Date('2026-09-13T12:00:00+09:00'),
+      doNotFake: [
+        'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate',
+        'nextTick', 'queueMicrotask', 'performance', 'hrtime',
+      ],
+    });
+    try {
+      const NOW = '2026-09'; // 고정한 오늘(2026-09-13)을 사이에 둔다
+      await occ('2026-09-01'); // 5만 · 했다
+      await occ('2026-09-08'); // 5만 · 했다
+      const cheap = await otherSubject(30_000);
+      await occOn(cheap, '2026-09-21'); // 3만 · 아직
+      await occOn(cheap, '2026-09-28'); // 3만 · 아직
 
-    const v = await svc().tuition(NOW, true);
-    const me = v.items.find((x) => x.studentId === stuId)!;
-    expect(me.done).toBe(2);
-    expect(me.total).toBe(4);
-    // 비싼 것을 했고 싼 것이 남았다 — 실제로 한 수업의 값은 10만이다
-    expect(me.doneAmount).toBe(100_000);
-    // 안분이면 (100,000 + 60,000) × 2/4 = 80,000 — 어느 수업의 값도 아니다
-    expect(me.doneAmount).not.toBe(80_000);
-    // 달 전체는 청구서가 낼 값 그대로다 — 토막을 내도 합이 어긋나지 않는다
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: NOW, invType: 'tuition', dueOn: DUE }, true);
-    expect(inv.amount).toBe(160_000);
+      const v = await svc().tuition(NOW, true);
+      const me = v.items.find((x) => x.studentId === stuId)!;
+      expect(me.done).toBe(2);
+      expect(me.total).toBe(4);
+      // 비싼 것을 했고 싼 것이 남았다 — 실제로 한 수업의 값은 10만이다
+      expect(me.doneAmount).toBe(100_000);
+      // 안분이면 (100,000 + 60,000) × 2/4 = 80,000 — 어느 수업의 값도 아니다
+      expect(me.doneAmount).not.toBe(80_000);
+      // 달 전체는 청구서가 낼 값 그대로다 — 토막을 내도 합이 어긋나지 않는다
+      const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: NOW, invType: 'tuition', dueOn: DUE }, true);
+      expect(inv.amount).toBe(160_000);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('「넘길 돈」도 **결강한 그 수업의 값**이다 — 1회 평균으로 뭉개지 않는다', async () => {

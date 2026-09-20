@@ -242,11 +242,13 @@ d('§69 6영역 · §73 결재함 — 판정 한 곳, 이동만 (C37)', () => {
   });
 
   /**
-   * 화면이 `canApprove && canSeeProfit` 를 스스로 조합하고 있었다. 2026-09-20 에 서버가
-   * **자기 결재**까지 거절하기 시작했으므로, 그 조합만으로는 올린 사람에게 단추가 열린 채
-   * 눌렀을 때만 거절당한다. 판정을 서버 한 줄(`canReview`)로 옮긴 자리의 회귀다 (S1 · D-R39).
+   * 화면이 `canApprove && canSeeProfit` 를 스스로 조합하고 있었다 — 판정을 서버 한 줄(`canReview`)로
+   * 옮긴 자리의 회귀다 (D-R39). **그 규약은 그대로고 답만 바뀌었다**: 대표 결정 2026-09-21 로
+   * 대표 보고(`rpt`)의 자기 결재 금지가 꺼져(`lib/approval.SELF_APPROVAL_GUARDED` 에서 빠졌다 ·
+   * DB 의 `rpt_no_self_review` CHECK 도 마이그레이션 54 가 함께 걷었다) 올린 사람에게도 단추가 선다.
+   * 나머지 세 조건(결재 권한 · 금액 권한 · 보는 사람을 아는가)은 그대로 경계로 남는다.
    */
-  it('§73 결재 단추는 서버가 연다 — 올린 사람에게는 닫히고 남에게는 열린다 (S1)', async () => {
+  it('§73 결재 단추는 서버가 연다 — 이제 올린 사람에게도 열리고, 쓰기와 같은 답이다 (D-R39)', async () => {
     const writer = await actor('단추작성자');
     const boss = await actor('단추결재자');
     await svc().saveMemo({ rptType: 'day', onDate: '2026-08-21', memos: [{ key: 'money', memo: '한 줄' }] }, writer);
@@ -255,20 +257,18 @@ d('§69 6영역 · §73 결재함 — 판정 한 곳, 이동만 (C37)', () => {
     const rowFor = async (viewer?: { id: number; canApprove: boolean }) =>
       (await svc().range('2026-08-01', '2026-08-31', true, viewer)).reports.find((r) => r.id === sent.id)!;
 
-    expect((await rowFor({ id: writer, canApprove: true })).canReview).toBe(false);
+    expect((await rowFor({ id: writer, canApprove: true })).canReview).toBe(true);
     expect((await rowFor({ id: boss, canApprove: true })).canReview).toBe(true);
     // 결재 권한이 없으면 남의 보고여도 닫힌다
     expect((await rowFor({ id: boss, canApprove: false })).canReview).toBe(false);
     // 금액을 못 보면 §69 를 결재하지 않는다 — 숫자를 안 보고 서명할 수 없다
     expect((await svc().range('2026-08-01', '2026-08-31', false, { id: boss, canApprove: true }))
       .reports.find((r) => r.id === sent.id)!.canReview).toBe(false);
-    // 보는 사람을 아예 모르면 닫는다
+    // 보는 사람을 아예 모르면 닫는다 — 모르는 쪽으로 열면 그 자리가 다음 불일치가 된다
     expect((await rowFor()).canReview).toBe(false);
 
-    // 단추가 말하는 것과 서버가 하는 것이 같다
-    await expect(svc().review(sent.id, { action: 'ok' }, writer))
-      .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
-    expect((await svc().review(sent.id, { action: 'ok' }, boss)).state).toBe('ok');
+    // 단추가 말하는 것과 서버가 하는 것이 같다 — 올린 사람이 눌러도 실제로 통과한다
+    expect((await svc().review(sent.id, { action: 'ok' }, writer)).state).toBe('ok');
   });
 
   it('올라오지 않은 보고는 결재할 수 없다', async () => {

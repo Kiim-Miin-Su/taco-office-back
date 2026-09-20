@@ -13,7 +13,9 @@
  *
  * ① 「+ 구성원」의 시급이 `canWage` 를 안 봤다 — `insertWage` 를 타는 다른 두 경로는 전부 요구한다.
  * ② 「끝난 것 지우기」가 `canCrudAll` 이면 **전사 하드 삭제**였다 — 화면은 보이는 것만 세는데.
- * ③ 컨설팅 **비공개 「지정」**이 `canHide` 없이 됐다 — §76 은 지정·열람 **둘 다** 대표 전용이라 적는다.
+ * ③ 컨설팅 **비공개 「지정」**이 `canHide` 를 안 봤다 — 판정이 `canHide` 하나를 지나는지가 이 시험의 내용이다.
+ *   (원문 §76 은 지정·열람 **둘 다 대표 전용**이라 적지만, **대표 결정 2026-09-21** 로 역할 경계가 관리자급까지
+ *    열렸다. 그래서 경계는 **사람별 예외 칸**(`STAFF.can_hide=false`)으로 옮겨 같은 것을 본다 — ① 과 같은 모양이다.)
  * ④ 회의 할 일이 **그만둔 사람**에게 배정됐다 — 같은 파일의 다른 모든 경로는 `activeStaff` 를 쓴다.
  *
  * 실제 HTTP(가드 · DTO · 트랜잭션)와 격리 DB 로 돈다. 이 스위트 전용 staff 971~975 · stu 9971 을 쓴다.
@@ -36,14 +38,16 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
   let ceo = '';
   let mgr = '';
   let noWage = '';
+  let noHide = '';
   const PW = 'sidedoor-1234';
   const CEO = 971;
-  const MGR = 972;       // 매니저 — 역할 파생으로 canWage true · canHide false
+  const MGR = 972;       // 매니저 — 역할 파생으로 canWage·canHide 둘 다 true (대표 결정 2026-09-21)
   const NOWAGE = 973;    // 매니저인데 can_wage=false 예외
   const TEACHER = 974;
   const RETIRED = 975;   // active=false
+  const NOHIDE = 976;    // 매니저인데 can_hide=false 예외 — 비공개 지정이 막히는 쪽
   const STU = 9971;
-  const ids = [CEO, MGR, NOWAGE, TEACHER, RETIRED];
+  const ids = [CEO, MGR, NOWAGE, TEACHER, RETIRED, NOHIDE];
   const NEW_EMAIL = 'sidedoor-new@t.kr';
   let mtId = 0;
   const consIds: number[] = [];
@@ -61,6 +65,19 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
       await q(`DELETE FROM log WHERE entity = 'STAFF' AND entity_id = $1`, [r.id]);
       await q(`DELETE FROM staff WHERE id = $1`, [r.id]);
     }
+  };
+
+  /** 이 스위트의 사람이 주인인 컨설팅을 통째로 치운다 — 앞선 실행이 남긴 줄까지 (staff FK 가 RESTRICT 다) */
+  const dropOwnedCons = async () => {
+    const rows = await q<{ id: string }>(`SELECT id FROM cons WHERE owner_id = ANY($1)`, [ids]);
+    const all = rows.map((r) => Number(r.id));
+    if (!all.length) return;
+    await q(`DELETE FROM cons_event WHERE cons_id = ANY($1)`, [all]);
+    await q(`DELETE FROM cons_item WHERE cons_id = ANY($1)`, [all]);
+    await q(`DELETE FROM cons_pick WHERE cons_id = ANY($1)`, [all]);
+    await q(`DELETE FROM cons_stu WHERE cons_id = ANY($1)`, [all]);
+    await q(`DELETE FROM cons WHERE id = ANY($1)`, [all]);
+    consIds.length = 0;
   };
 
   const dropOwn = async () => {
@@ -92,6 +109,7 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
     ds = app.get(DataSource);
 
     await dropNewStaff();
+    await dropOwnedCons();
     await q(`DELETE FROM todo WHERE to_id = ANY($1) OR from_id = ANY($1)`, [ids]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [ids]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [ids]);
@@ -104,9 +122,12 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
          ($2,'옆문매니저','sd-m@t.kr','manager',$6,true,NULL),
          ($3,'시급없는매니저','sd-nw@t.kr','manager',$6,true,false),
          ($4,'옆문강사','sd-t@t.kr','teacher',$6,true,NULL),
-         ($5,'그만둔사람','sd-r@t.kr','teacher',$6,false,NULL)`,
-      [CEO, MGR, NOWAGE, TEACHER, RETIRED, hash],
+         ($5,'그만둔사람','sd-r@t.kr','teacher',$6,false,NULL),
+         ($7,'비공개없는매니저','sd-nh@t.kr','manager',$6,true,NULL)`,
+      [CEO, MGR, NOWAGE, TEACHER, RETIRED, hash, NOHIDE],
     );
+    /* 사람별 예외는 따로 켠다 — 위 INSERT 는 can_wage 한 칸만 든다 */
+    await q(`UPDATE staff SET can_hide = false WHERE id = $1`, [NOHIDE]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'옆문학생','10')`, [STU]);
     await q(`INSERT INTO tzg (id, name, tz) VALUES (1,'한국 (KST)','Asia/Seoul') ON CONFLICT (id) DO NOTHING`);
@@ -117,16 +138,20 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
     ceo = await login('sd-ceo@t.kr');
     mgr = await login('sd-m@t.kr');
     noWage = await login('sd-nw@t.kr');
+    noHide = await login('sd-nh@t.kr');
   });
 
   afterAll(async () => {
     try {
       if (ds?.isInitialized) {
         await dropOwn();
+        await dropOwnedCons();
         await dropNewStaff();
         await q(`DELETE FROM wage WHERE staff_id = ANY($1)`, [ids]);
         await q(`DELETE FROM staff WHERE id = ANY($1)`, [ids]);
-        await q(`DELETE FROM stu WHERE id = $1`, [STU]);
+        /* 사람별 예외는 따로 켠다 — 위 INSERT 는 can_wage 한 칸만 든다 */
+    await q(`UPDATE staff SET can_hide = false WHERE id = $1`, [NOHIDE]);
+    await q(`DELETE FROM stu WHERE id = $1`, [STU]);
       }
     } finally {
       await app?.close();
@@ -203,17 +228,17 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
     ownerId: CEO, amount: 100000, sessions: 1, startOn: '2026-09-01', endOn: '2026-12-31', share,
   });
 
-  it('③ 비공개 지정은 대표만 — 매니저는 403 이고 아무것도 남지 않는다 (§76)', async () => {
-    const blocked = await api('post', '/consulting', mgr).send({ ...consBody('private'), ownerId: MGR }).expect(403);
+  it('③ 비공개 지정은 canHide 를 지난다 — 예외로 끈 매니저는 403 이고 아무것도 남지 않는다', async () => {
+    const blocked = await api('post', '/consulting', noHide).send({ ...consBody('private'), ownerId: NOHIDE }).expect(403);
     expect(blocked.body.code).toBe('CONS_PRIVATE_FORBIDDEN');
-    expect(await q(`SELECT id FROM cons WHERE share = 'private' AND owner_id = $1`, [MGR])).toEqual([]);
+    expect(await q(`SELECT id FROM cons WHERE share = 'private' AND owner_id = $1`, [NOHIDE])).toEqual([]);
 
     // 다른 범위는 그대로 만든다 — 막는 것은 「비공개 지정」 하나다
-    const open = await api('post', '/consulting', mgr).send({ ...consBody('all'), ownerId: MGR }).expect(201);
+    const open = await api('post', '/consulting', noHide).send({ ...consBody('all'), ownerId: NOHIDE }).expect(201);
     consIds.push(Number(open.body.id));
 
     // 만든 뒤 비공개로 바꾸는 길도 같은 문을 지난다
-    const moved = await api('patch', `/consulting/${open.body.id}/share`, mgr).send({ share: 'private' }).expect(403);
+    const moved = await api('patch', `/consulting/${open.body.id}/share`, noHide).send({ share: 'private' }).expect(403);
     expect(moved.body.code).toBe('CONS_PRIVATE_FORBIDDEN');
     expect((await q<{ share: string }>(`SELECT share FROM cons WHERE id = $1`, [Number(open.body.id)]))[0].share).toBe('all');
 
@@ -223,13 +248,22 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
     expect(ceoMade.body.share).toBe('private');
   });
 
+  it('⭐ ③ 역할 경계는 열렸다 — 예외가 없는 매니저는 이제 비공개로 지정한다 (대표 결정 2026-09-21)', async () => {
+    const made = await api('post', '/consulting', mgr).send({ ...consBody('private'), ownerId: MGR }).expect(201);
+    consIds.push(Number(made.body.id));
+    expect(made.body.share).toBe('private');
+    // 「눌리는데 거절당하는 단추」가 되지 않는다 — 단추와 서버가 같은 답이다
+    expect(made.body.capabilities.canSetPrivate).toBe(true);
+  });
+
   it('③ 단추도 같은 질문을 한다 — canSetPrivate 은 목록과 상세 둘 다에서 canHide 다 (D-R39)', async () => {
-    const mine = await api('post', '/consulting', mgr).send({ ...consBody('all'), ownerId: MGR }).expect(201);
+    const mine = await api('post', '/consulting', noHide).send({ ...consBody('all'), ownerId: NOHIDE }).expect(201);
     consIds.push(Number(mine.body.id));
     expect(mine.body.capabilities.canSetPrivate).toBe(false);
     expect(mine.body.capabilities.canChangeShare).toBe(true); // 범위를 바꾸는 것과는 다른 층이다
 
-    expect((await api('get', '/consulting', mgr).expect(200)).body.canSetPrivate).toBe(false);
+    expect((await api('get', '/consulting', noHide).expect(200)).body.canSetPrivate).toBe(false);
+    expect((await api('get', '/consulting', mgr).expect(200)).body.canSetPrivate).toBe(true);
     expect((await api('get', '/consulting', ceo).expect(200)).body.canSetPrivate).toBe(true);
   });
 
