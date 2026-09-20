@@ -50,6 +50,12 @@ export class ApRowDto {
   })
   canAct?: boolean;
 
+  @ApiPropertyOptional({
+    ...S,
+    description: '처리하지 못하는 이유 — 할 수 있으면 null. 시급 요청은 `canWage` 까지 있어야 승인된다 (S5)',
+  })
+  actBlockedReason?: string | null;
+
   @ApiProperty({
     enum: ['schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'missing', 'other'],
     description: '§14 필터 분류 — 서버 코드표가 정한다',

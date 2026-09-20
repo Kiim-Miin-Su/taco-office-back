@@ -268,7 +268,11 @@ export class ReportSendHistoryDto {
   @ApiProperty() onDate!: string;
   @ApiProperty({ type: [Number] }) repIds!: number[];
   @ApiProperty({ enum: ['blob'] }) channel!: string;
-  @ApiProperty() fileCount!: number;
+  @ApiProperty({ description: '보존된 파일 수 — 재발송이 세는 것과 같은 것이다(pdflog 의 file_url 이 있는 행 · S5)' })
+  fileCount!: number;
+  @ApiProperty({ description: '다시 보낼 수 있는가 — 보존 파일이 한 장이라도 있어야 한다 (D-R39)' }) canResend!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '재발송이 막힌 이유 — 보낼 수 있으면 null' })
+  resendBlockedReason!: string | null;
   @ApiProperty() sentAt!: string;
   @ApiProperty() sentBy!: number;
   @ApiProperty() sentByName!: string;

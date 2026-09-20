@@ -16,7 +16,7 @@ import { areaCountSql } from '../../lib/exec-areas';
 import { todayKst } from '../../lib/kst';
 import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { kstAt, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
-import { assertMonthOpen } from '../../lib/month-close';
+import { assertMonthOpen, monthClosedMessage } from '../../lib/month-close';
 import { insertWage } from '../../lib/wage';
 import { TEACHER_OF_OCC, payoutSheet } from '../../lib/payout-sheet';
 import { nowMinKst } from '../../lib/kst';
@@ -105,6 +105,9 @@ const INV_SELECT = `
          to_char(i.due_on,'YYYY-MM-DD') AS due_on,
          to_char(i.paid_at,'YYYY-MM-DD') AS paid_at,
          i.sent_at, i.detail->'void'->>'reason' AS void_reason,
+         -- 「취소」 단추가 서는지에 필요한 둘 — 서버가 실제로 거절하는 조건과 **같은 것**을 본다 (S5 · D-R39)
+         EXISTS (SELECT 1 FROM month_close mc WHERE mc.year_month = i.year_month AND mc.reopened_at IS NULL) AS month_closed,
+         EXISTS (SELECT 1 FROM pay p WHERE p.inv_id = i.id) AS has_pay,
          COALESCE((SELECT json_agg(json_build_object(
             'subKey', l.sub_key, 'label', l.label, 'count', l.count,
             'unitPrice', l.unit_price, 'amount', l.amount) ORDER BY l.seq)
@@ -176,17 +179,42 @@ export class AccountingService {
    * @param canSeeAmounts 대표만 금액을 본다 (D-R39). **가리는 일을 화면에 맡기지 않는다** —
    *   서버가 아예 null 로 내려보낸다. 화면에서만 감추면 네트워크 탭에 그대로 보인다.
    */
+  /**
+   * 「취소」 단추가 서는가 — **서버가 `voidInvoice` 에서 실제로 거절하는 조건과 같은 순서**다 (S5 · D-R39).
+   *
+   * 전에는 `canVoid` 가 `paid_amount === 0` 하나만 봤다. 그런데 쓰기는 ① 대표 ② 이미 취소 아님
+   * ③ **그 달이 안 마감** ④ **`pay` 행이 없고** 받은 돈도 0 — 넷을 본다. 그래서 마감한 달의 청구서나
+   * **0원짜리 입금 행이 붙은 청구서**는 단추가 선 채 눌러야만 409 를 받았다.
+   *
+   * 막힌 이유는 문장으로 내려보낸다 — 이 저장소의 `confirmBlockedReason`·`closeBlockedReason` 과 같은 모양이고,
+   * 쓰기가 내는 문장과 같은 말을 쓴다(화면이 두 벌의 설명을 갖지 않는다).
+   */
+  private static voidGate(
+    state: string, canVoidInvoice: boolean, r: Record<string, unknown>,
+  ): { canVoid: boolean; voidBlockedReason: string | null } {
+    const blocked = (reason: string) => ({ canVoid: false, voidBlockedReason: reason });
+    // 권한이 없으면 단추 자체가 없다 — 이유를 적으면 「내가 대표가 아니다」를 매번 말하게 된다
+    if (!canVoidInvoice) return { canVoid: false, voidBlockedReason: null };
+    if (state === 'void') return blocked('이미 취소된 청구서입니다');
+    if (r.month_closed === true) return blocked(monthClosedMessage(String(r.year_month)));
+    if (r.has_pay === true || Number(r.paid_amount) > 0) {
+      return blocked('입금이 붙은 청구서는 취소할 수 없습니다 — 입금을 먼저 지우세요');
+    }
+    return { canVoid: true, voidBlockedReason: null };
+  }
+
   /** 목록과 쓰기 응답이 같은 모양을 쓰도록 한 행의 변환도 한 곳에 둔다 */
   private invoiceRow(r: Record<string, unknown>, canSeeAmounts: boolean, today: string, canVoidInvoice = false): InvoiceDto {
     const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
     const due = r.due_on as string | null;
     const unpaid = r.state === 'unpaid' || r.state === 'partial' || r.state === 'sent';
     const state = String(r.state);
+    const voidGate = AccountingService.voidGate(state, canVoidInvoice, r);
     return {
-      // C94-a — 단추가 서는지는 여기서 정한다 (D-R39). 전달은 초안·미전달만, 취소는 대표 · 취소 전 · 입금 0
+      // C94-a — 단추가 서는지는 여기서 정한다 (D-R39). 전달은 초안·미전달만, 취소는 아래 `voidGate` 가 정한다
       sentAt: r.sent_at ? new Date(r.sent_at as string).toISOString() : null,
       canDeliver: (INV_DELIVERABLE as readonly string[]).includes(state),
-      canVoid: canVoidInvoice && state !== 'void' && Number(r.paid_amount) === 0,
+      ...voidGate,
       voidReason: (r.void_reason as string | null) ?? null,
       id: Number(r.id), studentId: Number(r.student_id), studentName: String(r.student_name),
       grade: (r.grade as string | null) ?? null,
@@ -975,8 +1003,12 @@ export class AccountingService {
         /*
          * **받아 놓고 못 해 준 수업**만 이월이다 (N-39). 완납이 아니면 이월할 것이 없고,
          * 못 해 준 수업이 없어도 없다. 이미 넘겼으면 다시 못 넘긴다 — 같은 돈이 두 번 넘어간다.
+         *
+         * **마감한 달도 아니다**(S5) — 쓰기가 `assertMonthOpen` 으로 409 `MONTH_CLOSED` 를 내는데
+         * 이 판정이 그것을 안 봐서 단추가 선 채 눌러야만 거절당했다. 마감은 세 거절(`CARRY_NOT_PAID`·
+         * `CARRY_NOTHING`·`CARRY_DUPLICATE`)보다 **앞에서** 걸린다 — 여기서도 앞에 둔다.
          */
-        carryable: paidInv.has(id) && carry > 0 && !carriedOut.has(id),
+        carryable: close === null && paidInv.has(id) && carry > 0 && !carriedOut.has(id),
         carriedAt: carriedOut.get(id) ?? null,
         carriedIn: money(got.amount),
         carriedInSessions: got.sessions,

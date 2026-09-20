@@ -189,10 +189,18 @@ d('§14 요청 처리 — 승인은 실제로 바꾸고, 반려는 아무것도 
 
   it('처리하면 서랍 목록에서 「기다리는 것」이 줄고, 처리할 수 있는 줄만 canAct 다', async () => {
     const id = await openReq('wage_change', { from: 42000, to: 45000 });
-    const before = await svc().all(BOSS, true, true, false);
+    // 시급 요청의 단추는 **시급 권한**까지 본다 (S5) — 쓰기가 `WAGE_REVIEW_FORBIDDEN` 으로 막는 그 권한이다
+    const before = await svc().all(BOSS, true, true, false, 'none', true);
     const mineRow = before.approvals.waiting.find((r) => r.kind === 'req' && r.id === id);
     expect(mineRow).toBeDefined();
     expect(mineRow!.canAct).toBe(true);
+    expect(mineRow!.actBlockedReason).toBeNull();
+
+    // 시급 예외가 걸린 사람에게는 같은 줄이 닫히고 이유가 문장으로 온다 — 모르면 닫는다
+    const noWage = await svc().all(BOSS, true, true, false, 'none', false);
+    const blockedRow = noWage.approvals.waiting.find((r) => r.kind === 'req' && r.id === id);
+    expect(blockedRow!.canAct).toBe(false);
+    expect(typeof blockedRow!.actBlockedReason).toBe('string');
     expect(mineRow!.asked).toBe('42,000원/시간 → 45,000원/시간');
     // 리포트·기획 같은 다른 갈래는 아직 이 화면에서 처리하지 않는다
     expect(before.approvals.waiting.filter((r) => r.kind !== 'req').every((r) => r.canAct === false)).toBe(true);

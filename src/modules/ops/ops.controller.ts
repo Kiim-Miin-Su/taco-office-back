@@ -193,7 +193,8 @@ export class OpsController {
   @ApiCreatedResponse({ type: ComplaintDto })
   @ApiNotFoundResponse({ description: 'STUDENT_NOT_FOUND | STAFF_NOT_FOUND' })
   createComplaint(@CurrentUser() user: RequestUser, @Body() dto: ComplaintCreateDto): Promise<ComplaintDto> {
-    return this.svc.createComplaint(user.id, dto);
+    // 「수강 종료 · 환불」 단추가 서는지는 돈 권한이 정한다 — 목록 응답과 같은 값이어야 한다 (S5)
+    return this.svc.createComplaint(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto);
   }
 
   @Patch('complaints/:id')
@@ -206,7 +207,7 @@ export class OpsController {
   @ApiConflictResponse({ description: 'code CPL_OWNER_REQUIRED | CPL_RESULT_REQUIRED | EMPTY_PATCH' })
   @ApiNotFoundResponse({ description: 'CPL_NOT_FOUND | STAFF_NOT_FOUND' })
   patchComplaint(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ComplaintPatchDto): Promise<ComplaintDto> {
-    return this.svc.patchComplaint(user.id, id, dto);
+    return this.svc.patchComplaint(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), id, dto);
   }
 
   @Post('teacher-change/preview')

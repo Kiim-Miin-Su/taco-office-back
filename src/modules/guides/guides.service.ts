@@ -56,6 +56,16 @@ const GUIDE_EVENT_CTE = `WITH rostered AS (
   FROM rostered
 )`;
 
+/**
+ * 「회차마다 나가는 안내」를 **무엇으로 찾는가** (S5).
+ *
+ * 사람이 보는 목록은 **그날 그려지는 것**을 모으고(`drawnOn`), 쓰기의 되읽기는 방금 쓴
+ * **그 회차**를 키로 집는다. 옮긴 회차에서 이 둘은 다른 날짜다.
+ */
+type PerLessonScope =
+  | { drawnOn: string; teacherId: number | null }
+  | { serId: number; onDate: string };
+
 
 @Injectable()
 export class GuidesService {
@@ -102,15 +112,32 @@ export class GuidesService {
 
 
   /**
-   * §43 「회차마다 나가는 안내」 한 날치 (F-63).
+   * §43 「회차마다 나가는 안내」 (F-63).
    *
-   * **정본은 그날의 온라인 SER_OCC** 이고 PNOTI 는 발송 기록이다. 목록과 줌 안내 쓰기 응답이
+   * **정본은 온라인 SER_OCC** 이고 PNOTI 는 발송 기록이다. 목록과 줌 안내 쓰기 응답이
    * 같은 함수를 쓴다 — 두 곳이 따로 만들면 보낸 직후의 줄이 목록과 다른 모양으로 보인다.
+   *
+   * **거르는 날과 돌려주는 날이 다르다** — 거르는 것은 「그려지는 날」(`lower(o.span)` 의 KST 날짜)이고
+   * 돌려주는 `onDate` 는 **회차 키**(`o.on_date`)다. 사람은 달력 날짜로 고르고 쓰기는 회차 키로 찾기
+   * 때문이다(C82-b — `ser_occ.id` 는 재투영 때 바뀌므로 키가 될 수 없다). 옮긴 회차에서 이 둘이
+   * 갈리는데, 전에는 둘 다 「그려지는 날」로 내려보내 **쓰기가 그 회차를 못 찾았다**(S5).
+   *
+   * 그래서 **찾는 방법도 둘**이다 — 목록은 그날 그려지는 것을 모으고(`drawnOn`), 쓰기의 되읽기는
+   * 방금 쓴 그 회차를 **키로** 집는다(`serId`+`onDate`). 되읽기까지 「그려지는 날」로 찾으면
+   * 옮긴 회차에서는 **쓰기가 끝난 뒤에 404** 가 났다 — 알림은 갔는데 화면은 실패로 읽는다.
    */
-  private async perLessonRows(onDate: string, teacherId: number | null): Promise<PerLessonNoticeDto[]> {
+  private async perLessonRows(scope: PerLessonScope): Promise<PerLessonNoticeDto[]> {
+    const byKey = 'serId' in scope;
+    const where = byKey
+      ? `o.ser_id=$1 AND o.on_date=$2::date`
+      : `${kstDateOf('lower(o.span)')}=$1::date AND ($2::bigint IS NULL OR o.teacher_id=$2)`;
+    const params: unknown[] = byKey ? [scope.serId, scope.onDate] : [scope.drawnOn, scope.teacherId];
     const perRows = await this.q(
       `SELECT o.id AS source_occurrence_id,o.ser_id,
-              to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS on_date,
+              -- 회차 키를 준다 (S5). 전에는 「그려지는 날」을 on_date 라 불러 내려보냈는데,
+              -- 같은 질의의 PNOTI 조인과 쓰기(sendZoomNotice)는 o.on_date 를 쓴다 — 옮긴 회차에서
+              -- 화면이 되돌려 보낸 날짜로는 회차를 못 찾아 404 가 나거나, 그 날짜의 다른 회차에 붙었다.
+              to_char(o.on_date,'YYYY-MM-DD') AS on_date,
               ${START_MIN} AS start_min,${END_MIN} AS end_min,
               o.teacher_id,t.name AS teacher_name,r.title AS ser_title,k.name AS kind_name,
               o.zacc_id,z.label AS zacc_label,ss.student_id,st.name AS student_name,
@@ -135,13 +162,12 @@ export class GuidesService {
             LIMIT 1
          ) p ON true
         WHERE NOT o.canceled
-          AND ${kstDateOf('lower(o.span)')}=$1::date
-          AND ($2::bigint IS NULL OR o.teacher_id=$2)
+          AND ${where}
           AND NOT EXISTS (
             SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id
           )
         ORDER BY lower(o.span),o.id,st.name,st.id,p.id DESC`,
-      [onDate, teacherId],
+      params,
     );
     const byOccurrence = new Map<number, R[]>();
     for (const row of perRows) {
@@ -232,7 +258,7 @@ export class GuidesService {
     const only = teacherId !== undefined;
     const guides = await this.guideRows(`WHERE ($1::bigint IS NULL OR g.teacher_id=$1)`, [only ? teacherId : null]);
 
-    const perLesson = await this.perLessonRows(todayKst(), only ? teacherId : null);
+    const perLesson = await this.perLessonRows({ drawnOn: todayKst(), teacherId: only ? teacherId : null });
     const teacherChanges = new Map<string, number>();
     for (const guide of guides.filter((guide) => guide.reason === 'teacher_change')) {
       const key = `${guide.studentId}|${guide.serId ?? 'none'}`;
@@ -742,8 +768,8 @@ export class GuidesService {
       await m.query(histSql(), ['pnoti', Number(teacherRows[0].id), 'guide_send', userId]);
     });
 
-    /* 목록과 같은 함수로 그 회차를 다시 읽는다 — 오늘이 아닌 날짜도 옳게 돌려준다 */
-    const rows = await this.perLessonRows(dto.onDate, null);
+    /* 목록과 같은 함수로 그 회차를 다시 읽는다 — **방금 쓴 키 그대로** 집는다(옮긴 회차도 찾는다) */
+    const rows = await this.perLessonRows({ serId: dto.serId, onDate: dto.onDate });
     const lesson = rows.find((row) => row.serId === dto.serId);
     if (!lesson) throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '해당 회차를 찾을 수 없습니다' });
     return { lesson, teacherNotices, parentNotices };

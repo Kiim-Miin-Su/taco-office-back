@@ -277,9 +277,16 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
     expect((await q<{ mode: string }>(`SELECT mode FROM ser WHERE id = $1`, [r.rows[0].serId]))[0]!.mode).toBe('online');
     const detail = (await api('get', `/consulting/${consC}`).expect(200)).body;
     expect(detail).toMatchObject({ sessionsDone: 0, sessionsPlanned: 2, requiredLeft: 0 });
-    expect(detail.capabilities.canClose).toBe(true); // 약정·필수 항목이 없다 — 회차 조건이 없어 종료 판정 자체는 열린다
-    // 그러나 잡아 둔 날짜가 남아 있으면 종료는 막는다 — 접는 정책을 여기서 지어내지 않는다
-    expect((await api('post', `/consulting/${consC}/close`).send({}).expect(409)).body.code).toBe('CONS_SESSIONS_PLANNED');
+    /*
+     * 잡아 둔 날짜가 남아 있으면 **단추부터 닫힌다** (S5 · D-R39).
+     * C95 때는 여기서 `canClose === true` 였다 — 약정·필수 항목만 보고 「잡아 둔 날짜」는 쓰기 쪽에서만
+     * 던졌기 때문이다. 단추가 서 있는데 누르면 409 인 자리였고, 이제 판정이 한 곳(`consultingCloseIssue`)이다.
+     */
+    expect(detail.capabilities.canClose).toBe(false);
+    const closeFail = (await api('post', `/consulting/${consC}/close`).send({}).expect(409)).body;
+    expect(closeFail.code).toBe('CONS_SESSIONS_PLANNED');
+    // 막힌 이유도 같은 말이다 — 미리 말하는 문장과 눌렀을 때의 문장이 갈리면 안 된다
+    expect(detail.capabilities.closeBlockedReason).toBe(closeFail.message);
     expect((await q<{ stage: string }>(`SELECT stage FROM cons WHERE id = $1`, [consC]))[0]!.stage).toBe('running');
 
     // 겹침 — 담당이 그 시각에 다른 수업이 있다 → 409 · 어느 날짜인지 문장에 · 회차·할 일 모두 되돌아간다

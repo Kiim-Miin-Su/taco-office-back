@@ -61,12 +61,21 @@ describe('§31 회차 · 종료 판정 (C95 · I-91 · I-95 · N-18 채택)', ()
     expect(consultingSessionAddIssue('done')?.code).toBe('CONS_LOCKED');
   });
   it('종료는 필수 항목이 0 · 약정 회차를 채웠을 때만 — 순서대로 막힌 이유 하나를 말한다', () => {
-    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 0 })).toBeNull();
-    expect(consultingCloseIssue({ stage: 'running', sessions: null, sessionsDone: 0, requiredLeft: 0 })).toBeNull();
-    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 5, requiredLeft: 0 })).toBeNull();
-    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 2 })).toMatchObject({ code: 'CONS_ITEMS_LEFT', message: expect.stringContaining('필수 항목 2개') });
-    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 1, requiredLeft: 0 })).toMatchObject({ code: 'CONS_SESSIONS_LEFT', message: expect.stringContaining('남은 2회') });
-    expect(consultingCloseIssue({ stage: 'contract', sessions: 3, sessionsDone: 3, requiredLeft: 0 })?.code).toBe('CONS_NOT_RUNNING');
-    expect(consultingCloseIssue({ stage: 'done', sessions: 3, sessionsDone: 3, requiredLeft: 0 })?.code).toBe('CONS_ALREADY_DONE');
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 0, sessionsPlanned: 0 })).toBeNull();
+    expect(consultingCloseIssue({ stage: 'running', sessions: null, sessionsDone: 0, requiredLeft: 0, sessionsPlanned: 0 })).toBeNull();
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 5, requiredLeft: 0, sessionsPlanned: 0 })).toBeNull();
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 2, sessionsPlanned: 0 })).toMatchObject({ code: 'CONS_ITEMS_LEFT', message: expect.stringContaining('필수 항목 2개') });
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 1, requiredLeft: 0, sessionsPlanned: 0 })).toMatchObject({ code: 'CONS_SESSIONS_LEFT', message: expect.stringContaining('남은 2회') });
+    expect(consultingCloseIssue({ stage: 'contract', sessions: 3, sessionsDone: 3, requiredLeft: 0, sessionsPlanned: 0 })?.code).toBe('CONS_NOT_RUNNING');
+    expect(consultingCloseIssue({ stage: 'done', sessions: 3, sessionsDone: 3, requiredLeft: 0, sessionsPlanned: 0 })?.code).toBe('CONS_ALREADY_DONE');
+  });
+
+  it('앞으로 잡아 둔 회차도 같은 판정이 막는다 — 단추와 쓰기가 같은 함수를 본다 (S5)', () => {
+    // 전에는 이 갈래만 쓰기 쪽에서 따로 던져서 `canClose` 가 true 인 채로 단추가 섰다
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 0, sessionsPlanned: 2 }))
+      .toMatchObject({ code: 'CONS_SESSIONS_PLANNED', message: expect.stringContaining('잡아 둔 회차 2개') });
+    // 순서는 쓰기 쪽과 같다 — 항목이 남아 있으면 그 이유가 먼저다
+    expect(consultingCloseIssue({ stage: 'running', sessions: 3, sessionsDone: 3, requiredLeft: 1, sessionsPlanned: 2 })?.code)
+      .toBe('CONS_ITEMS_LEFT');
   });
 });

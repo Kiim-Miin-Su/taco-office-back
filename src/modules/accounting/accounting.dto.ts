@@ -65,7 +65,13 @@ export class InvoiceDto {
   /* C94-a — 전달 · 취소 (테스트 시나리오 H-76 · N-139). 단추가 서는지는 서버가 정한다 (D-R39) */
   @ApiPropertyOptional({ type: String, nullable: true, description: '학부모께 전달한 시각 (ISO) — 전달 전이면 null' }) sentAt?: string | null;
   @ApiProperty({ description: '「전달」을 누를 수 있는가 — 초안·미전달만' }) canDeliver!: boolean;
-  @ApiProperty({ description: '「취소」를 누를 수 있는가 — 대표 · 취소 전 · 입금 0' }) canVoid!: boolean;
+  @ApiProperty({ description: '「취소」를 누를 수 있는가 — 대표 · 취소 전 · **그 달이 안 마감** · 입금 행 0 (S5 · 쓰기와 같은 조건)' })
+  canVoid!: boolean;
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '취소가 막힌 이유 — 열려 있거나 권한 자체가 없으면 null. 쓰기가 내는 문장과 같은 말이다',
+  })
+  voidBlockedReason!: string | null;
   @ApiPropertyOptional({ type: String, nullable: true, description: '취소 사유 — 취소된 청구서에만 (N-139 「이력에 남는다」)' }) voidReason?: string | null;
 }
 
@@ -427,7 +433,7 @@ export class TuitionRowDto {
    * **돈을 안 받았으면 이월할 것이 없다** — 그냥 안 청구된 것이고 §54 가 이미 빼고 있다.
    * 판정은 서버가 한다 — 화면이 「완납인가」를 다시 읽으면 단추가 서는 줄과 서버의 답이 갈린다 (D-R39).
    */
-  @ApiProperty({ description: '이월 처리를 누를 수 있는가 (N-39)' }) carryable!: boolean;
+  @ApiProperty({ description: '이월 처리를 누를 수 있는가 — 마감한 달은 false 다 (N-39 · S5)' }) carryable!: boolean;
   @ApiPropertyOptional({
     type: String, nullable: true,
     description: '이미 넘겼으면 그 시각 — 한 달은 한 번만 넘긴다',

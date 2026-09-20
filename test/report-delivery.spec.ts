@@ -632,6 +632,39 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       .toHaveLength(2);
   });
 
+  /**
+   * **「다시 보내기」가 서는지도 서버가 정한다** (S5 · D-R39).
+   *
+   * 이 단추에는 **조건이 아예 없었다** — 보존 파일이 한 장도 없는 줄에서도 서 있었고 누르면
+   * 409 `REPORT_DELIVERY_FILES_MISSING` 였다. 게다가 목록의 `fileCount` 는 **첨부 줄 전부**를 세고
+   * 재발송은 **파일이 남아 있는 줄**만 세어, 화면이 「파일 2장 보관」이라 적는 줄이 실제로는
+   * 못 보내는 줄일 수 있었다. 이제 둘이 같은 것(`file_url IS NOT NULL`)을 센다.
+   *
+   * 파일이 사라진 상태는 제품이 만들지 않는다 — 보존이 실패하면 이력 자체가 안 남는다(바로 위 회귀).
+   * 그래서 여기서는 **보존 파일만 지워** 그 상태를 만든다. 쓰기가 그 상태를 막는 한, 단추도 막아야 한다.
+   */
+  it('보존 파일이 0장이면 canResend 가 닫히고, 그 이유가 쓰기가 내는 문장과 같다 (S5)', async () => {
+    const sent = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+      .send(deliveryBody('00000000-0000-4000-8000-000000000090')).expect(201);
+    const sendId = sent.body.item.id as number;
+    expect(sent.body.item).toMatchObject({ fileCount: 2, canResend: true, resendBlockedReason: null });
+
+    const listOf = async () => {
+      const res = await request(app.getHttpServer()).get('/reports/deliveries/history').set(auth(managerToken)).expect(200);
+      return (res.body.items as Array<Record<string, unknown>>).find((r) => r.id === sendId)!;
+    };
+    expect(await listOf()).toMatchObject({ fileCount: 2, canResend: true, resendBlockedReason: null });
+
+    await q(`UPDATE pdflog SET file_url = NULL WHERE kind='report_png' AND ref_id=$1`, [sendId]);
+    const gone = await listOf();
+    // 세는 것이 같다 — 「파일 2장 보관」이라 적어 놓고 못 보내는 줄이 되지 않게
+    expect(gone).toMatchObject({ fileCount: 0, canResend: false });
+    const blocked = await request(app.getHttpServer()).post(`/reports/deliveries/${sendId}/resend`)
+      .set(auth(managerToken)).send({ requestKey: '00000000-0000-4000-8000-000000000091' }).expect(409);
+    expect(blocked.body.code).toBe('REPORT_DELIVERY_FILES_MISSING');
+    expect(blocked.body.message).toBe(gone.resendBlockedReason);
+  });
+
   it('두 번째 Blob 저장이 실패하면 먼저 저장한 파일을 보상 삭제하고 이력을 남기지 않는다', async () => {
     put.mockResolvedValueOnce('https://private.blob/first.png').mockRejectedValueOnce(new Error('blob failed'));
     await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))

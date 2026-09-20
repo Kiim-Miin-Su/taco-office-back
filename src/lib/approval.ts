@@ -228,6 +228,8 @@ export interface ApRow {
   applicable?: boolean;
   /** 이 사람이 **지금** 이 줄을 처리할 수 있는가 — 판정은 서버가 한다 */
   canAct?: boolean;
+  /** 못 하는 이유 문장 — 할 수 있으면 null. 쓰기가 내는 말과 같다 (S5) */
+  actBlockedReason?: string | null;
   /** §14 필터 분류 — 서버가 만들고 화면은 비교만 한다 (D-R18). */
   category?: ApInboxCategory;
   /** 분류의 사람이 읽는 이름 — 서버 코드표의 값. */
@@ -413,11 +415,15 @@ export const isKnownApWord = (raw: string | null | undefined): boolean =>
  *
  * @param viewerId  「내가 올린 것」을 가르는 기준
  * @param canApprove 승인 권한이 있는가 — 없으면 `waiting` 에 남의 건이 들어가지 않는다 (D-R39)
+ * @param canWage 시급을 다룰 수 있는가 — **시급 요청은 이것까지 있어야 승인된다**(S5).
+ *   `reviewRequest` 가 403 `WAGE_REVIEW_FORBIDDEN` 로 막는데 `canAct` 가 그것을 몰라서
+ *   단추가 선 채 눌러야만 거절당했다. 안 주면 예전처럼 **승인 권한만** 본다.
  */
 export function apFlow(
   rows: ApRow[],
   viewerId: number,
   canApprove: boolean,
+  canWage?: boolean,
 ): ApFlow {
   const back: CategorizedApRow[] = [];
   const waiting: CategorizedApRow[] = [];
@@ -433,8 +439,13 @@ export function apFlow(
   for (const r of categorizedRows) {
     const isMine = r.byId !== null && r.byId === viewerId;
     // 처리할 수 있는가 — 권한이 있고, 남의 것이고, 아직 기다리는 중이고, 적용 경로가 있는 갈래
-    r.canAct = canApprove && !isMine && r.state === 'waiting'
+    const open = canApprove && !isMine && r.state === 'waiting'
       && AP_ACTIONABLE_KINDS.includes(r.kind) && r.applicable !== false;
+    /* **시급 요청은 한 층이 더 있다**(S5) — `reviewRequest` 가 `canWage` 없이 승인하면 403 을 낸다.
+       인자를 안 준 호출자에게는 예전 그대로다(모르는 쪽으로 닫지 않는다 — 그러면 §75 가 통째로 잠긴다). */
+    const needsWage = open && r.kind === 'req' && r.reqType === 'wage_change' && canWage === false;
+    r.canAct = open && !needsWage;
+    r.actBlockedReason = needsWage ? '시급을 다룰 권한이 필요합니다' : null;
     // 남의 결재는 승인 권한이 있을 때만 **목록에서 아예 뺀다.**
     // 감추기만 하면 「있다」는 사실이 배지 숫자로 새어 나간다 (D-R39).
     if (!isMine && !canApprove) continue;

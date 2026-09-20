@@ -23,7 +23,8 @@ import type {
 import {
   CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB,
   CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
-  consShareLabel, consultingCloseIssue, consultingContractStepLabel, consultingRecordIssue, consultingRequesterLabel,
+  consShareLabel, consultingCloseIssue, consultingContractStepLabel, consultingRecordIssue,
+  consultingRemainingMessage, consultingRequesterLabel,
   consultingSessionAddIssue, consultingSessionDone, consultingSessionIssue, consultingStageLabel,
   type ConsultingFileRole, type ConsultingType,
   type ConsultingRecord,
@@ -268,8 +269,9 @@ export class ConsultingService {
     const sessionsDone = Number(counts?.done ?? 0);
     const sessionsPlanned = Number(counts?.planned ?? 0);
     const requiredLeft = Number(counts?.required_left ?? 0);
+    // 「잡아 둔 날짜」까지 같은 판정에 넣는다 — 이 인자가 빠져 있어 단추가 헛섰다 (S5)
     const closeIssue = consultingCloseIssue({
-      stage, sessions: detail.sessions == null ? null : Number(detail.sessions), sessionsDone, requiredLeft,
+      stage, sessions: detail.sessions == null ? null : Number(detail.sessions), sessionsDone, requiredLeft, sessionsPlanned,
     });
     return {
       id: consId,
@@ -311,7 +313,10 @@ export class ConsultingService {
         canResolveFeedback: mutable && step === 2 && unresolved > 0,
         canDeliver: mutable && step === 2 && contractFiles.length > 0 && unresolved === 0,
         canAddSignedFile: mutable && step === 4 && Boolean(delivery) && files.length < CONSULTING_FILE_MAX,
-        canAddPayment: canMoney && step === 5 && stage !== 'done' && (due === null || due > 0),
+        // 상세도 같은 판정을 쓴다 — 전에는 레거시 행에서 **서버는 받는데 단추가 안 서는** 반대 방향 불일치였다 (S5)
+        ...ConsultingService.payGate({
+          canMoney, stage, contractStep: step, legacy: detail.start_on == null && detail.requester == null, due,
+        }),
         canCreateInvoice: canMoney && invId === null && this.invoiceable(step, due),
         canArchive: true,
         externalParentSendSupported: false,
@@ -698,6 +703,8 @@ export class ConsultingService {
   async accounting(viewerId: number, canMoney: boolean, canHide: boolean): Promise<ConsAccountingDto> {
     const rows = await this.q(
       `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.share, c.owner_id,
+              -- 「납부 넣기」 판정의 재료 — 서버가 보는 것과 같은 칸이어야 한다 (S5)
+              (c.start_on IS NULL AND c.requester IS NULL) AS legacy,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
               COALESCE((SELECT array_agg(s.name ORDER BY s.name)
                           FROM cons_stu cs JOIN stu s ON s.id = cs.student_id
@@ -760,6 +767,9 @@ export class ConsultingService {
         payments: money ? (paysByCons.get(Number(r.id)) ?? []) : [],
         invId,
         canInvoice: money && invId === null && this.invoiceable(record.contractStep, due),
+        ...ConsultingService.payGate({
+          canMoney: money, stage, contractStep: record.contractStep, legacy: r.legacy === true, due,
+        }),
       };
     });
 
@@ -770,6 +780,30 @@ export class ConsultingService {
       totalDue: canMoney ? totalDue : null,
       canSeeAmounts: canMoney,
     };
+  }
+
+  /**
+   * 「납부 넣기」가 서는가 — **`addPayment` 가 실제로 거절하는 순서 그대로**다 (S5 · D-R39 · D-R22).
+   *
+   * 전에는 세 곳이 서로 다른 질문을 했다: 회계 표의 단추는 `amount`·`due`·`stage` 만 보고(계약 단계를
+   * 안 봐서 **409 `CONS_PAY_NOT_READY`**), 상세의 `canAddPayment` 는 `step === 5` 를 **무조건** 걸어
+   * (레거시 행은 서버가 받는데 단추가 안 서는 **반대 방향** 불일치), 서버만 「C79 신규 계약이면 step 5」
+   * 였다. 이제 셋이 이 함수 하나를 본다.
+   *
+   * `legacy` — C79 이전 행(`start_on`·`requester` 가 둘 다 비어 있다). 그 행들에는 계약 5단계가 없어서
+   * 단계를 요구하면 **기존 회계 계약이 깨진다**(서버가 그래서 예외를 두었다).
+   */
+  private static payGate(input: {
+    canMoney: boolean; stage: string; contractStep: number | null; legacy: boolean; due: number | null;
+  }): { canAddPayment: boolean; payBlockedReason: string | null } {
+    const blocked = (reason: string) => ({ canAddPayment: false, payBlockedReason: reason });
+    // 금액이 안 보이면 단추도 없다 — 이유를 적으면 그 자체가 금액 권한을 말한다
+    if (!input.canMoney) return { canAddPayment: false, payBlockedReason: null };
+    if (input.stage === 'done') return blocked('종료된 컨설팅에는 납부를 더할 수 없습니다');
+    if (!input.legacy && input.contractStep !== CONTRACT_STEP_MAX) return blocked('서명본 등록 뒤 수납할 수 있습니다');
+    // 문장은 쓰기의 409 `OVERPAY` 와 **같은 함수**에서 나온다 (S5 · D-R22)
+    if (input.due !== null && input.due <= 0) return blocked(consultingRemainingMessage(input.due));
+    return { canAddPayment: true, payBlockedReason: null };
   }
 
   /**
@@ -799,6 +833,7 @@ export class ConsultingService {
         throw new ConflictException({ code: 'CONS_PAY_LOCKED', message: '종료된 컨설팅에는 납부를 더할 수 없습니다' });
       }
       // C79 신규 계약은 서명본(step 5) 전 수납을 막는다. 레거시 행은 기존 회계 계약을 보존한다.
+      // 문장은 `payGate` 와 같다 — 단추가 미리 말하는 이유와 눌렀을 때의 이유가 갈리면 안 된다 (S5)
       const c79 = locked.start_on != null || locked.requester != null;
       if (c79 && Number(locked.contract_step) !== CONTRACT_STEP_MAX) {
         throw new ConflictException({ code: 'CONS_PAY_NOT_READY', message: '서명본 등록 뒤 수납할 수 있습니다' });
@@ -811,7 +846,7 @@ export class ConsultingService {
       if (amount !== null && before + dto.amount > amount) {
         throw new ConflictException({
           code: 'OVERPAY',
-          message: `남은 금액은 ${Math.max(0, amount - before)}원입니다 — 그보다 많이 적을 수 없습니다`,
+          message: consultingRemainingMessage(amount - before),
         });
       }
       const [pay] = (await m.query(

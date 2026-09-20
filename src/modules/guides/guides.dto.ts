@@ -88,7 +88,8 @@ export class PerLessonNoticeDto {
   @ApiProperty() id!: number;
   @ApiProperty(ID_SCHEMA) sourceOccurrenceId!: number;
   @ApiProperty(ID_SCHEMA) serId!: number;
-  @ApiProperty() onDate!: string;
+  @ApiProperty({ description: '**회차 키**의 날짜(`ser_occ.on_date`) — 줌 안내 쓰기가 이 값을 그대로 받는다. 옮긴 회차에서는 그려지는 날과 다르다 (S5 · C82-b)' })
+  onDate!: string;
   @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439 }) startMin!: number;
   @ApiProperty({ type: 'integer', minimum: 1, maximum: 1440 }) endMin!: number;
   @ApiPropertyOptional(N) teacherId?: number | null;
@@ -300,7 +301,7 @@ export class ZoomNoticeWriteDto {
   @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   serId!: number;
 
-  @ApiProperty({ ...DATE_SCHEMA, description: '회차가 그려지는 KST 날짜' })
+  @ApiProperty({ ...DATE_SCHEMA, description: '**회차 키**의 날짜 — 목록이 준 `PerLessonNoticeDto.onDate` 를 그대로 되돌려 준다. 그려지는 날이 아니다(옮긴 회차에서 갈린다 · S5)' })
   @IsCalendarDate()
   onDate!: string;
 }

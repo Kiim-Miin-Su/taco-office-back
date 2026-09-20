@@ -135,7 +135,7 @@ export class OpsService {
     const leads = await this.leadRows(leadScope.where, leadScope.params, today);
 
     const cplScope = scoped('c.created_at', area ? { sql: 'c.area = $?', value: area } : undefined);
-    const complaints = await this.complaintRows(cplScope.where, cplScope.params, today);
+    const complaints = await this.complaintRows(cplScope.where, cplScope.params, today, canSeeAmounts);
     // 칩 줄의 건수는 **갈래 필터를 빼고** 센다 — 「수업 1」을 고른 뒤에도 다른 갈래의 수가 보여야 고를 수 있다
     const cplCountScope = scoped('c.created_at');
     const areaCounts = await this.areaCounts(cplCountScope.where, cplCountScope.params);
@@ -466,8 +466,16 @@ export class OpsService {
 
   /* ══ §67 컴플레인 — 읽기 한 벌 · 접수 · 처리 (C93 · J-96 · J-98 · J-101) ═══════ */
 
-  /** §67 카드 한 줄 — `GET /ops` 와 쓰기 응답이 같은 SELECT 를 쓴다 */
-  private async complaintRows(where: string, params: unknown[], today = todayKst()): Promise<ComplaintDto[]> {
+  /**
+   * §67 카드 한 줄 — `GET /ops` 와 쓰기 응답이 같은 SELECT 를 쓴다.
+   *
+   * @param canMoney 「수강 종료 · 환불」이 서는가 (S5). 그 창이 부르는 `POST /accounting/withdrawals`
+   *   (미리보기까지)는 `@Perm('canMoney')` 라 권한이 없으면 **창이 뜨자마자 403** 이었는데, 화면은
+   *   그 줄에서 **아무 권한도 보지 않았다** — 네 자리 중 유일하게 불리언조차 없던 곳이다.
+   */
+  private async complaintRows(
+    where: string, params: unknown[], today = todayKst(), canMoney = false,
+  ): Promise<ComplaintDto[]> {
     return (await this.q(
       `SELECT c.id, c.area, c.student_id, s.name AS student_name, c.stage, c.body, c.action, c.result,
               to_char(c.created_at,'YYYY-MM-DD') AS created_at, c.owner_id, o.name AS owner_name,
@@ -495,12 +503,15 @@ export class OpsService {
         overdueDays: open && due && due < today ? daysSince(due) : 0,
         severity: (r.severity as string) ?? null, severityLabel: cplSeverityLabel(r.severity as string | null),
         teacherChanged: Boolean(r.teacher_changed),
+        /* 「수강 종료 · 환불」 단추 — 돈 권한 · 아직 안 끝난 건 · 학생이 붙어 있는 건 (S5 · D-R39).
+           환불 창이 부르는 경로가 `canMoney` 라 이 셋이 서버의 조건과 같은 질문이다. */
+        canWithdraw: canMoney && open && r.student_id != null,
       };
     });
   }
 
-  private async complaintOne(id: number): Promise<ComplaintDto> {
-    const [row] = await this.complaintRows('WHERE c.id = $1', [id]);
+  private async complaintOne(id: number, canMoney = false): Promise<ComplaintDto> {
+    const [row] = await this.complaintRows('WHERE c.id = $1', [id], todayKst(), canMoney);
     if (!row) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
     return row;
   }
@@ -509,7 +520,7 @@ export class OpsService {
    * 「+ 접수」 (J-96) — 접수는 언제나 `received` 다. 담당을 정했으면 그 사람에게 알림, LOG 는 같은 트랜잭션.
    * 학생·담당은 표가 있는지 서버가 본다 — 없는 id 를 받아 적으면 카드가 「문의자」로 조용히 바뀐다.
    */
-  async createComplaint(viewerId: number, dto: ComplaintCreateDto): Promise<ComplaintDto> {
+  async createComplaint(viewerId: number, canMoney: boolean, dto: ComplaintCreateDto): Promise<ComplaintDto> {
     const body = dto.body.trim();
     if (!body) throw new ConflictException({ code: 'CPL_BODY_REQUIRED', message: '내용을 적어 주세요' });
     if (dto.studentId != null) {
@@ -536,7 +547,7 @@ export class OpsService {
       );
       return cplId;
     });
-    return this.complaintOne(id);
+    return this.complaintOne(id, canMoney);
   }
 
   /**
@@ -544,7 +555,7 @@ export class OpsService {
    * 「대응」은 담당이 있어야(「담당을 정해야 합니다」), 「결과」는 결과 글이 있어야 한다(「마무리했습니다」).
    * 담당이 바뀌면 새 담당에게 알림. 판정은 고친 뒤의 값으로 한다 — 담당과 단계를 한 번에 보내도 된다.
    */
-  async patchComplaint(viewerId: number, id: number, dto: ComplaintPatchDto): Promise<ComplaintDto> {
+  async patchComplaint(viewerId: number, canMoney: boolean, id: number, dto: ComplaintPatchDto): Promise<ComplaintDto> {
     const hasAny = ['stage', 'ownerId', 'action', 'result', 'dueOn', 'severity'].some((k) => (dto as Record<string, unknown>)[k] !== undefined);
     if (!hasAny) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
     const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
@@ -585,7 +596,7 @@ export class OpsService {
           JSON.stringify({ stage: next.stage, ownerId: next.ownerId, dueOn: next.dueOn, severity: next.severity })],
       );
     });
-    return this.complaintOne(id);
+    return this.complaintOne(id, canMoney);
   }
 
   private async activeStaff(id: number): Promise<{ id: number; name: string }> {

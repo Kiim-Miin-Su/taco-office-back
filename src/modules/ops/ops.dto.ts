@@ -165,6 +165,11 @@ export class ComplaintDto {
   @ApiPropertyOptional({ ...S, description: 'light | normal | severe — 코드값 · 이름은 severityLabel' }) severity?: string | null;
   @ApiPropertyOptional({ ...S, description: '가벼움 · 보통 · 심각 — 낱말은 서버 (D-R18)' }) severityLabel?: string | null;
   @ApiProperty({ description: '강사 교체 마법사를 거쳤는가 (J-97 · `cpl.teacher_changed`)' }) teacherChanged!: boolean;
+  @ApiProperty({
+    description: '「수강 종료 · 환불」이 서는가 — 돈 권한 · 아직 안 끝난 건 · 학생이 붙은 건 (S5 · D-R39). '
+      + '그 창이 부르는 경로가 canMoney 라 화면이 권한을 안 보면 창이 뜨자마자 403 이 난다',
+  })
+  canWithdraw!: boolean;
 }
 
 /** §67 「+ 접수」 (C93 · J-96 · N-46 ①) — 상태는 받지 않는다: 접수는 언제나 `received` */

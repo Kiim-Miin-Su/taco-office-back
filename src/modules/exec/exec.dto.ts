@@ -64,6 +64,15 @@ export class ExecReportDto {
       + '**내가 올린 보고가 아닐 때**(rpt_no_self_review). 화면이 역할을 다시 조합하지 않는다 (D-R39)',
   })
   canReview!: boolean;
+
+  @ApiProperty({
+    description: '「작성 중 저장」·「대표께 올리기」가 열리는가 — 아직 고칠 수 있는 상태(draft·rej)인가 (S5 · D-R39). '
+      + '역할 권한은 별개다 — 화면은 이 값과 `canCrudAll` 을 함께 본다',
+  })
+  canWriteMemo!: boolean;
+
+  @ApiProperty({ ...S, description: '못 고치는 이유 — 고칠 수 있으면 null. 쓰기가 내는 문장과 같은 말이다' })
+  writeBlockedReason!: string | null;
 }
 
 /** 숫자 한 칸 — 저장하지 않고 매번 센다 (D-R4) */

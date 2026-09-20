@@ -22,11 +22,16 @@ export const MONTH_CLOSED = 'MONTH_CLOSED' as const;
 
 export const monthOf = (iso: string): string => iso.slice(0, 7);
 
+/**
+ * 마감 문장 한 곳 — 거절의 `message` 와 **단추가 막힌 이유**가 같은 말을 쓴다 (S5 · D-R18).
+ * 두 벌이면 화면이 미리 말하는 이유와 눌렀을 때의 이유가 갈린다.
+ */
+export function monthClosedMessage(month: string): string {
+  return `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월은 마감됐습니다 — 대표가 마감을 해제한 뒤 고칠 수 있습니다`;
+}
+
 export function monthClosedError(month: string): ConflictException {
-  return new ConflictException({
-    code: MONTH_CLOSED,
-    message: `${month.slice(0, 4)}년 ${Number(month.slice(5, 7))}월은 마감됐습니다 — 대표가 마감을 해제한 뒤 고칠 수 있습니다`,
-  });
+  return new ConflictException({ code: MONTH_CLOSED, message: monthClosedMessage(month) });
 }
 
 /** 지금 마감돼 있는 달 전부 — `YYYY-MM` 오름차순 */

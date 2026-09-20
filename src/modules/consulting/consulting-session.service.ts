@@ -237,19 +237,19 @@ export class ConsultingSessionService {
       )) as Array<{ done: number; required_left: number }>;
       const sessions = c.sessions == null ? null : Number(c.sessions);
       const sessionsDone = Number(counts?.done ?? 0);
-      const issue = consultingCloseIssue({ stage: String(c.stage), sessions, sessionsDone, requiredLeft: Number(counts?.required_left ?? 0) });
+      /* 앞으로 잡아 둔 회차 — 판정 안으로 옮겼다(S5). 전에는 여기서 따로 던져서 상세의 `canClose` 가
+         그것을 모른 채 true 였고 단추가 헛섰다. 이제 화면과 쓰기가 **같은 함수**를 본다 (D-R39 · D-R22). */
+      const [{ planned }] = (await m.query(
+        `SELECT count(*)::int AS planned FROM cons_sess x WHERE x.cons_id = $1 AND x.on_date > $2::date`, [consId, today],
+      )) as Array<{ planned: number }>;
+      const issue = consultingCloseIssue({
+        stage: String(c.stage), sessions, sessionsDone,
+        requiredLeft: Number(counts?.required_left ?? 0), sessionsPlanned: Number(planned),
+      });
       if (issue) throw new ConflictException(issue);
       const students = await this.students(m, consId);
       const studentNames = students.map((s) => s.name);
       const typeLabel = CONSULTING_TYPE_LABEL[String(c.cons_type) as ConsultingType] ?? String(c.cons_type);
-
-      /* 앞으로 잡아 둔 회차 — 종료 뒤에 남으면 시간표가 끝난 컨설팅을 계속 부른다. 접는 정책(사유·처리)을 여기서 지어내지 않고 막는다 */
-      const [{ planned }] = (await m.query(
-        `SELECT count(*)::int AS planned FROM cons_sess x WHERE x.cons_id = $1 AND x.on_date > $2::date`, [consId, today],
-      )) as Array<{ planned: number }>;
-      if (Number(planned) > 0) {
-        throw new ConflictException({ code: 'CONS_SESSIONS_PLANNED', message: `앞으로 잡아 둔 회차 ${planned}개가 있습니다 — 시간표에서 접거나 날짜가 지나야 종료할 수 있습니다` });
-      }
 
       /* 안내문 — 문구 틀을 고르면 그 본문, 아니면 서버 기본 문장. 학생마다 PNOTI parent 한 줄 (발송처는 N-42) */
       let body: string;

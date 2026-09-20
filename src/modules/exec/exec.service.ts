@@ -39,6 +39,30 @@ function areaMemos(memo: unknown): ExecAreaMemoDto[] {
 }
 import { kstAt, serStuOn } from '../../lib/sql';
 
+/**
+ * **아직 고칠 수 있는 보고의 상태** — 낱말은 여기 하나다 (S5 · D-R18).
+ *
+ * 쓰기 둘(`writeMemo` 의 `ON CONFLICT … WHERE`, `submit` 의 앞선 검사)과 **단추 판정**이 같은 배열을
+ * 본다. 전에는 쓰기 두 곳에 `['draft','rej']` 가 손으로 적혀 있었고 화면은 역할 권한만 봐서,
+ * 이미 올린 보고에서도 단추가 선 채 눌러야만 409 `RPT_LOCKED` 가 났다.
+ */
+const WRITABLE_RPT_STATES: readonly string[] = ['draft', 'rej'];
+
+/**
+ * 막힌 이유 한 문장 (S5 · D-R22).
+ *
+ * 세 곳이 서로 다르게 말하고 있었다 — 저장은 「이미 올린 보고는 고칠 수 없습니다…」, 올리기는
+ * 「이미 올린 보고입니다」, 화면 단추는 아무 말도 안 했다. **같은 잠금에 문장이 셋이면** 사람은
+ * 서로 다른 세 가지 일이 일어났다고 읽는다. 이제 단추도 저장도 올리기도 이 함수를 부른다.
+ *
+ * 결재가 끝난 보고(`ok`)와 아직 결재를 기다리는 보고(`sent`)는 **다음에 할 일이 다르다** —
+ * 하나는 끝났고 하나는 반려를 기다리면 다시 고칠 수 있다. 그래서 문장도 둘이다.
+ */
+const rptLockedMessage = (state: string): string =>
+  (state === 'ok'
+    ? '결재가 끝난 보고는 고칠 수 없습니다'
+    : '이미 올린 보고는 고칠 수 없습니다. 반려된 뒤에 다시 적어 주세요');
+
 type R = Record<string, unknown>;
 
 /**
@@ -191,15 +215,20 @@ export class ExecService {
             VALUES ($1, $2::date, $3::jsonb, 'draft')
        ON CONFLICT (rpt_type, on_date) DO UPDATE
           SET memo = rpt.memo || EXCLUDED.memo
-        WHERE rpt.state IN ('draft', 'rej')
+        WHERE rpt.state IN (${WRITABLE_RPT_STATES.map((w) => `'${w}'`).join(',')})
        RETURNING id, state`,
       [dto.rptType, key, JSON.stringify(patch)],
     );
     if (!row) {
-      throw new ConflictException({
-        code: 'RPT_LOCKED',
-        message: '이미 올린 보고는 고칠 수 없습니다. 반려된 뒤에 다시 적어 주세요',
-      });
+      /*
+       * 0행이면 **왜 막혔는지 다시 읽는다** (S1 의 RPT 쓰기와 같은 자리).
+       * `ON CONFLICT … WHERE` 는 무엇에 걸렸는지 말해 주지 않는다 — 상태를 모른 채
+       * 한 문장으로 뭉뚱그리면 결재가 끝난 보고에도 「반려된 뒤에 다시 적어 주세요」라 답한다.
+       */
+      const locked = await this.row(
+        `SELECT state FROM rpt WHERE rpt_type = $1 AND on_date = $2::date`, [dto.rptType, key],
+      );
+      throw new ConflictException({ code: 'RPT_LOCKED', message: rptLockedMessage(String(locked?.state ?? '')) });
     }
     // 누가 적었는지는 LOG 가 갖는다 — RPT 의 서명 두 칸은 「올린 사람」과 「대표 승인」이다
     await this.log(actorId, Number(row.id), 'memo', { areas: dto.memos.map((m) => m.key) });
@@ -221,8 +250,9 @@ export class ExecService {
     if (!found) {
       throw new NotFoundException({ code: 'RPT_NOT_FOUND', message: '아직 적은 것이 없습니다' });
     }
-    if (!['draft', 'rej'].includes(String(found.state))) {
-      throw new ConflictException({ code: 'RPT_LOCKED', message: '이미 올린 보고입니다' });
+    if (!WRITABLE_RPT_STATES.includes(String(found.state))) {
+      // 저장과 같은 문장이다 — 한 잠금에 말이 둘이면 두 가지 일로 읽힌다 (S5)
+      throw new ConflictException({ code: 'RPT_LOCKED', message: rptLockedMessage(String(found.state)) });
     }
     if (filledAreas(found.memo) === 0) {
       throw new ConflictException({
@@ -528,6 +558,15 @@ export class ExecService {
       canReview: String(r.state) === 'sent' && canSeeAmounts
         && viewer !== undefined && viewer.canApprove
         && !isSelfReview(r.sent_by, viewer.id),
+      /*
+       * 「작성 중 저장」·「대표께 올리기」도 여기서 정한다 (S5 · D-R39).
+       *
+       * 화면은 `canCrudAll` 이라는 **역할 권한**만 보고 있어서, 이미 올린 보고(`sent`)나 결재가 끝난
+       * 보고(`ok`)에서도 두 단추가 선 채 눌러야만 409 `RPT_LOCKED` 를 받았다. 쓰기가 보는 집합은
+       * `('draft','rej')` 하나다 — 그것을 그대로 내려보낸다. 문장도 쓰기가 내는 말과 같다.
+       */
+      canWriteMemo: WRITABLE_RPT_STATES.includes(String(r.state)),
+      writeBlockedReason: WRITABLE_RPT_STATES.includes(String(r.state)) ? null : rptLockedMessage(String(r.state)),
     }));
 
     const areas = await this.areaCounts(from, to);

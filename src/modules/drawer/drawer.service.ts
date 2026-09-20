@@ -252,7 +252,7 @@ export class DrawerService {
     canWage = false,
   ): Promise<DrawerDto> {
     const approvalRows = await this.approvalRows();
-    const approvals = apFlow(approvalRows, viewerId, canApprove);
+    const approvals = apFlow(approvalRows, viewerId, canApprove, canWage);
     const approvalFlow = approvalFlowProjection(approvalRows, viewerId, flowScope);
 
     // 할 일 — 강사는 자기 것만 (주고받은 것). 화면이 안 걸러도 서버가 거른다 (D-R39)

@@ -135,6 +135,14 @@ export interface ConsultingCloseInput {
   sessionsDone: number;
   /** 아직 안 끝낸 필수 항목 수 */
   requiredLeft: number;
+  /**
+   * 앞으로 잡아 둔 회차 수 — 오늘보다 뒤인 `cons_sess` 행.
+   *
+   * **이 칸이 없어서 단추가 헛섰다**(S5). 판정은 여기 한 곳인데 「잡아 둔 날짜」만 쓰기 쪽
+   * (`ConsultingSessionService.close`)에서 따로 던져서, 필수 항목과 약정 회차를 다 채운 건은
+   * `canClose === true` 로 단추가 서고 **미리 보기를 눌러야 409** 를 받았다.
+   */
+  sessionsPlanned: number;
 }
 
 /**
@@ -153,6 +161,14 @@ export function consultingCloseIssue(input: ConsultingCloseInput): { code: strin
       message: `약정 ${input.sessions}회 중 ${input.sessionsDone}회를 했습니다 — 남은 ${input.sessions - input.sessionsDone}회를 마쳐야 종료할 수 있습니다 (예외 종료는 N-18-a)`,
     };
   }
+  /* 앞으로 잡아 둔 회차 — 종료 뒤에 남으면 시간표가 끝난 컨설팅을 계속 부른다.
+     접는 정책(사유·처리)을 지어내지 않고 막는다. 순서는 쓰기 쪽과 같다(항목 → 약정 회차 → 잡아 둔 날짜). */
+  if (input.sessionsPlanned > 0) {
+    return {
+      code: 'CONS_SESSIONS_PLANNED',
+      message: `앞으로 잡아 둔 회차 ${input.sessionsPlanned}개가 있습니다 — 시간표에서 접거나 날짜가 지나야 종료할 수 있습니다`,
+    };
+  }
   return null;
 }
 
@@ -162,3 +178,15 @@ export function consultingSessionAddIssue(stage: string): { code: string; messag
   if (stage !== 'running') return { code: 'CONS_NOT_RUNNING', message: '수납이 끝나야 회차를 기록할 수 있습니다 (계약 → 진행)' };
   return null;
 }
+
+/**
+ * 「남은 금액」 한 문장 (S5 · D-R22).
+ *
+ * 단추가 미리 말하는 이유(`payGate` 의 `payBlockedReason`)와 눌렀을 때의 거절(409 `OVERPAY`)이
+ * **같은 말이어야 한다.** 두 벌로 적어 두었더니 화면은 「남은 금액이 없습니다」라 적고 서버는
+ * 「남은 금액은 0원입니다 — …」라 답했다. 같은 사실을 두 곳에 적지 않는다.
+ *
+ * 음수는 0 으로 접는다 — 이미 더 받은 건이라도 「남은 금액은 −3만원」이라 적지 않는다.
+ */
+export const consultingRemainingMessage = (remaining: number): string =>
+  `남은 금액은 ${Math.max(0, remaining)}원입니다 — 그보다 많이 적을 수 없습니다`;

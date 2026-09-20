@@ -350,14 +350,26 @@ export class ReportsService {
     });
   }
 
+  /**
+   * 발송 이력 한 줄.
+   *
+   * **`fileCount` 는 재발송이 실제로 세는 것과 같은 것을 센다**(S5) — `pdflog` 의 `report_png` 중
+   * **`file_url` 이 있는** 행이다. 전에는 화면의 「파일 N장 보관」이 `file_url` 없는 행까지 세어
+   * **N > 0 인데 재발송은 409** 가 났다. 두 수의 출처가 다르면 화면이 조용히 거짓을 말한다.
+   *
+   * 단추가 서는지도 그 수에서 나온다(D-R39) — 화면이 `fileCount` 를 다시 해석하지 않는다.
+   */
   private static historyRow(row: SendHistoryRow): ReportSendHistoryDto {
     const repIds = Array.isArray(row.rep_ids)
       ? row.rep_ids.map(Number).filter((id) => Number.isInteger(id) && id > 0)
       : [];
+    const fileCount = Number(row.file_count);
     return {
       id: Number(row.id), sourceSendId: row.source_send_id ? Number(row.source_send_id) : null,
       studentId: Number(row.student_id), studentName: row.student_name,
-      onDate: row.on_date, repIds, channel: row.channel, fileCount: Number(row.file_count),
+      onDate: row.on_date, repIds, channel: row.channel, fileCount,
+      canResend: fileCount > 0,
+      resendBlockedReason: fileCount > 0 ? null : '재발송할 보존 파일이 없습니다',
       sentAt: row.sent_at, sentBy: Number(row.sent_by), sentByName: row.sent_by_name,
     };
   }
@@ -369,7 +381,7 @@ export class ReportsService {
               rs.rep_ids, rs.channel,
               to_char(rs.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
               rs.sent_by, sf.name AS sent_by_name,
-              (SELECT count(*) FROM pdflog p WHERE p.kind='report_png' AND p.ref_id=rs.id)::text AS file_count
+              (SELECT count(*) FROM pdflog p WHERE p.kind='report_png' AND p.ref_id=rs.id AND p.file_url IS NOT NULL)::text AS file_count
          FROM rsend rs JOIN stu st ON st.id=rs.student_id JOIN staff sf ON sf.id=rs.sent_by
         WHERE rs.id=$1`,
       [sendId],
@@ -684,7 +696,7 @@ export class ReportsService {
               count(*) OVER()::text AS total_count,
               to_char(rs.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
               rs.sent_by, sf.name AS sent_by_name,
-              (SELECT count(*) FROM pdflog x WHERE x.kind='report_png' AND x.ref_id=rs.id)::text AS file_count
+              (SELECT count(*) FROM pdflog x WHERE x.kind='report_png' AND x.ref_id=rs.id AND x.file_url IS NOT NULL)::text AS file_count
          FROM rsend rs JOIN stu st ON st.id=rs.student_id JOIN staff sf ON sf.id=rs.sent_by
         WHERE ${where.join(' AND ')}
         ORDER BY rs.sent_at DESC, rs.id DESC LIMIT 100`,

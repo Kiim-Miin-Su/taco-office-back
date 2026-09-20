@@ -213,7 +213,8 @@ export class ConsultingCapabilitiesDto {
   @ApiProperty() canResolveFeedback!: boolean;
   @ApiProperty() canDeliver!: boolean;
   @ApiProperty() canAddSignedFile!: boolean;
-  @ApiProperty() canAddPayment!: boolean;
+  @ApiProperty({ description: '「납부 넣기」가 서는가 — 회계 표의 줄과 같은 판정(payGate) (S5)' }) canAddPayment!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '납부를 못 넣는 이유 — 넣을 수 있거나 금액 권한이 없으면 null' }) payBlockedReason!: string | null;
   @ApiProperty() canCreateInvoice!: boolean;
   @ApiProperty() canArchive!: boolean;
   @ApiProperty({ description: '학부모 연락처/채널 정책 미제공으로 현재 false. deliver는 외부 발송이 아니라 완료 기록이다.' }) externalParentSendSupported!: boolean;
@@ -299,6 +300,10 @@ export class ConsAccountRowDto {
   @ApiPropertyOptional({ ...N, description: '전환된 청구서 — 없으면 null' }) invId?: number | null;
   @ApiProperty({ description: '청구서로 전환할 수 있는가 — 이미 살아 있는 청구서가 있으면 false' })
   canInvoice!: boolean;
+  @ApiProperty({ description: '「납부 넣기」가 서는가 — 쓰기가 거절하는 순서 그대로다(종료 · 서명본 전 · 남은 금액 0) (S5 · D-R39)' })
+  canAddPayment!: boolean;
+  @ApiProperty({ ...S, description: '납부를 못 넣는 이유 — 넣을 수 있거나 금액 권한이 없으면 null' })
+  payBlockedReason!: string | null;
 }
 
 /** `GET /consulting/accounting` — §28 */
