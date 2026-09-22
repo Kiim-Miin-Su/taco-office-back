@@ -12,6 +12,7 @@ import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { ZoomService } from '../zoom/zoom.service';
 import { daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { kstAt } from '../../lib/sql';
+import { todoSourceLabel } from '../../lib/todo';
 import {
   MFB_KIND_LABEL, mfbStateLabel, mktChannelLabel, mktItemLabel, mktTitle,
   type MfbKind,
@@ -155,14 +156,16 @@ export class OpsService {
 
     const todoScope = scoped('t.due_on');
     const todos = (await this.q(
-      `SELECT t.id, t.title, t.done, t.src, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name
-         FROM todo t LEFT JOIN staff s ON s.id = t.to_id
+      `SELECT t.id, t.title, t.done, t.src, to_char(t.due_on,'YYYY-MM-DD') AS due_on, t.to_id, s.name AS to_name, f.name AS from_name
+         FROM todo t LEFT JOIN staff s ON s.id = t.to_id LEFT JOIN staff f ON f.id = t.from_id
         ${todoScope.where}
         ORDER BY t.done, t.due_on NULLS LAST, t.id`, todoScope.params,
     )).map((r) => {
       const due = (r.due_on as string) ?? null;
       return {
         id: Number(r.id), title: String(r.title), toName: (r.to_name as string) ?? null,
+        toId: r.to_id == null ? null : Number(r.to_id), fromName: (r.from_name as string) ?? null,
+        srcLabel: todoSourceLabel(String(r.src)),
         dueOn: due, done: Boolean(r.done), src: String(r.src),
         overdueDays: !r.done && due && due < today ? daysSince(due) : 0,
       };
@@ -250,8 +253,9 @@ export class OpsService {
       intakeHead: await this.intakeHead(leads, canSeeAmounts, today),
       range: { from: from ?? null, to: to ?? null, label: opsRangeLabel(from, to) },
       areaCounts, mtTypeCounts,
-      // §64 담당 칩 줄 — 열린 할 일만 센다(끝난 것은 고를 일이 없다) · 담당 없는 것도 제 줄을 갖는다
-      todoOwnerCounts: OpsService.ownerCounts(todos),
+      // §64 상태별 담당 칩. 같은 기간·같은 TODO 목록에서 열린 것과 끝난 것을 각각 센다.
+      todoOwnerCounts: OpsService.ownerCounts(todos, false),
+      todoDoneOwnerCounts: OpsService.ownerCounts(todos, true),
       mtTypes: mtTypeOptions().map((o) => ({ key: o.key, label: o.label })),
       // 단추가 서는지도 서버다 (D-R39) — 지금은 이 화면을 볼 수 있으면 만들 수 있다
       canCreateMeeting: true, canCreatePlan: true,
@@ -264,16 +268,16 @@ export class OpsService {
   }
 
   /** §64 담당 칩 — 「전체 3 · Hoon 1 · Lauren 1 · 김범준 1」 (D-R37 · 화면이 세지 않는다) */
-  private static ownerCounts(todos: Array<{ toName: string | null; done: boolean }>): OpsCountDto[] {
-    const open = todos.filter((t) => !t.done);
-    const byName = new Map<string, number>();
-    for (const t of open) {
-      const key = t.toName ?? '';
-      byName.set(key, (byName.get(key) ?? 0) + 1);
+  private static ownerCounts(todos: Array<{ toId: number | null; toName: string | null; done: boolean }>, done: boolean): OpsCountDto[] {
+    const counts = new Map<string, OpsCountDto>();
+    for (const t of todos) {
+      if (t.done !== done) continue;
+      const key = t.toId == null ? '__none__' : String(t.toId);
+      const existing = counts.get(key);
+      if (existing) existing.count += 1;
+      else counts.set(key, { key, label: t.toName ?? '담당 없음', count: 1 });
     }
-    return [...byName.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .map(([key, count]) => ({ key: key || '__none__', label: key || '담당 없음', count }));
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
   }
 
   /** §67 갈래 칩 — **0건 갈래도 선다**(어휘이지 데이터가 아니다 · C66) */

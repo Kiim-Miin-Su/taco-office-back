@@ -185,7 +185,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     planDues: [], planOverdue: 0, planStages: [], cplStages: [], cplAreas: [], cplSeverities: [],
     // C96 — 기간·갈래는 **서버가 말한다**(D-R18·D-R37). 빈 응답도 그 모양을 갖춰야 계약이다
     range: { from: null, to: null, label: '전체' },
-    areaCounts: [], mtTypeCounts: [], todoOwnerCounts: [], mtTypes: [],
+    areaCounts: [], mtTypeCounts: [], todoOwnerCounts: [], todoDoneOwnerCounts: [], mtTypes: [],
     canCreateMeeting: false, canCreatePlan: false,
     intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [], sources: [], touchKinds: [], followUpSoon: 0, funnelSince: null },
   };

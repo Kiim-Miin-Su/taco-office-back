@@ -5,6 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { TODO_SRC_T_VALUES } from '../../entities/enums';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { CPL_AREAS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
 import { INTAKE_FUNNEL_STAGES, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
@@ -234,11 +235,14 @@ export class CplWordDto {
 /** §64 운영 할 일 */
 export class TodoDto {
   @ApiProperty() id!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '담당 필터의 식별자. 이름으로 합치지 않는다' }) toId!: number | null;
+  @ApiProperty(S) fromName!: string | null;
+  @ApiProperty({ description: '기존 TODO 출처 코드표의 표시 이름' }) srcLabel!: string;
   @ApiProperty() title!: string;
   @ApiPropertyOptional(S) toName?: string | null;
   @ApiPropertyOptional(S) dueOn?: string | null;
   @ApiProperty() done!: boolean;
-  @ApiProperty({ enum: ['meeting', 'complaint', 'consulting', 'plan', 'manual'] }) src!: string;
+  @ApiProperty({ enum: TODO_SRC_T_VALUES }) src!: string;
   @ApiProperty({ description: '기한이 지난 날 수. 0이면 안 지남' }) overdueDays!: number;
 }
 
@@ -740,8 +744,10 @@ export class OpsDto {
   areaCounts!: OpsAreaCountDto[];
   @ApiProperty({ type: [OpsCountDto], description: '§63 회의 종류 칩 줄의 건수 — 서버가 센다 (D-R37)' })
   mtTypeCounts!: OpsCountDto[];
-  @ApiProperty({ type: [OpsCountDto], description: '§64 담당 칩 줄의 건수 — 열린 할 일만. 담당 없는 것은 「담당 없음」 (D-R37)' })
+  @ApiProperty({ type: [OpsCountDto], description: '§64 열린 할 일의 담당 칩. key는 담당 ID 문자열 또는 __none__. 같은 이름도 별도 ID로 구분' })
   todoOwnerCounts!: OpsCountDto[];
+  @ApiProperty({ type: [OpsCountDto], description: '§64 끝난 할 일의 담당 칩. key는 담당 ID 문자열 또는 __none__' })
+  todoDoneOwnerCounts!: OpsCountDto[];
   @ApiProperty({ type: [CplWordDto], description: '회의 종류 다섯 — 「+ 회의 잡기」 폼의 낱말 (D-R18 · C96)' })
   mtTypes!: CplWordDto[];
   @ApiProperty({ description: '「+ 회의 잡기」가 서는가 — 단추도 서버가 정한다 (D-R39)' }) canCreateMeeting!: boolean;

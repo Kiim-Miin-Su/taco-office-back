@@ -14517,6 +14517,7 @@
     },
     "/drawer/todos/{id}": {
       "patch": {
+        "description": "done만 바꾸면 기존 주고받은 범위. dueOn(null 삭제 포함)은 canAdminPage와 canCrudAll이 모두 필요하다. 생략한 필드·제목·담당·출처는 보존한다.",
         "operationId": "DrawerController_todoDone",
         "parameters": [
           {
@@ -14524,7 +14525,9 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -14533,7 +14536,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TodoDoneDto"
+                "$ref": "#/components/schemas/TodoPatchDto"
               }
             }
           }
@@ -14550,7 +14553,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "BAD_REQUEST: 안전한 양의 ID, boolean, 실재 날짜 및 허용 필드 검증 실패",
             "content": {
               "application/json": {
                 "schema": {
@@ -14570,7 +14573,7 @@
             }
           },
           "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "TODO_DUE_FORBIDDEN: 기한 변경 권한 부족. 혼합 done도 저장하지 않음",
             "content": {
               "application/json": {
                 "schema": {
@@ -14580,7 +14583,7 @@
             }
           },
           "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "NOT_FOUND: 없는 행 또는 기존 완료 범위 밖",
             "content": {
               "application/json": {
                 "schema": {
@@ -14590,7 +14593,7 @@
             }
           },
           "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "EMPTY_PATCH: done/dueOn 모두 생략",
             "content": {
               "application/json": {
                 "schema": {
@@ -14610,7 +14613,7 @@
             }
           }
         },
-        "summary": "§15 할 일 체크 — 내가 주고받은 것만",
+        "summary": "§15·§64 할 일 완료·기한 변경",
         "tags": [
           "drawer"
         ]
@@ -20930,6 +20933,19 @@
           "id": {
             "type": "number"
           },
+          "toId": {
+            "type": "number",
+            "nullable": true,
+            "description": "담당 필터의 식별자. 이름으로 합치지 않는다"
+          },
+          "fromName": {
+            "type": "string",
+            "nullable": true
+          },
+          "srcLabel": {
+            "type": "string",
+            "description": "기존 TODO 출처 코드표의 표시 이름"
+          },
           "title": {
             "type": "string"
           },
@@ -20951,7 +20967,8 @@
               "complaint",
               "consulting",
               "plan",
-              "manual"
+              "manual",
+              "lesson"
             ]
           },
           "overdueDays": {
@@ -20961,6 +20978,9 @@
         },
         "required": [
           "id",
+          "toId",
+          "fromName",
+          "srcLabel",
           "title",
           "done",
           "src",
@@ -21853,7 +21873,14 @@
             }
           },
           "todoOwnerCounts": {
-            "description": "§64 담당 칩 줄의 건수 — 열린 할 일만. 담당 없는 것은 「담당 없음」 (D-R37)",
+            "description": "§64 열린 할 일의 담당 칩. key는 담당 ID 문자열 또는 __none__. 같은 이름도 별도 ID로 구분",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsCountDto"
+            }
+          },
+          "todoDoneOwnerCounts": {
+            "description": "§64 끝난 할 일의 담당 칩. key는 담당 ID 문자열 또는 __none__",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/OpsCountDto"
@@ -21898,6 +21925,7 @@
           "areaCounts",
           "mtTypeCounts",
           "todoOwnerCounts",
+          "todoDoneOwnerCounts",
           "mtTypes",
           "canCreateMeeting",
           "canCreatePlan"
@@ -30160,7 +30188,8 @@
               "complaint",
               "consulting",
               "plan",
-              "manual"
+              "manual",
+              "lesson"
             ]
           },
           "srcLabel": {
@@ -30766,17 +30795,21 @@
           "role"
         ]
       },
-      "TodoDoneDto": {
+      "TodoPatchDto": {
         "type": "object",
         "properties": {
           "done": {
             "type": "boolean",
-            "description": "완료로 바꿀지 여부"
+            "description": "생략 유지, true 완료, false 해제. null 불가"
+          },
+          "dueOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "생략 유지, null 기한 삭제. 관리자 화면·전체 수정 권한 필요"
           }
-        },
-        "required": [
-          "done"
-        ]
+        }
       },
       "TodoCreateDto": {
         "type": "object",
@@ -30786,12 +30819,15 @@
             "maxLength": 160
           },
           "toId": {
-            "type": "number",
+            "type": "integer",
             "minimum": 1,
+            "maximum": 9007199254740991,
             "description": "생략하면 나에게 배정. 다른 사람 배정은 canCrudAll만"
           },
           "dueOn": {
             "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "example": "2026-09-14",
             "description": "KST 기준 기한"
           }

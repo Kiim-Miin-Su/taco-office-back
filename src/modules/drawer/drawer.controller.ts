@@ -15,14 +15,14 @@
  * **승인과 반려는 여기서 하지 않는다** (D-R27). 줄을 누르면 그 화면으로 간다.
  */
 import {
-  BadRequestException, Body, Controller, Delete, Get, NotFoundException,
+  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException,
   Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import {
-  ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
+  ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { OkDto } from '../../common/http.dto';
+import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import { approvalFlowScope, Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ScheduleService } from '../schedule/schedule.service';
@@ -30,7 +30,7 @@ import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
   ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
   StaffCreateDto, TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
-  TodoDoneDto, ZoomChangeReqDto,
+  TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
 
@@ -52,6 +52,7 @@ export class DrawerController {
     return {
       canApprove: role !== null && hasPerm(role, 'canApprove', user.perms),
       canSeeAll: role !== null && hasPerm(role, 'canCrudAll', user.perms),
+      canEditTodoDue: role !== null && hasPerm(role, 'canAdminPage', user.perms) && hasPerm(role, 'canCrudAll', user.perms),
       canWage: role !== null && hasPerm(role, 'canWage', user.perms),
       approvalFlowScope: role === null ? 'none' as const : approvalFlowScope(role, user.perms),
     };
@@ -83,15 +84,23 @@ export class DrawerController {
   }
 
   @Patch('todos/:id')
-  @ApiOperation({ summary: '§15 할 일 체크 — 내가 주고받은 것만' })
+  @ApiOperation({ summary: '§15·§64 할 일 완료·기한 변경', description: 'done만 바꾸면 기존 주고받은 범위. dueOn(null 삭제 포함)은 canAdminPage와 canCrudAll이 모두 필요하다. 생략한 필드·제목·담당·출처는 보존한다.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST: 안전한 양의 ID, boolean, 실재 날짜 및 허용 필드 검증 실패' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'TODO_DUE_FORBIDDEN: 기한 변경 권한 부족. 혼합 done도 저장하지 않음' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'NOT_FOUND: 없는 행 또는 기존 완료 범위 밖' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'EMPTY_PATCH: done/dueOn 모두 생략' })
   @ApiOkResponse({ type: OkDto })
   async todoDone(
     @CurrentUser() user: RequestUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: TodoDoneDto,
+    @Param() params: TodoParamsDto,
+    @Body() dto: TodoPatchDto,
   ): Promise<OkDto> {
-    const { canSeeAll } = this.gate(user);
-    const hit = await this.svc.setTodoDone(id, dto.done, user.id, canSeeAll);
+    const { canSeeAll, canEditTodoDue } = this.gate(user);
+    // null 삭제도 기한 변경이다. 기존 강사의 done-only 권한은 유지한다.
+    if (dto.dueOn !== undefined && !canEditTodoDue) {
+      throw new ForbiddenException({ code: 'TODO_DUE_FORBIDDEN', message: '할 일 기한을 바꿀 권한이 없습니다' });
+    }
+    const hit = await this.svc.patchTodo(params.id, dto, user.id, canSeeAll);
     // 남의 할 일이면 「없다」로 답한다 — 「있는데 권한이 없다」를 흘리지 않는다
     if (!hit) throw new NotFoundException({ code: 'NOT_FOUND', message: '할 일을 찾을 수 없습니다' });
     return { ok: true };

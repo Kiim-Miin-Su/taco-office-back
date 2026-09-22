@@ -32,7 +32,7 @@ import { todoSourceLabel } from '../../lib/todo';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
 import { insertWage } from '../../lib/wage';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
-import type { ChreqReviewDto, DrawerDto, MemberDto, ReqReviewDto, StaffCreateDto, TodoCreateDto } from './drawer.dto';
+import type { ChreqReviewDto, DrawerDto, MemberDto, ReqReviewDto, StaffCreateDto, TodoCreateDto, TodoPatchDto } from './drawer.dto';
 import bcrypt from 'bcryptjs';
 
 type R = Record<string, unknown>;
@@ -550,6 +550,37 @@ export class DrawerService {
         ],
       );
       return rows.length;
+    });
+  }
+
+  /** §64 기한과 선택적 완료를 같은 행 잠금/감사 transaction에 저장한다. */
+  async patchTodo(id: number, dto: TodoPatchDto, viewerId: number, canSeeAll: boolean): Promise<boolean> {
+    if (dto.dueOn === undefined) {
+      if (dto.done === undefined) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 항목이 없습니다' });
+      return this.setTodoDone(id, dto.done, viewerId, canSeeAll);
+    }
+    return this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const [row] = await m.query(
+        `SELECT done, to_char(due_on,'YYYY-MM-DD') AS due_on FROM todo
+          WHERE id=$1 AND ($3::boolean OR to_id=$2 OR from_id=$2) FOR UPDATE`,
+        [id, viewerId, canSeeAll],
+      ) as Array<{ done: boolean; due_on: string | null }>;
+      if (!row) return false;
+      const before = { done: row.done, dueOn: row.due_on };
+      const after = { done: dto.done ?? row.done, dueOn: dto.dueOn };
+      // 같은 값을 재전송하면 업무 변경이 없다. LOG를 늘리지 않고 성공으로 답한다.
+      if (before.done === after.done && before.dueOn === after.dueOn) return true;
+      const changed = await m.query(
+        `UPDATE todo SET done=$2, due_on=$3::date WHERE id=$1 RETURNING id`,
+        [id, after.done, after.dueOn],
+      );
+      if (writtenRows(changed).length === 0) return false;
+      await m.query(
+        `INSERT INTO log (actor_id,entity,entity_id,action,before,after)
+          VALUES ($1,'TODO',$2,'update',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify(before), JSON.stringify(after)],
+      );
+      return true;
     });
   }
 

@@ -15,9 +15,10 @@ import {
 import { Transform } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional,
-  IsString, Matches, Max, MaxLength, Min, MinLength,
+  IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf,
 } from 'class-validator';
-import { ID_SCHEMA } from '../../common/validation';
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
+import { TODO_SRC_T_VALUES } from '../../entities/enums';
 
 /** §14 처리의 두 갈래 — 낱말의 출처는 여기 하나다 */
 export const REQ_DECISIONS = ['approve', 'reject'] as const;
@@ -176,7 +177,7 @@ export class DrawerTodoDto {
   @ApiPropertyOptional(N) toId?: number | null;
   @ApiPropertyOptional(S) dueOn?: string | null;
   @ApiProperty() done!: boolean;
-  @ApiProperty({ enum: ['meeting', 'complaint', 'consulting', 'plan', 'manual'] }) src!: string;
+  @ApiProperty({ enum: TODO_SRC_T_VALUES }) src!: string;
   @ApiProperty({ description: '출처 이름 — 서버 코드표가 정한다 (D-R18)' }) srcLabel!: string;
   @ApiProperty({ description: '기한이 지난 날 수. 0이면 안 지남' }) overdueDays!: number;
   @ApiPropertyOptional({ ...S, description: '출처가 있으면 원본으로 갈 곳' }) go?: string | null;
@@ -386,10 +387,21 @@ export class DrawerDto {
    서랍에서 하는 것은 **넣기와 표시뿐**이다. 승인·반려는 그 화면에서 한다 (D-R27). */
 
 
-export class TodoDoneDto {
-  @ApiProperty({ description: '완료로 바꿀지 여부' })
-  @IsBoolean()
-  done!: boolean;
+export class TodoParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  id!: number;
+}
+
+/** 완료는 기존 주고받은 범위, 기한은 관리자 두 최종 권한을 요구한다. */
+export class TodoPatchDto {
+  @ApiPropertyOptional({ type: Boolean, description: '생략 유지, true 완료, false 해제. null 불가' })
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean()
+  done?: boolean;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '생략 유지, null 기한 삭제. 관리자 화면·전체 수정 권한 필요' })
+  @IsOptional() @IsCalendarDate()
+  dueOn?: string | null;
 }
 
 /** §15 수동 할 일 만들기. 출처 연결 할 일은 각 도메인의 전용 API가 만든다. */
@@ -399,12 +411,12 @@ export class TodoCreateDto {
   @IsString() @MinLength(1) @MaxLength(160)
   title!: string;
 
-  @ApiPropertyOptional({ minimum: 1, description: '생략하면 나에게 배정. 다른 사람 배정은 canCrudAll만' })
-  @IsOptional() @IsInt() @Min(1)
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '생략하면 나에게 배정. 다른 사람 배정은 canCrudAll만' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   toId?: number;
 
-  @ApiPropertyOptional({ example: '2026-09-14', description: 'KST 기준 기한' })
-  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @ApiPropertyOptional({ ...DATE_SCHEMA, example: '2026-09-14', description: 'KST 기준 기한' })
+  @IsOptional() @IsCalendarDate()
   dueOn?: string;
 }
 
