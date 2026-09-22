@@ -180,7 +180,8 @@ export class BooksService {
     if (!keys.length) throw new BadRequestException('바꿀 교재 값을 하나 이상 보내 주세요');
     const col: Record<string, string> = { code: 'code', title: 'title', subKey: 'sub_key', level: 'level', grade: 'grade', pages: 'pages' };
     const sets = keys.map(([k], n) => `"${col[k]}" = $${n + 2}`).join(', ');
-    if (dto.code !== undefined && !dto.code.trim() || dto.title !== undefined && !dto.title.trim()) {
+    if (dto.code !== undefined && (typeof dto.code !== 'string' || !dto.code.trim())
+      || dto.title !== undefined && (typeof dto.title !== 'string' || !dto.title.trim())) {
       throw new BadRequestException({ code: 'BOOK_TEXT_REQUIRED', message: '교재 코드와 이름은 비울 수 없습니다' });
     }
     try {
@@ -191,7 +192,8 @@ export class BooksService {
           const [subject] = await m.query(`SELECT key FROM sub WHERE key = $1`, [dto.subKey]);
           if (!subject) throw new BadRequestException({ code: 'BOOK_SUBJECT_NOT_FOUND', message: '과목을 찾을 수 없습니다' });
         }
-        if (dto.pages !== undefined) {
+        // 전체 쪽수 미정(null)은 0쪽이 아니다. 진도 쪽수는 보존하고 비율만 null로 파생한다.
+        if (dto.pages != null) {
           const [progress] = await m.query(
             `SELECT max(progress_page)::int AS max_page FROM issue WHERE lib_id=$1`, [id],
           ) as Array<{ max_page: number | null }>;

@@ -1,10 +1,10 @@
 /** @file-guide
- * 목적: §41 자료 전달 API가 화면과 같은 두 권한을 실제 HTTP guard에서 요구하는지 검증한다.
- * 책임/재사용: 실제 BooksController·PermGuard를 사용하고 BooksService만 대역한다.
+ * 목적: §39 교재 수정의 nullable 입력과 §41 자료 전달의 실제 HTTP 권한 계약을 검증한다.
+ * 책임/재사용: 실제 BooksController·DTO·PermGuard를 사용하고 BooksService만 대역한다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import type { INestApplication } from '@nestjs/common';
+import { ValidationPipe, type INestApplication } from '@nestjs/common';
 import { APP_GUARD, Reflector } from '@nestjs/core';
 import { Test } from '@nestjs/testing';
 import type { NextFunction, Request, Response } from 'express';
@@ -14,11 +14,12 @@ import { BooksController } from '../src/modules/books/books.controller';
 import { BooksService } from '../src/modules/books/books.service';
 import { buildOpenApi } from '../src/openapi';
 
-describe('§41 자료 전달 HTTP 권한 계약', () => {
+describe('§39 교재 수정 · §41 자료 전달 HTTP 계약', () => {
   let app: INestApplication;
   let user: RequestUser | undefined;
   const service = {
     packs: jest.fn(), createPack: jest.fn(), patchPack: jest.fn(), transitionPack: jest.fn(),
+    patchBook: jest.fn(),
   };
 
   beforeAll(async () => {
@@ -31,6 +32,7 @@ describe('§41 자료 전달 HTTP 권한 계약', () => {
     }).compile();
     app = module.createNestApplication();
     app.use((req: Request, _res: Response, next: NextFunction) => { req.user = user; next(); });
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
     await app.listen(0, '127.0.0.1');
   });
 
@@ -39,6 +41,43 @@ describe('§41 자료 전달 HTTP 권한 계약', () => {
     for (const fn of Object.values(service)) fn.mockReset();
   });
   afterAll(async () => { await app?.close(); });
+
+  it('교재 선택 정보 넷은 PATCH OpenAPI에서 생략과 null 삭제를 모두 허용한다', () => {
+    const schemas = buildOpenApi(app).components?.schemas;
+    const patch = schemas?.BookPatchDto;
+    const create = schemas?.BookWriteDto;
+    if (!patch || '$ref' in patch || !create || '$ref' in create) throw new Error('교재 입력 schema 누락');
+    for (const field of ['subKey', 'level', 'grade', 'pages']) {
+      expect(patch.properties?.[field]).toMatchObject({ type: field === 'pages' ? 'number' : 'string', nullable: true });
+      expect(patch.required ?? []).not.toContain(field);
+      expect(create.properties?.[field]).not.toMatchObject({ nullable: true });
+    }
+  });
+
+  it.each([
+    { subKey: null, level: null, grade: null, pages: null },
+    { title: '제목만 수정' },
+  ])('교재 PATCH는 null 삭제와 생략을 그대로 서비스에 넘긴다: %j', async body => {
+    user = { id: 2, name: '관리자', role: 'admin', perms: {} };
+    service.patchBook.mockResolvedValue({ id: 4, code: 'BOOK', title: '교재' });
+    await request(app.getHttpServer()).patch('/books/4').send(body).expect(200);
+    expect(service.patchBook).toHaveBeenCalledWith(2, 4, body);
+  });
+
+  it.each([
+    { code: null }, { title: null }, { code: ' ' }, { title: ' ' },
+    { pages: 0 }, { pages: 1.5 }, { pages: 32768 }, { level: 12 }, { unrelated: 'drop' },
+  ])('교재 PATCH의 잘못된 입력은 서비스 호출 전에 400이다: %j', async body => {
+    user = { id: 2, name: '관리자', role: 'admin', perms: {} };
+    await request(app.getHttpServer()).patch('/books/4').send(body).expect(400);
+    expect(service.patchBook).not.toHaveBeenCalled();
+  });
+
+  it('강사의 직접 교재 PATCH는 서비스 호출 전에 403이다', async () => {
+    user = { id: 3, name: '강사', role: 'teacher', perms: {} };
+    await request(app.getHttpServer()).patch('/books/4').send({ pages: null }).expect(403);
+    expect(service.patchBook).not.toHaveBeenCalled();
+  });
 
   it('다섯 handler 모두 canAdminPage와 canGpaPack을 함께 요구한다', () => {
     const reflector = app.get(Reflector);

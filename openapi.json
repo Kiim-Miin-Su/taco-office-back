@@ -23851,18 +23851,22 @@
           },
           "subKey": {
             "type": "string",
+            "nullable": true,
             "maxLength": 20
           },
           "level": {
             "type": "string",
+            "nullable": true,
             "maxLength": 20
           },
           "grade": {
             "type": "string",
+            "nullable": true,
             "maxLength": 10
           },
           "pages": {
             "type": "number",
+            "nullable": true,
             "minimum": 1,
             "maximum": 32767
           }

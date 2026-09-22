@@ -8,7 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString,
-  Matches, Max, MaxLength, Min, MinLength, ValidateNested,
+  Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { HIST_ACTIONS } from '../../lib/history';
@@ -71,12 +71,14 @@ export class BookWriteResultDto {
 }
 
 export class BookPatchDto {
-  @ApiPropertyOptional({ minLength: 1, maxLength: 30 }) @IsOptional() @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(30) code?: string;
-  @ApiPropertyOptional({ minLength: 1, maxLength: 120 }) @IsOptional() @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(120) title?: string;
-  @ApiPropertyOptional({ maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) subKey?: string;
-  @ApiPropertyOptional({ maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) level?: string;
-  @ApiPropertyOptional({ maxLength: 10 }) @IsOptional() @IsString() @MaxLength(10) grade?: string;
-  @ApiPropertyOptional({ minimum: 1, maximum: 32767 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32767) pages?: number;
+  // 필수 이름은 생략할 수 있지만 지울 수 없다. IsOptional은 null까지 통과시키므로 쓰지 않는다.
+  @ApiPropertyOptional({ minLength: 1, maxLength: 30 }) @ValidateIf((_object, value) => value !== undefined) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(30) code?: string;
+  @ApiPropertyOptional({ minLength: 1, maxLength: 120 }) @ValidateIf((_object, value) => value !== undefined) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(120) title?: string;
+  // 선택 정보는 생략하면 보존하고 null이면 삭제한다. 생성 DTO의 생략 계약은 그대로 둔다.
+  @ApiPropertyOptional({ ...S, maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) subKey?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) level?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 10 }) @IsOptional() @IsString() @MaxLength(10) grade?: string | null;
+  @ApiPropertyOptional({ ...N, minimum: 1, maximum: 32767 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32767) pages?: number | null;
 }
 
 /** §39 「+ 판 올리기」 — 새 판을 저장소에 넣는다 */

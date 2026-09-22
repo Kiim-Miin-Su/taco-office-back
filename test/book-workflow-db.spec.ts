@@ -1,13 +1,15 @@
 /** @file-guide
- * 목적: §38 ISSUE와 §41 GPAPACK의 실제 Postgres 저장·제약·전이를 검증한다.
+ * 목적: §38 ISSUE·§39 LIB·§41 GPAPACK의 실제 Postgres 저장·제약·전이를 검증한다.
  * 책임/재사용: BooksService의 공개 쓰기/읽기만 호출하며 스크래치 DB 트랜잭션 밖에 행을 남기지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
 import { DataSource, QueryRunner } from 'typeorm';
+import { plainToInstance } from 'class-transformer';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { BooksService } from '../src/modules/books/books.service';
+import { BookPatchDto } from '../src/modules/books/books.dto';
 import { BookWorkflow1759700000000 } from '../src/migrations/1759700000000-book-workflow';
 import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
@@ -62,6 +64,41 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
   });
   afterEach(async () => { if (q?.isTransactionActive) await q.rollbackTransaction(); if (q && !q.isReleased) await q.release(); });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
+
+  it('선택 정보를 null로 지우면 재조회와 LOG에 남고 기존 진도 쪽수는 보존한다', async () => {
+    await q.query(`INSERT INTO sub (key,name,color) VALUES ('t52-book','교재 검수','#123456') ON CONFLICT (key) DO NOTHING`);
+    await svc().patchBook(owner, libA, { subKey: 't52-book', level: 'F', grade: 'G9' });
+    const issue = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'ok', progressPage: 55 });
+    const cleared = { subKey: null, level: null, grade: null, pages: null };
+
+    await svc().patchBook(owner, libA, plainToInstance(BookPatchDto, cleared));
+
+    expect((await svc().all()).items.find((book) => book.id === libA)).toMatchObject(cleared);
+    expect((await q.query(`SELECT sub_key,level,grade,pages FROM lib WHERE id=$1`, [libA]))[0])
+      .toEqual({ sub_key: null, level: null, grade: null, pages: null });
+    const tracked = (await svc().tracking()).students.find((student) => student.id === studentA)?.issues.find((row) => row.id === issue.id);
+    expect(tracked).toMatchObject({ progressPage: 55, progressPercent: null });
+    const [log] = await q.query(`SELECT actor_id,before,after FROM log WHERE entity='LIB' AND entity_id=$1 AND action='edit' ORDER BY id DESC LIMIT 1`, [libA]);
+    expect(log).toMatchObject({
+      actor_id: String(owner), before: { subKey: 't52-book', level: 'F', grade: 'G9', pages: 100 }, after: cleared,
+    });
+
+    // 전체 쪽수 미정은 0쪽이 아니다. 다시 숫자를 적으면 기존 진도 하한 검사가 그대로 적용된다.
+    await expect(svc().patchBook(owner, libA, { pages: 50 }))
+      .rejects.toMatchObject({ response: { code: 'BOOK_PAGES_BELOW_PROGRESS' } });
+    await svc().patchBook(owner, libA, { pages: 60 });
+    expect((await svc().all()).items.find((book) => book.id === libA)?.pages).toBe(60);
+  });
+
+  it('수정 요청에서 생략한 선택 정보는 저장된 값을 보존한다', async () => {
+    await q.query(`INSERT INTO sub (key,name,color) VALUES ('t52-book','교재 검수','#123456') ON CONFLICT (key) DO NOTHING`);
+    await svc().patchBook(owner, libA, { subKey: 't52-book', level: 'F', grade: 'G9' });
+    await svc().patchBook(owner, libA, { title: '제목만 수정' });
+    expect((await svc().all()).items.find((book) => book.id === libA))
+      .toMatchObject({ title: '제목만 수정', subKey: 't52-book', level: 'F', grade: 'G9', pages: 100 });
+    const [log] = await q.query(`SELECT before,after FROM log WHERE entity='LIB' AND entity_id=$1 AND action='edit' ORDER BY id DESC LIMIT 1`, [libA]);
+    expect(log).toEqual({ before: { title: '교재 A' }, after: { title: '제목만 수정' } });
+  });
 
   it('배부→진도→회수가 ISSUE 한 행과 HIST에 원자적으로 이어진다', async () => {
     const issue = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'ok' });
