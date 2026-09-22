@@ -535,6 +535,34 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       .toHaveLength(1);
   });
 
+  it('P1 — 담당 매니저는 본인 리포트도 상세에서 승인하고 같은 담당자로 이력을 남긴다', async () => {
+    // 기존 회차를 재사용한다. 담당자 투영과 REP 모두 같은 사람으로 맞춰 HTTP 읽기·쓰기를 본다.
+    await q('UPDATE ser SET teacher_id=$2 WHERE id=$1', [SER, MANAGER]);
+    await q('UPDATE ser_occ SET teacher_id=$2 WHERE ser_id=$1', [SER, MANAGER]);
+    await q('UPDATE rep SET teacher_id=$2 WHERE id=$1', [repId, MANAGER]);
+    try {
+      await submit(managerToken, body).expect(201);
+      expect((await get(managerToken).expect(200)).body)
+        .toMatchObject({ teacherId: MANAGER, state: 'wait', canReview: true });
+      const approved = await review(managerToken, { decision: 'approve' }).expect(201);
+      expect(approved.body).toMatchObject({ teacherId: MANAGER, state: 'ok', canReview: false });
+      const [stored] = await q<{ teacher_id: string; reviewer_id: string; state: string }>(
+        'SELECT teacher_id::text, reviewer_id::text, state FROM rep WHERE id=$1', [repId],
+      );
+      expect(stored).toEqual({ teacher_id: String(MANAGER), reviewer_id: String(MANAGER), state: 'ok' });
+      expect(await q(`SELECT 1 FROM log WHERE actor_id=$1 AND entity='REP' AND entity_id=$2 AND action='approve'`,
+        [MANAGER, repId])).toHaveLength(1);
+      expect(await q(`SELECT 1 FROM noti WHERE to_id=$1 AND from_id=$1 AND link='/reports'`,
+        [MANAGER])).toHaveLength(1);
+      expect((await review(managerToken, { decision: 'approve' }).expect(409)).body.code)
+        .toBe('REPORT_NOT_WAITING');
+    } finally {
+      await q('UPDATE rep SET teacher_id=$2 WHERE id=$1', [repId, TEACHER]);
+      await q('UPDATE ser_occ SET teacher_id=$2 WHERE ser_id=$1', [SER, TEACHER]);
+      await q('UPDATE ser SET teacher_id=$2 WHERE id=$1', [SER, TEACHER]);
+    }
+  });
+
   it('canApprove 예외 권한만 있는 검토자도 전건 큐와 상세를 읽고 검토할 수 있다', async () => {
     expect((await get(reviewerToken).expect(403)).body.code).toBe('REPORT_FORBIDDEN');
     const ownOnly = await request(app.getHttpServer())

@@ -66,7 +66,7 @@ describe('isSelfReview — 모르는 것은 막지 않는다', () => {
   });
 });
 
-describe('리포트 승인 — 쓴 사람은 결재하지 못한다 (순수 규칙)', () => {
+describe('리포트 승인 — 현재 자기 결재 정책을 따른다 (순수 규칙)', () => {
   const base = { canApprove: true, state: 'wait' as const, decision: 'approve' as const };
 
   it('자기가 쓴 리포트도 이제 통과한다 — `rep` 이 목록에서 빠졌다 (대표 결정 2026-09-21)', () => {

@@ -25,6 +25,7 @@ import { DEV_URL } from './db';
 import { buildOpenApi } from '../src/openapi';
 import { ExecService } from '../src/modules/exec/exec.service';
 import { GUIDE_PENDING_DB, needsReportActionDbState } from '../src/lib/rules';
+import { RANGE_FROM, RANGE_TO } from '../src/seed/schedule';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(40_000);
@@ -37,6 +38,8 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   const RECURRING_SER = 9_111_002;
   const SCREEN_DATE = '2099-01-01';
   const SCREEN_MOVED_DATE = '2099-01-03';
+  // 시드 회차는 SEED_TODAY를 따라 움직인다. 정상 데이터 조회도 같은 범위를 사용한다.
+  const SEEDED_RANGE = `from=${RANGE_FROM}&to=${RANGE_TO}`;
   /**
    * 매니저는 **금액 예외를 꺼 둔다**(`can_money=false`).
    *
@@ -232,7 +235,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   });
 
   it('현황판 — 회차마다 네 마크가 온다', async () => {
-    const r = await get('/board?from=2026-08-01&to=2026-09-30', MANAGER).expect(200);
+    const r = await get(`/board?${SEEDED_RANGE}`, MANAGER).expect(200);
     expect(r.body.rows.length).toBeGreaterThan(0);
     expect(r.body.summary.lessons).toBeGreaterThan(0);
     expect(r.body.summary.marks.map((m: { key: string }) => m.key)).toEqual([
@@ -258,7 +261,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   });
 
   it('현황판 — 매니저 필터와 조회 범위를 계약에서 방어한다', async () => {
-    const all = await get('/board?from=2026-08-01&to=2026-09-30', MANAGER).expect(200);
+    const all = await get(`/board?${SEEDED_RANGE}`, MANAGER).expect(200);
     const teacherId = all.body.rows.find(
       (row: { teacherId: number | null }) => row.teacherId,
     )?.teacherId;
@@ -267,7 +270,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     expect(subKey).toBeTruthy();
 
     const filtered = await get(
-      `/board?from=2026-08-01&to=2026-09-30&teacherId=${teacherId}&subKey=${encodeURIComponent(subKey)}`,
+      `/board?${SEEDED_RANGE}&teacherId=${teacherId}&subKey=${encodeURIComponent(subKey)}`,
       MANAGER,
     ).expect(200);
     filtered.body.rows.forEach((row: { teacherId: number; subKey: string }) => {
@@ -289,7 +292,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   });
 
   it('대표 보고 — 숫자 칸과 제출된 보고가 온다', async () => {
-    const r = await get('/exec?from=2026-08-01&to=2026-08-31', CEO).expect(200);
+    const r = await get(`/exec?${SEEDED_RANGE}`, CEO).expect(200);
     expect(r.body.stats.length).toBeGreaterThan(0);
     expect(r.body.stats.find((s: { key: string }) => s.key === 'lessons').value).toBeGreaterThan(0);
   });
@@ -313,8 +316,8 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   });
 
   it('대표 보고의 돈 칸 — 대표가 아니면 값이 없다', async () => {
-    const ceo = await get('/exec?from=2026-08-01&to=2026-08-31', CEO).expect(200);
-    const mgr = await get('/exec?from=2026-08-01&to=2026-08-31', MANAGER).expect(200);
+    const ceo = await get(`/exec?${SEEDED_RANGE}`, CEO).expect(200);
+    const mgr = await get(`/exec?${SEEDED_RANGE}`, MANAGER).expect(200);
 
     const money = (b: { stats: Array<{ money: boolean; value: number | null }> }) =>
       b.stats.filter((s) => s.money);
@@ -325,7 +328,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
 
   it('컨설팅·대표 보고는 강사가 아예 못 연다', async () => {
     await get('/consulting', TEACHER).expect(403);
-    await get('/exec?from=2026-08-01&to=2026-08-31', TEACHER).expect(403);
+    await get(`/exec?${SEEDED_RANGE}`, TEACHER).expect(403);
   });
 
   it('관리자 안내는 강사를 차단하고 강사 안내·현황판은 본인 범위만 연다', async () => {
@@ -334,7 +337,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     expect(ownGuides.body.students).toEqual([]);
     await get('/teacher/guides', MANAGER).expect(403);
 
-    const b = await get('/board?from=2026-08-01&to=2026-09-30&teacherId=912', TEACHER).expect(200);
+    const b = await get(`/board?${SEEDED_RANGE}&teacherId=912`, TEACHER).expect(200);
     // 911 은 시드에 수업이 없는 사람이라 0건이어야 한다 — 남의 수업이 새어 나오면 안 된다
     expect(b.body.rows.length).toBe(0);
   });
@@ -371,7 +374,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
      캘린더가 전부 「안 씀」으로 칠해도 아무도 못 알아채는 종류의 오류다. */
 
   it('캘린더 — 쓴 수업이 쓴 것으로 내려온다', async () => {
-    const r = await get('/schedule/occurrences?from=2026-08-01&to=2026-08-31', MANAGER).expect(200);
+    const r = await get(`/schedule/occurrences?${SEEDED_RANGE}`, MANAGER).expect(200);
     expect(r.body.items.length).toBeGreaterThan(0);
     const written = r.body.items.filter((o: { written: boolean }) => o.written);
     expect(written.length).toBeGreaterThan(0);

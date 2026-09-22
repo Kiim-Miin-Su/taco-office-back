@@ -25,7 +25,7 @@
 
 import type { IsoDate, Minutes } from './recurrence';
 import { addD, diffD } from './recurrence';
-import { isSelfReview } from './approval';
+import { blocksSelfApproval } from './approval';
 
 /* ── 회차 ─────────────────────────────────────────────────────────────── */
 
@@ -375,14 +375,13 @@ export type ReportReviewIssue =
 /**
  * 승인·반려의 유일한 전이 방어. 화면은 `canReview` 결과만 읽는다 (D-R13 · D-R34).
  *
- * **자기가 쓴 리포트는 자기가 승인하지 못한다** — `isSelfReview` 한 곳이 그 판정을 갖는다
- * (2026-09-20 검수: 지출에는 DB CHECK 까지 있는데 여기엔 한 줄도 없었다). `actorId` 를 안 넘기면
- * 그 검사를 건너뛴다 — 화면의 `canReview` 는 「이 사람이 결재 자체를 할 수 있나」를 묻는 자리라
- * 특정 리포트의 작성자를 모른 채 부를 수 있기 때문이고, **막는 것은 쓰기 경로**다.
+ * 자기 결재 여부는 `blocksSelfApproval`의 현재 정책을 따른다. 2026-09-21 P1에서
+ * `rep`을 허용했으며, 다시 제한할 때도 공용 목록 한 곳만 바꾼다.
+ * 특정 작성자를 모르는 미리보기는 actorId를 생략할 수 있다. 상세와 쓰기는 둘 다 전달한다.
  */
 export function reportReviewIssue(c: ReportReviewContext): ReportReviewIssue | null {
   if (!c.canApprove) return 'REPORT_REVIEW_FORBIDDEN';
-  if (c.actorId != null && isSelfReview(c.teacherId, c.actorId)) return 'SELF_APPROVAL_FORBIDDEN';
+  if (c.actorId != null && blocksSelfApproval('rep', c.teacherId, c.actorId)) return 'SELF_APPROVAL_FORBIDDEN';
   if (c.state !== 'wait') return 'REPORT_NOT_WAITING';
   if (c.decision === 'approve' && c.reason !== undefined) return 'APPROVE_REASON_FORBIDDEN';
   if (c.decision === 'reject' && !c.reason?.trim()) return 'REJECT_REASON_REQUIRED';
