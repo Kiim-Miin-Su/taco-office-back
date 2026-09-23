@@ -10,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryRunner, Repository } from 'typeorm';
 import { Zacc } from '../../entities';
 import { nowHourKst, todayKst } from '../../lib/kst';
-import { sealSecret, secretKeyFrom } from '../../lib/secret-box';
+import { sealSecret, secretKeyFrom, SECRET_BOX_HEADER_BYTES } from '../../lib/secret-box';
 import { loadState } from '../schedule/schedule.state.repo';
 import { project } from '../schedule/schedule.project';
 import type {
@@ -47,7 +47,7 @@ export class ZoomService {
     const date = onDate ?? todayKst();
     const accounts = (await this.zaccs.query(
       `SELECT z.id, z.label, z.login_email, z.join_url, z.meeting_id, z.active,
-              (z.login_secret IS NOT NULL AND octet_length(z.login_secret) > 0) AS has_secret,
+              (octet_length(z.login_secret) > ${SECRET_BOX_HEADER_BYTES}) AS has_secret,
               (SELECT count(*)::int FROM ser_occ o
                 WHERE o.zacc_id = z.id AND NOT o.canceled
                   AND (lower(o.span) AT TIME ZONE 'Asia/Seoul')::date = $1::date) AS used
@@ -123,7 +123,7 @@ export class ZoomService {
       await m.query(`INSERT INTO zlog (zacc_id, actor_id, action) VALUES ($1,$2,'rotate')`, [Number(row.id), userId]);
       const [out] = (await m.query(
         `SELECT id,label,login_email,join_url,meeting_id,active,
-                (login_secret IS NOT NULL AND octet_length(login_secret) > 0) AS has_secret, 0 AS used
+                (octet_length(login_secret) > ${SECRET_BOX_HEADER_BYTES}) AS has_secret, 0 AS used
            FROM zacc WHERE id = $1`, [Number(row.id)],
       )) as Array<Record<string, unknown>>;
       return this.row(out);
@@ -142,16 +142,19 @@ export class ZoomService {
       if (dto.joinUrl !== undefined) put('join_url', dto.joinUrl.trim());
       if (dto.meetingId !== undefined) put('meeting_id', dto.meetingId.trim() || null);
       if (dto.active !== undefined) put('active', dto.active);
-      if (dto.loginSecret !== undefined) put('login_secret', sealSecret(dto.loginSecret, this.key()));
-      if (dto.meetingPw !== undefined) put('meeting_pw_enc', sealSecret(dto.meetingPw, this.key()));
+      // 폼의 「비우면 유지」와 직접 HTTP가 같다. 공백을 포함한 실제 비밀은 trim하지 않는다.
+      const rotateLogin = dto.loginSecret !== undefined && dto.loginSecret !== '';
+      const rotateMeeting = dto.meetingPw !== undefined && dto.meetingPw !== '';
+      if (rotateLogin) put('login_secret', sealSecret(dto.loginSecret!, this.key()));
+      if (rotateMeeting) put('meeting_pw_enc', sealSecret(dto.meetingPw!, this.key()));
       if (!set.length) throw new BadRequestException({ code: 'NOTHING_TO_CHANGE', message: '바꿀 값이 없습니다' });
       await m.query(`UPDATE zacc SET ${set.join(', ')} WHERE id = $1`, vals);
-      if (dto.loginSecret !== undefined || dto.meetingPw !== undefined) {
+      if (rotateLogin || rotateMeeting) {
         await m.query(`INSERT INTO zlog (zacc_id, actor_id, action) VALUES ($1,$2,'rotate')`, [id, userId]);
       }
       const [out] = (await m.query(
         `SELECT id,label,login_email,join_url,meeting_id,active,
-                (login_secret IS NOT NULL AND octet_length(login_secret) > 0) AS has_secret,
+                (octet_length(login_secret) > ${SECRET_BOX_HEADER_BYTES}) AS has_secret,
                 (SELECT count(*)::int FROM ser_occ o WHERE o.zacc_id = zacc.id AND NOT o.canceled) AS used
            FROM zacc WHERE id = $1`, [id],
       )) as Array<Record<string, unknown>>;

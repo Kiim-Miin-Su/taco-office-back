@@ -10293,6 +10293,8 @@
             "in": "query",
             "description": "기준일 YYYY-MM-DD (KST). 없으면 오늘",
             "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
               "type": "string"
             }
           }
@@ -10469,7 +10471,9 @@
             "required": true,
             "in": "path",
             "schema": {
-              "type": "number"
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
             }
           }
         ],
@@ -25525,7 +25529,7 @@
           },
           "hasSecret": {
             "type": "boolean",
-            "description": "비밀이 저장돼 있는가 — 값 자체는 내려보내지 않는다"
+            "description": "암호문에 비밀 payload가 있는가. 빈 값은 false이며 복호화 가능성은 보증하지 않는다. 값 자체는 내려보내지 않는다"
           }
         },
         "required": [
@@ -25641,23 +25645,32 @@
         "type": "object",
         "properties": {
           "label": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20
           },
           "loginEmail": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
           },
           "joinUrl": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 500,
+            "description": "로그인 정보가 없는 절대 HTTP(S) 참가 주소"
           },
           "meetingId": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 30
           },
           "loginSecret": {
             "type": "string",
+            "maxLength": 200,
             "description": "줌 로그인 비밀 — 평문으로 두지 않는다. 넣으면 암호화해 저장한다"
           },
           "meetingPw": {
             "type": "string",
+            "maxLength": 50,
             "description": "회의 비밀번호 — 같은 방식으로 저장한다"
           }
         },
@@ -25671,22 +25684,34 @@
         "type": "object",
         "properties": {
           "label": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20
           },
           "loginEmail": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
           },
           "joinUrl": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 500,
+            "description": "로그인 정보가 없는 절대 HTTP(S) 참가 주소"
           },
           "meetingId": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 30,
+            "description": "생략은 유지, 빈 문자열은 회의 ID 삭제. null은 거절"
           },
           "loginSecret": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 200,
+            "description": "생략·빈 문자열은 기존 비밀 유지. 나머지 문자열은 공백까지 보존"
           },
           "meetingPw": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 50,
+            "description": "생략·빈 문자열은 기존 비밀번호 유지. 나머지 문자열은 공백까지 보존"
           },
           "active": {
             "type": "boolean",

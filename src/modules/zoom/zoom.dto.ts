@@ -5,7 +5,9 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, IsSafeHttpUrl, ToHttpInteger } from '../../common/validation';
 
 /**
  * §21 줌 계정 — 서랍은 **칸이 비었는지**만 보여 주고, 고치는 자리는 「줌 계정 관리」다.
@@ -23,7 +25,7 @@ export class ZoomAcctDto {
   @ApiProperty({ description: '지금 쓰는 계정인가 — 끄면 새 배정에서 빠진다' }) active!: boolean;
   @ApiProperty({ description: '이 계정이 붙어 있는 회차 수 (기준일)' }) usedCount!: number;
   /** 비밀은 **내려보내지 않는다.** 보관은 암호화(`login_secret`)이고 열람은 별도 경로다 */
-  @ApiProperty({ description: '비밀이 저장돼 있는가 — 값 자체는 내려보내지 않는다' }) hasSecret!: boolean;
+  @ApiProperty({ description: '암호문에 비밀 payload가 있는가. 빈 값은 false이며 복호화 가능성은 보증하지 않는다. 값 자체는 내려보내지 않는다' }) hasSecret!: boolean;
 }
 
 /** 한 시간 칸의 점유 — §21 의 격자 한 칸 */
@@ -59,40 +61,65 @@ export class ZoomBoardDto {
 }
 
 export class ZoomAccountCreateDto {
-  @ApiProperty()
-  @IsString() @MaxLength(20)
+  @ApiProperty({ minLength: 1, maxLength: 20 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(20)
   label!: string;
 
-  @ApiProperty()
-  @IsString() @MaxLength(120)
+  @ApiProperty({ minLength: 1, maxLength: 120 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(120)
   loginEmail!: string;
 
-  @ApiProperty()
+  @ApiProperty({ maxLength: 500, description: '로그인 정보가 없는 절대 HTTP(S) 참가 주소' })
   @IsString() @MaxLength(500)
+  @IsSafeHttpUrl({ message: '참가 링크는 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다' })
   joinUrl!: string;
 
-  @ApiPropertyOptional()
-  @IsOptional() @IsString() @MaxLength(30)
+  @ApiPropertyOptional({ maxLength: 30 })
+  @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(30)
   meetingId?: string;
 
-  @ApiPropertyOptional({ description: '줌 로그인 비밀 — 평문으로 두지 않는다. 넣으면 암호화해 저장한다' })
-  @IsOptional() @IsString() @MaxLength(200)
+  @ApiPropertyOptional({ maxLength: 200, description: '줌 로그인 비밀 — 평문으로 두지 않는다. 넣으면 암호화해 저장한다' })
+  @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(200)
   loginSecret?: string;
 
-  @ApiPropertyOptional({ description: '회의 비밀번호 — 같은 방식으로 저장한다' })
-  @IsOptional() @IsString() @MaxLength(50)
+  @ApiPropertyOptional({ maxLength: 50, description: '회의 비밀번호 — 같은 방식으로 저장한다' })
+  @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(50)
   meetingPw?: string;
 }
 
 export class ZoomAccountPatchDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(20) label?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(120) loginEmail?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) joinUrl?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(30) meetingId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) loginSecret?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(50) meetingPw?: string;
+  @ApiPropertyOptional({ minLength: 1, maxLength: 20 })
+  @ValidateIf((_object, value) => value !== undefined)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(20) label?: string;
+
+  @ApiPropertyOptional({ minLength: 1, maxLength: 120 })
+  @ValidateIf((_object, value) => value !== undefined)
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(120) loginEmail?: string;
+
+  @ApiPropertyOptional({ maxLength: 500, description: '로그인 정보가 없는 절대 HTTP(S) 참가 주소' })
+  @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(500)
+  @IsSafeHttpUrl({ message: '참가 링크는 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다' }) joinUrl?: string;
+
+  @ApiPropertyOptional({ maxLength: 30, description: '생략은 유지, 빈 문자열은 회의 ID 삭제. null은 거절' })
+  @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(30) meetingId?: string;
+
+  @ApiPropertyOptional({ maxLength: 200, description: '생략·빈 문자열은 기존 비밀 유지. 나머지 문자열은 공백까지 보존' })
+  @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(200) loginSecret?: string;
+
+  @ApiPropertyOptional({ maxLength: 50, description: '생략·빈 문자열은 기존 비밀번호 유지. 나머지 문자열은 공백까지 보존' })
+  @ValidateIf((_object, value) => value !== undefined) @IsString() @MaxLength(50) meetingPw?: string;
   @ApiPropertyOptional({ description: '끄면 새 배정에서 빠진다. 이미 붙은 회차는 건드리지 않는다' })
-  @IsOptional() @IsBoolean() active?: boolean;
+  @ValidateIf((_object, value) => value !== undefined) @IsBoolean() active?: boolean;
+}
+
+export class ZoomAccountParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  id!: number;
 }
 
 /**
@@ -121,7 +148,7 @@ export class ZoomAssignResultDto {
 }
 
 export class ZoomBoardQueryDto {
-  @ApiPropertyOptional({ description: '기준일 YYYY-MM-DD (KST). 없으면 오늘' })
-  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '기준일 YYYY-MM-DD (KST). 없으면 오늘' })
+  @ValidateIf((_object, value) => value !== undefined) @IsCalendarDate()
   onDate?: string;
 }

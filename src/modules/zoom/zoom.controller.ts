@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
@@ -12,7 +12,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
   ZoomAccountCreateDto, ZoomAcctDto, ZoomAccountPatchDto, ZoomAssignDto, ZoomAssignResultDto,
-  ZoomBoardDto, ZoomBoardQueryDto,
+  ZoomBoardDto, ZoomBoardQueryDto, ZoomAccountParamsDto,
 } from './zoom.dto';
 import { ZoomService } from './zoom.service';
 
@@ -43,7 +43,7 @@ export class ZoomController {
   }
 
   @Post('accounts')
-  @Perm('canCrudAll')
+  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({ summary: '줌 계정 추가 — 비밀은 암호화해 저장하고 응답에 싣지 않는다' })
   @ApiCreatedResponse({ type: ZoomAcctDto })
   @ApiConflictResponse({ description: 'code ZACC_LABEL_TAKEN' })
@@ -52,16 +52,16 @@ export class ZoomController {
   }
 
   @Patch('accounts/:id')
-  @Perm('canCrudAll')
+  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({ summary: '줌 계정 고치기 — 끄면 새 배정에서 빠지고, 이미 붙은 회차는 건드리지 않는다' })
   @ApiOkResponse({ type: ZoomAcctDto })
   @ApiNotFoundResponse({ description: 'code ZACC_NOT_FOUND' })
   async patch(
     @CurrentUser() user: RequestUser,
-    @Param('id', ParseIntPipe) id: number,
+    @Param() params: ZoomAccountParamsDto,
     @Body() dto: ZoomAccountPatchDto,
   ): Promise<ZoomAcctDto> {
-    return this.svc.patch(user.id, id, dto);
+    return this.svc.patch(user.id, params.id, dto);
   }
 
   @Post('assign')

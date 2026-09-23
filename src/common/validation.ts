@@ -29,3 +29,26 @@ export function ToHttpInteger(): PropertyDecorator {
     typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value,
   { toClassOnly: true });
 }
+
+/** 사용자가 입력한 참가/참조 링크. URL 파서가 지워 버리는 제어문자도 먼저 거절한다. */
+export function IsSafeHttpUrl(options?: ValidationOptions): PropertyDecorator {
+  return ValidateBy({
+    name: 'isSafeHttpUrl',
+    validator: {
+      validate(value: unknown): boolean {
+        if (typeof value !== 'string') return false;
+        if ([...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === '\\')) return false;
+        const text = value.trim();
+        if (!/^https?:\/\/[^/?#]/i.test(text) || /\s/.test(text)) return false;
+        try {
+          const url = new URL(text);
+          return Boolean(url.hostname) && !url.username && !url.password
+            && (url.protocol === 'http:' || url.protocol === 'https:');
+        } catch {
+          return false;
+        }
+      },
+      defaultMessage: args => `${args?.property ?? 'URL'}는 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다`,
+    },
+  }, options);
+}

@@ -20,6 +20,8 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:
 
 const IV = 12;
 const TAG = 16;
+/** IV와 인증 태그만 있는 빈 암호문을 실제 비밀 payload와 구분한다. 복호화 성공 보장은 아니다. */
+export const SECRET_BOX_HEADER_BYTES = IV + TAG;
 
 /** 어떤 길이의 문자열 키든 32바이트로 — SHA-256 한 번. 키 회전은 대표 결정이 있을 때 별도로 한다 */
 export function secretKeyFrom(raw: string | undefined): Buffer | null {
@@ -36,7 +38,7 @@ export function sealSecret(plain: string, key: Buffer): Buffer {
 
 /** 열 수 없으면 null 이다 — 훼손됐는지 키가 다른지를 부르는 쪽이 사람 말로 옮긴다 */
 export function openSecret(sealed: Buffer, key: Buffer): string | null {
-  if (sealed.length <= IV + TAG) return null;
+  if (sealed.length <= SECRET_BOX_HEADER_BYTES) return null;
   try {
     const d = createDecipheriv('aes-256-gcm', key, sealed.subarray(0, IV));
     d.setAuthTag(sealed.subarray(IV, IV + TAG));
