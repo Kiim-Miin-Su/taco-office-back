@@ -840,13 +840,14 @@ export class DrawerService {
     if (req.req_type === 'room' && p0.zaccId !== undefined) {
       if (!this.zoom) throw new Error('ZoomService 가 주입되지 않았습니다');
       await this.anyRepo.manager.transaction(async (m: EntityManager) => {
-        await m.query(`SELECT id FROM chreq WHERE id = $1 FOR UPDATE`, [chreqId]);
         await this.zoom!.assignIn(m, viewerId, {
           serId,
           // apply_all 이면 규칙 전체, 아니면 그 회차만 (D-R16 과 같은 뜻)
           onDate: req.apply_all ? undefined : req.on_date,
           zaccId: Number(p0.zaccId),
         });
+        // 일반 일정 승인처럼 SER→CHREQ 순서다. 먼저 처리됐으면 close의 pending CAS가 전부 되돌린다.
+        await m.query(`SELECT id FROM chreq WHERE id = $1 FOR UPDATE`, [chreqId]);
         await close((sql, p) => m.query(sql, p));
       });
       return { id: chreqId, state: 'approved', applied: asked };

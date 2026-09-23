@@ -32,7 +32,7 @@ import {
 } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
-import { closedMonths, closedOccSnapshot, monthClosedError, monthOf } from '../../lib/month-close';
+import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { loadState, persist } from './schedule.state.repo';
 import { issueScheduleUndo, readScheduleUndo, sameScheduleState } from './schedule.undo';
 import { assertScheduleReferences } from './schedule.references';
@@ -312,12 +312,10 @@ export class ScheduleWriteService {
       const snapshotIds = [...new Set([...before.SER.map((row) => row.id), ...touched])];
       if (closed.length) {
         const closedAfter = await closedOccSnapshot(q, snapshotIds, closed);
-        if (closedAfter !== closedBefore) {
-          // 어느 달인지 말한다 — 새 규칙이면 시작일의 달, 아니면 바뀐 회차가 든 첫 마감 달
-          const hit = closed.find((m) => closedAfter.includes(`"on_date":"${m}-`) || closedBefore.includes(`"on_date":"${m}-`))
-            ?? monthOf(after.SER[0]?.fromDate ?? closed[0]!);
-          throw monthClosedError(hit);
-        }
+        assertClosedOccUnchanged({
+          before: closedBefore, after: closedAfter, closed,
+          fallbackMonth: monthOf(after.SER[0]?.fromDate ?? closed[0]!),
+        });
       }
       const afterSnapshot = actorId && undoable ? await loadState(q, snapshotIds) : null;
 

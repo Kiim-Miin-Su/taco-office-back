@@ -6,7 +6,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, IsSafeHttpUrl, ToHttpInteger } from '../../common/validation';
 
 /**
@@ -127,16 +127,16 @@ export class ZoomAccountParamsDto {
  * 겹침은 마지막에 `ser_occ` 의 EXCLUDE 가 막는다 — 같은 계정이 같은 시간에 두 번 붙지 않는다.
  */
 export class ZoomAssignDto {
-  @ApiProperty({ description: '어느 수업 규칙인가' })
-  @IsInt() @Min(1)
+  @ApiProperty({ ...ID_SCHEMA, description: '어느 수업 규칙인가' })
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   serId!: number;
 
-  @ApiPropertyOptional({ description: 'YYYY-MM-DD. 주면 그 회차만, 안 주면 규칙 전체' })
-  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '날짜는 YYYY-MM-DD 입니다' })
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '원래 회차 키 YYYY-MM-DD. 생략은 규칙 전체, null은 거절' })
+  @ValidateIf((_object, value) => value !== undefined) @IsCalendarDate()
   onDate?: string;
 
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '붙일 계정. null 이면 뗀다' })
-  @IsOptional() @IsInt() @Min(1)
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true, description: '붙일 계정. null/생략은 배정 제거. 회차 override 제거는 고정 배정 상속으로 돌아갈 수 있다' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   zaccId?: number | null;
 }
 

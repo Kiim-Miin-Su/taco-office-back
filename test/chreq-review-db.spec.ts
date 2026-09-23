@@ -190,6 +190,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
    * 이제 승인하면 계정이 실제로 붙고, 붙는 일과 요청 종결이 한 트랜잭션이다.
    */
   it('줌 계정 변경도 반영된다 — 계정이 실제로 붙는다 (C48 에서 열림)', async () => {
+    await q(`UPDATE ser SET mode='online' WHERE id=$1`, [SER]);
     const [z] = (await ds.query(
       `INSERT INTO zacc (label, login_email, login_secret, join_url, active)
        VALUES ($1,$2,'\\x00'::bytea,'https://zoom.us/j/99',true) RETURNING id`,

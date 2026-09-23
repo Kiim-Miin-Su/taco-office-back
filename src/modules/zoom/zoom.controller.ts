@@ -65,13 +65,13 @@ export class ZoomController {
   }
 
   @Post('assign')
-  @Perm('canCrudAll')
+  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '줌 계정 배정 — 회차 하나 또는 규칙 전체 (§43 「계정 배정 →」 · §19 「강의실 바꾸기」의 줌 모양)',
     description: '정본은 ZASSIGN 이고 `ser_occ.zacc_id` 는 투영이다. 겹치면 EXCLUDE 가 막고 통째로 되돌아간다.',
   })
   @ApiCreatedResponse({ type: ZoomAssignResultDto })
-  @ApiConflictResponse({ description: 'code ZACC_INACTIVE | 겹침(EXCLUDE)' })
+  @ApiConflictResponse({ description: 'code ZACC_INACTIVE | ZOOM_ASSIGN_NOT_ONLINE | ZOOM_ASSIGN_CANCELED | MONTH_CLOSED | RESOURCE_CONFLICT' })
   async assign(@CurrentUser() user: RequestUser, @Body() dto: ZoomAssignDto): Promise<ZoomAssignResultDto> {
     return this.svc.assign(user.id, dto);
   }

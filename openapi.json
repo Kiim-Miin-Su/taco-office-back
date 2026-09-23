@@ -10625,7 +10625,7 @@
             }
           },
           "409": {
-            "description": "code ZACC_INACTIVE | 겹침(EXCLUDE)"
+            "description": "code ZACC_INACTIVE | ZOOM_ASSIGN_NOT_ONLINE | ZOOM_ASSIGN_CANCELED | MONTH_CLOSED | RESOURCE_CONFLICT"
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -25723,17 +25723,23 @@
         "type": "object",
         "properties": {
           "serId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "description": "어느 수업 규칙인가"
           },
           "onDate": {
             "type": "string",
-            "description": "YYYY-MM-DD. 주면 그 회차만, 안 주면 규칙 전체"
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "원래 회차 키 YYYY-MM-DD. 생략은 규칙 전체, null은 거절"
           },
           "zaccId": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
             "nullable": true,
-            "description": "붙일 계정. null 이면 뗀다"
+            "description": "붙일 계정. null/생략은 배정 제거. 회차 override 제거는 고정 배정 상속으로 돌아갈 수 있다"
           }
         },
         "required": [

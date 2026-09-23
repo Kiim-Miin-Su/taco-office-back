@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: month-close.ts — closedMonthBetween, assertMonthOpen, assertRangeOpen, MONTH_CLOSED (util)
+ * 목적: month-close.ts — 날짜/기간 마감 및 일정·줌 배정의 snapshot 불변 판정 (util)
  * 책임/재사용: §54 월 마감 판정 한 곳. 스케줄·출결·청구·이월·휴원 쓰기가 같은 함수로 409 MONTH_CLOSED 를 던진다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -32,6 +32,17 @@ export function monthClosedMessage(month: string): string {
 
 export function monthClosedError(month: string): ConflictException {
   return new ConflictException({ code: MONTH_CLOSED, message: monthClosedMessage(month) });
+}
+
+/** 일정 쓰기와 줌 배정이 같은 보호 snapshot·오류 선택을 사용한다. */
+export function assertClosedOccUnchanged(f: {
+  before: string; after: string; closed: string[]; fallbackMonth: string;
+}): void {
+  if (!f.closed.length || f.before === f.after) return;
+  // 기존 원래 날짜 우선 선택은 유지한다. 이동 표시월만 닫혔다면 열린 시작월을 말하지 않는다.
+  const hit = f.closed.find((month) => f.after.includes(`"on_date":"${month}-`) || f.before.includes(`"on_date":"${month}-`))
+    ?? (f.closed.includes(f.fallbackMonth) ? f.fallbackMonth : f.closed[0]!);
+  throw monthClosedError(hit);
 }
 
 /** 지금 마감돼 있는 달 전부 — `YYYY-MM` 오름차순 */

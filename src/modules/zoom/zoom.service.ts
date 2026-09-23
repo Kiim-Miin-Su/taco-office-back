@@ -10,6 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryRunner, Repository } from 'typeorm';
 import { Zacc } from '../../entities';
 import { nowHourKst, todayKst } from '../../lib/kst';
+import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { sealSecret, secretKeyFrom, SECRET_BOX_HEADER_BYTES } from '../../lib/secret-box';
 import { loadState } from '../schedule/schedule.state.repo';
 import { project } from '../schedule/schedule.project';
@@ -181,20 +182,35 @@ export class ZoomService {
     const zaccId = dto.zaccId ?? null;
     {
       const q = m.queryRunner as QueryRunner;
-      const [ser] = (await m.query(`SELECT id FROM ser WHERE id = $1`, [dto.serId])) as { id: string }[];
+      if (!q?.isTransactionActive) throw new Error('줌 배정은 활성 transaction 안에서만 사용할 수 있습니다');
+      // 일정/출결과 같은 부모 잠금을 첫 snapshot 전에 잡고 commit까지 유지한다.
+      const before = await loadState(q, [dto.serId], { forWrite: true });
+      const ser = before.SER[0];
       if (!ser) throw new NotFoundException({ code: 'SER_NOT_FOUND', message: '수업 규칙을 찾을 수 없습니다' });
+      if (ser.mode !== 'online') {
+        throw new ConflictException({ code: 'ZOOM_ASSIGN_NOT_ONLINE', message: '현장 수업에는 줌 계정을 배정하지 않습니다' });
+      }
+      if (dto.onDate !== undefined) {
+        const [occ] = (await m.query(
+          `SELECT canceled FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date`, [dto.serId, dto.onDate],
+        )) as { canceled: boolean }[];
+        if (!occ) throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '해당 회차를 찾을 수 없습니다. 최신 목록에서 다시 선택해 주세요' });
+        if (occ.canceled) throw new ConflictException({ code: 'ZOOM_ASSIGN_CANCELED', message: '휴강한 회차에는 줌 계정을 배정하지 않습니다' });
+      }
       if (zaccId !== null) {
-        const [z] = (await m.query(`SELECT id, active FROM zacc WHERE id = $1`, [zaccId])) as { id: string; active: boolean }[];
+        // 여러 배정은 함께 읽되 계정 비활성화는 이 transaction이 끝날 때까지 기다린다.
+        const [z] = (await m.query(`SELECT id, active FROM zacc WHERE id = $1 FOR SHARE`, [zaccId])) as { id: string; active: boolean }[];
         if (!z) throw new NotFoundException({ code: 'ZACC_NOT_FOUND', message: '줌 계정을 찾을 수 없습니다' });
         if (!z.active) throw new ConflictException({ code: 'ZACC_INACTIVE', message: '꺼 둔 계정은 새로 배정할 수 없습니다' });
       }
 
+      const closed = await closedMonths(q);
+      const closedBefore = await closedOccSnapshot(q, [dto.serId], closed);
+
       let excId: number | null = null;
-      if (dto.onDate) {
-        const [exc] = (await m.query(
-          `SELECT id FROM exc WHERE ser_id = $1 AND on_date = $2::date`, [dto.serId, dto.onDate],
-        )) as { id: string }[];
-        if (exc) excId = Number(exc.id);
+      if (dto.onDate !== undefined) {
+        const exc = before.EXC.find((row) => row.onDate === dto.onDate);
+        if (exc) excId = exc.id;
         else {
           const [made] = (await m.query(
             `INSERT INTO exc (ser_id, on_date, canceled, reason, by_id) VALUES ($1,$2::date,false,$3,$4) RETURNING id`,
@@ -216,9 +232,15 @@ export class ZoomService {
         await m.query(`INSERT INTO zlog (zacc_id, actor_id, action) VALUES ($1,$2,'assign')`, [zaccId, userId]);
       }
 
-      // 겹침 판정이 되돌아갈 수 있게 규칙을 먼저 잠근다 (다른 쓰기 경로와 같은 순서)
-      const state = await loadState(q, [dto.serId], { forWrite: true });
+      // 새 EXC를 포함해 같은 부모 잠금 아래에서 다시 읽고 기존 투영/EXCLUDE를 재사용한다.
+      const state = await loadState(q, [dto.serId]);
       const projected = await project(q, state, [dto.serId]);
+      if (closed.length) {
+        assertClosedOccUnchanged({
+          before: closedBefore, after: await closedOccSnapshot(q, [dto.serId], closed), closed,
+          fallbackMonth: monthOf(ser.fromDate),
+        });
+      }
       return { serId: dto.serId, onDate: dto.onDate ?? null, zaccId, projected };
     }
   }

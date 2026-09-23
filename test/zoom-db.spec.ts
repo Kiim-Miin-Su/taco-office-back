@@ -27,10 +27,14 @@ import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
 import { dataSourceOptions } from '../src/data-source';
 import { Zacc } from '../src/entities';
-import { nowHourKst } from '../src/lib/kst';
+import { nowHourKst, todayKst } from '../src/lib/kst';
+import { addD } from '../src/lib/recurrence';
+import { monthClosedMessage } from '../src/lib/month-close';
 import { openSecret, sealSecret, secretKeyFrom } from '../src/lib/secret-box';
 import { ZoomService } from '../src/modules/zoom/zoom.service';
 import { ZoomAccountCreateDto, ZoomAccountPatchDto } from '../src/modules/zoom/zoom.dto';
+import * as stateRepo from '../src/modules/schedule/schedule.state.repo';
+import { project } from '../src/modules/schedule/schedule.project';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -496,5 +500,382 @@ d('S3-a 줌 계정 HTTP 입력·권한·영속화', () => {
     await http('patch', `/zoom/accounts/${accountId}`).send({ active: false }).expect(200);
     const res = await http('get', '/zoom').expect(200);
     expect(res.body.accounts.find((a: { id: number }) => a.id === accountId).active).toBe(false);
+  });
+});
+
+/**
+ * S3-b: 실제 HTTP/JWT/guard → 공용 assignIn → EXC/ZASSIGN/ZLOG/SER_OCC.
+ * 전용 scratch DB에만 소유 fixture를 만들고 삭제한다. 10/01 조합만 최종 권한 projection 대역이다.
+ * 경합은 기존 schedule-write 시험처럼 첫 부모 snapshot을 멈추고 pg_blocking_pids로 확인한다.
+ */
+d('S3-b 회차 줌 배정 HTTP·월마감·외부 transaction', () => {
+  let app: INestApplication;
+  let ds: DataSource;
+  const ADMIN = 29881;
+  const TEACHER = 29882;
+  const KIND = 's3b_zoom';
+  const PASSWORD = 's3b-local-login-only';
+  const DAY = addD(todayKst(), 2);
+  const PREV = addD(`${todayKst().slice(0, 7)}-01`, -1).slice(0, 7);
+  const PREV_DAY = `${PREV}-15`;
+  const tokens = new Map<number, string>();
+  const made: number[] = [];
+  let accounts: number[] = [];
+  let serId: number;
+
+  const sql = <T = Record<string, unknown>>(statement: string, params: unknown[] = []): Promise<T[]> =>
+    ds.query(statement, params) as Promise<T[]>;
+  const http = (method: 'get' | 'post' | 'patch', path: string, actor = ADMIN) =>
+    request(app.getHttpServer())[method](path).set('Authorization', `Bearer ${tokens.get(actor)}`)
+      .timeout({ response: 10000, deadline: 20000 });
+  const body = () => ({ serId, onDate: DAY, zaccId: accounts[0] });
+  const assign = (value: Record<string, unknown> = body()) => http('post', '/zoom/assign').send(value);
+  const rebuild = (id: number) => ds.transaction(async (m) => {
+    const q = m.queryRunner!;
+    await project(q, await stateRepo.loadState(q, [id], { forWrite: true }), [id]);
+  });
+  const makeSeries = async (options: { mode?: 'online' | 'offline'; from?: string; to?: string; once?: boolean } = {}) => {
+    const from = options.from ?? DAY;
+    const [row] = await sql<{ id: string }>(`INSERT INTO ser(kind_key,mode,start_min,end_min,rrule,from_date,to_date,title)
+      VALUES ($1,$2,600,660,$3,$4::date,$5::date,'S3B 배정 회차') RETURNING id`,
+    [KIND, options.mode ?? 'online', options.once ? 'ONCE' : 'DAILY', from, options.to ?? (options.once ? from : addD(from, 2))]);
+    const id = Number(row.id);
+    made.push(id);
+    await rebuild(id);
+    return id;
+  };
+  const addException = async (id: number, onDate: string, options: { moved?: string; canceled?: boolean }) => {
+    await sql(`INSERT INTO exc(ser_id,on_date,canceled,new_date,reason,by_id)
+      VALUES ($1,$2::date,$3,$4::date,'S3B fixture',$5)`, [id, onDate, options.canceled ?? false, options.moved ?? null, ADMIN]);
+    await rebuild(id);
+  };
+  const makeRequest = async (id = serId, onDate = DAY, zaccId = accounts[0], applyAll = false) => {
+    const [row] = await sql<{ id: string }>(`INSERT INTO chreq(ser_id,on_date,req_type,payload,reason,by_id,apply_all)
+      VALUES ($1,$2::date,'room',$3::jsonb,'S3B 줌 변경',$4,$5) RETURNING id`,
+    [id, onDate, JSON.stringify({ zaccId }), TEACHER, applyAll]);
+    return Number(row.id);
+  };
+  const approve = (id: number) => http('post', `/drawer/change-requests/${id}/review`).send({ decision: 'approve' });
+  const closeMonth = (month: string) => sql('INSERT INTO month_close(year_month,closed_by) VALUES ($1,$2)', [month, ADMIN]);
+  const snapshot = async () => ({
+    series: await sql('SELECT * FROM ser WHERE id=ANY($1::bigint[]) ORDER BY id', [made]),
+    exceptions: await sql('SELECT * FROM exc WHERE ser_id=ANY($1::bigint[]) ORDER BY id', [made]),
+    assignments: await sql(`SELECT z.* FROM zassign z LEFT JOIN exc e ON e.id=z.exc_id
+      WHERE z.ser_id=ANY($1::bigint[]) OR e.ser_id=ANY($1::bigint[]) ORDER BY z.id`, [made]),
+    assignmentLogs: await sql('SELECT * FROM zlog WHERE zacc_id=ANY($1::bigint[]) ORDER BY id', [accounts]),
+    occurrences: await sql('SELECT * FROM ser_occ WHERE ser_id=ANY($1::bigint[]) ORDER BY ser_id,on_date', [made]),
+    requests: await sql('SELECT * FROM chreq WHERE ser_id=ANY($1::bigint[]) ORDER BY id', [made]),
+    logs: await sql('SELECT * FROM log WHERE actor_id=$1 ORDER BY id', [ADMIN]),
+    notifications: await sql('SELECT * FROM noti WHERE from_id=$1 ORDER BY id', [ADMIN]),
+  });
+  const expectUnchanged = async (run: () => PromiseLike<request.Response>, status: number, code?: string, message?: string) => {
+    const before = await snapshot();
+    const res = await run();
+    expect({ status: res.status, ...(code ? { code: res.body.code } : {}), ...(message ? { message: res.body.message } : {}), state: await snapshot() })
+      .toEqual({ status, ...(code ? { code } : {}), ...(message ? { message } : {}), state: before });
+  };
+
+  beforeAll(async () => {
+    ds = scratchDataSource();
+    await ds.initialize();
+    const module = await Test.createTestingModule({ imports: [AppModule] }).overrideProvider(DataSource).useValue(ds).compile();
+    app = module.createNestApplication();
+    app.useLogger(false);
+    app.use(cookieParser());
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    await app.listen(0, '127.0.0.1');
+    await sql(`INSERT INTO kind(key,name,color,cap,grp,rep) VALUES ($1,'S3B 배정','#000000',4,'lesson',false)`, [KIND]);
+    await sql(`INSERT INTO staff(id,name,email,role,password_hash,active) VALUES
+      ($1,'S3B 관리자','s3b-admin@t.invalid','admin',$3,true),
+      ($2,'S3B 강사','s3b-teacher@t.invalid','teacher',$3,true)`, [ADMIN, TEACHER, await bcrypt.hash(PASSWORD, 4)]);
+    for (const [id, email] of [[ADMIN, 's3b-admin@t.invalid'], [TEACHER, 's3b-teacher@t.invalid']] as const) {
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PASSWORD }).expect(201);
+      tokens.set(id, res.body.accessToken as string);
+    }
+  });
+  beforeEach(async () => {
+    accounts = (await sql<{ id: string }>(`INSERT INTO zacc(label,login_email,login_secret,join_url,active)
+      VALUES ('S3B-A','s3b-a@t.invalid',$1,'https://zoom.us/j/31',true),
+             ('S3B-B','s3b-b@t.invalid',$1,'https://zoom.us/j/32',true) RETURNING id`,
+    [sealSecret('', secretKeyFrom(process.env.ZOOM_ENC_KEY)!)])).map((row) => Number(row.id));
+    serId = await makeSeries();
+  });
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await sql('DELETE FROM month_close WHERE closed_by=$1', [ADMIN]);
+    await sql('DELETE FROM log WHERE actor_id=$1', [ADMIN]);
+    await sql('DELETE FROM noti WHERE from_id=$1 OR to_id=ANY($2::bigint[])', [ADMIN, [ADMIN, TEACHER]]);
+    await sql('DELETE FROM chreq WHERE ser_id=ANY($1::bigint[])', [made]);
+    await sql('DELETE FROM zlog WHERE zacc_id=ANY($1::bigint[])', [accounts]);
+    await sql('DELETE FROM zassign WHERE zacc_id=ANY($1::bigint[])', [accounts]);
+    await sql('DELETE FROM ser_occ WHERE ser_id=ANY($1::bigint[])', [made]);
+    await sql('DELETE FROM exc_stu_out WHERE exc_id IN (SELECT id FROM exc WHERE ser_id=ANY($1::bigint[]))', [made]);
+    await sql('DELETE FROM exc WHERE ser_id=ANY($1::bigint[])', [made]);
+    await sql('DELETE FROM ser WHERE id=ANY($1::bigint[])', [made]);
+    await sql('DELETE FROM zacc WHERE id=ANY($1::bigint[])', [accounts]);
+    await sql("UPDATE staff SET role='admin',active=true WHERE id=$1", [ADMIN]);
+    made.length = 0;
+  });
+  afterAll(async () => {
+    if (ds?.isInitialized) {
+      await sql('DELETE FROM staff WHERE id=ANY($1::bigint[])', [[ADMIN, TEACHER]]);
+      await sql('DELETE FROM kind WHERE key=$1', [KIND]);
+    }
+    await app?.close();
+    if (ds?.isInitialized) await ds.destroy();
+  });
+
+  it.each(['serId', 'zaccId'].flatMap((field) =>
+    [0, -1, 1.5, 9007199254740992, '1', '0x10', '1e2', '1 OR 1=1', []].map((value) => ({ field, value })),
+  ))('$field=$value는400이며 거절 시 모든 표가 불변이다', async ({ field, value }) => {
+    await expectUnchanged(() => assign({ ...body(), [field]: value }), 400);
+  });
+  it.each([null, '', '2026-02-30', '2025-02-29', '2026-13-01', '2026-09-24 OR 1=1', ['2026-09-24']].map((value) => [value]))(
+    'onDate=%j는400이며 전체 배정으로 확대하지 않는다', async (onDate) => {
+      await expectUnchanged(() => assign({ ...body(), onDate }), 400);
+    },
+  );
+  it('필수 SER 누락/null·알 수 없는 body 키는400이고 안전정수의 없는 대상은404다', async () => {
+    await expectUnchanged(() => assign({ zaccId: accounts[0] }), 400);
+    await expectUnchanged(() => assign({ ...body(), serId: null }), 400);
+    await expectUnchanged(() => assign({ ...body(), unsupported: true }), 400);
+    await expectUnchanged(() => assign({ ...body(), serId: Number.MAX_SAFE_INTEGER }), 404);
+    await expectUnchanged(() => assign({ ...body(), zaccId: Number.MAX_SAFE_INTEGER }), 404);
+  });
+  it.each([[false, false], [true, false], [false, true], [true, true]] as const)(
+    '직접 HTTP 배정의 최종 admin=%s/crud=%s는 둘 다 있어야 저장한다', async (canAdminPage, canCrudAll) => {
+      const auth = app.get(AuthService);
+      const current = auth.currentUser.bind(auth);
+      jest.spyOn(auth, 'currentUser').mockImplementation(async (id) => ({ ...await current(id), perms: { canAdminPage, canCrudAll } }));
+      if (canAdminPage && canCrudAll) await assign().expect(201);
+      else await expectUnchanged(() => assign(), 403);
+    },
+  );
+  it('익명·강사와 로그인 뒤 권한 회수는 배정과 모든 부산물을 막는다', async () => {
+    await expectUnchanged(() => request(app.getHttpServer()).post('/zoom/assign').send(body()), 401);
+    await expectUnchanged(() => http('post', '/zoom/assign', TEACHER).send(body()), 403);
+    await sql("UPDATE staff SET role='teacher' WHERE id=$1", [ADMIN]);
+    await expectUnchanged(() => assign(), 403);
+    await sql('UPDATE staff SET active=false WHERE id=$1', [ADMIN]);
+    await expectUnchanged(() => assign(), 401);
+  });
+  it.each(['offline', 'canceled', 'missing'] as const)('%s 대상은 회차 배정과 EXC 생성을 거절한다', async (target) => {
+    if (target === 'offline') await sql("UPDATE ser SET mode='offline' WHERE id=$1", [serId]);
+    if (target === 'canceled') await addException(serId, DAY, { canceled: true });
+    await expectUnchanged(() => assign({ ...body(), onDate: target === 'missing' ? addD(DAY, 40) : DAY }), target === 'missing' ? 404 : 409);
+  });
+  it('현장 규칙 전체 배정도 거절한다', async () => {
+    await sql("UPDATE ser SET mode='offline' WHERE id=$1", [serId]);
+    await expectUnchanged(() => assign({ serId, zaccId: accounts[0] }), 409);
+  });
+  it('비활성 계정은 새 배정에 쓰지 않는다', async () => {
+    await sql('UPDATE zacc SET active=false WHERE id=$1', [accounts[0]]);
+    await expectUnchanged(() => assign(), 409, 'ZACC_INACTIVE');
+  });
+  it('기본 배정·회차 우선·회차 null 해제의 기본 상속을 새 조회로 확인한다', async () => {
+    await assign({ serId, zaccId: accounts[0] }).expect(201);
+    await assign({ ...body(), zaccId: accounts[1] }).expect(201);
+    expect(await sql('SELECT zacc_id FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date', [serId, DAY])).toEqual([{ zacc_id: String(accounts[1]) }]);
+    expect(await sql('SELECT DISTINCT zacc_id FROM ser_occ WHERE ser_id=$1 AND on_date<>$2::date', [serId, DAY])).toEqual([{ zacc_id: String(accounts[0]) }]);
+    await assign({ ...body(), zaccId: null }).expect(201);
+    expect(await sql('SELECT DISTINCT zacc_id FROM ser_occ WHERE ser_id=$1', [serId])).toEqual([{ zacc_id: String(accounts[0]) }]);
+    const board = await http('get', '/zoom').query({ onDate: DAY }).expect(200);
+    expect(board.body.accounts.find((a: { id: number }) => a.id === accounts[0]).usedCount).toBe(1);
+  });
+  it('옮긴 회차는 원래 onDate로 배정하고 표시 날짜의 다른 회차를 만들지 않는다', async () => {
+    const movedTo = addD(DAY, 6);
+    await addException(serId, DAY, { moved: movedTo });
+    await assign().expect(201);
+    const [stored] = await sql(`SELECT on_date::text, zacc_id, to_char(lower(span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS drawn
+      FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date`, [serId, DAY]);
+    expect(stored).toEqual({ on_date: DAY, zacc_id: String(accounts[0]), drawn: movedTo });
+    await expectUnchanged(() => assign({ ...body(), onDate: movedTo }), 404);
+    const board = await http('get', '/zoom').query({ onDate: movedTo }).expect(200);
+    expect(board.body.accounts.find((a: { id: number }) => a.id === accounts[0]).usedCount).toBe(1);
+  });
+  it('겹침409은 실패 EXC/ZASSIGN/ZLOG/SER_OCC 전부를 되돌리고 다른 계정 재시도는 된다', async () => {
+    const rival = await makeSeries();
+    await assign({ serId: rival, onDate: DAY, zaccId: accounts[0] }).expect(201);
+    await expectUnchanged(() => assign(), 409, 'RESOURCE_CONFLICT');
+    await assign({ ...body(), zaccId: accounts[1] }).expect(201);
+  });
+  it('기존 override 변경 충돌도 원래 배정과 감사 표를 보존한다', async () => {
+    const rival = await makeSeries();
+    await assign({ serId: rival, onDate: DAY, zaccId: accounts[0] }).expect(201);
+    await assign({ ...body(), zaccId: accounts[1] }).expect(201);
+    await expectUnchanged(() => assign(), 409, 'RESOURCE_CONFLICT');
+  });
+  it('외부 transaction이 실패하면 assignIn의 성공까지 모두 되돌린다', async () => {
+    const before = await snapshot();
+    await expect(ds.transaction(async (manager) => {
+      await app.get(ZoomService).assignIn(manager, ADMIN, body());
+      throw new Error('S3B external rollback');
+    })).rejects.toThrow('S3B external rollback');
+    expect(await snapshot()).toEqual(before);
+  });
+  it('줌 변경요청 승인 충돌도 pending·NOTI/LOG·배정을 모두 보존한다', async () => {
+    const rival = await makeSeries();
+    await assign({ serId: rival, onDate: DAY, zaccId: accounts[0] }).expect(201);
+    const id = await makeRequest();
+    await expectUnchanged(() => approve(id), 409, 'RESOURCE_CONFLICT');
+  });
+  it('같은 줌 변경요청을 동시에 승인해도 한 번만 반영하고 알린다', async () => {
+    const id = await makeRequest();
+    const results = await Promise.all([approve(id), approve(id)]);
+    expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(await sql("SELECT state FROM chreq WHERE id=$1", [id])).toEqual([{ state: 'approved' }]);
+    expect(await sql("SELECT action FROM log WHERE entity='chreq' AND entity_id=$1", [id])).toEqual([{ action: 'apply' }]);
+    expect(await sql('SELECT id FROM noti WHERE from_id=$1', [ADMIN])).toHaveLength(1);
+    expect(await sql("SELECT id FROM zlog WHERE zacc_id=$1 AND action='assign'", [accounts[0]])).toHaveLength(1);
+  });
+  it.each(['occurrence', 'whole', 'clear', 'approval'] as const)('마감 달 %s 배정 변경은409이며 모든 부산물을 되돌린다', async (scope) => {
+    const id = await makeSeries({ from: PREV_DAY, to: DAY });
+    if (scope === 'clear') await assign({ serId: id, zaccId: accounts[0] }).expect(201);
+    const requestId = scope === 'approval' ? await makeRequest(id, PREV_DAY) : undefined;
+    await closeMonth(PREV);
+    await expectUnchanged(() => requestId === undefined
+      ? assign({ serId: id, ...(['whole', 'clear'].includes(scope) ? {} : { onDate: PREV_DAY }), zaccId: scope === 'clear' ? null : accounts[1] })
+      : approve(requestId), 409, 'MONTH_CLOSED');
+  });
+  it('마감이 있어도 같은 SER의 열린 달 배정은 되고 해제 뒤 과거 회차도 된다', async () => {
+    const id = await makeSeries({ from: PREV_DAY, to: DAY });
+    await closeMonth(PREV);
+    await assign({ serId: id, onDate: DAY, zaccId: accounts[0] }).expect(201);
+    await sql('UPDATE month_close SET reopened_at=now(),reopened_by=$1,reopen_reason=$2 WHERE closed_by=$1', [ADMIN, 'S3B 재검수']);
+    await assign({ serId: id, onDate: PREV_DAY, zaccId: accounts[1] }).expect(201);
+  });
+  it('열린 달의 줌 변경요청 승인은 같은 SER의 마감 회차를 바꾸지 않는다', async () => {
+    const id = await makeSeries({ from: PREV_DAY, to: DAY });
+    const before = await sql('SELECT * FROM ser_occ WHERE ser_id=$1 AND on_date<$2::date ORDER BY on_date', [id, `${todayKst().slice(0, 7)}-01`]);
+    await closeMonth(PREV);
+    const req = await makeRequest(id, DAY);
+    await approve(req).expect(201);
+    // 재투영의 surrogate id는 바뀔 수 있다. 보호 대상인 날짜·시각·자원·휴강은 그대로다.
+    const after = await sql('SELECT * FROM ser_occ WHERE ser_id=$1 AND on_date<$2::date ORDER BY on_date', [id, `${todayKst().slice(0, 7)}-01`]);
+    const withoutId = (rows: Record<string, unknown>[]) => rows.map(({ id: _id, ...row }) => row);
+    expect(withoutId(after)).toEqual(withoutId(before));
+  });
+  it.each(['original', 'drawn'] as const)('이동 회차의 %s 월이 마감되어도 배정 변경은409다', async (closedSide) => {
+    const original = closedSide === 'original' ? PREV_DAY : DAY;
+    const moved = closedSide === 'original' ? DAY : PREV_DAY;
+    const id = await makeSeries({ from: original, once: true });
+    await addException(id, original, { moved });
+    await closeMonth(PREV);
+    await expectUnchanged(() => assign({ serId: id, onDate: original, zaccId: accounts[0] }), 409, 'MONTH_CLOSED', monthClosedMessage(PREV));
+  });
+
+  it('같은 SER의 일정 수정과 배정은 부모부터 직렬화하고 예외·시간을 모두 보존한다', async () => {
+    let release!: () => void, ready!: () => void, consumerReady!: (pid: number) => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const paused = new Promise<void>((resolve) => { ready = resolve; });
+    const started = new Promise<number>((resolve) => { consumerReady = resolve; });
+    let writer: QueryRunner | undefined;
+    let consumerSeen = false;
+    let childBeforeParent = false;
+    const originalLoad = stateRepo.loadState;
+    const stateSpy = jest.spyOn(stateRepo, 'loadState').mockImplementation(async (q, ids, options) => {
+      const state = await originalLoad(q, ids, options);
+      if (!writer && ids.includes(serId) && options?.forWrite) {
+        writer = q;
+        ready();
+        await hold;
+      }
+      return state;
+    });
+    const createRunner = ds.createQueryRunner.bind(ds);
+    const runnerSpy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+      const q = createRunner(...args);
+      const originalQuery = q.query.bind(q);
+      jest.spyOn(q, 'query').mockImplementation(async (statement: string, parameters?: unknown[], structured?: boolean) => {
+        if (writer && writer !== q && q.isTransactionActive) {
+          if (!consumerSeen && /(?:INSERT INTO exc|DELETE FROM zassign|INSERT INTO zassign|INSERT INTO zlog)/.test(statement)) childBeforeParent = true;
+          if (!consumerSeen && statement.includes('FROM ser ') && /FOR (NO KEY UPDATE|UPDATE)/.test(statement)) {
+            consumerSeen = true;
+            const [{ pid }] = await originalQuery('SELECT pg_backend_pid() AS pid');
+            consumerReady(pid);
+          }
+        }
+        return structured ? originalQuery(statement, parameters, true) : originalQuery(statement, parameters);
+      });
+      return q;
+    });
+    const first = Promise.resolve(http('patch', `/schedule/${serId}`).send({ scope: 'all', onDate: DAY, startMin: 630, endMin: 690 }));
+    let second: Promise<request.Response> | undefined;
+    try {
+      await Promise.race([paused, first.then(() => { throw new Error('일정의 첫 부모 snapshot에 도달하지 못함'); })]);
+      second = Promise.resolve(assign());
+      const pid = await Promise.race([started, second.then(() => { throw new Error('배정의 부모 잠금에 도달하지 못함'); })]);
+      let blocked = false;
+      const deadline = Date.now() + 4000;
+      while (!blocked) {
+        [{ blocked }] = await sql<{ blocked: boolean }>('SELECT cardinality(pg_blocking_pids($1))>0 AS blocked', [pid]);
+        if (Date.now() > deadline) throw new Error('배정의 실제 부모 잠금 관측 시간 초과');
+      }
+      release();
+      const results = await Promise.all([first, second]);
+      expect({ status: results.map((r) => r.status), blocked, childBeforeParent }).toEqual({ status: [200, 201], blocked: true, childBeforeParent: false });
+      expect(await sql(`SELECT zacc_id, EXTRACT(MINUTE FROM lower(span) AT TIME ZONE 'Asia/Seoul')::int AS minute
+        FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date`, [serId, DAY])).toEqual([{ zacc_id: String(accounts[0]), minute: 30 }]);
+    } finally {
+      release();
+      await Promise.allSettled([first, ...(second ? [second] : [])]);
+      stateSpy.mockRestore();
+      runnerSpy.mockRestore();
+    }
+  });
+
+  it('계정 비활성화는 진행 중 배정의 활성 확인 잠금이 끝날 때까지 기다린다', async () => {
+    let release!: () => void, ready!: () => void, patchReady!: (pid: number) => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    const paused = new Promise<void>((resolve) => { ready = resolve; });
+    const started = new Promise<number>((resolve) => { patchReady = resolve; });
+    const createRunner = ds.createQueryRunner.bind(ds);
+    let assigning: QueryRunner | undefined;
+    let patchSeen = false;
+    const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+      const q = createRunner(...args);
+      const originalQuery = q.query.bind(q);
+      jest.spyOn(q, 'query').mockImplementation(async (statement: string, parameters?: unknown[], structured?: boolean) => {
+        const run = () => structured ? originalQuery(statement, parameters, true) : originalQuery(statement, parameters);
+        if (!assigning && q.isTransactionActive && statement.includes('FROM zacc') && statement.includes('active')) {
+          assigning = q;
+          const result = await run();
+          ready();
+          await hold;
+          return result;
+        }
+        if (assigning && assigning !== q && !patchSeen && statement.includes('FROM zacc') && statement.includes('FOR UPDATE')) {
+          patchSeen = true;
+          const [{ pid }] = await originalQuery('SELECT pg_backend_pid() AS pid');
+          patchReady(pid);
+        }
+        return run();
+      });
+      return q;
+    });
+    const first = Promise.resolve(assign());
+    let second: Promise<request.Response> | undefined;
+    try {
+      await Promise.race([paused, first.then(() => { throw new Error('배정의 활성 확인에 도달하지 못함'); })]);
+      let patchDone = false;
+      second = Promise.resolve(http('patch', `/zoom/accounts/${accounts[0]}`).send({ active: false }))
+        .then((res) => { patchDone = true; return res; });
+      const pid = await Promise.race([started, second.then(() => { throw new Error('계정 수정 잠금에 도달하지 못함'); })]);
+      let blocked = false;
+      const deadline = Date.now() + 4000;
+      while (!blocked && !patchDone) {
+        [{ blocked }] = await sql<{ blocked: boolean }>('SELECT cardinality(pg_blocking_pids($1))>0 AS blocked', [pid]);
+        if (Date.now() > deadline) throw new Error('계정 수정의 실제 잠금 관측 시간 초과');
+      }
+      release();
+      const results = await Promise.all([first, second]);
+      expect({ status: results.map((r) => r.status), blocked }).toEqual({ status: [201, 200], blocked: true });
+      expect(await sql('SELECT active FROM zacc WHERE id=$1', [accounts[0]])).toEqual([{ active: false }]);
+      expect(await sql('SELECT zacc_id FROM ser_occ WHERE ser_id=$1 AND on_date=$2::date', [serId, DAY])).toEqual([{ zacc_id: String(accounts[0]) }]);
+    } finally {
+      release();
+      await Promise.allSettled([first, ...(second ? [second] : [])]);
+      spy.mockRestore();
+    }
   });
 });
