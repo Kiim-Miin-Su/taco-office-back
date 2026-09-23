@@ -58,6 +58,8 @@ export class BookWorkflow1759700000000 implements MigrationInterface {
 
     await q.query(`ALTER TABLE "issue" ALTER COLUMN "issued_on" DROP NOT NULL`);
     await q.query(`ALTER TABLE "issue" ADD COLUMN "state" varchar(12) NOT NULL DEFAULT 'ok'`);
+    // 기존 반납 사실을 보존한 뒤 상태/날짜 제약과 활성 배부 unique를 적용한다.
+    await q.query(`UPDATE "issue" SET "state" = 'returned' WHERE "returned_on" IS NOT NULL`);
     await q.query(`ALTER TABLE "issue" ADD COLUMN "progress_page" int`);
     await q.query(`ALTER TABLE "issue" ADD COLUMN "requested_by" bigint REFERENCES "staff"("id")`);
     await q.query(`ALTER TABLE "issue" ADD COLUMN "approved_by" bigint REFERENCES "staff"("id")`);

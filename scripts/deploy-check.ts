@@ -15,6 +15,7 @@
  */
 import 'reflect-metadata';
 import * as dotenv from 'dotenv';
+import { MigrationExecutor } from 'typeorm';
 import ds from '../src/data-source';
 import { describeTarget } from '../src/lib/target';
 import { assertCookieConfig } from '../src/auth/cookie';
@@ -41,18 +42,24 @@ async function main(): Promise<void> {
   console.log(`  필수 키   ${missing.length === 0 ? '전부 있음' : `없음: ${missing.join(' · ')}`}`);
   if (prod) console.log(`  운영 키   ${missingProd.length === 0 ? '전부 있음' : `없음: ${missingProd.join(' · ')}`}`);
 
+  let invalid = missing.length > 0 || missingProd.length > 0;
   try {
     console.log(`  쿠키      ${assertCookieConfig()}`);
   } catch (e) {
     console.log(`  쿠키      ✗ ${(e as Error).message.split('\n')[0]}`);
-    process.exitCode = 1;
+    invalid = true;
   }
 
-  if (missing.length || missingProd.length) process.exitCode = 1;
+  // exitCode만 세우면 --run이 아래로 내려가 잘못된 설정에서도 실제 DB를 바꾼다.
+  if (invalid) {
+    process.exitCode = 1;
+    return;
+  }
 
   await ds.initialize();
   try {
-    const pending = await ds.showMigrations();
+    // showMigrations는 이력표가 없으면 만든다. 조회 모드는 표 존재 확인/SELECT만 한다.
+    const pending = (await new MigrationExecutor(ds).getPendingMigrations()).length > 0;
     console.log(`  마이그레이션  ${pending ? '**밀린 것이 있다**' : '최신'}`);
 
     if (!RUN) {

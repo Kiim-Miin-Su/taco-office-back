@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: 1761500000000-self-approval.ts — 올린 사람은 결재하지 못한다 (REP · RPT · PLAN 기한 · GPA 승인 도장) (migration)
+ * 목적: 51의 자기 결재 제약·GPA 승인 도장을 추가하고, 기존 이력을 보존해 54의 현재 정책까지 전환한다 (migration).
  * 책임/재사용: 스키마 변경만 소유한다. 기존 행을 추정으로 보정하지 않고, 되돌릴 수 있는 down 을 함께 둔다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -18,9 +18,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * `rpt.sent_by` 는 C85-a 에서 생겼고 그 전 행은 NULL 이며(N-25 기존 행 보정 0),
  * 강사 없는 회차의 `rep.teacher_id` 도 NULL 일 수 있다.
  *
- * **`NOT VALID`** 로 새 행만 검사한다. 다만 `NOT VALID` 는 **기존 행만** 봐주고 새 INSERT/UPDATE 는
- * 그대로 검사하며 **시드는 언제나 새 INSERT** 다 (C86-g 가 출하를 멈춘 자리) — 그래서 아래 preflight 가
- * 지금 위반하는 행이 있는지 먼저 세어, 있으면 **고르지 않고 멈춘다.**
+ * 위 금지는 당시 정책이다. **2026-09-21 P1 결정으로 54가 이 네 CHECK를 제거한다.**
+ * 51 이전 DB의 정상 자기 결재 이력 때문에 54에 도달하지 못하면 최신 정책과 모순이다.
+ * 따라서 기존 행은 집계만 알리고 보존한다. NOT VALID는 기존 행을 검사하지 않지만
+ * 새 INSERT/UPDATE는 검사하므로, 운영 전환은 54까지 같은 transaction에서 마친 뒤 앱을 연다.
  *
  * GPA 는 **승인 도장 칸 자체가 없었다** — 누가 승인했는지 어디에도 안 남았다. 두 칸을 새로 판다.
  */
@@ -28,7 +29,7 @@ export class SelfApproval1761500000000 implements MigrationInterface {
   name = 'SelfApproval1761500000000';
 
   public async up(q: QueryRunner): Promise<void> {
-    // ── preflight — 지금 자기 결재인 행이 있으면 사람이 정해야 한다 (추정 보정 금지 · N-25)
+    // ── 기존 행은 보존한다. 54가 허용할 자기 결재를 삭제/타인으로 치환해 통과시키지 않는다.
     for (const [table, author, reviewer] of [
       ['rep', 'teacher_id', 'reviewer_id'],
       ['rpt', 'sent_by', 'reviewed_by'],
@@ -39,9 +40,9 @@ export class SelfApproval1761500000000 implements MigrationInterface {
           WHERE ${author} IS NOT NULL AND ${reviewer} IS NOT NULL AND ${author} = ${reviewer}`,
       )) as [{ n: string }];
       if (Number(n) > 0) {
-        throw new Error(
-          `${table}: 올린 사람과 결재한 사람이 같은 행이 ${n}건 있습니다. ` +
-          '어느 쪽을 고칠지는 사람이 정합니다 — 이 마이그레이션은 값을 바꾸지 않습니다.',
+        console.warn(
+          `[self-approval upgrade] ${table}: 기존 자기 결재 ${n}건을 그대로 보존합니다. ` +
+          'NOT VALID 제약을 거쳐 54의 현행 정책까지 같은 트랜잭션에서 적용하세요.',
         );
       }
     }
