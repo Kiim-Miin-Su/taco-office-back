@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: validation.ts — DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger (dto)
+ * 목적: validation.ts — DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger, IsSafeHttpUrl (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -31,12 +31,15 @@ export function ToHttpInteger(): PropertyDecorator {
 }
 
 /** 사용자가 입력한 참가/참조 링크. URL 파서가 지워 버리는 제어문자도 먼저 거절한다. */
-export function IsSafeHttpUrl(options?: ValidationOptions): PropertyDecorator {
+export function IsSafeHttpUrl(options?: ValidationOptions & { allowBlank?: boolean }): PropertyDecorator {
+  const { allowBlank = false, ...validationOptions } = options ?? {};
   return ValidateBy({
     name: 'isSafeHttpUrl',
     validator: {
       validate(value: unknown): boolean {
         if (typeof value !== 'string') return false;
+        // 선택 입력만 기존 trim-empty→NULL 의미를 보존한다. 길이 검사는 DTO가 별도로 유지한다.
+        if (allowBlank && value.trim() === '') return true;
         if ([...value].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 || char === '\\')) return false;
         const text = value.trim();
         if (!/^https?:\/\/[^/?#]/i.test(text) || /\s/.test(text)) return false;
@@ -50,5 +53,5 @@ export function IsSafeHttpUrl(options?: ValidationOptions): PropertyDecorator {
       },
       defaultMessage: args => `${args?.property ?? 'URL'}는 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다`,
     },
-  }, options);
+  }, validationOptions);
 }

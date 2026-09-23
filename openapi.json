@@ -28967,7 +28967,9 @@
           },
           "noteUrl": {
             "type": "string",
-            "description": "기록지 URL — 500자 이내"
+            "nullable": true,
+            "maxLength": 500,
+            "description": "선택 기록지 HTTP(S) URL — 원문 500자 이내. 생략/null/공백은 비움"
           }
         },
         "required": [

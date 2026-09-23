@@ -6,6 +6,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsSafeHttpUrl } from '../../common/validation';
 
 const S = { type: String, nullable: true } as const;
 
@@ -123,9 +124,10 @@ export class GpaUseCreateDto {
   @ApiPropertyOptional({ description: "kind='gpa' 회차 SER id" })
   @IsOptional() @IsInt() @Min(1)
   serId?: number;
-  @ApiPropertyOptional({ description: '기록지 URL — 500자 이내' })
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 500, description: '선택 기록지 HTTP(S) URL — 원문 500자 이내. 생략/null/공백은 비움' })
   @IsOptional() @IsString() @MaxLength(500)
-  noteUrl?: string;
+  @IsSafeHttpUrl({ allowBlank: true, message: '기록지 URL은 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다' })
+  noteUrl?: string | null;
 }
 
 export class GpaUseStateDto {

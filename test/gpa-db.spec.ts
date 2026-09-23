@@ -1,10 +1,18 @@
 /** @file-guide
- * 목적: gpa-db.spec.ts (test)
+ * 목적: GPA 잔여/사이클 및 선택 기록지 URL의 실제 HTTP·권한·DB 계약 회귀 (test)
  * 책임/재사용: 기존 대상 함수를 import하여 정상/거절/경계 회귀를 검증한다. 테스트 안에 제품 규칙을 복제하지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import cookieParser from 'cookie-parser';
+import * as bcrypt from 'bcryptjs';
 import { DataSource, QueryRunner } from 'typeorm';
+import { AppModule } from '../src/app.module';
+import { AuthService } from '../src/auth/auth.service';
+import { GpaUseCreateDto } from '../src/modules/gpa/gpa.dto';
 import { dataSourceOptions } from '../src/data-source';
 import { GpaCycle } from '../src/entities';
 import { GpaService } from '../src/modules/gpa/gpa.service';
@@ -243,5 +251,179 @@ d('§4.5·§82 GPA 4표 — 잔여 계산과 사이클 잠금 (N-13 채택 · C3
       await ds.query(`DELETE FROM staff WHERE id = 42`);
       await ds.query(`DELETE FROM gpasvc WHERE key = 'c95'`);
     }
+  });
+});
+
+
+/** S3-c — URL 입력은 실제 HTTP pipe/guard를 지나며 scratch의 소유 행만 정리한다. */
+d('S3-c GPA 선택 기록지 URL HTTP·DB', () => {
+  let app: INestApplication;
+  let ds: DataSource;
+  let cycleId: number;
+  let ownsService = false;
+  let point: number;
+  const ADMIN = 29891;
+  const TEACHER = 29892;
+  const STUDENT = 29891;
+  const DAY = '2040-01-10';
+  const PASSWORD = 's3c-local-fixture-only';
+  const tokens = new Map<number, string>();
+  const sql = <T = Record<string, unknown>>(statement: string, params: unknown[] = []): Promise<T[]> =>
+    ds.query(statement, params) as Promise<T[]>;
+  const http = (method: 'get' | 'post', path: string, actor = ADMIN) =>
+    request(app.getHttpServer())[method](path)
+      .set('Authorization', `Bearer ${tokens.get(actor)}`)
+      .timeout({ response: 10000, deadline: 20000 });
+  const valid = () => ({ cycleId, studentId: STUDENT, svcKey: 'hw', onDate: DAY, startMin: 600 });
+  const snapshot = async () => ({
+    uses: await sql('SELECT * FROM gpa_use WHERE cycle_id=$1 ORDER BY id', [cycleId]),
+    allocs: await sql('SELECT * FROM gpa_alloc WHERE cycle_id=$1 ORDER BY id', [cycleId]),
+    cycle: await sql('SELECT * FROM gpa_cycle WHERE id=$1', [cycleId]),
+    logs: await sql('SELECT * FROM log WHERE actor_id=$1 ORDER BY id', [ADMIN]),
+    totals: await sql(`SELECT COALESCE(sum(points) FILTER (WHERE state='ok'),0)::int AS used,
+      COALESCE(sum(points) FILTER (WHERE state='wait'),0)::int AS wait FROM gpa_use WHERE cycle_id=$1`, [cycleId]),
+  });
+  const board = async () => (await http('get', '/gpa').query({ anchor: DAY }).expect(200)).body;
+  const accepted = async (noteUrl: unknown) => {
+    const before = await board();
+    const res = await http('post', '/gpa/uses').send({ ...valid(), noteUrl }).expect(201);
+    const expected = typeof noteUrl === 'string' ? noteUrl.trim() || null : null;
+    const [stored] = await sql('SELECT note_url,points,state,coord_id FROM gpa_use WHERE id=$1', [res.body.id]);
+    const fresh = await board();
+    expect(res.body).toMatchObject({ noteUrl: expected, state: 'wait', points: point, studentId: STUDENT });
+    expect(stored).toMatchObject({ note_url: expected, state: 'wait', points: point, coord_id: String(ADMIN) });
+    expect(fresh.uses.find((u: { id: number }) => u.id === res.body.id)).toMatchObject({ noteUrl: expected, state: 'wait' });
+    expect({ uses: fresh.totalUses, alloc: fresh.totalAlloc, used: fresh.totalUsed, wait: fresh.totalWait, remain: fresh.totalRemain })
+      .toEqual({ uses: before.totalUses + 1, alloc: before.totalAlloc, used: before.totalUsed, wait: before.totalWait + point, remain: before.totalRemain - point });
+  };
+  const rejected = async (noteUrl: unknown) => {
+    const before = await snapshot();
+    const priorBoard = await board();
+    const res = await http('post', '/gpa/uses').send({ ...valid(), noteUrl });
+    expect({ status: res.status, state: await snapshot() }).toEqual({ status: 400, state: before });
+    expect(await board()).toEqual(priorBoard);
+    expect(JSON.stringify(res.body)).toMatch(/noteUrl|기록지 URL/);
+  };
+
+  beforeAll(async () => {
+    const url = assertScratch(TEST_URL);
+    if (dataSourceOptions.type !== 'postgres') throw new Error('PostgreSQL required');
+    ds = new DataSource({ ...dataSourceOptions, url, ssl: false, logging: false });
+    await ds.initialize();
+    const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(DataSource).useValue(ds).compile();
+    app = module.createNestApplication();
+    app.useLogger(false);
+    app.use(cookieParser());
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    await app.listen(0, '127.0.0.1');
+    const hash = await bcrypt.hash(PASSWORD, 4);
+    await sql(`INSERT INTO staff(id,name,email,role,password_hash,active) VALUES
+      ($1,'S3C 관리자','s3c-admin@t.invalid','admin',$3,true),
+      ($2,'S3C 강사','s3c-teacher@t.invalid','teacher',$3,true)`, [ADMIN, TEACHER, hash]);
+    await sql(`INSERT INTO stu(id,name) VALUES ($1,'S3C 기록지 학생')`, [STUDENT]);
+    // 서비스 키는 DTO의 원문5종이다. 이미 있는 규정은 수정하지 않고 원래 포인트를 사용한다.
+    const added = await sql(`INSERT INTO gpasvc(key,name,point,sort) VALUES ('hw','S3C 숙제',1,1)
+      ON CONFLICT (key) DO NOTHING RETURNING key`);
+    ownsService = added.length > 0;
+    point = Number((await sql('SELECT point FROM gpasvc WHERE key=$1', ['hw']))[0].point);
+    for (const [actor, email] of [[ADMIN, 's3c-admin@t.invalid'], [TEACHER, 's3c-teacher@t.invalid']] as const) {
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PASSWORD }).expect(201);
+      tokens.set(actor, res.body.accessToken as string);
+    }
+  });
+  beforeEach(async () => {
+    const [cycle] = await sql(`INSERT INTO gpa_cycle(no,from_date,to_date) VALUES (29891,'2040-01-01','2040-01-28') RETURNING id`);
+    cycleId = Number(cycle.id);
+    await sql(`INSERT INTO gpa_alloc(cycle_id,student_id,coord_id,points) VALUES ($1,$2,$3,12)`, [cycleId, STUDENT, ADMIN]);
+    await sql(`INSERT INTO gpa_use(cycle_id,student_id,svc_key,points,on_date,coord_id,note_url,state)
+      VALUES ($1,$2,'hw',$3,$4,$5,'https://example.test/existing','wait')`, [cycleId, STUDENT, point, DAY, ADMIN]);
+  });
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await sql('DELETE FROM gpa_use WHERE cycle_id=$1', [cycleId]);
+    await sql('DELETE FROM gpa_alloc WHERE cycle_id=$1', [cycleId]);
+    await sql('DELETE FROM gpa_cycle WHERE id=$1', [cycleId]);
+    await sql(`UPDATE staff SET role='admin',active=true WHERE id=$1`, [ADMIN]);
+  });
+  afterAll(async () => {
+    if (ds?.isInitialized) {
+      await sql('DELETE FROM stu WHERE id=$1', [STUDENT]);
+      await sql('DELETE FROM staff WHERE id=ANY($1::bigint[])', [[ADMIN, TEACHER]]);
+      if (ownsService) await sql(`DELETE FROM gpasvc WHERE key='hw'`);
+    }
+    if (app) await app.close();
+    if (ds?.isInitialized) await ds.destroy();
+  });
+
+  it.each([
+    ['HTTP', 'http://example.test/note'],
+    ['HTTPS query/fragment', 'https://example.test/note?a=1&b=2#part'],
+    ['앞뒤 일반 공백', '  https://example.test/note  '],
+    ['유니코드 host/path', 'https://예시.한국/기록지'],
+    ['생략', undefined], ['null', null], ['빈 문자열', ''],
+    ['공백', '   '], ['탭/개행만', '\t\n\r'],
+  ])('%s는 기존 trim/NULL 저장·POST→새GET·잔여 감소가 일치한다', async (_label, noteUrl) => {
+    await accepted(noteUrl);
+  });
+
+  it.each(['a', '😀'])('원문500/501자 %s 경계는 기존 MaxLength의 Unicode 문자수를 따른다', async (char) => {
+    const prefix = 'https://example.test/';
+    await accepted(prefix + char.repeat(500 - prefix.length));
+    await rejected(prefix + char.repeat(501 - prefix.length));
+  });
+  it('원문 공백포함500자는 trim 저장하고501자는 trim후 짧아도 거절한다', async () => {
+    const url = 'https://example.test/note';
+    await accepted(url + ' '.repeat(500 - url.length));
+    await rejected(url + ' '.repeat(501 - url.length));
+  });
+  it('trim-empty500자는NULL,501자는URL blank옵션과 무관하게 거절한다', async () => {
+    await accepted(' \t\r\n'.repeat(125));
+    await rejected(' '.repeat(501));
+  });
+  it.each([0, 1, true, false, [], ['https://example.test'], {}, { url: 'https://example.test' }].map((value) => [value]))('비문자열 %j는400·기존사용/배정/잔여/로그불변', rejected);
+  it.each([
+    'javascript:alert(1)', 'data:text/html,test', 'file:///tmp/note', 'ftp://example.test/note',
+    '//example.test/note', '/note', 'example.test/note', 'https://', 'https:///example.test/note',
+    'https://user:password@example.test/note', 'https://user@example.test/note',
+    'https://example.test/a b', 'https://example.test/a\tb', 'https://example.test/a\nb',
+    '\nhttps://example.test/note', 'https://example.test/note\t',
+    'https://example.test/\u0000', 'https://example.test/\u007f', 'https://example.test\\note',
+  ])('위험/비절대 URL %s는400·정상동봉필드도저장하지않음', rejected);
+
+  it('익명401·실제강사403은읽기/생성거절·DB불변이다', async () => {
+    const before = await snapshot();
+    for (const actor of [undefined, TEACHER]) {
+      for (const method of ['get', 'post'] as const) {
+        const path = method === 'get' ? '/gpa' : '/gpa/uses';
+        const call = actor === undefined ? request(app.getHttpServer())[method](path) : http(method, path, actor);
+        const res = method === 'get' ? await call.query({ anchor: DAY }) : await call.send(valid());
+        expect(res.status).toBe(actor === undefined ? 401 : 403);
+      }
+    }
+    expect(await snapshot()).toEqual(before);
+  });
+  it.each([[false, false], [true, false], [false, true], [true, true]] as const)('최종admin=%s/crud=%s는기존두권한정책을보존한다', async (canAdminPage, canCrudAll) => {
+      const auth = app.get(AuthService);
+      const current = auth.currentUser.bind(auth);
+      // STAFF에는 독립10/01 칸이 없으므로 최종 projection만 바꾸고 실제 JWT/guard/SQL을 통과한다.
+      jest.spyOn(auth, 'currentUser').mockImplementation(async (id) => ({ ...await current(id), perms: { canAdminPage, canCrudAll } }));
+      const before = await snapshot();
+      const read = await http('get', '/gpa').query({ anchor: DAY });
+      const created = await http('post', '/gpa/uses').send({ ...valid(), noteUrl: 'https://example.test/note' });
+      const allowed = canAdminPage && canCrudAll;
+      expect({ read: read.status, create: created.status }).toEqual({ read: allowed ? 200 : 403, create: allowed ? 201 : 403 });
+      if (!allowed) expect(await snapshot()).toEqual(before);
+    });
+  it.each([['role', 'teacher', 403], ['active', false, 401]] as const)('기발급토큰의%s회수도다시확인하고쓰기0', async (field, value, status) => {
+      await sql(`UPDATE staff SET ${field}=$1 WHERE id=$2`, [value, ADMIN]);
+      const before = await snapshot();
+      await http('get', '/gpa').query({ anchor: DAY }).expect(status);
+      await http('post', '/gpa/uses').send(valid()).expect(status);
+      expect(await snapshot()).toEqual(before);
+    });
+  it('선택URL의null·길이계약을Swagger에도명시한다', () => {
+    expect(Reflect.getMetadata('swagger/apiModelProperties', GpaUseCreateDto.prototype, 'noteUrl'))
+      .toMatchObject({ type: String, required: false, nullable: true, maxLength: 500 });
   });
 });
