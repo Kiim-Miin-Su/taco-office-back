@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { BookWorkflow1759700000000 } from '../src/migrations/1759700000000-book-workflow';
 import { assertScratch, TEST_URL } from './db';
+import { GpapackLegacyState1762100000000 } from '../src/migrations/1762100000000-gpapack-legacy-state';
 
 const d = TEST_URL ? describe : describe.skip;
 const migration = new BookWorkflow1759700000000();
@@ -58,8 +59,7 @@ d('33 업그레이드 — 기존 배부·반납 원본과 활성 제약', () => 
     await q.query('INSERT INTO staff VALUES (1)');
     await q.query(`INSERT INTO lib VALUES (1,'math')`);
     await q.query(`INSERT INTO vers VALUES (1,1,'1판')`);
-    // 원래 상태를 fixture에 남겨 후속 GPAPACK 정책 회귀를 확장할 수 있게 한다.
-    // 이 시험은 approved→전달 또는 pending 전환의 의미를 확정하지 않는다.
+    // 원래 승인/대기를 보존하고 전달 사실과 구분하는 실제 업그레이드 fixture다.
     await q.query(`INSERT INTO gpapack VALUES
       (1,1,'self','기존 자습 요청','approved','2026-08-20T01:00:00Z'),
       (2,1,'exam','기존 시험 요청','pending','2026-08-21T01:00:00Z')`);
@@ -74,6 +74,49 @@ d('33 업그레이드 — 기존 배부·반납 원본과 활성 제약', () => 
   async function issues(): Promise<unknown[]> {
     return q.query(`SELECT id,lib_id,vers_id,student_id,issued_on,returned_on FROM issue ORDER BY id`);
   }
+
+  it('옛 승인과 대기 원문은 보존하고 전달 시각을 만들지 않는다', async () => {
+    await migration.up(q);
+    expect(await q.query(`SELECT id,legacy_state,state,delivered_at,received_at FROM gpapack ORDER BY id`))
+      .toEqual([
+        { id: '1', legacy_state: 'approved', state: 'pending', delivered_at: null, received_at: null },
+        { id: '2', legacy_state: 'pending', state: 'pending', delivered_at: null, received_at: null },
+      ]);
+    await migration.down(q);
+    expect(await q.query('SELECT id,state FROM gpapack ORDER BY id'))
+      .toEqual([{ id: '1', state: 'approved' }, { id: '2', state: 'pending' }]);
+  });
+
+  it('57은 보존된 원문을 덮어쓰지 않고 이를 지우는 down을 거절한다', async () => {
+    await migration.up(q);
+    const forward = new GpapackLegacyState1762100000000();
+    const before = await q.query('SELECT id,legacy_state FROM gpapack ORDER BY id');
+    await forward.up(q);
+    expect(await q.query('SELECT id,legacy_state FROM gpapack ORDER BY id')).toEqual(before);
+    await q.query('SAVEPOINT no_loss');
+    await expect(forward.down(q)).rejects.toThrow('GPAPACK original states must be preserved');
+    await q.query('ROLLBACK TO SAVEPOINT no_loss');
+    expect(await q.query('SELECT id,legacy_state FROM gpapack ORDER BY id')).toEqual(before);
+  });
+
+  it('이미 옛33을 지난 DB는 원문 미상으로 맞추며 상태·전달 시각을 바꾸지 않는다', async () => {
+    await migration.up(q);
+    await q.query('ALTER TABLE gpapack DROP COLUMN legacy_state');
+    const before = await q.query('SELECT * FROM gpapack ORDER BY id');
+    const forward = new GpapackLegacyState1762100000000();
+    await forward.up(q);
+    expect(await q.query('SELECT legacy_state FROM gpapack')).toEqual([{ legacy_state: null }, { legacy_state: null }]);
+    await forward.down(q);
+    expect(await q.query('SELECT * FROM gpapack ORDER BY id')).toEqual(before);
+  });
+
+  it('반려 등 의미가 다른 옛 상태는 조용히 다시 열지 않는다', async () => {
+    await q.query("UPDATE gpapack SET state='rejected' WHERE id=1");
+    await q.query('SAVEPOINT unsupported_state');
+    await expect(migration.up(q)).rejects.toThrow('GPAPACK legacy state requires explicit migration');
+    await q.query('ROLLBACK TO SAVEPOINT unsupported_state');
+    expect(await q.query('SELECT state FROM gpapack WHERE id=1')).toEqual([{ state: 'rejected' }]);
+  });
 
   it('기존 반납과 같은 학생·책의 현재 배부를 모두 보존한다', async () => {
     await q.query(`INSERT INTO issue VALUES

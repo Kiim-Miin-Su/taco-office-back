@@ -91,11 +91,14 @@ export class BookWorkflow1759700000000 implements MigrationInterface {
     await q.query(`ALTER TABLE "gpapack" ADD COLUMN "received_by" bigint REFERENCES "staff"("id")`);
     await q.query(`ALTER TABLE "gpapack" ADD COLUMN "received_at" timestamptz`);
     await q.query(`ALTER TABLE "gpapack" ADD COLUMN "updated_at" timestamptz NOT NULL DEFAULT now()`);
-    /* 레거시 approved에는 전달 시각 칸이 없었다. 새 상태 제약을 걸기 전에 이관 시각을 명시해
-       "전달 완료인데 전달 시각 없음"인 불가능 행을 만들지 않는다. */
-    await q.query(`UPDATE "gpapack" SET
-      "delivered_at" = CASE WHEN "state" = 'approved' THEN now() ELSE NULL END,
-      "state" = CASE "state" WHEN 'approved' THEN 'delivered' ELSE 'pending' END`);
+    // 승인과 전달은 다른 사실이다. 옛 상태를 보존하고 확인되지 않은 전달 시각은 만들지 않는다.
+    await q.query(`DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM "gpapack" WHERE "state" NOT IN ('open','pending','approved')) THEN
+        RAISE EXCEPTION 'GPAPACK legacy state requires explicit migration';
+      END IF;
+    END $$`);
+    await q.query(`ALTER TABLE "gpapack" ADD COLUMN "legacy_state" varchar(12)`);
+    await q.query(`UPDATE "gpapack" SET "legacy_state" = "state", "state" = 'pending'`);
     await q.query(`ALTER TABLE "gpapack" ADD CONSTRAINT "gpapack_type_valid" CHECK ("pack_type" IN ('exam','self'))`);
     await q.query(`ALTER TABLE "gpapack" ADD CONSTRAINT "gpapack_state_valid" CHECK ("state" IN ('pending','delivered','received'))`);
     await q.query(`ALTER TABLE "gpapack" ADD CONSTRAINT "gpapack_delivery_order" CHECK (
@@ -133,6 +136,8 @@ export class BookWorkflow1759700000000 implements MigrationInterface {
         RAISE EXCEPTION 'BookWorkflow down requires exactly one student per gpapack; refusing lossy rollback';
       END IF;
     END $$`);
+    // Legacy rows may lack the new workflow fields; restoring their student must remain possible.
+    await q.query(`ALTER TABLE "gpapack" DROP CONSTRAINT IF EXISTS "gpapack_required_for_write"`);
     await q.query(`ALTER TABLE "gpapack" ADD COLUMN "student_id" bigint`);
     await q.query(`UPDATE "gpapack" g SET "student_id" = s."student_id"
       FROM (SELECT "gpapack_id", min("student_id") AS "student_id" FROM "gpapack_student" GROUP BY "gpapack_id") s
@@ -141,10 +146,19 @@ export class BookWorkflow1759700000000 implements MigrationInterface {
     await q.query(`DROP TABLE "gpapack_lib"`);
     await q.query(`DROP TABLE "gpapack_student"`);
     await q.query(`ALTER TABLE "gpapack" DROP CONSTRAINT IF EXISTS "gpapack_delivery_order"`);
-    await q.query(`ALTER TABLE "gpapack" DROP CONSTRAINT IF EXISTS "gpapack_required_for_write"`);
     await q.query(`ALTER TABLE "gpapack" DROP CONSTRAINT IF EXISTS "gpapack_state_valid"`);
     await q.query(`ALTER TABLE "gpapack" DROP CONSTRAINT IF EXISTS "gpapack_type_valid"`);
-    await q.query(`UPDATE "gpapack" SET "state" = CASE "state" WHEN 'delivered' THEN 'approved' WHEN 'received' THEN 'approved' ELSE 'pending' END`);
+    const legacyColumn = await q.query(`SELECT 1 FROM pg_attribute
+      WHERE attrelid='gpapack'::regclass AND attname='legacy_state' AND NOT attisdropped`);
+    if (legacyColumn.length) {
+      await q.query(`UPDATE "gpapack" SET "state" = CASE
+        WHEN "state" IN ('delivered','received') THEN 'approved'
+        ELSE COALESCE("legacy_state", 'pending') END`);
+      await q.query(`ALTER TABLE "gpapack" DROP COLUMN "legacy_state"`);
+    } else {
+      await q.query(`UPDATE "gpapack" SET "state" = CASE "state"
+        WHEN 'delivered' THEN 'approved' WHEN 'received' THEN 'approved' ELSE 'pending' END`);
+    }
     await q.query(`ALTER TABLE "gpapack" DROP COLUMN "updated_at", DROP COLUMN "received_at", DROP COLUMN "received_by",
       DROP COLUMN "delivered_at", DROP COLUMN "delivered_by", DROP COLUMN "created_by", DROP COLUMN "coordinator_id", DROP COLUMN "effective_on"`);
     await q.query(`ALTER TABLE "gpapack" RENAME COLUMN "memo" TO "detail"`);

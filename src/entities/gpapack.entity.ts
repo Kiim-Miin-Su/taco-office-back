@@ -30,6 +30,10 @@ export class Gpapack {
   @Column({ type: 'varchar', length: 12, default: 'open' })
   state: string;
 
+  /** 33 적용 전 원문 상태. 승인으로부터 전달 완료를 추정하지 않기 위한 이관 증거. */
+  @Column({ type: 'varchar', length: 12, nullable: true })
+  legacyState: string | null;
+
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
 

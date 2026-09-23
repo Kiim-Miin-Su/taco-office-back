@@ -43,7 +43,7 @@ export class Rpt {
   @Column({ type: 'text', nullable: true })
   rejectReason: string | null;
 
-  /** 올린 사람 — 원본 §69 서명줄. 시각과 **짝**이다 (CHECK rpt_sign_pair) */
+  /** 올린 사람 — 원본 §69 서명줄. 신규/변경 시각과 짝이다 (rpt_signature_transition_trigger). */
   @Column({ type: 'bigint', nullable: true })
   sentBy: number | null;
 
