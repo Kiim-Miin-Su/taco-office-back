@@ -20,8 +20,12 @@ import { DataSource } from 'typeorm';
 import {
   REPORT_WRITTEN_DB, REP_STATE_FROM_DB, reportStateFromDb,
 } from '../src/lib/rules';
-import { REPORTS } from '../src/seed/ops';
+import { REPORTS, REQS } from '../src/seed/ops';
 import { STURATES } from '../src/seed/money';
+import { STUDENTS } from '../src/seed/people';
+import { dataSourceOptions } from '../src/data-source';
+import { Lead } from '../src/entities';
+import { BooksService } from '../src/modules/books/books.service';
 import { DEV_URL } from './db';
 
 /** 규칙이 아는 상태 이름 전부 — 옮긴 값이 여기 없으면 규칙이 못 읽는다. */
@@ -186,11 +190,88 @@ describe('시드 상수 — DB 없이 보는 것', () => {
     }
   });
 
+  /*
+   * 줌 링크(PNOTI)는 회차가 있는 날에만 선다 — 전에는 「오늘 ±1일」로 적어 **금요일에 시드할 때만** 맞았다
+   * (QA 0926 B3: 토요일 시드에서 준비 화면의 안내 줄이 없는 회차를 가리켜 404). 시드하는 요일이 무엇이든 맞아야 하므로
+   * 일주일 일곱 날을 기준일로 바꿔 가며 상수를 다시 읽는다.
+   */
+  it.each(['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24', '2026-09-25', '2026-09-26', '2026-09-27'])(
+    '기준일 %s 에도 줌 링크(PNOTI) 날짜마다 그 수업의 회차가 있다',
+    (today) => {
+      const before = process.env.SEED_TODAY;
+      process.env.SEED_TODAY = today;
+      try {
+        jest.isolateModules(() => {
+          /* eslint-disable @typescript-eslint/no-require-imports -- 기준일(환경 값)을 바꿔 모듈 상수를 다시 읽는다 */
+          const { PNOTIS } = require('../src/seed/outputs') as typeof import('../src/seed/outputs');
+          const { expand } = require('../src/seed/schedule') as typeof import('../src/seed/schedule');
+          /* eslint-enable @typescript-eslint/no-require-imports */
+          const occ = new Set(expand().map((o) => `${o.serId}|${o.onDate}`));
+          for (const p of PNOTIS) expect([p.serId, p.onDate, occ.has(`${p.serId}|${p.onDate}`)]).toEqual([p.serId, p.onDate, true]);
+          // 보낸 줄은 지난 회차, 안 보낸 줄은 오늘 포함 다음 회차 — 「오늘 20:00 … 줌 링크」가 그날 나간 것으로 읽힌다
+          for (const p of PNOTIS) expect(p.sentAt ? p.onDate < today && p.sentAt === p.onDate : p.onDate >= today).toBe(true);
+          // 오늘이 토요일(18번 수업 요일)이면 안 보낸 줄이 오늘 회차에 선다 — 수업 상세의 학부모 발송을 오늘 시험할 수 있다
+          const saturday = new Date(`${today}T00:00:00Z`).getUTCDay() === 6;
+          expect(PNOTIS.filter((p) => !p.sentAt).every((p) => (p.onDate === today) === saturday)).toBe(true);
+        });
+      } finally {
+        if (before === undefined) delete process.env.SEED_TODAY; else process.env.SEED_TODAY = before;
+      }
+    },
+  );
+
   // C94-d 가 `sturate_reason_present` 를 새겼다 — NOT VALID 는 기존 행만 미루고 시드는 언제나 새 INSERT 다 (C86-g 와 같은 자리)
   it('학생별 단가 예외에는 사유가 있다 (sturate_reason_present)', () => {
     for (const r of STURATES) {
       const v = r as { studentId: number; reason?: string };
       expect([v.studentId, (v.reason ?? '').trim() !== '']).toEqual([v.studentId, true]);
     }
+  });
+
+  /*
+   * §38-8 강사 요청 칩 (wave 6) — 시드의 교재 변경 요청은 학생 칸 없이 payload.studentName 으로만 학생을 가리킨다.
+   * 트래킹 보드는 그 이름이 **시드 학생 중 정확히 하나**일 때만 그 학생 줄에 「강사 요청」 칩을 세운다(동명이인은 오귀속하지 않는다).
+   * 원문 컷의 표본 이름(강라율·고은성)은 시드 학생이 아니라서 칩이 한 번도 서지 않았다.
+   */
+  it('교재 변경 요청(§38-8)의 학생 이름은 시드 학생 중 정확히 하나를 가리킨다', () => {
+    const names = STUDENTS.map((s) => s.name as string);
+    const bookChanges = REQS.filter((r) => r.reqType === 'book_change');
+    expect(bookChanges.length).toBeGreaterThan(0);
+    for (const r of bookChanges) {
+      const name = (r.payload as { studentName?: string }).studentName ?? '';
+      expect([name, names.filter((n) => n === name).length]).toEqual([name, 1]);
+    }
+  });
+});
+
+/**
+ * §38-8 — 시드가 든 DB 에서 트래킹 보드(BooksService.tracking · 화면이 받는 그 응답)가 실제로 칩을 세우는가.
+ * 판정(요청 → 학생)은 서비스 한 곳이고 여기서는 결과만 본다. DATABASE_URL 이 없으면 건너뛴다.
+ */
+d('시드 — §38-8 트래킹 보드 강사 요청 칩', () => {
+  let ds: DataSource;
+  beforeAll(async () => {
+    if (dataSourceOptions.type !== 'postgres') throw new Error('PostgreSQL required');
+    ds = new DataSource({ ...dataSourceOptions, url: URL, ssl: false, logging: false });
+    await ds.initialize();
+  });
+  afterAll(async () => { await ds?.destroy(); });
+
+  it('시드의 교재 변경 요청마다 그 학생 줄에 「강사 요청」 칩이 선다', async () => {
+    const tracking = await new BooksService(ds.getRepository(Lead)).tracking();
+    const names = REQS.filter((r) => r.reqType === 'book_change' && r.state === 'pending')
+      .map((r) => (r.payload as { studentName?: string }).studentName);
+    expect(names.length).toBeGreaterThan(0);
+    // 머리 띠의 요청은 전부 실제 학생에 붙는다 — 어느 학생에도 안 붙은 요청(studentId null)이 없다
+    expect(tracking.teacherRequests.filter((request) => request.studentId === null)).toEqual([]);
+    for (const name of names) {
+      const row = tracking.students.find((student) => student.name === name);
+      expect([name, row?.todos.find((todo) => todo.key === 'teacher_request')?.label]).toEqual([name, '강사 요청']);
+    }
+    // 머리 칸 「강사 요청 N」과 칩을 단 학생 수가 같은 말을 한다
+    const head = tracking.states.find((state) => state.key === 'teacher_request')?.count;
+    const chips = tracking.students.reduce((sum, student) =>
+      sum + (student.todos.find((todo) => todo.key === 'teacher_request')?.count ?? 0), 0);
+    expect(chips).toBe(head);
   });
 });

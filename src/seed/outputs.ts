@@ -14,7 +14,7 @@ import { addD, diffD } from '../lib/recurrence';
 import { nowMinKst } from '../lib/kst';
 import { effectiveRepState } from '../lib/rules';
 import { KINDS, SEED_TODAY } from './base';
-import type { OccSeed } from './schedule';
+import { SERS, type OccSeed } from './schedule';
 
 export type RepState = 'na' | 'plan' | 'none' | 'draft' | 'wait' | 'ok' | 'rej';
 
@@ -135,12 +135,28 @@ export const GUIDES = [
     body: '담당 선생님 변경 안내 — 학부모님께 오늘 중 발송 예정입니다.' },
 ];
 
-/** 매번 보내는 것 — 온라인 수업 줌 링크 (§43 · PNOTI) */
+/**
+ * 그 반복 수업의 가장 가까운 회차 날짜 — dir=-1 이면 오늘 **전**, +1 이면 오늘 **뒤** (요일 규칙 SERS.days 에서 낸다).
+ * 줌 링크(PNOTI)는 **회차가 있는 날**에만 선다. 전에는 「오늘 ±1일」로 적어 금요일에 시드할 때만 회차와 맞았고,
+ * 다른 요일에는 없는 회차를 가리켜 준비 화면의 안내 줄이 404 로 끊겼다 (QA 0926 B3).
+ */
+function lessonDay(serId: number, dir: -1 | 1, fromToday = false): string {
+  const ser = SERS.find((s) => s.id === serId);
+  // 안 보낸 줄은 오늘 회차도 받는다 — 오늘이 그 수업 요일이면 「오늘 수업 · 아직 안 보냄」 줄이 선다(수업 상세의 학부모 발송 단추)
+  for (let n = fromToday ? 0 : 1; ser && ser.days.length > 0 && n <= 7; n += 1) {
+    const d = addD(SEED_TODAY, dir * n);
+    if (ser.days.includes(new Date(`${d}T00:00:00Z`).getUTCDay())) return d;
+  }
+  // 조용히 엉뚱한 날짜를 넣지 않는다 — 시드가 멈추는 편이 낫다
+  throw new Error(`시드: 반복 수업 ${serId} 의 가까운 회차를 찾지 못했습니다`);
+}
+
+/** 매번 보내는 것 — 온라인 수업 줌 링크 (§43 · PNOTI). 보낸 줄은 지난 회차 그날, 안 보낸 줄은 오늘 포함 다음 회차 */
 export const PNOTIS = [
-  { serId: 7,  onDate: addD(SEED_TODAY, -1), studentId: 5,  channel: 'app', body: '오늘 20:00 Writing 줌 링크입니다.', sentAt: addD(SEED_TODAY, -1) },
-  { serId: 13, onDate: addD(SEED_TODAY, -1), studentId: 18, channel: 'app', body: '오늘 21:00 SAT Math 줌 링크입니다.', sentAt: addD(SEED_TODAY, -1) },
-  { serId: 18, onDate: addD(SEED_TODAY, 1),  studentId: 15, channel: 'app', body: '내일 12:00 MAP Reading 줌 링크입니다.', sentAt: null },
-  { serId: 18, onDate: addD(SEED_TODAY, 1),  studentId: 19, channel: 'app', body: '내일 12:00 MAP Reading 줌 링크입니다.', sentAt: null },
+  { serId: 7,  onDate: lessonDay(7, -1),  studentId: 5,  channel: 'app', body: '오늘 20:00 Writing 줌 링크입니다.', sentAt: lessonDay(7, -1) },
+  { serId: 13, onDate: lessonDay(13, -1), studentId: 18, channel: 'app', body: '오늘 21:00 SAT Math 줌 링크입니다.', sentAt: lessonDay(13, -1) },
+  { serId: 18, onDate: lessonDay(18, 1, true), studentId: 15, channel: 'app', body: '12:00 MAP Reading 줌 링크입니다.', sentAt: null },
+  { serId: 18, onDate: lessonDay(18, 1, true), studentId: 19, channel: 'app', body: '12:00 MAP Reading 줌 링크입니다.', sentAt: null },
 ];
 
 /** 서가 — 교재 */
