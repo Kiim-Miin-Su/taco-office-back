@@ -386,6 +386,8 @@ d('우측 서랍 — §14~§21', () => {
       ['1시간 안에 제출', '차감 없음', 0], ['1시간 지각 시', '5,000원 차감', 5000], ['4시간 이후', '10,000원 차감', 10000],
     ]);
     t.lateReportTiers.forEach((x: { fromMinutes: number; amount: number }) => expect(tierFor(x.fromMinutes).amount).toBe(x.amount));
+    // 강사 정책 띠 넷(2026-09-25) — 강사도 받는다(그 화면이 강사 화면이다)
+    expect(t.teacherPolicies.map((p: { screen: string }) => p.screen)).toEqual(['unavailable', 'guides', 'history', 'suggestions']);
 
     const m = (await get('/meta', MANAGER).expect(200)).body;
     const [{ n }] = await ds.query('SELECT count(*)::int n FROM stu');

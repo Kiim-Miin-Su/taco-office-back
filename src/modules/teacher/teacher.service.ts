@@ -22,13 +22,12 @@ import type {
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
 } from './teacher.dto';
+import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS } from '../../lib/teacher-policy';
 
-/** 건의 월 한도 (V26 §7 확정 — 서버가 센다, SUGGESTION_QUOTA_EXCEEDED) */
-const SUGGESTION_MONTHLY_LIMIT = 3;
 /** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
 const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
-/** 불가 시간 (N-20 채택 2026-09-12 §4-17) — 등록 대상 **날짜별 7일 전 마감**. 격자 창은 원본 §15/16 의 08:00~23:00. */
-const UNAV_DEADLINE_DAYS = 7;
+/* 건의 월 한도 · 불가 시간 마감(N-20 · 날짜별 7일 전)은 lib/teacher-policy 한 곳 — 강사 정책 띠가 같은 숫자를 읽는다.
+   격자 창은 원본 §15/16 의 08:00~23:00. */
 const UNAV_MIN_START = 8 * 60;
 const UNAV_MAX_END = 23 * 60;
 /** 두 KST 달력일 사이 일수 (b − a) */

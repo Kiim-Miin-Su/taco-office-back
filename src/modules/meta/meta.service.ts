@@ -14,12 +14,13 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Kind, Room, Staff, Stu, Sub, Zacc } from '../../entities';
-import { INV_TYPES, INV_TYPE_LABEL, INV_TYPE_SUB } from '../accounting/accounting.dto';
+import { INV_TYPES, INV_TYPE_LABEL, INV_TYPE_SUB, invTypeIssueBlockedReason } from '../accounting/accounting.dto';
 import { permsOf } from '../../common/perm';
 import {
   ATTENDANCE_CANCEL_REASONS, ATTENDANCE_CANCEL_REASON_LABEL, DEDUCTIBLE_CANCEL_REASONS,
   CANCEL_TREATS, CANCEL_TREAT_LABEL, CANCEL_TREAT_SUB, PENALTY_RULE,
 } from '../../lib/rules';
+import { teacherPolicies } from '../../lib/teacher-policy';
 import type { MetaDto } from './meta.dto';
 
 @Injectable()
@@ -67,6 +68,9 @@ export class MetaService {
       // 종류가 늘어도 화면은 그대로다 — 낱말이 한 곳에서만 온다 (D-R18)
       invTypes: INV_TYPES.map((key) => ({
         key, label: INV_TYPE_LABEL[key], sub: INV_TYPE_SUB[key], other: key !== 'tuition',
+        // 낼 수 있는가도 발행과 같은 판정이다 (PB-01) — 화면이 종류를 골라 놓고 409 를 받지 않게
+        issuable: invTypeIssueBlockedReason(key) === null,
+        issueBlockedReason: invTypeIssueBlockedReason(key),
       })),
       // 휴강 창의 낱말과 정책 — 화면은 select 를 채우고 판정은 서버가 한다 (C92 · D-R39)
       cancelReasons: ATTENDANCE_CANCEL_REASONS.map((key) => ({
@@ -75,6 +79,8 @@ export class MetaService {
       cancelTreats: CANCEL_TREATS.map((key) => ({ key, label: CANCEL_TREAT_LABEL[key], sub: CANCEL_TREAT_SUB[key] })),
       // 리포트 지각 차감 — 판정 정본을 그대로 (작은 것부터). 화면은 금액을 적지 않고 이 배열을 그린다 (D-R32 · 2026-09-25)
       lateReportTiers: PENALTY_RULE.map(({ fromMinutes, amount, range, when, cut, tone }) => ({ fromMinutes, amount, range, when, cut, tone })),
+      // 강사 화면 최상단 정책 띠 — 숫자는 판정 상수에서 (lib/teacher-policy · 2026-09-25)
+      teacherPolicies: teacherPolicies(),
     };
   }
 }

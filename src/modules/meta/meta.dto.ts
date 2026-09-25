@@ -10,6 +10,7 @@
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { ATTENDANCE_CANCEL_REASONS, CANCEL_TREATS, type AttendanceCancelReason, type CancelTreat } from '../../lib/rules';
+import { TEACHER_POLICY_SCREENS, type TeacherPolicyScreen } from '../../lib/teacher-policy';
 
 export class KindDto {
   @ApiProperty() key!: string;
@@ -68,6 +69,10 @@ export class InvTypeDto {
   @ApiProperty({ description: '이름 — §53 카드의 배지' }) label!: string;
   @ApiProperty({ description: '부제 — §57 「그 밖의 수입」 줄의 설명' }) sub!: string;
   @ApiProperty({ description: '수업료가 아닌 돈인가 — §57 이 세는 것' }) other!: boolean;
+  @ApiProperty({ description: '§53 「새 청구서 발행」으로 지금 낼 수 있는가 — 발행(409 INV_TYPE_NOT_SUPPORTED)과 같은 판정 (PB-01)' })
+  issuable!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '못 내는 이유 — 발행 409 의 문장과 같다. 낼 수 있으면 null (PB-01)' })
+  issueBlockedReason!: string | null;
 }
 
 /**
@@ -102,6 +107,16 @@ export class LateReportTierDto {
   @ApiProperty({ enum: ['ok', 'warn', 'bad'], description: '색 — 화면은 이 값만 본다' }) tone!: 'ok' | 'warn' | 'bad';
 }
 
+/**
+ * 강사 정책 띠 한 장 — 대표 결정 2026-09-25 「강사 화면 7개 전부의 최상단」(lib/teacher-policy 한 곳).
+ * 홈·캘린더·리포트는 지각 차감 띠(lateReportTiers)가 그 자리를 맡으므로 여기엔 나머지 넷만 온다.
+ */
+export class TeacherPolicyDto {
+  @ApiProperty({ enum: TEACHER_POLICY_SCREENS, description: '어느 강사 화면의 띠인가' }) screen!: TeacherPolicyScreen;
+  @ApiProperty({ description: '띠 제목' }) title!: string;
+  @ApiProperty({ type: [String], description: '규칙 줄 — 숫자는 판정 상수에서 만든다' }) lines!: string[];
+}
+
 export class MetaDto {
   @ApiProperty({ type: [KindDto] }) kinds!: KindDto[];
   @ApiProperty({ type: [SubDto] }) subs!: SubDto[];
@@ -113,4 +128,5 @@ export class MetaDto {
   @ApiProperty({ type: [CancelReasonDto], description: '휴강 사유 다섯과 차감 가능 여부 (C92)' }) cancelReasons!: CancelReasonDto[];
   @ApiProperty({ type: [CancelTreatDto], description: '휴강 처리 셋 — 이월 · 차감 · 보강 이관 (C92)' }) cancelTreats!: CancelTreatDto[];
   @ApiProperty({ type: [LateReportTierDto], description: '리포트 지각 제출 차감 셋 — 작은 것부터 (D-R32 · 2026-09-25)' }) lateReportTiers!: LateReportTierDto[];
+  @ApiProperty({ type: [TeacherPolicyDto], description: '강사 화면 최상단 정책 띠 — 불가 시간·수업 안내·히스토리·건의 (2026-09-25)' }) teacherPolicies!: TeacherPolicyDto[];
 }
