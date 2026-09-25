@@ -22,6 +22,7 @@ import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { InvoiceDto } from '../accounting/accounting.dto';
 import { BookIssueDto } from '../books/books.dto';
 import { SCHEDULE_INPUT_LIMITS, UnavWarnDto } from '../schedule/schedule.dto';
+import { LeadDiagDto } from './lead-diag.dto';
 
 const ID_MAX = Number.MAX_SAFE_INTEGER;
 
@@ -68,7 +69,11 @@ export class EnrollLineDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '등록 회차 수 — ENR.sessions (비우면 정하지 않음)' })
   @IsOptional() @IsInt() @Min(1) @Max(999) sessions?: number | null;
 
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '교재 — 서가(LIB) id. 있으면 배부 요청(wait)이 남고, 없으면 「교재 배정이 필요합니다」 알림이 간다' })
+  /**
+   * 키를 **보내지 않으면** 상담 진단에서 담당자가 고른 교재(최신 줄 · DQ1)를 그런 줄 가운데 **첫 줄에 한 번** 기본으로 쓴다.
+   * `null` 은 「교재 미정」이라는 명시라 기본값으로 덮지 않는다 — 화면이 기본값을 언제든 바꾸거나 비울 수 있어야 한다.
+   */
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '교재 — 서가(LIB) id. 있으면 배부 요청(wait)이 남고, null 이면 「교재 배정이 필요합니다」 알림이 간다. 키를 빼면 상담 진단에서 담당자가 고른 교재를 첫 그런 줄에 기본으로 쓴다(없으면 null 과 같다)' })
   @IsOptional() @IsInt() @Min(1) @Max(ID_MAX) libId?: number | null;
 }
 
@@ -164,4 +169,8 @@ export class EnrollResultDto {
   @ApiProperty({ description: '알림을 받은 관리자 수' }) notifiedStaff!: number;
   @ApiProperty({ type: [UnavWarnDto], description: '강사 불가 시간에 걸친 회차 — 막지 않고 알린다 (A-07)' }) unavailable!: UnavWarnDto[];
   @ApiProperty({ description: '상담 단계 — 언제나 enrolled' }) stage!: string;
+  /* DQ1 (2026-09-25) — 상담 진단 점수는 lead.student_id 를 따라 그 학생의 것으로 읽힌다. 값을 옮겨 적지 않는다 */
+  @ApiProperty({ description: '교재를 적지 않은 줄에 상담 진단에서 담당자가 고른 교재를 기본으로 요청했는가' }) diagBookApplied!: boolean;
+  @ApiPropertyOptional({ type: LeadDiagDto, nullable: true, description: '그 학생의 최신 상담 진단 — 등록으로 생긴 연결(lead.student_id)을 따라 읽은 값. 없으면 null' })
+  latestDiag?: LeadDiagDto | null;
 }

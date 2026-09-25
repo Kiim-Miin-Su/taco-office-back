@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: people.ts — STUDENTS, ENROLLMENTS, LEADS (seed)
+ * 목적: people.ts — STUDENTS, ENROLLMENTS, LEADS, LEAD_DIAGS, LEAD_PLANS, LEAD_APPTS (seed)
  * 책임/재사용: 격리 개발/테스트 자료 생성용이다. 기존 enum/키/참조 제약을 재사용하고 운영 데이터를 임의 수정하지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -90,3 +90,38 @@ export const LEADS = [
   { id: 17, name: '심우주', studentId: null, school: '삼성중',   ownerId: 3, stage: 'failed',   createdAt: '2026-07-29', stopAt: 'after_second', reason: '시간대 불일치 — 주말반 요청' },
   { id: 18, name: '천보람', studentId: null, school: '휘경고',   ownerId: 4, stage: 'failed',   createdAt: '2026-07-24', stopAt: 'before_first', reason: '타 학원 등록' },
 ];
+
+/**
+ * 상담 단계 진단 점수 세 줄 (DQ1 대표 답변 2026-09-25 「점수만 저장 + 담당자가 선택」 · A-04) — 2차 상담·보류 건에만.
+ *
+ * 레벨·교재는 **담당자가 고른 값**을 적은 표본이다 — 점수에서 계산한 것이 아니고, 이 점수들로 경계를 읽어 내면 안 된다.
+ * 11번(표은결)은 PDF A-04 의 표본 점수 62·71·58 을 그대로 쓰고, 12번(구시온)은 **아직 레벨·교재를 고르기 전**(점수만)이라
+ * 화면의 「담당자가 고릅니다」 빈 칸이 실제로 선다. 교재 id 는 `outputs.LIBS` 의 행이다.
+ */
+export const LEAD_DIAGS = [
+  { leadId: 11, english: 62, math: 71, interview: 58, takenOn: '2026-08-21', level: 'practice', bookId: 2, note: '어머니 동석 · SAT 수학 먼저 희망', createdBy: 4 },
+  { leadId: 12, english: 48, math: 55, interview: 70, takenOn: '2026-08-20', level: null, bookId: null, note: null, createdBy: 3 },
+  { leadId: 13, english: 81, math: 77, interview: 85, takenOn: '2026-08-13', level: 'master', bookId: 3, note: '수락 여부 확인 중', createdBy: 4 },
+] as const;
+
+/**
+ * 배치안 초안 (23-16 · 24-07) — 2차 상담 · 보류 · 실패(「당시 배치안」) 건에만. 원본 §23 카드의 「SAT Reading 주2 · Rebecca」 모양.
+ * 단가는 적지 않는다 — 읽을 때 적은 날의 단가표(RATE)가 붙는다. 강사는 시드의 유일한 강사(7 · 김재훈)다.
+ */
+export const LEAD_PLANS = [
+  { leadId: 11, seq: 1, kindKey: 'class', subKey: 'sat-math', perWeek: 2, teacherId: 7, createdBy: 4, on: '2026-08-21' },
+  { leadId: 13, seq: 1, kindKey: 'class', subKey: 'map-read', perWeek: 3, teacherId: 7, createdBy: 4, on: '2026-08-13' },
+  { leadId: 13, seq: 2, kindKey: 'class', subKey: 'writing', perWeek: 2, teacherId: null, createdBy: 4, on: '2026-08-13' },
+  { leadId: 14, seq: 1, kindKey: 'class', subKey: 'ap-chem', perWeek: 2, teacherId: 7, createdBy: 3, on: '2026-08-10' },
+  { leadId: 17, seq: 1, kindKey: 'class', subKey: 'sat-read', perWeek: 2, teacherId: 7, createdBy: 3, on: '2026-07-31' },
+] as const;
+
+/**
+ * 2차 · 진단 일정 (23-15) — 2차 대기 두 건. 시간표 회차는 만들지 않은 상태(「미생성」)라 「스케줄에 N건 만들기」가 실제로 선다.
+ * 강의실 3 = 3층 컨설팅룸 · 1 = 2층 A강의실. 날짜는 rel() 로 시드 기준일에 맞춰 앞으로 밀린다.
+ */
+export const LEAD_APPTS = [
+  { leadId: 9, kind: 'diag', onDate: '2026-08-31', startMin: 600, endMin: 660, mode: 'offline', roomId: 1, createdBy: 4 },
+  { leadId: 9, kind: 'second', onDate: '2026-09-02', startMin: 870, endMin: 930, mode: 'offline', roomId: 3, createdBy: 4 },
+  { leadId: 10, kind: 'second', onDate: '2026-09-01', startMin: 1140, endMin: 1200, mode: 'online', roomId: null, createdBy: 3 },
+] as const;

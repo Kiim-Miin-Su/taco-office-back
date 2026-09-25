@@ -54,6 +54,12 @@ describe('§23·§24 LEAD 응답 projection', () => {
       failFrom: null, revivalStage: null, revivalSource: null,
       // C90: 옛 건은 유입 경로 NULL(보정 0) · 끝난 결과라 다음 단계 없음 · 접촉 없음 → 칩 없음
       source: null, sourceLabel: null, nextStages: [], touches: [], lastTouchAt: null, nextOn: null, nextLabel: null, nextTone: null,
+      // DQ1: 최신 진단은 같은 SELECT 의 LATERAL 로 붙는다(왕복 수 그대로) — 적은 적이 없으면 null
+      latestDiag: null,
+      // wave 3 (23-10 · 23-12 · 24-04~06) — 옛 실패 건: 도달 기록이 없어 실패일·재연락·단계 기한을 **짓지 않는다**(N-25) · 학년·사유 분류 NULL
+      grade: null, reasonKind: null, reasonKindLabel: null, failedAt: null, recontact: null, stageDue: null,
+      // wave 3 (23-15 · 23-16) — 배치안 초안 · 2차/진단 일정은 같은 SELECT 의 JSON 칸(왕복 수 그대로) · 적은 적이 없으면 [] · 보류가 아니면 재확인 날짜 null
+      plan: [], appts: [], recheckOn: null,
     }]);
     // 7 고정 목록 + 접촉 원장 1회(lead_id = ANY — 건마다 묻지 않는다 · C90) + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
     // + §60 대표 피드백 글타래 1회 (C53) + §62 기획 기한 1회 (C56)
@@ -126,10 +132,12 @@ describe('§23·§24 LEAD 응답 projection', () => {
   });
 
   it.each([['2026-09-07', 3], ['2026-09-10', 0], ['2026-09-11', 0]])('접수일 %s와 KST 경과 %i일의 기존 의미를 유지한다', async (createdAt, ageDays) => {
-    const { svc } = service([row({ created_at: createdAt, failed_at: '2026-09-09' })]);
+    const { svc } = service([row({ created_at: createdAt, failed_at: '2026-09-09T15:20:00+09:00' })]);
     const [lead] = (await svc.all(1, false, false)).leads;
+    // 경과일은 여전히 접수일에서 센다 — 실패한 날로 바꿔 세지 않는다
     expect(lead).toMatchObject({ createdAt, ageDays });
-    expect(lead).not.toHaveProperty('failedAt');
+    // wave 3 (24-04) — 실패한 날은 도달 기록의 「등록 실패」 줄에서 **날짜만** 내려간다. 날 열(raw)은 새지 않는다
+    expect(lead.failedAt).toBe('2026-09-09');
     expect(lead).not.toHaveProperty('failed_at');
   });
 });
@@ -187,7 +195,9 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     range: { from: null, to: null, label: '전체' },
     areaCounts: [], mtTypeCounts: [], todoOwnerCounts: [], todoDoneOwnerCounts: [], mtTypes: [],
     canCreateMeeting: false, canCreatePlan: false,
-    intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [], sources: [], touchKinds: [], followUpSoon: 0, funnelSince: null },
+    // w5 — 탭 동그라미·§63 머리 칩의 수도 서버가 센다 (C-4 · 67-2 · 63-5 · 63-6)
+    cplOverdue: 0, planPending: 0, mtMyWaiting: 0, mtMinutesCount: 0,
+    intakeHead: { funnel: [], enrollRate: 0, owners: [], alerts: [], stops: [], sources: [], touchKinds: [], followUpSoon: 0, funnelSince: null, failReasons: [] },
   };
 
   beforeAll(async () => {
@@ -216,10 +226,16 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     }
   });
 
-  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 22필드로 명시한다 (11 + N-25 실패 이력 3 + C90 유입·접촉·다음 단계 8)', () => {
+  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 32필드로 명시한다 (11 + N-25 실패 이력 3 + C90 유입·접촉·다음 단계 8 + DQ1 최신 진단 1 + wave 3 여섯 + 배치안·일정·재확인 셋)', () => {
     const schema = openApi.components?.schemas?.LeadDto;
     if (!schema || '$ref' in schema) throw new Error('LeadDto schema 누락');
-    expect(Object.keys(schema.properties ?? {})).toHaveLength(22);
+    expect(Object.keys(schema.properties ?? {})).toHaveLength(32);
+    // wave 3 — 학년 · 사유 분류 · 실패일 · 재연락 · 단계 기한은 더해진 칸이고 옛 건은 null 이다(선택 · 기존 소비자를 깨지 않는다)
+    for (const field of ['grade', 'reasonKind', 'reasonKindLabel', 'failedAt', 'recontact', 'stageDue', 'plan', 'appts', 'recheckOn']) {
+      expect(schema.required ?? []).not.toContain(field);
+    }
+    // DQ1 — 최신 진단 한 줄은 더해진 칸이고 없으면 null 이다(선택 · 기존 소비자를 깨지 않는다)
+    expect(schema.required).not.toContain('latestDiag');
     // C90 — 판정·낱말은 서버 (D-R18 · D-R37): 다음 단계 목록과 접촉 원장은 필수 배열, 칩 한 줄과 색은 nullable
     expect(schema.required).toEqual(expect.arrayContaining(['nextStages', 'touches']));
     for (const field of ['source', 'sourceLabel', 'lastTouchAt', 'nextOn', 'nextLabel', 'nextTone']) {
@@ -265,6 +281,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       // 늘어난 둘은 **결재까지 가는 길**이지 검색이 아니다 — stage='review' 로 가는 길이 없어
       // §69 「결재 대기」 배지가 구조적으로 0 이었고, research 를 쓰는 API 도 없었다 (전수 검수 §5).
       '/ops/plans/{id}', '/ops/plans/{id}/stage', '/ops/plans/{id}/due', '/ops/plans/{id}/review',
+      // §65 「+ 대표 지시」 (w5 · 65-4) — 과제(TODO) 한 줄을 쓰는 길이지 검색이 아니다
+      '/ops/plans/{id}/tasks',
       // §66 회의 상세 — 상세·속기록·할 일 배정 (C57)
       '/ops/meetings/{id}', '/ops/meetings/{id}/minutes', '/ops/meetings/{id}/todos',
     ]);
@@ -303,7 +321,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     expect(JSON.stringify(create.post?.requestBody)).toContain('#/components/schemas/LeadCreateDto');
     const createDto = openApi.components?.schemas?.LeadCreateDto;
     if (!createDto || '$ref' in createDto) throw new Error('LeadCreateDto schema 누락');
-    expect(Object.keys(createDto.properties ?? {})).toEqual(['name', 'school', 'source', 'ownerId', 'note']);
+    // wave 3 (23-10) — 학년은 더해진 선택 칸이다(필수 둘은 그대로)
+    expect(Object.keys(createDto.properties ?? {})).toEqual(['name', 'school', 'source', 'ownerId', 'note', 'grade']);
     expect(createDto.required).toEqual(['name', 'source']);
     expect(createDto.properties?.source).toMatchObject({ enum: ['kakao', 'phone', 'blog', 'instagram', 'referral', 'walkin'] });
     const move = openApi.paths['/ops/leads/{id}/stage'];
@@ -470,7 +489,8 @@ describe('§23 상담 머리 (C86-a)', () => {
     expect([at('consultDue').label, at('consultDue').count]).toEqual(['상담 오늘·지남 2', 2]);
     expect([at('followUpLate').label, at('followUpLate').count]).toEqual(['사후 관리 밀림 1', 1]);
     expect(out.followUpSoon).toBe(2);
-    expect(out.alerts.map((a) => a.key)).toEqual(['unpaid', 'noSchedule', 'noInvoice', 'consultDue', 'followUpLate']);
+    // 차례는 원본 §23 경고 줄 그대로 (wave3 23-08)
+    expect(out.alerts.map((a) => a.key)).toEqual(['consultDue', 'followUpLate', 'unpaid', 'noSchedule', 'noInvoice']);
   });
 
   it('퍼널은 여섯 칸이고 등록·등록 실패만 결과 칸이다 — 순서와 낱말이 서버에 있다', async () => {
