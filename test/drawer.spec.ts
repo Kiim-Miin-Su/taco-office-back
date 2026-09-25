@@ -110,7 +110,8 @@ describe('§75 역할별 projection 위임 — DB 독립', () => {
     );
     controller.all({ id: 1, name: '권한 검수', role }, {});
     // C97 — 여섯째 인자 canWage: 강사만 false. 구성원 칸의 시급 projection 은 이 값으로만 켜진다(D-R39 · 화면은 role 을 보지 않는다)
-    expect(svc.all).toHaveBeenCalledWith(1, role !== 'teacher', role !== 'teacher', false, scope, role !== 'teacher');
+    // W8 — 일곱째 인자 canManageStaff(canAdminPage + canCrudAll): 줄 단추(수정·초기화·사용 중지·삭제)는 이 값으로만 켜진다
+    expect(svc.all).toHaveBeenCalledWith(1, role !== 'teacher', role !== 'teacher', false, scope, role !== 'teacher', role !== 'teacher');
   });
 });
 

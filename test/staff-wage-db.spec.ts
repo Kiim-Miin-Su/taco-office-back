@@ -18,6 +18,7 @@ import { AppModule } from '../src/app.module';
 import { Lead } from '../src/entities';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { wageRateAt } from '../src/lib/wage';
+import { INITIAL_PASSWORD } from '../src/lib/account-policy';
 import { DEV_URL } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
@@ -132,19 +133,20 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${t}`).timeout({ response: 8000, deadline: 15000 });
 
   /* ── D-41 ─────────────────────────────────────────────────────────────── */
-  it('D-41 「+ 구성원」 — 강사 계정이 서고 바로 로그인되며, 비밀번호는 해시로만 남고 응답에 없다 · 시급을 적으면 같은 트랜잭션에 WAGE 한 줄(입사일이 지났으면 오늘부터)', async () => {
+  it('D-41 「+ 구성원」 — 강사 계정이 서고 초기 비밀번호로 로그인되며(첫 설정 대상), 해시는 응답에 없다 · 시급을 적으면 같은 트랜잭션에 WAGE 한 줄(입사일이 지났으면 오늘부터)', async () => {
+    // W8 — 비밀번호는 서버가 초기 비밀번호로 정한다(칸이 없다). 넘겨줄 정보만 이 응답에 실린다
     const res = await api('post', '/drawer/staff').send({
-      name: ' 박수진 ', email: NEW_EMAIL.toUpperCase(), password: 'first-pw-1234', role: 'teacher', title: '영어', tz: 'America/New_York',
+      name: ' 박수진 ', email: NEW_EMAIL.toUpperCase(), role: 'teacher', title: '영어', tz: 'America/New_York',
       hiredOn: plus(TODAY, -30), wageRate: 42000,
     }).expect(201);
-    expect(res.body).toMatchObject({ name: '박수진', email: NEW_EMAIL, role: 'teacher', title: '영어', tz: 'America/New_York', active: true, wageRate: 42000, wageFrom: TODAY });
-    expect(JSON.stringify(res.body)).not.toMatch(/password|hash|first-pw/i);
+    expect(res.body).toMatchObject({ name: '박수진', email: NEW_EMAIL, role: 'teacher', title: '영어', tz: 'America/New_York', active: true, wageRate: 42000, wageFrom: TODAY, loginId: NEW_EMAIL, initialPassword: INITIAL_PASSWORD, mustChangeCredentials: true });
+    expect(JSON.stringify(res.body)).not.toMatch(/password_?hash|\$2[aby]\$/i);
     const [row] = await q<{ password_hash: string; hired_on: string }>(`SELECT password_hash, to_char(hired_on,'YYYY-MM-DD') AS hired_on FROM staff WHERE id = $1`, [res.body.id]);
-    expect(row.password_hash).not.toContain('first-pw');
-    expect(await bcrypt.compare('first-pw-1234', row.password_hash)).toBe(true);
+    expect(row.password_hash).not.toContain(INITIAL_PASSWORD);
+    expect(await bcrypt.compare(INITIAL_PASSWORD, row.password_hash)).toBe(true);
     expect(row.hired_on).toBe(plus(TODAY, -30));
-    // 그 계정으로 바로 들어온다 — 강사 화면
-    const login = await request(app.getHttpServer()).post('/auth/login').send({ email: NEW_EMAIL, password: 'first-pw-1234' }).expect(201);
+    // 그 계정으로 들어온다 — 강사 화면(첫 설정은 W8 인증 흐름이 요구한다)
+    const login = await request(app.getHttpServer()).post('/auth/login').send({ email: NEW_EMAIL, password: INITIAL_PASSWORD }).expect(201);
     expect(login.body.me?.role ?? login.body.user?.role ?? login.body.role).toBe('teacher');
     const wages = await q<{ rate: string; from_date: string; reason: string; approved_by: string }>(
       `SELECT rate, to_char(from_date,'YYYY-MM-DD') AS from_date, reason, approved_by FROM wage WHERE staff_id = $1`, [res.body.id]);
@@ -166,20 +168,19 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     expect(asTeacher.members.every((m: { wageable?: boolean; wageRate?: number | null }) => m.wageable === false && m.wageRate === null)).toBe(true);
   });
 
-  it('구성원 추가의 거절 — 같은 이메일 409 · 모르는 시간대 409 · 대표·관리자 역할은 DTO 가 400 · 짧은 비밀번호 400 · 강사 403', async () => {
-    await api('post', '/drawer/staff').send({ name: '중복', email: NEW_EMAIL, password: 'another-pw-1', role: 'manager' }).expect(409)
+  it('구성원 추가의 거절 — 같은 이메일 409 · 모르는 시간대 409 · 대표·관리자 역할은 DTO 가 400 · 강사 403 (비밀번호 칸의 400 은 staff-crud-w8-db.spec)', async () => {
+    await api('post', '/drawer/staff').send({ name: '중복', email: NEW_EMAIL, role: 'manager' }).expect(409)
       .expect((r) => expect(r.body.code).toBe('STAFF_EMAIL_TAKEN'));
-    await api('post', '/drawer/staff').send({ name: '화성', email: 'mars-c97@t.kr', password: 'another-pw-1', role: 'teacher', tz: 'Mars/Olympus' }).expect(409)
+    await api('post', '/drawer/staff').send({ name: '화성', email: 'mars-c97@t.kr', role: 'teacher', tz: 'Mars/Olympus' }).expect(409)
       .expect((r) => expect(r.body.code).toBe('TZ_UNKNOWN'));
-    await api('post', '/drawer/staff').send({ name: '대표', email: 'ceo2-c97@t.kr', password: 'another-pw-1', role: 'ceo' }).expect(400);
-    await api('post', '/drawer/staff').send({ name: '관리', email: 'adm2-c97@t.kr', password: 'another-pw-1', role: 'admin' }).expect(400);
-    await api('post', '/drawer/staff').send({ name: '짧음', email: 'short-c97@t.kr', password: '1234567', role: 'teacher' }).expect(400);
-    await api('post', '/drawer/staff', teacherToken).send({ name: '강사가', email: 't-c97@t.kr', password: 'another-pw-1', role: 'teacher' }).expect(403);
+    await api('post', '/drawer/staff').send({ name: '대표', email: 'ceo2-c97@t.kr', role: 'ceo' }).expect(400);
+    await api('post', '/drawer/staff').send({ name: '관리', email: 'adm2-c97@t.kr', role: 'admin' }).expect(400);
+    await api('post', '/drawer/staff', teacherToken).send({ name: '강사가', email: 't-c97@t.kr', role: 'teacher' }).expect(403);
     // 거절은 아무것도 남기지 않는다
     expect(await q(`SELECT id FROM staff WHERE email IN ('mars-c97@t.kr','ceo2-c97@t.kr','adm2-c97@t.kr','short-c97@t.kr','t-c97@t.kr')`)).toEqual([]);
     // 서비스로 곧장 불러도 역할 밖은 DTO 가 아니라 표(role_t)가 막는다 — 값이 enum 밖이면 22P02
     const svc = new DrawerService(ds.getRepository(Lead));
-    await expect(svc.createStaff(MANAGER, true, { name: 'x', email: 'x-c97@t.kr', password: 'another-pw-1', role: 'nope' })).rejects.toBeTruthy();
+    await expect(svc.createStaff(MANAGER, true, { name: 'x', email: 'x-c97@t.kr', role: 'nope' })).rejects.toBeTruthy();
     expect(await q(`SELECT id FROM staff WHERE email = 'x-c97@t.kr'`)).toEqual([]);
   });
 
@@ -208,8 +209,8 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     expect(await wageRateAt(ds, TEACHER, plus(TODAY, 7))).toBe(47000);
     const notis = await q<{ body: string; category: string }>(`SELECT body, category FROM noti WHERE to_id = $1 ORDER BY id`, [TEACHER]);
     expect(notis.map((n) => n.body)).toEqual([
-      expect.stringContaining(`45,000원 로 바뀝니다 — ${TODAY} 수업부터 · 3년차`),
-      expect.stringContaining(`47,000원 로 바뀝니다 — ${plus(TODAY, 7)} 수업부터`),
+      expect.stringContaining(`45,000원으로 바뀝니다 — ${TODAY} 수업부터 · 3년차`),
+      expect.stringContaining(`47,000원으로 바뀝니다 — ${plus(TODAY, 7)} 수업부터`),
     ]);
     // 서랍 §17 의 「지금 시급」도 같은 판정 — 예약 줄이 아니라 오늘 줄
     const drawer = (await api('get', '/drawer').expect(200)).body;

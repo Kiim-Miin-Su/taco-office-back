@@ -252,12 +252,48 @@ export class MemberDto {
   /* 「시급 수정」 단추가 서는 줄 — 강사이고 활성이며 보는 이가 canWage 일 때만. 화면은 role 을 보지 않고 이 값만 본다 (D-R39) */
   @ApiPropertyOptional({ description: '시급 줄을 둘 수 있는 사람인가 — 활성 강사 · canWage 아니면 false (C97 · D-R39)' })
   wageable?: boolean;
+
+  /* ── W8 사용자 표 CRUD (대표 지시 2026-09-26) — 줄마다 **서버가** 가른다. 화면은 role 을 보지 않는다 (D-R39) ── */
+  @ApiPropertyOptional({ description: '첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩' })
+  mustChangeCredentials?: boolean;
+  @ApiPropertyOptional({ ...S, description: '휴대폰(숫자만) — 전체를 다루는 사람(canCrudAll)에게만 싣는다. 그 밖에는 null' })
+  phone?: string | null;
+  @ApiPropertyOptional({ ...S, description: '입사일 YYYY-MM-DD — 「수정」 창의 처음 값. 옛 계정은 null 일 수 있다' })
+  hiredOn?: string | null;
+  @ApiPropertyOptional({ description: '「수정」 — 보는 이가 매니저 이상이고 이 줄이 강사·매니저일 때만 (대표·관리자 줄은 이 길로 못 고친다)' })
+  canEdit?: boolean;
+  @ApiPropertyOptional({ description: '수정 창에서 역할을 바꿀 수 있는가 — canEdit 이고 **자기 줄이 아닐 때만** (자기 역할은 못 바꾼다)' })
+  canChangeRole?: boolean;
+  @ApiPropertyOptional({ description: '「비밀번호 초기화」 — canEdit 이고 자기 줄이 아닐 때만 (자기 것은 첫 설정 흐름으로 바꾼다)' })
+  canResetPassword?: boolean;
+  @ApiPropertyOptional({ description: '「사용 중지」·「다시 사용」 — canEdit 이고 자기 줄이 아닐 때만' })
+  canToggleActive?: boolean;
+  @ApiPropertyOptional({ description: '「삭제」 — canEdit 이고 자기 줄이 아닐 때만. 기록이 있으면 서버가 409 로 막는다(사용 중지로 막는다)' })
+  canDelete?: boolean;
 }
 
 /** 새 구성원이 될 수 있는 역할 — 대표·관리자 계정은 이 길로 만들지 않는다(권한 상승 경로를 두지 않는다 · C97) */
 export const STAFF_CREATE_ROLES = ['teacher', 'manager'] as const;
 
-/** §17 「+ 구성원」 (C97 · 테스트 시나리오 D-41 「신규 강사 등록」). 비밀번호는 저장만 하고 어느 응답에도 싣지 않는다 */
+/**
+ * 넘겨줄 정보 — 아이디(=이메일)와 초기 비밀번호 (W8 · 대표 지시 2026-09-26 「아이디 및 비밀번호 생성하여 넘겨줄 수 있게」).
+ * **이 응답과 비밀번호 초기화 응답에만** 실린다 — 목록·기록(log)에는 없다. 첫 로그인 때 반드시 바꾸게 되어 있다.
+ */
+export class StaffHandoverDto {
+  @ApiProperty({ description: '로그인 아이디 — 이메일' }) loginId!: string;
+  @ApiProperty({ description: '초기 비밀번호 — 서버 상수(운영 값). 첫 로그인 때 반드시 바꾼다' }) initialPassword!: string;
+}
+
+/** 「+ 구성원」의 응답 — 만든 줄(MemberDto) + 넘겨줄 정보 */
+export class StaffCreatedDto extends MemberDto {
+  @ApiProperty({ description: '로그인 아이디 — 이메일' }) loginId!: string;
+  @ApiProperty({ description: '초기 비밀번호 — 이 응답에만 실린다' }) initialPassword!: string;
+}
+
+/**
+ * §17 「+ 구성원」 (C97 · 테스트 시나리오 D-41 「신규 강사 등록」).
+ * **비밀번호 칸이 없다** (W8) — 서버가 늘 초기 비밀번호로 만들고 첫 로그인 때 바꾸게 한다. 보내면 400(허용 밖 필드).
+ */
 export class StaffCreateDto {
   @ApiProperty({ maxLength: 40 })
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
@@ -268,10 +304,6 @@ export class StaffCreateDto {
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
   @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
   email!: string;
-
-  @ApiProperty({ minLength: 8, maxLength: 72, description: '첫 비밀번호 — 로그인 규칙과 같은 8자 이상' })
-  @IsString() @MinLength(8, { message: '비밀번호는 8자 이상입니다' }) @MaxLength(72)
-  password!: string;
 
   @ApiProperty({ enum: [...STAFF_CREATE_ROLES], description: '강사 · 매니저 — 대표·관리자는 만들지 않는다' })
   @IsIn([...STAFF_CREATE_ROLES], { message: '역할은 강사 · 매니저 중 하나입니다' })
@@ -285,7 +317,7 @@ export class StaffCreateDto {
   @IsOptional() @IsString() @MaxLength(40)
   tz?: string | null;
 
-  @ApiPropertyOptional({ ...S, maxLength: 20 })
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '휴대폰 — 숫자만 남겨 저장한다(한국 휴대폰만 · 아니면 400)' })
   @IsOptional() @IsString() @MaxLength(20)
   phone?: string | null;
 
@@ -296,6 +328,59 @@ export class StaffCreateDto {
   @ApiPropertyOptional({ type: Number, nullable: true, minimum: 1000, description: '기본 시급(원/시간) — 적으면 입사일(또는 오늘)부터의 WAGE 한 줄이 같은 트랜잭션에 선다 · 소급 없음' })
   @IsOptional() @IsInt() @Min(1000) @Max(10_000_000)
   wageRate?: number | null;
+}
+
+/* ══ §17 사용자 표 CRUD (W8 · 대표 지시 2026-09-26 「매니저 이상급부터 user table CRUD」) ══════════
+   대상은 **강사·매니저 줄뿐**이다 — 대표·관리자 줄은 403 STAFF_PROTECTED (매니저가 대표 계정을 고치거나 가져가지 못하게).
+   자기 줄은 역할 · 비밀번호 초기화 · 사용 중지 · 삭제가 막힌다. 시급은 여기서 고치지 않는다(「시급 수정」 · C97). */
+
+export class StaffParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  id!: number;
+}
+
+/**
+ * 「수정」 — 보낸 칸만 바꾼다(생략 = 그대로). 이름·이메일·역할·시간대·입사일은 null 을 받지 않는다 —
+ * 지우는 값이 아니기 때문이다. 직함·휴대폰은 null 또는 빈 글이면 비운다.
+ */
+export class StaffPatchDto {
+  @ApiPropertyOptional({ maxLength: 40 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @ValidateIf((_o, v) => v !== undefined) @IsString() @MinLength(1, { message: '이름을 적어 주세요' }) @MaxLength(40)
+  name?: string;
+
+  @ApiPropertyOptional({ format: 'email', maxLength: 120, description: '로그인 아이디 — 유일(대소문자 무시). 바꾸면 이메일 확인이 풀린다' })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
+  @ValidateIf((_o, v) => v !== undefined) @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
+  email?: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '휴대폰 — 숫자만 남겨 저장(한국 휴대폰만 · 아니면 400). null·빈 글이면 비운다. 바꾸면 휴대폰 확인이 풀린다' })
+  @IsOptional() @IsString() @MaxLength(20)
+  phone?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '직함 — 권한과 무관 (D-R39). null·빈 글이면 비운다' })
+  @IsOptional() @IsString() @MaxLength(20)
+  title?: string | null;
+
+  @ApiPropertyOptional({ maxLength: 40, description: '시간대 — 시간대 그룹(tzg)에 있는 값만' })
+  @ValidateIf((_o, v) => v !== undefined) @IsString() @MinLength(1) @MaxLength(40)
+  tz?: string;
+
+  @ApiPropertyOptional({ enum: [...STAFF_CREATE_ROLES], description: '강사 · 매니저 — 대표·관리자로는 못 바꾼다. 자기 역할은 403 SELF_ROLE' })
+  @ValidateIf((_o, v) => v !== undefined) @IsIn([...STAFF_CREATE_ROLES], { message: '역할은 강사 · 매니저 중 하나입니다' })
+  role?: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '입사일 YYYY-MM-DD' })
+  @ValidateIf((_o, v) => v !== undefined) @IsCalendarDate()
+  hiredOn?: string;
+}
+
+/** 「사용 중지」·「다시 사용」 — 사용 중지된 계정은 다음 요청부터 인증이 막힌다(기존 활성 검사) */
+export class StaffActiveDto {
+  @ApiProperty({ description: 'false = 사용 중지 · true = 다시 사용' })
+  @IsBoolean()
+  active!: boolean;
 }
 
 /**

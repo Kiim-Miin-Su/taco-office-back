@@ -29,7 +29,8 @@ import { ScheduleService } from '../schedule/schedule.service';
 import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
   ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
-  StaffCreateDto, TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
+  StaffActiveDto, StaffCreateDto, StaffCreatedDto, StaffHandoverDto, StaffParamsDto, StaffPatchDto,
+  TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
   TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
@@ -53,6 +54,8 @@ export class DrawerController {
       canApprove: role !== null && hasPerm(role, 'canApprove', user.perms),
       canSeeAll: role !== null && hasPerm(role, 'canCrudAll', user.perms),
       canEditTodoDue: role !== null && hasPerm(role, 'canAdminPage', user.perms) && hasPerm(role, 'canCrudAll', user.perms),
+      // §17 사용자 표 CRUD 의 줄 단추 — 쓰기 경로의 @Perm('canAdminPage','canCrudAll') 과 같은 둘 (W8)
+      canManageStaff: role !== null && hasPerm(role, 'canAdminPage', user.perms) && hasPerm(role, 'canCrudAll', user.perms),
       canWage: role !== null && hasPerm(role, 'canWage', user.perms),
       approvalFlowScope: role === null ? 'none' as const : approvalFlowScope(role, user.perms),
     };
@@ -62,25 +65,88 @@ export class DrawerController {
   @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 승인함/결재 흐름 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
   all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
-    const { canApprove, canSeeAll, canWage, approvalFlowScope: flowScope } = this.gate(user);
+    const { canApprove, canSeeAll, canWage, canManageStaff, approvalFlowScope: flowScope } = this.gate(user);
     // notiWindow=all 은 **보여 주는 범위**만 넓힌다 — 지운 적이 없으므로 예전 것이 그대로 나온다 (N-7 · D-16)
-    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage);
+    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage, canManageStaff);
   }
 
-  /* ══ §17 구성원 (C97 · 테스트 시나리오 D-41) ═══════════════════════════════ */
+  /* ══ §17 구성원 (C97 · 테스트 시나리오 D-41) · 사용자 표 CRUD (W8 · 대표 지시 2026-09-26) ═══════════ */
 
   @Post('staff')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
-    summary: '「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41)',
-    description: '이름 · 이메일(유일) · 첫 비밀번호(해시로만 저장 · 응답에 없다) · 역할 둘 · 직함 · 시간대(tzg) · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). 대표·관리자 계정은 이 길로 만들지 않는다.',
+    summary: '「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41 · W8)',
+    description: '이름 · 이메일(유일 · 로그인 아이디) · 역할 둘 · 직함 · 시간대(tzg) · 휴대폰(숫자만) · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). '
+      + '**비밀번호는 받지 않는다** — 서버가 초기 비밀번호로 만들고 첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 건다. '
+      + '응답에 넘겨줄 정보(loginId · initialPassword)가 이때만 실린다. 대표·관리자 계정은 이 길로 만들지 않는다.',
   })
-  @ApiCreatedResponse({ type: MemberDto })
+  @ApiCreatedResponse({ type: StaffCreatedDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(허용 밖 필드 — password 포함) | STAFF_PHONE_INVALID' })
   @ApiConflictResponse({ description: 'code STAFF_EMAIL_TAKEN | TZ_UNKNOWN | WAGE_SAME_DAY' })
   @ApiForbiddenResponse({ description: 'code WAGE_SET_FORBIDDEN — 시급을 적었는데 canWage 가 없다 (S4)' })
-  createStaff(@CurrentUser() user: RequestUser, @Body() dto: StaffCreateDto): Promise<MemberDto> {
+  createStaff(@CurrentUser() user: RequestUser, @Body() dto: StaffCreateDto): Promise<StaffCreatedDto> {
     // 만들기는 canCrudAll, **시급은 canWage** — 다른 권한이므로 따로 넘긴다 (S4)
     return this.svc.createStaff(user.id, this.gate(user).canWage, dto);
+  }
+
+  @Patch('staff/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§17 「수정」 — 강사·매니저 줄의 이름 · 이메일 · 휴대폰 · 직함 · 시간대 · 역할 · 입사일 (W8)',
+    description: '보낸 칸만 바꾼다. 대표·관리자 줄은 403 STAFF_PROTECTED, 자기 역할은 403 SELF_ROLE. 이메일을 바꾸면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀린다. 시급은 「시급 수정」에서만.',
+  })
+  @ApiOkResponse({ type: MemberDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드 · 역할 ceo/admin) | STAFF_PHONE_INVALID' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_ROLE' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'STAFF_EMAIL_TAKEN | TZ_UNKNOWN | EMPTY_PATCH' })
+  updateStaff(
+    @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Body() dto: StaffPatchDto,
+  ): Promise<MemberDto> {
+    return this.svc.updateStaff(user.id, this.gate(user).canWage, p.id, dto);
+  }
+
+  @Post('staff/:id/password-reset')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§17 「비밀번호 초기화」 — 초기 비밀번호로 되돌리고 첫 설정을 다시 건다 (W8)',
+    description: '자기 것은 403 SELF_RESET(첫 설정 흐름으로 바꾼다), 대표·관리자 줄은 403 STAFF_PROTECTED. 그 계정의 이전 로그인은 끊긴다(credentials_changed_at). 응답은 넘겨줄 정보 — 기록(log)에는 비밀번호가 없다.',
+  })
+  @ApiCreatedResponse({ type: StaffHandoverDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_RESET' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  resetStaffPassword(@CurrentUser() user: RequestUser, @Param() p: StaffParamsDto): Promise<StaffHandoverDto> {
+    return this.svc.resetStaffPassword(user.id, p.id);
+  }
+
+  @Patch('staff/:id/active')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§17 「사용 중지」·「다시 사용」 (W8)',
+    description: '사용 중지된 계정은 다음 요청부터 인증이 막히고 로그인도 안 된다(기존 활성 검사). 자기 것은 403 SELF_ACTIVE, 대표·관리자 줄은 403 STAFF_PROTECTED. 같은 값이면 그대로 돌려준다.',
+  })
+  @ApiOkResponse({ type: MemberDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_ACTIVE' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  setStaffActive(
+    @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Body() dto: StaffActiveDto,
+  ): Promise<MemberDto> {
+    return this.svc.setStaffActive(user.id, this.gate(user).canWage, p.id, dto.active);
+  }
+
+  @Delete('staff/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§17 「삭제」 — 기록이 하나도 없는 계정만 지운다 (W8)',
+    description: '잘못 만든 계정을 치우는 길이다. 시급 줄 · 할 일 · 알림 · 수업 등 이 계정을 가리키는 행이 하나라도 있으면 409 STAFF_HAS_RECORDS — 사용 중지로 막는다. 자기 것은 403 SELF_DELETE, 대표·관리자 줄은 403 STAFF_PROTECTED.',
+  })
+  @ApiOkResponse({ type: OkDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_DELETE' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'STAFF_HAS_RECORDS' })
+  async deleteStaff(@CurrentUser() user: RequestUser, @Param() p: StaffParamsDto): Promise<OkDto> {
+    await this.svc.deleteStaff(user.id, p.id);
+    return { ok: true };
   }
 
   @Patch('todos/:id')
@@ -237,10 +303,18 @@ export class DrawerController {
     return { id, conflicts: [] };
   }
 
-  /** 요청서에 안 적힌 값은 원본 회차에서 가져와 채운다 — 「강사만 바꾸는」 요청도 시각이 필요하다 */
+  /**
+   * 요청서에 안 적힌 값은 원본 회차에서 가져와 채운다 — 「강사만 바꾸는」 요청도 시각이 필요하다.
+   *
+   * 날짜는 **그 회차가 실제로 놓인 날**(`base.date`)이다. 요청서의 `onDate` 는 규칙이 찍은 날(EXC 키)이라
+   * 다른 날로 옮긴 회차에서는 엉뚱한 날의 겹침을 보게 된다. 키는 저장(`createChangeReq`)과 반영(patch)에만 쓴다.
+   */
   private async previewConflicts(
     dto: NormalizedChangeRequest,
-    base: { startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null },
+    base: {
+      startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null;
+      date: string;
+    },
   ) {
     if (dto.reqType === 'cancel') return [];
 
@@ -257,7 +331,7 @@ export class DrawerController {
     }
 
     return this.sched.conflicts({
-      onDate: dto.onDate,
+      onDate: base.date,
       startMin: dto.reqType === 'time_move' ? dto.payload.startMin : base.startMin,
       endMin: dto.reqType === 'time_move' ? dto.payload.endMin : base.endMin,
       teacherId: dto.reqType === 'teacher' ? dto.payload.teacherId : base.teacherId,

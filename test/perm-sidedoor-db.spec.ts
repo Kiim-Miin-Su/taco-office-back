@@ -161,7 +161,8 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
   /* ── ① 구성원 추가의 시급 ─────────────────────────────────────────── */
 
   it('① 시급 예외가 걸린 매니저는 「+ 구성원」으로도 시급을 못 세운다 — 만들기 자체는 막지 않는다', async () => {
-    const base = { name: '새강사', email: NEW_EMAIL, password: 'sidedoor-new-1', role: 'teacher' as const };
+    // 비밀번호는 서버가 정한다(W8) — 본문에 싣지 않는다
+    const base = { name: '새강사', email: NEW_EMAIL, role: 'teacher' as const };
 
     // 시급을 적으면 403 — 그리고 **아무것도 남지 않는다**(구성원도 안 생긴다)
     const blocked = await api('post', '/drawer/staff', noWage).send({ ...base, wageRate: 50000 }).expect(403);

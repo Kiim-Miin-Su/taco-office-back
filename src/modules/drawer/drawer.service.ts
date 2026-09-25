@@ -27,18 +27,47 @@ import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest 
 import { ZoomService } from '../zoom/zoom.service';
 import { NOTI_CATEGORIES, NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
 import { groupByRole, roleLabel } from '../../lib/role-words';
-import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
+import { START_MIN, END_MIN, kstAt, kstDateOf, writtenRows } from '../../lib/sql';
 import { todoSourceLabel } from '../../lib/todo';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
 import { insertWage } from '../../lib/wage';
+import { INITIAL_PASSWORD, normalizeLoginEmail, normalizeMobile } from '../../lib/account-policy';
+import { staffRecordTables } from '../../lib/staff-refs';
+import { maskEmail, maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
-import type { ChreqReviewDto, DrawerDto, MemberDto, ReqReviewDto, StaffCreateDto, TodoCreateDto, TodoPatchDto } from './drawer.dto';
+import { STAFF_CREATE_ROLES } from './drawer.dto';
+import type {
+  ChreqReviewDto, DrawerDto, MemberDto, ReqReviewDto, StaffCreateDto, StaffCreatedDto, StaffHandoverDto, StaffPatchDto,
+  TodoCreateDto, TodoPatchDto,
+} from './drawer.dto';
 import bcrypt from 'bcryptjs';
 
 type R = Record<string, unknown>;
 
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
+const staffNotFound = () => new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
+const staffEmailTaken = () =>
+  new ConflictException({ code: 'STAFF_EMAIL_TAKEN', message: '그 이메일로 이미 구성원이 있습니다 — 로그인 아이디는 하나여야 합니다' });
+
+/** 휴대폰 칸 — 비우면 null, 적었으면 숫자만(한국 휴대폰만). 모양이 아니면 400 — 번호 원문은 오류에 싣지 않는다 */
+function staffPhoneOf(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined || raw.trim() === '') return null;
+  const phone = normalizeMobile(raw);
+  if (!phone) throw new BadRequestException({ code: 'STAFF_PHONE_INVALID', message: '휴대폰 번호 모양이 아닙니다 — 010으로 시작하는 번호를 적어 주세요' });
+  return phone;
+}
+
+/**
+ * §17 줄마다의 단추 — **서버가 가른다** (W8 · D-R39). 보는 이가 매니저 이상(canManage)이고 그 줄이 강사·매니저일 때만
+ * 「수정」이 서고, 자기 줄은 역할 · 초기화 · 사용 중지 · 삭제가 빠진다. 대표·관리자 줄에는 아무것도 서지 않는다.
+ */
+function staffRowFlags(canManage: boolean, manageable: boolean, self: boolean) {
+  const edit = canManage && manageable;
+  const other = edit && !self;
+  return { canEdit: edit, canChangeRole: other, canResetPassword: other, canToggleActive: other, canDelete: other };
+}
 
 @Injectable()
 export class DrawerService {
@@ -264,6 +293,8 @@ export class DrawerService {
     notiAll = false,
     flowScope: ApprovalFlowScope = 'none',
     canWage = false,
+    /** §17 줄 단추(수정·초기화·사용 중지·삭제)를 세울 수 있는가 — canAdminPage + canCrudAll (쓰기 경로의 @Perm 과 같은 둘) */
+    canManageStaff = false,
   ): Promise<DrawerDto> {
     const approvalRows = await this.approvalRows();
     const approvals = apFlow(approvalRows, viewerId, canApprove, canWage);
@@ -331,8 +362,12 @@ export class DrawerService {
     // 지금 시급은 **볼 수 있는 사람에게만** 싣는다(canWage · D-R39) — 못 보면 조회 자체를 안 한다. 회차의 시급과 같은 정의(오늘 이하의 마지막 줄 · lib/wage)
     // 구성원 목록(§17)도 전체를 볼 수 있는 사람(canCrudAll)에게만 싣는다 — 강사에게는 **자기 한 줄**뿐이다.
     // 이메일은 로그인 아이디다. 강사 화면은 서랍을 그리지 않지만 경로는 열려 있으므로 SELECT 단계에서 뺀다 (보안 검수 0925 · D-R39)
+    // 휴대폰도 연락처라 전체를 다루는 사람(canCrudAll)에게만 싣는다 — 아니면 SELECT 단계에서 뺀다 (W8)
     const members = (await this.q(
       `SELECT s.id, s.name, s.email, s.role::text AS role, s.title, s.tz, s.active,
+              CASE WHEN $3::boolean THEN s.phone END AS phone, s.must_change_credentials,
+              to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
+              (s.role::text = ANY($5::text[])) AS manageable,
               w.rate AS wage_rate, to_char(w.from_date,'YYYY-MM-DD') AS wage_from,
               (s.role = 'teacher' AND s.active) AS wageable
          FROM staff s
@@ -343,7 +378,7 @@ export class DrawerService {
          ) w ON true
         WHERE $3::boolean OR s.id = $4
         ORDER BY s.active DESC, s.id`,
-      [todayKst(), canWage, canSeeAll, viewerId],
+      [todayKst(), canWage, canSeeAll, viewerId, [...STAFF_CREATE_ROLES]],
     )).map((r) => ({
       id: Number(r.id), name: String(r.name), email: String(r.email),
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
@@ -351,6 +386,11 @@ export class DrawerService {
       wageFrom: canWage ? str(r.wage_from) : null,
       // 시급 줄을 둘 수 있는 줄은 표가 가른다(활성 강사) — 화면이 role 을 보지 않게 (D-R39)
       wageable: canWage && r.wageable === true,
+      mustChangeCredentials: r.must_change_credentials === true,
+      phone: str(r.phone),
+      hiredOn: str(r.hired_on),
+      // 「수정」·「비밀번호 초기화」·「사용 중지」·「삭제」가 서는 줄도 표가 가른다(강사·매니저 · 자기 줄 제외) — W8
+      ...staffRowFlags(canManageStaff, r.manageable === true, Number(r.id) === viewerId),
     }));
 
     /* 묶음은 **같은 배열**에서 낸다 — 따로 질의하면 목록과 인원이 갈린다 (D-R37 · D-R22) */
@@ -460,7 +500,7 @@ export class DrawerService {
    * **그 예외가 존재하는 이유 자체를 우회한다.** 구성원을 만드는 것과 시급을 정하는 것은 다른 권한이므로
    * 만들기 자체는 막지 않고 **시급 칸만** 막는다 — 시급을 비우면 그대로 만들어진다.
    */
-  async createStaff(viewerId: number, canWage: boolean, dto: StaffCreateDto): Promise<MemberDto> {
+  async createStaff(viewerId: number, canWage: boolean, dto: StaffCreateDto): Promise<StaffCreatedDto> {
     const today = todayKst();
     if (dto.wageRate != null && !canWage) {
       throw new ForbiddenException({
@@ -468,23 +508,35 @@ export class DrawerService {
         message: '시급을 다룰 권한이 필요합니다 — 시급을 비우고 만든 뒤 시급 담당자가 「시급 수정」으로 세울 수 있습니다',
       });
     }
+    // 휴대폰은 숫자만 저장한다 — 첫 설정의 문자 확인(SENS)이 같은 모양을 본다 (lib/account-policy)
+    const phone = staffPhoneOf(dto.phone);
     const tz = dto.tz?.trim() || KST;
     const [known] = (await this.q(`SELECT tz FROM tzg WHERE tz = $1`, [tz])) as Array<{ tz: string }>;
     if (!known) {
       throw new ConflictException({ code: 'TZ_UNKNOWN', message: '시간대 목록에 없는 값입니다 — 구성원·시간대에서 먼저 추가하세요' });
     }
-    const [taken] = (await this.q(`SELECT id FROM staff WHERE lower(email) = lower($1)`, [dto.email])) as Array<{ id: string }>;
-    if (taken) {
-      throw new ConflictException({ code: 'STAFF_EMAIL_TAKEN', message: '그 이메일로 이미 구성원이 있습니다 — 로그인 아이디는 하나여야 합니다' });
-    }
+    const email = normalizeLoginEmail(dto.email);
+    const [taken] = (await this.q(`SELECT id FROM staff WHERE lower(email) = $1`, [email])) as Array<{ id: string }>;
+    if (taken) throw staffEmailTaken();
     const hiredOn = dto.hiredOn ?? today;
-    const hash = await bcrypt.hash(dto.password, 10);
+    /*
+     * 비밀번호는 **서버가** 정한다 (W8 · 대표 지시 2026-09-26) — 만드는 사람이 고른 비밀번호는 만든 사람도 안다.
+     * 초기 비밀번호로 만들고 첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 걸어 둔다. 첫 로그인 때 본인이 바꾼다.
+     */
+    const hash = await bcrypt.hash(INITIAL_PASSWORD, 10);
     const id = await this.anyRepo.manager.transaction(async (m: EntityManager) => {
-      const [made] = (await m.query(
-        `INSERT INTO staff (name, email, phone, role, title, tz, password_hash, hired_on, active)
-         VALUES ($1, lower($2), $3, $4::role_t, $5, $6, $7, $8::date, true) RETURNING id`,
-        [dto.name, dto.email, dto.phone?.trim() || null, dto.role, dto.title?.trim() || null, tz, hash, hiredOn],
-      )) as Array<{ id: string }>;
+      let made: { id: string };
+      try {
+        [made] = (await m.query(
+          `INSERT INTO staff (name, email, phone, role, title, tz, password_hash, hired_on, active, must_change_credentials)
+           VALUES ($1, $2, $3, $4::role_t, $5, $6, $7, $8::date, true, true) RETURNING id`,
+          [dto.name, email, phone, dto.role, dto.title?.trim() || null, tz, hash, hiredOn],
+        )) as Array<{ id: string }>;
+      } catch (e) {
+        // 동시에 같은 이메일로 만든 사람이 있으면 표의 유일 제약이 마지막에 막는다 — 오류 원문(값이 든다) 대신 같은 409 문장
+        if ((e as { code?: string }).code === '23505') throw staffEmailTaken();
+        throw e;
+      }
       const staffId = Number(made.id);
       let wage: { fromDate: string } | null = null;
       if (dto.wageRate != null) {
@@ -498,15 +550,24 @@ export class DrawerService {
       return staffId;
     });
     // 만든 줄의 시급도 **볼 수 있는 사람에게만** 싣는다 — 여기서만 true 를 박으면 목록과 응답이 갈린다 (D-R39)
-    return this.memberOne(id, canWage);
+    const member = await this.memberOne(id, canWage, viewerId, true);
+    // 넘겨줄 정보는 **이 응답에만** 싣는다 — 목록·기록(log)에는 없다
+    return { ...member, loginId: member.email, initialPassword: INITIAL_PASSWORD };
   }
 
-  /** 구성원 한 줄 — `all()` 의 members 와 같은 모양(시급은 canWage 일 때만) */
-  private async memberOne(id: number, canWage: boolean): Promise<MemberDto> {
+  /**
+   * 구성원 한 줄 — `all()` 의 members 와 같은 모양(시급은 canWage 일 때만 · 휴대폰과 줄 플래그는 canManage 일 때만).
+   * 부르는 곳은 전부 매니저 이상 경로(`@Perm('canAdminPage','canCrudAll')`)다.
+   */
+  private async memberOne(id: number, canWage: boolean, viewerId: number, canManage: boolean): Promise<MemberDto> {
     const [r] = await this.q(
-      `SELECT id, name, email, role::text AS role, title, tz, active, (role = 'teacher' AND active) AS wageable FROM staff WHERE id = $1`, [id],
+      `SELECT id, name, email, phone, role::text AS role, title, tz, active, must_change_credentials,
+              to_char(hired_on,'YYYY-MM-DD') AS hired_on,
+              (role = 'teacher' AND active) AS wageable, (role::text = ANY($2::text[])) AS manageable
+         FROM staff WHERE id = $1`,
+      [id, [...STAFF_CREATE_ROLES]],
     );
-    if (!r) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
+    if (!r) throw staffNotFound();
     const wage = canWage ? await this.q(
       `SELECT rate, to_char(from_date,'YYYY-MM-DD') AS from_date FROM wage WHERE staff_id = $1 AND from_date <= $2::date ORDER BY from_date DESC LIMIT 1`,
       [id, todayKst()],
@@ -516,7 +577,187 @@ export class DrawerService {
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
       wageRate: wage[0] ? Number(wage[0].rate) : null, wageFrom: wage[0] ? String(wage[0].from_date) : null,
       wageable: canWage && r.wageable === true,
+      mustChangeCredentials: r.must_change_credentials === true,
+      phone: canManage ? str(r.phone) : null,
+      hiredOn: str(r.hired_on),
+      ...staffRowFlags(canManage, r.manageable === true, Number(r.id) === viewerId),
     };
+  }
+
+  /* ══ §17 사용자 표 CRUD (W8 · 대표 지시 2026-09-26 「매니저 이상급부터 user table CRUD 가능하게」) ══════
+     경로 가드는 컨트롤러의 `@Perm('canAdminPage','canCrudAll')` 이고, 여기서는 **대상 줄**을 다시 본다 —
+     대표·관리자 줄은 이 길로 못 건드린다(STAFF_PROTECTED · 매니저가 대표 계정을 고치거나 가져가지 못하게).
+     자기 줄은 역할 · 초기화 · 사용 중지 · 삭제가 막힌다 — 자기 계정을 스스로 잠그거나 올리는 길을 두지 않는다. */
+
+  /** 대상 줄을 잠그고 읽는다 — 없으면 404, 강사·매니저가 아니면 403 */
+  private async lockManageable(m: EntityManager, id: number): Promise<Record<string, unknown>> {
+    const [row] = (await m.query(
+      `SELECT id, name, email, phone, role::text AS role, title, tz, active, must_change_credentials,
+              to_char(hired_on,'YYYY-MM-DD') AS hired_on, (role::text = ANY($2::text[])) AS manageable
+         FROM staff WHERE id = $1 FOR UPDATE`,
+      [id, [...STAFF_CREATE_ROLES]],
+    )) as Array<Record<string, unknown>>;
+    if (!row) throw staffNotFound();
+    if (row.manageable !== true) {
+      throw new ForbiddenException({ code: 'STAFF_PROTECTED', message: '대표·관리자 계정은 여기서 바꿀 수 없습니다' });
+    }
+    return row;
+  }
+
+  /**
+   * 「수정」 — 보낸 칸만 바꾼다. 이메일(=아이디)을 바꾸면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀린다
+   * (확인한 것은 **옛 값**이다). 기록(log)에는 바뀐 칸만 남기고 연락처는 가린 모양으로만 적는다.
+   */
+  async updateStaff(viewerId: number, canWage: boolean, id: number, dto: StaffPatchDto): Promise<MemberDto> {
+    const phone = dto.phone === undefined ? undefined : staffPhoneOf(dto.phone);
+    await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const row = await this.lockManageable(m, id);
+      const cur: Record<string, string | null> = {
+        name: str(row.name), email: str(row.email), phone: str(row.phone), title: str(row.title),
+        tz: str(row.tz), role: str(row.role), hiredOn: str(row.hired_on),
+      };
+      const next: Record<string, string | null | undefined> = {
+        name: dto.name, email: dto.email === undefined ? undefined : normalizeLoginEmail(dto.email), phone,
+        title: dto.title === undefined ? undefined : (dto.title?.trim() || null),
+        tz: dto.tz?.trim(), role: dto.role, hiredOn: dto.hiredOn,
+      };
+      // 보낸 값 중 **지금과 다른 것만** 바꾼다 — 같은 값을 다시 보낸 칸은 바뀐 것이 아니다
+      const changed: Record<string, string | null> = {};
+      for (const key of Object.keys(next)) {
+        const value = next[key];
+        if (value !== undefined && value !== cur[key]) changed[key] = value;
+      }
+      if (Object.keys(changed).length === 0) {
+        throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 항목이 없습니다' });
+      }
+      if ('role' in changed && id === viewerId) {
+        throw new ForbiddenException({ code: 'SELF_ROLE', message: '자기 역할은 바꿀 수 없습니다 — 다른 매니저 이상에게 부탁하세요' });
+      }
+      if ('tz' in changed) {
+        const [known] = (await m.query(`SELECT tz FROM tzg WHERE tz = $1`, [changed.tz])) as Array<{ tz: string }>;
+        if (!known) {
+          throw new ConflictException({ code: 'TZ_UNKNOWN', message: '시간대 목록에 없는 값입니다 — 구성원·시간대에서 먼저 추가하세요' });
+        }
+      }
+      if ('email' in changed) {
+        const [taken] = (await m.query(`SELECT id FROM staff WHERE lower(email) = $1 AND id <> $2`, [changed.email, id])) as Array<{ id: string }>;
+        if (taken) throw staffEmailTaken();
+      }
+      // 칸 이름은 이 표에서만 온다 — 보낸 글이 SQL 이 되지 않는다(값은 전부 $n)
+      const COLUMN: Record<string, string> = {
+        name: 'name', email: 'email', phone: 'phone', title: 'title', tz: 'tz', role: 'role', hiredOn: 'hired_on',
+      };
+      const sets: string[] = [];
+      const params: unknown[] = [id];
+      for (const [key, value] of Object.entries(changed)) {
+        params.push(value);
+        const cast = key === 'role' ? '::role_t' : key === 'hiredOn' ? '::date' : '';
+        sets.push(`${COLUMN[key]} = $${params.length}${cast}`);
+      }
+      if ('email' in changed) sets.push('email_verified = false');
+      if ('phone' in changed) sets.push('phone_verified = false');
+      try {
+        await m.query(`UPDATE staff SET ${sets.join(', ')} WHERE id = $1`, params);
+      } catch (e) {
+        // 동시에 같은 이메일로 바꾼 사람이 있으면 표의 UNIQUE 가 마지막에 막는다
+        if ((e as { code?: string }).code === '23505') throw staffEmailTaken();
+        throw e;
+      }
+      const shown = (key: string, value: string | null) =>
+        value === null ? null : key === 'email' ? maskEmail(value) : key === 'phone' ? maskPhone(value) : value;
+      const before: Record<string, string | null> = {};
+      const after: Record<string, string | null> = {};
+      for (const [key, value] of Object.entries(changed)) {
+        before[key] = shown(key, cur[key] ?? null);
+        after[key] = shown(key, value);
+      }
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'update',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify(before), JSON.stringify(after)],
+      );
+    });
+    return this.memberOne(id, canWage, viewerId, true);
+  }
+
+  /**
+   * 「비밀번호 초기화」 — 초기 비밀번호로 되돌리고 첫 설정을 다시 건다. 세션을 끊는 시각(credentials_changed_at)도
+   * 적는다 — 그 전에 받은 토큰은 인증에서 막힌다(W8-A). 자기 것은 첫 설정 흐름으로 바꾼다(SELF_RESET).
+   */
+  async resetStaffPassword(viewerId: number, id: number): Promise<StaffHandoverDto> {
+    if (id === viewerId) {
+      throw new ForbiddenException({ code: 'SELF_RESET', message: '자기 비밀번호는 여기서 초기화하지 않습니다 — 로그인한 뒤 첫 설정 화면에서 바꾸세요' });
+    }
+    const hash = await bcrypt.hash(INITIAL_PASSWORD, 10);
+    const email = await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const row = await this.lockManageable(m, id);
+      await m.query(
+        `UPDATE staff SET password_hash = $2, must_change_credentials = true, credentials_changed_at = now() WHERE id = $1`,
+        [id, hash],
+      );
+      // 비밀번호·해시는 기록하지 않는다 — 「초기화했다」는 사실과 첫 설정 상태만 남긴다
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'password_reset',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify({ mustChangeCredentials: row.must_change_credentials === true }), JSON.stringify({ mustChangeCredentials: true })],
+      );
+      return String(row.email);
+    });
+    return { loginId: email, initialPassword: INITIAL_PASSWORD };
+  }
+
+  /** 「사용 중지」·「다시 사용」 — 같은 값이면 아무것도 적지 않고 그대로 돌려준다(두 번 눌러도 같다) */
+  async setStaffActive(viewerId: number, canWage: boolean, id: number, active: boolean): Promise<MemberDto> {
+    if (id === viewerId) {
+      throw new ForbiddenException({ code: 'SELF_ACTIVE', message: '자기 계정은 사용 중지할 수 없습니다' });
+    }
+    await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const row = await this.lockManageable(m, id);
+      if ((row.active === true) === active) return;
+      await m.query(`UPDATE staff SET active = $2 WHERE id = $1`, [id, active]);
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,$3,$4::jsonb,$5::jsonb)`,
+        [viewerId, id, active ? 'activate' : 'deactivate', JSON.stringify({ active: !active }), JSON.stringify({ active })],
+      );
+    });
+    return this.memberOne(id, canWage, viewerId, true);
+  }
+
+  /**
+   * 「삭제」 — **기록이 하나도 없는** 계정만 지운다(잘못 만든 계정을 치우는 길). 기록이 있으면 409 로 막고 사용 중지로 안내한다.
+   *
+   * 「기록」은 셋이다 — ① FK 가 없는 staff 칸(`STAFF_SOFT_REFS` · 시급 WAGE 포함) ② 지우면 조용히 같이 사라지거나
+   * 비워질 FK(CASCADE · SET NULL — 계정 자신의 인증 코드는 뺀다) ③ NO ACTION · RESTRICT FK — DB 가 23503 으로 막는다.
+   * ①②는 먼저 묻고 ③은 DB 에 맡긴다. 셋 다 같은 트랜잭션이라 막히면 **아무것도 안 사라진다.**
+   */
+  async deleteStaff(viewerId: number, id: number): Promise<void> {
+    if (id === viewerId) {
+      throw new ForbiddenException({ code: 'SELF_DELETE', message: '자기 계정은 지울 수 없습니다' });
+    }
+    const hasRecords = () => new ConflictException({ code: 'STAFF_HAS_RECORDS', message: '기록이 있는 구성원은 지울 수 없습니다 — 사용 중지로 막아 주세요' });
+    await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      await this.lockManageable(m, id);
+      if ((await staffRecordTables(m, id)).length > 0) throw hasRecords();
+      let gone: Array<Record<string, unknown>>;
+      try {
+        gone = writtenRows<Record<string, unknown>>(await m.query(
+          `DELETE FROM staff WHERE id = $1
+           RETURNING name, role::text AS role, title, tz, active, to_char(hired_on,'YYYY-MM-DD') AS hired_on, ${kstAt('created_at')} AS created_at`,
+          [id],
+        ));
+      } catch (e) {
+        if ((e as { code?: string }).code === '23503') throw hasRecords();
+        throw e;
+      }
+      const r = gone[0];
+      if (!r) throw staffNotFound();
+      // 지운 줄은 되살릴 수 없으므로 흔적을 남긴다 — 비밀번호·해시·연락처는 적지 않는다
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'delete',$3::jsonb,'{}'::jsonb)`,
+        [viewerId, id, JSON.stringify({
+          name: str(r.name), role: str(r.role), title: str(r.title), tz: str(r.tz),
+          active: r.active === true, hiredOn: str(r.hired_on), createdAt: str(r.created_at),
+        })],
+      );
+    });
   }
 
   /** §15 수동 할 일 만들기. 다른 사람에게 배정하려면 canCrudAll 이어야 한다. */
@@ -919,13 +1160,21 @@ export class DrawerService {
     return rows[0]?.found === true;
   }
 
-  /** 겹침을 볼 때 필요한 회차의 시각·자원 — 요청서에 안 적힌 것은 원본에서 가져온다 */
+  /**
+   * 겹침을 볼 때 필요한 회차의 시각·자원 — 요청서에 안 적힌 것은 원본에서 가져온다.
+   *
+   * `onDate` 는 규칙이 찍은 날(EXC 키)이라 **옮긴 회차는 실제로 놓인 날과 다르다**. 겹침은 달력 위의
+   * 자리를 보는 일이므로 그 회차가 놓인 KST 날짜(`date`)를 함께 준다 — 스케줄 `conflicts()` 가 받는 날이
+   * 그것이다(C84-b 가 적어 둔 키 ↔ 달력 구분 · README 7-3 「변경 요청 겹침 미리보기」 관찰).
+   */
   async occOf(serId: number, onDate: string): Promise<{
     startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null;
+    date: string;
   } | null> {
     const rows = await this.q(
       `SELECT ${START_MIN} AS start_min, ${END_MIN} AS end_min,
-              o.teacher_id, o.room_id, o.zacc_id
+              o.teacher_id, o.room_id, o.zacc_id,
+              to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS placed_on
          FROM ser_occ o WHERE o.ser_id = $1 AND o.on_date = $2 LIMIT 1`,
       [serId, onDate],
     );
@@ -934,6 +1183,7 @@ export class DrawerService {
     return {
       startMin: Number(r.start_min), endMin: Number(r.end_min),
       teacherId: num(r.teacher_id), roomId: num(r.room_id), zaccId: num(r.zacc_id),
+      date: String(r.placed_on),
     };
   }
 }

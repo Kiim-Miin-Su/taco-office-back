@@ -429,6 +429,305 @@
         ]
       }
     },
+    "/auth/onboarding": {
+      "get": {
+        "description": "낱말(채널 이름 · 못 보내는 까닭 · 비밀번호 규칙)은 서버가 준다. 첫 설정이 필요 없는 계정은 required=false.",
+        "operationId": "OnboardingController_info",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingInfoDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED: 로그인이 필요하다(첫 설정도 Access 토큰으로만 연다).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "첫 설정 안내 — 해야 하는지 · 지금 아이디 · 비밀번호 규칙 · 코드 채널",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/onboarding/codes": {
+      "post": {
+        "description": "코드와 받는 곳 원문은 저장하지 않는다(HMAC · 가린 모양만). 10분 유효 · 같은 채널 60초 간격 · 한 시간 5번.",
+        "operationId": "OnboardingController_codes",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingCodeRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingCodeResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST(입력 모양) · INVALID_EMAIL · INVALID_PHONE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED: 로그인이 필요하다(첫 설정도 Access 토큰으로만 연다).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ONBOARDING_NOT_REQUIRED(이미 첫 설정을 마친 계정) · EMAIL_TAKEN(다른 계정의 이메일 · 대소문자 무관)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "CODE_TOO_SOON(60초 안) · CODE_LIMIT(한 시간 5번)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "SEND_FAILED — 공급자가 거절 · 그 코드는 쓸 수 없게 닫는다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "SENDER_NOT_CONFIGURED — 발송 설정 없음 · 코드 줄을 만들지 않는다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "인증 코드 받기 — 새 아이디(이메일) 또는 휴대폰으로 6자리",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/onboarding/complete": {
+      "post": {
+        "description": "성공하면 로그인과 같다: Access 는 본문, Refresh 는 httpOnly 쿠키. 그 전에 발급된 이 계정의 토큰은 모두 401 이 된다.",
+        "operationId": "OnboardingController_complete",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingCompleteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST(입력 모양) · INVALID_EMAIL · INVALID_PHONE · PASSWORD_RULE(규칙 문장 그대로)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED: 로그인이 필요하다(첫 설정도 Access 토큰으로만 연다).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ONBOARDING_NOT_REQUIRED(이미 첫 설정을 마친 계정) · SAME_AS_CURRENT · EMAIL_TAKEN · CODE_NOT_REQUESTED · CODE_EXPIRED · CODE_LOCKED · CODE_MISMATCH(틀린 횟수는 남는다)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "첫 설정 마치기 — 새 아이디(이메일) · 새 비밀번호 · 휴대폰과 두 코드를 한 번에",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/meta": {
       "get": {
         "description": "학생 명단과 줌 회의 번호는 관리 화면(canAdminPage)에만 싣는다 — 강사에게는 students 가 빈 배열, meetingId 가 null 이다 (보안 검수 0925 · D-R39).",
@@ -643,6 +942,404 @@
           }
         },
         "summary": "회차 목록 — 일간·주간·월간·학생별·선생님별이 모두 이것을 쓴다",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/schedule/holidays": {
+      "get": {
+        "operationId": "ScheduleController_holidays",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "example": "2026-08-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "example": "2026-08-31",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HolidayListDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_RANGE: from 이 to 보다 뒤",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "공휴일 이름표 — 기간 안의 날만 (표시 전용 · 일정을 막지 않는다)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/schedule/unavailable": {
+      "get": {
+        "operationId": "ScheduleController_unavailable",
+        "parameters": [
+          {
+            "name": "from",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "example": "2026-08-01",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "example": "2026-08-31",
+              "type": "string"
+            }
+          },
+          {
+            "name": "teacherId",
+            "required": false,
+            "in": "query",
+            "description": "생략하면 그 기간의 모든 강사",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleUnavListDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_RANGE: from 이 to 보다 뒤",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 불가 시간(관리자 읽기) — 「가능 시간」 겹쳐 보기 · 빈 시간 찾기",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/schedule/series-counts": {
+      "get": {
+        "description": "일정 원본 = 오늘(KST) 이후에 놓일 날이 남은 SER(규칙상 날짜 또는 옮겨 놓인 회차). 끝난 규칙·지난 단발은 세지 않는다. 묶음 수·합계도 서버가 센다 — 화면은 그리기만 한다. 이름·색은 GET /meta.",
+        "operationId": "ScheduleController_seriesCounts",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleSeriesCountsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§07 사이드바 — 종류·과목별 일정 원본(SER) 수 (기간 무관)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
+    "/schedule/students/{studentId}/books": {
+      "get": {
+        "description": "판정은 §79 「교재 N」·§12 준비 「교재 배정」과 같다. label 은 교재가 없을 때만 「교재 없음」, 있으면 null.",
+        "operationId": "ScheduleController_studentBooks",
+        "parameters": [
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleStudentBooksDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND: 학생이 없습니다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§10 개인 머리 — 학생의 배부 완료(ISSUE ok) 교재 수와 「교재 없음」 낱말",
         "tags": [
           "schedule"
         ]
@@ -5244,6 +5941,99 @@
         ]
       }
     },
+    "/accounting/payments/manual": {
+      "post": {
+        "description": "`pay.inv_id` 는 비운다 — §55 분류는 「기타」다. 무엇에 대한 돈인지(reason)가 필수이고 같은 트랜잭션에 LOG(PAY create).",
+        "operationId": "AccountingController_addManualPayment",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualPaymentCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "저장된 입금 줄 — 목록의 줄과 같은 모양",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "code STUDENT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code PAY_REASON_REQUIRED(사유가 공백뿐)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구서 없이 들어온 돈 한 줄 — §55 「+ 결제 등록」 (A-D1 ② 매니저 직접 입력)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/payments/{id}": {
       "delete": {
         "description": "지우기 전에 그 줄을 통째로 LOG(PAY delete)에 남긴다 — 장부의 입금 줄이 흔적 없이 사라지면 안 된다 (S2).",
@@ -7178,6 +7968,85 @@
           }
         },
         "summary": "강사 교체 — 여섯 단계를 한 트랜잭션에 (C93 · 테스트 시나리오 J-97 · D-46 · N-132 · D-45 · F-62)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/marketing": {
+      "post": {
+        "description": "날짜를 안 주면 오늘, 담당을 안 주면 나다. 채널·항목은 지금 코드 일곱·일곱이다(원문 어휘 맞춤은 열린 결정 N-29 ①). 그만둔 사람은 담당이 될 수 없다. 응답은 GET /ops 의 marketing 줄과 같은 모양이다. 감사 줄(LOG MKT create)이 같은 트랜잭션이다.",
+        "operationId": "OpsController_createMarketing",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarketingCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketingDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND — 담당이 없거나 그만둔 사람"
+          },
+          "409": {
+            "description": "code MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§59 「+ 오늘 한 것」 — 마케팅 활동 한 줄 · URL 첨부",
         "tags": [
           "ops"
         ]
@@ -11298,6 +12167,100 @@
         ]
       }
     },
+    "/guides/zoom-notice/batch": {
+      "post": {
+        "description": "입력은 없다 — 보낼 회차는 서버가 목록의 canSendTeacher 와 같은 문(sendGate)으로 고른다. 줄마다 단건 줌 안내와 같은 쓰기·같은 트랜잭션 단위라 한 줄의 거절이 다른 줄을 되돌리지 않는다. 못 보낸 줄은 서버 코드·문장으로 skipped 에 싣는다.",
+        "operationId": "GuidesController_sendZoomNoticeBatch",
+        "parameters": [],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ZoomNoticeBatchResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 N명 한 번에 — 오늘 온라인 회차의 강사 줌 안내를 한 번에 (§43 매번 머리 · wave 6)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
     "/zoom": {
       "get": {
         "description": "점유는 `ser_occ` 에서 센다 — 「지금 가능」·「만석 시간대」도 같은 배열에서 센다.",
@@ -13675,6 +14638,82 @@
         ]
       }
     },
+    "/teacher/shell": {
+      "get": {
+        "description": "알림은 받는 사람이 본인인 NOTI 행만 싣는다(관리자 서랍의 다른 칸은 없다). 읽음 처리는 PATCH /drawer/notis/{id}/read · /drawer/notis/read-all(본인 한정)을 쓴다.",
+        "operationId": "TeacherController_shell",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherShellDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용 — 관리 화면 사용자는 서랍 알림을 쓴다"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 머리줄 — 시간대 · 오늘 시급 · 내게 온 알림 (강사 덱 모든 화면의 머리줄 · 메뉴 사용자 칸)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/teacher/home": {
       "get": {
         "operationId": "TeacherController_home",
@@ -15630,7 +16669,7 @@
     },
     "/drawer/staff": {
       "post": {
-        "description": "이름 · 이메일(유일) · 첫 비밀번호(해시로만 저장 · 응답에 없다) · 역할 둘 · 직함 · 시간대(tzg) · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). 대표·관리자 계정은 이 길로 만들지 않는다.",
+        "description": "이름 · 이메일(유일 · 로그인 아이디) · 역할 둘 · 직함 · 시간대(tzg) · 휴대폰(숫자만) · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). **비밀번호는 받지 않는다** — 서버가 초기 비밀번호로 만들고 첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 건다. 응답에 넘겨줄 정보(loginId · initialPassword)가 이때만 실린다. 대표·관리자 계정은 이 길로 만들지 않는다.",
         "operationId": "DrawerController_createStaff",
         "parameters": [],
         "requestBody": {
@@ -15649,13 +16688,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MemberDto"
+                  "$ref": "#/components/schemas/StaffCreatedDto"
                 }
               }
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "BAD_REQUEST(허용 밖 필드 — password 포함) | STAFF_PHONE_INVALID",
             "content": {
               "application/json": {
                 "schema": {
@@ -15701,7 +16740,401 @@
             }
           }
         },
-        "summary": "「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41)",
+        "summary": "「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41 · W8)",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/staff/{id}": {
+      "patch": {
+        "description": "보낸 칸만 바꾼다. 대표·관리자 줄은 403 STAFF_PROTECTED, 자기 역할은 403 SELF_ROLE. 이메일을 바꾸면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀린다. 시급은 「시급 수정」에서만.",
+        "operationId": "DrawerController_updateStaff",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST(형식 · 허용 밖 필드 · 역할 ceo/admin) | STAFF_PHONE_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "STAFF_PROTECTED | SELF_ROLE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "STAFF_EMAIL_TAKEN | TZ_UNKNOWN | EMPTY_PATCH",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§17 「수정」 — 강사·매니저 줄의 이름 · 이메일 · 휴대폰 · 직함 · 시간대 · 역할 · 입사일 (W8)",
+        "tags": [
+          "drawer"
+        ]
+      },
+      "delete": {
+        "description": "잘못 만든 계정을 치우는 길이다. 시급 줄 · 할 일 · 알림 · 수업 등 이 계정을 가리키는 행이 하나라도 있으면 409 STAFF_HAS_RECORDS — 사용 중지로 막는다. 자기 것은 403 SELF_DELETE, 대표·관리자 줄은 403 STAFF_PROTECTED.",
+        "operationId": "DrawerController_deleteStaff",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "STAFF_PROTECTED | SELF_DELETE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "STAFF_HAS_RECORDS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§17 「삭제」 — 기록이 하나도 없는 계정만 지운다 (W8)",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/staff/{id}/password-reset": {
+      "post": {
+        "description": "자기 것은 403 SELF_RESET(첫 설정 흐름으로 바꾼다), 대표·관리자 줄은 403 STAFF_PROTECTED. 그 계정의 이전 로그인은 끊긴다(credentials_changed_at). 응답은 넘겨줄 정보 — 기록(log)에는 비밀번호가 없다.",
+        "operationId": "DrawerController_resetStaffPassword",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffHandoverDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "STAFF_PROTECTED | SELF_RESET",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§17 「비밀번호 초기화」 — 초기 비밀번호로 되돌리고 첫 설정을 다시 건다 (W8)",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/staff/{id}/active": {
+      "patch": {
+        "description": "사용 중지된 계정은 다음 요청부터 인증이 막히고 로그인도 안 된다(기존 활성 검사). 자기 것은 403 SELF_ACTIVE, 대표·관리자 줄은 403 STAFF_PROTECTED. 같은 값이면 그대로 돌려준다.",
+        "operationId": "DrawerController_setStaffActive",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffActiveDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "STAFF_PROTECTED | SELF_ACTIVE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "§17 「사용 중지」·「다시 사용」 (W8)",
         "tags": [
           "drawer"
         ]
@@ -17610,6 +19043,10 @@
           },
           "canGpaPack": {
             "type": "boolean"
+          },
+          "mustChangeCredentials": {
+            "type": "boolean",
+            "description": "첫 설정(아이디=이메일 · 비밀번호 · 휴대폰 · 이메일 인증)을 끝내야 하는가 — 서버는 늘 채운다"
           }
         },
         "required": [
@@ -17654,6 +19091,182 @@
         },
         "required": [
           "accessToken"
+        ]
+      },
+      "OnboardingChannelDto": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "채널 이름 — 「메일」·「문자」"
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "지금 코드를 보낼 수 있는가 — 아니면 화면이 단추를 잠근다"
+          },
+          "notReadyReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "보낼 수 없는 까닭 — ready=false 일 때만"
+          }
+        },
+        "required": [
+          "channel",
+          "label",
+          "ready",
+          "notReadyReason"
+        ]
+      },
+      "OnboardingInfoDto": {
+        "type": "object",
+        "properties": {
+          "required": {
+            "type": "boolean",
+            "description": "이 계정이 첫 설정을 해야 하는가 — false 면 화면은 일정으로 보낸다"
+          },
+          "loginId": {
+            "type": "string",
+            "description": "지금 로그인 아이디(이메일)"
+          },
+          "phoneMasked": {
+            "type": "string",
+            "nullable": true,
+            "description": "지금 등록된 휴대폰(가린 모양) — 없으면 null"
+          },
+          "passwordRule": {
+            "type": "string",
+            "description": "비밀번호 규칙 문장 — 화면은 이 문장을 그대로 적는다"
+          },
+          "codeTtlMinutes": {
+            "type": "number",
+            "description": "코드 유효 시간(분)"
+          },
+          "resendAfterSeconds": {
+            "type": "number",
+            "description": "같은 채널로 다시 받기까지 기다릴 초"
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingChannelDto"
+            }
+          }
+        },
+        "required": [
+          "required",
+          "loginId",
+          "phoneMasked",
+          "passwordRule",
+          "codeTtlMinutes",
+          "resendAfterSeconds",
+          "channels"
+        ]
+      },
+      "OnboardingCodeRequestDto": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ],
+            "description": "email = 새 아이디(이메일)로 · sms = 휴대폰으로"
+          },
+          "target": {
+            "type": "string",
+            "example": "kim@tnacademy.kr",
+            "maxLength": 160,
+            "description": "받을 이메일 주소 또는 휴대폰 번호"
+          }
+        },
+        "required": [
+          "channel",
+          "target"
+        ]
+      },
+      "OnboardingCodeResultDto": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ]
+          },
+          "targetMasked": {
+            "type": "string",
+            "description": "코드를 보낸 곳(가린 모양)"
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "코드가 만료되는 시각"
+          },
+          "resendAfterSeconds": {
+            "type": "number",
+            "description": "같은 채널로 다시 받기까지 기다릴 초"
+          },
+          "devCode": {
+            "type": "string",
+            "description": "개발용 — 운영이 아니고 서버의 AUTH_CODE_DEV_ECHO=on 이며 발송 설정이 없을 때만 실린다. 운영 응답에는 절대 없다"
+          }
+        },
+        "required": [
+          "channel",
+          "targetMasked",
+          "expiresAt",
+          "resendAfterSeconds"
+        ]
+      },
+      "OnboardingCompleteDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "kim@tnacademy.kr",
+            "maxLength": 160,
+            "description": "새 로그인 아이디(이메일) — 코드를 받은 주소"
+          },
+          "password": {
+            "type": "string",
+            "example": "********",
+            "maxLength": 200,
+            "description": "새 비밀번호 — 규칙은 GET /auth/onboarding 의 passwordRule"
+          },
+          "phone": {
+            "type": "string",
+            "example": "010-1234-5678",
+            "maxLength": 20,
+            "description": "휴대폰 번호 — 코드를 받은 번호"
+          },
+          "emailCode": {
+            "type": "string",
+            "example": "123456",
+            "pattern": "^\\d{6}$",
+            "description": "이메일로 받은 코드"
+          },
+          "phoneCode": {
+            "type": "string",
+            "example": "123456",
+            "pattern": "^\\d{6}$",
+            "description": "휴대폰으로 받은 코드"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "phone",
+          "emailCode",
+          "phoneCode"
         ]
       },
       "KindDto": {
@@ -18373,6 +19986,228 @@
           "items"
         ]
       },
+      "HolidayDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "name": {
+            "type": "string",
+            "description": "공휴일 이름 — 화면이 그대로 칩에 적는다"
+          }
+        },
+        "required": [
+          "date",
+          "name"
+        ]
+      },
+      "HolidayListDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HolidayDto"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "items"
+        ]
+      },
+      "ScheduleUnavRowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "teacherId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "teacherName": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "강사가 불가로 적은 날짜(KST)"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "endMin": {
+            "type": "number"
+          },
+          "reason": {
+            "type": "string",
+            "description": "강사가 적은 사유 — 화면이 그대로 보여 준다"
+          }
+        },
+        "required": [
+          "id",
+          "teacherId",
+          "teacherName",
+          "date",
+          "startMin",
+          "endMin",
+          "reason"
+        ]
+      },
+      "ScheduleUnavListDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleUnavRowDto"
+            }
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "items"
+        ]
+      },
+      "ScheduleSeriesCountDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "종류 또는 과목 코드"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "key",
+          "count"
+        ]
+      },
+      "ScheduleSeriesGroupDto": {
+        "type": "object",
+        "properties": {
+          "grp": {
+            "type": "string",
+            "description": "묶음 코드(kind.grp)"
+          },
+          "label": {
+            "type": "string",
+            "description": "묶음 낱말 — 「수업」·「상담·진단」·「회의」 (서버 lib/catalog-words 한 곳)"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "이 묶음 종류들의 일정 원본 수 합"
+          },
+          "kinds": {
+            "description": "묶음 안의 종류 전부(0 도 싣는다) · 코드표 차례",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleSeriesCountDto"
+            }
+          }
+        },
+        "required": [
+          "grp",
+          "label",
+          "count",
+          "kinds"
+        ]
+      },
+      "ScheduleSeriesCountsDto": {
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "「남은 날」을 판정한 기준일 — 오늘(KST)"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "묶음 수의 합"
+          },
+          "groups": {
+            "description": "수업 · 상담·진단 · 회의 차례",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleSeriesGroupDto"
+            }
+          },
+          "subs": {
+            "description": "쓰는 과목(sub.active) 중 1 이상만 · 코드표 차례",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleSeriesCountDto"
+            }
+          }
+        },
+        "required": [
+          "asOf",
+          "total",
+          "groups",
+          "subs"
+        ]
+      },
+      "ScheduleStudentBooksDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "bookCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "배부 완료(ISSUE ok) 교재 수"
+          },
+          "label": {
+            "type": "string",
+            "nullable": true,
+            "description": "머리에 적을 낱말 — 배부 완료 교재가 없으면 「교재 없음」, 있으면 null(원문 컷은 없는 경우만 적는다)"
+          }
+        },
+        "required": [
+          "studentId",
+          "bookCount",
+          "label"
+        ]
+      },
       "StudentPauseDto": {
         "type": "object",
         "properties": {
@@ -18926,6 +20761,12 @@
             "nullable": true,
             "description": "직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다."
           },
+          "undoExpiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "그 토큰이 끝나는 시각 — 토큰 안의 만료와 같은 값. 화면의 「되돌리기 ▾」 목록은 지난 단계를 이 값으로 뺀다 (토큰이 없으면 null)"
+          },
           "unavailable": {
             "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",
             "type": "array",
@@ -19160,6 +21001,12 @@
             "type": "string",
             "nullable": true,
             "description": "직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다."
+          },
+          "undoExpiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "그 토큰이 끝나는 시각 — 토큰 안의 만료와 같은 값. 화면의 「되돌리기 ▾」 목록은 지난 단계를 이 값으로 뺀다 (토큰이 없으면 null)"
           },
           "unavailable": {
             "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",
@@ -19487,6 +21334,12 @@
             "type": "string",
             "nullable": true,
             "description": "직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다."
+          },
+          "undoExpiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "그 토큰이 끝나는 시각 — 토큰 안의 만료와 같은 값. 화면의 「되돌리기 ▾」 목록은 지난 단계를 이 값으로 뺀다 (토큰이 없으면 null)"
           },
           "unavailable": {
             "description": "강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄",
@@ -20646,6 +22499,14 @@
             "type": "string",
             "description": "상태의 이름 — 낱말은 서버가 만든다 (D-R18)"
           },
+          "invType": {
+            "type": "string",
+            "description": "청구 종류 코드(INV_TYPES 넷 중 하나) — 이름은 invTypeLabel 을 쓴다"
+          },
+          "invTypeLabel": {
+            "type": "string",
+            "description": "청구 종류 이름 — 「수업료 청구」·「컨설팅비 청구」 (§53 칩 · 보드 카드와 같은 낱말)"
+          },
           "issuedOn": {
             "type": "string",
             "nullable": true
@@ -20707,6 +22568,8 @@
           "paidAmount",
           "state",
           "stateLabel",
+          "invType",
+          "invTypeLabel",
           "remaining",
           "overdueDays",
           "lines",
@@ -21140,6 +23003,10 @@
             "type": "string",
             "nullable": true,
             "description": "이월 단추가 설 자리인데 막힌 이유 — 마감 · 받는 달 수업료 청구서가 이미 나감. 설 자리가 아니거나 누를 수 있으면 null (PB-04)"
+          },
+          "carryPending": {
+            "type": "boolean",
+            "description": "넘길 돈이 있는 줄 — 원문 §54 처럼 위로 모이고 옅게 칠한다 (금액 권한과 무관)"
           },
           "carriedAt": {
             "type": "string",
@@ -22612,6 +24479,42 @@
           "paidOn"
         ]
       },
+      "ManualPaymentCreateDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number",
+            "description": "누구의 돈인가 — 학생 번호"
+          },
+          "amount": {
+            "type": "number",
+            "description": "들어온 금액(원) — 사람이 확인한 값 그대로"
+          },
+          "paidOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "입금일"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "transfer",
+              "cash"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "무엇에 대한 돈인가 — 교재비 · 조정 등. 청구서가 없으니 필수(공백뿐이면 409 PAY_REASON_REQUIRED)"
+          }
+        },
+        "required": [
+          "studentId",
+          "amount",
+          "paidOn",
+          "reason"
+        ]
+      },
       "ExpenseReviewDto": {
         "type": "object",
         "properties": {
@@ -23294,6 +25197,70 @@
           "scheduled"
         ]
       },
+      "LeadAftercareRowDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "invoice",
+              "book",
+              "guide"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "「청구서」 · 「교재」 · 「안내」"
+          },
+          "value": {
+            "type": "string",
+            "description": "「없음」 · 「2건」 · 「1권」 · 「배정 대기」 · 「보냄」 · 「쓰는 중」"
+          },
+          "done": {
+            "type": "boolean",
+            "description": "됐는가 — 줄 바탕 색(됨 = 초록 · 아직 = 회색)을 가른다"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "value",
+          "done"
+        ]
+      },
+      "LeadCardActionDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "appt",
+              "enroll",
+              "fail",
+              "schedule",
+              "move",
+              "extend",
+              "touch",
+              "detail",
+              "resume"
+            ],
+            "description": "appt(2차·진단 일정) · enroll(등록 확정) · fail(실패 분류) · schedule(스케줄에 만들기) · move(단계 이동) · extend(연장 +2일) · touch(접촉 기록) · detail(상세) · resume(되살리기)"
+          },
+          "label": {
+            "type": "string",
+            "description": "단추 낱말 — 「2차 진행」 · 「연장 +2일」 · 「스케줄에 1건 만들기」"
+          },
+          "to": {
+            "type": "string",
+            "nullable": true,
+            "description": "move 의 도착 단계 — 언제나 그 건의 nextStages 안이다. 다른 단추는 null"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
       "LeadDto": {
         "type": "object",
         "properties": {
@@ -23473,6 +25440,29 @@
             "nullable": true,
             "format": "date",
             "description": "보류 재확인 날짜(23-16) — 적어 둔 날짜 또는 보류에 들어온 날 + 2일. 보류가 아니거나 들어온 날을 모르면 null"
+          },
+          "aftercare": {
+            "nullable": true,
+            "description": "등록 카드의 줄(원본 §23 「청구서 없음 · 교재 없음 · 안내 없음」) — 차례 청구서 · 교재 · 안내. 등록 건이 아니거나 학생이 안 붙었으면 null. 해피콜·월간 상담 줄은 원장·규칙이 없어 싣지 않는다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeadAftercareRowDto"
+            }
+          },
+          "lessons": {
+            "nullable": true,
+            "description": "등록 카드의 「등록 수업」(원본 §23 「모의수업 A 주1 · KJ」) — 그 학생의 지금 명단(SER_STU · 끝난 명단·규칙 · 단발 제외)을 한 줄씩. 「주N」은 매주 규칙의 요일 수 · 매일/격주는 규칙 낱말. 등록 건이 아니거나 학생이 안 붙었으면 null",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cardActions": {
+            "description": "카드 단추 줄(원본 §23 단계별 단추) — 서는 단추와 낱말은 서버 한 곳(lib/intake-words.leadCardActions). 단계 이동은 nextStages 안에서만",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeadCardActionDto"
+            }
           }
         },
         "required": [
@@ -23569,6 +25559,26 @@
           "canWithdraw": {
             "type": "boolean",
             "description": "「수강 종료 · 환불」이 서는가 — 돈 권한 · 아직 안 끝난 건 · 학생이 붙은 건 (S5 · D-R39). 그 창이 부르는 경로가 canMoney 라 화면이 권한을 안 보면 창이 뜨자마자 403 이 난다"
+          },
+          "requester": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "mother",
+              "father"
+            ],
+            "description": "mother | father — 누가 알렸는지(코드값). 모르면 null"
+          },
+          "requesterLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "「어머니」 · 「아버지」 — 낱말은 서버 (D-R18). 모르면 null(카드에 서지 않는다)"
+          },
+          "closedOn": {
+            "type": "string",
+            "nullable": true,
+            "format": "date",
+            "description": "마무리한 날(KST) — 「결과」로 옮긴 순간 서버가 찍는다(입력 칸 아님). 열린 건 · 옛 「결과」 행(모름)은 null"
           }
         },
         "required": [
@@ -23918,6 +25928,10 @@
             "type": "string",
             "description": "회의 종류 이름 — 낱말은 서버가 만든다 (D-R18 · C57)"
           },
+          "mtTypeShort": {
+            "type": "string",
+            "description": "짧은 이름 — 원문 §63 줄 머리 칩 「기획」 (g6 63-7 · x5). §66 머리는 긴 이름(mtTypeLabel)"
+          },
           "title": {
             "type": "string",
             "nullable": true
@@ -23976,6 +25990,7 @@
           "id",
           "mtType",
           "mtTypeLabel",
+          "mtTypeShort",
           "attendees",
           "confirmed",
           "hasMinutes",
@@ -24014,6 +26029,11 @@
           "name": {
             "type": "string",
             "description": "카드에 쓰는 이름 — title 이 없으면 채널·항목으로 부른다"
+          },
+          "onDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "한 날 — 기간을 가르는 날(§59 「일·주·월」) · 옛 행은 null (x5)"
           },
           "byId": {
             "type": "number",
@@ -24377,7 +26397,7 @@
           },
           "enrollRate": {
             "type": "number",
-            "description": "등록률 % — 등록 / 전체, 정수 반올림. 전체 0 이면 0"
+            "description": "등록률 % — 등록 / (등록 + 등록 실패), 정수 반올림. 끝난 건이 없으면 0. 진행 중인 건은 분모에 넣지 않는다(원본 §23 「등록 3 · 실패 6 · 33%」 · 23-19)"
           },
           "owners": {
             "description": "담당 칩 — 「전체」는 화면이 붙인다",
@@ -24563,6 +26583,13 @@
               "$ref": "#/components/schemas/CplWordDto"
             }
           },
+          "cplRequesters": {
+            "description": "문의자 관계 둘 — 어머니 · 아버지 (원본 §67 카드 · §29 「누가 요청」 · wave 6 67-5). 「+ 접수」·처리 창의 낱말",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CplWordDto"
+            }
+          },
           "planDues": {
             "description": "§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표",
             "type": "array",
@@ -24685,6 +26712,49 @@
           "mtMinutesCount": {
             "type": "number",
             "description": "속기록을 쓴 회의 수 — 원본 §63 「54회 · 속기록 32」의 뒤 수 (같은 기간)"
+          },
+          "mktChannels": {
+            "description": "「+ 오늘 한 것」 폼의 채널 일곱 — 지금 코드의 이름표(원문 어휘 맞춤은 N-29 ①)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CplWordDto"
+            }
+          },
+          "mktItems": {
+            "description": "「+ 오늘 한 것」 폼의 항목 일곱",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CplWordDto"
+            }
+          },
+          "canCreateMarketing": {
+            "type": "boolean",
+            "description": "「+ 오늘 한 것」이 서는가 — 단추도 서버가 정한다 (D-R39)"
+          },
+          "mktChannelCounts": {
+            "description": "§59 「어디에」 — 고른 기간의 채널별 활동 수. 건수가 있는 채널만(원문 띠) · 많은 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsCountDto"
+            }
+          },
+          "mktByCounts": {
+            "description": "§59 「누가」 — 고른 기간의 담당별 활동 수. key 는 담당 ID 또는 __none__ · 많은 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsCountDto"
+            }
+          },
+          "mktItemCounts": {
+            "description": "§59 머리 오른쪽 항목 범례 — 고른 기간의 항목별 활동 수 · 많은 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpsCountDto"
+            }
+          },
+          "mktDays": {
+            "type": "number",
+            "description": "§59 머리 「N건 · M일 진행」의 M — 고른 기간에 활동이 있었던 날 수"
           }
         },
         "required": [
@@ -25554,6 +27624,15 @@
             ],
             "nullable": true,
             "description": "가벼움 · 보통 · 심각 — 코드값"
+          },
+          "requester": {
+            "type": "string",
+            "enum": [
+              "mother",
+              "father"
+            ],
+            "nullable": true,
+            "description": "문의자 관계(67-5) — 어머니 · 아버지 코드값. 낱말은 GET /ops.cplRequesters · 모르면 비운다"
           }
         },
         "required": [
@@ -25603,6 +27682,15 @@
               "severe"
             ],
             "nullable": true
+          },
+          "requester": {
+            "type": "string",
+            "enum": [
+              "mother",
+              "father"
+            ],
+            "nullable": true,
+            "description": "문의자 관계(67-5) — null 이면 비운다. 마무리 날짜는 받지 않는다(「결과」로 옮길 때 서버가 찍는다)"
           }
         }
       },
@@ -25939,6 +28027,65 @@
           "steps"
         ]
       },
+      "MarketingCreateDto": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 120,
+            "description": "활동 이름 — 카드 제목"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "instagram",
+              "naver",
+              "daangn",
+              "kakao",
+              "youtube",
+              "referral",
+              "flyer"
+            ],
+            "description": "어디에 — 낱말은 GET /ops.mktChannels"
+          },
+          "item": {
+            "type": "string",
+            "enum": [
+              "ad",
+              "blog",
+              "biz",
+              "channel",
+              "video",
+              "word",
+              "print"
+            ],
+            "description": "무엇을 — 낱말은 GET /ops.mktItems"
+          },
+          "url": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "올린 글·광고의 주소 — HTTP(S) · 비우면 없음"
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "한 날 — 없으면 오늘(「오늘 한 것」)"
+          },
+          "byId": {
+            "type": "number",
+            "nullable": true,
+            "description": "담당 — 없으면 나. §60 답변을 쓸 수 있는 사람"
+          }
+        },
+        "required": [
+          "title",
+          "channel",
+          "item"
+        ]
+      },
       "MfbCommentWriteDto": {
         "type": "object",
         "properties": {
@@ -26117,11 +28264,20 @@
           },
           "canReview": {
             "type": "boolean",
-            "description": "최종 승인·보완 요청을 할 수 있는가 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65)"
+            "description": "최종 승인을 할 수 있는가 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65)"
           },
           "reviewBlockedReason": {
             "type": "string",
             "description": "단추가 닫혀 있는 이유 — 열려 있으면 null",
+            "nullable": true
+          },
+          "canRework": {
+            "type": "boolean",
+            "description": "보완 요청을 할 수 있는가 — 기한 승인과 무관하다(원문 규칙은 최종 승인만 막는다)"
+          },
+          "reworkBlockedReason": {
+            "type": "string",
+            "description": "보완 요청 단추가 닫혀 있는 이유 — 열려 있으면 null",
             "nullable": true
           },
           "reworkReason": {
@@ -26169,6 +28325,8 @@
           "canDecideDue",
           "canReview",
           "reviewBlockedReason",
+          "canRework",
+          "reworkBlockedReason",
           "reworkReason",
           "canEdit",
           "editBlockedReason",
@@ -27039,6 +29197,11 @@
           "title": {
             "type": "string"
           },
+          "level": {
+            "type": "string",
+            "nullable": true,
+            "description": "교재 레벨 원문(lib.level) — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). 없으면 null"
+          },
           "studentCount": {
             "type": "number"
           },
@@ -27358,6 +29521,11 @@
           },
           "title": {
             "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "nullable": true,
+            "description": "교재 레벨 원문(lib.level) — 카드 교재 줄의 레벨 글자 사각(원문 §41 · g4 §41-3). 없으면 null"
           },
           "versId": {
             "type": "number",
@@ -27786,6 +29954,11 @@
             "type": "string",
             "description": "new(첫 수업) | teacher_change(강사 교체)"
           },
+          "kindLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "안내 종류 낱말 — 첫 수업 = 「포괄 안내」 · 강사 교체 = 「간이 안내」(원문 §45 kind full/quick · §44 머리 칩). 모르는 사유는 null"
+          },
           "state": {
             "type": "string",
             "enum": [
@@ -27942,6 +30115,7 @@
           "id",
           "studentId",
           "reason",
+          "kindLabel",
           "state",
           "pending",
           "canSend",
@@ -28253,6 +30427,36 @@
           "teacherExternal"
         ]
       },
+      "ZoomNoticeBatchInfoDto": {
+        "type": "object",
+        "properties": {
+          "teacherCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "「강사 N명」의 N — 지금 보낼 수 있는 오늘 온라인 회차의 서로 다른 강사 수"
+          },
+          "lessonCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "지금 보낼 수 있는 회차 수(canSendTeacher 인 줄)"
+          },
+          "canSend": {
+            "type": "boolean",
+            "description": "누를 수 있는가 — 발송 권한(canAdminPage·canCrudAll)이 있고 보낼 회차가 하나라도 있을 때만 true"
+          },
+          "blockedReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "못 누르는 이유 — 누를 수 있으면 null"
+          }
+        },
+        "required": [
+          "teacherCount",
+          "lessonCount",
+          "canSend",
+          "blockedReason"
+        ]
+      },
       "GuidesDto": {
         "type": "object",
         "properties": {
@@ -28296,6 +30500,14 @@
           },
           "deliveryCapabilities": {
             "$ref": "#/components/schemas/GuideDeliveryCapabilitiesDto"
+          },
+          "zoomBatch": {
+            "description": "§43 매번 머리 「강사 N명 한 번에」 — N·회차 수·막힌 이유 (wave 6)",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ZoomNoticeBatchInfoDto"
+              }
+            ]
           }
         },
         "required": [
@@ -28714,6 +30926,95 @@
         "required": [
           "lesson",
           "teacherNotices",
+          "parentNotices"
+        ]
+      },
+      "ZoomNoticeBatchRowDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "**회차 키**의 날짜(`ser_occ.on_date`) — 단건 줌 안내와 같은 키"
+          },
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439
+          },
+          "teacherId": {
+            "type": "number",
+            "nullable": true,
+            "description": "그 회차의 강사 — 없으면 null"
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentNames": {
+            "type": "string",
+            "description": "그 회차 명단의 학생 이름(쉼표로 잇는다) — 결과 띠가 어느 수업인지 말하게"
+          },
+          "code": {
+            "type": "string",
+            "nullable": true,
+            "description": "건너뛴 까닭의 코드 — ZOOM_NOTICE_ALREADY · ZOOM_NOTICE_NO_ACCOUNT · ZOOM_NOTICE_NO_TEACHER · ZOOM_NOTICE_CANCELED · ZOOM_NOTICE_NOT_ONLINE · OCCURRENCE_NOT_FOUND. 보냈으면 null"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "건너뛴 까닭 — 서버 문장 그대로(단건 쓰기·단추의 막힌 이유와 같은 말). 보냈으면 null"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "startMin",
+          "teacherId",
+          "teacherName",
+          "studentNames",
+          "code",
+          "reason"
+        ]
+      },
+      "ZoomNoticeBatchResultDto": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "description": "이번에 보낸 회차 — 줄마다 제 트랜잭션이라 다른 줄의 거절에 되돌아가지 않는다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoomNoticeBatchRowDto"
+            }
+          },
+          "skipped": {
+            "description": "건너뛴 회차와 서버 이유 — 이미 보냄 · 계정/강사 없음 · 그 사이 바뀐 회차",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ZoomNoticeBatchRowDto"
+            }
+          },
+          "teacherCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "이번에 받은 서로 다른 강사 수"
+          },
+          "parentNotices": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "학부모에게 「보낼 것」으로 남긴 줄 수의 합 — 실제 발송은 아직 없다(N-42)"
+          }
+        },
+        "required": [
+          "sent",
+          "skipped",
+          "teacherCount",
           "parentNotices"
         ]
       },
@@ -29766,6 +32067,10 @@
             "type": "string",
             "description": "공개 범위 이름 — 「수납만 공개」"
           },
+          "shareChipLabel": {
+            "type": "string",
+            "description": "§26 카드 공개 칩 낱말 — 원본 「수납만」(짧은 낱말 · 26-08). 원본에 없는 범위는 이름 그대로"
+          },
           "contractStepLabel": {
             "type": "string",
             "nullable": true,
@@ -29777,8 +32082,9 @@
             "description": "요청자 — 「어머니」. 안 적혔으면 null"
           },
           "ageDays": {
-            "type": "number",
-            "description": "시작한 지 며칠 — 원본 「60일 지남」 (D-R37)"
+            "type": "integer",
+            "nullable": true,
+            "description": "시작한 지 며칠 — 원본 「60일 지남」 (D-R37). 계약 시작일(start_on)부터 센다. 시작일이 없거나 아직 시작 전이면 null(칸을 세우지 않는다)"
           },
           "paidAmount": {
             "type": "number",
@@ -29813,6 +32119,7 @@
           "stageLabel",
           "typeLabel",
           "shareLabel",
+          "shareChipLabel",
           "ageDays",
           "sessionsLog",
           "sessionsDone",
@@ -29871,6 +32178,22 @@
           "meaning"
         ]
       },
+      "ConsultingWordDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "description": "「편입 · 전학」 · 「어머니」 …"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
       "ConsultingListDto": {
         "type": "object",
         "properties": {
@@ -29901,6 +32224,25 @@
             "items": {
               "$ref": "#/components/schemas/ConsultingShareWordDto"
             }
+          },
+          "types": {
+            "description": "§29 「어떤 컨설팅」 종류 10 — 원본 차례 · 이름(가운뎃점 앞뒤 띄움 · 29-02)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingWordDto"
+            }
+          },
+          "requesters": {
+            "description": "§29 「누가 요청」 둘 — 「어머니 · 아버지」",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingWordDto"
+            }
+          },
+          "studentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "§27 학생별 탭 머리 「학생 N명」 — 이 사람이 볼 수 있는 건(csCan)의 학생 수. `GET /consulting/students` 의 줄 수와 같은 셈이다(26-03 · D-R37)"
           }
         },
         "required": [
@@ -29964,6 +32306,10 @@
             "type": "string",
             "description": "종류 코드"
           },
+          "typeLabel": {
+            "type": "string",
+            "description": "종류 이름 — 「에세이 지도」 (서버 낱말 · 29-02)"
+          },
           "stage": {
             "type": "string",
             "enum": [
@@ -30021,6 +32367,7 @@
           "id",
           "studentName",
           "consType",
+          "typeLabel",
           "stage",
           "stageLabel",
           "payments",
@@ -30072,6 +32419,10 @@
           "consType": {
             "type": "string",
             "description": "종류 코드"
+          },
+          "typeLabel": {
+            "type": "string",
+            "description": "종류 이름 — 「국제학교 지원」 (서버 낱말 · 29-02)"
           },
           "stage": {
             "type": "string",
@@ -30145,6 +32496,7 @@
         "required": [
           "id",
           "consType",
+          "typeLabel",
           "stage",
           "stageLabel",
           "createdOn",
@@ -31041,6 +33393,90 @@
           "computedAt"
         ]
       },
+      "TeacherNotiDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "굵은 제목 한 줄 — 옛 행은 null(화면은 본문을 한 줄로 그린다)"
+          },
+          "body": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string",
+            "nullable": true,
+            "description": "원본으로 가는 앱 경로 — 강사가 열 수 없는 경로면 화면이 이동하지 않는다"
+          },
+          "read": {
+            "type": "boolean"
+          },
+          "at": {
+            "type": "string",
+            "description": "받은 시각 YYYY-MM-DDTHH:MI:SS+09:00 (KST)"
+          },
+          "categoryLabel": {
+            "type": "string",
+            "description": "종류 낱말 — lib/noti 한 곳(서랍 §16 칩과 같은 표)"
+          },
+          "fromName": {
+            "type": "string",
+            "nullable": true,
+            "description": "보낸 사람 — 시스템이 보낸 것은 null"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "read",
+          "at",
+          "categoryLabel"
+        ]
+      },
+      "TeacherShellDto": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "IANA 시간대 — staff.tz"
+          },
+          "tzLabel": {
+            "type": "string",
+            "description": "표기 「Seoul · UTC+9」 — 그 시각의 UTC 차이(서머타임 반영)를 서버가 짓는다"
+          },
+          "wageRate": {
+            "type": "number",
+            "nullable": true,
+            "description": "오늘 적용되는 본인 시급(원/시간) — 없으면 null"
+          },
+          "notis": {
+            "description": "내게 온 알림 — 최근 notiWindowDays 일, 안 읽은 것 먼저·새것 먼저",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherNotiDto"
+            }
+          },
+          "unread": {
+            "type": "number",
+            "description": "배지 수 — notis 중 안 읽은 줄 수"
+          },
+          "notiWindowDays": {
+            "type": "number",
+            "description": "목록 창(일) — 창 밖 알림은 지우지 않고 싣지 않는다 (N-7)"
+          }
+        },
+        "required": [
+          "timezone",
+          "tzLabel",
+          "notis",
+          "unread",
+          "notiWindowDays"
+        ]
+      },
       "TeacherLessonDto": {
         "type": "object",
         "properties": {
@@ -31131,20 +33567,37 @@
           "repState"
         ]
       },
+      "TeacherDaySummaryDto": {
+        "type": "object",
+        "properties": {
+          "lessons": {
+            "type": "number",
+            "description": "오늘(KST) 열린 수업 수 — 휴강·출결 취소 제외"
+          },
+          "minutes": {
+            "type": "number",
+            "description": "오늘 열린 수업 총 시수(분)"
+          }
+        },
+        "required": [
+          "lessons",
+          "minutes"
+        ]
+      },
       "TeacherWeekDto": {
         "type": "object",
         "properties": {
           "lessons": {
             "type": "number",
-            "description": "이번 주(월~일) 취소 제외 수업 수"
+            "description": "이번 주(월~일) 열린 수업 수 — 휴강·출결 취소 제외"
           },
           "minutes": {
             "type": "number",
-            "description": "이번 주 총 시수(분)"
+            "description": "이번 주 열린 수업 총 시수(분)"
           },
           "unwritten": {
             "type": "number",
-            "description": "이번 주 지나간 수업 중 미작성 후보 수"
+            "description": "이번 주 지나간 열린 수업 중 리포트 대상 종류(kind.rep)의 미작성 수 — 리포트 목록과 같은 판정"
           }
         },
         "required": [
@@ -31158,7 +33611,7 @@
         "properties": {
           "unwrittenReports": {
             "type": "number",
-            "description": "지나간 수업 중 리포트 미작성 후보 (REPORT_UNWRITTEN_CANDIDATE_DB)"
+            "description": "지나간 열린 수업(휴강·출결 취소 제외) 중 리포트 대상 종류의 미작성 (REPORT_UNWRITTEN_CANDIDATE_DB)"
           },
           "waitingApprovals": {
             "type": "number",
@@ -31322,6 +33775,14 @@
               "$ref": "#/components/schemas/TeacherLessonDto"
             }
           },
+          "todaySummary": {
+            "description": "hero 「오늘 수업 N건 · 시수 N시간」 — today 목록과 같은 날·같은 판정",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherDaySummaryDto"
+              }
+            ]
+          },
           "week": {
             "$ref": "#/components/schemas/TeacherWeekDto"
           },
@@ -31336,6 +33797,7 @@
           "todayDate",
           "today",
           "upcoming",
+          "todaySummary",
           "week",
           "todo",
           "settings"
@@ -32353,6 +34815,45 @@
           "canApprove"
         ]
       },
+      "GpaLessonDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "YYYY-MM-DD — 회차가 놓인 날"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "시작 KST 분"
+          },
+          "endMin": {
+            "type": "number",
+            "description": "끝 KST 분 — 자정은 1440"
+          },
+          "name": {
+            "type": "string",
+            "description": "수업 이름 — 일정 제목 · 과목 · 종류 중 있는 것"
+          },
+          "studentIds": {
+            "description": "그날 명단(수강 기간 안) 학생 — 기록 창은 고른 학생이 든 회차만 보인다",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "startMin",
+          "endMin",
+          "name",
+          "studentIds"
+        ]
+      },
       "GpaBoardDto": {
         "type": "object",
         "properties": {
@@ -32414,6 +34915,13 @@
             "items": {
               "$ref": "#/components/schemas/GpaUseDto"
             }
+          },
+          "lessons": {
+            "description": "이 사이클 창 안의 GPA 회차 — 기록 창 「수업 연결」 줄(날짜·시간 순 · 휴강 제외). 사이클이 없으면 빈 배열",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GpaLessonDto"
+            }
           }
         },
         "required": [
@@ -32426,7 +34934,8 @@
           "totalRemain",
           "totalUses",
           "students",
-          "uses"
+          "uses",
+          "lessons"
         ]
       },
       "GpaUseCreateDto": {
@@ -32452,7 +34961,7 @@
           },
           "serId": {
             "type": "number",
-            "description": "kind='gpa' 회차 SER id"
+            "description": "kind='gpa' 회차 SER id — 없는 회차는 404 SER_NOT_FOUND · GPA 가 아닌 수업은 409 GPA_SER_NOT_GPA"
           },
           "noteUrl": {
             "type": "string",
@@ -32593,7 +35102,12 @@
           "note": {
             "type": "string",
             "nullable": true,
-            "description": "값 아래 한 줄 — 「다 된 것」 · 이익의 「-268%」(원본 §70 · §71). 서버가 짓는다. 없으면 null"
+            "description": "값 아래 한 줄 — 「다 된 것」 · 이익의 「-268%」 · 주간의 「지난주 ▲ 25%」(원본 §70 · §71). 서버가 짓는다. 없으면 null"
+          },
+          "prev": {
+            "type": "number",
+            "nullable": true,
+            "description": "견준 값 — **주간 머리**의 입금 · 신규 문의 · 마케팅 게시만 직전 주(−7일)의 같은 셈을 싣는다(원본 §70 · N-66 주간). 비교하지 않는 칸 · 일간 · 월간 · 금액을 볼 권한이 없는 입금은 null"
           }
         },
         "required": [
@@ -32766,6 +35280,34 @@
           "display"
         ]
       },
+      "ExecAreaItemDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "영역 안에서 겹치지 않는 열쇠 — 「inv-12」 · 「plan-3」"
+          },
+          "title": {
+            "type": "string",
+            "description": "줄 제목 — 「양찬욱 · 8월 수업료」 · 「봄 설명회 기획」"
+          },
+          "sub": {
+            "type": "string",
+            "nullable": true,
+            "description": "줄 부제 — 「₩300,000 · 기한 08-10 · 11일 지남」. 금액을 볼 권한이 없으면 금액이 빠진다 (D-R39). 없으면 null"
+          },
+          "go": {
+            "type": "string",
+            "description": "누르면 가는 원본 화면 — 이동만 한다 (D-R27)"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "sub",
+          "go"
+        ]
+      },
       "ExecAreaDto": {
         "type": "object",
         "properties": {
@@ -32798,6 +35340,18 @@
             "items": {
               "$ref": "#/components/schemas/ExecAreaTileDto"
             }
+          },
+          "itemsLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "펼칠 줄 머리 — 「기한 지난 청구서 2건」 · 「이번 주 올린 것 4건」(원본 §69~§71). 「펼치기 ▾」는 화면이 붙인다. 줄이 없으면 null — 그 카드에는 펼칠 줄이 서지 않는다 (N-67 · D-R44)"
+          },
+          "items": {
+            "description": "펼칠 줄 — 배지와 같은 판정 조각으로 뽑은 것(마케팅은 이 기간 올린 것) · 여덟에서 끊는다(원본 수업 「8건」)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExecAreaItemDto"
+            }
           }
         },
         "required": [
@@ -32807,7 +35361,9 @@
           "count",
           "go",
           "headline",
-          "tiles"
+          "tiles",
+          "itemsLabel",
+          "items"
         ]
       },
       "ExecInboxDto": {
@@ -32899,7 +35455,7 @@
         "properties": {
           "key": {
             "type": "string",
-            "description": "inflow | first | wait2nd | second | enrolled"
+            "description": "inflow | first | second | enrolled — second 는 「2차 · 진단」(2차 상담에 닿은 건 · 71-5)"
           },
           "label": {
             "type": "string"
@@ -32938,7 +35494,7 @@
             }
           },
           "funnel": {
-            "description": "상담 퍼널 — 유입 · 1차 상담 · 2차 대기 · 2차 상담 · 등록 (도달 기록 기준 · C90)",
+            "description": "상담 퍼널 네 줄 — 유입 · 1차 상담 · 2차 · 진단 · 등록 (원본 §71 · 71-5 · 도달 기록 기준 · C90)",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ExecFunnelRowDto"
@@ -33987,6 +36543,40 @@
           "wageable": {
             "type": "boolean",
             "description": "시급 줄을 둘 수 있는 사람인가 — 활성 강사 · canWage 아니면 false (C97 · D-R39)"
+          },
+          "mustChangeCredentials": {
+            "type": "boolean",
+            "description": "첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "description": "휴대폰(숫자만) — 전체를 다루는 사람(canCrudAll)에게만 싣는다. 그 밖에는 null"
+          },
+          "hiredOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "입사일 YYYY-MM-DD — 「수정」 창의 처음 값. 옛 계정은 null 일 수 있다"
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "「수정」 — 보는 이가 매니저 이상이고 이 줄이 강사·매니저일 때만 (대표·관리자 줄은 이 길로 못 고친다)"
+          },
+          "canChangeRole": {
+            "type": "boolean",
+            "description": "수정 창에서 역할을 바꿀 수 있는가 — canEdit 이고 **자기 줄이 아닐 때만** (자기 역할은 못 바꾼다)"
+          },
+          "canResetPassword": {
+            "type": "boolean",
+            "description": "「비밀번호 초기화」 — canEdit 이고 자기 줄이 아닐 때만 (자기 것은 첫 설정 흐름으로 바꾼다)"
+          },
+          "canToggleActive": {
+            "type": "boolean",
+            "description": "「사용 중지」·「다시 사용」 — canEdit 이고 자기 줄이 아닐 때만"
+          },
+          "canDelete": {
+            "type": "boolean",
+            "description": "「삭제」 — canEdit 이고 자기 줄이 아닐 때만. 기록이 있으면 서버가 409 로 막는다(사용 중지로 막는다)"
           }
         },
         "required": [
@@ -34381,12 +36971,6 @@
             "maxLength": 120,
             "description": "로그인 아이디 — 유일"
           },
-          "password": {
-            "type": "string",
-            "minLength": 8,
-            "maxLength": 72,
-            "description": "첫 비밀번호 — 로그인 규칙과 같은 8자 이상"
-          },
           "role": {
             "type": "string",
             "enum": [
@@ -34410,7 +36994,8 @@
           "phone": {
             "type": "string",
             "nullable": true,
-            "maxLength": 20
+            "maxLength": 20,
+            "description": "휴대폰 — 숫자만 남겨 저장한다(한국 휴대폰만 · 아니면 400)"
           },
           "hiredOn": {
             "type": "string",
@@ -34427,8 +37012,182 @@
         "required": [
           "name",
           "email",
-          "password",
           "role"
+        ]
+      },
+      "StaffCreatedDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "manager",
+              "admin",
+              "ceo"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "직함은 권한이 아니다 (D-R39)"
+          },
+          "tz": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "wageRate": {
+            "type": "number",
+            "nullable": true,
+            "description": "오늘 붙는 기본 시급(원/시간) — canWage 아니면 null · 시급 줄이 없으면 null"
+          },
+          "wageFrom": {
+            "type": "string",
+            "nullable": true,
+            "description": "그 시급의 적용 시작일 YYYY-MM-DD"
+          },
+          "wageable": {
+            "type": "boolean",
+            "description": "시급 줄을 둘 수 있는 사람인가 — 활성 강사 · canWage 아니면 false (C97 · D-R39)"
+          },
+          "mustChangeCredentials": {
+            "type": "boolean",
+            "description": "첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "description": "휴대폰(숫자만) — 전체를 다루는 사람(canCrudAll)에게만 싣는다. 그 밖에는 null"
+          },
+          "hiredOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "입사일 YYYY-MM-DD — 「수정」 창의 처음 값. 옛 계정은 null 일 수 있다"
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "「수정」 — 보는 이가 매니저 이상이고 이 줄이 강사·매니저일 때만 (대표·관리자 줄은 이 길로 못 고친다)"
+          },
+          "canChangeRole": {
+            "type": "boolean",
+            "description": "수정 창에서 역할을 바꿀 수 있는가 — canEdit 이고 **자기 줄이 아닐 때만** (자기 역할은 못 바꾼다)"
+          },
+          "canResetPassword": {
+            "type": "boolean",
+            "description": "「비밀번호 초기화」 — canEdit 이고 자기 줄이 아닐 때만 (자기 것은 첫 설정 흐름으로 바꾼다)"
+          },
+          "canToggleActive": {
+            "type": "boolean",
+            "description": "「사용 중지」·「다시 사용」 — canEdit 이고 자기 줄이 아닐 때만"
+          },
+          "canDelete": {
+            "type": "boolean",
+            "description": "「삭제」 — canEdit 이고 자기 줄이 아닐 때만. 기록이 있으면 서버가 409 로 막는다(사용 중지로 막는다)"
+          },
+          "loginId": {
+            "type": "string",
+            "description": "로그인 아이디 — 이메일"
+          },
+          "initialPassword": {
+            "type": "string",
+            "description": "초기 비밀번호 — 이 응답에만 실린다"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "role",
+          "active",
+          "loginId",
+          "initialPassword"
+        ]
+      },
+      "StaffPatchDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 120,
+            "description": "로그인 아이디 — 유일(대소문자 무시). 바꾸면 이메일 확인이 풀린다"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "휴대폰 — 숫자만 남겨 저장(한국 휴대폰만 · 아니면 400). null·빈 글이면 비운다. 바꾸면 휴대폰 확인이 풀린다"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "직함 — 권한과 무관 (D-R39). null·빈 글이면 비운다"
+          },
+          "tz": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "시간대 — 시간대 그룹(tzg)에 있는 값만"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "teacher",
+              "manager"
+            ],
+            "description": "강사 · 매니저 — 대표·관리자로는 못 바꾼다. 자기 역할은 403 SELF_ROLE"
+          },
+          "hiredOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "입사일 YYYY-MM-DD"
+          }
+        }
+      },
+      "StaffHandoverDto": {
+        "type": "object",
+        "properties": {
+          "loginId": {
+            "type": "string",
+            "description": "로그인 아이디 — 이메일"
+          },
+          "initialPassword": {
+            "type": "string",
+            "description": "초기 비밀번호 — 서버 상수(운영 값). 첫 로그인 때 반드시 바꾼다"
+          }
+        },
+        "required": [
+          "loginId",
+          "initialPassword"
+        ]
+      },
+      "StaffActiveDto": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "description": "false = 사용 중지 · true = 다시 사용"
+          }
+        },
+        "required": [
+          "active"
         ]
       },
       "TodoPatchDto": {

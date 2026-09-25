@@ -26,7 +26,8 @@
     "write:coverage": "ts-node -P tsconfig.json scripts/write-coverage.ts",
     "invoice:reprice": "ts-node -P tsconfig.json scripts/invoice-reprice.ts",
     "migration:deploy": "ts-node -P tsconfig.json scripts/deploy-check.ts --run",
-    "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts"
+    "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts",
+    "golive:reset": "ts-node -P tsconfig.json scripts/golive-reset.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

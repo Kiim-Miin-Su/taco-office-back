@@ -1,0 +1,328 @@
+/** @file-guide
+ * 목적: staff-crud-w8-db.spec.ts (test)
+ * 책임/재사용: 기존 대상 함수를 import하여 정상/거절/경계 회귀를 검증한다. 테스트 안에 제품 규칙을 복제하지 않는다.
+ * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
+ */
+
+/**
+ * W8 — §17 사용자 표 CRUD (대표 지시 2026-09-26 「강사는 대표·매니저·관리자가 아이디 및 비밀번호 생성하여 넘겨줄 수 있게 ·
+ * 매니저 이상급부터 user table CRUD」 · 「운영 시 초기 비밀번호(INITIAL_PASSWORD) · 첫 로그인 시 강제 변경」).
+ *
+ * 실제 HTTP(권한 가드 · **운영과 같은** ValidationPipe — 허용 밖 필드는 400)와 격리 DB 로 돈다.
+ * 막히는 쪽을 되는 쪽만큼 본다 — 대표·관리자 줄 보호, 자기 줄 보호, 기록 있는 계정의 삭제 거절(아무것도 안 사라짐).
+ * 이 스위트 전용 staff 8861~8866 과 `w8b-` 로 시작하는 이메일만 쓴다.
+ */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import cookieParser from 'cookie-parser';
+import * as bcrypt from 'bcryptjs';
+import { DataSource } from 'typeorm';
+import { AppModule } from '../src/app.module';
+import { INITIAL_PASSWORD } from '../src/lib/account-policy';
+import { STAFF_OWN_TABLES, STAFF_SOFT_REFS, staffForeignKeys } from '../src/lib/staff-refs';
+import { DEV_URL } from './db';
+
+const d = DEV_URL ? describe : describe.skip;
+jest.setTimeout(90_000);
+
+d('W8 §17 사용자 표 CRUD — 만들기(넘겨줄 정보) · 수정 · 비밀번호 초기화 · 사용 중지 · 삭제', () => {
+  let app: INestApplication;
+  let ds: DataSource;
+  const PW = 'w8b-fixture-1234';
+  const CEO = 8861;
+  const ADMIN = 8862;
+  const MGR = 8863;
+  const MGR2 = 8864;
+  const TEACHER = 8865;
+  const TEACHER2 = 8866; // 사용 중지 · 초기화 대상
+  const ids = [CEO, ADMIN, MGR, MGR2, TEACHER, TEACHER2];
+  const tokens: Record<string, string> = {};
+
+  const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> => ds.query(sql, p) as Promise<T[]>;
+  const api = (m: 'get' | 'post' | 'patch' | 'delete', url: string, token = tokens.mgr) =>
+    (request(app.getHttpServer()) as unknown as Record<string, (u: string) => request.Test>)[m](url)
+      .timeout({ response: 8000, deadline: 15000 })
+      .set('Authorization', `Bearer ${token}`);
+  const login = async (email: string, password = PW) =>
+    (await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
+      .send({ email, password }).expect(201)).body.accessToken as string;
+
+  /** 이 스위트가 만든 계정(w8b-*)과 그 흔적을 치운다 — 앞선 실행이 남긴 것까지 */
+  const dropMade = async () => {
+    const rows = await q<{ id: string }>(`SELECT id FROM staff WHERE email LIKE 'w8b-new-%'`);
+    for (const r of rows) {
+      await q(`DELETE FROM wage WHERE staff_id = $1`, [r.id]);
+      await q(`DELETE FROM pnoti WHERE staff_id = $1`, [r.id]);
+      await q(`DELETE FROM file WHERE uploaded_by = $1`, [r.id]);
+      await q(`DELETE FROM auth_code WHERE staff_id = $1`, [r.id]);
+      await q(`DELETE FROM log WHERE entity = 'STAFF' AND entity_id = $1`, [r.id]);
+      await q(`DELETE FROM staff WHERE id = $1`, [r.id]);
+    }
+  };
+  const dropFixtures = async () => {
+    await q(`DELETE FROM log WHERE actor_id = ANY($1) OR (entity = 'STAFF' AND entity_id = ANY($1))`, [ids]);
+    await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [ids]);
+    await q(`DELETE FROM wage WHERE staff_id = ANY($1) OR approved_by = ANY($1)`, [ids]);
+    await q(`DELETE FROM auth_code WHERE staff_id = ANY($1)`, [ids]);
+    await q(`DELETE FROM staff WHERE id = ANY($1)`, [ids]);
+  };
+  /** 만들기 → 만든 줄의 id */
+  const make = async (email: string, extra: Record<string, unknown> = {}) => {
+    const res = await api('post', '/drawer/staff').send({ name: '새 사람', email, role: 'teacher', ...extra }).expect(201);
+    return Number(res.body.id);
+  };
+
+  beforeAll(async () => {
+    const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = mod.createNestApplication();
+    app.use(cookieParser());
+    // 운영(app.factory)과 같은 파이프 — 허용 밖 필드(예: password)는 400 이다
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    await app.listen(0, '127.0.0.1');
+    ds = app.get(DataSource);
+    await dropMade();
+    await dropFixtures();
+    const hash = await bcrypt.hash(PW, 4);
+    await q(
+      `INSERT INTO staff (id, name, email, phone, role, password_hash, active) VALUES
+         ($1,'표대표','w8b-ceo@t.kr',NULL,'ceo',$7,true),
+         ($2,'표관리','w8b-admin@t.kr',NULL,'admin',$7,true),
+         ($3,'표매니저','w8b-mgr@t.kr','01011112222','manager',$7,true),
+         ($4,'표매니저둘','w8b-mgr2@t.kr',NULL,'manager',$7,true),
+         ($5,'표강사','w8b-t@t.kr','01033334444','teacher',$7,true),
+         ($6,'표강사둘','w8b-t2@t.kr',NULL,'teacher',$7,true)`,
+      [CEO, ADMIN, MGR, MGR2, TEACHER, TEACHER2, hash],
+    );
+    await q(`INSERT INTO tzg (id, name, tz) VALUES (1,'한국 (KST)','Asia/Seoul'), (2,'미국 동부','America/New_York') ON CONFLICT (id) DO NOTHING`);
+    tokens.ceo = await login('w8b-ceo@t.kr');
+    tokens.mgr = await login('w8b-mgr@t.kr');
+    tokens.teacher = await login('w8b-t@t.kr');
+    tokens.teacher2 = await login('w8b-t2@t.kr');
+  });
+
+  afterAll(async () => {
+    try {
+      if (ds?.isInitialized) {
+        await dropMade();
+        await dropFixtures();
+      }
+    } finally {
+      await app?.close();
+    }
+  });
+
+  /* ── 1. 만들기 — 비밀번호 칸 없음 · 넘겨줄 정보 ─────────────────────────── */
+  it('만들기 — 서버가 초기 비밀번호로 만들고 첫 설정을 걸며, 넘겨줄 정보(아이디·초기 비밀번호)는 이 응답에만 있다', async () => {
+    const res = await api('post', '/drawer/staff').send({
+      name: ' 새 강사 ', email: ' W8B-New-1@T.kr ', role: 'teacher', phone: '010-5555-6666',
+    }).expect(201);
+    expect(res.body).toMatchObject({
+      name: '새 강사', email: 'w8b-new-1@t.kr', role: 'teacher', active: true,
+      loginId: 'w8b-new-1@t.kr', initialPassword: INITIAL_PASSWORD, mustChangeCredentials: true, phone: '01055556666',
+    });
+    const [row] = await q<{ password_hash: string; must_change_credentials: boolean; email_verified: boolean; phone_verified: boolean }>(
+      `SELECT password_hash, must_change_credentials, email_verified, phone_verified FROM staff WHERE id = $1`, [res.body.id]);
+    expect(await bcrypt.compare(INITIAL_PASSWORD, row.password_hash)).toBe(true);
+    expect(row).toMatchObject({ must_change_credentials: true, email_verified: false, phone_verified: false });
+    // 기록에는 비밀번호도 초기 비밀번호도 연락처도 없다
+    const [log] = await q<{ after: unknown }>(`SELECT after FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action = 'create'`, [res.body.id]);
+    expect(JSON.stringify(log.after)).not.toContain(INITIAL_PASSWORD);
+    expect(JSON.stringify(log.after)).not.toMatch(/01055556666|w8b-new-1|password|hash/i);
+    // 목록(서랍)에는 넘겨줄 정보가 없다
+    const drawer = (await api('get', '/drawer').expect(200)).body;
+    expect(JSON.stringify(drawer)).not.toContain(INITIAL_PASSWORD);
+    expect(drawer.members.find((m: { id: number }) => m.id === res.body.id)).toMatchObject({ mustChangeCredentials: true });
+  });
+
+  it('만들기의 거절 — password 를 보내면 400(허용 밖) · 휴대폰 모양이 아니면 400 · 강사 403 · 아무것도 안 남는다', async () => {
+    await api('post', '/drawer/staff').send({ name: 'x', email: 'w8b-new-pw@t.kr', role: 'teacher', password: 'mine-1234' }).expect(400);
+    await api('post', '/drawer/staff').send({ name: 'x', email: 'w8b-new-ph@t.kr', role: 'teacher', phone: '02-123-4567' }).expect(400)
+      .expect((r) => expect(r.body.code).toBe('STAFF_PHONE_INVALID'));
+    await api('post', '/drawer/staff', tokens.teacher).send({ name: 'x', email: 'w8b-new-t@t.kr', role: 'teacher' }).expect(403);
+    await api('post', '/drawer/staff').send({ name: 'x', email: 'w8b-new-c@t.kr', role: 'ceo' }).expect(400);
+    expect(await q(`SELECT id FROM staff WHERE email IN ('w8b-new-pw@t.kr','w8b-new-ph@t.kr','w8b-new-t@t.kr','w8b-new-c@t.kr')`)).toEqual([]);
+  });
+
+  /* ── 2. 줄마다 서버 플래그 ────────────────────────────────────────────── */
+  it('줄 플래그 — 매니저는 강사·매니저 줄을 다루고 자기 줄은 수정만 · 대표·관리자 줄은 전부 false · 강사가 보면 전부 false 이고 휴대폰이 없다', async () => {
+    const drawer = (await api('get', '/drawer').expect(200)).body;
+    const m = (id: number) => drawer.members.find((x: { id: number }) => x.id === id);
+    const all = { canEdit: true, canChangeRole: true, canResetPassword: true, canToggleActive: true, canDelete: true };
+    const none = { canEdit: false, canChangeRole: false, canResetPassword: false, canToggleActive: false, canDelete: false };
+    expect(m(TEACHER)).toMatchObject({ ...all, phone: '01033334444', mustChangeCredentials: false });
+    expect(m(MGR2)).toMatchObject(all);
+    expect(m(MGR)).toMatchObject({ ...none, canEdit: true, phone: '01011112222' });
+    expect(m(CEO)).toMatchObject(none);
+    expect(m(ADMIN)).toMatchObject(none);
+    const asTeacher = (await api('get', '/drawer', tokens.teacher).expect(200)).body;
+    expect(asTeacher.members).toHaveLength(1);
+    expect(asTeacher.members[0]).toMatchObject({ ...none, phone: null });
+  });
+
+  /* ── 3. 수정 ──────────────────────────────────────────────────────────── */
+  it('수정 — 보낸 칸만 바뀌고, 이메일·휴대폰을 바꾸면 그 확인이 풀리며, 기록에는 연락처 원문이 없다', async () => {
+    const id = await make('w8b-new-edit@t.kr', { phone: '01077778888' });
+    await q(`UPDATE staff SET email_verified = true, phone_verified = true WHERE id = $1`, [id]);
+    const res = await api('patch', `/drawer/staff/${id}`).send({
+      name: ' 고친 이름 ', email: ' W8B-New-Edit2@T.kr ', phone: '010-9999-0000', title: '영어', tz: 'America/New_York', role: 'manager', hiredOn: '2026-09-01',
+    }).expect(200);
+    expect(res.body).toMatchObject({ id, name: '고친 이름', email: 'w8b-new-edit2@t.kr', phone: '01099990000', title: '영어', tz: 'America/New_York', role: 'manager', hiredOn: '2026-09-01' });
+    const [row] = await q<Record<string, unknown>>(
+      `SELECT email_verified, phone_verified, to_char(hired_on,'YYYY-MM-DD') AS hired_on FROM staff WHERE id = $1`, [id]);
+    expect(row).toMatchObject({ email_verified: false, phone_verified: false, hired_on: '2026-09-01' });
+    const [log] = await q<{ before: unknown; after: unknown }>(`SELECT before, after FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action = 'update'`, [id]);
+    const text = JSON.stringify(log);
+    expect(text).not.toMatch(/01099990000|01077778888|w8b-new-edit2@|w8b-new-edit@/);
+    expect(log.after).toMatchObject({ name: '고친 이름', role: 'manager', tz: 'America/New_York' });
+    // 직함·휴대폰은 빈 글로 비운다 — 휴대폰을 비워도 확인은 풀린 채다
+    const cleared = await api('patch', `/drawer/staff/${id}`).send({ title: '', phone: '' }).expect(200);
+    expect(cleared.body).toMatchObject({ title: null, phone: null });
+  });
+
+  it('수정의 거절 — 대표·관리자 줄 403 · 자기 역할 403 · 같은 이메일(대소문자 무시) 409 · 모르는 시간대 409 · 휴대폰 400 · 빈 수정 409 · 없는 id 404 · 강사 403 · 역할 ceo 400', async () => {
+    const id = await make('w8b-new-rej@t.kr');
+    const code = (c: string) => (r: request.Response) => expect(r.body.code).toBe(c);
+    await api('patch', `/drawer/staff/${CEO}`).send({ name: '가져가기' }).expect(403).expect(code('STAFF_PROTECTED'));
+    await api('patch', `/drawer/staff/${ADMIN}`).send({ email: 'w8b-mine@t.kr' }).expect(403).expect(code('STAFF_PROTECTED'));
+    await api('patch', `/drawer/staff/${MGR}`).send({ role: 'teacher' }).expect(403).expect(code('SELF_ROLE'));
+    await api('patch', `/drawer/staff/${id}`).send({ email: 'W8B-T@T.KR' }).expect(409).expect(code('STAFF_EMAIL_TAKEN'));
+    await api('patch', `/drawer/staff/${id}`).send({ tz: 'Mars/Olympus' }).expect(409).expect(code('TZ_UNKNOWN'));
+    await api('patch', `/drawer/staff/${id}`).send({ phone: '1234' }).expect(400).expect(code('STAFF_PHONE_INVALID'));
+    await api('patch', `/drawer/staff/${id}`).send({}).expect(409).expect(code('EMPTY_PATCH'));
+    await api('patch', `/drawer/staff/${id}`).send({ name: '새 사람' }).expect(409).expect(code('EMPTY_PATCH'));
+    await api('patch', `/drawer/staff/99999999`).send({ name: '없음' }).expect(404).expect(code('STAFF_NOT_FOUND'));
+    await api('patch', `/drawer/staff/${id}`, tokens.teacher).send({ name: '강사가' }).expect(403);
+    await api('patch', `/drawer/staff/${id}`).send({ role: 'ceo' }).expect(400);
+    await api('patch', `/drawer/staff/${id}`).send({ name: null }).expect(400);
+    await api('patch', `/drawer/staff/${id}`).send({ wageRate: 50000 }).expect(400);
+    // 대표·관리자 줄은 그대로다
+    expect((await q<{ name: string }>(`SELECT name FROM staff WHERE id = $1`, [CEO]))[0].name).toBe('표대표');
+    // 자기 이름은 바꿀 수 있다 — 막는 것은 역할뿐
+    await api('patch', `/drawer/staff/${MGR}`).send({ name: '표매니저' , title: '실장' }).expect(200);
+  });
+
+  /* ── 4. 비밀번호 초기화 ───────────────────────────────────────────────── */
+  it('비밀번호 초기화 — 초기 비밀번호 · 첫 설정 다시 · 세션 끊는 시각을 적고, 넘겨줄 정보를 돌려준다(기록에는 없다)', async () => {
+    const before = new Date(Date.now() - 1000);
+    const res = await api('post', `/drawer/staff/${TEACHER2}/password-reset`).send({}).expect(201);
+    expect(res.body).toEqual({ loginId: 'w8b-t2@t.kr', initialPassword: INITIAL_PASSWORD });
+    const [row] = await q<{ password_hash: string; must_change_credentials: boolean; credentials_changed_at: Date }>(
+      `SELECT password_hash, must_change_credentials, credentials_changed_at FROM staff WHERE id = $1`, [TEACHER2]);
+    expect(await bcrypt.compare(INITIAL_PASSWORD, row.password_hash)).toBe(true);
+    expect(await bcrypt.compare(PW, row.password_hash)).toBe(false);
+    expect(row.must_change_credentials).toBe(true);
+    expect(new Date(row.credentials_changed_at).getTime()).toBeGreaterThan(before.getTime());
+    const [log] = await q<{ before: unknown; after: unknown }>(`SELECT before, after FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action = 'password_reset'`, [TEACHER2]);
+    expect(JSON.stringify(log)).not.toContain(INITIAL_PASSWORD);
+    expect(JSON.stringify(log)).not.toMatch(/hash|\$2[aby]\$/);
+  });
+
+  it('비밀번호 초기화의 거절 — 자기 것 403 SELF_RESET · 대표 403 STAFF_PROTECTED · 강사 403 · 없는 id 404 · 대표 비밀번호는 그대로', async () => {
+    await api('post', `/drawer/staff/${MGR}/password-reset`).send({}).expect(403).expect((r) => expect(r.body.code).toBe('SELF_RESET'));
+    await api('post', `/drawer/staff/${CEO}/password-reset`).send({}).expect(403).expect((r) => expect(r.body.code).toBe('STAFF_PROTECTED'));
+    await api('post', `/drawer/staff/${ADMIN}/password-reset`).send({}).expect(403);
+    await api('post', `/drawer/staff/${TEACHER}/password-reset`, tokens.teacher).send({}).expect(403);
+    await api('post', `/drawer/staff/99999999/password-reset`).send({}).expect(404);
+    const [ceo] = await q<{ password_hash: string; must_change_credentials: boolean }>(`SELECT password_hash, must_change_credentials FROM staff WHERE id = $1`, [CEO]);
+    expect(await bcrypt.compare(PW, ceo.password_hash)).toBe(true);
+    expect(ceo.must_change_credentials).toBe(false);
+  });
+
+  /* ── 5. 사용 중지 ─────────────────────────────────────────────────────── */
+  it('사용 중지 — 그 계정은 다음 요청부터 막히고 로그인도 안 된다 · 다시 사용하면 돌아온다 · 자기·대표 403', async () => {
+    const id = await make('w8b-new-act@t.kr');
+    const off = await api('patch', `/drawer/staff/${id}/active`).send({ active: false }).expect(200);
+    expect(off.body).toMatchObject({ id, active: false });
+    const [log] = await q<{ action: string }>(`SELECT action FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action IN ('deactivate','activate') ORDER BY id`, [id]);
+    expect(log.action).toBe('deactivate');
+    // 이미 받은 토큰도 다음 요청에서 막힌다 — 기존 활성 검사(요청마다 STAFF 를 다시 읽는다)
+    await api('patch', `/drawer/staff/${TEACHER}/active`).send({ active: false }).expect(200);
+    await api('get', '/drawer', tokens.teacher).expect(401);
+    await request(app.getHttpServer()).post('/auth/login').send({ email: 'w8b-t@t.kr', password: PW }).expect(401);
+    await api('patch', `/drawer/staff/${TEACHER}/active`).send({ active: true }).expect(200);
+    tokens.teacher = await login('w8b-t@t.kr');
+    await api('patch', `/drawer/staff/${MGR}/active`).send({ active: false }).expect(403).expect((r) => expect(r.body.code).toBe('SELF_ACTIVE'));
+    await api('patch', `/drawer/staff/${CEO}/active`).send({ active: false }).expect(403).expect((r) => expect(r.body.code).toBe('STAFF_PROTECTED'));
+    await api('patch', `/drawer/staff/${id}/active`).send({ active: 'no' }).expect(400);
+    await api('patch', `/drawer/staff/${id}/active`, tokens.teacher).send({ active: true }).expect(403);
+    expect((await q<{ active: boolean }>(`SELECT active FROM staff WHERE id = $1`, [CEO]))[0].active).toBe(true);
+  });
+
+  /* ── 6. 삭제 ──────────────────────────────────────────────────────────── */
+  it('삭제 — 기록 없는 새 계정은 지워지고(자기 인증 코드는 같이) 기록에 지운 줄이 남는다', async () => {
+    const id = await make('w8b-new-del@t.kr', { title: '임시' });
+    await q(`INSERT INTO auth_code (staff_id, channel, target_hash, target_masked, code_hash, expires_at)
+             VALUES ($1,'email',repeat('a',64),'w8***@t.kr',repeat('b',64), now() + interval '10 minutes')`, [id]);
+    await api('delete', `/drawer/staff/${id}`).expect(200).expect((r) => expect(r.body).toEqual({ ok: true }));
+    expect(await q(`SELECT id FROM staff WHERE id = $1`, [id])).toEqual([]);
+    expect(await q(`SELECT id FROM auth_code WHERE staff_id = $1`, [id])).toEqual([]);
+    const [log] = await q<{ actor_id: string; before: Record<string, unknown> }>(
+      `SELECT actor_id, before FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action = 'delete'`, [id]);
+    expect(Number(log.actor_id)).toBe(MGR);
+    expect(log.before).toMatchObject({ name: '새 사람', role: 'teacher', title: '임시' });
+    expect(JSON.stringify(log.before)).not.toMatch(/w8b-new-del|hash|password/i);
+  });
+
+  it('삭제의 거절 — 시급 줄 · 조용히 같이 지워질 줄(CASCADE) · FK 로 막히는 줄이 있으면 409 이고 아무것도 안 사라진다 · 자기·대표·강사는 403', async () => {
+    const msg = '기록이 있는 구성원은 지울 수 없습니다 — 사용 중지로 막아 주세요';
+    // ① 시급 줄 — FK 가 없는 칸이라 서버가 직접 묻는다
+    const withWage = await make('w8b-new-wage@t.kr', { wageRate: 41000 });
+    await api('delete', `/drawer/staff/${withWage}`).expect(409).expect((r) => {
+      expect(r.body.code).toBe('STAFF_HAS_RECORDS');
+      expect(r.body.message).toBe(msg);
+    });
+    expect(await q(`SELECT id FROM staff WHERE id = $1`, [withWage])).toHaveLength(1);
+    expect(await q(`SELECT id FROM wage WHERE staff_id = $1`, [withWage])).toHaveLength(1);
+    // ② CASCADE FK(pnoti) — 지우면 조용히 같이 사라질 줄이다. 먼저 물어 막는다
+    const withPnoti = await make('w8b-new-pnoti@t.kr');
+    await q(`INSERT INTO pnoti (channel, body, audience, staff_id) VALUES ('app','수업 알림','teacher',$1)`, [withPnoti]);
+    await api('delete', `/drawer/staff/${withPnoti}`).expect(409).expect((r) => expect(r.body.code).toBe('STAFF_HAS_RECORDS'));
+    expect(await q(`SELECT id FROM pnoti WHERE staff_id = $1`, [withPnoti])).toHaveLength(1);
+    expect(await q(`SELECT id FROM staff WHERE id = $1`, [withPnoti])).toHaveLength(1);
+    // ③ NO ACTION FK(file.uploaded_by) — DB 가 23503 으로 막고 서버가 409 로 바꾼다
+    const withFile = await make('w8b-new-file@t.kr');
+    await q(`INSERT INTO file (kind, name, mime, bytes, sha256, data, uploaded_by) VALUES ('report-png','a.png','image/png',1,repeat('c',64),'\\x00'::bytea,$1)`, [withFile]);
+    await api('delete', `/drawer/staff/${withFile}`).expect(409).expect((r) => expect(r.body.code).toBe('STAFF_HAS_RECORDS'));
+    expect(await q(`SELECT id FROM staff WHERE id = $1`, [withFile])).toHaveLength(1);
+    expect(await q(`SELECT id FROM file WHERE uploaded_by = $1`, [withFile])).toHaveLength(1);
+    // 막힌 삭제는 기록도 남기지 않는다
+    expect(await q(`SELECT id FROM log WHERE entity = 'STAFF' AND entity_id = ANY($1) AND action = 'delete'`, [[withWage, withPnoti, withFile]])).toEqual([]);
+    // 자기 · 대표 · 관리자 · 강사
+    await api('delete', `/drawer/staff/${MGR}`).expect(403).expect((r) => expect(r.body.code).toBe('SELF_DELETE'));
+    await api('delete', `/drawer/staff/${CEO}`).expect(403).expect((r) => expect(r.body.code).toBe('STAFF_PROTECTED'));
+    await api('delete', `/drawer/staff/${ADMIN}`).expect(403);
+    await api('delete', `/drawer/staff/${withPnoti}`, tokens.teacher).expect(403);
+    await api('delete', `/drawer/staff/99999999`).expect(404);
+    expect(await q(`SELECT id FROM staff WHERE id = ANY($1)`, [[CEO, ADMIN, MGR]])).toHaveLength(3);
+  });
+
+  /* ── 7. 목록이 낡지 않는가 ────────────────────────────────────────────── */
+  it('ERD 의 STAFF 참조는 모두 「DB FK」이거나 「FK 없는 칸 목록(STAFF_SOFT_REFS)」에 있다 — 새 표가 조용히 빠지지 않는다', async () => {
+    const dbml = readFileSync(join(__dirname, '..', 'src', 'entities', 'erd.dbml.snapshot'), 'utf8');
+    const refs = new Set<string>();
+    let table = '';
+    for (const line of dbml.split('\n')) {
+      const t = /^Table\s+(\w+)/.exec(line);
+      if (t) table = t[1].toLowerCase();
+      // 한 줄에 여러 칸이 있는 표(CONS_PICK · MTATTD)도 본다 — 「칸 bigint [ref: > STAFF.id」 모양만 고른다
+      for (const m of line.matchAll(/(\w+)\s+bigint\s+\[[^\]]*ref:\s*>\s*STAFF\.id/g)) {
+        if (table) refs.add(`${table}.${m[1]}`);
+      }
+    }
+    expect(refs.size).toBeGreaterThan(60);
+    const fks = new Set((await staffForeignKeys(ds)).map((fk) => `${fk.table}.${fk.column}`));
+    const soft = new Set(STAFF_SOFT_REFS.map(([t, c]) => `${t}.${c}`));
+    const missing = [...refs].filter((r) => !fks.has(r) && !soft.has(r));
+    expect(missing).toEqual([]);
+    // 목록의 칸은 실제로 있고, FK 가 선 칸은 목록에 두지 않는다(두 벌이 되지 않게)
+    const cols = await q<{ c: string }>(
+      `SELECT table_name || '.' || column_name AS c FROM information_schema.columns WHERE table_schema = 'public'`);
+    const have = new Set(cols.map((r) => r.c));
+    expect([...soft].filter((s) => !have.has(s))).toEqual([]);
+    expect([...soft].filter((s) => fks.has(s))).toEqual([]);
+    expect(STAFF_OWN_TABLES).toEqual(['auth_code']);
+  });
+});
