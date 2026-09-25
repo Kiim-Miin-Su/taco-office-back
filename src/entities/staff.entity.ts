@@ -10,9 +10,14 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { ROLE_T_VALUES } from './enums';
 
+/**
+ * 로그인 아이디(이메일)는 대소문자를 가리지 않고 유일하다 — `lower(email)` 식 색인(v4.51 · 1763700000000).
+ * 식 색인은 데코레이터로 적을 수 없어 이름만 알리고 동기화에서 뺀다(마이그레이션이 주인이다).
+ */
+@Index('staff_email_lower_key', { synchronize: false })
 @Entity({ name: 'staff' })
 export class Staff {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -21,6 +26,7 @@ export class Staff {
   @Column({ type: 'varchar', length: 40 })
   name: string;
 
+  /** 로그인 아이디 (W8 · 2026-09-26). 저장 · 비교는 소문자 정규화(lib/account-policy) · `lower(email)` 유일(v4.51) */
   @Column({ type: 'varchar', length: 120, unique: true })
   email: string;
 
@@ -49,6 +55,25 @@ export class Staff {
   /** SENS 인증 완료 여부 (TBO-15) */
   @Column({ type: 'boolean', default: false })
   phoneVerified: boolean;
+
+  /**
+   * 첫 설정(아이디=이메일 · 비밀번호 · 휴대폰 · 이메일 인증)을 끝내야 하는 계정 (W8 · 2026-09-26 · v4.50).
+   * 켜는 곳은 셋뿐 — 관리자의 계정 만들기 · 비밀번호 초기화 · 운영 전환 스크립트. 켜져 있으면 첫 설정 경로 밖의 API 는 403.
+   */
+  @Column({ type: 'boolean', default: false })
+  mustChangeCredentials: boolean;
+
+  /** 이메일 인증 완료 여부 (W8 · v4.50) — 휴대폰의 `phoneVerified` 와 짝 */
+  @Column({ type: 'boolean', default: false })
+  emailVerified: boolean;
+
+  /**
+   * 마지막으로 이 계정의 아이디·비밀번호가 (다시) 정해진 시각 (W8 · v4.50 · v4.51 뜻 넓힘) — 누가 했든 찍는다:
+   * 본인 첫 설정 완료 · 관리자 비밀번호 초기화 · 운영 전환 스크립트. 이보다 먼저 발급된 Access · Refresh 토큰은
+   * 401 「다시 로그인해 주세요」다(AuthService) — 초기 비밀번호를 아는 만든 사람의 세션도 여기서 끊긴다. 옛 행 NULL = 끊지 않는다.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  credentialsChangedAt: Date | null;
 
   /** 지출 · 총수입 — NULL 이면 role==ceo */
   @Column({ type: 'boolean', nullable: true })

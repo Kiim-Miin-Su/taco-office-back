@@ -40,6 +40,13 @@ export class MeDto implements PermFlags {
   @ApiProperty() canApprove!: boolean;
   @ApiProperty() canHide!: boolean;
   @ApiProperty() canGpaPack!: boolean;
+
+  /*
+   * W8 · 대표 지시 2026-09-26 — 켜져 있으면 화면은 첫 설정(/onboarding) 밖으로 나가지 못하고 서버도 403 이다.
+   * 서버는 **늘** 채운다. 계약에서만 선택 칸인 이유: 화면 시험의 Me 대역 수십 벌을 한꺼번에 고치지 않으려고(빠지면 false 로 읽는다).
+   */
+  @ApiProperty({ required: false, description: '첫 설정(아이디=이메일 · 비밀번호 · 휴대폰 · 이메일 인증)을 끝내야 하는가 — 서버는 늘 채운다' })
+  mustChangeCredentials?: boolean;
 }
 
 export class LoginResultDto {

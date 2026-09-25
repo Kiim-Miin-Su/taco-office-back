@@ -6,6 +6,10 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-52 W8 로그인 아이디 · 세션 끊기 (2026-09-26 · v4.51): STAFF 색인 하나 — staff_email_lower_key UNIQUE (lower(email)) (아이디=이메일 · 로그인은 대소문자 무관 · 대소문자만 다른 두 계정이 생기지 않게 · 이미 있으면 마이그레이션이 멈춘다 · 보정 0 N-25) · STAFF.credentials_changed_at 뜻 넓힘(본인 첫 설정 · 관리자 비밀번호 초기화 · 운영 전환 스크립트가 찍고, 그보다 먼저 발급된 토큰은 401). 칸 0 · migration 1763700000000-staff-email-lower-unique
+// TBO-52 W8 계정 첫 설정 (2026-09-26 · v4.50): STAFF 칸 셋 — must_change_credentials(첫 로그인 강제 변경 · 켜는 곳은 관리자 계정 만들기 · 비밀번호 초기화 · 운영 전환 스크립트뿐 · 기본 false) · email_verified(이메일 인증 · phone_verified 와 짝) · credentials_changed_at(마지막으로 스스로 바꾼 시각). 새 표 AUTH_CODE — 인증 코드 한 줄(코드 · 받는 곳 원문은 저장하지 않는다 — HMAC · 가린 받는 곳만 · 시도 수 · 만료 · 쓴 시각). 옛 행 보정 0 (N-25) · migration 1763600000000-account-onboarding (대표 지시 2026-09-26 「초기 비밀번호 (초기 비밀번호 — 값은 src/lib/account-policy.ts 한 곳) · 첫 로그인 아이디·비밀번호 강제 변경 · phone·email 인증 필수」)
+// TBO-52 wave6 컴플레인 문의자·마무리 (2026-09-26 · v4.49): NULL 허용 칸 둘 — CPL.requester(원본 §67 카드 「고은설 어머니」 · 누가 알렸는지 · mother | father = §29 「누가 요청」과 같은 말 · cpl_requester_words CHECK) · CPL.closed_at(원본 §67 결과 칸 「08-12」 · 「결과」로 옮긴 순간을 서버가 찍고 다시 열면 비운다 · cpl_closed_at_stage CHECK). 두 CHECK NOT VALID · 옛 행 NULL(보정 0 · N-25) · migration 1763300000000 (g6 67-5 · 67-6)
+// TBO-52 wave5 스케줄 공휴일 (2026-09-25 · v4.48): 새 표 HOLIDAY — (on_date, name) 키 · 이름 빈칸 금지 CHECK. 원문 §09 월간 칸 「광복절」·「광복절 대체」 칩 · §10 요일 머리(g1 §09 #2 · §10 #8). 표시 전용(일정을 막지 않는다) · GET /schedule/holidays 가 읽는다 · 2026 법정 공휴일을 마이그레이션이 함께 넣는다(참고 자료 · 시드 --reset 이 비우지 않는다). 마이그레이션 1 (1763100000000-schedule-holiday).
 // TBO-52 wave3 g3 상담 배치안·일정 (2026-09-25 · v4.47): 새 표 둘 + 칸 하나 — LEAD_PLAN(배치안 초안 줄 · 과목 · 주 N회 · 강사 · 단가 칸 없음(RATE 가 정본) · 23-16 · 24-07) · LEAD_APPT(2차 상담 · 진단고사 일정 · 종류마다 한 줄 · ser_id 가 비면 「미생성」 · 23-15) · LEAD.recheck_on(보류 재확인 날짜 · 「연장 +2일」 · 23-16). 옛 행 보정 0 · 마이그레이션은 v4.45 의 1762400000000 파일에 더했다.
 // TBO-52 wave3 g4 안내 두 상자 (2026-09-25 · v4.46): NULL 허용 칸 둘 — GUIDE.direction(§44 「지도 방향」) · GUIDE.admin_note(§44 「관리자 코멘트 · 강사만」 — 학부모 발송 본문·안내문 PNG 에 싣지 않는다) · 길이 CHECK 둘(guide_direction_len · guide_admin_note_len · 본문과 같은 4000자). 쓰기는 안내 작성(PUT /guides/{id}/body)이 보낸 칸만 · 보낸 안내는 셋 다 잠김. 옛 안내 NULL(보정 0 · N-25). 마이그레이션 1 (1762500000000-guide-direction).
 // TBO-52 wave3 상담·컨설팅 (2026-09-25 · v4.45): NULL 허용 칸 넷 — LEAD.grade(§23 카드 학년 칩 · 23-10) · LEAD.reason_kind(§24 실패 사유 분류 다섯 · lead_reason_kind_words CHECK · 24-05) · CONS_SESS.result · CONS_SESS.next_until(§31 회차 「결과」·「다음까지」 · 31-08 — 다음까지는 담당의 TODO 한 줄 + NOTI). 옛 행 NULL(보정 0 · N-25). 마이그레이션 1 (1762400000000-intake-consulting-w3).
@@ -59,7 +63,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.47 (2026-09-25) — 같은 날 여섯 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」
+// version : 4.51 (2026-09-26) — v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -181,7 +185,7 @@ Table SUB {
 Table STAFF {
   id          bigserial   [pk]
   name        varchar(40) [not null]
-  email       varchar(120)[not null, unique]
+  email       varchar(120)[not null, unique, note: '로그인 아이디 (W8 · 2026-09-26) — 저장 · 비교는 소문자 정규화 · v4.51 lower(email) 유일(staff_email_lower_key)']
   phone       varchar(20)
   role        role_t      [not null, note: 'D-R39 — 권한의 유일한 출처']
   title       varchar(20) [note: '직함 표시용 — 매니저 · 상담실장 · 코디네이터. 권한과 무관 (교수실장 직함은 없음, 2026-09-12)']
@@ -191,6 +195,9 @@ Table STAFF {
   password_hash  varchar(72)  [note: 'bcrypt. 길이 60 이지만 알고리즘이 바뀔 자리를 둔다']
   last_login_at  timestamptz
   phone_verified boolean      [not null, default: false, note: 'SENS 인증 완료 여부 (TBO-15)']
+  must_change_credentials boolean [not null, default: false, note: 'v4.50 · 첫 설정(아이디=이메일 · 비밀번호 · 휴대폰 · 이메일 인증)을 끝내야 한다 — 켜져 있으면 첫 설정 경로 밖의 API 는 403 CREDENTIALS_CHANGE_REQUIRED · 켜는 곳은 관리자 계정 만들기 · 비밀번호 초기화 · 운영 전환 스크립트뿐']
+  email_verified boolean      [not null, default: false, note: 'v4.50 · 이메일 인증 완료 여부 (phone_verified 와 짝)']
+  credentials_changed_at timestamptz [note: 'v4.50 · v4.51 뜻 넓힘 — 마지막으로 이 계정의 아이디·비밀번호가 (다시) 정해진 시각. 누가 했든 찍는다: 본인 첫 설정 완료 · 관리자 비밀번호 초기화 · 운영 전환 스크립트. 이보다 먼저 발급된(iat 초 < 이 시각의 초) Access · Refresh 토큰은 401 · 옛 행 NULL = 끊지 않는다 (N-25)']
 
   // v2 §76 의 권한 5플래그. **평소에는 전부 NULL 이고 role 에서 파생한다** (D-R39).
   // 사람별 예외가 생기는 날에만 값을 넣어 파생 결과를 덮어쓴다.
@@ -205,11 +212,33 @@ Table STAFF {
   created_at  timestamptz [not null, default: `now()`]
 
   Note: '''
+  v4.51 · 식 색인 staff_email_lower_key — UNIQUE ON staff (lower(email)). 아이디=이메일 · 대소문자만 다른 두 계정 금지.
+    식 색인은 indexes 블록 대신 여기 적는다(scripts/dbml-parse.py 가 괄호 든 식을 칸으로 읽는다) · 엔티티는 synchronize:false 로 이름만 안다.
+    기존 중복이 있으면 마이그레이션 1763700000000 이 멈춘다(보정 0 · N-25).
   명세서 시드 16명. 대표 3 · 교수실장 1 · 상담실장 1 · 코디 3 + 강사.
   실측 가능/잠김 — 대표 14/0 · 교수실장 2/12 · 상담실장 0/14 · 코디네이터 0/14 (D-R28).
   ⚠️ 이 실측은 v2 화면의 **표시**이고, 판정은 D-R39 3줄이다.
      canAdminPage = role != teacher · canCrudAll = role != teacher · canSeeProfit = role == ceo
   대표 전용 12가지 중 **지출 · 총수입만** 실제로 대표 전용이고, 나머지는 매니저 이상이 본다.
+  '''
+}
+
+Table AUTH_CODE {
+  id            bigserial    [pk]
+  staff_id      bigint       [not null, ref: > STAFF.id, note: 'ON DELETE CASCADE — 계정이 사라지면 코드도 뜻이 없다']
+  channel       varchar(8)   [not null, note: 'email | sms (auth_code_channel_words CHECK) — 보내는 길은 기존 Sender 한 곳(SMTP · Naver SENS · DQ3)']
+  target_hash   varchar(64)  [not null, note: '받는 곳(정규화)의 HMAC — 원문을 저장하지 않는다']
+  target_masked varchar(160) [not null, note: '사람이 읽는 가린 받는 곳 — maskEmail · 휴대폰 가운데 가림']
+  code_hash     varchar(64)  [not null, note: '6자리 코드의 HMAC(서버 비밀) — 원문을 저장하지 않는다']
+  expires_at    timestamptz  [not null, note: '보낸 뒤 10분 (auth_code_expiry_after_create CHECK)']
+  attempts      int          [not null, default: 0, note: '틀린 횟수 — 다섯 번이면 그 코드는 끝난다 (auth_code_attempts_range CHECK >= 0)']
+  consumed_at   timestamptz  [note: '맞게 쓴 시각 — 한 번 쓴 코드는 다시 못 쓴다']
+  created_at    timestamptz  [not null, default: `now()`]
+
+  indexes { (staff_id, channel, created_at) [name: 'auth_code_staff_channel_idx'] }
+  Note: '''
+  v4.50 · W8 첫 설정 인증 코드. 쓰는 곳은 POST /auth/onboarding/codes(보내기) · POST /auth/onboarding/complete(확인) 둘뿐.
+  시드 --reset 이 비운다(SEEDED_TABLES). 운영 전환 스크립트도 비운다.
   '''
 }
 
@@ -372,6 +401,18 @@ Table TZG {
   id          bigserial   [pk]
   name        varchar(40) [not null]
   tz          varchar(40) [not null]
+}
+
+Table HOLIDAY {
+  on_date     date        [not null, note: 'v4.48 · 공휴일 날짜(KST 달력 날짜)']
+  name        varchar(40) [not null, note: 'v4.48 · 칩에 그대로 적는 이름 — 대체공휴일은 「광복절 대체」처럼 원문 컷의 낱말 (holiday_name_present CHECK: 빈칸 금지)']
+
+  indexes { (on_date, name) [pk] }
+  Note: '''
+  원문 §09 월간 칸 「광복절」·「광복절 대체」 칩 · §10 요일 머리 (g1 §09 #2 · §10 #8).
+  화면이 정적 공휴일 표를 들면 업무 데이터 사본이 되므로 서버 표로 둔다. 한 날에 이름이 둘일 수 있어 키는 (날짜, 이름).
+  표시 전용 — 일정을 막거나 회차를 지우지 않는다. 2026 법정 공휴일은 마이그레이션 1763100000000 이 함께 넣는다(참고 자료 · 시드 --reset 대상 아님).
+  '''
 }
 
 // ─────────────────────────────────────────────────────────────── 자원
@@ -1260,6 +1301,8 @@ Table CPL {
   owner_id    bigint      [ref: > STAFF.id]
   due_on      date        [note: 'v4.32 · 대응 기한 (J-98) — 열린 건에만 「N일 지남」을 센다. 옛 행 NULL (N-25)']
   severity    varchar(8)  [note: 'v4.32 · light | normal | severe — 원본 §67 카드의 가벼움 · 보통 · 심각 (cpl_severity_words CHECK · NULL 허용). 낱말은 lib/complaint-words 한 곳']
+  requester   varchar(8)  [note: 'v4.49 · mother | father — 원본 §67 카드 「고은설 어머니」(누가 알렸는지 · 67-5). cpl_requester_words CHECK(NOT VALID · NULL 허용) · 낱말은 lib/complaint-words(§29 「누가 요청」과 같은 말) · 옛 행 NULL (N-25)']
+  closed_at   timestamptz [note: 'v4.49 · 「결과」로 옮긴 순간 (67-6 · 원본 §67 결과 칸 「08-12」) — PATCH /ops/complaints/{id} 가 closed 로 옮길 때 서버가 찍고, 결과 칸에 머무는 동안은 그대로, 다시 열면 비운다(입력 칸 아님 · ComplaintDto.closedOn 은 KST 날짜). cpl_closed_at_stage CHECK(closed_at IS NULL OR stage = closed · NOT VALID). 옛 결과 행 NULL — 접수일·LOG 로 짓지 않는다 (N-25)']
   created_at  timestamptz [not null, default: `now()`]
   Note: '''시드 8건. 접수 → 대응 → 결과.
     v4.32 (C93) — POST /ops/complaints(「+ 접수」 · 언제나 received · 담당 알림 · LOG) · PATCH /ops/complaints/{id}(보낸 칸만 · acting 은 담당이, closed 는 결과가 있어야 한다 · J-101).
@@ -1870,3 +1913,19 @@ Table SER_OCC {
 //   + LEAD_PLAN — 배치안 초안 줄(과목 · 주 N회 · 강사) · CHECK 둘 · UNIQUE(lead_id, seq). 단가는 RATE 에서 읽는다(칸 없음 · 23-16 · 24-07).
 //   + LEAD_APPT — 2차 상담 · 진단고사 일정 · CHECK 넷 · UNIQUE(lead_id, kind) · ser_id ON DELETE SET NULL(「미생성」 판정 · 23-15).
 //   표 2 · 컬럼 1 · 마이그레이션 0 새 파일(1762400000000-intake-consulting-w3 에 더함 · 앞 판을 돌린 DB 는 revert 뒤 run) · 기존 행 보정 0.
+// v4.47 → v4.48 (2026-09-25 · TBO-52 wave5 스케줄 공휴일) — 새 표 하나.
+//   + HOLIDAY — (on_date, name) 키 · holiday_name_present CHECK · 표시 전용(원문 §09 월간 칸 칩 · §10 요일 머리 · g1 §09 #2 · §10 #8).
+//   읽기: GET /schedule/holidays?from&to(로그인한 누구나). 2026 법정 공휴일 20줄을 마이그레이션이 함께 넣는다 — 다른 해는 들어 있지 않다.
+//   표 1 · 컬럼 2 · 마이그레이션 1 (1763100000000-schedule-holiday) · 기존 행 보정 0.
+// v4.48 → v4.49 (2026-09-26 · TBO-52 wave6 운영 컴플레인) — 칸 둘.
+//   + CPL.requester varchar(8) — mother | father(원본 §67 카드 「고은설 어머니」 · §29 「누가 요청」과 같은 말) · cpl_requester_words CHECK(NOT VALID · NULL 허용).
+//   + CPL.closed_at timestamptz — 「결과」로 옮긴 순간을 서버가 찍고 다시 열면 비운다(입력 칸 아님) · cpl_closed_at_stage CHECK(closed_at IS NULL OR stage = 'closed' · NOT VALID).
+//   표 0 · 컬럼 2 · 마이그레이션 1 (1763300000000-cpl-requester-closed) · 기존 행 보정 0 (N-25).
+// v4.49 → v4.50 (2026-09-26 · TBO-52 W8 계정 첫 설정) — 칸 셋 + 표 하나.
+//   + STAFF.must_change_credentials boolean not null default false · STAFF.email_verified boolean not null default false · STAFF.credentials_changed_at timestamptz.
+//   + AUTH_CODE — 인증 코드 원장(코드 · 받는 곳 원문 없음 · HMAC · 시도 수 · 만료 · 쓴 시각) · FK staff ON DELETE CASCADE · CHECK 셋.
+//   표 1 · 컬럼 3 · 마이그레이션 1 (1763600000000-account-onboarding) · 기존 행 보정 0 (N-25 — 옛 계정은 잠그지 않는다).
+// v4.50 → v4.51 (2026-09-26 · TBO-52 W8 로그인 아이디 · 세션 끊기) — 색인 하나 + 칸 뜻 넓힘.
+//   + STAFF 색인 staff_email_lower_key UNIQUE (lower(email)) — 로그인은 lower(email) = 정규화한 입력으로 찾는다(AuthService.login). 기존 staff_email_key 는 그대로.
+//   ~ STAFF.credentials_changed_at — 「스스로 바꾼 시각」→ 「(다시) 정해진 시각」(첫 설정 · 관리자 초기화 · 운영 전환). 그보다 먼저 발급된 Access · Refresh 는 401.
+//   표 0 · 컬럼 0 · 마이그레이션 1 (1763700000000-staff-email-lower-unique) · 기존 행 보정 0 (N-25 — 대소문자 중복이 있으면 멈춘다).

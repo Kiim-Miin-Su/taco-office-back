@@ -14,6 +14,7 @@ import * as Joi from 'joi';
 import { dataSourceOptions } from './data-source';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { OnboardingGuard } from './auth/onboarding.guard';
 import { PermGuard } from './common/perm';
 import { ApiErrorFilter } from './common/filters/api-error.filter';
 import { HealthController } from './health.controller';
@@ -103,6 +104,8 @@ import { GuardiansModule } from './modules/guardians/guardians.module';
   providers: [
     // 순서가 중요하다 — 인증이 먼저 request.user 를 채워야 권한 가드가 판정할 수 있다
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // 첫 설정 잠금(W8) — 인증 뒤 · 권한 앞. 권한 문장보다 「첫 설정」이라는 진짜 까닭을 먼저 말한다
+    { provide: APP_GUARD, useClass: OnboardingGuard },
     { provide: APP_GUARD, useClass: PermGuard },
     { provide: APP_FILTER, useClass: ApiErrorFilter },
   ],

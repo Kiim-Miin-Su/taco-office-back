@@ -15,6 +15,12 @@ export interface RequestUser {
   name: string;
   role: string;
   perms?: Partial<Record<PermName, boolean | null>> | null;
+  /**
+   * 첫 설정(아이디=이메일 · 비밀번호 · 휴대폰 · 이메일 인증)을 끝내야 하는 계정인가 (W8 · 2026-09-26).
+   * 현재 STAFF 에서 매 요청 다시 읽는다 — 켜져 있으면 OnboardingGuard 가 첫 설정 경로 밖을 403 으로 막는다.
+   * 선택 칸인 이유: 요청 사용자를 직접 만드는 시험 대역이 많다. 빠지면 잠기지 않은 계정으로 본다(서버는 늘 채운다).
+   */
+  mustChange?: boolean;
 }
 
 @Injectable()

@@ -12,11 +12,14 @@ import { Staff } from '../entities';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
+import { OnboardingController } from './onboarding.controller';
+import { OnboardingService } from './onboarding.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Staff]), PassportModule, JwtModule.register({})],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  // 첫 설정(W8) — 발송은 전역 NotifyModule 의 SENDER 를 쓴다
+  controllers: [AuthController, OnboardingController],
+  providers: [AuthService, JwtStrategy, OnboardingService],
   exports: [AuthService],
 })
 export class AuthModule {}

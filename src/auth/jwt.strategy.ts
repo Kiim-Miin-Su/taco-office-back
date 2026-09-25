@@ -26,6 +26,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     // 토큰에 담긴 역할이 우리가 아는 넷 중 하나가 아니면 통과시키지 않는다.
     // 예전 토큰(head · adm · coord)이 남아 있을 수 있다 — 조용히 흘려보내면 가드가 오판한다.
     if (!isRole(payload.role) || !isJwtSubject(payload.sub)) throw new UnauthorizedException('다시 로그인해 주세요');
-    return this.auth.currentUser(payload.sub);
+    // 발급 시각을 넘긴다 — 자격이 다시 정해진 뒤(첫 설정 · 비밀번호 초기화 · 운영 전환)의 옛 토큰을 끊는다 (W8)
+    return this.auth.currentUser(payload.sub, payload.iat);
   }
 }

@@ -85,6 +85,8 @@ export * from './stu-pause.entity';
 export * from './month-close.entity';
 export * from './guardian.entity';
 export * from './guardian-send.entity';
+export * from './holiday.entity';
+export * from './auth-code.entity';
 export * from './zacc.entity';
 export * from './zassign.entity';
 export * from './zlog.entity';
@@ -96,6 +98,8 @@ import {
   MonthClose,
   Guardian,
   GuardianSend,
+  Holiday,
+  AuthCode,
   Autorep,
   Chreq,
   Cons,
@@ -180,6 +184,9 @@ export const ENTITIES = [
   // DQ3 (2026-09-25) — 보호자와 보호자별 발송 원장
   Guardian,
   GuardianSend,
+  Holiday,
+  // W8 (2026-09-26) — 첫 설정 이메일 · 휴대폰 인증 코드
+  AuthCode,
   Att,
   Autorep,
   Chreq,

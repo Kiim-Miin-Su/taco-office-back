@@ -11,6 +11,7 @@ import { AuthService } from './auth.service';
 import { LoginDto, LoginResultDto, MeDto, RefreshResultDto } from './dto/auth.dto';
 import { Public } from './public.decorator';
 import { CurrentUser } from './current-user.decorator';
+import { AllowWhileOnboarding } from './allow-while-onboarding.decorator';
 import type { RequestUser } from '../common/perm';
 // 쿠키 속성은 auth/cookie.ts 한 곳에서만 만든다 — 여기서 다시 적으면 도메인이 갈린다
 import { REFRESH_COOKIE, cookieOptions, clearOptions } from './cookie';
@@ -53,6 +54,8 @@ export class AuthController {
     res.status(204);
   }
 
+  // 첫 설정 전 계정도 읽는다 — 화면이 mustChangeCredentials 를 보고 첫 설정으로 보낸다 (W8)
+  @AllowWhileOnboarding()
   @Get('me')
   @ApiOperation({ summary: '내 정보 — **권한 플래그를 서버가 내려준다** (D-R39)', description: '현재 활성 STAFF의 역할·예외에서 파생한다. 보호 API도 요청 인증 시 같은 현재 계정을 읽으며 발급 당시 JWT 권한을 재사용하지 않는다. 비활성/삭제 계정은401. 이미 처리 중인 요청의 commit 직전 회수나 브라우저의 실시간 Me 갱신을 보장하지 않는다.' })
   @ApiOkResponse({ type: MeDto })
