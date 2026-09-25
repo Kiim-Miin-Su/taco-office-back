@@ -56,7 +56,9 @@ d('56 legacy RPT — 미상 과거 서명 보존과 현재 실제 서명', () =>
     )`);
     await q.query(`CREATE TABLE noti (
       id bigserial PRIMARY KEY, to_id bigint REFERENCES staff(id), from_id bigint REFERENCES staff(id),
-      body text, link text, category varchar(24)
+      body text, link text, category varchar(24),
+      -- NOTI.title(v4.44 · migration 1762900000000) — 대표 보고 제출 알림이 제목을 함께 쓴다(wave 4)
+      title varchar(80)
     )`);
     // 서명자 컬럼 이전의 합성 원본이다. 운영 복제본이나 public 업무/ledger를 읽거나 수정하지 않는다.
     await q.query(`INSERT INTO rpt (id,rpt_type,on_date,state,memo,sent_at)

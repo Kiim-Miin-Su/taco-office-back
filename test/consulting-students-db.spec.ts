@@ -154,6 +154,15 @@ d('§27 컨설팅 학생별 (C59)', () => {
     expect(c.createdOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  it('계약 시작일은 **건이 생긴 날과 따로** 준다 — 시작 미정이면 null (27-05)', async () => {
+    await q.query(`UPDATE cons SET start_on = '2026-07-12', created_at = '2026-09-25T01:00:00Z' WHERE id = ${OPEN}`);
+    const c = (await find(boss, A))!.cases.find((x) => x.id === OPEN)!;
+    expect(c.startOn).toBe('2026-07-12');     // §29 「시작 *」 — §31 머리와 같은 값
+    expect(c.createdOn).toBe('2026-09-25');   // 뜻은 그대로 — 건이 생긴 날
+    const later = (await find(boss, A))!.cases.find((x) => x.id === HIDDEN)!;
+    expect(later.startOn).toBeNull();          // §30 머리의 「시작 미정」과 같은 말
+  });
+
   it('학년을 그대로 내려보낸다 — 없으면 null 이고 빈 문자열로 뭉개지 않는다', async () => {
     expect((await find(boss, A))!.grade).toBe('G12');
     await q.query(`UPDATE stu SET grade = NULL WHERE id = ${B}`);

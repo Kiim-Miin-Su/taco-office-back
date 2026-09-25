@@ -122,4 +122,38 @@ describe('boardSummary', () => {
     expect(result.summary.missing).toBe(0);
     expect(result.teacherRows[0].days[0].marks.every((mark) => mark.na)).toBe(true);
   });
+
+  /**
+   * §35 요일 머리 「월 17 · 6 남음」과 §36 달력 칸(건수 · N 남음 · 과목색 점)은 **날짜 하나**의 집계다.
+   * 화면이 rows 를 다시 세지 않게 서버가 `days[]` 로 준다 (D-R37 · N-19).
+   */
+  it('날짜별 집계 days[] — 수업 수 · 남은 수 · 휴강 · 과목 키(처음 나온 순서, 겹침 없음)', () => {
+    const all = (done: boolean) => [
+      { key: 'book', done },
+      { key: 'guide', done },
+      { key: 'zoom', done: false, na: true },
+      { key: 'report', done },
+    ];
+    const result = boardSummary([
+      row('2026-09-02', all(true), { subKey: 'vocab' }),
+      row('2026-09-01', all(true), { subKey: 'writing' }),
+      row('2026-09-01', all(false), { subKey: 'vocab' }),
+      row('2026-09-01', all(true), { subKey: 'writing' }),
+      row('2026-09-01', all(false), { subKey: 'sat_math', canceled: true }),
+      row('2026-09-03', all(false), { subKey: null, canceled: true }),
+    ]);
+
+    expect(result.days).toEqual([
+      { date: '2026-09-01', lessons: 3, remaining: 1, canceled: 1, subKeys: ['writing', 'vocab'] },
+      { date: '2026-09-02', lessons: 1, remaining: 0, canceled: 0, subKeys: ['vocab'] },
+      // 휴강만 있는 날도 칸이 선다 — 「0 · 휴강 1」
+      { date: '2026-09-03', lessons: 0, remaining: 0, canceled: 1, subKeys: [] },
+    ]);
+    // 날짜 합 = 머리 칸의 수 (한 화면의 두 숫자가 갈리지 않는다)
+    expect(result.days.reduce((sum, day) => sum + day.lessons, 0)).toBe(result.summary.lessons);
+    expect(result.days.reduce((sum, day) => sum + day.canceled, 0)).toBe(result.summary.canceled);
+    expect(result.days.reduce((sum, day) => sum + day.remaining, 0)).toBe(
+      result.summary.lessons - result.summary.doneLessons,
+    );
+  });
 });

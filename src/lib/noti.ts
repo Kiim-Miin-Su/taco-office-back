@@ -81,3 +81,54 @@ export function notiCategory(
  * 창 밖의 건수는 `notiOlderCount` 로 내려보내 화면이 「더 있다」고 말한다.
  */
 export const NOTI_WINDOW_DAYS = 30;
+
+/* ── §16 알림 제목 (16-1 · impl3-w8) ───────────────────────────────────────── */
+
+/**
+ * 알림 제목 — §16 카드의 **굵은 한 줄**(`noti.title` · varchar 80 · 없으면 화면이 본문 한 줄로 그린다).
+ *
+ * 쓰는 자리가 열 개 넘는 모듈에 흩어져 있어 **낱말은 여기 한 곳**에 둔다(D-R18) — 같은 일이 모듈마다
+ * 다른 제목이 되지 않게(예: 「교재 배정 필요」는 명단 쓰기와 등록 확정 두 곳이 보낸다).
+ * 제목은 「무슨 일」만 짧게, 누구·언제·무엇은 **본문이 예전 그대로** 말한다. 서랍의 결재 결과 둘
+ * (「{종류} 요청 승인/반려」 · 「변경 요청 반영/반려」)은 요청 종류가 들어가 drawer 가 직접 짓는다.
+ */
+export const NOTI_TITLE = {
+  // 회계
+  expenseSubmitted: '지출 심사 요청',
+  expenseRejected: '지출 반려',
+  wageChanged: '시급 변경',
+  // 교재 · 안내
+  bookReceived: '자료 수령 확인',
+  bookNeeded: '교재 배정 필요',
+  guideNeeded: '수업 안내 필요',
+  guideArrived: '수업 안내 도착',
+  zoomGuide: '줌 안내',
+  // 리포트
+  reportDue: '리포트 작성 독촉',
+  reportApproved: '리포트 승인',
+  reportRejected: '리포트 반려',
+  // 시간표
+  absence: '결강',
+  carryOver: '이월 발생',
+  rosterAdded: '수업에 학생 추가',
+  // 컨설팅
+  consSessions: '컨설팅 회차 잡힘',
+  consNextTask: '컨설팅 다음 할 일',
+  consDone: '컨설팅 종료',
+  // 운영
+  teacherChange: '강사 교체',
+  teacherHandover: '담당 이관',
+  meetingInvite: '회의 초대',
+  meetingTodo: '회의 할 일',
+  planOwner: '기획 담당 지정',
+  planTask: '기획 과제',
+  complaintOwner: '컴플레인 담당 지정',
+  mktFeedback: '대표 피드백',
+  mktReply: '피드백 답변',
+  enrollNewStudent: '새 학생 등록',
+  enrollConfirmed: '등록 확정',
+  // 대표 보고
+  execSubmitted: '대표 보고 올라옴',
+} as const satisfies Record<string, string>;
+
+export type NotiTitleKey = keyof typeof NOTI_TITLE;

@@ -93,7 +93,7 @@ export class ReportsController {
   }
 
   @Get('deliveries/history')
-  @ApiOperation({ summary: 'RSEND/PDFLOG 발송 이력 — 날짜 또는 리포트로 필터' })
+  @ApiOperation({ summary: 'RSEND/PDFLOG 발송 이력 — 날짜 또는 리포트로 필터 · span 이면 일/주/월 묶음(§48)' })
   @ApiOkResponse({ type: ReportSendHistoryListDto })
   async deliveryHistory(
     @CurrentUser() user: RequestUser,

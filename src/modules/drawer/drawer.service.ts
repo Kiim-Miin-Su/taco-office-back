@@ -19,14 +19,14 @@ import { EntityManager, QueryRunner, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import type { ApprovalFlowScope } from '../../common/perm';
 import {
-  apFlow, approvalFlowProjection, labelOf, reqAsked, reqAskedLine, toApState,
+  apFlow, approvalFlowProjection, labelOf, reqAsked, reqAskedLine, requesterReason, toApState,
   GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
 import { kindGroupLabel } from '../../lib/catalog-words';
 import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ZoomService } from '../zoom/zoom.service';
 import { NOTI_CATEGORIES, NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
-import { groupByRole } from '../../lib/role-words';
+import { groupByRole, roleLabel } from '../../lib/role-words';
 import { START_MIN, END_MIN, kstAt, writtenRows } from '../../lib/sql';
 import { todoSourceLabel } from '../../lib/todo';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
@@ -171,15 +171,19 @@ export class DrawerService {
          FROM req q LEFT JOIN staff s ON s.id = q.staff_id`,
     )) {
       const reqType = String(r.req_type);
+      const asked = reqAskedLine(reqType, r.payload);
+      const payload = (r.payload ?? {}) as Record<string, unknown>;
       rows.push({
         kind: 'req', id: Number(r.id),
         title: `${labelOf(REQ_TYPE_LABEL, reqType)} 요청`,
         // 「무엇을 바라는가」를 줄에 적는다 — 근거를 안 보고 누르는 승인이 되지 않도록 (§14)
-        sub: reqAskedLine(reqType, r.payload),
+        sub: asked,
         byId: num(r.staff_id), byName: str(r.by_name), at: String(r.at),
         state: toApState(str(r.state)), why: str(r.reject_reason),
         go: `/ops?tab=todo&request=${Number(r.id)}`,
-        reqType, asked: reqAskedLine(reqType, r.payload),
+        reqType, asked,
+        // 강사가 적은 사유(§14 인용 줄 · g2 14-4). 옛 교재 변경 요청은 그 말이 `message` 칸에 있다
+        reason: requesterReason([asked], payload.reason, payload.message),
       });
     }
 
@@ -200,6 +204,9 @@ export class DrawerService {
       const asked = chreqAsked(reqType, r.payload, {
         teacherName: str(r.teacher_name), roomName: str(r.room_name), zaccLabel: str(r.zacc_label),
       });
+      const state = toApState(str(r.state));
+      // 반려 사유는 이제 제 칸이 있다 (v4.18) — 옛 행은 신청 사유 칸에만 있어 그것으로 갈음한다
+      const why = state === 'back' ? (str(r.reject_reason) ?? str(r.reason)) : null;
       rows.push({
         kind: 'chreq', id: Number(r.id),
         title: `${labelOf(REQ_TYPE_LABEL, reqType)} 요청`,
@@ -207,11 +214,11 @@ export class DrawerService {
         sub: [str(r.ser_title), str(r.on_date), asked, r.apply_all === true ? '(이후 전체)' : '(이 회차만)']
           .filter(Boolean).join(' · '),
         byId: num(r.by_id), byName: str(r.by_name), at: String(r.at),
-        state: toApState(str(r.state)),
-        // 반려 사유는 이제 제 칸이 있다 (v4.18) — 옛 행은 신청 사유 칸에만 있어 그것으로 갈음한다
-        why: toApState(str(r.state)) === 'back' ? (str(r.reject_reason) ?? str(r.reason)) : null,
+        state, why,
         go: `/schedule?changeRequest=${Number(r.id)}`,
         reqType, asked, applicable: chreqApplicable(reqType, r.payload),
+        // 신청 사유(§14 인용 줄 · g2 14-4) — 옛 반려 행은 그 글이 반려 사유 자리에 이미 서므로 두 번 싣지 않는다
+        reason: requesterReason([asked, why], r.reason),
       });
     }
 
@@ -227,16 +234,23 @@ export class DrawerService {
          LEFT JOIN stu s ON s.id = gs.student_id
         GROUP BY g.id, b.name`,
     )) {
-      const sub = [str(r.stu_names), r.effective_on ? `기한 ${String(r.effective_on)}` : null, str(r.memo)]
-        .filter(Boolean).join(' · ');
+      /*
+       * 부제는 원문 §75 줄 그대로 「학생 · 기한」이다 — 메모는 부제가 아니라 올린 사람의 말이라 §14 인용 줄로 간다.
+       * 제목은 종류 이름을 **두 번 말하지 않는다**(g2 14-7) — 시드·옛 행의 제목이 종류 이름과 같은 글이라
+       * 「시험 대비 자료 요청 · 시험 대비 자료 요청」이 서고 있었다.
+       */
+      const kindTitle = `${labelOf(GPAPACK_TYPE_LABEL, String(r.pack_type))} 자료 요청`;
+      const ownTitle = str(r.title)?.trim() || null;
+      const title = ownTitle && ownTitle !== kindTitle ? `${kindTitle} · ${ownTitle}` : kindTitle;
+      const sub = [str(r.stu_names), r.effective_on ? `기한 ${String(r.effective_on)}` : null]
+        .filter(Boolean).join(' · ') || null;
       rows.push({
         kind: 'gpapack', id: Number(r.id),
-        title: [`${labelOf(GPAPACK_TYPE_LABEL, String(r.pack_type))} 자료 요청`, str(r.title)]
-          .filter(Boolean).join(' · '),
-        sub: sub || null,
+        title, sub,
         byId: num(r.created_by), byName: str(r.by_name), at: String(r.at),
         state: toApState(str(r.state)), why: null,
         go: `/books?tab=requests&pack=${Number(r.id)}`,
+        reason: requesterReason([title, sub], r.memo),
       });
     }
 
@@ -280,7 +294,8 @@ export class DrawerService {
        창 밖에 몇 건이 남아 있는지 함께 세어, 화면이 「없어진 것이 아니라 안 보이는 것」이라고 말할 수 있게 한다. */
     const windowDays = notiAll ? 0 : NOTI_WINDOW_DAYS;
     const notis = (await this.q(
-      `SELECT n.id, n.body, n.link, n.category, n.to_id, n.read_at, f.name AS from_name,
+      `SELECT n.id, n.title, n.body, n.link, n.category, n.to_id, n.read_at, f.name AS from_name,
+              f.role::text AS from_role,
               ${kstAt(`n.created_at`)} AS at
          FROM noti n LEFT JOIN staff f ON f.id = n.from_id
         WHERE ($2::boolean OR n.to_id = $1)
@@ -290,8 +305,12 @@ export class DrawerService {
     )).map((r) => {
       const link = str(r.link);
       const category = notiCategory(str(r.category), link);
+      const fromRole = str(r.from_role);
       return {
-        id: Number(r.id), body: String(r.body), fromName: str(r.from_name),
+        // 제목은 제목 칸이 생긴 뒤 적는 쓰기만 갖는다 — 옛 행은 null 이고 화면은 본문을 한 줄로 그린다 (g2 16-1)
+        id: Number(r.id), title: str(r.title), body: String(r.body), fromName: str(r.from_name),
+        // 보낸 이의 역할 낱말은 §17 과 같은 표에서 꺼낸다 (g2 16-2 · D-R18) — 시스템이 보낸 것은 null
+        fromRoleLabel: fromRole ? roleLabel(fromRole) : null,
         toId: num(r.to_id), link, read: r.read_at !== null, at: String(r.at),
         tone: notiTone(link),
         category, categoryLabel: NOTI_CATEGORY_LABEL[category],
@@ -717,10 +736,12 @@ export class DrawerService {
           JSON.stringify({ state: 'pending' }),
           JSON.stringify({ state: approving ? 'approved' : 'rejected', applied, reason })],
       );
-      // 올린 사람은 결과를 알아야 한다 — 분류는 NOTI.category에 명시한다 (§16)
+      // 올린 사람은 결과를 알아야 한다 — 분류는 NOTI.category에 명시한다 (§16).
+      // 제목은 §16 카드의 굵은 한 줄이다(g2 16-1) — 본문은 예전 그대로 두어 다른 읽는 자리가 바뀌지 않는다
       await m.query(
-        `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, $4, 'request')`,
+        `INSERT INTO noti (to_id, from_id, title, body, link, category) VALUES ($1, $2, $3, $4, $5, 'request')`,
         [byId, viewerId,
+          `${label} 요청 ${approving ? '승인' : '반려'}`,
           approving
             ? `${label} 요청이 승인됐습니다${applied ? ` — ${applied}` : ''}`
             : `${label} 요청이 반려됐습니다 — ${reason}`,
@@ -805,8 +826,9 @@ export class DrawerService {
           JSON.stringify({ state: approving ? 'approved' : 'rejected', asked, reason })],
       );
       await run(
-        `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, $4, 'schedule')`,
+        `INSERT INTO noti (to_id, from_id, title, body, link, category) VALUES ($1, $2, $3, $4, $5, 'schedule')`,
         [Number(req.by_id), viewerId,
+          `변경 요청 ${approving ? '반영' : '반려'}`,
           approving
             ? `변경 요청이 반영됐습니다 — ${asked ?? '시간표가 바뀌었습니다'}`
             : `변경 요청이 반려됐습니다 — ${reason}`,

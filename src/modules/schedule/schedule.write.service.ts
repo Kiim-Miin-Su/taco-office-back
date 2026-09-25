@@ -31,6 +31,7 @@ import {
   type AttendanceCancelReason, type CancelTreat,
 } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
+import { NOTI_TITLE } from '../../lib/noti';
 import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { loadState, persist } from './schedule.state.repo';
@@ -111,17 +112,17 @@ async function notifyCancel(
   const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
   const treatText = makeup ? `${treatLabel} → ${makeup.date} ${hhmm(makeup.startMin)}` : treatLabel;
   await q.query(
-    `INSERT INTO noti (to_id, from_id, body, link, category)
-     SELECT id, $1, $2, $3, 'schedule' FROM staff
+    `INSERT INTO noti (to_id, from_id, body, link, category, title)
+     SELECT id, $1, $2, $3, 'schedule', $5 FROM staff
       WHERE active AND (id = $4 OR role <> 'teacher') AND ($1::bigint IS NULL OR id <> $1)`,
-    [actorId ?? null, `${head.subject} 결강 — ${who} (${onDate} · ${treatText})`, `/schedule?date=${onDate}`, teacherId ?? -1],
+    [actorId ?? null, `${head.subject} 결강 — ${who} (${onDate} · ${treatText})`, `/schedule?date=${onDate}`, teacherId ?? -1, NOTI_TITLE.absence],
   );
   if (treat === 'carry') {
     await q.query(
-      `INSERT INTO noti (to_id, from_id, body, link, category)
-       SELECT id, $1, $2, $3, 'schedule' FROM staff
+      `INSERT INTO noti (to_id, from_id, body, link, category, title)
+       SELECT id, $1, $2, $3, 'schedule', $4 FROM staff
         WHERE active AND role = 'ceo' AND ($1::bigint IS NULL OR id <> $1)`,
-      [actorId ?? null, `${head.subject} 이월 1회 발생 — ${who} · 다음 달 청구에서 빠집니다 (${onDate})`, `/accounting?tab=tuition&month=${month}`],
+      [actorId ?? null, `${head.subject} 이월 1회 발생 — ${who} · 다음 달 청구에서 빠집니다 (${onDate})`, `/accounting?tab=tuition&month=${month}`, NOTI_TITLE.carryOver],
     );
   }
 }
@@ -163,26 +164,26 @@ async function notifyRosterAdd(
   if (!head) return;
   // ⓐ 들어왔다 — 그 수업 강사와 관리자급 전원 (`notifyCancel` 과 같은 술어)
   await q.query(
-    `INSERT INTO noti (to_id, from_id, body, link, category)
-     SELECT id, $1, $2, $3, 'schedule' FROM staff
+    `INSERT INTO noti (to_id, from_id, body, link, category, title)
+     SELECT id, $1, $2, $3, 'schedule', $5 FROM staff
       WHERE active AND (id = $4 OR role <> 'teacher')`,
     [actorId ?? null, `${head.student} 학생이 ${head.subject} 수업에 들어왔습니다`,
-     `/schedule?date=${onDate}`, teacherId ?? -1],
+     `/schedule?date=${onDate}`, teacherId ?? -1, NOTI_TITLE.rosterAdded],
   );
   // ⓑ·ⓒ 준비할 일 — 쓰는 사람은 관리자다 (§43 안내 · §38 교재는 관리자 화면이다)
   if (needGuide) {
     await q.query(
-      `INSERT INTO noti (to_id, from_id, body, link, category)
-       SELECT id, $1, $2, '/guides', 'request' FROM staff WHERE active AND role <> 'teacher'`,
-      [actorId ?? null, `${head.student} 수업 안내가 필요합니다`],
+      `INSERT INTO noti (to_id, from_id, body, link, category, title)
+       SELECT id, $1, $2, '/guides', 'request', $3 FROM staff WHERE active AND role <> 'teacher'`,
+      [actorId ?? null, `${head.student} 수업 안내가 필요합니다`, NOTI_TITLE.guideNeeded],
     );
   }
   if (needBook) {
     // 링크·분류는 C91 등록 확정이 쓰는 것과 같은 선택이다 — 같은 일에 두 자리가 생기지 않게
     await q.query(
-      `INSERT INTO noti (to_id, from_id, body, link, category)
-       SELECT id, $1, $2, '/books', 'request' FROM staff WHERE active AND role <> 'teacher'`,
-      [actorId ?? null, `${head.student} 교재 배정이 필요합니다`],
+      `INSERT INTO noti (to_id, from_id, body, link, category, title)
+       SELECT id, $1, $2, '/books', 'request', $3 FROM staff WHERE active AND role <> 'teacher'`,
+      [actorId ?? null, `${head.student} 교재 배정이 필요합니다`, NOTI_TITLE.bookNeeded],
     );
   }
 }

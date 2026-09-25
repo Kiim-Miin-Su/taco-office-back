@@ -14,7 +14,7 @@ import {
   MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
   MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
-  MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto,
+  MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto, PlanTaskCreateDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
 import { EnrollResultDto, LeadEnrollDto } from './enroll.dto';
@@ -160,7 +160,7 @@ export class OpsController {
     description: '같은 트랜잭션을 끝까지 돌리고 되돌린다 — 겹침(409)·강사 불가 시간·첫 수업일·청구액이 실제와 같다. 화면이 짓지 않는다 (D-R37).',
   })
   @ApiCreatedResponse({ type: EnrollResultDto })
-  @ApiConflictResponse({ description: 'code ALREADY_ENROLLED | LEAD_FAILED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED' })
+  @ApiConflictResponse({ description: 'code ALREADY_ENROLLED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED — 등록 실패 건도 되살리기 없이 바로 등록한다(원본 §24 「바로 수업 등록」 · 실패 이력은 도달 기록·LOG 에 남는다)' })
   @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND | STUDENT_NOT_FOUND | 교재 없음' })
   enrollPreview(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadEnrollDto): Promise<EnrollResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
@@ -175,7 +175,7 @@ export class OpsController {
       + '→ 교재 요청(wait) 또는 「교재 배정이 필요합니다」 알림 → 첫 수업 안내 초안 → 강사·관리자 알림 → LEAD enrolled + 도달 기록 + LOG.',
   })
   @ApiCreatedResponse({ type: EnrollResultDto })
-  @ApiConflictResponse({ description: 'code ALREADY_ENROLLED | LEAD_FAILED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED' })
+  @ApiConflictResponse({ description: 'code ALREADY_ENROLLED | STUDENT_DUPLICATE | STUDENT_SAME_NAME | 시간표 겹침 | MONTH_CLOSED — 등록 실패 건도 되살리기 없이 바로 등록한다(원본 §24 「바로 수업 등록」 · 실패 이력은 도달 기록·LOG 에 남는다)' })
   @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND | STUDENT_NOT_FOUND | 교재 없음' })
   enroll(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadEnrollDto): Promise<EnrollResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
@@ -378,6 +378,25 @@ export class OpsController {
     @Body() dto: PlanReviewDto,
   ): Promise<PlanDetailDto> {
     return this.svc.reviewPlan(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
+  }
+
+  @Post('plans/:id/tasks')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§65 「+ 대표 지시」 — 기획에 과제(TODO) 한 줄 · 담당 알림 · 감사 줄을 한 트랜잭션에서 (w5 · 65-4)',
+    description:
+      '과제는 TODO(src=plan · plan_id) 한 줄이다 — §62 기한 표·§61 「과제 N/M」·§64 할 일이 같은 줄을 읽는다. '
+      + '기획 결재 권한이 있어야 하고 끝난 기획에는 더하지 않는다. 막힌 문장은 읽기의 addTaskBlockedReason 과 같다.',
+  })
+  @ApiCreatedResponse({ type: PlanDetailDto })
+  @ApiConflictResponse({ description: 'code CEO_ONLY | PLAN_DONE | TASK_TITLE_REQUIRED' })
+  @ApiNotFoundResponse({ description: 'PLAN_NOT_FOUND · STAFF_NOT_FOUND' })
+  async addPlanTask(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PlanTaskCreateDto,
+  ): Promise<PlanDetailDto> {
+    return this.svc.addPlanTask(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
   }
 
   /* ══ §66 회의 상세 ═════════════════════════════════════════════════════ */

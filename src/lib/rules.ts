@@ -86,6 +86,16 @@ export const REP_STATE_FROM_DB = {
 export type RepStateDb = keyof typeof REP_STATE_FROM_DB;
 
 /**
+ * `rep_state_t`(DB) → 사람이 읽는 낱말 — 서버가 문장을 만드는 자리(§12 준비 줄 등)가 코드값(`plan`·`none`)을 찍지 않게 한다.
+ * 원문 §12 컷은 「ok · 08-21 10:35」처럼 상태값을 그대로 적지만, 코드값은 사람의 낱말이 아니다(QA 0925 H14 · g1 §12 #8).
+ * 화면 쪽 같은 낱말은 front `components/teacher/format.ts` REP 표다 — 둘이 갈리면 이 표가 서버 문장의 정본이다.
+ */
+export const REP_STATE_LABEL_DB: Record<RepStateDb, string> = {
+  na: '리포트 대상 아님', plan: '수업 예정', none: '리포트 미작성', draft: '작성 중',
+  wait: '승인 대기', ok: '승인 완료', rej: '반려',
+};
+
+/**
  * 캘린더에 보여 줄 리포트 상태.
  *
  * `na` 는 리포트 대상이 아닌 종류에만 쓴다. 리포트 대상 회차의 미작성 상태는

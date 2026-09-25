@@ -64,6 +64,12 @@ export class GpaUseDto {
   @ApiProperty({ description: '기록 당시 GPASVC.point 스냅샷' }) points!: number;
   @ApiProperty({ description: 'YYYY-MM-DD' }) onDate!: string;
   @ApiPropertyOptional({ type: Number, nullable: true }) startMin?: number | null;
+  @ApiProperty({
+    type: Number, nullable: true,
+    description: '끝 시각(KST 분 · 자정은 1440) — 기록에는 칸이 없어 연결 회차(serId)가 그날 놓인 자리에서 읽는다. '
+      + '회차가 없으면 null — 원본 §82 회차 내역 「18:00–18:45」 (82-8)',
+  })
+  endMin!: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: "kind='gpa' 회차 연결" }) serId?: number | null;
   @ApiPropertyOptional(S) coordName?: string | null;
   @ApiPropertyOptional(S) noteUrl?: string | null;

@@ -23,6 +23,10 @@ export class Noti {
   @Column({ type: 'bigint', nullable: true })
   fromId: number | null;
 
+  /** §16 카드의 굵은 제목 (g2 16-1 · migration 1762900000000). 옛 행·제목을 안 적는 쓰기는 null — 화면은 본문만 그린다 */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  title: string | null;
+
   @Column({ type: 'text' })
   body: string;
 

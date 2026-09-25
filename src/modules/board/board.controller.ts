@@ -31,6 +31,8 @@ export class BoardController {
       to: query.to,
       teacherId: canAll ? query.teacherId : user.id,
       subKey: query.subKey,
+      // 필터 칩(facet)은 거르기 전을 센다 — 다만 강사 본인 범위는 facet 에도 그대로 (D-R39)
+      scopeTeacherId: canAll ? undefined : user.id,
     });
   }
 }

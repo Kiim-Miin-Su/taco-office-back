@@ -69,14 +69,20 @@ export const NOTIS = [
   { toId: 1,  fromId: 2, body: '지난 분기 정산 마감 안내', link: '/accounting', category: 'etc', createdAt: D(-95) },
 ];
 
-/** 컨설팅 — 계약 5단계 → 진행 → 종료 (§26~§31) */
+/**
+ * 컨설팅 — 계약 5단계 → 진행 → 종료 (§26~§31).
+ * 진행·종료 건은 계약 시작일(`startOn` → cons.start_on)을 갖는다 — 없으면 §27 기간이 「건이 생긴 날(시드 날짜) ~ 종료일」로 거꾸로 보였다(QA 0925).
+ * 요청자(`requester` → cons.requester)와 시작일은 §29 시작 폼이 **처음부터 받는 값**이라 계약 단계 건도 갖는다
+ * (impl3-w8 · 26-11) — 비워 두면 §26 카드가 담당만, §30 머리가 「요청자 미정 · 시작 미정」이라 원문과 달랐다.
+ * 계약 단계 건의 시작일은 아직 오지 않은 **예정일**이다.
+ */
 export const CONSULTINGS = [
-  { id: 1, consType: 'admissions', stage: 'running', contractStep: 5, amount: 8400000, sessions: 13, endOn: '2027-01-31', ownerId: 3, share: 'money_only', students: [5] },
-  { id: 2, consType: 'essay',      stage: 'running', contractStep: 5, amount: 3600000, sessions: 8,  endOn: '2026-12-20', ownerId: 7, share: 'money_only', students: [6] },
-  { id: 3, consType: 'roadmap',    stage: 'contract', contractStep: 1, amount: 2800000, sessions: 6, endOn: '2027-02-28', ownerId: 3, share: 'money_only', students: [3] },
+  { id: 1, consType: 'admissions', stage: 'running', contractStep: 5, amount: 8400000, sessions: 13, requester: 'mother', startOn: '2026-07-13', endOn: '2027-01-31', ownerId: 3, share: 'money_only', students: [5] },
+  { id: 2, consType: 'essay',      stage: 'running', contractStep: 5, amount: 3600000, sessions: 8,  requester: 'father', startOn: '2026-08-03', endOn: '2026-12-20', ownerId: 7, share: 'money_only', students: [6] },
+  { id: 3, consType: 'roadmap',    stage: 'contract', contractStep: 1, amount: 2800000, sessions: 6, requester: 'mother', startOn: '2026-10-12', endOn: '2027-02-28', ownerId: 3, share: 'money_only', students: [3] },
   // 공개 범위를 섞어 둔다 — 전부 money_only 면 두 번째 권한 층(csCan)이 한 번도 안 돈다.
-  { id: 4, consType: 'admissions', stage: 'contract', contractStep: 3, amount: 7200000, sessions: 12, endOn: '2027-01-31', ownerId: 2, share: 'picked',  students: [1] },
-  { id: 5, consType: 'admissions', stage: 'done',    contractStep: 5, amount: 8400000, sessions: 13, endOn: '2026-08-15', ownerId: 7, share: 'private', students: [8] },
+  { id: 4, consType: 'admissions', stage: 'contract', contractStep: 3, amount: 7200000, sessions: 12, requester: 'mother', startOn: '2026-10-05', endOn: '2027-01-31', ownerId: 2, share: 'picked',  students: [1] },
+  { id: 5, consType: 'admissions', stage: 'done',    contractStep: 5, amount: 8400000, sessions: 13, requester: 'father', startOn: '2026-03-02', endOn: '2026-08-15', ownerId: 7, share: 'private', students: [8] },
 ];
 
 /**
@@ -223,35 +229,47 @@ export const PLANS = [
   { id: 2, title: '교재 재고 회전율 개선안', stage: 'review', goal: '사장 재고를 줄인다', research: '20권 매입분 중 6권만 나감', ask: '매입 단위를 10권으로', dueOn: D(-2), ownerId: 4 },
   { id: 3, title: '9월 신규 강사 채용안',   stage: 'rework', goal: '주말 수요 대응', research: null, ask: '인건비 3개월치 추정 필요', dueOn: D(-4), ownerId: 2 },
   { id: 4, title: '겨울 특강 커리큘럼 초안', stage: 'draft',  goal: '12월 특강 3종', research: null, ask: null, dueOn: D(2), ownerId: 3 },
-  { id: 5, title: '출결 일괄 확정 도입',     stage: 'approved', goal: '출결 확인율 95% 이상', research: '금요일 일괄 확정 도입 후 94.1% → 97.4%', ask: '승인 완료', dueOn: D(-4), ownerId: 2 },
+  // 승인 칸 건은 기한 승인을 거친 뒤다 — 규칙상 기한 승인 없이 최종 승인이 열리지 않는다(C56 · impl3-w8 61-9). 기한 승인은 대표(1)
+  { id: 5, title: '출결 일괄 확정 도입',     stage: 'approved', goal: '출결 확인율 95% 이상', research: '금요일 일괄 확정 도입 후 94.1% → 97.4%', ask: '승인 완료', dueOn: D(-4), ownerId: 2, dueApprovedAt: D(-6), dueApprovedBy: 1 },
 ];
 
 /** 회의 5종 (§63 · §66) */
-export const MEETINGS = [
-  { id: 1, mtType: 'plan',      title: '9월 마케팅 집행 확정 회의', onDate: D(0),  minutes: null, attendees: [1, 2, 3, 4, 7] },
-  { id: 2, mtType: 'consulting', title: '대학 원서 마감 일정 점검',  onDate: D(0),  minutes: null, attendees: [3, 7] },
-  { id: 3, mtType: 'general',   title: '주간 운영 회의 (35주차)',   onDate: D(3),  minutes: null, attendees: [1, 2, 3, 4, 7] },
-  { id: 4, mtType: 'marketing', title: '8월 채널별 성과 리뷰',      onDate: D(-2), minutes: '채널별 등록당 비용을 비교. 인스타 재검토 결정.', attendees: [1, 2, 3, 4, 7] },
-  { id: 5, mtType: 'general',   title: '주간 운영 회의 (34주차)',   onDate: D(-4), minutes: '리포트 작성률 하락 원인 공유. 배정 분산 합의.', attendees: [1, 2, 3, 4, 7] },
+/*
+ * `serId` — 이어진 하루짜리 회의 회차(`schedule.SERS` 24~27 · impl3-w8 63-3). §63 줄의 시각·자리는 그 회차에서 읽는다.
+ * 5번은 **옛 기록**으로 둔다(연결 없음 → 「시각 없음」) — 모두 이으면 그 갈래가 시드에서 한 번도 안 돈다.
+ */
+export const MEETINGS: Array<{ id: number; mtType: string; title: string; onDate: string; minutes: string | null; attendees: number[]; serId: number | null }> = [
+  { id: 1, mtType: 'plan',      title: '9월 마케팅 집행 확정 회의', onDate: D(0),  minutes: null, attendees: [1, 2, 3, 4, 7], serId: 24 },
+  { id: 2, mtType: 'consulting', title: '대학 원서 마감 일정 점검',  onDate: D(0),  minutes: null, attendees: [3, 7], serId: 25 },
+  { id: 3, mtType: 'general',   title: '주간 운영 회의 (35주차)',   onDate: D(3),  minutes: null, attendees: [1, 2, 3, 4, 7], serId: 26 },
+  { id: 4, mtType: 'marketing', title: '8월 채널별 성과 리뷰',      onDate: D(-2), minutes: '채널별 등록당 비용을 비교. 인스타 재검토 결정.', attendees: [1, 2, 3, 4, 7], serId: 27 },
+  { id: 5, mtType: 'general',   title: '주간 운영 회의 (34주차)',   onDate: D(-4), minutes: '리포트 작성률 하락 원인 공유. 배정 분산 합의.', attendees: [1, 2, 3, 4, 7], serId: null },
 ];
 
-/** 컴플레인 — 영역 5종 · 접수 → 대응 → 결과 (§67) */
-export const COMPLAINTS = [
-  { area: 'schedule', studentId: 9,  stage: 'received', body: '스케줄 변경을 통보받지 못했습니다.', teacherChanged: false, ownerId: 2, createdAt: D(-1) },
-  { area: 'teacher',  studentId: 5,  stage: 'received', body: '수업 시작이 10분씩 반복해서 늦습니다.', teacherChanged: false, ownerId: 4, createdAt: D(-1) },
-  { area: 'book',     studentId: 4,  stage: 'acting',   body: '교재 배송이 3일 지연됐습니다.', action: '통화 완료 · 재발송 처리 중', teacherChanged: false, ownerId: 4, createdAt: D(-5) },
-  { area: 'lesson',   studentId: 7,  stage: 'acting',   body: '그룹 수업 인원이 너무 많습니다.', action: '분반 검토 중 · 09-01 회신 약속', teacherChanged: false, ownerId: 3, createdAt: D(-6) },
-  { area: 'intake',   studentId: null, stage: 'acting', body: '상담 예약 시간이 착오로 잡혔습니다.', action: '사과 + 재예약 완료', teacherChanged: false, ownerId: 3, createdAt: D(-8) },
-  { area: 'lesson',   studentId: 11, stage: 'closed',   body: '수업 취소 환불이 지연됩니다.', action: '환불 처리', result: '08-24 환불 완료', teacherChanged: false, ownerId: 2, createdAt: D(-12) },
-  { area: 'lesson',   studentId: 2,  stage: 'closed',   body: '리포트 내용이 부실합니다.', action: '재작성 요청', result: '08-22 재작성 전달', teacherChanged: true, ownerId: 3, createdAt: D(-14) },
-  { area: 'book',     studentId: 10, stage: 'closed',   body: '교재가 파본입니다.', action: '교체 발송', result: '08-20 교체 완료', teacherChanged: false, ownerId: 4, createdAt: D(-16) },
+/**
+ * 컴플레인 — 영역 5종 · 접수 → 대응 → 결과 (§67).
+ * 심각도(`severity` · light | normal | severe)는 접수 때 고르는 값이다 — 비워 두면 §67 카드의 칩이 하나도 안 섰다
+ * (impl3-w8 · 67-8). 지난 건 하나(8)는 심각도를 모르는 옛 기록으로 남긴다 — 칩 없는 갈래도 화면에 보이게.
+ */
+export const COMPLAINTS: Array<{
+  area: string; studentId: number | null; stage: string; body: string; action?: string; result?: string;
+  teacherChanged: boolean; ownerId: number; createdAt: string; severity: 'light' | 'normal' | 'severe' | null;
+}> = [
+  { area: 'schedule', studentId: 9,  stage: 'received', body: '스케줄 변경을 통보받지 못했습니다.', teacherChanged: false, ownerId: 2, createdAt: D(-1), severity: 'severe' },
+  { area: 'teacher',  studentId: 5,  stage: 'received', body: '수업 시작이 10분씩 반복해서 늦습니다.', teacherChanged: false, ownerId: 4, createdAt: D(-1), severity: 'normal' },
+  { area: 'book',     studentId: 4,  stage: 'acting',   body: '교재 배송이 3일 지연됐습니다.', action: '통화 완료 · 재발송 처리 중', teacherChanged: false, ownerId: 4, createdAt: D(-5), severity: 'normal' },
+  { area: 'lesson',   studentId: 7,  stage: 'acting',   body: '그룹 수업 인원이 너무 많습니다.', action: '분반 검토 중 · 09-01 회신 약속', teacherChanged: false, ownerId: 3, createdAt: D(-6), severity: 'light' },
+  { area: 'intake',   studentId: null, stage: 'acting', body: '상담 예약 시간이 착오로 잡혔습니다.', action: '사과 + 재예약 완료', teacherChanged: false, ownerId: 3, createdAt: D(-8), severity: 'light' },
+  { area: 'lesson',   studentId: 11, stage: 'closed',   body: '수업 취소 환불이 지연됩니다.', action: '환불 처리', result: '08-24 환불 완료', teacherChanged: false, ownerId: 2, createdAt: D(-12), severity: 'severe' },
+  { area: 'lesson',   studentId: 2,  stage: 'closed',   body: '리포트 내용이 부실합니다.', action: '재작성 요청', result: '08-22 재작성 전달', teacherChanged: true, ownerId: 3, createdAt: D(-14), severity: 'normal' },
+  { area: 'book',     studentId: 10, stage: 'closed',   body: '교재가 파본입니다.', action: '교체 발송', result: '08-20 교체 완료', teacherChanged: false, ownerId: 4, createdAt: D(-16), severity: null },
 ];
 
 /** 건의 사항 — 강사 창구 (§Data/Suggestion Card) */
 export const SUGGESTIONS = [
   { staffId: 7,  category: 'schedule', body: '화요일 저녁 슬롯이 너무 붙어 있습니다. 30분 간격을 주세요.', state: 'open',      createdAt: D(-2) },
   { staffId: 7,  category: 'lesson',   body: 'MAP Math 그룹 인원을 4명 이하로 유지해 주세요.', state: 'reviewing', createdAt: D(-6) },
-  { staffId: 7, category: 'pay',      body: '지각 차감 기준을 강사 화면에도 표시해 주세요.', state: 'done', reply: '§47 화면에 구간표를 넣었습니다.', replyBy: 3, replyAt: D(-3), createdAt: D(-11) },
+  { staffId: 7, category: 'pay',      body: '지각 차감 기준을 강사 화면에도 표시해 주세요.', state: 'done', reply: '리포트 화면과 수업 히스토리에 지각 차감 구간표를 넣었습니다.', replyBy: 3, replyAt: D(-3), createdAt: D(-11) },
   { staffId: 7,  category: 'etc',      body: '3층 회의실 프로젝터 교체 요청합니다.', state: 'open', createdAt: D(-40) },
 ];
 
@@ -263,13 +281,25 @@ export const SUGGESTIONS = [
  * `reviewedAt` 을 적으면 `reviewedBy` 를 **반드시 함께** 적어야 한다 — 한쪽만 있으면 DB 가 막는다.
  * 올린 사람은 관리자(김민수 2), 결재는 **대표만**(김민선 1) 한다.
  */
+/*
+ * 메모는 **6영역 모양**(`lib/exec-areas` EXEC_AREA_KEYS — money · mkt · ops · consulting · complaint · lesson)이다.
+ * 한동안 옛 `{ note }` 한 칸이라 §73 결재함이 모두 「0/6 적음」이었다 — 영역 칸이 아니면 세지 않는다(impl3-w8 · 73-4).
+ * 적은 칸 수를 섞어 둔다(1 · 2 · 3 · 4 · 6) — 다 같으면 「N/6」이 무엇을 세는지 화면에서 안 보인다.
+ */
 export const REPORTS = [
-  { rptType: 'day',   onDate: D(-4), memo: { note: '출결 미확인 2건은 야간 수업이라 다음 날 정리됩니다.' }, state: 'sent',   sentAt: D(-4), sentBy: 2 },
-  { rptType: 'day',   onDate: D(-3), memo: { note: '특이사항 없습니다.' }, state: 'sent',   sentAt: D(-3), sentBy: 2 },
-  { rptType: 'day',   onDate: D(-2), memo: { note: '컴플레인 1건 접수 — 오늘 중 통화 예정입니다.' }, state: 'sent', sentAt: D(-2), sentBy: 2 },
-  { rptType: 'day',   onDate: D(-1), memo: { note: '리포트 독촉 5건 발송했습니다.' }, state: 'ok', sentAt: D(-1), sentBy: 2, reviewedAt: D(0), reviewedBy: 1 },
-  { rptType: 'week',  onDate: D(-4), memo: { note: '리포트 작성률 3.4%p 하락은 한 강사에게 몰린 결과입니다. 배정을 나눴습니다.' }, state: 'sent', sentAt: D(-3), sentBy: 3 },
-  { rptType: 'month', onDate: '2026-08-01', memo: { note: '영업이익률 35.4% — 목표 32% 대비 +3.4%p.' }, state: 'draft' },
+  { rptType: 'day',   onDate: D(-4), memo: { money: '카드 결제 2건은 내일 입금 확인합니다.', ops: '출결 미확인 2건은 야간 수업이라 다음 날 정리됩니다.', lesson: '야간 AP Chem 2회차 교재 배부 완료.' }, state: 'sent',   sentAt: D(-4), sentBy: 2 },
+  { rptType: 'day',   onDate: D(-3), memo: { ops: '특이사항 없습니다.' }, state: 'sent',   sentAt: D(-3), sentBy: 2 },
+  { rptType: 'day',   onDate: D(-2), memo: { ops: '리포트 독촉 3건 발송했습니다.', complaint: '컴플레인 1건 접수 — 오늘 중 통화 예정입니다.' }, state: 'sent', sentAt: D(-2), sentBy: 2 },
+  { rptType: 'day',   onDate: D(-1), memo: {
+    money: '8월 미납 1건 통화 — 이번 주 금요일 입금 약속.', mkt: '인스타 릴스 문의 2건, 둘 다 상담 예약으로 이어졌습니다.',
+    ops: '리포트 독촉 5건 발송했습니다.', consulting: '원서 마감 점검 회의 일정 확정.',
+    complaint: '어제 접수 건 통화 완료 — 재발 방지로 변경 문자 발송을 매니저가 확인합니다.', lesson: '대강 없이 전 수업 진행.',
+  }, state: 'ok', sentAt: D(-1), sentBy: 2, reviewedAt: D(0), reviewedBy: 1 },
+  { rptType: 'week',  onDate: D(-4), memo: {
+    money: '주간 입금 12건 · 미납 2건.', ops: '리포트 작성률 3.4%p 하락은 한 강사에게 몰린 결과입니다. 배정을 나눴습니다.',
+    complaint: '스케줄 통보 누락 2건 — 변경 알림을 보호자에게도 보내기로 했습니다.', lesson: '그룹 수업 인원 조정 검토 중.',
+  }, state: 'sent', sentAt: D(-3), sentBy: 3 },
+  { rptType: 'month', onDate: '2026-08-01', memo: { money: '영업이익률 35.4% — 목표 32% 대비 +3.4%p.', mkt: '인스타 등록당 비용이 10만원을 넘어 9월 집행을 재검토합니다.' }, state: 'draft' },
 ];
 
 /** 할 일 — 회의·컴플레인·기획에서 자동으로 모인다 (§64) */

@@ -146,7 +146,7 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
       return fail('TIME_REQUIRED', '시작과 끝 시각을 모두 입력해야 합니다');
     }
     if (supplied('teacherId') || supplied('roomId') || supplied('zaccId')) {
-      return fail('BAD_CHANGE_FIELDS', '시간 이동 요청에는 시각만 보낼 수 있습니다');
+      return fail('BAD_CHANGE_FIELDS', '시간 옮기기 요청에는 시각만 보낼 수 있습니다');
     }
     const issue = lessonTimeIssue(input.startMin, input.endMin);
     if (issue) return fail('BAD_RANGE', issue);
@@ -161,7 +161,7 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
       return fail('TEACHER_REQUIRED', '바꿀 강사를 선택해야 합니다');
     }
     if (supplied('startMin') || supplied('endMin') || supplied('roomId') || supplied('zaccId')) {
-      return fail('BAD_CHANGE_FIELDS', '강사 변경 요청에는 강사만 보낼 수 있습니다');
+      return fail('BAD_CHANGE_FIELDS', '강사 바꾸기 요청에는 강사만 보낼 수 있습니다');
     }
     return { ok: true, value: { ...target, reqType: input.reqType, payload: { teacherId: input.teacherId } } };
   }
@@ -179,7 +179,7 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
       return fail('ROOM_REQUIRED', '바꿀 Zoom 계정을 선택해야 합니다');
     }
     if (supplied('startMin') || supplied('endMin') || supplied('teacherId')) {
-      return fail('BAD_CHANGE_FIELDS', '강의실 변경 요청에는 강의실 또는 Zoom 계정만 보낼 수 있습니다');
+      return fail('BAD_CHANGE_FIELDS', '강의실 바꾸기 요청에는 강의실 또는 Zoom 계정만 보낼 수 있습니다');
     }
     return {
       ok: true,

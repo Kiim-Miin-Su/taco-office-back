@@ -182,4 +182,25 @@ d('§60 대표 피드백 (C53)', () => {
     // 담당자가 없으면 이 화면을 보는 관리자가 답할 수 있다
     expect(t.canReply).toBe(true);
   });
+  /* ── §59 트래킹 — 기간 토글이 말하는 기간의 활동만 (59-1 · P0) ─────────── */
+
+  it('§59 기간을 고르면 **그 기간의 활동만** 온다 — 칩이 「9월」이라 말하면서 8월 활동을 보이지 않는다 (59-1)', async () => {
+    const made = (await q.query(
+      `INSERT INTO mkt (channel, item, title, on_date, by_id) VALUES
+         ('naver','blog','8월 글','2026-08-29',${OWNER}),
+         ('instagram','reels','9월 릴스','2026-09-03',${OWNER})
+       RETURNING id`,
+    )) as Array<{ id: string }>;
+    const [aug, sep] = made.map((r) => Number(r.id));
+    const ids = async (from?: string, to?: string) =>
+      (await svc().all(CEO, false, true, { from, to })).marketing.map((m) => m.id);
+
+    const september = await ids('2026-09-01', '2026-09-30');
+    expect(september).toContain(sep);
+    expect(september).not.toContain(aug);
+    // 날짜가 없는 옛 활동은 가르지 않는다 — 회의·할 일과 같은 규약(rangeClause)
+    expect(september).toContain(mktId);
+    // 기간을 안 고르면 전부다 — 응답 모양은 그대로
+    expect(await ids()).toEqual(expect.arrayContaining([aug, sep, mktId]));
+  });
 });

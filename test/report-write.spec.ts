@@ -350,9 +350,10 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       const api = (method: 'post' | 'put' | 'patch' | 'delete', path: string, token = managerToken) =>
         request(app.getHttpServer())[method](path).set('Authorization', `Bearer ${token}`)
           .timeout({ response: 5000, deadline: 10000 });
+      // 명단이 빈 회차에는 투영이 REP 를 만들지 않는다(impl3-w8) — 경합 시험도 받는 학생 하나를 둔다
       const created = await api('post', '/schedule').send({
         kindKey: 'class', subKey: 'ap-chem', mode: 'offline', fromDate: date, rrule: 'ONCE',
-        startMin: 60, endMin: 120, teacherId: TEACHER, roomId: null, studentIds: [], title: 'report race',
+        startMin: 60, endMin: 120, teacherId: TEACHER, roomId: null, studentIds: [STUDENT], title: 'report race',
       }).expect(201);
       const id = created.body.serIds[0] as number;
       const ref = `/reports/${id}/${date}`;

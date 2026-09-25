@@ -59,6 +59,15 @@ export const SERS: SerSeed[] = [
   { id: 22, kindKey: 'diagx', subKey: 'diag',     teacherId: 3,  roomId: 3, zaccId: null, mode: 'offline', startMin: hm(11), endMin: hm(12), days: [6], students: [], title: '진단 평가 (신규)' },
   // 단발이 하나는 있어야 recurring=false 분기가 시드에서 돈다 — 값이 한 종류뿐이면 검증된 적 없는 것
   { id: 23, kindKey: 'mock',  subKey: 'mock-sat', teacherId: 3,  roomId: 3, zaccId: null, mode: 'offline', startMin: hm(15), endMin: hm(16, 30), days: [], students: [13], title: '모의 SAT 1회 특강', onceOn: addD(SEED_TODAY, 3) },
+  /*
+   * 회의 기록(`ops.MEETINGS`)이 잇는 하루짜리 회의 회차 (impl3-w8 · 63-3).
+   * 「+ 회의 잡기」(C96)와 같은 모양이다 — 종류 meeting · 과목은 회의 종류 · 「강사」 자리가 주관자 · 학생 없음.
+   * 이것이 없으면 §63 줄의 시각·자리가 전부 「시각 없음」·「—」이었다. 34주차 회의 하나는 옛 기록(연결 없음)으로 남긴다.
+   */
+  { id: 24, kindKey: 'meeting', subKey: 'mt-pl', teacherId: 2, roomId: 4, zaccId: null, mode: 'offline', startMin: hm(11), endMin: hm(12), days: [], students: [], title: '9월 마케팅 집행 확정 회의', onceOn: addD(SEED_TODAY, 0) },
+  { id: 25, kindKey: 'meeting', subKey: 'mt-cs', teacherId: 3, roomId: 3, zaccId: null, mode: 'offline', startMin: hm(14), endMin: hm(15), days: [], students: [], title: '대학 원서 마감 일정 점검', onceOn: addD(SEED_TODAY, 0) },
+  { id: 26, kindKey: 'meeting', subKey: 'mt-pg', teacherId: 2, roomId: 4, zaccId: null, mode: 'offline', startMin: hm(11), endMin: hm(12), days: [], students: [], title: '주간 운영 회의 (35주차)', onceOn: addD(SEED_TODAY, 3) },
+  { id: 27, kindKey: 'meeting', subKey: 'mt-mk', teacherId: 4, roomId: 4, zaccId: null, mode: 'offline', startMin: hm(14), endMin: hm(15), days: [], students: [], title: '8월 채널별 성과 리뷰', onceOn: addD(SEED_TODAY, -2) },
 ];
 
 /** 시드가 덮는 기간 — 오늘 기준 앞 3주 · 뒤 1주 */

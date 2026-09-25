@@ -141,6 +141,20 @@ export const INV_STATE_LABEL: Record<string, string> = {
 export const INV_TYPES_OTHER = INV_TYPES.filter((t) => t !== 'tuition');
 
 /**
+ * 지금 **낼 수 있는** 청구 종류 (PB-01 · 결정 대기).
+ *
+ * 줄 계산(`invoice-lines.ts`)은 그 달의 **수업**을 센다 — 수업료의 규칙이다. 종류를 받고도 그 계산을 그대로 써서
+ * 응시료·진단고사·컨설팅비로 내면 수업료와 똑같은 줄·금액의 청구서가 또 생겼다(종류가 달라 중복 검사도 통과).
+ * 수업료 외 종류의 금액 규칙(정액 · 수동 금액 · 연결 원천)이 정해지기 전까지는 **수업료만** 낸다.
+ * 컨설팅비는 §28 「청구서로 전환」(남은 돈)이 따로 낸다 — 이 목록과 무관하다.
+ */
+export const INV_TYPES_ISSUABLE: readonly string[] = ['tuition'];
+export const INV_TYPE_NOT_SUPPORTED = 'INV_TYPE_NOT_SUPPORTED' as const;
+/** 막힌 이유 한 문장 — 발행 409 와 §53 종류 고르기(meta)가 같은 말을 쓴다 (D-R22) */
+export const invTypeIssueBlockedReason = (key: string): string | null =>
+  (INV_TYPES_ISSUABLE.includes(key) ? null : '수업료 외 청구는 금액 규칙이 정해지면 열립니다');
+
+/**
  * 청구서 한 장을 새로 낸다 (§53 「+ 새 청구서 발행」).
  *
  * **줄(INV_LINE)은 받지 않는다.** 원문 명세가 「횟수는 서버가 `occ()` 로 센다 —
@@ -434,6 +448,13 @@ export class TuitionRowDto {
    * 판정은 서버가 한다 — 화면이 「완납인가」를 다시 읽으면 단추가 서는 줄과 서버의 답이 갈린다 (D-R39).
    */
   @ApiProperty({ description: '이월 처리를 누를 수 있는가 — 마감한 달은 false 다 (N-39 · S5)' }) carryable!: boolean;
+  /*
+   * 단추가 **설 자리인데** 막힌 이유 (PB-04) — 완납·넘길 돈·아직 안 넘김이 다 참인데 못 누르는 줄만 문장이 있다
+   * (그 달 마감 · 받는 달 수업료 청구서가 이미 나감). 쓰기(`carryTuition`)의 409 문장과 같은 말이다.
+   * 넘길 것이 없거나 이미 넘긴 줄은 null — 단추가 설 자리가 아니다.
+   */
+  @ApiPropertyOptional({ type: String, nullable: true, description: '이월 단추가 설 자리인데 막힌 이유 — 마감 · 받는 달 수업료 청구서가 이미 나감. 설 자리가 아니거나 누를 수 있으면 null (PB-04)' })
+  carryBlockedReason?: string | null;
   @ApiPropertyOptional({
     type: String, nullable: true,
     description: '이미 넘겼으면 그 시각 — 한 달은 한 번만 넘긴다',
@@ -571,6 +592,130 @@ export class PayoutSheetDto {
   @ApiProperty({ type: [PayoutSheetRowDto] }) rows!: PayoutSheetRowDto[];
   @ApiProperty({ description: '전체 미작성 수업 수 — 「미작성 N건은 강사료에서 빠집니다」' }) unwrittenCount!: number;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '실지급 합 — 줄의 합. 화면이 더하지 않는다' }) netTotal?: number | null;
+  @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
+
+  /*
+   * w5 · g5 56-02 — 원본 §56 합계 카드 「8월에 드릴 돈 ₩4,836,692 · 88.7시간 · 강사료 ₩5,096,750 · 차감 −₩95,000 ·
+   * 세금 −₩165,058 · 보류 98.4h」. 전부 **줄의 합**이고 서버가 더한다 — 화면이 행을 더하지 않는다 (D-R37).
+   * 시간은 분으로 보낸다(화면이 「88.7시간」으로 적는다 — 단위 바꾸기는 표시다).
+   */
+  @ApiProperty({ description: '리포트 쓴 수업 시간 합(분) — 「88.7시간」' }) writtenMinutes!: number;
+  @ApiProperty({ description: '미작성으로 보류된 수업 시간 합(분) — 「보류 98.4h」' }) unwrittenMinutes!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '강사료(총액) 합 — 금액 권한 없으면 null' }) grossTotal!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '지각 차감 합 (D-R32)' }) lateCutTotal!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '세금 합 — 소득세 + 지방세 (D-15)' }) taxTotal!: number | null;
+}
+
+/**
+ * `GET /accounting/payouts/{staffId}?month=` — 원본 §56 오른쪽 상세 「시급 · 수업 날짜 · 리포트 미작성 · 정산 내역」 (w5 · 56-01).
+ *
+ * 세는 곳은 **시트와 같은 함수**(`lib/payout-sheet`)다 — 줄(`row`)은 시트의 그 줄과 같은 값이고, 수업 줄의 금액 합이
+ * 곧 줄의 총액이다. 화면이 수업을 다시 세거나 더하지 않는다 (D-R37).
+ */
+export class PayoutRateDto {
+  @ApiProperty({ description: '이 날부터 (WAGE.from_date)' }) fromDate!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '시급 — 금액 권한 없으면 null' }) rate!: number | null;
+}
+
+export class PayoutLessonDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty({ description: 'YYYY-MM-DD' }) onDate!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() durMin!: number;
+  @ApiProperty({ description: '수업 이름 — 제목 → 과목 → 종류 순 (서버가 고른다)' }) name!: string;
+  @ApiProperty({ type: String, nullable: true, description: '그날 명단 이름' }) students!: string | null;
+  @ApiProperty() studentCount!: number;
+  @ApiProperty({ description: '휴강인가' }) canceled!: boolean;
+  @ApiProperty({ enum: ['written', 'unwritten', 'canceled', 'na', 'upcoming'], description: '정산 갈래' }) settle!: string;
+  @ApiProperty({ description: '갈래 이름 — 「리포트 씀」·「리포트 미작성」·「휴강」·「리포트 대상 아님」·「아직」 (D-R18)' }) settleLabel!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '이 수업의 강사료 — 쓴 수업만 · 금액 권한 없으면 null' }) pay!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '지각 차감 — 쓴 수업만 (D-R32)' }) lateCut!: number | null;
+}
+
+export class PayoutDetailDto {
+  @ApiProperty() staffId!: number;
+  @ApiProperty() staffName!: string;
+  @ApiProperty({ description: 'YYYY-MM' }) month!: string;
+  @ApiProperty({ type: PayoutSheetRowDto, description: '시트의 그 줄과 같은 값 — 같은 함수가 셌다' }) row!: PayoutSheetRowDto;
+  @ApiProperty({ type: [PayoutRateDto], description: '이 달에 걸린 시급 — 달 시작 때의 시급 + 달 안에서 바뀐 것 (D8)' }) rates!: PayoutRateDto[];
+  @ApiProperty({ type: [PayoutLessonDto], description: '이 달의 수업 — 날짜 내림차순 (강사 히스토리와 같은 순서)' }) lessons!: PayoutLessonDto[];
+}
+
+export class PayoutDetailParamsDto {
+  @ApiProperty({ description: '강사', type: 'integer', minimum: 1 })
+  @Transform(({ value }) => (typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value))
+  @IsInt({ message: '강사 번호가 올바르지 않습니다' }) @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  staffId!: number;
+}
+
+/* ── §55 들어온 돈 — 기간 · 달력 · 분류별 · 미수 전체 (w5 · g5 55-01 · 55-02 · 55-03 · 55-05) ──────────────── */
+
+/**
+ * `GET /accounting/cashflow?from&to&category` — 원본 §55 「들어온 돈 › 입금 기록」.
+ *
+ * 원본 컷의 수가 스스로 뜻을 말한다 — 「11건 · ₩5,287,300 청구 · ₩3,964,000 입금 · ₩1,323,300 예정」은
+ * **청구 = 입금 + 예정**이고, 달력 날짜 칸의 합이 청구(5,287,300)와 같으며, 숫자 배지(22일 1 · 28일 1 · 31일 2)가
+ * 「미수 전체」의 **기한**(D-1 · D-7 · D-10 둘)에 앉는다. 그래서 한 기간의 돈은 두 갈래다 —
+ *   · **입금**: 그 기간에 들어온 입금 줄(`pay.paid_on`)
+ *   · **예정**: 아직 덜 받은 청구서(`INV_OPEN` · 남은 돈 > 0)의 **기한**(`inv.due_on`)이 그 기간에 드는 것 — 남은 돈
+ * 분납 회차별 기한은 저장처가 없어(55-06 결정 대기) 청구서 한 장이 예정 한 건이다.
+ */
+export class CashflowQueryDto {
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '이 날부터 — 없으면 처음부터' })
+  @IsOptional() @IsCalendarDate()
+  from?: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '이 날까지 — 없으면 끝까지' })
+  @IsOptional() @IsCalendarDate()
+  to?: string;
+
+  @ApiPropertyOptional({ enum: PAY_CATEGORIES.map((c) => c.key), description: '분류 칩으로 좁히기 — 달력·요약만 좁히고 칩 건수는 그대로다' })
+  @IsOptional() @IsIn(PAY_CATEGORIES.map((c) => c.key), { message: '분류는 수업료 · GPA 관리비 · 컨설팅비 · 진단고사·상담 · 시험 응시료 · 기타 중 하나입니다' })
+  category?: string;
+}
+
+export class CashflowDayDto {
+  @ApiProperty({ description: 'YYYY-MM-DD' }) date!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '그날의 돈(입금 + 예정) — 달력 칸의 금액' }) amount!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) paidAmount!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) expectedAmount!: number | null;
+  @ApiProperty({ description: '그날의 건수(입금 + 예정)' }) count!: number;
+  @ApiProperty({ description: '그날 기한인 예정 건수 — 원본 달력 칸의 숫자 배지' }) expectedCount!: number;
+}
+
+export class CashflowCategoryDto {
+  @ApiProperty() key!: string;
+  @ApiProperty({ description: '§55 컷의 낱말' }) label!: string;
+  @ApiProperty({ description: '이 기간의 건수(입금 + 예정) — 칩 「수업료 2」' }) count!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '청구(입금 + 예정)' }) billed!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '입금' }) paid!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '받은 비율 % — 입금 / 청구, 반올림. 청구 0 이면 0 · 금액 권한 없으면 null' }) rate!: number | null;
+}
+
+export class CashflowOpenDto {
+  @ApiProperty() invId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ description: '「전액」(아직 한 푼도 안 받음) · 「잔액」(일부 받음) — 분납 회차별 기한은 저장처가 없다(55-06)' }) partLabel!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '남은 돈 — 금액 권한 없으면 null' }) amount!: number | null;
+  @ApiProperty({ type: String, nullable: true }) dueOn!: string | null;
+  @ApiProperty({ description: '「21일 연체」·「오늘」·「D-7」·「기한 없음」 — 낱말은 서버 (D-R18)' }) whenLabel!: string;
+  @ApiProperty({ type: String, nullable: true, description: "줄 바탕 — 'danger'(연체) | 'warning'(7일 안) | null" }) tone!: string | null;
+}
+
+export class CashflowDto {
+  @ApiProperty({ type: String, nullable: true }) from!: string | null;
+  @ApiProperty({ type: String, nullable: true }) to!: string | null;
+  @ApiProperty({ description: '기간 낱말 — 「전체」·「2026년 8월」·「8월 21일」·「08-17 ~ 08-23」' }) label!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '기간의 날 수 — 「31일」. 전체면 null' }) dayCount!: number | null;
+  @ApiProperty({ type: String, nullable: true, description: '고른 분류 — 없으면 null(전체)' }) category!: string | null;
+  @ApiProperty({ description: '오늘 (KST) — 달력의 오늘 칸' }) today!: string;
+  @ApiProperty({ description: '건수(입금 + 예정) — 「11건」' }) count!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '청구 = 입금 + 예정' }) billed!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '입금' }) paid!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '예정 — 기한이 이 기간인 청구서의 남은 돈' }) expected!: number | null;
+  @ApiProperty({ type: [CashflowDayDto], description: '돈이 있는 날만 — 날짜 오름차순' }) days!: CashflowDayDto[];
+  @ApiProperty({ type: [CashflowCategoryDto], description: '분류 여섯 — 0건도 선다(어휘) · 고른 분류와 무관' }) categories!: CashflowCategoryDto[];
+  @ApiProperty({ type: [CashflowOpenDto], description: '미수 전체 — 기간과 무관 · 기한 이른 순' }) open!: CashflowOpenDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
 }
 

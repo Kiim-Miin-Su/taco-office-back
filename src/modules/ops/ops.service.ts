@@ -12,6 +12,7 @@ import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { ZoomService } from '../zoom/zoom.service';
 import { daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { kstAt } from '../../lib/sql';
+import { NOTI_TITLE } from '../../lib/noti';
 import { todoSourceLabel } from '../../lib/todo';
 import {
   MFB_KIND_LABEL, mfbStateLabel, mktChannelLabel, mktItemLabel, mktTitle,
@@ -26,11 +27,15 @@ import {
   INTAKE_FUNNEL_STAGES, INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel,
   LEAD_SOURCES, LEAD_SOURCE_LABEL, LEAD_SOURCE_TOUCH_KIND, LEAD_SOURCE_UNSET, LEAD_SOURCE_UNSET_LABEL,
   LEAD_TOUCH_KINDS, LEAD_TOUCH_KIND_LABEL, intakeStageLabel, leadNextStages, leadSourceLabel, leadTouchKindLabel,
+  LEAD_REASON_KINDS, LEAD_REASON_KIND_LABEL, LEAD_REASON_KIND_UNSET, LEAD_REASON_KIND_UNSET_LABEL,
+  leadDueLabel, leadReasonKindLabel, leadRecontactDone, leadRecheckOn, leadStageDue, LEAD_APPT_KINDS, LEAD_APPT_KIND_LABEL,
   type LeadSource,
 } from '../../lib/intake-words';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
+import { LEAD_DIAG_LATEST_JOIN, leadDiagFromRow } from './lead-diag.service';
+import { LEAD_APPTS_JSON, LEAD_PLAN_JSON, leadApptsFromRow, leadPlanFromRow } from './lead-plan.service';
 import { INV_OPEN } from '../../lib/rules';
-import { sqlWordList } from '../../lib/sql';
+import { kstDateOf, sqlWordList } from '../../lib/sql';
 import {
   dueLabel, planDueKindLabel, planDueState, planStageLabel,
   type PlanDueState,
@@ -40,12 +45,12 @@ import {
   mtAttendState, mtTypeLabel, mtTypeOptions, type MtType,
 } from '../../lib/meeting-words';
 import type {
-  IntakeAlertDto, IntakeHeadDto,
+  IntakeAlertDto, IntakeFailReasonDto, IntakeHeadDto,
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
   LeadCreateDto, LeadDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
-  PlanDetailDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
-  PlanStageMoveDto, PlanTaskDto,
+  PlanDetailDto, PlanDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
+  PlanStageMoveDto, PlanTaskCreateDto, PlanTaskDto,
   MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
   PlanCreateDto, PlanCreateResultDto,
@@ -63,6 +68,44 @@ type R = Record<string, unknown>;
  */
 const PLAN_REWORK_COUNT_SQL =
   `(SELECT count(*)::int FROM log l WHERE l.entity = 'plan' AND l.entity_id = p.id AND l.action = 'rework')`;
+
+/**
+ * §61 카드 한 줄의 SELECT — 목록과 「+ 기획 올리기」 응답이 같은 SELECT 를 쓴다 (w5).
+ * 「과제 1/3」은 §65 보고서의 `tasks` 와 **같은 집합**(TODO `plan_id`)을 센다 — 세는 칸을 파지 않는다 (D-R22).
+ */
+const PLAN_ROW_SELECT = `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
+         p.due_approved_at, s.name AS owner_name,
+         ${PLAN_REWORK_COUNT_SQL} AS rework_count,
+         (SELECT count(*) FILTER (WHERE t.done)::int FROM todo t WHERE t.plan_id = p.id) AS task_done,
+         (SELECT count(*)::int FROM todo t WHERE t.plan_id = p.id) AS task_total
+    FROM plan p LEFT JOIN staff s ON s.id = p.owner_id`;
+
+/**
+ * 회의의 **자리** 낱말 — §63 줄과 §66 머리가 같은 함수를 쓴다 (D-R18 · w5 66-2).
+ * 이어진 회차가 없으면(옛 회의) null — 지어내지 않는다 (N-25).
+ */
+function meetingPlaceLabel(r: R): string | null {
+  if (r.ser_id == null) return null;
+  if (r.mode === 'online') return `온라인${r.zoom_label ? ` ${String(r.zoom_label)}` : ''}`;
+  return (r.room_name as string) ?? null;
+}
+
+/** 회의에 이어진 회차·강의실·줌 계정 — §63 줄과 §66 머리가 **같은 조인**을 쓴다 */
+const MEETING_PLACE_JOINS = `
+  LEFT JOIN ser s ON s.id = m.ser_id
+  LEFT JOIN room r ON r.id = s.room_id
+  LEFT JOIN zassign za ON za.ser_id = s.id
+  LEFT JOIN zacc z ON z.id = za.zacc_id`;
+
+/**
+ * 「+ 대표 지시」가 막히는 이유 — 읽기(`addTaskBlockedReason`)와 쓰기(409)가 **같은 문장**을 쓴다 (S5 · D-R22 · w5 65-4).
+ * 권한이 먼저다(S1 의 순서). 끝난 기획에 과제를 더하면 「완료」가 거짓이 된다.
+ */
+function planTaskBlockedReason(stage: string, canApprove: boolean): string | null {
+  if (!canApprove) return '대표 지시는 기획 결재 권한이 있는 사람만 적습니다';
+  if (stage === 'done') return '끝난 기획에는 과제를 더하지 않습니다';
+  return null;
+}
 
 /** pg bigint의 숫자 문자열만 변환한다. 연결 없음과 ID 0/정밀도 손실은 구분한다. */
 function leadId(value: unknown): number;
@@ -128,7 +171,7 @@ export class OpsService {
   /**
    * @param query 기간·갈래 (C96 · N-46 ②). **검색 인자는 없다** — §24 FQ 는 받은 목록에서 거른다.
    *   목록마다 시간으로 삼는 날짜가 다르다: 상담·컴플레인은 **들어온 날**(`created_at`),
-   *   회의는 **회의 날**(`on_date`), 할 일·기획은 **기한**(`due_on`). 날짜가 없는 줄은 가르지 않는다.
+   *   회의·마케팅 활동은 **그 날**(`on_date`), 할 일·기획은 **기한**(`due_on`). 날짜가 없는 줄은 가르지 않는다.
    */
   async all(viewerId: number, canSeeAmounts: boolean, canComment: boolean, query: OpsQueryDto = {}): Promise<OpsDto> {
     const today = todayKst();
@@ -146,13 +189,14 @@ export class OpsService {
 
     // 한 줄의 모양은 leadRows 한 곳 — GET /ops 와 쓰기 응답이 같은 SELECT·같은 판정을 쓴다 (C90)
     const leadScope = scoped('l.created_at');
-    const leads = await this.leadRows(leadScope.where, leadScope.params, today);
+    const leads = await this.leadRows(leadScope.where, leadScope.params, today, canSeeAmounts);
 
     const cplScope = scoped('c.created_at', area ? { sql: 'c.area = $?', value: area } : undefined);
     const complaints = await this.complaintRows(cplScope.where, cplScope.params, today, canSeeAmounts);
     // 칩 줄의 건수는 **갈래 필터를 빼고** 센다 — 「수업 1」을 고른 뒤에도 다른 갈래의 수가 보여야 고를 수 있다
     const cplCountScope = scoped('c.created_at');
-    const areaCounts = await this.areaCounts(cplCountScope.where, cplCountScope.params);
+    // 같은 문장이 §67 「기한 지남 N」·컴플레인 탭 동그라미도 센다 (w5 · 67-2 · C-4) — 갈래를 골라도 흔들리지 않는다
+    const { counts: areaCounts, overdue: cplOverdue } = await this.areaCounts(cplCountScope.where, cplCountScope.params, today);
 
     const todoScope = scoped('t.due_on');
     const todos = (await this.q(
@@ -173,39 +217,31 @@ export class OpsService {
 
     const planScope = scoped('p.due_on');
     const plans = (await this.q(
-      `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
-              p.due_approved_at, s.name AS owner_name,
-              ${PLAN_REWORK_COUNT_SQL} AS rework_count
-         FROM plan p LEFT JOIN staff s ON s.id = p.owner_id
+      `${PLAN_ROW_SELECT}
         ${planScope.where}
         ORDER BY p.due_on NULLS LAST, p.id`, planScope.params,
-    )).map((r) => {
-      const due = (r.due_on as string) ?? null;
-      const stage = String(r.stage);
-      const open = PLAN_OPEN_STAGES.includes(stage);
-      return {
-        id: Number(r.id), title: String(r.title), stage,
-        // 단계 이름을 만드는 자리는 서버 한 곳이다 — §61 보드 · §62 기한 표 · §65 보고서가 같이 쓴다 (D-R18)
-        stageLabel: planStageLabel(stage),
-        goal: (r.goal as string) ?? null, ask: (r.ask as string) ?? null,
-        dueOn: due, ownerName: (r.owner_name as string) ?? null,
-        overdueDays: open && due && due < today ? daysSince(due) : 0,
-        dueState: planDueState(due, r.due_approved_at) as string,
-        reworkCount: Number(r.rework_count ?? 0),
-      };
-    });
+    )).map((r) => OpsService.planRow(r, today));
+    /* 기획 탭 동그라미 — 원본 §61·§64 컷의 「기획 2」·「단계 보드 ②」는 **대표 손이 가야 할 것**이다
+       (검토 요청 1 + 보완 요청 1). 전체 건수를 달면 할 일이 없는 날에도 동그라미가 선다 (w5 · C-4) */
+    const planPending = plans.filter((p) => p.stage === 'review' || p.stage === 'rework').length;
 
     const { planDues, planOverdue } = await this.planDeadlines(today);
 
     const mtScope = scoped('m.on_date');
-    const meetings = await this.meetingRows(mtScope.where, mtScope.params);
+    const meetings = await this.meetingRows(mtScope.where, mtScope.params, today);
     const mtCountScope = scoped('m.on_date');
-    const mtTypeCounts = await this.mtTypeCounts(mtCountScope.where, mtCountScope.params);
+    // 같은 문장이 §63 머리 「54회 · 속기록 32」·「내 응답 대기 17」도 센다 (w5 · 63-5 · 63-6)
+    const { counts: mtTypeCounts, minutes: mtMinutesCount, myWaiting: mtMyWaiting } =
+      await this.mtTypeCounts(mtCountScope.where, mtCountScope.params, viewerId);
 
+    // §59 도 기간을 탄다 — 활동한 날(`on_date`)로 가른다. 여기만 빠져 있어 칩이 「9월」이라 말하면서
+    // 8월 활동을 그대로 보였다 (59-1). 날짜가 없는 옛 활동은 다른 목록처럼 가르지 않는다(rangeClause)
+    const mktScope = scoped('m.on_date');
     const marketing = (await this.q(
       `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.by_id, b.name AS by_name
          FROM mkt m LEFT JOIN staff b ON b.id = m.by_id
-        ORDER BY (m.result->>'enrolled')::int DESC NULLS LAST, m.id`,
+        ${mktScope.where}
+        ORDER BY (m.result->>'enrolled')::int DESC NULLS LAST, m.id`, mktScope.params,
     )).map((r) => {
       const res = (r.result ?? {}) as Record<string, number>;
       const enrolled = res.enrolled ?? 0;
@@ -259,6 +295,34 @@ export class OpsService {
       mtTypes: mtTypeOptions().map((o) => ({ key: o.key, label: o.label })),
       // 단추가 서는지도 서버다 (D-R39) — 지금은 이 화면을 볼 수 있으면 만들 수 있다
       canCreateMeeting: true, canCreatePlan: true,
+      cplOverdue, planPending, mtMyWaiting, mtMinutesCount,
+    };
+  }
+
+  /**
+   * §61 카드 한 장 — 목록(`GET /ops`)과 「+ 기획 올리기」 응답이 **같은 변환**을 쓴다 (C90 `leadRows` 와 같은 규약).
+   *
+   * 「과제 1/3」·기한 낱말·기한 상태 이름을 여기서 만든다(w5 · 61-1~61-3). 기한 낱말은 §62 표와 **같은
+   * `dueLabel`** 이고, 끝난(승인·완료) 기획에는 달지 않는다 — overdueDays 가 열린 기획에만 서는 것과 같은 판정이다.
+   */
+  private static planRow(r: R, today: string): PlanDto {
+    const due = (r.due_on as string) ?? null;
+    const stage = String(r.stage);
+    const open = PLAN_OPEN_STAGES.includes(stage);
+    const dueState = planDueState(due, r.due_approved_at);
+    return {
+      id: Number(r.id), title: String(r.title), stage,
+      // 단계 이름을 만드는 자리는 서버 한 곳이다 — §61 보드 · §62 기한 표 · §65 보고서가 같이 쓴다 (D-R18)
+      stageLabel: planStageLabel(stage),
+      goal: (r.goal as string) ?? null, ask: (r.ask as string) ?? null,
+      dueOn: due, ownerName: (r.owner_name as string) ?? null,
+      overdueDays: open && due && due < today ? daysSince(due) : 0,
+      dueState: dueState as string,
+      reworkCount: Number(r.rework_count ?? 0),
+      taskDone: Number(r.task_done ?? 0),
+      taskTotal: Number(r.task_total ?? 0),
+      dueLabel: open && due ? dueLabel(daysUntil(due, today)) : null,
+      dueStateLabel: PLAN_DUE_STATE_LABEL[dueState as PlanDueState],
     };
   }
 
@@ -281,21 +345,48 @@ export class OpsService {
   }
 
   /** §67 갈래 칩 — **0건 갈래도 선다**(어휘이지 데이터가 아니다 · C66) */
-  private async areaCounts(where: string, params: unknown[]): Promise<OpsCountDto[]> {
-    const rows = await this.q<{ area: string; n: string }>(
-      `SELECT c.area, count(*)::text AS n FROM cpl c ${where} GROUP BY c.area`, params,
+  /**
+   * §67 갈래 칩 — **0건 갈래도 선다**(어휘이지 데이터가 아니다 · C66).
+   *
+   * 같은 문장에서 **기한 지난 열린 건**도 센다(w5 · 67-2 · C-4) — 줄의 `overdueDays` 와 같은 판정(열린 단계 · 기한 < 오늘)이다.
+   * 따로 물으면 `GET /ops` 한 번에 왕복이 는다(ops-contract 가 조회 수를 센다).
+   */
+  private async areaCounts(where: string, params: unknown[], today: string): Promise<{ counts: OpsCountDto[]; overdue: number }> {
+    const p = [...params, [...CPL_OPEN_STAGES], today];
+    const rows = await this.q<{ area: string; n: string; overdue: number }>(
+      `SELECT c.area, count(*)::text AS n,
+              count(*) FILTER (WHERE c.stage = ANY($${p.length - 1}::text[]) AND c.due_on < $${p.length}::date)::int AS overdue
+         FROM cpl c ${where} GROUP BY c.area`, p,
     );
     const got = new Map(rows.map((r) => [String(r.area), Number(r.n)]));
-    return CPL_AREAS.map((key) => ({ key, label: CPL_AREA_LABEL[key], count: got.get(key) ?? 0 }));
+    return {
+      counts: CPL_AREAS.map((key) => ({ key, label: CPL_AREA_LABEL[key], count: got.get(key) ?? 0 })),
+      overdue: rows.reduce((n, r) => n + Number(r.overdue ?? 0), 0),
+    };
   }
 
-  /** §63 회의 종류 칩 — 같은 규약으로 0건도 선다 */
-  private async mtTypeCounts(where: string, params: unknown[]): Promise<OpsCountDto[]> {
-    const rows = await this.q<{ mt_type: string; n: string }>(
-      `SELECT m.mt_type, count(*)::text AS n FROM mtrec m ${where} GROUP BY m.mt_type`, params,
+  /**
+   * §63 회의 종류 칩 — 같은 규약으로 0건도 선다.
+   *
+   * 같은 문장에서 머리의 「속기록 N」·「내 응답 대기 N」도 센다(w5 · 63-5 · 63-6) — 「썼다」는 줄의 `hasMinutes` 와
+   * 같은 판정(빈 글은 안 쓴 것)이고, 응답 대기는 §66 의 세 값 중 `null` 이다.
+   */
+  private async mtTypeCounts(where: string, params: unknown[], viewerId: number): Promise<{ counts: OpsCountDto[]; minutes: number; myWaiting: number }> {
+    const p = [...params, viewerId];
+    const rows = await this.q<{ mt_type: string; n: string; minutes: number; my_waiting: number }>(
+      `SELECT m.mt_type, count(*)::text AS n,
+              count(*) FILTER (WHERE m.minutes IS NOT NULL AND m.minutes <> '')::int AS minutes,
+              count(*) FILTER (WHERE EXISTS (
+                SELECT 1 FROM mtattd a WHERE a.mt_id = m.id AND a.staff_id = $${p.length} AND a.confirmed IS NULL
+              ))::int AS my_waiting
+         FROM mtrec m ${where} GROUP BY m.mt_type`, p,
     );
     const got = new Map(rows.map((r) => [String(r.mt_type), Number(r.n)]));
-    return MT_TYPES.map((key) => ({ key, label: MT_TYPE_LABEL[key], count: got.get(key) ?? 0 }));
+    return {
+      counts: MT_TYPES.map((key) => ({ key, label: MT_TYPE_LABEL[key], count: got.get(key) ?? 0 })),
+      minutes: rows.reduce((n, r) => n + Number(r.minutes ?? 0), 0),
+      myWaiting: rows.reduce((n, r) => n + Number(r.my_waiting ?? 0), 0),
+    };
   }
 
   /**
@@ -304,35 +395,44 @@ export class OpsService {
    * 시각·자리는 `mtrec` 이 아니라 **이어진 회차**에서 읽는다 — 옛 회의는 이어진 것이 없어 셋 다 null 이고,
    * 화면은 그 사실을 그대로 말한다(지어내지 않는다 · N-25).
    */
-  private async meetingRows(where: string, params: unknown[]): Promise<MeetingDto[]> {
+  private async meetingRows(where: string, params: unknown[], today = todayKst()): Promise<MeetingDto[]> {
     return (await this.q(
       `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date, m.minutes, m.ser_id,
               s.start_min, s.end_min, s.mode, r.name AS room_name, z.label AS zoom_label,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id)::int AS attendees,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed)::int AS confirmed,
-              (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed IS NULL)::int AS waiting
+              (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed IS NULL)::int AS waiting,
+              -- §63 줄의 이름 칩 (w5 · 63-2) — §66 상세의 참석 줄과 같은 순서(staff.id)·같은 세 값이다
+              COALESCE((SELECT json_agg(json_build_object(
+                         'staffId', a.staff_id, 'name', st.name, 'title', st.title, 'confirmed', a.confirmed) ORDER BY st.id)
+                         FROM mtattd a JOIN staff st ON st.id = a.staff_id WHERE a.mt_id = m.id), '[]'::json) AS people
          FROM mtrec m
-         LEFT JOIN ser s ON s.id = m.ser_id
-         LEFT JOIN room r ON r.id = s.room_id
-         LEFT JOIN zassign za ON za.ser_id = s.id
-         LEFT JOIN zacc z ON z.id = za.zacc_id
+         ${MEETING_PLACE_JOINS}
         ${where}
         ORDER BY m.on_date DESC NULLS LAST, m.id DESC`, params,
-    )).map((r) => ({
-      id: Number(r.id), mtType: String(r.mt_type),
-      // 낱말은 서버가 만든다 — 한동안 이 표가 「general」 「plan」을 그대로 찍고 있었다 (D-R18 · C57)
-      mtTypeLabel: mtTypeLabel(String(r.mt_type)),
-      title: (r.title as string) ?? null,
-      onDate: (r.on_date as string) ?? null,
-      attendees: Number(r.attendees), confirmed: Number(r.confirmed), waiting: Number(r.waiting),
-      hasMinutes: Boolean(r.minutes),
-      serId: leadId(r.ser_id, true),
-      startMin: r.start_min == null ? null : Number(r.start_min),
-      endMin: r.end_min == null ? null : Number(r.end_min),
-      placeLabel: r.ser_id == null ? null
-        : r.mode === 'online' ? `온라인${r.zoom_label ? ` ${String(r.zoom_label)}` : ''}`
-        : (r.room_name as string) ?? null,
-    }));
+    )).map((r) => {
+      const onDate = (r.on_date as string) ?? null;
+      return {
+        id: Number(r.id), mtType: String(r.mt_type),
+        // 낱말은 서버가 만든다 — 한동안 이 표가 「general」 「plan」을 그대로 찍고 있었다 (D-R18 · C57)
+        mtTypeLabel: mtTypeLabel(String(r.mt_type)),
+        title: (r.title as string) ?? null,
+        onDate,
+        attendees: Number(r.attendees), confirmed: Number(r.confirmed), waiting: Number(r.waiting),
+        hasMinutes: Boolean(r.minutes),
+        serId: leadId(r.ser_id, true),
+        startMin: r.start_min == null ? null : Number(r.start_min),
+        endMin: r.end_min == null ? null : Number(r.end_min),
+        placeLabel: meetingPlaceLabel(r),
+        attendeeList: ((r.people ?? []) as Array<{ staffId: unknown; name: string; title: string | null; confirmed: boolean | null }>)
+          .map((a) => {
+            const state = mtAttendState(a.confirmed);
+            return { staffId: leadId(a.staffId), name: String(a.name), title: a.title ?? null, state, stateLabel: MT_ATTEND_LABEL[state] };
+          }),
+        // 「예정」 — 오늘도 아직 예정이다(끝났는지는 날짜만으로 모른다) · 날짜 없는 옛 회의는 예정이 아니다
+        upcoming: onDate !== null && onDate >= today,
+      };
+    });
   }
 
   /* ══ C96 — 「+ 회의 잡기」 · 「+ 기획 올리기」 (N-46 ①) ═══════════════════════ */
@@ -417,9 +517,9 @@ export class OpsService {
         `SELECT count(*)::text AS n FROM mtattd WHERE mt_id = $1`, [mtId],
       )) as Array<{ n: string }>;
       await q.query(
-        `INSERT INTO noti (to_id, from_id, body, link, category)
-         SELECT id, $1, $2, '/ops', 'schedule' FROM staff WHERE active AND id = ANY($3::bigint[]) AND id <> $1`,
-        [viewerId, `${title ?? mtTypeLabel(dto.mtType)} — ${dto.onDate} ${OpsService.hm(dto.startMin)} 회의에 초대됐습니다`, everyone],
+        `INSERT INTO noti (to_id, from_id, body, link, category, title)
+         SELECT id, $1, $2, '/ops', 'schedule', $4 FROM staff WHERE active AND id = ANY($3::bigint[]) AND id <> $1`,
+        [viewerId, `${title ?? mtTypeLabel(dto.mtType)} — ${dto.onDate} ${OpsService.hm(dto.startMin)} 회의에 초대됐습니다`, everyone, NOTI_TITLE.meetingInvite],
       );
       await q.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'MTREC',$2,'create',$3::jsonb)`,
@@ -456,9 +556,9 @@ export class OpsService {
       const planId = Number(row.id);
       if (owner.id !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category)
-           SELECT id, $1, $2, '/ops', 'request' FROM staff WHERE id = $3 AND active`,
-          [viewerId, `기획 「${title}」 담당이 됐습니다`, owner.id],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title)
+           SELECT id, $1, $2, '/ops', 'request', $4 FROM staff WHERE id = $3 AND active`,
+          [viewerId, `기획 「${title}」 담당이 됐습니다`, owner.id, NOTI_TITLE.planOwner],
         );
       }
       await em.query(
@@ -467,22 +567,9 @@ export class OpsService {
       );
       return planId;
     });
-    const [plan] = (await this.q(
-      `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
-              p.due_approved_at, s.name AS owner_name
-         FROM plan p LEFT JOIN staff s ON s.id = p.owner_id WHERE p.id = $1`, [id],
-    ));
-    const due = (plan.due_on as string) ?? null;
-    return {
-      plan: {
-        id, title, stage: String(plan.stage), stageLabel: planStageLabel(String(plan.stage)),
-        goal: (plan.goal as string) ?? null, ask: (plan.ask as string) ?? null,
-        dueOn: due, ownerName: (plan.owner_name as string) ?? null,
-        overdueDays: 0, dueState: planDueState(due, plan.due_approved_at) as string,
-        // 방금 만든 기획은 반려된 적이 없다 — 세어 봐야 언제나 0 이다
-        reworkCount: 0,
-      },
-    };
+    // 목록과 **같은 SELECT·같은 변환**이다 (w5) — 방금 만든 기획은 반려된 적도 과제도 없어 세어 봐야 0 이다
+    const [plan] = await this.q(`${PLAN_ROW_SELECT} WHERE p.id = $1`, [id]);
+    return { plan: OpsService.planRow(plan, todayKst()) };
   }
 
   /* ══ §67 컴플레인 — 읽기 한 벌 · 접수 · 처리 (C93 · J-96 · J-98 · J-101) ═══════ */
@@ -558,8 +645,8 @@ export class OpsService {
       const cplId = leadId(made.id);
       if (owner && owner.id !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?tab=complaint', 'request')`,
-          [owner.id, viewerId, `컴플레인 담당 — ${cplAreaLabel(dto.area)} · ${body.slice(0, 40)}${dto.dueOn ? ` · 기한 ${dto.dueOn.slice(5)}` : ''}`],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?tab=complaint', 'request', $4)`,
+          [owner.id, viewerId, `컴플레인 담당 — ${cplAreaLabel(dto.area)} · ${body.slice(0, 40)}${dto.dueOn ? ` · 기한 ${dto.dueOn.slice(5)}` : ''}`, NOTI_TITLE.complaintOwner],
         );
       }
       await em.query(
@@ -594,10 +681,10 @@ export class OpsService {
         severity: dto.severity === undefined ? cur.severity : dto.severity,
       };
       if (next.stage === 'acting' && next.ownerId == null) {
-        throw new ConflictException({ code: 'CPL_OWNER_REQUIRED', message: '대응으로 옮기려면 담당을 정해야 합니다 (§67 「담당을 정해야 합니다」)' });
+        throw new ConflictException({ code: 'CPL_OWNER_REQUIRED', message: '대응으로 옮기려면 담당을 정해야 합니다' });
       }
       if (next.stage === 'closed' && !next.result) {
-        throw new ConflictException({ code: 'CPL_RESULT_REQUIRED', message: '마무리하려면 결과를 적어야 합니다 (J-101)' });
+        throw new ConflictException({ code: 'CPL_RESULT_REQUIRED', message: '마무리하려면 결과를 적어야 합니다' });
       }
       await em.query(
         `UPDATE cpl SET stage = $2, owner_id = $3, action = $4, result = $5, due_on = $6::date, severity = $7 WHERE id = $1`,
@@ -606,8 +693,8 @@ export class OpsService {
       const ownerChanged = next.ownerId != null && next.ownerId !== leadId(cur.owner_id, true);
       if (ownerChanged && next.ownerId !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?tab=complaint', 'request')`,
-          [next.ownerId, viewerId, `컴플레인 담당 — #${id}${next.dueOn ? ` · 기한 ${String(next.dueOn).slice(5)}` : ''}`],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?tab=complaint', 'request', $4)`,
+          [next.ownerId, viewerId, `컴플레인 담당 — #${id}${next.dueOn ? ` · 기한 ${String(next.dueOn).slice(5)}` : ''}`, NOTI_TITLE.complaintOwner],
         );
       }
       await em.query(
@@ -636,7 +723,7 @@ export class OpsService {
    * 「사후 관리 밀림」)을 더했다. 둘은 접촉 원장의 「다음은 언제」로 센다(N-44) — 카드 칩과 **같은 함수**(`nextChip`)라 수가 갈리지 않는다.
    */
   private async intakeHead(
-    leads: ReadonlyArray<Pick<LeadDto, 'stage'> & Partial<Pick<LeadDto, 'ownerId' | 'ownerName' | 'source' | 'touches'>>>,
+    leads: ReadonlyArray<Pick<LeadDto, 'stage'> & Partial<Pick<LeadDto, 'name' | 'ownerId' | 'ownerName' | 'source' | 'touches' | 'reasonKind'>>>,
     canSeeAmounts: boolean,
     today = todayKst(),
   ): Promise<IntakeHeadDto> {
@@ -705,7 +792,11 @@ export class OpsService {
     const noSchedule = Number(at('noSchedule')?.n ?? 0);
     const noInvoice = Number(at('noInvoice')?.n ?? 0);
 
+    // 차례는 원본 §23 경고 줄 그대로다 — 상담 오늘·지남 · 사후 관리 밀림 · 미수 · 스케줄 미생성 · 청구서 없음 (wave3 23-08)
     const alerts: IntakeAlertDto[] = [
+      // 앞의 둘은 이 화면 안의 카드가 답이다 — 칩이 카드에 붙어 있으므로 갈 곳도 여기다 (D-R27)
+      { key: 'consultDue', label: `상담 오늘·지남 ${consultDue}`, count: consultDue, amount: null, go: '/intake' },
+      { key: 'followUpLate', label: `사후 관리 밀림 ${followUpLate}`, count: followUpLate, amount: null, go: '/intake' },
       {
         key: 'unpaid',
         // 금액을 못 보는 사람에게는 사람 수만 말한다 — 문장을 화면이 만들지 않는다 (D-R18 · D-R39)
@@ -728,10 +819,25 @@ export class OpsService {
         amount: null,
         go: '/accounting',
       },
-      // 아래 둘은 이 화면 안의 카드가 답이다 — 칩이 카드에 붙어 있으므로 갈 곳도 여기다 (D-R27)
-      { key: 'consultDue', label: `상담 오늘·지남 ${consultDue}`, count: consultDue, amount: null, go: '/intake' },
-      { key: 'followUpLate', label: `사후 관리 밀림 ${followUpLate}`, count: followUpLate, amount: null, go: '/intake' },
     ];
+
+    /*
+     * §24 「실패 사유 N건」 막대 (24-05) — 지금 실패인 건을 분류로 센다. 다섯은 어휘라 0 이어도 서고,
+     * 분류가 없는 건(옛 실패 · 분류 전)은 「분류 안 됨」 한 줄로 있을 때만 선다 — 이 줄이 없으면 머리의 「등록 실패 N」과 합이 갈린다 (N-19).
+     */
+    const reasonNames = new Map<string, string[]>();
+    for (const l of leads) {
+      if (l.stage !== 'failed') continue;
+      const key = l.reasonKind ?? LEAD_REASON_KIND_UNSET;
+      reasonNames.set(key, [...(reasonNames.get(key) ?? []), l.name ?? '']);
+    }
+    const failReasons: IntakeFailReasonDto[] = LEAD_REASON_KINDS.map((key) => ({
+      key, label: LEAD_REASON_KIND_LABEL[key], count: reasonNames.get(key)?.length ?? 0, names: reasonNames.get(key) ?? [],
+    }));
+    const unclassified = reasonNames.get(LEAD_REASON_KIND_UNSET) ?? [];
+    if (unclassified.length) {
+      failReasons.push({ key: LEAD_REASON_KIND_UNSET, label: LEAD_REASON_KIND_UNSET_LABEL, count: unclassified.length, names: unclassified });
+    }
 
     // 도달 기록이 언제부터 있나 — §71 퍼널이 「언제부터의 값」인지 말할 근거 (N-45 · 옛 건 보정 0)
     const [since] = await this.q(
@@ -750,6 +856,8 @@ export class OpsService {
       touchKinds: LEAD_TOUCH_KINDS.map((key) => ({ key, label: LEAD_TOUCH_KIND_LABEL[key] })),
       followUpSoon,
       funnelSince: (since?.since as string) ?? null,
+      failReasons,
+      apptKinds: LEAD_APPT_KINDS.map((key) => ({ key, label: LEAD_APPT_KIND_LABEL[key] })),
     };
   }
 
@@ -762,12 +870,25 @@ export class OpsService {
    * 접촉 원장은 **한 번에** 읽는다(`lead_id = ANY`) — 건마다 물으면 18건에 열여덟 번이다.
    * N-25: failed 건의 되살릴 단계 판정 — 명시값 → 도달 기록 역순 → 미분류(null) — 는 명시값 없는 failed 건이 있을 때만 한 번 뒤따른다.
    */
-  private async leadRows(where: string, params: unknown[], today = todayKst()): Promise<LeadDto[]> {
+  private async leadRows(where: string, params: unknown[], today = todayKst(), canSeeAmounts = false): Promise<LeadDto[]> {
     const pending = new Map<number, LeadDto>();
+    // 최신 진단 점수 한 줄은 같은 SELECT 에 LATERAL 로 붙인다 — 카드마다 묻지 않는다(DQ1 · 왕복 0)
     const rows = await this.q(
       `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason, l.owner_id, l.student_id, l.fail_from, l.source,
-              to_char(l.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name
+              l.grade, l.reason_kind, to_char(l.recheck_on,'YYYY-MM-DD') AS recheck_on,
+              -- 배치안 초안 · 2차/진단 일정(23-15 · 23-16)도 같은 SELECT 의 JSON 한 칸씩이다 — 카드마다 묻지 않는다(왕복 수 그대로)
+              ${LEAD_PLAN_JSON}, ${LEAD_APPTS_JSON},
+              to_char(l.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name,
+              -- 실패한 순간 — 도달 기록의 마지막 「등록 실패」 줄(24-04 · 재연락 판정의 기준). 옛 건은 줄이 없어 NULL (N-25)
+              CASE WHEN l.stage = 'failed' THEN
+                (SELECT ${kstAt('max(g.at)')} FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'failed') END AS failed_at,
+              -- 지금 단계에 들어온 날(KST) — 단계 기한(SLA)의 기준 (23-12). 1차는 유입이 곧 도달이라 기록이 없으면 접수일이다
+              CASE WHEN l.stage IN (${sqlWordList(INTAKE_FUNNEL_STAGES)}) THEN COALESCE(
+                (SELECT to_char(${kstDateOf('max(g.at)')},'YYYY-MM-DD') FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = l.stage),
+                CASE WHEN l.stage = 'first' THEN to_char(${kstDateOf('l.created_at')},'YYYY-MM-DD') END) END AS stage_entered_on,
+              ld.*
          FROM lead l LEFT JOIN staff o ON o.id = l.owner_id
+         ${LEAD_DIAG_LATEST_JOIN}
         ${where}
         ORDER BY l.created_at DESC, l.id DESC`,
       params,
@@ -800,6 +921,14 @@ export class OpsService {
       const failed = stage === 'failed';
       const touches = touchesBy.get(id) ?? [];
       const next = this.nextChip(stage, touches[0] ?? null, today);
+      const failedAt = failed ? ((r.failed_at as string) ?? null) : null;
+      // 재연락 (24-06) — 실패 뒤에 접촉 원장에 줄이 있으면 완료. 실패 시각을 모르면 판정하지 않는다
+      const recontactDone = failed ? leadRecontactDone(failedAt, touches[0]?.at ?? null) : null;
+      const recontactOn = touches[0]?.nextOn ?? null;
+      const enteredOn = (r.stage_entered_on as string) ?? null;
+      const appts = leadApptsFromRow(r);
+      const second = appts.find((a) => a.kind === 'second') ?? null;
+      const recheckOn = leadRecheckOn(stage, (r.recheck_on as string) ?? null, enteredOn);
       const dto: LeadDto = {
         id, name: String(r.name), school: (r.school as string) ?? null,
         ownerId: leadId(r.owner_id, true), studentId: leadId(r.student_id, true),
@@ -815,6 +944,26 @@ export class OpsService {
         lastTouchAt: touches[0]?.at ?? null,
         nextOn: touches[0]?.nextOn ?? null,
         nextLabel: next?.label ?? null, nextTone: next?.tone ?? null,
+        latestDiag: leadDiagFromRow(r),
+        grade: (r.grade as string) ?? null,
+        reasonKind: (r.reason_kind as string) ?? null,
+        reasonKindLabel: leadReasonKindLabel(r.reason_kind as string | null),
+        failedAt: failedAt ? failedAt.slice(0, 10) : null,
+        recontact: recontactDone === null ? null : {
+          done: recontactDone,
+          label: recontactDone ? '재연락 완료' : '재연락 대기',
+          tone: recontactDone ? 'info' : 'warning',
+          on: recontactOn,
+          dueLabel: recontactOn ? leadDueLabel(recontactOn, today) : null,
+        },
+        stageDue: leadStageDue(stage, enteredOn, today,
+          // 보류는 재확인 날짜 · 2차 대기는 잡아 둔 2차 일정이 기한이다(원본 §23 「2차 상담 2026-08-26 14:30 · D-5」 · 23-15 · 23-16)
+          stage === 'hold' && recheckOn ? { dueOn: recheckOn }
+            : stage === 'wait2nd' && second ? { dueOn: second.onDate, task: `2차 상담 ${second.onDate} ${OpsService.hm(second.startMin)}` }
+            : null),
+        plan: leadPlanFromRow(r, canSeeAmounts),
+        appts,
+        recheckOn,
       };
       if (failed && !failFrom) pending.set(id, dto);
       return dto;
@@ -863,10 +1012,11 @@ export class OpsService {
     }
     const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
     const note = dto.note?.trim() || null;
+    const grade = dto.grade?.trim() || null;
     const id = await this.lead.manager.transaction(async (em) => {
       const [made] = (await em.query(
-        `INSERT INTO lead (name, school, owner_id, stage, source) VALUES ($1, $2, $3, 'first', $4) RETURNING id`,
-        [name, dto.school?.trim() || null, owner?.id ?? null, dto.source],
+        `INSERT INTO lead (name, school, owner_id, stage, source, grade) VALUES ($1, $2, $3, 'first', $4, $5) RETURNING id`,
+        [name, dto.school?.trim() || null, owner?.id ?? null, dto.source, grade],
       )) as Array<{ id: string }>;
       const lid = leadId(made.id);
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'first', $2)`, [lid, viewerId]);
@@ -878,7 +1028,7 @@ export class OpsService {
       }
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'create','{}'::jsonb,$3::jsonb)`,
-        [viewerId, lid, JSON.stringify({ name, school: dto.school?.trim() || null, ownerId: owner?.id ?? null, source: dto.source })],
+        [viewerId, lid, JSON.stringify({ name, school: dto.school?.trim() || null, ownerId: owner?.id ?? null, source: dto.source, grade })],
       );
       return lid;
     });
@@ -903,7 +1053,8 @@ export class OpsService {
           message: `${intakeStageLabel(cur.stage)}에서는 ${allowed.map((k) => intakeStageLabel(k)).join(' · ')}(으)로만 옮길 수 있습니다`,
         });
       }
-      await em.query(`UPDATE lead SET stage = $2 WHERE id = $1`, [id, dto.to]);
+      // 재확인 날짜는 그 보류 한 번의 것이다 — 단계가 바뀌면 비운다(다음 보류에 옛 날짜가 남지 않게 · 23-16)
+      await em.query(`UPDATE lead SET stage = $2, recheck_on = NULL WHERE id = $1`, [id, dto.to]);
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, $2, $3)`, [id, dto.to, viewerId]);
     });
     return this.leadOne(id);
@@ -931,7 +1082,11 @@ export class OpsService {
    * 실패 전이 — 이전 단계를 **그 순간의 사실**로 fail_from 에 명시 기록하고
    * 도달 기록(append-only)에 'failed' 를 남긴다. 등록 건은 실패로 보낼 수 없다.
    */
-  async failLead(byId: number, id: number, dto: { stopAt: string; reason?: string }): Promise<LeadDto> {
+  async failLead(byId: number, id: number, dto: { stopAt: string; reason?: string; reasonKind?: string }): Promise<LeadDto> {
+    // 사유 분류는 DTO 가 막고 표의 CHECK 가 마지막으로 막는다 — 서비스도 한 번 더 본다(직접 호출 경로 · 24-05)
+    if (dto.reasonKind !== undefined && !(LEAD_REASON_KINDS as readonly string[]).includes(dto.reasonKind)) {
+      throw new ConflictException({ code: 'LEAD_REASON_KIND_INVALID', message: '사유 분류는 연락 두절 · 타 학원 등록 · 일정 안 맞음 · 비용 · 시기 안 맞음 중 하나입니다' });
+    }
     const [row] = await this.q(`SELECT id, stage FROM lead WHERE id = $1`, [id]);
     if (!row) throw new NotFoundException('상담 건을 찾을 수 없습니다');
     const stage = String(row.stage);
@@ -939,8 +1094,9 @@ export class OpsService {
     if (stage === 'enrolled') throw new ConflictException({ code: 'ENROLLED_LOCKED', message: '등록된 건은 실패로 보낼 수 없습니다' });
     await this.lead.manager.transaction(async (em) => {
       await em.query(
-        `UPDATE lead SET stage = 'failed', fail_from = $2, stop_at = $3, reason = COALESCE($4, reason) WHERE id = $1`,
-        [id, stage, dto.stopAt, dto.reason?.trim() || null]);
+        `UPDATE lead SET stage = 'failed', fail_from = $2, stop_at = $3, reason = COALESCE($4, reason),
+                         reason_kind = COALESCE($5, reason_kind) WHERE id = $1`,
+        [id, stage, dto.stopAt, dto.reason?.trim() || null, dto.reasonKind ?? null]);
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'failed', $2)`, [id, byId]);
     });
     return this.leadOne(id);
@@ -969,14 +1125,15 @@ export class OpsService {
       });
     }
     await this.lead.manager.transaction(async (em) => {
-      await em.query(`UPDATE lead SET stage = $2, fail_from = NULL, stop_at = NULL WHERE id = $1`, [id, target]);
+      await em.query(`UPDATE lead SET stage = $2, fail_from = NULL, stop_at = NULL, recheck_on = NULL WHERE id = $1`, [id, target]);
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, $2, $3)`, [id, target, byId]);
     });
     return this.leadOne(id);
   }
 
-  private async leadOne(id: number): Promise<LeadDto> {
-    const [row] = await this.leadRows('WHERE l.id = $1', [id]);
+  /** 상담 한 줄 — 쓰기 응답이 `GET /ops` 와 같은 모양을 쓴다(배치안·일정 컨트롤러도 이것으로 답한다 · 23-15 · 23-16) */
+  async leadOne(id: number, canSeeAmounts = false): Promise<LeadDto> {
+    const [row] = await this.leadRows('WHERE l.id = $1', [id], todayKst(), canSeeAmounts);
     if (!row) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
     return row;
   }
@@ -1061,7 +1218,7 @@ export class OpsService {
    */
   async comment(viewerId: number, canComment: boolean, mktId: number, dto: MfbCommentWriteDto): Promise<MfbThreadDto[]> {
     if (!canComment) {
-      throw new ConflictException({ code: 'CEO_ONLY', message: '대표 코멘트는 대표만 남깁니다 (원문 §60)' });
+      throw new ConflictException({ code: 'CEO_ONLY', message: '대표 코멘트는 대표만 남깁니다' });
     }
     const [mkt] = await this.q(`SELECT id, channel, item, title FROM mkt WHERE id = $1`, [mktId]);
     if (!mkt) throw new NotFoundException('마케팅 활동이 없습니다');
@@ -1073,9 +1230,9 @@ export class OpsService {
         [mktId, viewerId, dto.body.trim()],
       );
       await em.query(
-        `INSERT INTO noti (to_id, from_id, body, link, category)
-         SELECT id, $1, $2, '/ops?mkt', 'request' FROM staff WHERE role <> 'teacher' AND id <> $1`,
-        [viewerId, `대표 피드백 — ${name}`],
+        `INSERT INTO noti (to_id, from_id, body, link, category, title)
+         SELECT id, $1, $2, '/ops?mkt', 'request', $3 FROM staff WHERE role <> 'teacher' AND id <> $1`,
+        [viewerId, `대표 피드백 — ${name}`, NOTI_TITLE.mktFeedback],
       );
     });
     return this.feedbackThreads(viewerId);
@@ -1109,8 +1266,8 @@ export class OpsService {
       const to = leadId(parent.by_id);
       if (to !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?mkt', 'request')`,
-          [to, viewerId, `피드백 답변 — ${name}`],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?mkt', 'request', $4)`,
+          [to, viewerId, `피드백 답변 — ${name}`, NOTI_TITLE.mktReply],
         );
       }
     });
@@ -1265,7 +1422,50 @@ export class OpsService {
       reworkReason: (p.rework_reason as string) ?? null,
       canEdit, editBlockedReason: canEdit ? null : planLockedMessage(stage),
       nextStages: planNextStages(stage).map((key) => ({ key, label: PLAN_STAGE_LABEL[key] })),
+      // 「+ 대표 지시」 — 쓰기(`addPlanTask`)와 같은 함수가 판정한다 (w5 · 65-4 · S5)
+      canAddTask: planTaskBlockedReason(stage, canApprove) === null,
+      addTaskBlockedReason: planTaskBlockedReason(stage, canApprove),
     };
+  }
+
+  /**
+   * 「+ 대표 지시」 — 원본 §65 「2 · 과제」 오른쪽 단추 (w5 · g6 65-4).
+   *
+   * 과제는 **TODO 한 줄**(`src='plan'` · `plan_id`)이다 — §62 기한 표·§65 과제 줄·§61 「과제 1/3」·§64 할 일이
+   * 전부 그 한 줄을 읽는다(새 표를 파지 않는다 · D-R22). 담당 알림·감사 줄이 **같은 트랜잭션**이다 —
+   * 밖에서 알리면 할 일은 안 생겼는데 알림만 간다(§66 할 일 배정과 같은 규약 · D-R43).
+   * 기획 행을 잠근 채 단계를 다시 본다 — 그 사이 완료로 옮겨진 기획에 과제가 붙지 않게.
+   */
+  async addPlanTask(viewerId: number, canApprove: boolean, id: number, dto: PlanTaskCreateDto): Promise<PlanDetailDto> {
+    const title = dto.title.trim();
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(
+        `SELECT id, title, stage FROM plan WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; title: string; stage: string }>;
+      if (!cur) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
+      const blocked = planTaskBlockedReason(cur.stage, canApprove);
+      if (blocked) throw new ConflictException({ code: canApprove ? 'PLAN_DONE' : 'CEO_ONLY', message: blocked });
+      if (!title) throw new ConflictException({ code: 'TASK_TITLE_REQUIRED', message: '할 일을 적어 주세요' });
+      // 그만둔 사람에게는 주지 않는다 — 이 파일의 다른 담당 자리와 같은 판정(S4)
+      const [to] = (await em.query(`SELECT id, name FROM staff WHERE id = $1 AND active`, [dto.toId])) as Array<{ id: string }>;
+      if (!to) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
+      await em.query(
+        `INSERT INTO todo (title, from_id, to_id, due_on, done, src, plan_id)
+         VALUES ($1, $2, $3, $4::date, false, 'plan', $5)`,
+        [title, viewerId, dto.toId, dto.dueOn ?? null, id],
+      );
+      if (dto.toId !== viewerId) {
+        await em.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, $4, 'request', $5)`,
+          [dto.toId, viewerId, `기획 과제 — ${cur.title} · ${title}${dto.dueOn ? ` · 기한 ${dto.dueOn.slice(5)}` : ''}`, `/ops?tab=plan&plan=${id}`, NOTI_TITLE.planTask],
+        );
+      }
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'plan',$2,'task',$3::jsonb)`,
+        [viewerId, id, JSON.stringify({ title, toId: dto.toId, dueOn: dto.dueOn ?? null })],
+      );
+    });
+    return (await this.planDetail(id, canApprove, viewerId))!;
   }
 
   /**
@@ -1276,7 +1476,7 @@ export class OpsService {
    */
   async decidePlanDue(viewerId: number, canApprove: boolean, id: number, dto: PlanDueDecisionDto): Promise<PlanDetailDto> {
     if (!canApprove) {
-      throw new ConflictException({ code: 'CEO_ONLY', message: '기한 승인은 대표만 합니다 (원문 §61·§65)' });
+      throw new ConflictException({ code: 'CEO_ONLY', message: '기한 승인은 대표만 합니다' });
     }
     const [row] = await this.q(
       `SELECT id, due_on, due_approved_at, owner_id FROM plan WHERE id = $1`, [id],
@@ -1485,8 +1685,10 @@ export class OpsService {
     const today = todayKst();
     const [m] = await this.q(
       `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date,
-              m.pre_files, m.minutes, ${kstAt('m.minutes_at')} AS minutes_at, b.name AS minutes_by_name
+              m.pre_files, m.minutes, ${kstAt('m.minutes_at')} AS minutes_at, b.name AS minutes_by_name,
+              m.ser_id, s.start_min, s.end_min, s.mode, r.name AS room_name, z.label AS zoom_label
          FROM mtrec m LEFT JOIN staff b ON b.id = m.minutes_by
+         ${MEETING_PLACE_JOINS}
         WHERE m.id = $1`,
       [id],
     );
@@ -1527,6 +1729,10 @@ export class OpsService {
     return {
       id: leadId(m.id), mtType: mt, mtTypeLabel: mtTypeLabel(mt),
       title: (m.title as string) ?? null, onDate: (m.on_date as string) ?? null,
+      // §66 머리 「18:30–19:30 · … · 6호」 — §63 줄과 같은 조인·같은 낱말 함수 (w5 · 66-2)
+      startMin: m.start_min == null ? null : Number(m.start_min),
+      endMin: m.end_min == null ? null : Number(m.end_min),
+      placeLabel: meetingPlaceLabel(m),
       attendees, confirmed,
       // 원문 「참석 0/4 확인」 — 화면이 다시 세지 않는다 (D-R37)
       attendLabel: `참석 ${confirmed}/${attendees.length} 확인`,
@@ -1580,8 +1786,8 @@ export class OpsService {
       );
       if (to.id !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/ops?todo', 'request')`,
-          [dto.toId, viewerId, `회의 할 일 — ${name}`],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?todo', 'request', $4)`,
+          [dto.toId, viewerId, `회의 할 일 — ${name}`, NOTI_TITLE.meetingTodo],
         );
       }
     });

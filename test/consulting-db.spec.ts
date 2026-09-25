@@ -102,6 +102,16 @@ d('§26 DB 제약과 migration 11', () => {
     ]);
   });
 
+  it('공개 범위 넷의 이름과 뜻 한 줄도 목록이 준다 — §29 칩 아래 한 줄(29-06)이 §30 배너와 같은 낱말이다', async () => {
+    const { shares } = await new ConsultingService(q.manager.getRepository(Lead)).all(1, true, true);
+    expect(shares).toEqual([
+      { key: 'all', label: '전체 공개', meaning: '관리자 누구나 봅니다' },
+      { key: 'money_only', label: '수납만 공개', meaning: '금액만 보이고 내용은 숨깁니다' },
+      { key: 'picked', label: '지정 공개', meaning: '고른 사람만 봅니다' },
+      { key: 'private', label: '전체 비공개', meaning: '담당자와 대표만 봅니다' },
+    ]);
+  });
+
   it('회차 중복은 UNIQUE로 차단한다', async () => {
     await q.query(`INSERT INTO cons_sess (cons_id,seq) VALUES ($1,1)`, [id]);
     await expect(q.query(`INSERT INTO cons_sess (cons_id,seq) VALUES ($1,1)`, [id]))

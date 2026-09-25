@@ -46,6 +46,12 @@ export class ApRowDto {
   asked?: string | null;
 
   @ApiPropertyOptional({
+    ...S,
+    description: '올린 사람이 자기 말로 적은 사유 — §14 카드의 인용 줄. 적힌 것이 없거나 줄에 이미 보인 글과 같으면 null',
+  })
+  reason?: string | null;
+
+  @ApiPropertyOptional({
     type: Boolean,
     description: '이 사람이 **지금** 이 줄을 여기서 처리할 수 있는가 (§14). 화면은 이 값만 보고 단추를 그린다',
   })
@@ -198,8 +204,15 @@ export class NotiReadAllDto {
 
 export class NotiDto {
   @ApiProperty() id!: number;
+  @ApiPropertyOptional({
+    ...S,
+    description: '§16 카드의 굵은 제목(NOTI.title). 제목 칸이 생기기 전 행과 제목을 안 적는 쓰기는 null — 그때는 본문이 한 줄이다',
+  })
+  title?: string | null;
   @ApiProperty() body!: string;
   @ApiPropertyOptional(S) fromName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '보낸 이의 역할 낱말(§16 메타 줄 · lib/role-words) — 시스템이 보낸 것은 null' })
+  fromRoleLabel?: string | null;
   @ApiPropertyOptional(N) toId?: number | null;
   @ApiPropertyOptional(S) link?: string | null;
   @ApiProperty() read!: boolean;

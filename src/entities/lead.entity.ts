@@ -13,6 +13,7 @@
 import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Check('lead_source_words', "source IS NULL OR source IN ('kakao','phone','blog','instagram','referral','walkin')")
+@Check('lead_reason_kind_words', "reason_kind IS NULL OR reason_kind IN ('unreachable','other_academy','schedule','cost','timing')")
 @Entity({ name: 'lead' })
 export class Lead {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -46,6 +47,18 @@ export class Lead {
 
   @Column({ type: 'text', nullable: true })
   reason: string | null;
+
+  /** v4.45 · 실패 사유 분류 — unreachable | other_academy | schedule | cost | timing (원본 §24 다섯 · 24-05). 옛 실패 건은 NULL — 사유 글에서 추정하지 않는다 (N-25) */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  reasonKind: string | null;
+
+  /** v4.45 · 학년 — 원본 §23 카드의 학년 칩 (23-10). `stu.grade` 와 같은 폭의 자유 글 · 옛 건 NULL */
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  grade: string | null;
+
+  /** v4.47 · 보류 재확인 날짜 (23-16) — 비면 보류에 들어온 날 + 2일. 「연장 +2일」이 적고 단계가 바뀌면 비운다 */
+  @Column({ type: 'date', nullable: true })
+  recheckOn: string | null;
 
   /** v4.34 · 유입 경로 — kakao | phone | blog | instagram | referral | walkin (컷 §23 · N-44). 옛 행은 NULL — 추정 보정 0 (N-25) */
   @Column({ type: 'varchar', length: 16, nullable: true })

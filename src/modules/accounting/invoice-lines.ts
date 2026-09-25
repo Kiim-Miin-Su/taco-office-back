@@ -65,6 +65,19 @@ const LIVE = `(NOT o.canceled OR ${TREAT} = 'deduct')
 const DROPPED = `((o.canceled AND COALESCE(${TREAT}, 'carry') = 'carry')
         OR ${STU_OUT})`;
 
+/**
+ * 그 학생의 **컨설팅 계약이 덮는 회차**인가 (PB-05).
+ *
+ * §31 「회차 기록」(C95)은 시간표 회차(SER)를 만들거나 있는 회차에 잇고 `cons_sess.ser_id` 로 적는다. 그 회차는
+ * 컨설팅 계약 금액(`cons.amount`)이 이미 값을 치른다 — 수업료 줄로 또 세면 회당 단가만큼 이중 청구가 되고,
+ * 그 유형의 단가가 없으면 학생의 수업료 발행 전체가 `INV_NO_RATE` 로 막혔다.
+ * 계약에 든 학생만 뺀다 — 이어 붙인 회차에 계약 밖 학생이 함께 있으면 그 학생은 원래대로 센다.
+ * 청구 줄 · §54 명단/회차 · 일괄 발행 후보가 이 한 조각을 같이 쓴다.
+ */
+export const consultingCovered = (serExpr: string, studentExpr: string): string => `EXISTS (
+             SELECT 1 FROM cons_sess cx JOIN cons_stu cxs ON cxs.cons_id = cx.cons_id
+              WHERE cx.ser_id = ${serExpr} AND cxs.student_id = ${studentExpr})`;
+
 /** 한 달을 어디까지 셀 것인가 — 위 주석의 세 토막 */
 export type LineSlice =
   | { kind: 'month' }
@@ -104,6 +117,8 @@ const sqlFor = (slice: LineSlice): string => `
       JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ss.student_id = $1 AND ${serStuOn('ss', 'o.on_date')}
      WHERE ${slice.kind === 'dropped' ? DROPPED : slice.kind === 'deducted' ? `o.canceled AND ${TREAT} = 'deduct' AND NOT ${STU_OUT}` : LIVE}
        AND ${kstMonthOf('lower(o.span)')} = $2
+       -- 컨설팅 계약이 덮는 회차는 수업료가 아니다 — 청구도 넘길 돈도 아니다 (PB-05)
+       AND NOT ${consultingCovered('se.id', '$1')}
        ${slice.kind === 'done' ? 'AND o.on_date <= $3::date' : ''}
        ${slice.kind === 'after' ? 'AND o.on_date > $3::date' : ''}
        ${slice.kind === 'after' && slice.serIds ? 'AND se.id = ANY($4::bigint[])' : ''}

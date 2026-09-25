@@ -183,12 +183,14 @@ export const AP_INBOX_CATEGORY_LABEL: Record<ApInboxCategory, string> = {
 export const REQ_TYPE_LABEL: Record<string, string> = {
   // REQ — 사람이 올리는 요청
   wage_change: '시급 변경', tz_change: '시간대 변경', unav_add: '불가 시간 추가', doc: '서류',
-  // CHREQ — 수업을 바꿔 달라는 요청
-  time: '시간 변경', time_move: '시간 이동', teacher: '강사 변경',
+  // 교재 변경 요청 — §14 분류 칩(AP_INBOX_CATEGORY_LABEL)과 같은 낱말. 없던 동안 제목이 「book_change 요청」으로 나갔다
+  book_change: '교재 변경',
+  // CHREQ — 수업을 바꿔 달라는 요청. §19 컷의 「무엇을」 칩 낱말 그대로 (시간 옮기기 · 강사 바꾸기 · 강의실 바꾸기)
+  time: '시간 변경', time_move: '시간 옮기기', teacher: '강사 바꾸기',
   // 컷 §19 의 갈래 이름 그대로다 — 「시간 옮기기 · 강사 바꾸기 · 강의실 바꾸기 · **휴강**」.
   // `cancel` 을 「취소」라 적던 동안, 같은 줄의 대상 칸(서버가 지은 문장)은 「휴강」이라
   // 적고 있었다 — 한 줄이 제 갈래를 두 이름으로 부르고 있었다 (`lib/change-request.ts`).
-  room: '강의실 변경', off: '휴강', cancel: '휴강',
+  room: '강의실 바꾸기', off: '휴강', cancel: '휴강',
 };
 
 /**
@@ -214,6 +216,25 @@ export function reqAskedLine(reqType: string, payload: unknown): string | null {
   const { from, to } = reqAsked(reqType, payload);
   if (!to) return from;
   return from ? `${from} → ${to}` : to;
+}
+
+/**
+ * §14 카드의 **사유 인용 줄**(g2 대조 14-4) — 후보 중 처음으로 적힌 글을 고른다.
+ *
+ * 이미 그 줄에 보인 글(`shown` — 「바라는 것」·반려 사유·제목)과 같으면 **두 번 싣지 않는다**.
+ * 모르는 요청 갈래는 사유가 곧 「바라는 것」이라(`reqAsked`) 회색 상자와 인용 줄에 같은 글이 두 번 서던 자리다.
+ * 적힌 것이 없으면 null — 사유를 지어내지 않는다.
+ */
+export function requesterReason(
+  shown: ReadonlyArray<string | null | undefined>, ...candidates: unknown[]
+): string | null {
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const text = candidate.trim();
+    if (!text) continue;
+    return shown.some((s) => (s ?? '').trim() === text) ? null : text;
+  }
+  return null;
 }
 
 /** 기존 import 경로는 유지하되 종류의 정본은 변경요청 도메인 파일에 둔다. */
@@ -264,6 +285,11 @@ export interface ApRow {
   reqType?: string | null;
   /** 무엇을 바라는가 — 「42,000원/시간 → 45,000원/시간」처럼 이미 사람이 읽는 문장이다 */
   asked?: string | null;
+  /**
+   * 올린 사람이 **자기 말로** 적은 사유 — 원문 §14 카드의 인용 줄(g2 대조 14-4). 적힌 것이 없으면 null.
+   * 근거를 안 보고 누르는 승인이 되지 않도록 카드에 싣는다. 만드는 규칙은 `requesterReason` 한 곳이다.
+   */
+  reason?: string | null;
   /**
    * 이 **줄**이 반영 가능한가 — 갈래가 아니라 줄이다.
    *

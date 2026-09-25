@@ -665,6 +665,45 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     expect(blocked.body.message).toBe(gone.resendBlockedReason);
   });
 
+  /**
+   * g5 §48 — 원문 「보낸 내역」은 **일별 · 주별 · 월별** 묶음 카드(「08-17 ~ 08-23 · 1건 · 기록지 1 · 1명 ▾」)이고
+   * 줄마다 **과목 · 강사 · 수업일**이 선다. 묶음의 건수·기록지·인원은 서버가 센다 — 화면이 items(100건 상한)로
+   * 다시 세면 잘린 묶음의 수가 틀린다 (48-02 · 48-01 · 48-03).
+   */
+  it('§48 보낸 내역 — span 묶음(건수·기록지·인원)과 줄의 과목·강사를 서버가 준다', async () => {
+    const sent = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+      .send(deliveryBody('00000000-0000-4000-8000-000000000070')).expect(201);
+    const sendId = sent.body.item.id as number;
+    expect(sent.body.item).toMatchObject({ subjectNames: ['AP Chem'], teacherNames: ['발송강사'] });
+
+    const week = await request(app.getHttpServer()).get('/reports/deliveries/history')
+      .query({ span: 'week' }).set(auth(managerToken)).expect(200);
+    expect(week.body.span).toBe('week');
+    const group = (week.body.groups as Array<Record<string, unknown>>)
+      .find((g) => (g.sendIds as number[]).includes(sendId))!;
+    expect(group).toBeTruthy();
+    // 주는 월요일에 건다 — from 은 월요일, to 는 그 주 일요일, 이름은 원문 꼴 「MM-DD ~ MM-DD」
+    expect(new Date(`${String(group.from)}T00:00:00Z`).getUTCDay()).toBe(1);
+    expect(group.label).toBe(`${String(group.from).slice(5)} ~ ${String(group.to).slice(5)}`);
+    expect(Number(group.count)).toBeGreaterThanOrEqual(1);
+    expect(Number(group.sheets)).toBeGreaterThanOrEqual(2);
+    expect(Number(group.students)).toBeGreaterThanOrEqual(1);
+    // 머리 「기록지 N장」 = 묶음 기록지 합
+    expect(week.body.sheets).toBe((week.body.groups as Array<{ sheets: number }>).reduce((a, g) => a + g.sheets, 0));
+
+    const month = await request(app.getHttpServer()).get('/reports/deliveries/history')
+      .query({ span: 'month' }).set(auth(managerToken)).expect(200);
+    const monthGroup = (month.body.groups as Array<Record<string, unknown>>).find((g) => (g.sendIds as number[]).includes(sendId))!;
+    expect(String(monthGroup.from).endsWith('-01')).toBe(true);
+    expect(monthGroup.label).toMatch(/^\d{4}년 \d{1,2}월$/);
+
+    // span 없이 부르면 묶음 없이 옛 모양 그대로(additive)
+    const plain = await request(app.getHttpServer()).get('/reports/deliveries/history').set(auth(managerToken)).expect(200);
+    expect(plain.body.groups).toEqual([]);
+    await request(app.getHttpServer()).get('/reports/deliveries/history').query({ span: 'year' })
+      .set(auth(managerToken)).expect(400);
+  });
+
   it('두 번째 Blob 저장이 실패하면 먼저 저장한 파일을 보상 삭제하고 이력을 남기지 않는다', async () => {
     put.mockResolvedValueOnce('https://private.blob/first.png').mockRejectedValueOnce(new Error('blob failed'));
     await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))

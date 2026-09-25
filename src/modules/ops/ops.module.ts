@@ -13,6 +13,10 @@ import { GuidesModule } from '../guides/guides.module';
 import { ScheduleModule } from '../schedule/schedule.module';
 import { ZoomModule } from '../zoom/zoom.module';
 import { LeadEnrollService } from './enroll.service';
+import { LeadDiagController } from './lead-diag.controller';
+import { LeadDiagService } from './lead-diag.service';
+import { LeadPlanController } from './lead-plan.controller';
+import { LeadPlanService } from './lead-plan.service';
 import { OpsController } from './ops.controller';
 import { OpsService } from './ops.service';
 import { TeacherChangeService } from './teacher-change.service';
@@ -20,7 +24,8 @@ import { TeacherChangeService } from './teacher-change.service';
 /** 등록 확정(C91)·강사 교체(C93)·회의 잡기(C96)는 시간표·청구서·교재·안내·줌의 **기존 쓰기**를 한 트랜잭션에서 부른다 */
 @Module({
   imports: [TypeOrmModule.forFeature([Lead]), ScheduleModule, AccountingModule, BooksModule, GuidesModule, ZoomModule],
-  controllers: [OpsController],
-  providers: [OpsService, LeadEnrollService, TeacherChangeService],
+  // 상담 진단 점수(DQ1) · 배치안·일정(wave3 g3)은 같은 /ops/leads 경로의 다른 기능이라 컨트롤러를 나눈다
+  controllers: [OpsController, LeadDiagController, LeadPlanController],
+  providers: [OpsService, LeadEnrollService, TeacherChangeService, LeadDiagService, LeadPlanService],
 })
 export class OpsModule {}

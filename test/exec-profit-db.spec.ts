@@ -114,6 +114,55 @@ d('§71 손익 — 매출 − 강사료 − 지출 (H-86)', () => {
     expect(stat(s, 'margin')).toBeNull();
   });
 
+  /* ── PB-02 · 71-3 — 컨설팅 수납(cons_pay)도 들어온 돈이다 ─────────────────────── */
+
+  /** 컨설팅 한 건 — 담당·학생·계약 금액. 수납은 따로 넣는다 */
+  const consulting = async (amount: number, deleted = false): Promise<number> => {
+    const [c] = (await q.query(
+      `INSERT INTO cons (cons_type, stage, contract_step, amount, sessions, owner_id, share, deleted_at, deleted_by)
+       VALUES ('essay', 'running', 5, $1, 4, $2, 'all', $3, $4) RETURNING id`,
+      [amount, staffId, deleted ? '2026-08-20T00:00:00Z' : null, deleted ? staffId : null],
+    )) as Array<{ id: string }>;
+    return Number(c.id);
+  };
+  const consPay = (consId: number, amount: number, on: string) => q.query(
+    `INSERT INTO cons_pay (cons_id, amount, paid_on, memo, by_id) VALUES ($1,$2,$3::date,'QA',$4)`,
+    [consId, amount, on, staffId],
+  );
+
+  it('청구서 없이 받은 **컨설팅 수납도 수입**이다 — 기간 안의 것만 (PB-02 · 71-3)', async () => {
+    await q.query(`DELETE FROM cons_pay`);
+    await q.query(`INSERT INTO pay (inv_id, amount, paid_on, method) VALUES (NULL, 1000000, '2026-08-10', 'transfer')`);
+    const c = await consulting(6_000_000);
+    await consPay(c, 3_000_000, '2026-08-16');
+    await consPay(c, 1_400_000, '2026-09-15');   // 다음 달 — 8월 수입이 아니다
+    const s = (await aug()).stats;
+    expect(stat(s, 'revenue')).toBe(4_000_000);
+    expect(stat(s, 'profit')).toBe(4_000_000);
+  });
+
+  it('**청구서로 전환한 컨설팅은 두 번 세지 않는다** — 전환 청구서는 남은 돈만 담는다 (PB-02 · N-33)', async () => {
+    await q.query(`DELETE FROM cons_pay`);
+    const [stu] = (await q.query(`INSERT INTO stu (name) VALUES ('손익 학생') RETURNING id`)) as Array<{ id: string }>;
+    const c = await consulting(800_000);
+    await consPay(c, 300_000, '2026-08-05');                   // 계약금은 컨설팅 원장에
+    const [inv] = (await q.query(
+      `INSERT INTO inv (student_id, year_month, inv_type, title, amount, paid_amount, state, issued_on, cs_id)
+       VALUES ($1,'2026-08','consulting','8월 컨설팅비',500000,500000,'paid','2026-08-06',$2) RETURNING id`,
+      [Number(stu.id), c],
+    )) as Array<{ id: string }>;
+    await q.query(`INSERT INTO pay (inv_id, amount, paid_on, method) VALUES ($1, 500000, '2026-08-20', 'transfer')`, [Number(inv.id)]);
+    // 받은 돈은 계약 금액과 같다 — 800,000 을 넘으면 같은 돈이 두 원장에서 세진 것이다
+    expect(stat((await aug()).stats, 'revenue')).toBe(800_000);
+  });
+
+  it('보관 삭제한 컨설팅의 수납은 세지 않는다 — §28 회계 표와 같은 집합이다', async () => {
+    await q.query(`DELETE FROM cons_pay`);
+    const gone = await consulting(500_000, true);
+    await consPay(gone, 500_000, '2026-08-11');
+    expect(stat((await aug()).stats, 'revenue')).toBe(0);
+  });
+
   it('금액을 못 보는 사람에게는 강사료도 이익률도 null 이다 (D-R39)', async () => {
     await payout('2026-08', 800000, 0, true);
     const s = (await svc.range('2026-08-01', '2026-08-31', false)).stats;

@@ -50,6 +50,16 @@ export class ConsultingSessionDto {
   @ApiPropertyOptional({ ...N, description: '연결된 수업이 있으면 그 SER' }) serId?: number | null;
   @ApiPropertyOptional({ description: 'C95 · 오늘까지 한 회차인가 — 날짜가 오늘 이하(또는 미정). 앞으로 잡아 둔 날짜는 false (기록 ≠ 완료 · N-18)' })
   done?: boolean;
+
+  /* 원본 §31 회차 머리 「1회차 · 26년 7월 14일 화요일 · 16:00–17:00 · 김범준 · 4호 · 기록됨」 (31-07) — 시간표 회차(SER)에서 파생한다. 연결이 없으면 null */
+  @ApiPropertyOptional({ ...N, description: '시작 KST 분 — 연결된 시간표 회차의 시각 (31-07)' }) startMin?: number | null;
+  @ApiPropertyOptional({ ...N, description: '끝 KST 분 (자정은 1440)' }) endMin?: number | null;
+  @ApiPropertyOptional({ ...S, description: '그 회차를 맡은 사람 — 시간표 회차의 강사(예외가 있으면 예외의 강사)' }) staffName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '강의실 이름 — 없으면 null' }) roomName?: string | null;
+  @ApiPropertyOptional({ description: '「기록됨」 — 무엇을 · 왜 · 어떻게가 다 찼는가. 할 일을 접는 조건과 같다 (서버 판정)' }) recorded?: boolean;
+  /* 원본 §31 회차 본문의 「결과」와 「다음까지」 (31-08) */
+  @ApiPropertyOptional({ ...S, description: '결과 — 인용 상자' }) result?: string | null;
+  @ApiPropertyOptional({ ...S, description: '다음까지 — 적으면 담당의 할 일과 알림이 선다 (슬라이드 31 연동)' }) nextUntil?: string | null;
 }
 
 
@@ -62,6 +72,8 @@ export class ConsItemDto {
   @ApiProperty() done!: boolean;
   @ApiPropertyOptional({ ...S, description: '처리자 이름 — 미완료면 null' }) doneBy?: string | null;
   @ApiPropertyOptional({ ...S, format: 'date', description: '처리일 — 미완료면 null' }) doneOn?: string | null;
+  @ApiPropertyOptional({ ...S, description: '처리 시각 KST(YYYY-MM-DDTHH:MI:SS+09:00) — 원본 §31 「2026-07-22 14:00 · 김범준」의 시각 (31-04). 미완료면 null' })
+  doneAt?: string | null;
   @ApiProperty({ description: 'template(§29 자동 생성분) | manual(N-18-a 확정 전 쓰기 없음)' }) source!: string;
 }
 
@@ -124,6 +136,13 @@ export class ConsultingStageDto {
   @ApiProperty({ description: '칸 이름 아래 한 줄 — **다음에 무엇을 하는지** (원본 §26)' }) sub!: string;
 }
 
+/** 공개 범위 낱말 한 벌 — 이름 + 뜻 한 줄 (슬라이드 32 · §29 칩 아래 · 29-06) */
+export class ConsultingShareWordDto {
+  @ApiProperty({ enum: CONS_SHARES }) key!: string;
+  @ApiProperty({ description: '「전체 공개」 …' }) label!: string;
+  @ApiProperty({ description: '「관리자 누구나 봅니다」 …' }) meaning!: string;
+}
+
 export class ConsultingListDto {
   @ApiProperty({ type: [ConsultingDto] }) items!: ConsultingDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
@@ -131,6 +150,8 @@ export class ConsultingListDto {
   canSetPrivate!: boolean;
   @ApiProperty({ type: [ConsultingStageDto], description: '§26 칸 셋 — 빈 칸도 이름과 한 줄을 갖는다' })
   stages!: ConsultingStageDto[];
+  @ApiPropertyOptional({ type: [ConsultingShareWordDto], description: '공개 범위 넷의 이름과 뜻 — §29 「누가 볼 수 있나」 칩과 그 아래 한 줄(29-06). 「전체 비공개」를 고를 수 있는지는 canSetPrivate' })
+  shares?: ConsultingShareWordDto[];
 }
 
 /* ══ §29 생성 · §30 계약 5단계 (C79-product) ═══════════════════════════ */
@@ -148,7 +169,7 @@ export class ConsultingCreateDto {
 
   @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) ownerId!: number;
   @ApiProperty({ minimum: 1, maximum: 2_147_483_647 }) @IsInt() @Min(1) @Max(2_147_483_647) amount!: number;
-  @ApiProperty({ minimum: 1, maximum: CONSULTING_SESSION_MAX, description: '약정 회차. 실제 일정 생성 정책은 미확정이므로 저장만 하며 수업을 자동 생성하지 않는다.' }) @IsInt() @Min(1) @Max(CONSULTING_SESSION_MAX) sessions!: number;
+  @ApiProperty({ minimum: 1, maximum: CONSULTING_SESSION_MAX, description: '약정 회차 — 계약서의 숫자다. 이 값으로 회차를 미리 만들지 않는다. 시간표 회차는 「회차 기록」(POST /consulting/{id}/sessions)이 날짜마다 만든다(C95).' }) @IsInt() @Min(1) @Max(CONSULTING_SESSION_MAX) sessions!: number;
   @ApiProperty({ ...DATE_SCHEMA }) @IsCalendarDate() startOn!: string;
   @ApiProperty({ ...DATE_SCHEMA }) @IsCalendarDate() endOn!: string;
   @ApiProperty({ enum: CONS_SHARES }) @IsIn(CONS_SHARES as unknown as string[]) share!: ConsShare;
@@ -198,7 +219,7 @@ export class ConsultingFeedbackDto {
 export class ConsultingTypeCapabilityDto {
   @ApiProperty() defaultItemsSupported!: boolean;
   @ApiProperty({ type: String, nullable: true }) reason!: string | null;
-  @ApiProperty({ description: '실제 일정 생성 정책은 원본에 없어 현재 false' }) scheduleCreationSupported!: boolean;
+  @ApiProperty({ description: '「회차 기록」이 시간표 회차(SER)를 만드는가 — C95 부터 true (30-02)' }) scheduleCreationSupported!: boolean;
   @ApiProperty({ type: String, nullable: true }) scheduleCreationReason!: string | null;
 }
 
@@ -236,6 +257,13 @@ export class ConsultingPaymentStateDto {
   @ApiProperty(N) invoiceId!: number | null;
 }
 
+/** 계약 단계 한 칸 — 원본 §30 스테퍼 「✓ 계약서 준비 · 초안을 올립니다」 (30-07) */
+export class ConsultingContractStepDto {
+  @ApiProperty({ minimum: 1, maximum: CONTRACT_STEP_MAX }) step!: number;
+  @ApiProperty() label!: string;
+  @ApiProperty() sub!: string;
+}
+
 export class ConsultingDetailDto {
   @ApiProperty() id!: number;
   @ApiProperty() consType!: string;
@@ -252,6 +280,10 @@ export class ConsultingDetailDto {
   @ApiProperty(N) amount!: number | null;
   @ApiProperty(N) sessions!: number | null;
   @ApiProperty({ enum: CONS_SHARES }) share!: ConsShare;
+  @ApiProperty({ description: '공개 범위 이름 — 「수납만 공개」 (D-R18)' }) shareLabel!: string;
+  @ApiPropertyOptional({ ...S, description: '공개 범위의 뜻 한 줄 — 「금액만 보이고 내용은 숨깁니다」(슬라이드 32 · 30-06)' }) shareMeaning?: string | null;
+  @ApiProperty({ type: () => [ConsultingContractStepDto], description: '계약 5단계 — 이름과 한 줄(원본 §30 스테퍼 · 30-07). 낱말은 서버가 쥔다' })
+  contractSteps!: ConsultingContractStepDto[];
   @ApiProperty({ type: [Number] }) pickedStaffIds!: number[];
   @ApiProperty({ type: [String] }) pickedStaffNames!: string[];
   @ApiProperty() createdAt!: string;
@@ -338,13 +370,18 @@ export class ConsStudentCaseDto {
   @ApiProperty({ description: '종류 코드' }) consType!: string;
   @ApiProperty({ type: String, enum: CONSULTING_STAGES }) stage!: ConsultingStage;
   @ApiProperty({ description: '단계 이름 — 낱말은 서버가 만든다 (D-R18)' }) stageLabel!: string;
-  @ApiProperty({ description: '건이 생긴 날 — 계약 시작일이라는 칸은 원문에 없다', example: '2026-07-12' })
+  @ApiProperty({ description: '건이 생긴 날 — 계약 시작일이 아니다(그것은 startOn)', example: '2026-07-12' })
   createdOn!: string;
+  /* 기간 칸은 「시작 ~ 종료」다 — 건이 생긴 날을 시작으로 적으면 §30·§31 머리와 다른 기간을 말한다 (27-05) */
+  @ApiPropertyOptional({ ...S, description: '계약 시작일 — §29 「시작 *」(cons.start_on). 미정이면(옛 건 포함) null', example: '2026-07-12' })
+  startOn?: string | null;
   @ApiPropertyOptional({ ...S, description: '종료 예정일 — 미정이면 null' }) endOn?: string | null;
   @ApiPropertyOptional(S) ownerName?: string | null;
 
   /* 셋 다 **서버가 센다** — 화면이 배열 길이를 세면 잠긴 건에서 분자가 0 이 된다 (D-R37) */
   @ApiProperty({ description: '기록된 회차 수 — 완료 회차가 아니다 (N-18 §4-17)' }) sessionsLogged!: number;
+  @ApiProperty({ description: '오늘까지 한 회차 수 — §26 카드 · §30 머리와 **같은 셈**(날짜가 오늘 이하 또는 미정 · 27-04). 앞으로 잡아 둔 날짜는 세지 않는다' })
+  sessionsDone!: number;
   @ApiPropertyOptional({ ...N, description: '약정 회차 — 미정이면 null' }) sessions?: number | null;
   @ApiProperty() itemsDone!: number;
   @ApiProperty() itemsTotal!: number;
@@ -417,6 +454,10 @@ export class ConsSessionWriteDto {
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) what?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) why?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) how?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 2000, description: '결과 — 원본 §31 인용 상자 (31-08)' })
+  @IsOptional() @IsString() @MaxLength(2000) result?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 120, description: '다음까지 — 바뀌어 적히면 담당의 할 일(TODO) 한 줄과 알림이 같은 트랜잭션에서 선다(슬라이드 31 연동 · 31-08). 한 회차에 할 일은 하나 — 고쳐 적으면 그 할 일의 제목을 바꾼다' })
+  @IsOptional() @IsString() @MaxLength(120) nextUntil?: string | null;
 }
 
 /** 잡힌 회차 한 줄 — 미리보기와 확정이 같은 모양 */

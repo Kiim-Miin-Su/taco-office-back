@@ -125,6 +125,10 @@ export class BookHistoryRowDto {
   @ApiPropertyOptional(N) studentId?: number | null;
   @ApiPropertyOptional(S) byName?: string | null;
   @ApiProperty({ description: 'KST ISO' }) at!: string;
+  @ApiProperty({
+    description: '가리키던 행이 지워졌는가 — hist 는 FK 가 없어 줄이 남는다. 참이면 subject 가 「지워진 배부 #N」꼴',
+  })
+  refMissing!: boolean;
 }
 
 export class BookHistoryQueryDto {
@@ -282,6 +286,10 @@ export class BookPackDto {
   @ApiPropertyOptional(S) createdByName?: string | null;
   @ApiPropertyOptional(S) deliveredAt?: string | null;
   @ApiPropertyOptional(S) receivedAt?: string | null;
+  @ApiPropertyOptional({ ...S, description: '전달한 사람 이름(gpapack.delivered_by) — 옛 건은 null' })
+  deliveredByName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '수령 확인한 사람 이름(gpapack.received_by) — 옛 건은 null' })
+  receivedByName?: string | null;
   @ApiProperty({ type: [BookPackStudentDto] }) students!: BookPackStudentDto[];
   @ApiProperty({ type: [BookPackLibDto] }) books!: BookPackLibDto[];
   @ApiProperty({ description: 'pending 자료를 전달해도 되는가 — 필수 링크 판정은 서버가 한다' }) canDeliver!: boolean;
@@ -289,10 +297,15 @@ export class BookPackDto {
   @ApiProperty({ type: [String], description: '전달 전에 채워야 할 항목' }) deliveryBlockers!: string[];
 }
 
+/** 코디네이터 레일 한 줄 — 「Sophia 2건 · 미확인 1」 (g4 §41-5) */
+export class BookPackCoordinatorDto extends NamedCountDto {
+  @ApiProperty({ description: '전달했는데 아직 수령 확인이 없는 묶음 수' }) unreceived!: number;
+}
+
 export class BookPacksDto {
   @ApiProperty({ type: [BookPackDto] }) items!: BookPackDto[];
   @ApiProperty({ type: [NamedCountDto] }) types!: NamedCountDto[];
-  @ApiProperty({ type: [NamedCountDto] }) coordinators!: NamedCountDto[];
+  @ApiProperty({ type: [BookPackCoordinatorDto] }) coordinators!: BookPackCoordinatorDto[];
 }
 
 export class BooksDto {

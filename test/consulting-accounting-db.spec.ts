@@ -16,7 +16,8 @@
  */
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
-import { Lead } from '../src/entities';
+import { Inv, Lead } from '../src/entities';
+import { AccountingService } from '../src/modules/accounting/accounting.service';
 import { ConsultingService } from '../src/modules/consulting/consulting.service';
 import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
@@ -55,6 +56,8 @@ const EARLY = 93;
 const PICKED = 94;
 /** 학생 둘 — 청구서를 누구 앞으로 낼지 원문에 없다 */
 const TWO_STU = 95;
+/** 계약 5단계인데 아직 **계약** 단계 — 수납이 다 끝나야 진행으로 넘어간다 (PB-03) */
+const SIGNED = 96;
 
 d('§28 컨설팅 회계 (C58)', () => {
   let ds: DataSource;
@@ -92,16 +95,18 @@ d('§28 컨설팅 회계 (C58)', () => {
          (${PAY_ONLY},'admissions', 'running',  5, 800000, 8, ${OWNER}, 'money_only'),
          (${EARLY},   'roadmap',    'contract', 1, 500000, 4, ${OWNER}, 'all'),
          (${PICKED},  'essay',      'running',  5, 300000, 3, ${OWNER}, 'picked'),
-         (${TWO_STU}, 'admissions', 'running',  5, 700000, 5, ${OWNER}, 'all')`,
+         (${TWO_STU}, 'admissions', 'running',  5, 700000, 5, ${OWNER}, 'all'),
+         (${SIGNED},  'essay',      'contract', 5, 600000, 4, ${OWNER}, 'all')`,
     );
     await q.query(
       `INSERT INTO cons_stu (cons_id, student_id) VALUES
          (${OPEN},${STU_A}), (${PAY_ONLY},${STU_B}), (${EARLY},${STU_A}),
-         (${PICKED},${STU_A}), (${TWO_STU},${STU_A}), (${TWO_STU},${STU_B})`,
+         (${PICKED},${STU_A}), (${TWO_STU},${STU_A}), (${TWO_STU},${STU_B}), (${SIGNED},${STU_B})`,
     );
     await q.query(
       `INSERT INTO cons_pay (cons_id, amount, paid_on, memo, by_id) VALUES
-         (${PAY_ONLY}, 400000, $1::date, '계약금', ${OWNER})`,
+         (${PAY_ONLY}, 400000, $1::date, '계약금', ${OWNER}),
+         (${SIGNED},   200000, $1::date, '계약금', ${OWNER})`,
       [day(-3)],
     );
   });
@@ -272,5 +277,67 @@ d('§28 컨설팅 회계 (C58)', () => {
     expect((await row(PAY_ONLY)).canInvoice).toBe(true);
     const again = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
     expect(again.invId).not.toBe(first.invId);
+  });
+  /* ── PB-03 전환 뒤에는 두 원장이 서로를 안다 ─────────────────────── */
+
+  const acct = () => new AccountingService(q.manager.getRepository(Inv));
+  /** 전환 청구서를 학부모께 보냈다 — 초안에는 입금을 붙이지 못한다(§53 단계) */
+  const convertAndSend = async (consId: number): Promise<number> => {
+    const { invId } = await svc().toInvoice(OWNER, true, true, consId);
+    await acct().deliverInvoice(OWNER, invId!, true);
+    return invId!;
+  };
+  const stageOf = async (consId: number): Promise<string> => {
+    const [c] = (await q.query(`SELECT stage FROM cons WHERE id = $1`, [consId])) as Array<{ stage: string }>;
+    return c.stage;
+  };
+
+  it('전환한 건에는 「납부 넣기」가 서지 않고 이유를 말한다 — 입금은 청구서에서 받는다 (PB-03)', async () => {
+    expect((await row(PAY_ONLY)).canAddPayment).toBe(true);
+    await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    const after = await row(PAY_ONLY);
+    expect(after.canAddPayment).toBe(false);
+    expect(after.payBlockedReason).toContain('청구서');
+    // 상세도 같은 판정이다
+    const detail = await svc().detail(OWNER, true, true, PAY_ONLY);
+    expect(detail.capabilities.canAddPayment).toBe(false);
+    expect(detail.capabilities.payBlockedReason).toBe(after.payBlockedReason);
+  });
+
+  it('전환한 건에 납부를 넣으면 409 — 같은 돈이 두 원장에 적히지 않는다 (PB-03)', async () => {
+    await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    const reason = (await row(PAY_ONLY)).payBlockedReason;
+    await expect(svc().addPayment(OWNER, true, true, PAY_ONLY, { amount: 100000, paidOn: day(0) }))
+      .rejects.toMatchObject({ status: 409, response: { code: 'CONS_PAY_INVOICED', message: reason } });
+    const [{ n }] = (await q.query(
+      `SELECT count(*)::int AS n FROM cons_pay WHERE cons_id = ${PAY_ONLY}`,
+    )) as Array<{ n: number }>;
+    expect(n).toBe(1);
+  });
+
+  it('전환 청구서를 취소하면 다시 납부를 넣을 수 있다 — void 는 살아 있는 청구서가 아니다', async () => {
+    const { invId } = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [invId]);
+    expect((await row(PAY_ONLY)).canAddPayment).toBe(true);
+    const after = await svc().addPayment(OWNER, true, true, PAY_ONLY, { amount: 100000, paidOn: day(0) });
+    expect(after.paid).toBe(500000);
+  });
+
+  it('전환 청구서로 **다 받으면** 진행으로 넘어간다 — 회차 잡기가 막힌 채 남지 않는다 (PB-03)', async () => {
+    expect(await stageOf(SIGNED)).toBe('contract');
+    const invId = await convertAndSend(SIGNED);          // 남은 돈 400,000
+    await acct().addPayment(OWNER, { invId, amount: 150000, paidOn: day(0) }, true);
+    expect(await stageOf(SIGNED)).toBe('contract');      // 아직 250,000 남았다
+    await acct().addPayment(OWNER, { invId, amount: 250000, paidOn: day(0) }, true);
+    expect(await stageOf(SIGNED)).toBe('running');
+  });
+  /* ── 30-02 상세가 사실을 말한다 ──────────────────────────────────── */
+
+  it('상세는 「회차 기록이 시간표 회차를 만든다」고 말한다 — C95 이후 「약정 회차만 저장」은 사실이 아니다 (30-02)', async () => {
+    for (const id of [OPEN, PAY_ONLY]) {   // essay · admissions — 유형과 무관하다
+      const { typeCapability } = await svc().detail(OWNER, true, true, id);
+      expect(typeCapability.scheduleCreationSupported).toBe(true);
+      expect(typeCapability.scheduleCreationReason).toBeNull();
+    }
   });
 });

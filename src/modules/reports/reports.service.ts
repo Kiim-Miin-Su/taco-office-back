@@ -19,10 +19,12 @@ import {
   type ReportReminderIssue, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
 import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
+import { roleLabel } from '../../lib/role-words';
+import { NOTI_TITLE } from '../../lib/noti';
 import type {
   ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportQueryDto,
   ReportReminderCreateDto, ReportReminderResultDto, ReportReviewDto, ReportRowDto,
-  ReportSendHistoryDto, ReportUpsertDto, UnwrittenDto,
+  ReportSendGroupDto, ReportSendHistoryDto, ReportSendHistoryListDto, ReportSendSpan, ReportUpsertDto, UnwrittenDto,
 } from './reports.dto';
 import { REPORT_FILE_STORE, type ReportFileStore } from './report-file.store';
 import { lockScheduleSeries } from '../schedule/schedule.state.repo';
@@ -69,7 +71,31 @@ interface SendHistoryRow {
   sent_by_name: string;
   file_count: string;
   total_count: string;
+  subject_names: string[] | null;
+  teacher_names: string[] | null;
 }
+
+/**
+ * 보낸 한 건의 **과목 · 강사** — `rs.rep_ids` 가 가리키는 리포트들에서 읽는다 (g5 48-03).
+ * 원문 줄 「기록지 · 학생 · 과목 · 강사 · 08-19 수업」. 과목이 없는 종류(회의 등)는 종류 이름.
+ * 강사는 그 회차의 강사, 없으면 리포트 작성 강사 — 목록(list)과 같은 COALESCE 순서.
+ */
+const SEND_LESSON_COLUMNS = `(SELECT COALESCE(array_agg(DISTINCT COALESCE(sb.name, k.name))
+                    FILTER (WHERE COALESCE(sb.name, k.name) IS NOT NULL), '{}')
+           FROM rep r JOIN ser s2 ON s2.id = r.ser_id
+           LEFT JOIN sub sb ON sb.key = s2.sub_key LEFT JOIN kind k ON k.key = s2.kind_key
+          WHERE r.id IN (SELECT (jsonb_array_elements_text(rs.rep_ids))::bigint)) AS subject_names,
+        (SELECT COALESCE(array_agg(DISTINCT t.name) FILTER (WHERE t.name IS NOT NULL), '{}')
+           FROM rep r LEFT JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
+           LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
+          WHERE r.id IN (SELECT (jsonb_array_elements_text(rs.rep_ids))::bigint)) AS teacher_names`;
+
+/** 보낸 내역 묶음의 첫날(KST) — 주는 월요일(date_trunc week) · 달은 1일 (g5 48-02) */
+const SEND_SPAN_START: Record<ReportSendSpan, string> = {
+  day: kstDateOf('rs.sent_at'),
+  week: `date_trunc('week', ${kstDateOf('rs.sent_at')})::date`,
+  month: `date_trunc('month', ${kstDateOf('rs.sent_at')})::date`,
+};
 
 interface ReminderRow {
   id: string;
@@ -371,7 +397,15 @@ export class ReportsService {
       canResend: fileCount > 0,
       resendBlockedReason: fileCount > 0 ? null : '재발송할 보존 파일이 없습니다',
       sentAt: row.sent_at, sentBy: Number(row.sent_by), sentByName: row.sent_by_name,
+      subjectNames: row.subject_names ?? [], teacherNames: row.teacher_names ?? [],
     };
+  }
+
+  /** 묶음 이름 — 일 「MM-DD」 · 주 「MM-DD ~ MM-DD」(원문 §48) · 달 「YYYY년 M월」. 낱말은 여기 한 곳 */
+  private static sendGroupLabel(span: ReportSendSpan, from: string, to: string): string {
+    if (span === 'month') return `${from.slice(0, 4)}년 ${Number(from.slice(5, 7))}월`;
+    if (span === 'week') return `${from.slice(5)} ~ ${to.slice(5)}`;
+    return from.slice(5);
   }
 
   private async historyItem(q: Queryer, sendId: number): Promise<ReportSendHistoryDto | null> {
@@ -381,7 +415,8 @@ export class ReportsService {
               rs.rep_ids, rs.channel,
               to_char(rs.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
               rs.sent_by, sf.name AS sent_by_name,
-              (SELECT count(*) FROM pdflog p WHERE p.kind='report_png' AND p.ref_id=rs.id AND p.file_url IS NOT NULL)::text AS file_count
+              (SELECT count(*) FROM pdflog p WHERE p.kind='report_png' AND p.ref_id=rs.id AND p.file_url IS NOT NULL)::text AS file_count,
+              ${SEND_LESSON_COLUMNS}
          FROM rsend rs JOIN stu st ON st.id=rs.student_id JOIN staff sf ON sf.id=rs.sent_by
         WHERE rs.id=$1`,
       [sendId],
@@ -492,10 +527,17 @@ export class ReportsService {
       g.set(it.teacherId, cur);
     }
     const [t1, t4] = [LATE_REPORT_TIERS[1].fromMinutes, LATE_REPORT_TIERS[0].fromMinutes];
+    // 오른쪽 머리 「이름 · 역할 · 직함」 — 역할 낱말은 서버 한 벌(lib/role-words) (g5 47-07)
+    const staffRows = g.size === 0 ? [] : await this.ds.query<Array<{ id: string; role: string; title: string | null }>>(
+      `SELECT id, role, title FROM staff WHERE id = ANY($1::bigint[])`, [[...g.keys()]],
+    );
+    const staffOf = new Map(staffRows.map((row) => [Number(row.id), row]));
     const byTeacher = [...g.entries()]
       .map(([teacherId2, v]) => ({
         teacherId: teacherId2,
         teacherName: v.name,
+        roleLabel: roleLabel(staffOf.get(teacherId2)?.role ?? 'teacher'),
+        title: staffOf.get(teacherId2)?.title ?? null,
         count: v.items.length,
         oldestDate: v.items.map((x) => x.date).sort()[0] ?? null,
         over1h: v.items.filter((x) => x.minutesSinceEnd >= t1).length,
@@ -589,13 +631,13 @@ export class ReportsService {
       for (const [teacherId, summary] of [...grouped.entries()].sort(([a], [b]) => a - b)) {
         const inserted = await q.query(
           `INSERT INTO noti (
-             to_id, from_id, body, link, category, request_key, request_teacher_id
-           ) VALUES ($1, $2, $3, '/reports?section=unwritten', 'report_due', $4, $5)
+             to_id, from_id, body, link, category, request_key, request_teacher_id, title
+           ) VALUES ($1, $2, $3, '/reports?section=unwritten', 'report_due', $4, $5, $6)
            ON CONFLICT (request_key, to_id) WHERE request_key IS NOT NULL DO NOTHING
            RETURNING id`,
           [
             teacherId, actorId, `안 쓴 리포트 ${summary.count}건을 확인해 주세요.`,
-            dto.requestKey, dto.teacherId ?? null,
+            dto.requestKey, dto.teacherId ?? null, NOTI_TITLE.reportDue,
           ],
         ) as Array<{ id: string }>;
         if (!inserted[0]) continue;
@@ -682,8 +724,8 @@ export class ReportsService {
   }
 
   async deliveryHistory(
-    opts: { onDate?: string; repId?: number }, canCrudAll: boolean,
-  ): Promise<{ total: number; items: ReportSendHistoryDto[] }> {
+    opts: { onDate?: string; repId?: number; span?: ReportSendSpan }, canCrudAll: boolean,
+  ): Promise<ReportSendHistoryListDto> {
     this.requireDeliveryPermission(canCrudAll);
     const p: unknown[] = [];
     const where: string[] = ['1=1'];
@@ -696,15 +738,50 @@ export class ReportsService {
               count(*) OVER()::text AS total_count,
               to_char(rs.sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS sent_at,
               rs.sent_by, sf.name AS sent_by_name,
-              (SELECT count(*) FROM pdflog x WHERE x.kind='report_png' AND x.ref_id=rs.id AND x.file_url IS NOT NULL)::text AS file_count
+              (SELECT count(*) FROM pdflog x WHERE x.kind='report_png' AND x.ref_id=rs.id AND x.file_url IS NOT NULL)::text AS file_count,
+              ${SEND_LESSON_COLUMNS}
          FROM rsend rs JOIN stu st ON st.id=rs.student_id JOIN staff sf ON sf.id=rs.sent_by
         WHERE ${where.join(' AND ')}
         ORDER BY rs.sent_at DESC, rs.id DESC LIMIT 100`,
       p,
     );
+    /*
+     * §48 묶음 — 건수 · 기록지 · 인원을 **100건 상한 밖까지** 센다. 화면이 items 로 다시 세면
+     * 잘린 묶음의 수가 틀린다 (D-R37). 눈금이 없으면 묶음은 비우고 머리 「기록지 N장」만 센다.
+     */
+    const span = opts.span ?? null;
+    const groupRows = await this.ds.query<Array<{
+      from: string; to: string; count: string; sheets: string; students: string; send_ids: string[];
+    }>>(
+      `WITH base AS (
+         SELECT rs.id, rs.student_id, rs.sent_at,
+                ${SEND_SPAN_START[span ?? 'day']} AS start,
+                (SELECT count(*) FROM pdflog x WHERE x.kind='report_png' AND x.ref_id=rs.id AND x.file_url IS NOT NULL) AS files
+           FROM rsend rs
+          WHERE ${where.join(' AND ')}
+       )
+       SELECT to_char(start,'YYYY-MM-DD') AS "from",
+              to_char(CASE $${p.length + 1}::text
+                        WHEN 'week' THEN start + 6
+                        WHEN 'month' THEN (start + interval '1 month' - interval '1 day')::date
+                        ELSE start END,'YYYY-MM-DD') AS "to",
+              count(*)::text AS count, COALESCE(sum(files),0)::text AS sheets,
+              count(DISTINCT student_id)::text AS students,
+              array_agg(id::text ORDER BY sent_at DESC, id DESC) AS send_ids
+         FROM base GROUP BY start ORDER BY start DESC`,
+      [...p, span ?? 'day'],
+    );
+    const groups: ReportSendGroupDto[] = span === null ? [] : groupRows.map((row) => ({
+      from: row.from, to: row.to, label: ReportsService.sendGroupLabel(span, row.from, row.to),
+      count: Number(row.count), sheets: Number(row.sheets), students: Number(row.students),
+      sendIds: row.send_ids.map(Number),
+    }));
     return {
       total: rows[0] ? Number(rows[0].total_count) : 0,
       items: rows.map(ReportsService.historyRow),
+      span,
+      groups,
+      sheets: groupRows.reduce((sum, row) => sum + Number(row.sheets), 0),
     };
   }
 
@@ -992,13 +1069,14 @@ export class ReportsService {
       );
       if (row.teacher_id) {
         await q.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category)
-           VALUES ($1, $2, $3, '/reports', 'report')`,
+          `INSERT INTO noti (to_id, from_id, body, link, category, title)
+           VALUES ($1, $2, $3, '/reports', 'report', $4)`,
           [
             Number(row.teacher_id), actorId,
             dto.decision === 'approve'
               ? `${row.on_date} 리포트가 승인되었습니다.`
               : `${row.on_date} 리포트가 반려되었습니다: ${rejectReason}`,
+            dto.decision === 'approve' ? NOTI_TITLE.reportApproved : NOTI_TITLE.reportRejected,
           ],
         );
       }

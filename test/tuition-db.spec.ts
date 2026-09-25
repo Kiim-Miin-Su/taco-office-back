@@ -304,12 +304,22 @@ d('§54 수업료 계산 (C65)', () => {
     expect(await q.query(`SELECT id FROM inv WHERE student_id = $1 AND year_month = $2`, [stuId, MONTH])).toEqual([]);
   });
 
-  it('이월은 수업료 청구서에만 붙는다 — 다른 종류는 넘어온 돈을 빼지 않는다', async () => {
+  /*
+   * PB-01 — 청구 종류(invType)를 받고도 줄 계산은 **그 달 수업 전부**였다. 응시료·진단고사·컨설팅비로 내면
+   * 수업료와 똑같은 줄·금액의 청구서가 또 생기고(종류가 달라 중복 검사도 통과) 같은 수업이 두 번 청구됐다.
+   * 수업료 외 종류의 금액 규칙이 정해질 때까지(결정 대기) 서버가 409 로 막는다.
+   */
+  it('수업료 외 종류는 **금액 규칙이 정해질 때까지 내지 않는다** — 같은 수업이 두 번 청구되던 자리 (PB-01)', async () => {
     await occ(PAST[0]);
     await carryIn('2026-04', 20_000, 1);
-    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'exam_fee', dueOn: DUE }, true);
-    expect(inv.amount).toBe(50_000);
-    expect(inv.lines.every((l) => l.count > 0)).toBe(true);
+    for (const invType of ['exam_fee', 'diag_intake', 'consulting']) {
+      await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType, dueOn: DUE }, true))
+        .rejects.toMatchObject({ status: 409, response: { code: 'INV_TYPE_NOT_SUPPORTED' } });
+    }
+    expect(await q.query(`SELECT id FROM inv WHERE student_id = $1`, [stuId])).toEqual([]);
+    // 수업료는 그대로다 — 이월도 그대로 빠진다
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
+    expect(inv.amount).toBe(30_000);
   });
 
   /* ── 휴원 기간의 회차는 청구되지 않는다 (C92-c · C-36 · C-37) ─────────── */
@@ -578,6 +588,38 @@ d('§54 수업료 계산 (C65)', () => {
     expect((await row()).me.carriedIn).toBe(0);
   });
 
+  /*
+   * PB-04 — 이월 차감은 **청구서를 낼 때만** 음수 줄로 들어간다. 다음 달 청구서를 먼저 낸 뒤(월말 일괄 발행)
+   * 이월하면 차감이 어느 청구서에도 안 들어가는데 화면은 「N월 청구에서 빠집니다」라고 말했다.
+   */
+  it('**받는 달 수업료 청구서가 이미 나갔으면** 이월을 막는다 — 단추와 쓰기가 같은 이유를 말한다 (PB-04)', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1], true);            // 휴강 1회 · 5만
+    await payInvoice('paid');
+    await occ('2026-06-01');
+    const june = await svc().issueInvoice(91, { studentId: stuId, yearMonth: '2026-06', invType: 'tuition', dueOn: DUE }, true);
+
+    const { me } = await row();
+    expect(me.carryable).toBe(false);
+    expect(me.carryBlockedReason).toContain('2026년 6월');
+    await expect(svc().carryTuition(91, { studentId: stuId, month: MONTH }))
+      .rejects.toMatchObject({ status: 409, response: { code: 'CARRY_NEXT_ISSUED', message: me.carryBlockedReason } });
+    expect(await q.query(`SELECT id FROM carry WHERE student_id = $1`, [stuId])).toEqual([]);
+
+    // 그 청구서를 취소하면 다시 넘길 수 있다 — 취소된 청구서는 살아 있는 청구서가 아니다
+    await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [june.id]);
+    const again = await row();
+    expect(again.me.carryable).toBe(true);
+    expect(again.me.carryBlockedReason).toBeNull();
+    await svc().carryTuition(91, { studentId: stuId, month: MONTH });
+  });
+
+  it('넘길 것이 없는 줄은 막힌 이유도 없다 — 이유는 단추가 설 자리에서만 말한다 (PB-04)', async () => {
+    await occ(PAST[0]);
+    await payInvoice('paid');
+    expect((await row()).me.carryBlockedReason).toBeNull();
+  });
+
   it('금액을 못 보면 넘어온 돈도 안 준다 — 단추 여부는 금액이 아니라 판정이다', async () => {
     await occ(PAST[0]);
     await occ(PAST[1], true);
@@ -585,6 +627,66 @@ d('§54 수업료 계산 (C65)', () => {
     const { me } = await row(false);
     expect(me.carriedIn).toBeNull();
     expect(me.carryable).toBe(true);
+  });
+
+  /* ── PB-05 컨설팅 회차는 수업료가 아니다 ─────────────────────────────── */
+
+  /*
+   * §31 「회차 기록」은 C95 부터 시간표 회차(SER)를 만들고 학생을 명단에 넣는다. 청구 줄 계산이 종류를 안 봐서
+   * 그 회차가 **수업료 청구서에 회당 단가로** 들어갔다 — 컨설팅은 계약 금액(cons.amount)이 이미 받는 돈이다.
+   * 단가가 없는 유형이면 그 학생의 수업료 발행 전체가 INV_NO_RATE 로 막히기도 했다.
+   */
+  const consultingSession = async (onDate: string, withRate: boolean): Promise<number> => {
+    await q.query(
+      `INSERT INTO kind (key,name,color,cap,grp) VALUES ('tu_cons','컨설팅 시험','#777777',4,'lesson') ON CONFLICT (key) DO NOTHING`,
+    );
+    await q.query(`DELETE FROM rate WHERE kind_key = 'tu_cons'`);
+    if (withRate) {
+      await q.query(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ('tu_cons', NULL, 180000, '2026-01-01', 1)`);
+    }
+    const [se] = (await q.query(
+      `INSERT INTO ser (kind_key, title, mode, start_min, end_min, rrule, from_date, to_date)
+       VALUES ('tu_cons','컨설팅 1회차','offline',900,960,'ONCE',$1::date,$1::date) RETURNING id`, [onDate],
+    )) as Array<{ id: string }>;
+    const consSer = Number(se.id);
+    await q.query(`INSERT INTO ser_stu (ser_id, student_id) VALUES ($1,$2)`, [consSer, stuId]);
+    await occOn(consSer, onDate);
+    const [c] = (await q.query(
+      `INSERT INTO cons (cons_type, stage, contract_step, amount, sessions, owner_id, share)
+       VALUES ('admissions','running',5,900000,4,91,'all') RETURNING id`,
+    )) as Array<{ id: string }>;
+    await q.query(`INSERT INTO cons_stu (cons_id, student_id) VALUES ($1,$2)`, [Number(c.id), stuId]);
+    await q.query(
+      `INSERT INTO cons_sess (cons_id, seq, on_date, who, ser_id) VALUES ($1, 1, $2::date, '담당 · 학생', $3)`,
+      [Number(c.id), onDate, consSer],
+    );
+    return consSer;
+  };
+
+  it('컨설팅 회차는 **수업료 청구서에 들지 않는다** — 계약 금액이 이미 그 값이다 (PB-05)', async () => {
+    await occ(PAST[0]);
+    await occ(PAST[1]);
+    await consultingSession('2026-05-20', true);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
+    expect(inv.amount).toBe(100_000);
+    expect(inv.lines.map((l) => l.label)).toEqual(['수업료 과목']);
+    // §54 도 같은 집합을 센다 — 미리 본 회차와 청구한 회차가 갈리지 않는다 (D-R22)
+    const { me } = await row();
+    expect(me.total).toBe(2);
+    expect(me.doneAmount).toBe(100_000);
+  });
+
+  it('단가가 없는 컨설팅 유형이어도 수업료 발행이 막히지 않는다 — INV_NO_RATE 가 나던 자리 (PB-05)', async () => {
+    await occ(PAST[0]);
+    await consultingSession('2026-05-21', false);
+    const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);
+    expect(inv.amount).toBe(50_000);
+  });
+
+  it('컨설팅 회차만 있는 학생은 §54 줄이 서지 않는다 — 수업료가 없다 (PB-05)', async () => {
+    await consultingSession('2026-05-22', true);
+    const { all } = await row();
+    expect(all.items.some((x) => x.studentId === stuId)).toBe(false);
   });
 
   /* ── ④ 금액 권한 ─────────────────────────────────────────────────── */

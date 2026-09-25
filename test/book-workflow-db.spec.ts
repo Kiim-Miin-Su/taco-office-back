@@ -309,4 +309,55 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     expect(tracking.students.find((student) => student.id === studentB)?.todos)
       .not.toContainEqual(expect.objectContaining({ key: 'teacher_request' }));
   });
+
+  /* ── wave-3 · g4 §38-1 · §40-2 · §41-2 · §41-5 ─────────────────────────────── */
+
+  it('§38-1 배부 auto 는 할 일 칩도 머리 칸과 같은 「전달 대기」다 — 「안내 발송 대기」는 안내 초안 하나의 뜻', async () => {
+    const issue = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'wait' });
+    await svc().transitionIssue(owner, issue.id, 'auto');
+    const tracking = await svc().tracking();
+    const todos = tracking.students.find((student) => student.id === studentA)?.todos ?? [];
+    expect(todos).toContainEqual(expect.objectContaining({ key: 'auto', label: '전달 대기', count: 1 }));
+    // 한 화면 두 곳(할 일 칩 · 머리 칸)이 같은 상태를 같은 낱말로 부른다
+    const head = tracking.states.find((state) => state.key === 'auto');
+    expect(head?.label).toBe('전달 대기');
+  });
+
+  it('§40-2 가리키던 행이 지워진 이력 줄은 「지워진 배부 #N」으로 무엇이었는지 말한다 — 빈칸(—)으로 두지 않는다', async () => {
+    const [gone] = await q.query(`SELECT COALESCE(max(id),0)+1000 AS id FROM issue`);
+    const missingId = Number(gone.id);
+    await q.query(`INSERT INTO hist (entity,ref_id,action,by_id) VALUES ('issue',$1,'book_issue',$2)`, [missingId, owner]);
+    const live = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'ok' });
+    const board = await svc().historyBoard({ span: 'all' });
+    const orphan = board.items.find((item) => item.entity === 'issue' && item.refId === missingId);
+    expect(orphan).toMatchObject({ subject: `지워진 배부 #${missingId}`, refMissing: true });
+    const alive = board.items.find((item) => item.entity === 'issue' && item.refId === live.id);
+    expect(alive).toMatchObject({ subject: '교재 학생 A · 교재 A', refMissing: false });
+  });
+
+  it('§41-2 · §41-5 자료 전달은 전달한 사람·수령한 사람 이름과 코디네이터별 미확인 수를 준다', async () => {
+    for (const lib of [libA, libB]) {
+      await svc().addVersion(owner, lib, {
+        edition: 'v1',
+        seFile: { kind: 'lib-se', name: `${lib}.pdf`, base64: Buffer.from('s').toString('base64') },
+        teFile: { kind: 'lib-te', name: `${lib}-te.pdf`, base64: Buffer.from('t').toString('base64') },
+      });
+    }
+    const make = (title: string) => svc().createPack(owner, {
+      packType: 'exam', title, coordinatorId: coordinator, studentIds: [studentA], libIds: [libA, libB], effectiveOn: EFFECTIVE_ON,
+    });
+    const first = await make('첫 묶음');
+    const second = await make('둘째 묶음');
+    await make('셋째 묶음');
+    await svc().transitionPack(owner, first.id, 'delivered');
+    await svc().transitionPack(coordinator, first.id, 'received');
+    const delivered = await svc().transitionPack(owner, second.id, 'delivered');
+    expect(delivered).toMatchObject({ deliveredByName: '교재 담당', receivedByName: null });
+    const packs = await svc().packs(owner);
+    expect(packs.items.find((pack) => pack.id === first.id))
+      .toMatchObject({ deliveredByName: '교재 담당', receivedByName: '수령 코디' });
+    // 「수령 코디 3건 · 미확인 1」 — 미확인은 전달됐는데 아직 수령하지 않은 묶음
+    expect(packs.coordinators.find((row) => row.key === String(coordinator)))
+      .toMatchObject({ label: '수령 코디', count: 3, unreceived: 1 });
+  });
 });

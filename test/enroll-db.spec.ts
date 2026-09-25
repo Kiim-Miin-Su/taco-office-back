@@ -23,6 +23,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
+import { NOTI_TITLE } from '../src/lib/noti';
 import { DEV_URL } from './db';
 
 /** 함께 내는 첫 달 청구서의 기한 — 기한 자체를 보지 않는 시험들이 쓰는 값 (S3) */
@@ -108,7 +109,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
   });
 
   async function cleanup() {
-    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록E','등록F')`, [STU_EXISTING]);
+    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록D','등록E','등록F')`, [STU_EXISTING]);
     const ids = stus.map((s) => Number(s.id));
     const sers = await q<{ id: string }>(`SELECT DISTINCT ser_id AS id FROM ser_stu WHERE student_id = ANY($1) UNION SELECT id FROM ser WHERE kind_key = ANY($2)`, [ids, [KIND, KIND_NORATE]]);
     const serIds = sers.map((s) => Number(s.id));
@@ -213,10 +214,30 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(occ).toHaveLength(1);
     expect(occ[0]).toMatchObject({ serId: r.series[0].serId, startMin: 600 });
 
-    // 두 번은 409 · 실패 건은 409 · 강사는 403
+    // 두 번은 409 · 강사는 403 (실패 건은 이제 막지 않는다 — 아래 「바로 수업 등록」 24-07)
     expect((await api('post', `/ops/leads/${LEADS.hold}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(409)).body.code).toBe('ALREADY_ENROLLED');
-    expect((await api('post', `/ops/leads/${LEADS.failed}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(409)).body.code).toBe('LEAD_FAILED');
     await api('post', `/ops/leads/${LEADS.first}/enroll`, teacherToken).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(403);
+  });
+
+  /* ── 24-07 원본 §24 「바로 수업 등록」 — 되살리기 없이 등록 확정 · 실패 이력은 남는다 ─────────── */
+  it('등록 실패 건도 되살리기 없이 바로 등록한다 — 중단 지점·실패 전 단계는 비우되 도달 기록(failed → enrolled)과 LOG before 에 이력이 남는다 (24-07)', async () => {
+    await q(`UPDATE lead SET stop_at = 'after_second', fail_from = 'second', reason = '시간대 불일치' WHERE id = $1`, [LEADS.failed]);
+    await q(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'failed', $2)`, [LEADS.failed, ADMIN]);
+    const body = { startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:SA', startMin: 1080, endMin: 1140 })] };
+    // 미리보기 — 같은 값을 주고 아무것도 남기지 않는다
+    const pre = await api('post', `/ops/leads/${LEADS.failed}/enroll/preview`).send(body).expect(201);
+    expect(pre.body).toMatchObject({ preview: true, studentName: '등록D', stage: 'enrolled' });
+    expect(await q(`SELECT stage, stop_at FROM lead WHERE id = $1`, [LEADS.failed])).toEqual([{ stage: 'failed', stop_at: 'after_second' }]);
+    // 확정
+    const r = (await api('post', `/ops/leads/${LEADS.failed}/enroll`).send(body).expect(201)).body;
+    expect(r).toMatchObject({ preview: false, studentName: '등록D', studentCreated: true, stage: 'enrolled' });
+    const [lead] = await q<{ stage: string; stop_at: string | null; fail_from: string | null; reason: string | null }>(
+      `SELECT stage, stop_at, fail_from, reason FROM lead WHERE id = $1`, [LEADS.failed]);
+    expect(lead).toEqual({ stage: 'enrolled', stop_at: null, fail_from: null, reason: '시간대 불일치' });
+    const logs = await q<{ stage: string }>(`SELECT stage FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [LEADS.failed]);
+    expect(logs.map((x) => x.stage)).toEqual(['failed', 'enrolled']);
+    const [audit] = await q<{ before: Record<string, unknown> }>(`SELECT before FROM log WHERE entity = 'LEAD' AND entity_id = $1 AND action = 'enroll'`, [LEADS.failed]);
+    expect(audit.before).toEqual({ stage: 'failed', stopAt: 'after_second', failFrom: 'second' });
   });
 
   /* ── ② A-06 · A-07 · 미리보기 ───────────────────────────────────────── */
@@ -274,8 +295,10 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(norate.body.studentCreated).toBe(true);
     expect(await q(`SELECT 1 FROM inv WHERE student_id = $1`, [norate.body.studentId])).toEqual([]);
     expect(await q(`SELECT 1 FROM ser_stu WHERE student_id = $1`, [norate.body.studentId])).toHaveLength(1);
-    // 대표 알림에 「청구서 없음(INV_NO_RATE)」
-    const [n] = await q<{ body: string }>(`SELECT body FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '등록 확정 — 등록E%'`, [CEO, ADMIN]);
-    expect(n.body).toContain('청구서 없음(INV_NO_RATE)');
+    // 대표 알림에 「청구서 없음」과 **사람이 읽는 이유** — 코드값(INV_NO_RATE)은 알림 글에 싣지 않는다 (impl3-w8)
+    const [n] = await q<{ title: string | null; body: string }>(`SELECT title, body FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '등록 확정 — 등록E%'`, [CEO, ADMIN]);
+    expect(n.body).toContain('청구서 없음: 단가표에 없는 과목이 있습니다');
+    expect(n.body).not.toContain('INV_NO_RATE');
+    expect(n.title).toBe(NOTI_TITLE.enrollConfirmed);
   });
 });

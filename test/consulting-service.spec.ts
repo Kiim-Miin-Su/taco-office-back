@@ -41,7 +41,8 @@ describe('§26 조회 계약과 공개 범위', () => {
       { id: 1, canOpen: true, amount: 100000 }, { id: 2, canOpen: false, amount: 100000 },
     ]);
     expect(result.items[1].sessionsLog).toEqual([]);
-    expect(query.mock.calls[1][0]).toContain('WHERE cons_id = ANY($1::bigint[])');
+    // 회차 한 줄의 SELECT 는 공용 조각(CONS_SESS_SELECT · 별칭 x)이다 — 보이는 건만 넘긴다
+    expect(query.mock.calls[1][0]).toContain('WHERE x.cons_id = ANY($1::bigint[])');
     expect(query.mock.calls[1][1]).toEqual([[1]]);
   });
 

@@ -9,6 +9,7 @@ import { BadRequestException } from '@nestjs/common';
 import { IsIn, IsInt, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { GUIDE_FACT_KEYS, type GuideFactKey } from '../../lib/guide-body';
+import { LeadDiagDto } from '../ops/lead-diag.dto';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -54,7 +55,19 @@ export class GuideDto {
   @ApiPropertyOptional(S) studentName?: string | null;
   @ApiPropertyOptional(S) teacherName?: string | null;
   @ApiPropertyOptional(S) serTitle?: string | null;
+  /* 수업 이름표 — 정규 수업은 serTitle 이 비어 있다. 화면은 이 넷으로 「과목 · 시각 · 강의실」을 적는다 (g4 「수업명 미정」) */
+  @ApiPropertyOptional({ ...S, description: '과목 이름(sub.name) — 과목 없는 회차는 null' }) subName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '수업 종류 이름(kind.name) — 과목이 없을 때 부를 이름' }) kindName?: string | null;
+  @ApiPropertyOptional({ type: 'integer', nullable: true, minimum: 0, maximum: 1439, description: '그 회차의 시작 분(KST 자정 기준). 회차가 없으면 규칙의 시작 분' })
+  startMin?: number | null;
+  @ApiPropertyOptional({ ...S, description: '강의실 이름 — 그 회차의 강의실, 없으면 규칙의 강의실. 온라인·미정이면 null' }) roomName?: string | null;
   @ApiPropertyOptional(S) body?: string | null;
+  @ApiPropertyOptional({ ...S, description: '§44 「지도 방향」 — 옛 안내 null (g4 §44-3)' }) direction?: string | null;
+  @ApiPropertyOptional({
+    ...S,
+    description: '§44 「관리자 코멘트 · 강사만」 — 관리자와 받는 강사에게만 싣는다. 학부모 발송 본문·안내문 PNG 에는 쓰지 않는다 (g4 §44-3)',
+  })
+  adminNote?: string | null;
   @ApiPropertyOptional(S) dueOn?: string | null;
   @ApiPropertyOptional({ ...S, format: 'date', description: '첫 수업·강사 교체가 실제로 일어난 KST 회차일. 레거시 행은 null' })
   eventOn?: string | null;
@@ -122,6 +135,8 @@ export class PerLessonNoticeDto {
   @ApiPropertyOptional(N) teacherId?: number | null;
   @ApiPropertyOptional(S) teacherName?: string | null;
   @ApiPropertyOptional(S) kindName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '과목 이름(sub.name) — 과목 없는 회차는 null (g4 「수업명 미정」)' }) subName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '강의실 이름 — 그 회차의 강의실, 없으면 규칙의 강의실. 없으면 null' }) roomName?: string | null;
   @ApiPropertyOptional(N) zaccId?: number | null;
   @ApiPropertyOptional(S) zaccLabel?: string | null;
   @ApiProperty() zoomAssigned!: boolean;
@@ -159,7 +174,13 @@ export class GuideDeliveryCapabilitiesDto {
 export class GuidesDto {
   @ApiProperty({ type: [GuideDto], description: '한 번만 나가는 안내' }) guides!: GuideDto[];
   @ApiProperty({ type: [PerLessonNoticeDto], description: '회차마다 나가는 안내' }) perLesson!: PerLessonNoticeDto[];
-  @ApiProperty({ description: '아직 안 보낸 안내 수' }) todoCount!: number;
+  @ApiProperty({
+    type: () => [GuideMissingDto],
+    description: '안내가 필요한데(첫 수업·강사 교체) 아직 GUIDE 가 없는 학생 — §43 「안내 없음」 줄. '
+      + '판정은 §45 누락 카드와 같은 함수이고, 할 일 창은 수업 날 기준 최근 30일 ~ 앞으로 7일이다',
+  })
+  missing!: GuideMissingDto[];
+  @ApiProperty({ description: '할 일 수 = 안 보낸 안내 + 안내 없음 + 회차 안내 미기록 — 탭 배지와 목록이 같은 수' }) todoCount!: number;
   @ApiPropertyOptional({ ...N, description: '강사 전용 service 재사용 시 자기 것만 본 그 강사 id. 관리자 API는 null' })
   scopedTeacherId?: number | null;
   @ApiProperty({ type: GuideStatsDto, description: '§43 머리 6칸. 화면이 배열을 다시 세지 않는다' })
@@ -198,6 +219,12 @@ export class GuideStudentDto {
   @ApiProperty({ type: GuideDto }) latestGuide!: GuideDto;
   @ApiProperty({ type: [GuideBookDto] }) books!: GuideBookDto[];
   @ApiPropertyOptional({ type: GuideDiagnosticDto, nullable: true }) diagnostic?: GuideDiagnosticDto | null;
+  @ApiPropertyOptional({
+    type: () => LeadDiagDto,
+    nullable: true,
+    description: '§44 진단 카드 셋(영어 · 수학 · 인터뷰) — 등록된 상담 건(lead.student_id)의 최신 진단 점수(DQ1). 없으면 null',
+  })
+  scores?: LeadDiagDto | null;
 }
 
 export class GuideStudentsDto {
@@ -226,7 +253,15 @@ export class GuideMissingDto {
   @ApiPropertyOptional(N) teacherId?: number | null;
   @ApiPropertyOptional(S) teacherName?: string | null;
   @ApiPropertyOptional(S) serTitle?: string | null;
+  /* 수업 이름표 — 정규 수업은 serTitle 이 비어 있다. 화면은 이 넷으로 「과목 · 시각 · 강의실」을 적는다 (g4 「수업명 미정」) */
+  @ApiPropertyOptional({ ...S, description: '과목 이름(sub.name) — 과목 없는 회차는 null' }) subName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '수업 종류 이름(kind.name) — 과목이 없을 때 부를 이름' }) kindName?: string | null;
+  @ApiPropertyOptional({ type: 'integer', nullable: true, minimum: 0, maximum: 1439, description: '그 회차의 시작 분(KST 자정 기준). 회차가 없으면 규칙의 시작 분' })
+  startMin?: number | null;
+  @ApiPropertyOptional({ ...S, description: '강의실 이름 — 그 회차의 강의실, 없으면 규칙의 강의실. 온라인·미정이면 null' }) roomName?: string | null;
   @ApiProperty({ enum: ['new', 'teacher_change'] }) reason!: string;
+  @ApiProperty({ description: '그 수업 날(기한)이 며칠 지났는가 — 오늘이거나 앞날이면 0. §43 「마감 지남」 칩의 근거' })
+  overdueDays!: number;
 }
 
 export class GuideHistoryDayDto {
@@ -291,6 +326,18 @@ export class GuideTemplateWriteDto {
 export class GuideBodyDto {
   @ApiProperty({ description: '안내 본문' })
   @IsString() @MinLength(1) @MaxLength(4000) body!: string;
+
+  /* §44 두 상자 (g4 §44-3). 안 보내면(undefined) 그대로 두고, 빈 글자·null 은 비운다 */
+  @ApiPropertyOptional({ ...S, maxLength: 4000, description: '「지도 방향」 — 안 보내면 그대로, 빈 글자·null 은 비운다' })
+  @ValidateIf((_object, value) => value !== undefined && value !== null) @IsString() @MaxLength(4000)
+  direction?: string | null;
+
+  @ApiPropertyOptional({
+    ...S, maxLength: 4000,
+    description: '「관리자 코멘트 · 강사만」 — 강사에게만 보인다(학부모 발송 본문·안내문 PNG 에 싣지 않는다). 안 보내면 그대로, 빈 글자·null 은 비운다',
+  })
+  @ValidateIf((_object, value) => value !== undefined && value !== null) @IsString() @MaxLength(4000)
+  adminNote?: string | null;
 }
 
 /**

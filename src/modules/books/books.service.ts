@@ -10,6 +10,7 @@ import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { HIST_ACTIONS, histLabel, histSql } from '../../lib/history';
 import { todayKst } from '../../lib/kst';
+import { NOTI_TITLE } from '../../lib/noti';
 import { kstAt, serStuOn } from '../../lib/sql';
 import {
   ISSUE_STATE_LABEL, PACK_STATE_LABEL, PACK_TYPE_LABEL, issueTransitionIssue, packTransitionIssue,
@@ -40,6 +41,9 @@ function dbDay(value: unknown): string {
   const pad = (part: number) => String(part).padStart(2, '0');
   return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
 }
+
+/** 지워진 이력 대상의 낱말 — 「지워진 배부 #23」 (g4 §40-2). 칩 낱말(HIST_ACTIONS)과는 다른 축이다 */
+const HIST_ENTITY_WORD: Record<string, string> = { issue: '배부', lib: '교재', vers: '판', guide: '안내' };
 
 function historyRange(span: BookHistoryQueryDto['span'], anchor: string): [string | null, string | null] {
   if (span === 'all') return [null, null];
@@ -365,6 +369,13 @@ export class BooksService {
                 WHEN 'guide' THEN (SELECT sr.title FROM guide g LEFT JOIN ser sr ON sr.id=g.ser_id WHERE g.id=h.ref_id)
                 ELSE NULL END AS code,
               CASE WHEN h.entity='guide' THEN (SELECT g.body FROM guide g WHERE g.id=h.ref_id) END AS memo,
+              /* 가리키던 행이 아직 있는가 — hist 에는 FK 가 없어 대상이 지워져도 줄은 남는다(지워지지 않는 원장) */
+              CASE h.entity
+                WHEN 'vers'  THEN EXISTS (SELECT 1 FROM vers v WHERE v.id=h.ref_id)
+                WHEN 'lib'   THEN EXISTS (SELECT 1 FROM lib l WHERE l.id=h.ref_id)
+                WHEN 'issue' THEN EXISTS (SELECT 1 FROM issue i WHERE i.id=h.ref_id)
+                WHEN 'guide' THEN EXISTS (SELECT 1 FROM guide g WHERE g.id=h.ref_id)
+                ELSE true END AS ref_exists,
               CASE h.entity
                 WHEN 'issue' THEN (SELECT t.name FROM issue i JOIN stu s ON s.id=i.student_id JOIN ser_stu ss ON ss.student_id=s.id JOIN ser sr ON sr.id=ss.ser_id JOIN staff t ON t.id=sr.teacher_id WHERE i.id=h.ref_id ORDER BY sr.id LIMIT 1)
                 WHEN 'guide' THEN (SELECT t.name FROM guide g LEFT JOIN staff t ON t.id=g.teacher_id WHERE g.id=h.ref_id)
@@ -396,7 +407,11 @@ export class BooksService {
     const items = rows.map((r) => ({
       id: Number(r.id), action: String(r.action), actionLabel: histLabel(String(r.action)),
       entity: String(r.entity), refId: Number(r.ref_id),
-      subject: (r.subject as string) ?? null,
+      // 지워진 대상은 빈칸(—) 대신 무엇이었는지 적는다 (g4 §40-2) — 문장은 읽을 때 만든다
+      subject: r.ref_exists === false
+        ? `지워진 ${HIST_ENTITY_WORD[String(r.entity)] ?? '항목'} #${Number(r.ref_id)}`
+        : (r.subject as string) ?? null,
+      refMissing: r.ref_exists === false,
       code: (r.code as string) ?? null, memo: (r.memo as string) ?? null,
       teacherName: (r.teacher_name as string) ?? null,
       studentId: r.student_id == null ? null : Number(r.student_id),
@@ -524,7 +539,9 @@ export class BooksService {
       const auto = student.issues.filter((issue) => issue.state === 'auto').length;
       const requested = teacherRequests.filter((request) => request.studentId === student.id).length;
       if (wait) todos.push({ key: 'wait', label: '승인 대기', count: wait });
-      if (auto) todos.push({ key: 'auto', label: '안내 발송 대기', count: auto });
+      // 배부 auto 는 머리 칸과 같은 낱말 「전달 대기」다 — 「안내 발송 대기」는 아래 안내 초안의 뜻이라
+      // 한 칩 낱말이 두 뜻이 되지 않게 가른다 (g4 §38-1)
+      if (auto) todos.push({ key: 'auto', label: '전달 대기', count: auto });
       if (requested) todos.push({ key: 'teacher_request', label: '강사 요청', count: requested });
       const guideState = guideStateByStudent.get(student.id);
       if (!guideState) todos.push({ key: 'guide_missing', label: '안내 없음', count: 1 });
@@ -680,8 +697,10 @@ export class BooksService {
   private async packDto(m: EntityManager, id: number, viewerId: number): Promise<BookPackDto> {
     const [r] = await m.query(
       `SELECT g.*, c.name AS coordinator_name, cb.name AS created_by_name,
+              db.name AS delivered_by_name, rb.name AS received_by_name,
               ${kstAt('g.delivered_at')} AS delivered_at_kst, ${kstAt('g.received_at')} AS received_at_kst
          FROM gpapack g LEFT JOIN staff c ON c.id=g.coordinator_id LEFT JOIN staff cb ON cb.id=g.created_by
+         LEFT JOIN staff db ON db.id=g.delivered_by LEFT JOIN staff rb ON rb.id=g.received_by
         WHERE g.id=$1`, [id],
     ) as R[];
     if (!r) throw new NotFoundException('자료 전달을 찾을 수 없습니다');
@@ -709,6 +728,9 @@ export class BooksService {
       coordinatorId: r.coordinator_id == null ? null : Number(r.coordinator_id), coordinatorName: (r.coordinator_name as string) ?? null,
       createdByName: (r.created_by_name as string) ?? null,
       deliveredAt: (r.delivered_at_kst as string) ?? null, receivedAt: (r.received_at_kst as string) ?? null,
+      // 원문 §41 「전달 2026-08-20 · 김범준 · … 수령 08-18 17:20」 — 전달한 사람 이름 (g4 §41-2)
+      deliveredByName: (r.delivered_by_name as string) ?? null,
+      receivedByName: (r.received_by_name as string) ?? null,
       students: students.map((s) => ({ id: Number(s.id), name: String(s.name), grade: (s.grade as string) ?? null })),
       books: packBooks,
       canDeliver: state === 'pending' && blockers.length === 0,
@@ -721,10 +743,14 @@ export class BooksService {
     const ids = await this.q(`SELECT id FROM gpapack ORDER BY created_at DESC,id DESC`);
     const items = await Promise.all(ids.map((r) => this.packDto(this.anyRepo.manager, Number(r.id), viewerId)));
     const count = (key: string, label: string, n: number) => ({ key, label, count: n });
-    const coordinators = new Map<string, { key: string; label: string; count: number }>();
+    // 원문 레일 「Sophia 2건 미확인 1」 — 미확인 = 전달했는데 아직 수령 확인이 없는 묶음 (g4 §41-5)
+    const coordinators = new Map<string, { key: string; label: string; count: number; unreceived: number }>();
     for (const x of items) if (x.coordinatorId && x.coordinatorName) {
       const key = String(x.coordinatorId); const old = coordinators.get(key);
-      coordinators.set(key, count(key, x.coordinatorName, (old?.count ?? 0) + 1));
+      coordinators.set(key, {
+        ...count(key, x.coordinatorName, (old?.count ?? 0) + 1),
+        unreceived: (old?.unreceived ?? 0) + (x.state === 'delivered' ? 1 : 0),
+      });
     }
     return {
       items,
@@ -839,8 +865,8 @@ export class BooksService {
           && hasPerm(staff.role, 'canAdminPage')
           && hasPerm(staff.role, 'canGpaPack', { canGpaPack: staff.can_gpa_pack }))) {
           await m.query(
-            `INSERT INTO noti (to_id,from_id,body,link,category) VALUES ($1,$2,$3,'/books?tab=requests','request')`,
-            [Number(head.id), userId, `자료 수령 확인 · ${pack.title}`],
+            `INSERT INTO noti (to_id,from_id,body,link,category,title) VALUES ($1,$2,$3,'/books?tab=requests','request',$4)`,
+            [Number(head.id), userId, `자료 수령 확인 · ${pack.title}`, NOTI_TITLE.bookReceived],
           );
         }
       }

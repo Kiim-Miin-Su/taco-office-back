@@ -19,6 +19,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { ruleLabel } from '../../lib/recurrence';
+import { NOTI_TITLE } from '../../lib/noti';
 import { kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
 import { GuidesService } from '../guides/guides.service';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
@@ -192,22 +193,22 @@ export class TeacherChangeService {
     const when = dto.mode === 'day' ? `${md(dto.date)} 하루 대강` : `${md(dto.date)}부터`;
     let notifiedTeachers = 0;
     const link = `/schedule?date=${dto.date}`;
-    for (const [who, text] of [
-      [to.id, `강사 교체 — ${what} · ${when} · 회차 ${occurrences}회를 맡습니다${dto.memo ? ` · ${dto.memo.trim()}` : ''}`],
-      [from.id, `담당 이관 — ${what} · ${when} → ${to.name}`],
-    ] as Array<[number, string]>) {
+    for (const [who, text, title] of [
+      [to.id, `강사 교체 — ${what} · ${when} · 회차 ${occurrences}회를 맡습니다${dto.memo ? ` · ${dto.memo.trim()}` : ''}`, NOTI_TITLE.teacherChange],
+      [from.id, `담당 이관 — ${what} · ${when} → ${to.name}`, NOTI_TITLE.teacherHandover],
+    ] as Array<[number, string, string]>) {
       if (who === userId) continue;
       const rows = (await m.query(
-        `INSERT INTO noti (to_id, from_id, body, link, category) SELECT $1, $2, $3, $4, 'schedule' FROM staff WHERE id = $1 AND active RETURNING id`,
-        [who, userId, text, link],
+        `INSERT INTO noti (to_id, from_id, body, link, category, title) SELECT $1, $2, $3, $4, 'schedule', $5 FROM staff WHERE id = $1 AND active RETURNING id`,
+        [who, userId, text, link, title],
       )) as Array<{ id: string }>;
       notifiedTeachers += rows.length;
     }
     const staffRows = (await m.query(
-      `INSERT INTO noti (to_id, from_id, body, link, category)
-       SELECT id, $1, $2, $3, 'etc' FROM staff WHERE active AND role <> 'teacher' AND id <> $1 AND id <> $4 AND id <> $5 RETURNING id`,
+      `INSERT INTO noti (to_id, from_id, body, link, category, title)
+       SELECT id, $1, $2, $3, 'etc', $6 FROM staff WHERE active AND role <> 'teacher' AND id <> $1 AND id <> $4 AND id <> $5 RETURNING id`,
       [userId, `강사 교체 — ${from.name} → ${to.name} · ${what} · ${when}${cplRow ? ` · 컴플레인 #${cplRow.id}` : ''}`,
-        cplRow ? '/ops?tab=complaint' : link, from.id, to.id],
+        cplRow ? '/ops?tab=complaint' : link, from.id, to.id, NOTI_TITLE.teacherChange],
     )) as Array<{ id: string }>;
     const notifiedStaff = staffRows.length;
 
@@ -239,10 +240,10 @@ export class TeacherChangeService {
 
     const steps: TcStepDto[] = [
       { key: 'schedule', label: '스케줄', count: occurrences, note: `규칙 ${series.length}개 · 회차 ${occurrences}회 — ${dto.mode === 'day' ? '이날만 대강(회차 예외)' : `${md(dto.date)}부터 계속(규칙을 가른다)`}` },
-      { key: 'guide', label: '안내 초안', count: guideIds.length, note: guideIds.length ? '학생마다 강사 교체 안내 초안 — 수업 안내 §43 에서 다듬어 보냅니다' : '새로 만들 초안이 없습니다(이미 있음)' },
-      { key: 'parent', label: '학부모 안내', count: parentNotices, note: '보낼 안내로 남겼습니다 — 학부모 수신처는 아직 없습니다 (N-42)' },
+      { key: 'guide', label: '안내 초안', count: guideIds.length, note: guideIds.length ? '학생마다 강사 교체 안내 초안 — 수업 안내에서 다듬어 보냅니다' : '새로 만들 초안이 없습니다(이미 있음)' },
+      { key: 'parent', label: '학부모 안내', count: parentNotices, note: '보낼 안내로 남겼습니다 — 학부모 수신처는 아직 없습니다' },
       { key: 'book', label: '교재 확인', count: bookRows.length, note: bookRows.length ? '이관 학생의 배부 교재 — 새 강사가 이어받습니다(바꿀 것 없음)' : '배부된 교재가 없습니다' },
-      { key: 'payout', label: '정산 시수', count: occurrences, note: payout.length ? payout.map((p) => `${+p.month.slice(5)}월 ${p.occurrences}회 → ${to.name}${p.fromConfirmed || p.toConfirmed ? ' (확정된 달 — 되돌리지 않습니다 N-51)' : ''}`).join(' · ') : '옮겨 간 회차가 없습니다' },
+      { key: 'payout', label: '정산 시수', count: occurrences, note: payout.length ? payout.map((p) => `${+p.month.slice(5)}월 ${p.occurrences}회 → ${to.name}${p.fromConfirmed || p.toConfirmed ? ' (확정된 달 — 되돌리지 않습니다)' : ''}`).join(' · ') : '옮겨 간 회차가 없습니다' },
       { key: 'notify', label: '선생님 전달', count: notifiedTeachers, note: `새 강사 ${to.name}${from.active && from.id !== userId ? ` · 원래 강사 ${from.name}` : ''} · 관리자 ${notifiedStaff}명` },
     ];
     return { preview, mode: dto.mode, date: dto.date, fromTeacher: from, toTeacher: to, series, occurrences, guideDrafts: guideIds.length, parentNotices, books: bookRows, payout, notifiedTeachers, notifiedStaff, unavailable, cpl, steps };

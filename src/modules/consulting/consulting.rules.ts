@@ -73,6 +73,11 @@ export const consultingRequesterLabel = (v: string | null | undefined): string |
  */
 export const CONSULTING_CONTRACT_STEPS = ['계약서 준비', '피드백', '전달', '서명', '수납'] as const;
 
+/**
+ * 단계마다 한 줄 — 원본 §30 스테퍼의 이름 아래 글 그대로 (30-07). 이름과 같은 자리에 둔다 — 화면이 짝을 맞추지 않는다 (D-R18).
+ */
+export const CONSULTING_CONTRACT_STEP_SUB = ['초안을 올립니다', '누구나 의견을 답니다', '학부모께 보냅니다', '스캔본을 받습니다', '계약금을 받습니다'] as const;
+
 /** 1~5 밖은 이름이 없다 — 미정(null)과 잘못된 값을 같은 자리에서 막는다 */
 export const consultingContractStepLabel = (step: number | null | undefined): string | null =>
   typeof step === 'number' && Number.isInteger(step) && step >= 1 && step <= CONTRACT_STEP_MAX
@@ -90,6 +95,17 @@ export const CONS_SHARE_LABEL: Record<string, string> = {
   private: '전체 비공개',
 };
 export const consShareLabel = (share: string): string => CONS_SHARE_LABEL[share] ?? share;
+
+/**
+ * 공개 범위의 뜻 한 줄 — 슬라이드 32 설명 넷 그대로. §29 칩 아래 · §30·§31 공개 범위 한 줄 배너가 같이 쓴다 (29-06 · 30-06).
+ */
+export const CONS_SHARE_MEANING: Record<string, string> = {
+  all: '관리자 누구나 봅니다',
+  money_only: '금액만 보이고 내용은 숨깁니다',
+  picked: '고른 사람만 봅니다',
+  private: '담당자와 대표만 봅니다',
+};
+export const consShareMeaning = (share: string): string | null => CONS_SHARE_MEANING[share] ?? null;
 export const CONSULTING_FILE_ROLES = ['draft', 'revision', 'signed'] as const;
 export type ConsultingFileRole = (typeof CONSULTING_FILE_ROLES)[number];
 export const CONSULTING_FILE_MAX = 10;
@@ -127,6 +143,21 @@ export function consultingSessionDone(onDate: string | null, today: string): boo
   return onDate === null || onDate <= today;
 }
 
+/**
+ * 같은 판정의 SQL 조각 — `cons_sess` 별칭과 「오늘」 파라미터를 받는다. 상세·학생별·회차 잡기·종료가 **이 한 조각**으로 센다
+ * (27-04 — §27 학생별이 기록 행 수를 적어 §26·§30 과 다른 수를 말했다 · D-R37).
+ */
+export const consSessDoneSql = (alias: string, todayParam: string): string =>
+  `(${alias}.on_date IS NULL OR ${alias}.on_date <= ${todayParam}::date)`;
+
+/**
+ * 회차 본문이 다 적혔는가 — 원본 §31 회차 머리의 「기록됨」 (31-07). 무엇을 · 왜 · 어떻게가 다 차면 그 회차의 할 일도 접힌다
+ * (`ConsultingSessionService.writeSession` 과 같은 조건 — 화면이 네 칸을 다시 세지 않는다).
+ */
+export function consultingSessionRecorded(s: { what?: string | null; why?: string | null; how?: string | null }): boolean {
+  return Boolean(s.what && s.why && s.how);
+}
+
 export interface ConsultingCloseInput {
   stage: string;
   /** 약정 회차 — null 이면 회차 조건 없음 */
@@ -153,12 +184,12 @@ export function consultingCloseIssue(input: ConsultingCloseInput): { code: strin
   if (input.stage === 'done') return { code: 'CONS_ALREADY_DONE', message: '이미 종료된 컨설팅입니다' };
   if (input.stage !== 'running') return { code: 'CONS_NOT_RUNNING', message: '수납이 끝나 진행 중인 컨설팅만 종료할 수 있습니다' };
   if (input.requiredLeft > 0) {
-    return { code: 'CONS_ITEMS_LEFT', message: `필수 항목 ${input.requiredLeft}개가 남아 있습니다 — 끝내야 종료할 수 있습니다 (N-18)` };
+    return { code: 'CONS_ITEMS_LEFT', message: `필수 항목 ${input.requiredLeft}개가 남아 있습니다 — 끝내야 종료할 수 있습니다` };
   }
   if (input.sessions !== null && input.sessionsDone < input.sessions) {
     return {
       code: 'CONS_SESSIONS_LEFT',
-      message: `약정 ${input.sessions}회 중 ${input.sessionsDone}회를 했습니다 — 남은 ${input.sessions - input.sessionsDone}회를 마쳐야 종료할 수 있습니다 (예외 종료는 N-18-a)`,
+      message: `약정 ${input.sessions}회 중 ${input.sessionsDone}회를 했습니다 — 남은 ${input.sessions - input.sessionsDone}회를 마쳐야 종료할 수 있습니다`,
     };
   }
   /* 앞으로 잡아 둔 회차 — 종료 뒤에 남으면 시간표가 끝난 컨설팅을 계속 부른다.

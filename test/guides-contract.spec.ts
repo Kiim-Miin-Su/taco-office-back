@@ -9,7 +9,7 @@ import { validate } from 'class-validator';
 import { Reflector } from '@nestjs/core';
 import { PERM_KEY } from '../src/common/perm';
 import { GuidesController } from '../src/modules/guides/guides.controller';
-import { GuideDraftCreateDto, GuideHistoryQueryDto, ZoomNoticeWriteDto } from '../src/modules/guides/guides.dto';
+import { GuideBodyDto, GuideDraftCreateDto, GuideHistoryQueryDto, ZoomNoticeWriteDto } from '../src/modules/guides/guides.dto';
 import { GuidesService } from '../src/modules/guides/guides.service';
 
 describe('§43~§45 안내 HTTP 계약 (C78)', () => {
@@ -31,6 +31,14 @@ describe('§43~§45 안내 HTTP 계약 (C78)', () => {
     expect(await validate(history)).toHaveLength(2);
     const draft = plainToInstance(GuideDraftCreateDto, { sourceOccurrenceId: '1e3', studentId: 0 });
     expect(await validate(draft)).toHaveLength(2);
+  });
+
+  it('안내 작성의 지도 방향·관리자 코멘트는 선택이고 null 로 비울 수 있으나 4000자를 넘거나 글자가 아니면 거절한다 (g4 §44-3)', async () => {
+    const ok = plainToInstance(GuideBodyDto, { body: '안내', direction: null, adminNote: '강사만 보는 말' });
+    expect(await validate(ok)).toHaveLength(0);
+    expect(await validate(plainToInstance(GuideBodyDto, { body: '안내' }))).toHaveLength(0);
+    const bad = plainToInstance(GuideBodyDto, { body: '안내', direction: 'ㄱ'.repeat(4001), adminNote: 7 });
+    expect((await validate(bad)).map((e) => e.property).sort()).toEqual(['adminNote', 'direction']);
   });
 
   it('줌 안내는 회차 키 (serId, onDate) 만 받고 실제 달력 날짜가 아니면 거절한다 (C98 · F-63)', async () => {

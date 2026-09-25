@@ -20,12 +20,13 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { todayKst } from '../../lib/kst';
+import { NOTI_TITLE } from '../../lib/noti';
 import { END_MIN, START_MIN, kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import type { ConsCloseDto, ConsCloseResultDto, ConsSessionCreateDto, ConsSessionPlanRowDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsultingSessionDto } from './consulting.dto';
-import { CONSULTING_TYPE_LABEL, consultingCloseIssue, consultingSessionAddIssue, consultingSessionDone, type ConsultingType } from './consulting.rules';
-import { ConsultingService } from './consulting.service';
+import { CONSULTING_TYPE_LABEL, consSessDoneSql, consultingCloseIssue, consultingSessionAddIssue, consultingSessionDone, consultingSessionRecorded, type ConsultingType } from './consulting.rules';
+import { CONS_SESS_SELECT, ConsultingService, consSessDto } from './consulting.service';
 
 type R = Record<string, unknown>;
 
@@ -38,6 +39,13 @@ const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:
 
 /** 회차 할 일의 제목 — 잡을 때 만들고, 육하원칙을 다 적으면 같은 제목으로 되찾아 접는다 */
 const sessionTodoTitle = (seq: number, studentNames: string[]) => `컨설팅 ${seq}회차 기록 — ${studentNames.join(' · ') || '학생 미정'}`;
+
+/**
+ * 「다음까지」 할 일의 제목 앞자락 — 슬라이드 31 연동 「'다음까지' 항목 → TODO 자동 생성 · 담당자에게 NOTI」(31-08).
+ * 할 일에는 회차 칸이 없어 **앞자락으로 되찾는다**(회차 기록 할 일과 같은 규약) — 한 회차에 「다음까지」 할 일은 하나다.
+ */
+const nextUntilTodoPrefix = (seq: number) => `컨설팅 ${seq}회차 다음까지 — `;
+const TODO_TITLE_MAX = 160; // todo.title varchar(160)
 
 @Injectable()
 export class ConsultingSessionService {
@@ -161,13 +169,13 @@ export class ConsultingSessionService {
       if (staff.id !== viewerId) {
         const first = rows[0]!;
         const noti = (await m.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, $4, 'schedule') RETURNING id`,
-          [staff.id, viewerId, `컨설팅 회차 ${rows.length}건 잡힘 — ${studentNames.join(' · ')} · ${md(first.date)}${rows.length > 1 ? ` ~ ${md(rows[rows.length - 1]!.date)}` : ''}`, `/schedule?date=${first.date}`],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, $4, 'schedule', $5) RETURNING id`,
+          [staff.id, viewerId, `컨설팅 회차 ${rows.length}건 잡힘 — ${studentNames.join(' · ')} · ${md(first.date)}${rows.length > 1 ? ` ~ ${md(rows[rows.length - 1]!.date)}` : ''}`, `/schedule?date=${first.date}`, NOTI_TITLE.consSessions],
         )) as Array<{ id: string }>;
         notified = noti.length > 0;
       }
       const [counts] = (await m.query(
-        `SELECT (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND (x.on_date IS NULL OR x.on_date <= $2::date)) AS done,
+        `SELECT (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND ${consSessDoneSql('x', '$2')}) AS done,
                 (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND x.on_date > $2::date) AS planned`, [consId, today],
       )) as Array<{ done: number; planned: number }>;
       const sessions = c.sessions == null ? null : Number(c.sessions);
@@ -193,35 +201,74 @@ export class ConsultingSessionService {
       const m = q.manager;
       const c = await this.consulting.lockFull(m, viewerId, canHide, consId);
       if (String(c.stage) === 'done') throw new ConflictException({ code: 'CONS_LOCKED', message: '종료된 컨설팅의 회차 기록은 바꿀 수 없습니다' });
+      /* 「다음까지」가 바뀌었는지 보려면 고치기 전 값이 필요하다 — 행을 잠그고 읽는다(두 사람이 동시에 적어도 할 일이 둘 서지 않게) */
+      const [before] = (await m.query(
+        `SELECT id, seq, next_until FROM cons_sess WHERE id = $1 AND cons_id = $2 FOR UPDATE`, [sessId, consId],
+      )) as Array<{ id: string; seq: number; next_until: string | null }>;
+      if (!before) throw new NotFoundException({ code: 'CONS_SESSION_NOT_FOUND', message: '회차를 찾을 수 없습니다' });
       const sets: string[] = [];
       const params: unknown[] = [sessId, consId];
-      for (const key of ['who', 'what', 'why', 'how'] as const) {
+      /* 칸 이름은 이 고정 목록에서만 온다 — 값은 언제나 파라미터다(주입 없음) */
+      const columns = [['who', 'who'], ['what', 'what'], ['why', 'why'], ['how', 'how'], ['result', 'result'], ['nextUntil', 'next_until']] as const;
+      for (const [key, column] of columns) {
         if (dto[key] === undefined) continue;
         params.push(dto[key] === null ? null : String(dto[key]).trim() || null);
-        sets.push(`${key} = $${params.length}`);
+        sets.push(`${column} = $${params.length}`);
       }
       if (sets.length === 0) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 칸이 없습니다' });
-      const rows = writtenRows<R>(await m.query(
-        `UPDATE cons_sess SET ${sets.join(', ')} WHERE id = $1 AND cons_id = $2
-         RETURNING id, seq, to_char(on_date,'YYYY-MM-DD') AS on_date, who, what, why, how, ser_id`, params,
-      ));
-      const r = rows[0];
-      if (!r) throw new NotFoundException({ code: 'CONS_SESSION_NOT_FOUND', message: '회차를 찾을 수 없습니다' });
+      await m.query(`UPDATE cons_sess SET ${sets.join(', ')} WHERE id = $1 AND cons_id = $2`, params);
       await m.query(`INSERT INTO cons_event (cons_id, event_type, ref_id, by_id) VALUES ($1, 'session_written', $2, $3)`, [consId, sessId, viewerId]);
-      /* 무엇을·왜·어떻게가 다 적혔으면 그 회차의 할 일은 끝난 것이다 — 제목으로 되찾는다 (할 일에는 회차 칸이 없다) */
-      if (r.what && r.why && r.how) {
+      const [r] = (await m.query(`${CONS_SESS_SELECT} WHERE x.id = $1`, [sessId])) as R[];
+      const seq = Number(r.seq);
+      /* 무엇을·왜·어떻게가 다 적혔으면 그 회차의 할 일은 끝난 것이다 — 제목으로 되찾는다 (할 일에는 회차 칸이 없다). 「기록됨」과 같은 판정이다 */
+      if (consultingSessionRecorded({ what: r.what as string | null, why: r.why as string | null, how: r.how as string | null })) {
         await m.query(
           `UPDATE todo SET done = true WHERE cons_id = $1 AND src = 'consulting' AND NOT done AND title LIKE $2`,
-          [consId, `컨설팅 ${Number(r.seq)}회차 기록 — %`],
+          [consId, `컨설팅 ${seq}회차 기록 — %`],
         );
       }
-      const onDate = (r.on_date as string) ?? null;
-      return {
-        id: Number(r.id), seq: Number(r.seq), onDate,
-        who: (r.who as string) ?? null, what: (r.what as string) ?? null, why: (r.why as string) ?? null, how: (r.how as string) ?? null,
-        serId: r.ser_id == null ? null : Number(r.ser_id), done: consultingSessionDone(onDate, todayKst()),
-      };
+      /* 「다음까지」 (31-08 · 슬라이드 31 연동) — 새로 적히거나 바뀌었을 때만 담당의 할 일 한 줄 + 알림. 기한은 그 뒤 첫 회차 날짜(없으면 없음) */
+      const nextUntil = (r.next_until as string | null) ?? null;
+      if (dto.nextUntil !== undefined && nextUntil && nextUntil !== (before.next_until ?? null)) {
+        await this.nextUntilTodo(m, viewerId, c, consId, seq, (r.on_date as string | null) ?? null, nextUntil);
+      }
+      return consSessDto(r, todayKst());
     });
+  }
+
+  /**
+   * 「다음까지」 할 일 — 받는 사람은 건의 담당(owner)이다. 담당이 없으면 적은 사람에게 둔다(할 일을 허공에 두지 않는다).
+   * 그 회차의 열린 「다음까지」 할 일이 이미 있으면 제목만 고친다 — 고쳐 적을 때마다 할 일이 쌓이지 않게.
+   * 담당이 적은 사람이 아니면 알림 한 건(`etc` · 링크 /consulting).
+   */
+  private async nextUntilTodo(
+    m: EntityManager, viewerId: number, c: R, consId: number, seq: number, onDate: string | null, text: string,
+  ): Promise<void> {
+    const ownerId = c.owner_id == null ? viewerId : Number(c.owner_id);
+    const title = `${nextUntilTodoPrefix(seq)}${text}`.slice(0, TODO_TITLE_MAX);
+    const [nextSess] = (await m.query(
+      `SELECT to_char(min(on_date),'YYYY-MM-DD') AS on_date FROM cons_sess WHERE cons_id = $1 AND on_date > COALESCE($2::date, '-infinity'::date)`,
+      [consId, onDate],
+    )) as Array<{ on_date: string | null }>;
+    const dueOn = nextSess?.on_date ?? null;
+    const updated = writtenRows<{ id: string }>(await m.query(
+      `UPDATE todo SET title = $3, due_on = $4::date
+        WHERE cons_id = $1 AND src = 'consulting' AND NOT done AND title LIKE $2 RETURNING id`,
+      [consId, `${nextUntilTodoPrefix(seq)}%`, title, dueOn],
+    ));
+    if (updated.length === 0) {
+      await m.query(
+        `INSERT INTO todo (title, from_id, to_id, due_on, src, cons_id) VALUES ($1, $2, $3, $4::date, 'consulting', $5)`,
+        [title, viewerId, ownerId, dueOn, consId],
+      );
+    }
+    if (ownerId !== viewerId) {
+      const students = await this.students(m, consId);
+      await m.query(
+        `INSERT INTO noti (to_id, from_id, body, link, category, title) SELECT $1, $2, $3, '/consulting', 'etc', $4 FROM staff WHERE id = $1 AND active`,
+        [ownerId, viewerId, `컨설팅 ${seq}회차 다음까지 — ${students.map((s) => s.name).join(' · ') || '학생 미정'} · ${text}`, NOTI_TITLE.consNextTask],
+      );
+    }
   }
 
   /* ══ 종료 — I-95 · N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」 ═════════════════════════ */
@@ -232,7 +279,7 @@ export class ConsultingSessionService {
       const c = await this.consulting.lockFull(m, viewerId, canHide, consId);
       const today = todayKst();
       const [counts] = (await m.query(
-        `SELECT (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND (x.on_date IS NULL OR x.on_date <= $2::date)) AS done,
+        `SELECT (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND ${consSessDoneSql('x', '$2')}) AS done,
                 (SELECT count(*)::int FROM cons_item i WHERE i.cons_id=$1 AND i.required AND NOT i.done) AS required_left`, [consId, today],
       )) as Array<{ done: number; required_left: number }>;
       const sessions = c.sessions == null ? null : Number(c.sessions);
@@ -279,8 +326,8 @@ export class ConsultingSessionService {
       let notified = false;
       if (c.owner_id != null && Number(c.owner_id) !== viewerId) {
         const rows = (await m.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category) SELECT $1, $2, $3, '/consulting', 'etc' FROM staff WHERE id = $1 AND active RETURNING id`,
-          [Number(c.owner_id), viewerId, `컨설팅 종료 — ${studentNames.join(' · ')} · ${typeLabel} · ${sessionsDone}회`],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) SELECT $1, $2, $3, '/consulting', 'etc', $4 FROM staff WHERE id = $1 AND active RETURNING id`,
+          [Number(c.owner_id), viewerId, `컨설팅 종료 — ${studentNames.join(' · ')} · ${typeLabel} · ${sessionsDone}회`, NOTI_TITLE.consDone],
         )) as Array<{ id: string }>;
         notified = rows.length > 0;
       }

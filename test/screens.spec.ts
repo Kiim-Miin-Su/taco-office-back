@@ -231,7 +231,9 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     expect(guides.some((g) => g.pending)).toBe(true);
     expect(guides.some((g) => !g.pending)).toBe(true);
     const unsent = r.body.perLesson.filter((p: { sentAt: string | null }) => !p.sentAt).length;
-    expect(r.body.todoCount).toBe(guides.filter((g) => g.pending).length + unsent);
+    // 배지 = 목록: 안 보낸 안내 + 「안내 없음」(필요한데 GUIDE 가 없는 학생 · g4 §43-2) + 회차 안내 미기록
+    expect(Array.isArray(r.body.missing)).toBe(true);
+    expect(r.body.todoCount).toBe(guides.filter((g) => g.pending).length + r.body.missing.length + unsent);
   });
 
   it('현황판 — 회차마다 네 마크가 온다', async () => {
@@ -408,6 +410,8 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
     expect(r.body.total).toBeGreaterThan(0);
     expect(r.body.items.length).toBe(r.body.total);
     expect(r.body.byTeacher.length).toBeGreaterThan(0);
+    // 오른쪽 머리 「김재훈 · 강사」 — 역할 낱말은 서버가 준다(고정 문자열 「· 강사」 금지 · g5 47-07)
+    r.body.byTeacher.forEach((t: { roleLabel: string }) => expect(['강사', '매니저', '관리자', '대표']).toContain(t.roleLabel));
     // 초안·미작성은 미제출, 반려는 정산상 작성 인정이지만 모두 강사의 다음 조치가 필요하다.
     r.body.items.forEach((it: { state: string; written: boolean }) => {
       expect(needsReportActionDbState(it.state)).toBe(true);

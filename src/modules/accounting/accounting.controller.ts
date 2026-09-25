@@ -17,7 +17,8 @@ import {
   OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
   InvoiceBatchDto, InvoiceBatchResultDto, InvoiceVoidDto,
-  PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto, PayoutMonthParamsDto,
+  PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto, PayoutMonthParamsDto, PayoutDetailDto, PayoutDetailParamsDto,
+  CashflowDto, CashflowQueryDto,
   type IncomeSpan,
   StudentWithdrawDto, WithdrawResultDto,
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
@@ -78,6 +79,37 @@ export class AccountingController {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     const month = query.month ?? todayKst().slice(0, 7);
     return this.svc.payoutSheetOf(month, canSee, isRole(user.role) && canCeoConfirmPayout(user.role));
+  }
+
+  @Get('payouts/:staffId')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '§56 강사 한 사람 상세 — 시급 · 수업 날짜 · 리포트 미작성 · 정산 내역 (w5 · 56-01)',
+    description: '시트와 같은 함수(lib/payout-sheet)가 센다 — 줄(row)은 시트의 그 줄과 같은 값이고 수업 줄의 강사료 합이 총액이다. '
+      + '그 달 정산에 없는 사람은 404(없는 정산을 0원으로 지어내지 않는다).',
+  })
+  @ApiOkResponse({ type: PayoutDetailDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  async payoutDetail(
+    @CurrentUser() user: RequestUser, @Param() params: PayoutDetailParamsDto, @Query() query: TuitionQueryDto,
+  ): Promise<PayoutDetailDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.payoutDetail(params.staffId, query.month ?? todayKst().slice(0, 7), canSee, isRole(user.role) && canCeoConfirmPayout(user.role));
+  }
+
+  @Get('cashflow')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '§55 들어온 돈 — 기간 요약 · 입금 달력 · 분류별 · 미수 전체 (w5 · 55-01 · 55-02 · 55-03 · 55-05)',
+    description: '한 기간의 돈은 두 갈래다 — 그 기간에 들어온 입금 줄(pay.paid_on)과 기한이 그 기간인 덜 받은 청구서의 남은 돈(예정). '
+      + '청구 = 입금 + 예정. 분류는 입금 목록의 칩과 같은 함수(payCategory)가 정한다. 분류 칩으로 좁혀도 칩 건수는 그대로다. '
+      + '미수 전체는 기간과 무관하다. 끝이 시작보다 앞서면 409 BAD_RANGE.',
+  })
+  @ApiOkResponse({ type: CashflowDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'BAD_RANGE' })
+  async cashflow(@CurrentUser() user: RequestUser, @Query() query: CashflowQueryDto): Promise<CashflowDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.cashflow(canSee, query);
   }
 
   @Post('payouts/:month/confirm')

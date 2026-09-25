@@ -10,7 +10,7 @@
  * NOTI 표에 색 컬럼이 없어 **링크로 파생**한다. 표에 컬럼이 생기는 날
  * 이 파일이 바뀔 곳을 한 군데로 못 박아 둔다.
  */
-import { notiTone, NOTI_TONES } from '../src/lib/noti';
+import { notiTone, NOTI_TITLE, NOTI_TONES } from '../src/lib/noti';
 
 describe('notiTone', () => {
   it('막힌 일은 warn', () => {
@@ -31,5 +31,19 @@ describe('notiTone', () => {
   it('세 가지 밖으로 나가지 않는다', () => {
     ['/x', '/reports/unwritten', '/accounting/paid', null].forEach((l) =>
       expect(NOTI_TONES).toContain(notiTone(l)));
+  });
+});
+
+describe('NOTI_TITLE — §16 카드 제목 낱말 (16-1 · impl3-w8)', () => {
+  it('제목은 짧은 한국어 한 줄 — DB 칸(varchar 80)에 들고 내부 코드·영문 코드값이 없다', () => {
+    const titles = Object.values(NOTI_TITLE);
+    expect(titles.length).toBeGreaterThan(20);
+    for (const t of titles) {
+      expect(t.length).toBeGreaterThan(0);
+      expect(t.length).toBeLessThanOrEqual(20);
+      expect(t).not.toMatch(/[A-Za-z§#]|\bD-R|N-\d/);
+    }
+    // 같은 낱말이 두 열쇠에 있으면 한쪽이 다른 일을 가리키는 것이다
+    expect(new Set(titles).size).toBe(titles.length);
   });
 });

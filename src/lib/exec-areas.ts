@@ -22,6 +22,46 @@ import { CPL_OPEN_STAGES } from './complaint-words';
 import { INV_OPEN } from './rules';
 import { sqlWordList } from './sql';
 
+/* ── 판정 조각 — 배지(건수)와 카드 타일이 **같은 조각**을 쓴다 (69-8 · N-19) ─────────────
+ *
+ * 카드 안 타일 「기한 지남 2건」과 머리 배지 「2」가 따로 적힌 WHERE 로 세면 언젠가 갈린다.
+ * 그래서 「무엇을 세는가」는 여기 한 벌이고, 배지 SQL(`EXEC_AREAS[].sql`)과 서비스의 타일 SQL 이
+ * 같은 함수를 부른다. 인자 `a` 는 표 별칭(빈 문자열이면 별칭 없이), `d` 는 기준일 파라미터다.
+ */
+const col = (a: string, c: string): string => (a ? `${a}.${c}` : c);
+
+/** 아직 다 안 들어온 청구서 — 「못 받은 돈」의 집합. 완납·취소·초안은 빠진다 */
+export const invOpenWhere = (a = ''): string => `${col(a, 'state')} IN (${sqlWordList(INV_OPEN)})`;
+
+/** 그중 기준일에 납부 기한이 지난 것 — 회계 배지 */
+export const invOverdueWhere = (a = '', d = '$1'): string =>
+  `${invOpenWhere(a)} AND ${col(a, 'due_on')} IS NOT NULL AND ${col(a, 'due_on')} < ${d}::date`;
+
+/** 대표 검토(review)를 기다리는 기획 — 초안은 아직 아무도 기다리지 않는다 */
+export const planWaitingWhere = (a = ''): string => `${col(a, 'stage')} = 'review'`;
+
+/**
+ * 「진행 중 기획」 — 대표를 기다리지도(review) 않고 끝나지도(done) 않은 것 (§69 운영 타일).
+ * 결재 대기와 **겹치지 않게** 센다 — 같은 카드의 두 타일이 같은 건을 두 번 세면 합이 거짓이 된다.
+ */
+export const planRunningWhere = (a = ''): string => `${col(a, 'stage')} IN ('draft', 'rework', 'approved')`;
+
+/** 기준일에 기한이 지났는데 안 끝난 할 일 */
+export const todoOverdueWhere = (a = '', d = '$1'): string =>
+  `NOT ${col(a, 'done')} AND ${col(a, 'due_on')} IS NOT NULL AND ${col(a, 'due_on')} < ${d}::date`;
+
+/**
+ * 수납 전이라 진행이 잠긴 컨설팅 — 계약 5단계의 마지막이 수납이다.
+ * running/done 은 제약(cons_paid_stage_check)상 이미 5단계다.
+ * **보관 삭제한 건은 뺀다** — 대표 보고 수입이 이미 그 집합으로 뺀다(PB-02). 여기만 세면
+ * 카드의 「받은 돈」과 배지가 서로 다른 건을 가리킨다.
+ */
+export const consLockedWhere = (a = ''): string =>
+  `${col(a, 'stage')} = 'contract' AND COALESCE(${col(a, 'contract_step')}, 0) < 5 AND ${col(a, 'deleted_at')} IS NULL`;
+
+/** 아직 안 끝난 컴플레인 — 낱말은 `lib/complaint-words` 한 곳에서 온다 */
+export const cplOpenWhere = (a = ''): string => `${col(a, 'stage')} IN (${sqlWordList(CPL_OPEN_STAGES)})`;
+
 export const EXEC_AREA_KEYS = ['money', 'mkt', 'ops', 'consulting', 'complaint', 'lesson'] as const;
 export type ExecAreaKey = (typeof EXEC_AREA_KEYS)[number];
 
@@ -46,8 +86,7 @@ export const EXEC_AREAS: readonly ExecAreaDef[] = [
   {
     key: 'money', label: '회계', review: '납부 기한이 지난 청구서 수', go: '/accounting',
     // 기간 끝 시점에 「아직 안 들어왔는데 기한이 지난」 청구서. 완납·취소·초안은 세지 않는다.
-    sql: `SELECT count(*)::text n FROM inv
-           WHERE state IN (${sqlWordList(INV_OPEN)}) AND due_on IS NOT NULL AND due_on < $1::date`,
+    sql: `SELECT count(*)::text n FROM inv WHERE ${invOverdueWhere()}`,
   },
   {
     key: 'mkt', label: '마케팅', review: '없음 (정보성)', go: '/ops',
@@ -58,15 +97,14 @@ export const EXEC_AREAS: readonly ExecAreaDef[] = [
     // 기획은 대표 검토(review) 단계가 「결재 대기」다. 초안은 아직 아무도 기다리지 않는다
     // (drawer 가 초안을 대기함에 올려 배지를 부풀렸던 일이 실제로 있었다 — lib/approval 주석).
     sql: `SELECT (
-            (SELECT count(*) FROM plan WHERE stage = 'review')
-            + (SELECT count(*) FROM todo WHERE NOT done AND due_on IS NOT NULL AND due_on < $1::date)
+            (SELECT count(*) FROM plan WHERE ${planWaitingWhere()})
+            + (SELECT count(*) FROM todo WHERE ${todoOverdueWhere()})
           )::text n`,
   },
   {
     key: 'consulting', label: '컨설팅', review: '수납 전이라 진행이 잠긴 계약', go: '/consulting',
-    // 계약 5단계의 마지막이 수납이다. running/done 은 제약(cons_paid_stage_check)상 이미 5단계다.
-    sql: `SELECT count(*)::text n FROM cons
-           WHERE stage = 'contract' AND COALESCE(contract_step, 0) < 5`,
+    // 계약 5단계의 마지막이 수납이다 — 판정 조각 `consLockedWhere` (보관 삭제 건은 빠진다)
+    sql: `SELECT count(*)::text n FROM cons WHERE ${consLockedWhere()}`,
   },
   {
     key: 'complaint', label: '컴플레인', review: '아직 안 끝난 건', go: '/ops',
@@ -76,7 +114,7 @@ export const EXEC_AREAS: readonly ExecAreaDef[] = [
      * 배지가 8(전부)이고 열린 건은 5였다. DBML·entity 주석이 「open | acting | done」이라
      * 선언해 둔 것을 믿은 결과다. 이제 낱말은 `lib/complaint-words` 한 곳에서 온다.
      */
-    sql: `SELECT count(*)::text n FROM cpl WHERE stage IN (${sqlWordList(CPL_OPEN_STAGES)})`,
+    sql: `SELECT count(*)::text n FROM cpl WHERE ${cplOpenWhere()}`,
   },
   {
     key: 'lesson', label: '수업', review: '교재·안내·줌·리포트가 덜 된 수업', go: '/board',
@@ -101,4 +139,201 @@ export function filledAreas(memo: unknown): number {
   if (!memo || typeof memo !== 'object') return 0;
   const m = memo as Record<string, unknown>;
   return EXEC_AREA_KEYS.filter((k) => typeof m[k] === 'string' && (m[k] as string).trim() !== '').length;
+}
+
+/* ══ 기간 — 일일 · 주간 · 월간 시트 머리 (69-1 · 69-4 · D-R18) ═══════════════════════════════
+ *
+ * 주기 종류를 인자로 받지 않는다 — **기간이 말해 준다**(`monthly` 판과 같은 규약). 하루면 일일,
+ * 월요일부터 일요일까지면 주간, 달력 한 달 전체면 월간이다. 입력이 둘이면 둘이 어긋날 수 있다.
+ * 날짜 낱말도 서버가 짓는다 — 화면이 제 식으로 지으면 한 화면에 날짜가 두 모양이 된다(69-4).
+ */
+export type ExecPeriodKind = 'day' | 'week' | 'month' | 'range';
+
+const utc = (iso: string): Date => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+};
+const isoOf = (dt: Date): string => dt.toISOString().slice(0, 10);
+
+/** 달력 한 달 전체인가 — 2월처럼 끝날이 다른 달도 제 끝날을 안다 */
+export function isWholeMonth(from: string, to: string): boolean {
+  if (!from.endsWith('-01')) return false;
+  const [y, m] = from.split('-').map(Number);
+  // 다음 달 0일 = 이 달의 마지막 날. UTC 로 만들어 표준시 경계에서 하루가 밀리지 않게 한다.
+  return to === isoOf(new Date(Date.UTC(y, m, 0)));
+}
+
+export function execPeriodKind(from: string, to: string): ExecPeriodKind {
+  if (from === to) return 'day';
+  if (isWholeMonth(from, to)) return 'month';
+  const start = utc(from);
+  // 주는 **월요일에 건다** — 결재함 줄과 같은 셈이다(§73 「08-17 ~ 08-23」)
+  if (start.getUTCDay() === 1 && isoOf(new Date(start.getTime() + 6 * 86_400_000)) === to) return 'week';
+  return 'range';
+}
+
+/** 타일 이름 앞말 — 「오늘 입금」 · 「이번 주 접수」 · 「이번 달 수업」 (원본 §69~§71) */
+export const EXEC_PERIOD_WORD: Record<ExecPeriodKind, string> = {
+  day: '오늘', week: '이번 주', month: '이번 달', range: '이 기간',
+};
+
+/** 시트 머리 제목 — 「일일 업무 보고」 (원본 §69 · §70 · §71) */
+export const EXEC_SHEET_TITLE: Record<ExecPeriodKind, string> = {
+  day: '일일 업무 보고', week: '주간 업무 보고', month: '월간 업무 보고', range: '업무 보고',
+};
+
+/** 「26년 8월 21일 금요일」 — 결재함 줄(§73)과 시트 머리(§69)가 같은 함수를 쓴다 */
+export function execDayLabel(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${String(y).slice(2)}년 ${m}월 ${d}일 ${'일월화수목금토'[utc(iso).getUTCDay()]}요일`;
+}
+
+/** 시트 머리·도구 줄의 기간 — 「26년 8월 21일 금요일」 · 「08월 17일 ~ 08월 23일」 · 「2026년 8월」 */
+export function execPeriodLabel(kind: ExecPeriodKind, from: string, to: string): string {
+  const mmdd = (iso: string) => `${iso.slice(5, 7)}월 ${iso.slice(8, 10)}일`;
+  if (kind === 'day') return execDayLabel(from);
+  if (kind === 'week') return `${mmdd(from)} ~ ${mmdd(to)}`;
+  if (kind === 'month') return `${from.slice(0, 4)}년 ${Number(from.slice(5, 7))}월`;
+  return `${from} ~ ${to}`;
+}
+
+/* ══ 영역 카드의 한 줄 요약과 타일 (69-8 · 원본 §69~§71) ═══════════════════════════════════
+ *
+ * 숫자는 서비스가 원장에서 센 **사실**(`ExecAreaFacts`)이고, 문장과 타일은 이 순수 함수가 짓는다 —
+ * 화면이 문장을 조립하면 권한(금액 가림)이 화면에 흩어진다(D-R18 · D-R39). 금액 사실은 볼 권한이
+ * 없으면 서비스가 **세지 않고** null 로 준다. 그러면 문장에서 금액이 빠지고 타일 값도 null 이다.
+ *
+ * 펼칠 **줄**(「기한 지난 청구서 2건 펼치기 ▾」)은 여기 없다 — N-67 결정 대기다.
+ */
+export interface ExecAreaTile {
+  key: string;
+  label: string;
+  /** null = 금액을 볼 권한이 없다 (0 이 아니다) */
+  value: number | null;
+  unit: '원' | '건';
+  sub: string | null;
+  /** 붉게 볼 칸인가 — 손봐야 할 것이 있다 */
+  alert: boolean;
+  /** 값 대신 그릴 글 — 「없음」. 없으면 null */
+  display: string | null;
+}
+
+export interface ExecAreaDetail {
+  headline: string;
+  tiles: ExecAreaTile[];
+}
+
+export interface ExecAreaFacts {
+  money: {
+    inCount: number; inSum: number | null;
+    unpaidCount: number; unpaidSum: number | null;
+    overdueCount: number; overdueSum: number | null;
+  };
+  mkt: { posts: number; channels: number; topChannel: string | null; topCount: number; comments: number };
+  ops: { waiting: number; running: number; meetings: number; openTodos: number };
+  consulting: { locked: number; paid: number | null; contract: number | null; nextOn: string | null };
+  complaint: { received: number; receivedNames: string[]; open: number };
+  lesson: { lessons: number; missing: number; canceled: number; missingMarks: string[] };
+}
+
+/** 원화 — 원본 §69 의 「₩8,550,000」 모양. 음수는 「₩-7,674,692」(원본 §71) */
+export const krw = (n: number): string => `₩${n.toLocaleString('ko-KR')}`;
+
+/** 현황판 네 판정 축의 낱말 — 순서는 `BOARD_MARK_KEYS` 와 같다(교재 · 안내 · 줌 · 리포트) */
+export const EXEC_LESSON_MARK_LABEL: Record<string, string> = {
+  book: '교재', guide: '안내', zoom: '줌', report: '리포트',
+};
+
+const tile = (
+  key: string, label: string, value: number | null, unit: '원' | '건',
+  o: { sub?: string | null; alert?: boolean; display?: string | null } = {},
+): ExecAreaTile => ({ key, label, value, unit, sub: o.sub ?? null, alert: o.alert ?? false, display: o.display ?? null });
+
+/** 이름 몇 개 — 셋이 넘으면 「외 N명」. 없으면 「—」 (원본 §70 「양찬욱, 고은설」) */
+const names = (list: readonly string[]): string =>
+  list.length === 0 ? '—' : list.length <= 3 ? list.join(', ') : `${list.slice(0, 3).join(', ')} 외 ${list.length - 3}명`;
+
+export function execAreaDetails(kind: ExecPeriodKind, f: ExecAreaFacts): Record<ExecAreaKey, ExecAreaDetail> {
+  const w = EXEC_PERIOD_WORD[kind];
+  const m = f.money;
+  const unpaidText = m.unpaidSum === null ? `${m.unpaidCount}건` : krw(m.unpaidSum);
+  const moneyHead = kind === 'month'
+    ? (m.inSum === null
+      ? `${w} 입금 ${m.inCount}건 · 못 받은 돈 ${unpaidText}`
+      : `${w} ${krw(m.inSum)} 들어왔고 · 못 받은 돈 ${unpaidText}`)
+    : m.unpaidCount === 0
+      ? '못 받은 돈이 없습니다'
+      : `못 받은 돈 ${unpaidText}${m.overdueCount > 0 ? ` · 그중 ${m.overdueCount}건은 기한이 지났습니다` : ''}`;
+
+  const k = f.mkt;
+  const mktHead = k.posts === 0
+    ? `${w} 올린 것이 없습니다`
+    : `${w} ${k.posts}건 올렸습니다${k.topChannel ? ` · ${k.topChannel} ${k.topCount}건이 가장 많습니다` : ''}`;
+
+  const o = f.ops;
+  const c = f.consulting;
+  const due = c.contract !== null && c.paid !== null ? c.contract - c.paid : null;
+  const p = f.complaint;
+  const l = f.lesson;
+  const lessonHead = l.lessons === 0 && l.canceled === 0
+    ? `${w} 수업이 없습니다`
+    : `수업 ${l.lessons}건 중 ${l.missing}건 준비 덜 됨${l.canceled > 0 ? ` · 휴강 ${l.canceled}건` : ''}`;
+
+  return {
+    money: {
+      headline: moneyHead,
+      tiles: [
+        tile('in', `${w} 입금`, m.inSum, '원', { sub: `${m.inCount}건` }),
+        tile('unpaid', '못 받은 돈', m.unpaidSum, '원', { sub: `${m.unpaidCount}건`, alert: m.unpaidCount > 0 }),
+        tile('overdue', '기한 지남', m.overdueCount, '건', {
+          sub: m.overdueCount > 0 && m.overdueSum !== null ? krw(m.overdueSum) : null,
+          alert: m.overdueCount > 0,
+          display: m.overdueCount === 0 ? '없음' : null,
+        }),
+      ],
+    },
+    mkt: {
+      headline: mktHead,
+      tiles: [
+        // 아무것도 안 올렸으면 붉게 — 원본 §69 「올린 것 0건」 칸이 그렇다
+        tile('posts', '올린 것', k.posts, '건', { sub: k.posts > 0 ? `채널 ${k.channels}종` : '—', alert: k.posts === 0 }),
+        tile('feedback', '대표 피드백', k.comments, '건', { sub: k.comments > 0 ? '답변 확인' : '없음' }),
+      ],
+    },
+    ops: {
+      headline: o.waiting > 0 ? `기획 ${o.waiting}건이 대표 결재를 기다립니다` : '대표 결재를 기다리는 기획이 없습니다',
+      tiles: [
+        tile('waiting', '결재 대기', o.waiting, '건', { sub: o.waiting > 0 ? '확인 필요' : null, alert: o.waiting > 0 }),
+        tile('running', '진행 중 기획', o.running, '건', { sub: `${w} 회의 ${o.meetings}건` }),
+        tile('todos', '안 끝난 할 일', o.openTodos, '건'),
+      ],
+    },
+    consulting: {
+      headline: c.locked > 0 ? `${c.locked}건이 수납 전이라 진행이 잠겨 있습니다` : '수납 전이라 잠긴 컨설팅이 없습니다',
+      tiles: [
+        tile('paid', '받은 돈', c.paid, '원', { sub: c.contract === null ? null : `계약 ${krw(c.contract)}` }),
+        tile('due', '남은 돈', due, '원', {
+          sub: c.nextOn ? `다음 회차 ${c.nextOn.slice(5)}` : '예정 없음',
+          alert: (due ?? 0) > 0,
+        }),
+      ],
+    },
+    complaint: {
+      headline: p.open > 0 ? `${p.open}건이 아직 안 끝났습니다` : '안 끝난 컴플레인이 없습니다',
+      tiles: [
+        tile('received', `${w} 접수`, p.received, '건', { sub: names(p.receivedNames) }),
+        tile('open', '안 끝난 것', p.open, '건', { alert: p.open > 0 }),
+      ],
+    },
+    lesson: {
+      headline: lessonHead,
+      tiles: [
+        tile('lessons', `${w} 수업`, l.lessons, '건', { sub: l.canceled > 0 ? `휴강 ${l.canceled}건` : '휴강 없음' }),
+        tile('missing', '준비 안 됨', l.missing, '건', {
+          sub: l.missingMarks.length > 0 ? l.missingMarks.join(' · ') : '—',
+          alert: l.missing > 0,
+        }),
+      ],
+    },
+  };
 }

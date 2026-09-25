@@ -76,6 +76,10 @@ export class ReportRowDto {
 export class UnwrittenByTeacherDto {
   @ApiProperty() teacherId!: number;
   @ApiProperty() teacherName!: string;
+  @ApiProperty({ description: '역할 낱말(강사 · 매니저 …) — 서버 lib/role-words 한 벌. 오른쪽 머리 「이름 · 역할」 (g5 47-07)' })
+  roleLabel!: string;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '직함(staff.title) — 원문 「Sophia 강사 · 코디네이터」의 뒤 낱말. 없으면 null' })
+  title?: string | null;
   @ApiProperty() count!: number;
   @ApiPropertyOptional({ type: String, nullable: true, description: '가장 오래된 것' }) oldestDate?: string | null;
   @ApiProperty({ description: '1시간 넘긴 건수' }) over1h!: number;
@@ -236,10 +240,20 @@ export class ReportDeliveryQueryDto {
   onDate?: string;
 }
 
+export const REPORT_SEND_SPANS = ['day', 'week', 'month'] as const;
+export type ReportSendSpan = (typeof REPORT_SEND_SPANS)[number];
+
 export class ReportDeliveryHistoryQueryDto extends ReportDeliveryQueryDto {
   @ApiPropertyOptional(ID_SCHEMA) @ValidateIf((_object, value) => value !== undefined)
   @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   repId?: number;
+
+  @ApiPropertyOptional({
+    enum: REPORT_SEND_SPANS,
+    description: '보낸 내역을 묶는 눈금 — 일별 · 주별(월요일 시작) · 월별. 보낸 시각(KST) 기준. 없으면 groups 는 빈 배열',
+  })
+  @ValidateIf((_object, value) => value !== undefined) @IsIn(REPORT_SEND_SPANS)
+  span?: ReportSendSpan;
 }
 
 export class ReportDeliveryStudentDto {
@@ -276,11 +290,32 @@ export class ReportSendHistoryDto {
   @ApiProperty() sentAt!: string;
   @ApiProperty() sentBy!: number;
   @ApiProperty() sentByName!: string;
+  @ApiProperty({ type: [String], description: '보낸 리포트들의 과목 이름(없으면 종류 이름) — 원문 줄 「과목 · 강사 · 08-19 수업」' })
+  subjectNames!: string[];
+  @ApiProperty({ type: [String], description: '보낸 리포트들의 강사 이름 — 회차 강사, 없으면 리포트 작성 강사' })
+  teacherNames!: string[];
+}
+
+/** §48 보낸 내역 묶음 한 칸 — 「08-17 ~ 08-23 · 1건 · 기록지 1 · 1명」 (g5 48-02) */
+export class ReportSendGroupDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '묶음 첫날(KST) — 주는 월요일, 달은 1일' }) from!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '묶음 끝날(KST)' }) to!: string;
+  @ApiProperty({ description: '묶음 이름 — 일 「MM-DD」 · 주 「MM-DD ~ MM-DD」 · 달 「YYYY년 M월」' }) label!: string;
+  @ApiProperty({ description: '보낸 건수(재발송 포함)' }) count!: number;
+  @ApiProperty({ description: '보존된 기록지(PNG) 장수 — fileCount 합' }) sheets!: number;
+  @ApiProperty({ description: '받은 학생 수' }) students!: number;
+  @ApiProperty({ type: [Number], description: '이 묶음에 든 발송 id(최신 먼저) — 화면이 items 를 이 묶음에 놓는다' })
+  sendIds!: number[];
 }
 
 export class ReportSendHistoryListDto {
   @ApiProperty({ description: '필터에 맞는 전체 이력 수. items 100건 상한과 분리한다.' }) total!: number;
   @ApiProperty({ type: [ReportSendHistoryDto] }) items!: ReportSendHistoryDto[];
+  @ApiPropertyOptional({ enum: REPORT_SEND_SPANS, nullable: true, description: '요청한 눈금 — 없으면 null' })
+  span?: ReportSendSpan | null;
+  @ApiProperty({ type: [ReportSendGroupDto], description: 'span 묶음(최신 먼저). 건수·기록지·인원은 100건 상한 밖까지 센다' })
+  groups!: ReportSendGroupDto[];
+  @ApiProperty({ description: '필터에 맞는 기록지 전체 장수 — 머리 「기록지 N장」' }) sheets!: number;
 }
 
 export class ReportDeliveryResultDto {

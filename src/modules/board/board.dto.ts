@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: board.dto.ts — BoardQueryDto, CheckMarkDto, BoardRowDto, BoardMarkCountDto, BoardSummaryDto 등 (dto)
+ * 목적: board.dto.ts — BoardQueryDto, CheckMarkDto, BoardRowDto, BoardSummaryDto, BoardDayDto, BoardFacetsDto 등 (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -64,6 +64,11 @@ export class BoardRowDto {
   @ApiPropertyOptional({ type: Number, nullable: true }) teacherId!: number | null;
   @ApiPropertyOptional(S) teacherName?: string | null;
   @ApiPropertyOptional(S) roomName?: string | null;
+  @ApiPropertyOptional({
+    ...S,
+    description: '온라인 회차에 붙은 줌 계정 이름 — 장소 배지 「온라인 {이름}」(§34). 없으면 null',
+  })
+  zaccLabel?: string | null;
   @ApiProperty({ enum: ['offline', 'online'] }) mode!: string;
   @ApiProperty() kindKey!: string;
   @ApiPropertyOptional(S) kindName?: string | null;
@@ -125,6 +130,42 @@ export class BoardWeekDto {
   @ApiProperty() missing!: number;
 }
 
+/** §35 요일 머리 「월 17 · 6 남음」 · §36 달력 칸 — 날짜 하나 (화면이 rows 를 다시 세지 않는다 · D-R37) */
+export class BoardDayDto {
+  @ApiProperty({ description: '회차 span의 실제 날짜' }) date!: string;
+  @ApiProperty({ description: '휴강을 뺀 수업 수' }) lessons!: number;
+  @ApiProperty({ description: '네 축 중 하나라도 덜 된 수업 수 — 「N 남음」' }) remaining!: number;
+  @ApiProperty({ description: '그날 휴강한 수업 수' }) canceled!: number;
+  @ApiProperty({ type: [String], description: '그날 수업의 과목 키 — 시각 순 처음 나온 순서, 겹치지 않게(달력 칸 색 점)' })
+  subKeys!: string[];
+}
+
+/** 필터 칩 하나 — 과목 */
+export class BoardFacetSubjectDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: '그 기간의 (휴강 아닌) 수업 수' }) lessons!: number;
+}
+
+/** 필터 칩 하나 — 강사 */
+export class BoardFacetTeacherDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: '그 기간의 (휴강 아닌) 수업 수' }) lessons!: number;
+}
+
+/**
+ * §34 필터 칩 줄 두 줄 — 「그 기간에 나온 과목·강사만 선다」.
+ * 과목·강사 필터를 **걸기 전**의 그 기간을 센다 — 거른 결과로 세면 하나를 고르는 순간 나머지 칩이 사라진다.
+ * 강사 본인 범위(강사 계정)는 그대로 지킨다.
+ */
+export class BoardFacetsDto {
+  @ApiProperty({ type: [BoardFacetSubjectDto], description: '과목 코드표 순서(sort) → 이름' })
+  subjects!: BoardFacetSubjectDto[];
+  @ApiProperty({ type: [BoardFacetTeacherDto], description: '이름 순' })
+  teachers!: BoardFacetTeacherDto[];
+}
+
 export class BoardDto {
   @ApiProperty() from!: string;
   @ApiProperty() to!: string;
@@ -133,6 +174,9 @@ export class BoardDto {
   @ApiProperty({ type: BoardSummaryDto }) summary!: BoardSummaryDto;
   @ApiProperty({ type: [BoardTeacherRowDto] }) teacherRows!: BoardTeacherRowDto[];
   @ApiProperty({ type: [BoardWeekDto] }) weeks!: BoardWeekDto[];
+  @ApiProperty({ type: [BoardDayDto], description: '날짜별 집계 — §35 요일 머리 · §36 달력 칸' })
+  days!: BoardDayDto[];
+  @ApiProperty({ type: BoardFacetsDto }) facets!: BoardFacetsDto;
   @ApiProperty({ description: '저장하지 않는다는 사실을 화면이 그대로 적을 수 있게 (D-R4)' })
   computedAt!: string;
 }

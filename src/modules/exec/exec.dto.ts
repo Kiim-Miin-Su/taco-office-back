@@ -82,6 +82,32 @@ export class ExecStatDto {
   @ApiPropertyOptional({ ...N, description: '볼 권한이 없으면 null (D-R39)' }) value?: number | null;
   @ApiPropertyOptional(S) unit?: string | null;
   @ApiProperty({ description: '금액이라 권한을 타는 칸인가' }) money!: boolean;
+  @ApiPropertyOptional({
+    ...N,
+    description: '「6/49」처럼 분모가 있는 칸의 분모 — 원본 §70 「수업 준비 6/49」. 분모가 없는 칸은 null (69-6 · 70-1)',
+  })
+  total?: number | null;
+  @ApiPropertyOptional({
+    ...S,
+    description: '값 아래 한 줄 — 「다 된 것」 · 이익의 「-268%」(원본 §70 · §71). 서버가 짓는다. 없으면 null',
+  })
+  note?: string | null;
+}
+
+/**
+ * §69 영역 카드 안의 타일 한 칸 — 「오늘 입금 ₩0 · 0건」 (69-8).
+ * 판정은 `lib/exec-areas` 의 판정 조각과 같은 집합이다 — 배지 「2」와 타일 「기한 지남 2건」이 갈리지 않는다.
+ */
+export class ExecAreaTileDto {
+  @ApiProperty() key!: string;
+  @ApiProperty({ description: '「오늘 입금」 · 「이번 주 접수」 — 기간 앞말까지 서버가 붙인다' }) label!: string;
+  @ApiProperty({ ...N, description: '금액 칸인데 볼 권한이 없으면 null — 0 이 아니다 (D-R39)' }) value!: number | null;
+  @ApiProperty({ enum: ['원', '건'] }) unit!: string;
+  @ApiProperty({ ...S, description: '값 아래 한 줄 — 「5건」 · 「계약 ₩1,700,000」 · 「교재 · 안내 · 줌」. 없으면 null' })
+  sub!: string | null;
+  @ApiProperty({ description: '손봐야 할 것이 있어 붉게 볼 칸인가 — 서버 판정' }) alert!: boolean;
+  @ApiProperty({ ...S, description: '값 대신 그릴 글 — 기한 지난 것이 0 이면 「없음」(원본 §71). 없으면 null' })
+  display!: string | null;
 }
 
 /** §69 6영역 한 칸 — 저장하지 않고 매번 센다 (D-R4 · DEV-SPEC §5.3) */
@@ -91,6 +117,13 @@ export class ExecAreaDto {
   @ApiProperty({ description: '무엇을 살펴볼 것으로 세는지 한 줄' }) review!: string;
   @ApiProperty({ description: '살펴볼 것 건수. 마케팅은 정보성이라 항상 0 이다' }) count!: number;
   @ApiProperty({ description: '줄을 누르면 가는 곳 — 결재 흐름은 이동만 한다 (D-R27)' }) go!: string;
+  @ApiProperty({
+    description: '카드 한 줄 요약 — 「못 받은 돈 ₩8,550,000 · 그중 2건은 기한이 지났습니다」(원본 §69). '
+      + '금액을 볼 수 없으면 금액이 빠진 문장이다 (69-8 · D-R39)',
+  })
+  headline!: string;
+  @ApiProperty({ type: () => [ExecAreaTileDto], description: '카드 안 타일 2~3 — 순서·낱말은 서버가 정한다 (69-8)' })
+  tiles!: ExecAreaTileDto[];
 }
 
 /**
@@ -158,6 +191,25 @@ export class ExecMonthlyDto {
 export class ExecDto {
   @ApiProperty() from!: string;
   @ApiProperty() to!: string;
+  @ApiProperty({
+    enum: ['day', 'week', 'month', 'range'],
+    description: '기간이 말해 주는 주기 — 하루=day · 월~일=week · 달력 한 달=month · 그 밖=range. 인자로 받지 않는다',
+  })
+  periodKind!: string;
+  @ApiProperty({ description: '시트 머리 제목 — 「일일 업무 보고」 · 「주간 업무 보고」 · 「월간 업무 보고」 (69-1)' })
+  sheetTitle!: string;
+  @ApiProperty({
+    description: '시트 머리·도구 줄의 기간 — 「26년 8월 21일 금요일」 · 「08월 17일 ~ 08월 23일」 · 「2026년 8월」. '
+      + '결재함 줄과 같은 함수로 짓는다 (69-4 · D-R18)',
+  })
+  periodLabel!: string;
+  @ApiProperty({
+    type: [ExecStatDto],
+    description: '시트 머리 지표 넷 — 기간마다 원문 칸이 다르다. 일일: 들어온 돈 · 못 받은 돈 · 결재 대기 · 안 끝난 컴플레인 / '
+      + '주간: 입금 · 신규 문의 · 마케팅 게시 · 수업 준비 x/y / 월간: 매출 (입금) · 강사료 · 지출 · 이익 (69-6 · 70-1 · 71-1). '
+      + '결재 대기·컴플레인은 영역 타일과 같은 판정이다',
+  })
+  head!: ExecStatDto[];
   @ApiProperty({ type: [ExecStatDto] }) stats!: ExecStatDto[];
   @ApiProperty({ type: [ExecReportDto] }) reports!: ExecReportDto[];
   @ApiProperty({ type: [ExecAreaDto], description: '§69 6영역 — 대표 관심순 고정' }) areas!: ExecAreaDto[];

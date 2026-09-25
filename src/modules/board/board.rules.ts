@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: board.rules.ts — BOARD_MARK_KEYS, BoardMarkKey, BOARD_MAX_RANGE_DAYS, BoardMarkValue, BoardSourceRow 등 (util)
+ * 목적: board.rules.ts — BOARD_MARK_KEYS, BoardMarkKey, BOARD_MAX_RANGE_DAYS, BoardMarkValue, BoardSourceRow, BoardDay 등 (util)
  * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -27,6 +27,25 @@ export interface BoardSourceRow {
   onDate: string;
   canceled: boolean;
   marks: BoardMarkValue[];
+  /** 과목 키 — §36 달력 칸의 과목색 점. 없는 종류(회의 등)는 null */
+  subKey?: string | null;
+}
+
+/**
+ * §35 요일 머리 「월 17 · 6 남음」 · §36 달력 칸 「날짜 · 건수 · N 남음 · 과목색 점」 — 날짜 하나.
+ * 화면이 rows 를 다시 세면 머리 칸과 칸 숫자가 갈린다 (D-R37 · N-19).
+ */
+export interface BoardDay {
+  /** 실제 span 날짜 */
+  date: string;
+  /** 휴강을 뺀 수업 수 */
+  lessons: number;
+  /** 네 축 중 하나라도 덜 된 수업 수 — 「N 남음」 */
+  remaining: number;
+  /** 그날 휴강한 수업 수 */
+  canceled: number;
+  /** 그날 (휴강 아닌) 수업의 과목 키 — 처음 나온 순서, 겹치지 않게 */
+  subKeys: string[];
 }
 
 export interface BoardMarkCount {
@@ -95,7 +114,7 @@ function weekLabel(rows: readonly BoardSourceRow[], weekStart: string): string {
 }
 
 /**
- * 회차별 clChk 결과를 §35 강사×요일과 §36 월 KPI/주차 표로 합성한다.
+ * 회차별 clChk 결과를 §35 요일 칸·강사×요일과 §36 달력 칸·월 KPI/주차 표로 합성한다.
  * 취소 회차와 N/A 마크는 분모에서 제외하며 어떤 집계도 DB에 저장하지 않는다 (D-R4).
  */
 export function boardSummary(rows: readonly BoardSourceRow[]) {
@@ -159,7 +178,29 @@ export function boardSummary(rows: readonly BoardSourceRow[]) {
       };
     });
 
+  const dayGroups = new Map<string, BoardSourceRow[]>();
+  for (const row of rows) {
+    const group = dayGroups.get(row.date) ?? [];
+    group.push(row);
+    dayGroups.set(row.date, group);
+  }
+  const days: BoardDay[] = [...dayGroups.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, dayRows]) => {
+      const lessons = dayRows.filter((row) => !row.canceled);
+      const subKeys: string[] = [];
+      for (const row of lessons) if (row.subKey && !subKeys.includes(row.subKey)) subKeys.push(row.subKey);
+      return {
+        date,
+        lessons: lessons.length,
+        remaining: lessons.filter((row) => missingOf(markCounts([row])) > 0).length,
+        canceled: dayRows.length - lessons.length,
+        subKeys,
+      };
+    });
+
   return {
+    days,
     summary: {
       lessons: active.length,
       marks: summaryMarks,

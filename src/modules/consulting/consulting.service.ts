@@ -10,7 +10,8 @@ import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { hasPerm, isRole } from '../../common/perm';
 import { overdueDays as daysSince, todayKst } from '../../lib/kst';
-import { csCan, csCanAmount, csCanFull, type ConsShare, type ConsViewer } from '../../lib/rules';
+import { END_MIN, START_MIN, kstAt, kstDateOf } from '../../lib/sql';
+import { CONS_SHARES, csCan, csCanAmount, csCanFull, type ConsShare, type ConsViewer } from '../../lib/rules';
 import { INV_TYPE_LABEL } from '../accounting/accounting.dto';
 import { fileUrlOf, storeFile } from '../files/files.service';
 import type {
@@ -21,9 +22,11 @@ import type {
   ConsultingFileCreateDto, ConsultingSessionDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
 import {
+  CONSULTING_CONTRACT_STEPS, CONSULTING_CONTRACT_STEP_SUB,
   CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB,
   CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
-  consShareLabel, consultingCloseIssue, consultingContractStepLabel, consultingRecordIssue,
+  consSessDoneSql, consShareLabel, consShareMeaning, consultingCloseIssue, consultingContractStepLabel, consultingRecordIssue,
+  consultingSessionRecorded,
   consultingRemainingMessage, consultingRequesterLabel,
   consultingSessionAddIssue, consultingSessionDone, consultingSessionIssue, consultingStageLabel,
   type ConsultingFileRole, type ConsultingType,
@@ -32,9 +35,70 @@ import {
 
 type R = Record<string, unknown>;
 
+/**
+ * §31 진행 항목 한 줄 — SELECT 와 매핑이 **여기 하나**다. 목록 · 학생별 · 항목 체크 응답이 같은 칸을 읽는다
+ * (셋이 따로 적고 있어 처리 시각(31-04)을 한 곳에만 더하면 나머지가 낡았다 · D-R22).
+ */
+const CONS_ITEM_SELECT = `SELECT i.id, i.cons_id, i.seq, i.label, i.required, i.done, i.source,
+              to_char(${kstDateOf('i.done_at')},'YYYY-MM-DD') AS done_on,
+              CASE WHEN i.done_at IS NULL THEN NULL ELSE ${kstAt('i.done_at')} END AS done_at_text,
+              s.name AS done_by_name
+         FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by`;
+
+function consItemDto(r: R): ConsItemDto {
+  return {
+    id: Number(r.id), seq: Number(r.seq), label: String(r.label),
+    required: r.required === true, done: r.done === true, source: String(r.source),
+    doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
+    doneAt: (r.done_at_text as string) ?? null,
+  };
+}
+
+/**
+ * §31 회차 한 줄 — SELECT 와 매핑이 **여기 하나**다(목록 · 회차 고치기 응답 · 31-07 · 31-08).
+ * 회차 머리의 시각 · 담당 · 강의실은 **이어진 시간표 회차에서 읽는다** — 같은 사실을 `cons_sess` 에 또 적지 않는다(D-R22).
+ * 규칙이 원래 찍은 날(`o.on_date`)과 그려지는 날이 다를 수 있어(옮긴 회차) 그려지는 날이 같은 줄을 먼저 고른다.
+ */
+export const CONS_SESS_SELECT = `SELECT x.id, x.cons_id, x.seq, to_char(x.on_date,'YYYY-MM-DD') AS on_date,
+              x.who, x.what, x.why, x.how, x.ser_id, x.result, x.next_until,
+              oc.start_min, oc.end_min, oc.staff_name, oc.room_name
+         FROM cons_sess x
+         LEFT JOIN LATERAL (
+           SELECT ${START_MIN} AS start_min, ${END_MIN} AS end_min, st.name AS staff_name, rm.name AS room_name
+             FROM ser_occ o JOIN ser s ON s.id = o.ser_id
+             LEFT JOIN staff st ON st.id = COALESCE(o.teacher_id, s.teacher_id)
+             LEFT JOIN room rm ON rm.id = COALESCE(o.room_id, s.room_id)
+            WHERE o.ser_id = x.ser_id AND (o.on_date = x.on_date OR ${kstDateOf('lower(o.span)')} = x.on_date)
+            ORDER BY (${kstDateOf('lower(o.span)')} = x.on_date) DESC, o.id
+            LIMIT 1
+         ) oc ON true`;
+
+export function consSessDto(r: R, today: string): ConsultingSessionDto {
+  const onDate = (r.on_date as string) ?? null;
+  const text = (v: unknown) => (v as string) ?? null;
+  return {
+    id: Number(r.id), seq: Number(r.seq), onDate,
+    who: text(r.who), what: text(r.what), why: text(r.why), how: text(r.how),
+    serId: r.ser_id === null || r.ser_id === undefined ? null : Number(r.ser_id),
+    // 기록 ≠ 완료 (N-18) — 앞으로 잡아 둔 날짜는 아직 한 회차가 아니다
+    done: consultingSessionDone(onDate, today),
+    startMin: r.start_min == null ? null : Number(r.start_min),
+    endMin: r.end_min == null ? null : Number(r.end_min),
+    staffName: text(r.staff_name), roomName: text(r.room_name),
+    recorded: consultingSessionRecorded({ what: text(r.what), why: text(r.why), how: text(r.how) }),
+    result: text(r.result), nextUntil: text(r.next_until),
+  };
+}
+
 function assertRecord(record: { stage: unknown; contractStep: unknown; sessions: unknown }): asserts record is ConsultingRecord {
   if (consultingRecordIssue(record)) throw new InternalServerErrorException('컨설팅 데이터 무결성 오류');
 }
+
+/**
+ * 「청구서로 전환」한 뒤의 납부 (PB-03). 문장은 단추(`payGate`)와 쓰기(`addPayment` 409)가 **같은 것**을 쓴다.
+ * 전환 청구서는 남은 돈을 담고 있어서, 여기에 `cons_pay` 를 또 적으면 같은 돈이 두 원장에 선다.
+ */
+const CONS_PAY_INVOICED_MESSAGE = '청구서로 전환한 건입니다 — 입금은 회계 화면의 그 청구서에 기록하세요';
 
 /**
  * 컨설팅 — 권한이 **두 층**이다 (DEV-SPEC §4.4).
@@ -88,7 +152,7 @@ export class ConsultingService {
     if (share === 'private' && !canHide) {
       throw new ForbiddenException({
         code: 'CONS_PRIVATE_FORBIDDEN',
-        message: '비공개로 지정하는 것은 대표만 할 수 있습니다 — §76',
+        message: '비공개로 지정하는 것은 대표만 할 수 있습니다',
       });
     }
   }
@@ -244,7 +308,7 @@ export class ConsultingService {
     /* C95 — 회차·필수 항목·종료 도장. 세는 것은 전부 여기다 (D-R37) */
     const today = todayKst();
     const [counts] = await q<{ done: number; planned: number; required_left: number }>(
-      `SELECT (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND (x.on_date IS NULL OR x.on_date <= $2::date)) AS done,
+      `SELECT (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND ${consSessDoneSql('x', '$2')}) AS done,
               (SELECT count(*)::int FROM cons_sess x WHERE x.cons_id=$1 AND x.on_date > $2::date) AS planned,
               (SELECT count(*)::int FROM cons_item i WHERE i.cons_id=$1 AND i.required AND NOT i.done) AS required_left`,
       [consId, today],
@@ -290,17 +354,24 @@ export class ConsultingService {
       amount,
       sessions: detail.sessions == null ? null : Number(detail.sessions),
       share,
+      shareLabel: consShareLabel(share),
+      shareMeaning: consShareMeaning(share),
+      contractSteps: CONSULTING_CONTRACT_STEPS.map((label, i) => ({ step: i + 1, label, sub: CONSULTING_CONTRACT_STEP_SUB[i] })),
       pickedStaffIds: picked.map((s) => Number(s.id)),
       pickedStaffNames: picked.map((s) => String(s.name)),
       createdAt: String(detail.created_at_text),
+      /*
+       * 「회차 기록」은 C95 부터 **시간표 회차(SER)를 실제로 만든다**(있으면 잇는다 · `ConsultingSessionService.addSessions`).
+       * 여기만 「약정 회차만 저장합니다」라 적혀 있어 모든 상세에 사실과 다른 배너가 섰다 (30-02). 유형과 무관하다.
+       */
       typeCapability: consType === 'admissions'
         ? {
           defaultItemsSupported: true, reason: null,
-          scheduleCreationSupported: false, scheduleCreationReason: '실제 일정 생성 규칙이 확정되지 않아 약정 회차만 저장합니다',
+          scheduleCreationSupported: true, scheduleCreationReason: null,
         }
         : {
           defaultItemsSupported: false, reason: '이 유형의 기본 항목 템플릿은 아직 확정되지 않았습니다',
-          scheduleCreationSupported: false, scheduleCreationReason: '실제 일정 생성 규칙이 확정되지 않아 약정 회차만 저장합니다',
+          scheduleCreationSupported: true, scheduleCreationReason: null,
         },
       capabilities: {
         canEdit: mutable,
@@ -315,7 +386,7 @@ export class ConsultingService {
         canAddSignedFile: mutable && step === 4 && Boolean(delivery) && files.length < CONSULTING_FILE_MAX,
         // 상세도 같은 판정을 쓴다 — 전에는 레거시 행에서 **서버는 받는데 단추가 안 서는** 반대 방향 불일치였다 (S5)
         ...ConsultingService.payGate({
-          canMoney, stage, contractStep: step, legacy: detail.start_on == null && detail.requester == null, due,
+          canMoney, stage, contractStep: step, legacy: detail.start_on == null && detail.requester == null, due, invId,
         }),
         canCreateInvoice: canMoney && invId === null && this.invoiceable(step, due),
         canArchive: true,
@@ -537,26 +608,18 @@ export class ConsultingService {
     });
     const fullIds = visible.filter(({ full }) => full).map(({ r }) => Number(r.id));
     const logs = fullIds.length ? await this.q(
-      `SELECT id, cons_id, seq, to_char(on_date,'YYYY-MM-DD') AS on_date, who, what, why, how, ser_id
-         FROM cons_sess WHERE cons_id = ANY($1::bigint[]) ORDER BY cons_id, seq`,
+      `${CONS_SESS_SELECT} WHERE x.cons_id = ANY($1::bigint[]) ORDER BY x.cons_id, x.seq`,
       [fullIds],
     ) : [];
     const itemRows = fullIds.length ? await this.q(
-      `SELECT i.id, i.cons_id, i.seq, i.label, i.required, i.done, i.source,
-              to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
-         FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
-        WHERE i.cons_id = ANY($1::bigint[]) ORDER BY i.cons_id, i.seq`,
+      `${CONS_ITEM_SELECT} WHERE i.cons_id = ANY($1::bigint[]) ORDER BY i.cons_id, i.seq`,
       [fullIds],
     ) : [];
     const itemsByCons = new Map<number, ConsItemDto[]>();
     for (const r of itemRows) {
       const k = Number(r.cons_id);
       if (!itemsByCons.has(k)) itemsByCons.set(k, []);
-      itemsByCons.get(k)!.push({
-        id: Number(r.id), seq: Number(r.seq), label: String(r.label),
-        required: r.required === true, done: r.done === true, source: String(r.source),
-        doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
-      });
+      itemsByCons.get(k)!.push(consItemDto(r));
     }
 
     const byCons = new Map<number, ConsultingSessionDto[]>();
@@ -564,15 +627,7 @@ export class ConsultingService {
     for (const r of logs) {
       const k = Number(r.cons_id);
       if (!byCons.has(k)) byCons.set(k, []);
-      const onDate = (r.on_date as string) ?? null;
-      byCons.get(k)!.push({
-        id: Number(r.id), seq: Number(r.seq), onDate,
-        who: (r.who as string) ?? null, what: (r.what as string) ?? null,
-        why: (r.why as string) ?? null, how: (r.how as string) ?? null,
-        serId: r.ser_id === null || r.ser_id === undefined ? null : Number(r.ser_id),
-        // 기록 ≠ 완료 (N-18) — 앞으로 잡아 둔 날짜는 아직 한 회차가 아니다
-        done: consultingSessionDone(onDate, today),
-      });
+      byCons.get(k)!.push(consSessDto(r, today));
     }
 
     for (const sessions of byCons.values()) {
@@ -623,6 +678,8 @@ export class ConsultingService {
       stages: CONSULTING_STAGES.map((key) => ({
         key, label: CONSULTING_STAGE_LABEL[key], sub: CONSULTING_STAGE_SUB[key],
       })),
+      // 공개 범위 넷의 이름과 뜻 — §29 칩 아래 한 줄(29-06)도 §30 배너와 같은 낱말이다 (D-R18)
+      shares: CONS_SHARES.map((key) => ({ key, label: consShareLabel(key), meaning: consShareMeaning(key) ?? '' })),
     };
   }
 
@@ -665,17 +722,8 @@ export class ConsultingService {
         `INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,$2,$3,$4)`,
         [consId, dto.done ? 'item_done' : 'item_undone', itemId, viewerId],
       );
-      const [r] = (await m.query(
-        `SELECT i.id, i.seq, i.label, i.required, i.done, i.source,
-                to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
-           FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
-          WHERE i.id = $1`, [itemId],
-      )) as R[];
-      return {
-        id: Number(r.id), seq: Number(r.seq), label: String(r.label),
-        required: r.required === true, done: r.done === true, source: String(r.source),
-        doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
-      };
+      const [r] = (await m.query(`${CONS_ITEM_SELECT} WHERE i.id = $1`, [itemId])) as R[];
+      return consItemDto(r);
     });
   }
 
@@ -780,7 +828,7 @@ export class ConsultingService {
         invId,
         canInvoice: money && invId === null && this.invoiceable(record.contractStep, due),
         ...ConsultingService.payGate({
-          canMoney: money, stage, contractStep: record.contractStep, legacy: r.legacy === true, due,
+          canMoney: money, stage, contractStep: record.contractStep, legacy: r.legacy === true, due, invId,
         }),
       };
     });
@@ -804,15 +852,18 @@ export class ConsultingService {
    *
    * `legacy` — C79 이전 행(`start_on`·`requester` 가 둘 다 비어 있다). 그 행들에는 계약 5단계가 없어서
    * 단계를 요구하면 **기존 회계 계약이 깨진다**(서버가 그래서 예외를 두었다).
+   *
+   * `invId` — 살아 있는(취소 아닌) 전환 청구서. 있으면 납부는 그 청구서로 받는다 (PB-03).
    */
   private static payGate(input: {
-    canMoney: boolean; stage: string; contractStep: number | null; legacy: boolean; due: number | null;
+    canMoney: boolean; stage: string; contractStep: number | null; legacy: boolean; due: number | null; invId: number | null;
   }): { canAddPayment: boolean; payBlockedReason: string | null } {
     const blocked = (reason: string) => ({ canAddPayment: false, payBlockedReason: reason });
     // 금액이 안 보이면 단추도 없다 — 이유를 적으면 그 자체가 금액 권한을 말한다
     if (!input.canMoney) return { canAddPayment: false, payBlockedReason: null };
     if (input.stage === 'done') return blocked('종료된 컨설팅에는 납부를 더할 수 없습니다');
     if (!input.legacy && input.contractStep !== CONTRACT_STEP_MAX) return blocked('서명본 등록 뒤 수납할 수 있습니다');
+    if (input.invId !== null) return blocked(CONS_PAY_INVOICED_MESSAGE);
     // 문장은 쓰기의 409 `OVERPAY` 와 **같은 함수**에서 나온다 (S5 · D-R22)
     if (input.due !== null && input.due <= 0) return blocked(consultingRemainingMessage(input.due));
     return { canAddPayment: true, payBlockedReason: null };
@@ -825,6 +876,27 @@ export class ConsultingService {
    */
   private invoiceable(contractStep: number | null, due: number | null): boolean {
     return contractStep === CONTRACT_STEP_MAX && due !== null && due > 0;
+  }
+
+  /**
+   * 계약 → 진행 자동 전이 (N-18) — **다 받았을 때만**. 판정은 여기 한 곳이다 (PB-03).
+   *
+   * 받은 돈 = `cons_pay` 누계 + **살아 있는 전환 청구서에 붙은 입금**(`pay`). 전에는 `cons_pay` 만 봐서
+   * 학부모가 전환 청구서로 전액을 내면 건이 영영 `contract` 에 머물고 회차 잡기(`CONS_NOT_RUNNING`)가 막혔다.
+   * 두 원장은 같은 돈을 담지 않는다 — 전환은 남은 돈으로만 내고, 전환 뒤에는 `cons_pay` 를 막는다.
+   *
+   * 부르는 곳 둘: `addPayment`(cons_pay) · `AccountingService.addPayment`(cs 청구서 입금).
+   * 조건을 `UPDATE … WHERE` 에 넣어 두 쓰기가 엇갈려도 한 번만, 조건이 참일 때만 넘어간다.
+   */
+  static async promoteWhenPaid(m: { query(sql: string, params?: unknown[]): Promise<unknown> }, consId: number): Promise<void> {
+    await m.query(
+      `UPDATE cons c SET stage = 'running'
+        WHERE c.id = $1 AND c.stage = 'contract' AND c.contract_step = $2 AND c.amount IS NOT NULL
+          AND COALESCE((SELECT sum(p.amount) FROM cons_pay p WHERE p.cons_id = c.id), 0)
+            + COALESCE((SELECT sum(p.amount) FROM pay p JOIN inv i ON i.id = p.inv_id
+                         WHERE i.cs_id = c.id AND i.state <> 'void'), 0) >= c.amount`,
+      [consId, CONTRACT_STEP_MAX],
+    );
   }
 
   /**
@@ -850,6 +922,12 @@ export class ConsultingService {
       if (c79 && Number(locked.contract_step) !== CONTRACT_STEP_MAX) {
         throw new ConflictException({ code: 'CONS_PAY_NOT_READY', message: '서명본 등록 뒤 수납할 수 있습니다' });
       }
+      // 전환 청구서가 살아 있으면 돈은 그 청구서로 받는다 — 여기 또 적으면 같은 돈이 두 원장에 선다 (PB-03)
+      // `toInvoice` 도 같은 cons 행을 FOR UPDATE 로 잡으므로 둘이 엇갈려 끼어들지 않는다
+      const [live] = (await m.query(
+        `SELECT id FROM inv WHERE cs_id = $1 AND state <> 'void' LIMIT 1`, [consId],
+      )) as Array<{ id: string }>;
+      if (live) throw new ConflictException({ code: 'CONS_PAY_INVOICED', message: CONS_PAY_INVOICED_MESSAGE });
       const amount = locked.amount == null ? null : Number(locked.amount);
       const [{ paid: paidBefore }] = (await m.query(
         `SELECT COALESCE(sum(amount),0)::int AS paid FROM cons_pay WHERE cons_id=$1`, [consId],
@@ -866,11 +944,7 @@ export class ConsultingService {
         [consId, dto.amount, dto.paidOn, dto.memo?.trim() || null, viewerId],
       )) as Array<{ id: string }>;
       await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'payment_added',$2,$3)`, [consId, pay.id, viewerId]);
-      const paid = before + dto.amount;
-      // N-18: 확인된 누적 수납이 계약 금액에 도달했을 때만 진행으로 자동 전이한다.
-      if (String(locked.stage) === 'contract' && Number(locked.contract_step) === CONTRACT_STEP_MAX && amount !== null && paid >= amount) {
-        await m.query(`UPDATE cons SET stage='running' WHERE id=$1 AND stage='contract' AND contract_step=$2`, [consId, CONTRACT_STEP_MAX]);
-      }
+      await ConsultingService.promoteWhenPaid(m, consId);
     });
     return this.oneRow(viewerId, canMoney, canHide, consId);
   }
@@ -965,20 +1039,24 @@ export class ConsultingService {
    * 화면이 `items.length` 를 세면 **내용이 잠긴 건에서 분모가 0** 이 되어 「항목 0/0」이 된다.
    */
   async students(viewerId: number, canMoney: boolean, canHide: boolean): Promise<ConsStudentsDto> {
+    const today = todayKst();
     const rows = await this.q(
       `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
+              to_char(c.start_on,'YYYY-MM-DD')   AS start_on,
               to_char(c.end_on,'YYYY-MM-DD')     AS end_on,
               to_char(c.created_at,'YYYY-MM-DD') AS created_on,
               o.name AS owner_name,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
               (SELECT count(*)::int FROM cons_sess s WHERE s.cons_id = c.id)                 AS sessions_logged,
+              -- 「회차 2 / 6」은 §26 카드 · §30 머리와 같은 셈이다 — 앞으로 잡아 둔 날짜는 세지 않는다 (27-04)
+              (SELECT count(*)::int FROM cons_sess s WHERE s.cons_id = c.id AND ${consSessDoneSql('s', '$2')}) AS sessions_done,
               (SELECT count(*)::int FROM cons_item i WHERE i.cons_id = c.id)                 AS items_total,
               (SELECT count(*)::int FROM cons_item i WHERE i.cons_id = c.id AND i.done)      AS items_done,
               COALESCE((SELECT sum(p.amount)::int FROM cons_pay p WHERE p.cons_id = c.id), 0) AS paid
          FROM cons c LEFT JOIN staff o ON o.id = c.owner_id
         WHERE c.deleted_at IS NULL
         ORDER BY c.created_at DESC, c.id`,
-      [viewerId],
+      [viewerId, today],
     );
 
     const visible = rows.flatMap((r) => {
@@ -1003,21 +1081,14 @@ export class ConsultingService {
       [ids],
     );
     const itemRows = fullIds.length ? await this.q(
-      `SELECT i.id, i.cons_id, i.seq, i.label, i.required, i.done, i.source,
-              to_char(i.done_at,'YYYY-MM-DD') AS done_on, s.name AS done_by_name
-         FROM cons_item i LEFT JOIN staff s ON s.id = i.done_by
-        WHERE i.cons_id = ANY($1::bigint[]) ORDER BY i.cons_id, i.seq`,
+      `${CONS_ITEM_SELECT} WHERE i.cons_id = ANY($1::bigint[]) ORDER BY i.cons_id, i.seq`,
       [fullIds],
     ) : [];
     const itemsByCons = new Map<number, ConsItemDto[]>();
     for (const r of itemRows) {
       const k = Number(r.cons_id);
       if (!itemsByCons.has(k)) itemsByCons.set(k, []);
-      itemsByCons.get(k)!.push({
-        id: Number(r.id), seq: Number(r.seq), label: String(r.label),
-        required: r.required === true, done: r.done === true, source: String(r.source),
-        doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
-      });
+      itemsByCons.get(k)!.push(consItemDto(r));
     }
 
     const caseOf = (r: R, money: boolean, full: boolean): ConsStudentCaseDto => {
@@ -1029,9 +1100,11 @@ export class ConsultingService {
         stage: record.stage,
         stageLabel: consultingStageLabel(record.stage),
         createdOn: String(r.created_on),
+        startOn: (r.start_on as string) ?? null,
         endOn: (r.end_on as string) ?? null,
         ownerName: (r.owner_name as string) ?? null,
         sessionsLogged: Number(r.sessions_logged),
+        sessionsDone: Number(r.sessions_done),
         sessions: record.sessions,
         itemsDone: Number(r.items_done),
         itemsTotal: Number(r.items_total),

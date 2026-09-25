@@ -24,6 +24,8 @@ import { GUIDE_STATE_T_VALUES } from './enums';
 @ForeignKey('staff', ['teacherId'], ['id'], { name: 'guide_teacher_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('staff', ['createdBy'], ['id'], { name: 'guide_created_by_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Check('guide_reason_valid', "reason IN ('new','teacher_change')")
+@Check('guide_direction_len', '"direction" IS NULL OR char_length("direction") <= 4000')
+@Check('guide_admin_note_len', '"admin_note" IS NULL OR char_length("admin_note") <= 4000')
 @Entity({ name: 'guide' })
 export class Guide {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -47,6 +49,14 @@ export class Guide {
 
   @Column({ type: 'text', nullable: true })
   body: string | null;
+
+  /** §44 「지도 방향」 상자 (v4.46 · g4 §44-3). 옛 안내 NULL */
+  @Column({ type: 'text', nullable: true })
+  direction: string | null;
+
+  /** §44 「관리자 코멘트 · 강사만」 — 학부모 발송 본문·안내문 PNG 에 싣지 않는다 (v4.46 · g4 §44-3). 옛 안내 NULL */
+  @Column({ type: 'text', nullable: true })
+  adminNote: string | null;
 
   @Column({ type: 'date', nullable: true })
   dueOn: string | null;

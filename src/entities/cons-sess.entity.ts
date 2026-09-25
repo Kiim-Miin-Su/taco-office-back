@@ -40,6 +40,14 @@ export class ConsSess {
   @Column({ type: 'text', nullable: true })
   how: string | null;
 
+  /** v4.44 · 「결과」 — 원본 §31 회차 본문의 인용 상자 (31-08) */
+  @Column({ type: 'text', nullable: true })
+  result: string | null;
+
+  /** v4.44 · 「다음까지」 — 적으면 담당의 할 일(TODO)과 알림이 같은 트랜잭션에서 선다 (슬라이드 31 연동 · 31-08) */
+  @Column({ type: 'text', nullable: true })
+  nextUntil: string | null;
+
   /** 회차 기록 시 스케줄이 생긴다 */
   @Column({ type: 'bigint', nullable: true })
   serId: number | null;

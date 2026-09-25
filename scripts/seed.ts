@@ -16,6 +16,7 @@ import 'reflect-metadata';
 import * as dotenv from 'dotenv';
 import ds from '../src/data-source';
 import { runSeed, SEEDED_TABLES } from '../src/seed';
+import { STAFF } from '../src/seed/base';
 import { assertWritableTarget } from '../src/lib/target';
 
 dotenv.config({ path: '.env.local' });
@@ -48,7 +49,8 @@ async function main(): Promise<void> {
     const total = res.reduce((a, r) => a + r.rows, 0);
     for (const r of res) console.log(`  ${r.table.padEnd(12)} ${String(r.rows).padStart(5)}`);
     console.log(`\n시드 완료 — 표 ${res.length} · 행 ${total} · ${Date.now() - t0}ms`);
-    console.log(`계정: ceo@tnacademy.kr / head@tnacademy.kr / t01@tnacademy.kr … 비밀번호 taco1234!`);
+    // 계정 안내는 시드가 넣은 STAFF 에서 읽는다 — 손으로 적은 목록은 명단이 바뀌면 없는 계정(t01)을 안내한다
+    console.log(`계정: ${STAFF.map((s) => s.email).join(' / ')} … 비밀번호 taco1234!`);
   } finally {
     await ds.destroy();
   }

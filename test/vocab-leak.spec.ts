@@ -29,9 +29,11 @@ describe('낱말이 새지 않는다 (C67)', () => {
   });
 
   it('원문 §19 의 갈래 넷이 컷의 낱말이다', () => {
-    expect(REQ_TYPE_LABEL.time_move).toBe('시간 이동');
-    expect(REQ_TYPE_LABEL.teacher).toBe('강사 변경');
-    expect(REQ_TYPE_LABEL.room).toBe('강의실 변경');
+    // 컷 §19 「무엇을」 칩: 시간 옮기기 · 강사 바꾸기 · 강의실 바꾸기 · 휴강 (2026-09-25 원문 재대조로 교정)
+    expect(REQ_TYPE_LABEL.time_move).toBe('시간 옮기기');
+    expect(REQ_TYPE_LABEL.teacher).toBe('강사 바꾸기');
+    expect(REQ_TYPE_LABEL.room).toBe('강의실 바꾸기');
+    expect(REQ_TYPE_LABEL.book_change).toBe('교재 변경');
     expect(REQ_TYPE_LABEL.cancel).toBe('휴강');
   });
 });

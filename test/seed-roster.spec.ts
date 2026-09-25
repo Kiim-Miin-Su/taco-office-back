@@ -10,6 +10,8 @@ import * as outputs from '../src/seed/outputs';
 import * as people from '../src/seed/people';
 import * as schedule from '../src/seed/schedule';
 import { canAdminPage, canSeeProfit, permsOf } from '../src/common/perm';
+import { EXEC_AREA_KEYS, filledAreas } from '../src/lib/exec-areas';
+import { MT_TYPE_SUB, type MtType } from '../src/lib/meeting-words';
 
 describe('C75 — 4역할·5인 신규 개발 DB 표본', () => {
   it('요청한 이름·역할을 유지하고 관리자와 두 매니저의 기본 권한은 같다', () => {
@@ -89,5 +91,49 @@ describe('C75 — 4역할·5인 신규 개발 DB 표본', () => {
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     expect([...counts.values()].every((count) => count <= 3)).toBe(true);
+  });
+});
+
+/* impl3-w8 — 화면이 「표본 없음」으로 비던 자리(26-11 · 73-4 · 61-9 · 63-3 · 67-8)를 시드가 채운 모양 그대로인지 본다 */
+describe('impl3-w8 — 표본 시드의 모양', () => {
+  it('대표 보고 메모는 6영역 칸만 쓰고, 올린 보고는 한 칸 이상 적혀 있다 (73-4)', () => {
+    for (const r of ops.REPORTS) {
+      expect(Object.keys(r.memo).every((k) => (EXEC_AREA_KEYS as readonly string[]).includes(k))).toBe(true);
+      if (r.state !== 'draft') expect(filledAreas(r.memo)).toBeGreaterThan(0);
+    }
+    // 「N/6」이 무엇을 세는지 보이게 적은 칸 수가 한 가지가 아니다
+    expect(new Set(ops.REPORTS.map((r) => filledAreas(r.memo))).size).toBeGreaterThan(1);
+  });
+
+  it('컨설팅은 모두 요청자와 시작일이 있고 시작은 종료보다 앞이다 (26-11)', () => {
+    for (const c of ops.CONSULTINGS) {
+      expect(['mother', 'father']).toContain(c.requester);
+      expect(c.startOn && c.startOn <= c.endOn).toBeTruthy();
+    }
+  });
+
+  it('회의 기록이 잇는 회차는 같은 날 하루짜리 회의 회차이고 과목이 회의 종류와 같다 (63-3)', () => {
+    const linked = ops.MEETINGS.filter((m) => m.serId !== null);
+    expect(linked.length).toBeGreaterThan(0);
+    expect(ops.MEETINGS.some((m) => m.serId === null)).toBe(true);
+    for (const m of linked) {
+      const ser = schedule.SERS.find((s) => s.id === m.serId)!;
+      expect(ser).toMatchObject({ kindKey: 'meeting', onceOn: m.onDate, subKey: MT_TYPE_SUB[m.mtType as MtType], students: [] });
+    }
+  });
+
+  it('승인 칸 기획은 기한 승인(시각·사람 짝)을 거쳤다 (61-9)', () => {
+    for (const p of ops.PLANS.filter((row) => row.stage === 'approved')) {
+      const due = p as { dueApprovedAt?: string; dueApprovedBy?: number };
+      expect(due.dueApprovedAt && due.dueApprovedBy).toBeTruthy();
+      expect(base.STAFF.find((s) => s.id === due.dueApprovedBy)?.role).toBe('ceo');
+    }
+  });
+
+  it('컴플레인 심각도는 세 낱말 중 하나이고, 모르는 옛 기록도 하나 남는다 (67-8)', () => {
+    const sev = ops.COMPLAINTS.map((c) => c.severity);
+    expect(sev.filter((v) => v !== null).every((v) => ['light', 'normal', 'severe'].includes(v!))).toBe(true);
+    expect(sev.filter((v) => v !== null).length).toBeGreaterThan(sev.length / 2);
+    expect(sev).toContain(null);
   });
 });

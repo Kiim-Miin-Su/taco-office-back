@@ -53,6 +53,10 @@ function at(date: IsoDate, min: number): string {
  * 새 수업도 종료 시점에 독촉/작성 화면으로 자연스럽게 넘어간다.
  *
  * 제출 전 학생 목록은 현재 명단을 따라가고, 제출한 순간부터는 발송 대상 스냅샷으로 보존한다.
+ *
+ * **그날 명단이 빈 회차에는 새 REP 를 만들지 않는다** (impl3-w8). 상담의 진단 일정은 학생 없이 진단고사
+ * (`rep=true`) 회차를 만든다 — 그대로 두면 받는 사람 없는 리포트가 서서 독촉·작성 화면에 오른다.
+ * 학생을 넣으면 명단 쓰기가 같은 투영을 다시 부르므로 그때 생긴다. 이미 있는 REP 는 예전대로 강사·종류를 따라간다.
  */
 async function projectReports(q: QueryRunner, serIds: number[]): Promise<void> {
   await q.query(
@@ -70,6 +74,16 @@ async function projectReports(q: QueryRunner, serIds: number[]): Promise<void> {
        JOIN ser s ON s.id = o.ser_id
        JOIN kind k ON k.key = s.kind_key
       WHERE o.ser_id = ANY($1) AND k.rep AND NOT o.canceled
+        -- 아래 REP_STU 투영과 같은 명단 판정이다 — 받을 학생이 한 명도 없으면 새로 만들지 않는다
+        AND (
+          EXISTS (
+            SELECT 1 FROM ser_stu ss
+              LEFT JOIN exc e ON e.ser_id = o.ser_id AND e.on_date = o.on_date
+             WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+               AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id = e.id AND xo.student_id = ss.student_id)
+          )
+          OR EXISTS (SELECT 1 FROM rep r0 WHERE r0.ser_id = o.ser_id AND r0.on_date = o.on_date)
+        )
      ON CONFLICT (ser_id, on_date) DO UPDATE SET
        teacher_id = EXCLUDED.teacher_id,
        kind_key = EXCLUDED.kind_key

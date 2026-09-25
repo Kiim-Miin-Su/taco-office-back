@@ -9,7 +9,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
-import { EXEC_AREA_KEYS, EXEC_AREAS, filledAreas } from '../../lib/exec-areas';
+import { NOTI_TITLE } from '../../lib/noti';
+import {
+  consLockedWhere, cplOpenWhere, EXEC_AREA_KEYS, EXEC_AREAS, EXEC_LESSON_MARK_LABEL, EXEC_PERIOD_WORD, EXEC_SHEET_TITLE,
+  execAreaDetails, execDayLabel, execPeriodKind, execPeriodLabel, filledAreas, invOpenWhere, invOverdueWhere, isWholeMonth,
+  planRunningWhere, planWaitingWhere, type ExecAreaFacts, type ExecAreaKey, type ExecPeriodKind,
+} from '../../lib/exec-areas';
+import { mktChannelLabel } from '../../lib/marketing-words';
+import { BOARD_MARK_KEYS } from '../board/board.rules';
+import type { BoardDto } from '../board/board.dto';
 import { INTAKE_FUNNEL_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
 import {
   blocksSelfApproval, labelOf, RPT_TYPE_LABEL, SELF_APPROVAL_CODE, selfApprovalSqlGuard, toApState,
@@ -24,9 +32,31 @@ import { BoardService } from '../board/board.service';
  */
 export type ExecViewer = { id: number; canApprove: boolean };
 import type {
-  ExecAreaDto, ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto, ExecMonthlyDto,
+  ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto, ExecMonthlyDto,
   ExecReportWriteResultDto, ExecReviewDto, ExecStatDto, ExecSubmitDto,
 } from './exec.dto';
+
+/** 영역 배지 한 칸 — 결재함 줄은 이것만 센다(카드 타일은 이 기간의 시트에서만 만든다) */
+type AreaCount = { key: ExecAreaKey; label: string; review: string; count: number; go: string };
+
+/**
+ * 기간 안에 들어온 돈 — 청구서 입금(`pay`) + **컨설팅 수납(`cons_pay`)** (PB-02 · 71-3).
+ * 컨설팅 계약금은 청구서 없이 `cons_pay` 에만 들어온다 — `pay` 만 세면 그 달 이익이 계약금만큼 과소였다.
+ * 두 원장은 **같은 돈을 담지 않는다**: 「청구서로 전환」은 남은 돈으로만 내고(N-33) 전환 뒤에는
+ * `cons_pay` 를 막는다(PB-03). 보관 삭제한 건은 §28 회계 표와 같은 집합으로 뺀다.
+ *
+ * 머리의 「매출 (입금)」·「오늘 들어온 돈」과 회계 카드의 「입금」 타일이 **이 한 문장**을 읽는다.
+ * `$3` 이 false 면 금액을 **세지 않는다**(null) — 건수는 금액이 아니라 센다.
+ */
+const REVENUE_SQL = `
+  SELECT CASE WHEN $3::boolean THEN
+           (COALESCE((SELECT sum(amount) FROM pay WHERE paid_on BETWEEN $1::date AND $2::date),0)
+          + COALESCE((SELECT sum(p.amount) FROM cons_pay p JOIN cons c ON c.id = p.cons_id
+                       WHERE c.deleted_at IS NULL AND p.paid_on BETWEEN $1::date AND $2::date),0))::bigint
+         END AS total,
+         ((SELECT count(*) FROM pay WHERE paid_on BETWEEN $1::date AND $2::date)
+        + (SELECT count(*) FROM cons_pay p JOIN cons c ON c.id = p.cons_id
+            WHERE c.deleted_at IS NULL AND p.paid_on BETWEEN $1::date AND $2::date))::int AS n`;
 
 /**
  * 여섯 칸을 **언제나 다** 만든다 — 안 적은 칸은 빈 문자열이다.
@@ -108,12 +138,12 @@ export class ExecService {
    * §69 6영역 — 살펴볼 것을 센다. 정의는 `lib/exec-areas.ts` 한 곳에 있다.
    * 수업만 현황판(`clChk()`)의 판정을 그대로 가져온다.
    */
-  private async areaCounts(from: string, to: string): Promise<ExecAreaDto[]> {
-    const out: ExecAreaDto[] = [];
+  private async areaCounts(from: string, to: string, board?: BoardDto): Promise<AreaCount[]> {
+    const out: AreaCount[] = [];
     for (const a of EXEC_AREAS) {
       let count = 0;
       if (a.key === 'lesson') {
-        count = (await this.board.range({ from, to })).missingCount;
+        count = (board ?? await this.board.range({ from, to })).missingCount;
       } else if (a.sql) {
         // 기준일을 안 쓰는 판정(안 끝난 컴플레인 등)에 인자를 넘기면 bind 오류가 난다
         count = await this.one(a.sql, a.sql.includes('$1') ? [to] : []);
@@ -121,6 +151,138 @@ export class ExecService {
       out.push({ key: a.key, label: a.label, review: a.review, count, go: a.go });
     }
     return out;
+  }
+
+  /**
+   * §69 영역 카드의 **사실** — 한 줄 요약과 타일을 짓는 재료 (69-8).
+   *
+   * 「무엇을 세는가」는 `lib/exec-areas` 의 판정 조각(`invOverdueWhere` …)을 배지와 **같이** 쓴다 —
+   * 타일의 「기한 지남 2건」과 배지 「2」가 같은 WHERE 에서 나온다. 금액은 볼 권한이 없으면 세지 않는다(null).
+   * 「지금 남아 있는 것」(못 받은 돈 · 안 끝난 할 일 …)은 기준일(`to`)의 판정이고, 「이 기간에 일어난 것」
+   * (입금 · 접수 · 올린 것 · 회의)은 기간 안만 센다.
+   */
+  private async areaFacts(
+    from: string, to: string, canSeeAmounts: boolean, board: BoardDto,
+    revenue: { total: number | null; n: number },
+  ): Promise<ExecAreaFacts> {
+    const [inv] = await this.q(
+      `SELECT count(*) FILTER (WHERE ${invOpenWhere()})::int AS unpaid_n,
+              CASE WHEN $2::boolean THEN COALESCE(sum(amount - paid_amount) FILTER (WHERE ${invOpenWhere()}),0) END::bigint AS unpaid_sum,
+              count(*) FILTER (WHERE ${invOverdueWhere()})::int AS overdue_n,
+              CASE WHEN $2::boolean THEN COALESCE(sum(amount - paid_amount) FILTER (WHERE ${invOverdueWhere()}),0) END::bigint AS overdue_sum
+         FROM inv`,
+      [to, canSeeAmounts],
+    );
+    const [mkt] = await this.q(
+      `SELECT count(*)::int AS posts, count(DISTINCT channel)::int AS channels,
+              (SELECT count(*) FROM mfb WHERE kind = 'comment' AND (at AT TIME ZONE 'Asia/Seoul')::date BETWEEN $1::date AND $2::date)::int AS comments
+         FROM mkt WHERE on_date BETWEEN $1::date AND $2::date`,
+      [from, to],
+    );
+    // 「blog 1건이 가장 많습니다」 — 같은 수면 채널 코드 순(매번 같은 답이어야 한다)
+    const [top] = await this.q(
+      `SELECT channel, count(*)::int AS n FROM mkt WHERE on_date BETWEEN $1::date AND $2::date
+        GROUP BY channel ORDER BY n DESC, channel LIMIT 1`,
+      [from, to],
+    );
+    const [ops] = await this.q(
+      `SELECT (SELECT count(*) FROM plan WHERE ${planWaitingWhere()})::int AS waiting,
+              (SELECT count(*) FROM plan WHERE ${planRunningWhere()})::int AS running,
+              (SELECT count(*) FROM mtrec WHERE on_date BETWEEN $1::date AND $2::date)::int AS meetings,
+              (SELECT count(*) FROM todo WHERE NOT done)::int AS open_todos`,
+      [from, to],
+    );
+    const [cons] = await this.q(
+      `SELECT count(*)::int AS locked,
+              CASE WHEN $2::boolean THEN COALESCE(sum(c.amount),0) END::bigint AS contract,
+              CASE WHEN $2::boolean THEN COALESCE(sum((SELECT COALESCE(sum(p.amount),0) FROM cons_pay p WHERE p.cons_id = c.id)),0) END::bigint AS paid,
+              (SELECT to_char(min(s.on_date),'YYYY-MM-DD') FROM cons_sess s JOIN cons c2 ON c2.id = s.cons_id
+                WHERE ${consLockedWhere('c2')} AND s.on_date > $1::date) AS next_on
+         FROM cons c WHERE ${consLockedWhere('c')}`,
+      [to, canSeeAmounts],
+    );
+    const [cpl] = await this.q(
+      `SELECT count(*) FILTER (WHERE ${cplOpenWhere('c')})::int AS open,
+              count(*) FILTER (WHERE (c.created_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN $1::date AND $2::date)::int AS received,
+              COALESCE(array_agg(DISTINCT st.name ORDER BY st.name) FILTER (
+                WHERE (c.created_at AT TIME ZONE 'Asia/Seoul')::date BETWEEN $1::date AND $2::date AND st.name IS NOT NULL), '{}') AS names
+         FROM cpl c LEFT JOIN stu st ON st.id = c.student_id`,
+      [from, to],
+    );
+    const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+    return {
+      money: {
+        inCount: revenue.n, inSum: revenue.total,
+        unpaidCount: Number(inv?.unpaid_n ?? 0), unpaidSum: num(inv?.unpaid_sum),
+        overdueCount: Number(inv?.overdue_n ?? 0), overdueSum: num(inv?.overdue_sum),
+      },
+      mkt: {
+        posts: Number(mkt?.posts ?? 0), channels: Number(mkt?.channels ?? 0),
+        topChannel: top ? mktChannelLabel(String(top.channel)) : null, topCount: Number(top?.n ?? 0),
+        comments: Number(mkt?.comments ?? 0),
+      },
+      ops: {
+        waiting: Number(ops?.waiting ?? 0), running: Number(ops?.running ?? 0),
+        meetings: Number(ops?.meetings ?? 0), openTodos: Number(ops?.open_todos ?? 0),
+      },
+      consulting: {
+        locked: Number(cons?.locked ?? 0), paid: num(cons?.paid), contract: num(cons?.contract),
+        nextOn: (cons?.next_on as string | null) ?? null,
+      },
+      complaint: {
+        received: Number(cpl?.received ?? 0),
+        receivedNames: (cpl?.names as string[] | undefined) ?? [],
+        open: Number(cpl?.open ?? 0),
+      },
+      lesson: {
+        lessons: board.summary.lessons,
+        missing: board.missingCount,
+        canceled: board.summary.canceled,
+        // 덜 된 축의 낱말 — 현황판 네 축의 순서 그대로 (원본 §69 「교재 · 안내 · 줌」)
+        missingMarks: BOARD_MARK_KEYS
+          .filter((key) => (board.summary.marks.find((mk) => mk.key === key)?.missing ?? 0) > 0)
+          .map((key) => EXEC_LESSON_MARK_LABEL[key]),
+      },
+    };
+  }
+
+  /**
+   * 시트 머리 지표 넷 — **기간마다 원문 칸이 다르다** (69-6 · 70-1 · 71-1).
+   * 새로 세는 것은 없다: 영역 사실 · 수입 · 현황판 · 기존 통계에서 **같은 값**을 가져온다
+   * (결재 대기·안 끝난 컴플레인은 운영·컴플레인 카드 타일과 같은 수다 — N-19).
+   * 주간의 「지난주 ▼ 100%」 비교(N-66)는 결정 대기라 싣지 않는다.
+   */
+  private static head(
+    kind: ExecPeriodKind, f: ExecAreaFacts, board: BoardDto, stats: ExecStatDto[],
+  ): ExecStatDto[] {
+    const w = EXEC_PERIOD_WORD[kind];
+    const stat = (key: string) => stats.find((x) => x.key === key)?.value ?? null;
+    const revenue: ExecStatDto = { key: 'revenue', label: kind === 'day' ? '오늘 들어온 돈' : `${w} 입금`, value: f.money.inSum, unit: '원', money: true, total: null, note: null };
+    if (kind === 'month') {
+      const margin = stat('margin');
+      return [
+        { ...revenue, label: '매출 (입금)' },
+        { key: 'payout', label: '강사료', value: stat('payout'), unit: '원', money: true, total: null, note: null },
+        { key: 'expense', label: '지출', value: stat('expense'), unit: '원', money: true, total: null, note: null },
+        // 이익률은 「이익」 칸의 부제다 — 원본 §71 「−268%」. 수입이 0 이면 비율이 없다(null)
+        { key: 'profit', label: '이익', value: stat('profit'), unit: '원', money: true, total: null, note: margin === null ? null : `${margin}%` },
+      ];
+    }
+    if (kind === 'week') {
+      return [
+        revenue,
+        { key: 'leads', label: '신규 문의', value: stat('leads'), unit: '건', money: false, total: null, note: null },
+        { key: 'posts', label: '마케팅 게시', value: f.mkt.posts, unit: '건', money: false, total: null, note: null },
+        // 「수업 준비 6/49 · 다 된 것」 — 현황판의 판정(네 축이 다 선 수업 / 수업)을 그대로 쓴다 (C85-c)
+        { key: 'prep', label: '수업 준비', value: board.summary.doneLessons, unit: '건', money: false, total: board.summary.lessons, note: '다 된 것' },
+      ];
+    }
+    return [
+      revenue,
+      { key: 'unpaid', label: '못 받은 돈', value: f.money.unpaidSum, unit: '원', money: true, total: null, note: null },
+      { key: 'waiting', label: '결재 대기', value: f.ops.waiting, unit: '건', money: false, total: null, note: null },
+      { key: 'complaints', label: '안 끝난 컴플레인', value: f.complaint.open, unit: '건', money: false, total: null, note: null },
+    ];
   }
 
   /** RPT 키 날짜를 사람이 읽는 기간으로 (§73 줄 제목) */
@@ -147,9 +309,8 @@ export class ExecService {
       const span = ExecService.periodRange('week', onDate);
       return `${span.from.slice(5)} ~ ${span.to.slice(5)}`;
     }
-    const d = Number(onDate.slice(8));
-    const dow = '일월화수목금토'[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
-    return `${String(y).slice(2)}년 ${m}월 ${d}일 ${dow}요일`;
+    // 날짜 낱말은 시트 머리와 같은 함수다 (69-4) — 한 화면에 날짜가 두 모양이면 안 된다
+    return execDayLabel(onDate);
   }
 
   /** RPT 키 날짜 → 그 주기가 덮는 실제 기간 */
@@ -278,12 +439,13 @@ export class ExecService {
      * 제가 올리는 일이 흔하고, 그때 제 수신함에 제 글이 쌓이면 읽지 않게 된다 (C38 · C99 와 같은 규약).
      */
     await this.q(
-      `INSERT INTO noti (to_id, from_id, body, link, category)
-       SELECT id, $1, $2, $3, 'request' FROM staff WHERE active AND role = 'ceo' AND id <> $1`,
+      `INSERT INTO noti (to_id, from_id, body, link, category, title)
+       SELECT id, $1, $2, $3, 'request', $4 FROM staff WHERE active AND role = 'ceo' AND id <> $1`,
       [
         actorId,
         `${labelOf(RPT_TYPE_LABEL, dto.rptType)} 보고가 올라왔습니다 — ${key}`,
         `/exec?view=${dto.rptType}&date=${key}&rpt=${Number(found.id)}`,
+        NOTI_TITLE.execSubmitted,
       ],
     );
     return this.writeResult(Number(found.id));
@@ -296,7 +458,7 @@ export class ExecService {
   async review(id: number, dto: ExecReviewDto, actorId: number): Promise<ExecReportWriteResultDto> {
     const reason = (dto.reason ?? '').trim();
     if (dto.action === 'rej' && reason === '') {
-      throw new BadRequestException({ code: 'REASON_REQUIRED', message: '반려에는 사유가 필요합니다 (D-R13)' });
+      throw new BadRequestException({ code: 'REASON_REQUIRED', message: '반려에는 사유가 필요합니다' });
     }
     const row = await this.row(
       `UPDATE rpt
@@ -374,11 +536,7 @@ export class ExecService {
    * 없고 하루도 그렇다), 입력이 둘이면 둘이 어긋날 수 있다.
    */
   private wholeMonth(from: string, to: string): boolean {
-    if (!from.endsWith('-01')) return false;
-    const [y, m] = from.split('-').map(Number);
-    // 다음 달 0일 = 이 달의 마지막 날. UTC 로 만들어 표준시 경계에서 하루가 밀리지 않게 한다.
-    const last = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-    return to === last;
+    return isWholeMonth(from, to);
   }
 
   /**
@@ -475,12 +633,13 @@ export class ExecService {
     ]);
 
     // 금액 — 권한이 없으면 아예 세지 않는다. 세어 두고 지우면 실수로 흘린다.
-    let revenue: number | null = null;
+    // 수입은 REVENUE_SQL 한 문장이다 — 머리 「들어온 돈」과 회계 카드 「입금」 타일이 같이 읽는다
+    const [rev] = await this.q(REVENUE_SQL, [from, to, canSeeAmounts]);
+    const revenueFacts = { total: rev?.total === null || rev?.total === undefined ? null : Number(rev.total), n: Number(rev?.n ?? 0) };
+    const revenue: number | null = canSeeAmounts ? revenueFacts.total : null;
     let expense: number | null = null;
     let payout: number | null = null;
     if (canSeeAmounts) {
-      revenue = await this.one(
-        `SELECT COALESCE(sum(amount),0)::text n FROM pay WHERE paid_on BETWEEN $1::date AND $2::date`, [from, to]);
       // 확정된 지출만 센다 — 아직 결재 중인 건(requested_amount)은 나간 돈이 아니다.
       expense = await this.one(
         `SELECT COALESCE(sum(amount),0)::text n FROM expense
@@ -511,10 +670,12 @@ export class ExecService {
       { key: 'lessons',  label: '진행한 수업',   value: lessons,  unit: '회', money: false },
       { key: 'canceled', label: '취소·휴강',     value: canceled, unit: '회', money: false },
       { key: 'students', label: '수업받은 학생', value: students, unit: '명', money: false },
-      { key: 'leads',    label: '신규 상담',     value: newLeads, unit: '건', money: false },
+      // 원문 §70 의 낱말은 「신규 **문의**」다 (70-3) — 상담은 그 뒤의 단계다
+      { key: 'leads',    label: '신규 문의',     value: newLeads, unit: '건', money: false },
       { key: 'enrolled', label: '등록',          value: enrolled, unit: '건', money: false },
       { key: 'unwritten',label: '안 쓴 리포트',  value: unwritten,unit: '건', money: false },
-      { key: 'revenue',  label: '수입',          value: revenue,  unit: '원', money: true },
+      // 원문 §71 의 낱말은 「매출 (입금)」이다 (71-2) — 청구가 아니라 들어온 돈이라는 말까지 붙어 있다
+      { key: 'revenue',  label: '매출 (입금)',   value: revenue,  unit: '원', money: true },
       { key: 'payout',   label: '강사료',        value: payout,   unit: '원', money: true },
       { key: 'expense',  label: '지출',          value: expense,  unit: '원', money: true },
       { key: 'profit',   label: '이익',
@@ -572,13 +733,24 @@ export class ExecService {
       writeBlockedReason: WRITABLE_RPT_STATES.includes(String(r.state)) ? null : rptLockedMessage(String(r.state)),
     }));
 
-    const areas = await this.areaCounts(from, to);
+    // 현황판은 **한 번만** 부른다 — 수업 배지 · 수업 타일 · 주간 「수업 준비 x/y」가 같은 판정을 읽는다
+    const board = await this.board.range({ from, to });
+    const counts = await this.areaCounts(from, to, board);
+    const kind = execPeriodKind(from, to);
+    const facts = await this.areaFacts(from, to, canSeeAmounts, board, revenueFacts);
+    const details = execAreaDetails(kind, facts);
+    const areas = counts.map((a) => ({ ...a, headline: details[a.key].headline, tiles: details[a.key].tiles }));
     const inbox = await this.inbox();
     // 이 기간의 보고가 있으면 그 기재 수를, 없으면 0 — 「담당 x/6 기재」 (§69 머리)
     const here = inbox.find((r) => r.onDate >= from && r.onDate <= to);
 
     return {
-      from, to, stats, reports,
+      from, to,
+      periodKind: kind,
+      sheetTitle: EXEC_SHEET_TITLE[kind],
+      periodLabel: execPeriodLabel(kind, from, to),
+      head: ExecService.head(kind, facts, board, stats),
+      stats, reports,
       areas,
       reviewCount: areas.reduce((a, x) => a + x.count, 0),
       filled: here?.filled ?? 0,

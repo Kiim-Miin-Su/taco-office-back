@@ -4,6 +4,8 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
+import { daysUntil } from './kst';
+
 /**
  * 상담 단계 여섯 — **낱말과 순서가 사는 단 하나의 자리** (원본 §23).
  *
@@ -154,3 +156,140 @@ export const LEAD_NEXT_STAGES: Record<IntakeStage, readonly IntakeStage[]> = {
 
 export const leadNextStages = (stage: string): readonly IntakeStage[] =>
   LEAD_NEXT_STAGES[stage as IntakeStage] ?? [];
+
+/* ══ 1:1 대조 wave 3 — 실패 사유 분류 · 재연락 · 단계 기한 (24-05 · 24-06 · 23-12) ═══════════════════ */
+
+/**
+ * 실패 사유 분류 다섯 — **낱말과 순서가 사는 단 하나의 자리** (원본 §24 카드 칩 · 「실패 사유 N건」 막대 · 24-05).
+ * 저장값은 `LEAD.reason_kind`(`lead_reason_kind_words` CHECK · NULL 허용). 자유 글 `reason` 은 설명 칸으로 남는다.
+ * 옛 실패 건은 NULL — 사유 글에서 분류를 추정하지 않는다(N-25). 화면에는 「분류 안 됨」으로 선다.
+ */
+export const LEAD_REASON_KINDS = ['unreachable', 'other_academy', 'schedule', 'cost', 'timing'] as const;
+export type LeadReasonKind = (typeof LEAD_REASON_KINDS)[number];
+
+export const LEAD_REASON_KIND_LABEL: Record<LeadReasonKind, string> = {
+  unreachable: '연락 두절',
+  other_academy: '타 학원 등록',
+  schedule: '일정 안 맞음',
+  cost: '비용',
+  timing: '시기 안 맞음',
+};
+
+export const LEAD_REASON_KIND_UNSET = 'none';
+export const LEAD_REASON_KIND_UNSET_LABEL = '분류 안 됨';
+
+export const leadReasonKindLabel = (kind: string | null | undefined): string | null =>
+  kind == null ? null : (LEAD_REASON_KIND_LABEL[kind as LeadReasonKind] ?? kind);
+
+/**
+ * 재연락 상태 (원본 §24 실패 카드의 「재연락 완료」 파랑 · 「재연락 대기」 주황 · 24-06).
+ * **실패로 분류된 뒤에 접촉 원장에 한 줄이라도 있으면 완료**, 없으면 대기다. 실패 시각을 모르는 옛 건(도달 기록 없음)은
+ * 앞뒤를 가를 수 없어 판정하지 않는다(null · N-25). 판정은 이 함수 하나 — 카드와 서랍이 같은 값을 읽는다.
+ * `lastTouchAt`·`failedAt` 은 둘 다 `kstAt` 모양(`YYYY-MM-DDTHH:MI:SS+09:00`)이라 글자 순서가 시각 순서다.
+ */
+export function leadRecontactDone(failedAt: string | null, lastTouchAt: string | null): boolean | null {
+  if (!failedAt) return null;
+  return lastTouchAt !== null && lastTouchAt > failedAt;
+}
+
+/**
+ * 단계 기한(SLA) — 슬라이드 23 규칙 「단계별 SLA 1차 2일 · 2차 대기 7일 · 2차 상담 1일 · 보류 2일」 (23-12).
+ * 기한은 **그 단계에 들어온 날**(도달 기록의 마지막 줄 · 1차는 유입이 곧 도달이라 접수일)에서 센다.
+ * 들어온 날을 모르는 옛 건은 기한을 만들지 않는다(N-25).
+ */
+export const INTAKE_STAGE_SLA_DAYS: Partial<Record<IntakeStage, number>> = {
+  first: 2,
+  wait2nd: 7,
+  second: 1,
+  hold: 2,
+};
+
+/** 기한 띠의 앞말 — 그 단계에서 **할 일**이다. 원본 §23 카드 띠의 낱말 그대로(2차 대기는 컷의 띠가 일정이라 칸 아래 줄의 동사를 쓴다) */
+export const INTAKE_STAGE_TASK: Partial<Record<IntakeStage, string>> = {
+  first: '2차 일정 + 진단고사 잡기',
+  wait2nd: '2차 상담 진행',
+  second: '보류 · 등록 · 등록 실패 중 선택',
+  hold: '배치안 수락 여부 확인',
+};
+
+/** 날짜 문자열 + N일 (UTC 로 읽어 달력 날짜만 더한다 — 시간대가 끼지 않는다) */
+const addDays = (iso: string, days: number): string => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
+
+/** 날짜까지 남은 날 한 마디 — 「D-28」 · 「오늘」 · 「3일 지남」. 단계 기한 띠와 재연락 줄이 같은 말을 쓴다 */
+export function leadDueLabel(dueOn: string, today: string): string {
+  const diff = daysUntil(dueOn, today);
+  return diff < 0 ? `${-diff}일 지남` : diff === 0 ? '오늘' : `D-${diff}`;
+}
+
+/**
+ * 카드 띠 한 줄 — 「2차 일정 + 진단고사 잡기 · 오늘」 · 「배치안 수락 여부 확인 · 1일 지남」 · 「… · D-1」.
+ * 톤은 지남 = danger(빨강 바탕) · 오늘 = warning(호박 바탕) · 그 밖 = neutral. 카드 바탕도 이 톤으로 칠한다(원본 §23).
+ */
+export function leadStageDue(
+  stage: string, enteredOn: string | null, today: string,
+  /** 단계 SLA 대신 쓰는 기한 — 보류의 재확인 날짜 · 2차 대기의 2차 일정(23-15 · 23-16). 할 일 낱말을 바꿀 때만 task 를 준다 */
+  override?: { dueOn: string; task?: string } | null,
+): { task: string; dueOn: string; dueLabel: string; tone: 'danger' | 'warning' | 'neutral' } | null {
+  const days = INTAKE_STAGE_SLA_DAYS[stage as IntakeStage];
+  const stageTask = INTAKE_STAGE_TASK[stage as IntakeStage];
+  if (days == null || !stageTask) return null;
+  const task = override?.task ?? stageTask;
+  const dueOn = override?.dueOn ?? (enteredOn ? addDays(enteredOn, days) : null);
+  if (!dueOn) return null;
+  const diff = daysUntil(dueOn, today);
+  return { task, dueOn, dueLabel: leadDueLabel(dueOn, today), tone: diff < 0 ? 'danger' : diff === 0 ? 'warning' : 'neutral' };
+}
+
+/**
+ * 보류 재확인 날짜 (23-16) — 적어 둔 날짜가 있으면 그것, 없으면 보류에 들어온 날 + 2일(슬라이드 23 「D+2에 수락 여부 확인」).
+ * 들어온 날도 모르는 옛 건은 null — 날짜를 짓지 않는다(N-25). 보류가 아니면 null.
+ */
+export function leadRecheckOn(stage: string, recheckOn: string | null, enteredOn: string | null): string | null {
+  if (stage !== 'hold') return null;
+  if (recheckOn) return recheckOn;
+  return enteredOn ? addDays(enteredOn, INTAKE_STAGE_SLA_DAYS.hold ?? 2) : null;
+}
+
+/** 「연장 +2일」 한 번에 더하는 날 — 원본 §23 보류 카드 단추 낱말 그대로 */
+export const LEAD_HOLD_EXTEND_DAYS = 2;
+
+/**
+ * 「연장 +2일」의 새 날짜 — 지금 유효한 재확인 날짜에서 이틀 뒤(원문 「연장 +2일」 · 기한을 늘린다).
+ * 유효 날짜를 모르는 옛 건은 오늘을 기준으로 한다 — 사람이 지금 누른 것이라 과거를 짓는 것이 아니다.
+ */
+export function leadHoldExtended(current: string | null, today: string): string {
+  return addDays(current ?? today, LEAD_HOLD_EXTEND_DAYS);
+}
+
+/* ── 배치안 초안 · 2차/진단 일정 (23-15 · 23-16) ── */
+
+/** 배치안 한 줄의 낱말 — 「SAT Reading 주2 · Rebecca」(원본 §23 카드). 과목이 없으면 종류 이름, 강사가 없으면 뺀다 */
+export function leadPlanLineLabel(line: { subName?: string | null; kindName?: string | null; perWeek: number; teacherName?: string | null }): string {
+  const what = line.subName ?? line.kindName ?? '과목 미정';
+  return `${what} 주${line.perWeek}${line.teacherName ? ` · ${line.teacherName}` : ''}`;
+}
+
+/** 일정 종류 — 원본 §23 2차 대기 카드의 왼쪽 낱말 「진단」 · 「2차」 */
+export const LEAD_APPT_KINDS = ['diag', 'second'] as const;
+export type LeadApptKind = (typeof LEAD_APPT_KINDS)[number];
+export const LEAD_APPT_KIND_LABEL: Record<LeadApptKind, string> = { diag: '진단', second: '2차' };
+export const leadApptKindLabel = (k: string): string => LEAD_APPT_KIND_LABEL[k as LeadApptKind] ?? k;
+
+/**
+ * 시간표에 만들 때의 종류·과목 — 코드표의 「진단고사」(diagx · diag) · 「상담」(consult · intake).
+ * 원본 머리의 「상담 일정」 탭이 시간표 상담 종류로 가는 것과 같은 짝이다. 코드표에 없으면 만들기를 막는다(서비스가 409).
+ */
+export const LEAD_APPT_SER_CODE: Record<LeadApptKind, { kindKey: string; subKey: string; title: string }> = {
+  diag: { kindKey: 'diagx', subKey: 'diag', title: '진단고사' },
+  second: { kindKey: 'consult', subKey: 'intake', title: '2차 상담' },
+};
+
+/** 일정 장소 한 마디 — 온라인이면 「온라인 줌」, 강의실이 있으면 그 이름, 없으면 「장소 미정」 */
+export function leadApptPlaceLabel(mode: string, roomName: string | null): string {
+  if (mode === 'online') return '온라인 줌';
+  return roomName ?? '장소 미정';
+}

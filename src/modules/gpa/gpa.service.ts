@@ -15,7 +15,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GpaCycle } from '../../entities';
 import { addDays, todayKst } from '../../lib/kst';
-import { kstAt, writtenRows } from '../../lib/sql';
+import { END_MIN, kstAt, writtenRows } from '../../lib/sql';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
 import type {
   GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
@@ -37,6 +37,20 @@ export class GpaService {
               ${kstAt('c.closed_at')} AS closed_at, cb.name AS closed_by_name,
               (SELECT count(*)::int FROM gpa_use u WHERE u.cycle_id = c.id AND u.state = 'wait') AS wait_count
          FROM gpa_cycle c LEFT JOIN staff cb ON cb.id = c.closed_by`;
+
+  /**
+   * 소비 기록 한 줄 — 보드 · 기록 응답 · 승인 응답이 **같은 모양**을 읽는다.
+   *
+   * 끝 시각(`end_min`)은 기록에 칸이 없다 — 연결된 회차(`ser_id`)가 그날 실제로 놓인 자리
+   * (`ser_occ.span`)에서 읽는다(원본 §82 회차 내역 「18:00–18:45」 · 82-8). 회차가 없으면 null 이고
+   * 화면은 시작만 적는다 — 없는 끝을 지어내지 않는다.
+   */
+  private static readonly USE_SELECT = `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date,
+              u.start_min, u.ser_id, u.note_url, u.state, u.coord_id, co.name AS coord_name, ap.name AS approved_by_name,
+              to_char(u.approved_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS approved_on,
+              (SELECT ${END_MIN} FROM ser_occ o WHERE o.ser_id = u.ser_id AND o.on_date = u.on_date LIMIT 1) AS end_min
+         FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id
+         LEFT JOIN staff ap ON ap.id = u.approved_by`;
 
   /** anchor 를 품는 사이클, 없으면 직전(과거) 사이클 — 미래 사이클을 임의로 만들지 않는다. */
   private async cycleAt(anchor: string): Promise<R | null> {
@@ -87,11 +101,7 @@ export class GpaService {
       [cy.f, cy.t]);
 
     const uses = await this.q(
-      `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date,
-              u.start_min, u.ser_id, u.note_url, u.state, u.coord_id, co.name AS coord_name, ap.name AS approved_by_name,
-              to_char(u.approved_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS approved_on
-         FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id
-         LEFT JOIN staff ap ON ap.id = u.approved_by
+      `${GpaService.USE_SELECT}
         WHERE u.cycle_id = $1
         ORDER BY u.on_date, u.start_min NULLS LAST, u.id`, [cycleId]);
 
@@ -177,6 +187,7 @@ export class GpaService {
       id: Number(r.id), studentId: Number(r.student_id), svcKey: String(r.svc_key),
       points: Number(r.points), onDate: String(r.on_date),
       startMin: r.start_min === null || r.start_min === undefined ? null : Number(r.start_min),
+      endMin: r.end_min === null || r.end_min === undefined ? null : Number(r.end_min),
       serId: r.ser_id === null || r.ser_id === undefined ? null : Number(r.ser_id),
       coordName: (r.coord_name as string) ?? null,
       noteUrl: (r.note_url as string) ?? null,
@@ -218,11 +229,7 @@ export class GpaService {
        dto.startMin ?? null, coordId, dto.noteUrl?.trim() || null],
     );
     const [row] = await this.q(
-      `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date, u.start_min, u.ser_id,
-              u.note_url, u.state, u.coord_id, co.name AS coord_name, ap.name AS approved_by_name,
-              to_char(u.approved_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS approved_on
-         FROM gpa_use u LEFT JOIN staff co ON co.id = u.coord_id
-         LEFT JOIN staff ap ON ap.id = u.approved_by
+      `${GpaService.USE_SELECT}
         WHERE u.cycle_id = $1 AND u.student_id = $2 ORDER BY u.id DESC LIMIT 1`,
       [dto.cycleId, dto.studentId]);
     return this.useRow(row, coordId);
@@ -264,12 +271,7 @@ export class GpaService {
       );
     });
     const [out] = await this.q(
-      `SELECT u.id, u.student_id, u.svc_key, u.points, u.on_date::text AS on_date, u.start_min, u.ser_id,
-              u.note_url, u.state, u.coord_id, co.name AS coord_name, ap.name AS approved_by_name,
-              to_char(u.approved_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS approved_on
-         FROM gpa_use u
-         LEFT JOIN staff co ON co.id = u.coord_id
-         LEFT JOIN staff ap ON ap.id = u.approved_by
+      `${GpaService.USE_SELECT}
         WHERE u.id = $1`, [id]);
     return this.useRow(out, actorId);
   }

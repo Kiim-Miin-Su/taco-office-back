@@ -589,6 +589,20 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(Number(rep[0].n)).toBe(0);
   });
 
+  it('학생 없는 리포트 대상 회차(진단 일정)는 빈 REP 를 만들지 않고, 학생을 넣으면 그때 생긴다 (impl3-w8)', async () => {
+    // 상담의 진단 일정은 학생 없이(studentIds: []) 진단고사 회차를 만든다 — 받는 사람 없는 리포트가 서면 안 된다
+    const { id, from } = await makeSer({ kindKey: 'diagx', subKey: 'diag', rrule: 'ONCE', studentIds: [] });
+    expect(await q(`SELECT 1 FROM rep WHERE ser_id=$1`, [id])).toHaveLength(0);
+
+    await api('patch', `/schedule/${id}/roster`).send({ op: 'add', onDate: from, studentId: 1 }).expect(200);
+    const rep = await q<{ reports: string; recipients: string }>(
+      `SELECT count(DISTINCT r.id)::text AS reports, count(rs.student_id)::text AS recipients
+         FROM rep r LEFT JOIN rep_stu rs ON rs.rep_id = r.id WHERE r.ser_id=$1`,
+      [id],
+    );
+    expect(rep[0]).toEqual({ reports: '1', recipients: '1' });
+  });
+
   it("scope='this' — EXC 한 줄만 생기고 규칙은 그대로다", async () => {
     const { id, from } = await makeSer();
     const before = (await q<{ rrule: string }>(`SELECT rrule FROM ser WHERE id=$1`, [id]))[0].rrule;

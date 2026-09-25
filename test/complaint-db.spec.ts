@@ -25,6 +25,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { payoutSheet } from '../src/lib/payout-sheet';
+import { NOTI_TITLE } from '../src/lib/noti';
 import { DEV_URL } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
@@ -147,9 +148,11 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     }).expect(201)).body;
     cplIds.push(made.id);
     expect(made).toMatchObject({ area: 'lesson', areaLabel: '수업', studentId: STU1, studentName: '교체학생1', stage: 'received', ownerId: ADMIN, ownerName: '교체관리자', severity: 'severe', severityLabel: '심각', teacherChanged: false, overdueDays: 2 });
-    const notis = await q<{ body: string; category: string }>(`SELECT body, category FROM noti WHERE to_id = $1 AND from_id = $2`, [ADMIN, CEO]);
+    const notis = await q<{ title: string | null; body: string; category: string }>(`SELECT title, body, category FROM noti WHERE to_id = $1 AND from_id = $2`, [ADMIN, CEO]);
     expect(notis).toHaveLength(1);
     expect(notis[0]!.body).toContain('컴플레인 담당 — 수업');
+    // §16 카드의 굵은 제목 — 본문은 예전 그대로 두고 제목을 따로 적는다 (16-1 · impl3-w8)
+    expect(notis[0]!.title).toBe(NOTI_TITLE.complaintOwner);
     // GET /ops 가 같은 줄과 낱말표를 준다
     const ops = (await api('get', '/ops').expect(200)).body;
     const row = ops.complaints.find((c: { id: number }) => c.id === made.id);
@@ -229,8 +232,11 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(history.missing.filter((x: { serId: number }) => x.serId === newId)).toEqual([]);
     // 알림 — 새 강사 · 원래 강사 · 관리자(본인·강사 둘 제외)
     expect(r.notifiedTeachers).toBe(2);
-    const toB = await q<{ body: string; link: string }>(`SELECT body, link FROM noti WHERE to_id = $1 AND from_id = $2`, [T_B, CEO]);
+    const toB = await q<{ title: string | null; body: string; link: string }>(`SELECT title, body, link FROM noti WHERE to_id = $1 AND from_id = $2`, [T_B, CEO]);
     expect(toB).toHaveLength(1);
+    expect(toB[0]!.title).toBe(NOTI_TITLE.teacherChange);
+    expect((await q<{ title: string }>(`SELECT title FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '담당 이관%'`, [T_A, CEO]))[0]!.title).toBe(NOTI_TITLE.teacherHandover);
+    expect((await q<{ title: string }>(`SELECT title FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '강사 교체 — 교체A → 교체B%'`, [ADMIN, CEO]))[0]!.title).toBe(NOTI_TITLE.teacherChange);
     expect(toB[0]!.body).toContain('강사 교체 — 교체 과목 (교체학생1 · 교체학생2)');
     expect(toB[0]!.link).toBe(`/schedule?date=${MON2}`);
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '담당 이관%'`, [T_A, CEO]))[0]!.n).toBe(1);
