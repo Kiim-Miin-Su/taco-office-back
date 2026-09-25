@@ -127,12 +127,13 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
     const body = `${before!.autoFill!.body}이번 주부터 시작합니다. 준비물은 없습니다.`;
     await svc().writeBody(manager, source, { body });
 
-    const res = await svc().copyBody(manager, source);
+    const res = await svc().copyBody(manager, source, { id: manager, name: '안내 관리자', role: 'manager' });
     expect(res.headReplaced).toBe(true);
     expect(res.copied).toHaveLength(2);
     expect(res.skipped).toHaveLength(0);
     for (const copied of res.copied) {
       expect(copied.state).toBe('ready');
+      expect(copied).toMatchObject({ canSend: true, canAck: false, sendBlockedReason: null, acknowledgedAfterSeconds: null });
       expect(copied.body).toContain('이번 주부터 시작합니다');
       // 받는 학생의 이름으로 시작하고 원본 학생의 이름은 없다
       expect(copied.body).toContain(`학생 ${copied.studentName}`);

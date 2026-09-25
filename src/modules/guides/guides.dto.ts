@@ -5,6 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { BadRequestException } from '@nestjs/common';
 import { IsIn, IsInt, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { GUIDE_FACT_KEYS, type GuideFactKey } from '../../lib/guide-body';
@@ -45,6 +46,11 @@ export class GuideDto {
   @ApiProperty({ enum: ['draft', 'ready', 'sent', 'read'], description: 'draft·ready 가 아직 안 보낸 것' }) state!: string;
   /** 「보내야 함」의 정본 — 서버 GUIDE_PENDING_DB 파생. 화면은 상태 목록을 다시 정의하지 않는다. */
   @ApiProperty({ description: '아직 안 보냄 (GUIDE_PENDING_DB 파생) — 화면은 이 값만 읽는다' }) pending!: boolean;
+  @ApiProperty({ description: '현재 사용자에게 최초 내부 발송 전이가 허용되는가' }) canSend!: boolean;
+  @ApiProperty({ description: '현재 수신 강사에게 최초 확인 전이가 허용되는가' }) canAck!: boolean;
+  @ApiProperty({ ...S, description: '발송 불가 사유. canSend=true이면 null' }) sendBlockedReason!: string | null;
+  @ApiProperty({ type: 'integer', nullable: true, minimum: 0, description: '최초 GUIDE 발송부터 확인까지 초. 시각 누락/역전이면 null' })
+  acknowledgedAfterSeconds!: number | null;
   @ApiPropertyOptional(S) studentName?: string | null;
   @ApiPropertyOptional(S) teacherName?: string | null;
   @ApiPropertyOptional(S) serTitle?: string | null;
@@ -71,6 +77,27 @@ export class GuideDto {
     description: '아직 안 쓴 초안의 자동 채움 일곱 칸 (F-60). 이미 쓴/보낸 안내는 null — 저장하지 않는다',
   })
   autoFill?: GuideAutoFillDto | null;
+}
+
+/** GUIDE 행위는 id만 선택한다. 수신자·본문·상태·시각은 요청 필드가 아니다. */
+export class GuideActionParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  id!: number;
+}
+
+/** 추가 필드는 ValidationPipe가 막고, 빈 배열/비객체도 두 행위가 같은 검사로 막는다. */
+export class GuideActionDto {
+  static assertEmpty(body: unknown): void {
+    if (body === undefined) return;
+    if (body === null || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length > 0) {
+      throw new BadRequestException('안내 발송·확인은 입력 필드를 받지 않습니다');
+    }
+  }
+}
+
+export class ReceivedGuidesDto {
+  @ApiProperty({ type: [GuideDto], description: '로그인 강사에게 내부 전달된 sent/read 안내만' }) items!: GuideDto[];
 }
 
 export class PerLessonNoticeRecordDto {

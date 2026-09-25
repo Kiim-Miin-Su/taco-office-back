@@ -4,9 +4,9 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import {
-  ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
+  ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
@@ -20,11 +20,13 @@ import {
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto, TeacherUnavQueryDto,
 } from './teacher.dto';
 import { TeacherService } from './teacher.service';
+import { GuidesService } from '../guides/guides.service';
+import { GuideActionDto, GuideActionParamsDto, GuideDto, ReceivedGuidesDto } from '../guides/guides.dto';
 
 @ApiTags('teacher')
 @Controller('teacher')
 export class TeacherController {
-  constructor(private readonly svc: TeacherService) {}
+  constructor(private readonly svc: TeacherService, private readonly guidesService: GuidesService) {}
 
   /**
    * 강사 전용 표면 — 시급·정산이 실리므로 역할·본인 고정을 서버가 한다. 관리자 미리보기는 별도 결정 뒤에.
@@ -62,6 +64,31 @@ export class TeacherController {
   async guides(@CurrentUser() user: RequestUser, @Query() query: TeacherGuidesQueryDto): Promise<TeacherGuidesDto> {
     this.assertTeacher(user);
     return this.svc.guides(user.id, query.week);
+  }
+
+  @Get('guides/received')
+  @ApiOperation({ summary: '내부 전달받은 본인 GUIDE — 현재 담당 학생 자료와 구분한다' })
+  @ApiOkResponse({ type: ReceivedGuidesDto })
+  async receivedGuides(@CurrentUser() user: RequestUser): Promise<ReceivedGuidesDto> {
+    this.assertTeacher(user);
+    return this.guidesService.receivedGuides(user);
+  }
+
+  @Post('guides/:id/ack')
+  @HttpCode(200)
+  @ApiOperation({ summary: '본인에게 전달된 수업 안내를 확인한다. 반복 확인은 기존 결과를 반환한다' })
+  @ApiBody({ required: false, schema: { type: 'object', additionalProperties: false } })
+  @ApiOkResponse({ type: GuideDto })
+  @ApiConflictResponse({ description: 'code GUIDE_NOT_SENT' })
+  @ApiNotFoundResponse({ description: '안내 없음 또는 본인 수신 대상 아님' })
+  async acknowledgeGuide(
+    @CurrentUser() user: RequestUser,
+    @Param() params: GuideActionParamsDto,
+    @Body() _body: GuideActionDto,
+  ): Promise<GuideDto> {
+    this.assertTeacher(user);
+    GuideActionDto.assertEmpty(_body);
+    return this.guidesService.acknowledgeGuide(user, params.id);
   }
 
   @Get('suggestions')

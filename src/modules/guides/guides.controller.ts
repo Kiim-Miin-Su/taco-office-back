@@ -4,12 +4,12 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
-  GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideActionDto, GuideActionParamsDto, GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
   GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { GuidesService } from './guides.service';
@@ -23,24 +23,24 @@ export class GuidesController {
   @Perm('canAdminPage')
   @ApiOperation({ summary: '수업 안내 — 한 번만(GUIDE) · 회차마다(PNOTI) (§43)' })
   @ApiOkResponse({ type: GuidesDto })
-  async all(): Promise<GuidesDto> {
-    return this.svc.all();
+  async all(@CurrentUser() user: RequestUser): Promise<GuidesDto> {
+    return this.svc.all(undefined, user);
   }
 
   @Get('students')
   @Perm('canAdminPage')
   @ApiOperation({ summary: '안내 학생별 — 최신 유효 안내·교재·진단 projection (§44)' })
   @ApiOkResponse({ type: GuideStudentsDto })
-  async students(): Promise<GuideStudentsDto> {
-    return this.svc.students();
+  async students(@CurrentUser() user: RequestUser): Promise<GuideStudentsDto> {
+    return this.svc.students(user);
   }
 
   @Get('history')
   @Perm('canAdminPage')
   @ApiOperation({ summary: '안내 이력과 필요한데 없는 안내 — 일·주·월 (§45)' })
   @ApiOkResponse({ type: GuideHistoryDto })
-  async history(@Query() query: GuideHistoryQueryDto): Promise<GuideHistoryDto> {
-    return this.svc.history(query);
+  async history(@CurrentUser() user: RequestUser, @Query() query: GuideHistoryQueryDto): Promise<GuideHistoryDto> {
+    return this.svc.history(query, user);
   }
 
   @Post('drafts')
@@ -52,7 +52,7 @@ export class GuidesController {
   @ApiCreatedResponse({ type: GuideDto })
   @ApiConflictResponse({ description: 'code GUIDE_CANDIDATE_STALE | GUIDE_CREATE_RACE' })
   async createDraft(@CurrentUser() user: RequestUser, @Body() dto: GuideDraftCreateDto): Promise<GuideDto> {
-    return this.svc.createDraft(user.id, dto);
+    return this.svc.createDraft(user.id, dto, user);
   }
 
   /* ══ §43 머리의 「문구 관리」 — 문구 틀 ═══════════════════════════════════ */
@@ -106,7 +106,7 @@ export class GuidesController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: GuideBodyDto,
   ): Promise<GuideDto> {
-    return this.svc.writeBody(user.id, id, dto);
+    return this.svc.writeBody(user.id, id, dto, user);
   }
 
   @Post(':id/copy')
@@ -124,7 +124,23 @@ export class GuidesController {
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<GuideCopyResultDto> {
-    return this.svc.copyBody(user.id, id);
+    return this.svc.copyBody(user.id, id, user);
+  }
+
+  @Post(':id/send')
+  @HttpCode(200)
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '수업 안내를 저장된 수신 강사에게 내부 전달한다. 반복 요청은 기존 결과를 반환한다' })
+  @ApiBody({ required: false, schema: { type: 'object', additionalProperties: false } })
+  @ApiOkResponse({ type: GuideDto })
+  @ApiConflictResponse({ description: 'code GUIDE_NOT_READY | GUIDE_BODY_EMPTY | GUIDE_RECIPIENT_UNAVAILABLE' })
+  async sendGuide(
+    @CurrentUser() user: RequestUser,
+    @Param() params: GuideActionParamsDto,
+    @Body() _body: GuideActionDto,
+  ): Promise<GuideDto> {
+    GuideActionDto.assertEmpty(_body);
+    return this.svc.sendGuide(user, params.id);
   }
 
   /* ══ §43 회차 안내의 「강사 안내」 — 줌 안내 ═══════════════════════════════ */

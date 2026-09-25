@@ -96,6 +96,21 @@ d('§44·§45 안내 수직 계약 (C78)', () => {
     expect(month).toMatchObject({ from: '2026-09-01', to: '2026-09-30', counts: { missing: 2 } });
   });
 
+  it('S4-a 생성/작성/재생성/목록/학생별/이력은같은viewer판정을쓰고미제공은닫힌다', async () => {
+    const viewer = { id: manager, name: '안내 관리자', role: 'manager' };
+    const dto = { sourceOccurrenceId: firstOccurrenceId, studentId };
+    const made = await svc().createDraft(manager, dto, viewer);
+    expect(made).toMatchObject({ canSend: false, canAck: false, sendBlockedReason: expect.any(String), acknowledgedAfterSeconds: null });
+    const ready = await svc().writeBody(manager, made.id, { body: '수신 강사가 확인할 본문' }, viewer);
+    const expected = { canSend: true, canAck: false, sendBlockedReason: null, acknowledgedAfterSeconds: null };
+    expect(ready).toMatchObject(expected);
+    expect(await svc().createDraft(manager, dto, viewer)).toMatchObject(expected);
+    expect((await svc().all(undefined, viewer)).guides.find(g => g.id === made.id)).toMatchObject(expected);
+    expect((await svc().students(viewer)).items.find(s => s.studentId === studentId)?.latestGuide).toMatchObject(expected);
+    expect((await svc().history({ span: 'day', anchor: '2026-09-01' }, viewer)).days[0].items[0]).toMatchObject(expected);
+    expect((await svc().all()).guides.find(g => g.id === made.id)).toMatchObject({ canSend: false, canAck: false, sendBlockedReason: expect.any(String) });
+  });
+
   it('중간의 같은 강사 회차와 명단 밖 학생은 초안 생성에서 다시 거절한다', async () => {
     await expect(svc().createDraft(manager, { sourceOccurrenceId: middleOccurrenceId, studentId }))
       .rejects.toMatchObject({ response: { code: 'GUIDE_CANDIDATE_STALE' } });

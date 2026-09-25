@@ -7,6 +7,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { TeacherController } from './teacher.controller';
 import type { TeacherService } from './teacher.service';
+import type { GuidesService } from '../guides/guides.service';
 import type { RequestUser } from '../../common/perm';
 
 // DB 없는 단위 회귀 — 역할 방어와 본인 고정(위임 인자)만 본다. 집계 SQL은 격리 DB 스위트에서.
@@ -23,7 +24,11 @@ describe('TeacherController — 강사 전용 표면', () => {
     createUnavailable: jest.fn().mockResolvedValue({ id: 9 }),
     deleteUnavailable: jest.fn().mockResolvedValue({ ok: true }),
   } as unknown as TeacherService;
-  const ctrl = new TeacherController(svc);
+  const guides = {
+    receivedGuides: jest.fn().mockResolvedValue({ items: [] }),
+    acknowledgeGuide: jest.fn().mockResolvedValue({ id: 9, state: 'read' }),
+  } as unknown as GuidesService;
+  const ctrl = new TeacherController(svc, guides);
   const user = (role: RequestUser['role'], id = 7): RequestUser => ({ id, role, perms: {} } as RequestUser);
 
   beforeEach(() => jest.clearAllMocks());
@@ -70,6 +75,20 @@ describe('TeacherController — 강사 전용 표면', () => {
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 수업 안내도 403', async (role) => {
     await expect(ctrl.guides(user(role), {})).rejects.toBeInstanceOf(ForbiddenException);
     expect(svc.guides).not.toHaveBeenCalled();
+  });
+
+  it('수신함/확인은별도GUIDE서비스에실제사용자를전달한다', async () => {
+    const teacher = user('teacher', 42);
+    await ctrl.receivedGuides(teacher);
+    await ctrl.acknowledgeGuide(teacher, { id: 9 }, {});
+    expect(guides.receivedGuides).toHaveBeenCalledWith(teacher);
+    expect(guides.acknowledgeGuide).toHaveBeenCalledWith(teacher, 9);
+  });
+  it.each(['manager', 'admin', 'ceo'] as const)('%s 는GUIDE수신함/대리확인도403', async role => {
+    await expect(ctrl.receivedGuides(user(role))).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(ctrl.acknowledgeGuide(user(role), { id: 9 }, {})).rejects.toBeInstanceOf(ForbiddenException);
+    expect(guides.receivedGuides).not.toHaveBeenCalled();
+    expect(guides.acknowledgeGuide).not.toHaveBeenCalled();
   });
 
   it('불가 시간 조회·등록·삭제는 자기 id 로 위임된다', async () => {

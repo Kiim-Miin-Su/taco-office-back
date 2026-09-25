@@ -4,22 +4,27 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
+import { canAdminPage, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { histSql } from '../../lib/history';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
   GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
   GuideHistorySpan, GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
-  PerLessonNoticeDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
+  PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { guideAutoFill, guideAutoFills } from '../../lib/guide-body';
 import { END_MIN, kstAt, kstDateOf, START_MIN, serStuOn, writtenRows } from '../../lib/sql';
 import { addDays, isIsoDate, overdueDays as overdue, todayKst } from '../../lib/kst';
 
 type R = Record<string, unknown>;
+type GuideActionSource = {
+  state: string; teacherId: number | null; body: string | null;
+  recipientActive: boolean; recipientRole: string | null;
+};
 
 const DELIVERY_UNSUPPORTED = '학부모 연락처와 외부 발송 제공자 계약이 없어 실제 발송은 아직 지원하지 않습니다';
 
@@ -75,7 +80,7 @@ export class GuidesService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
-  private async guideRows(where = '', params: unknown[] = [], manager?: EntityManager): Promise<GuideDto[]> {
+  private async guideRows(where = '', params: unknown[] = [], manager?: EntityManager, viewer?: RequestUser): Promise<GuideDto[]> {
     const run = manager
       ? (sql: string, p: unknown[]) => manager.query(sql, p) as Promise<R[]>
       : (sql: string, p: unknown[]) => this.q(sql, p);
@@ -94,7 +99,8 @@ export class GuidesService {
               (SELECT h.by_id FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack' ORDER BY h.at,h.id LIMIT 1) AS acknowledged_by,
               (SELECT st.name FROM hist h LEFT JOIN staff st ON st.id=h.by_id WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack' ORDER BY h.at,h.id LIMIT 1) AS acknowledged_by_name,
               (SELECT ${kstAt('min(h.at)')} FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack') AS acknowledged_at,
-              s.name AS student_name,t.name AS teacher_name,r.title AS ser_title,cb.name AS created_by_name
+              s.name AS student_name,t.name AS teacher_name,r.title AS ser_title,cb.name AS created_by_name,
+              t.active AS recipient_active,t.role AS recipient_role
          FROM guide g
          LEFT JOIN stu s ON s.id=g.student_id
          LEFT JOIN staff t ON t.id=g.teacher_id
@@ -105,7 +111,7 @@ export class GuidesService {
          ORDER BY g.created_at DESC,g.id DESC`,
       params,
     );
-    const mapped = rows.map((row) => this.mapGuide(row));
+    const mapped = rows.map((row) => this.mapGuide(row, viewer));
     await this.attachAutoFill(mapped, manager);
     return mapped;
   }
@@ -227,16 +233,52 @@ export class GuidesService {
     for (const guide of drafts) guide.autoFill = fills.get(guide.id) ?? null;
   }
 
-  private mapGuide(r: R): GuideDto {
+  /** 버튼과 직접 전이의 동일 판정. guide 생략은 조회 전 actor 권한 검사에만 사용한다. */
+  private static guideCapabilities(viewer?: RequestUser, guide?: GuideActionSource) {
+    const role = viewer?.role;
+    const canManage = isRole(role) && hasPerm(role, 'canAdminPage', viewer?.perms) && hasPerm(role, 'canCrudAll', viewer?.perms);
+    const actualTeacher = isRole(role) && !canAdminPage(role);
+    const isRecipient = actualTeacher && guide?.teacherId === viewer?.id;
+    const recipientEligible = Boolean(guide?.teacherId && guide.recipientActive
+      && isRole(guide.recipientRole) && !canAdminPage(guide.recipientRole));
+    let sendBlockedReason: string | null = null;
+    let sendBlockedCode: string | null = null;
+    if (!canManage) sendBlockedReason = '안내를 발송할 권한이 없습니다';
+    else if (guide?.state !== 'ready') {
+      sendBlockedCode = 'GUIDE_NOT_READY';
+      sendBlockedReason = guide && (GUIDE_DONE_DB as readonly string[]).includes(guide.state)
+        ? '이미 발송한 안내입니다' : '안내를 먼저 작성하세요';
+    } else if (!guide.body?.trim()) {
+      sendBlockedCode = 'GUIDE_BODY_EMPTY'; sendBlockedReason = '안내 본문을 먼저 작성하세요';
+    } else if (!guide.teacherId) {
+      sendBlockedCode = 'GUIDE_RECIPIENT_UNAVAILABLE'; sendBlockedReason = '받는 강사가 지정되지 않았습니다';
+    } else if (!recipientEligible) {
+      sendBlockedCode = 'GUIDE_RECIPIENT_UNAVAILABLE'; sendBlockedReason = '활동 중인 강사에게만 안내를 발송할 수 있습니다';
+    }
+    return { canManage, actualTeacher, isRecipient, recipientEligible, canSend: sendBlockedReason === null,
+      canAck: isRecipient && guide?.state === 'sent', sendBlockedReason, sendBlockedCode };
+  }
+
+  private mapGuide(r: R, viewer?: RequestUser): GuideDto {
     const pending = (GUIDE_PENDING_DB as readonly string[]).includes(String(r.state));
+    const teacherId = r.teacher_id == null ? null : Number(r.teacher_id);
+    const body = (r.body as string) ?? null;
+    const gate = GuidesService.guideCapabilities(viewer, {
+      state: String(r.state), teacherId, body,
+      recipientActive: r.recipient_active === true, recipientRole: (r.recipient_role as string) ?? null,
+    });
+    const elapsed = r.sent_at && r.acknowledged_at
+      ? (Date.parse(String(r.acknowledged_at)) - Date.parse(String(r.sent_at))) / 1000 : NaN;
     return {
       id: Number(r.id), serId: r.ser_id == null ? null : Number(r.ser_id), studentId: Number(r.student_id),
-      teacherId: r.teacher_id == null ? null : Number(r.teacher_id),
+      teacherId,
       reason: String(r.reason), state: String(r.state), pending,
+      canSend: gate.canSend, canAck: gate.canAck, sendBlockedReason: gate.sendBlockedReason,
+      acknowledgedAfterSeconds: Number.isFinite(elapsed) && elapsed >= 0 ? Math.floor(elapsed) : null,
       studentName: (r.student_name as string) ?? null,
       teacherName: (r.teacher_name as string) ?? null,
       serTitle: (r.ser_title as string) ?? null,
-      body: (r.body as string) ?? null,
+      body,
       dueOn: (r.due_on as string) ?? null,
       eventOn: (r.event_on as string) ?? null,
       sourceOccurrenceId: r.source_occurrence_id == null ? null : Number(r.source_occurrence_id),
@@ -254,9 +296,9 @@ export class GuidesService {
   }
 
   /** teacherId 가 있으면 그 강사 것만 — 화면이 안 걸러도 서버가 거른다 (D-R39). */
-  async all(teacherId?: number): Promise<GuidesDto> {
+  async all(teacherId?: number, viewer?: RequestUser): Promise<GuidesDto> {
     const only = teacherId !== undefined;
-    const guides = await this.guideRows(`WHERE ($1::bigint IS NULL OR g.teacher_id=$1)`, [only ? teacherId : null]);
+    const guides = await this.guideRows(`WHERE ($1::bigint IS NULL OR g.teacher_id=$1)`, [only ? teacherId : null], undefined, viewer);
 
     const perLesson = await this.perLessonRows({ drawnOn: todayKst(), teacherId: only ? teacherId : null });
     const teacherChanges = new Map<string, number>();
@@ -289,7 +331,7 @@ export class GuidesService {
   }
 
   /** §44 학생별 — 학생의 최신 GUIDE와 같은 학생의 교재·진단을 한 projection으로 묶는다. */
-  async students(): Promise<GuideStudentsDto> {
+  async students(viewer?: RequestUser): Promise<GuideStudentsDto> {
     const latest = await this.q(
       `WITH ranked AS (
          SELECT g.*,count(*) OVER (PARTITION BY g.student_id)::int AS guide_count,
@@ -310,7 +352,8 @@ export class GuidesService {
               (SELECT sx.name FROM hist h LEFT JOIN staff sx ON sx.id=h.by_id WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack' ORDER BY h.at,h.id LIMIT 1) AS acknowledged_by_name,
               (SELECT ${kstAt('min(h.at)')} FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack') AS acknowledged_at,
               st.name AS student_name,st.grade,st.guidance,st.lang,
-              t.name AS teacher_name,s.title AS ser_title,cb.name AS created_by_name
+              t.name AS teacher_name,s.title AS ser_title,cb.name AS created_by_name,
+              t.active AS recipient_active,t.role AS recipient_role
          FROM ranked g JOIN stu st ON st.id=g.student_id
          LEFT JOIN staff t ON t.id=g.teacher_id LEFT JOIN ser s ON s.id=g.ser_id
          LEFT JOIN staff cb ON cb.id=g.created_by
@@ -334,7 +377,7 @@ export class GuidesService {
     const items = latest.map((row) => ({
         studentId: Number(row.student_id), studentName: String(row.student_name),
         grade: (row.grade as string) ?? null, guidance: (row.guidance as string) ?? null, lang: (row.lang as string) ?? null,
-        guideCount: Number(row.guide_count), latestGuide: this.mapGuide(row),
+        guideCount: Number(row.guide_count), latestGuide: this.mapGuide(row, viewer),
         books: books.filter((book) => Number(book.student_id) === Number(row.student_id)).map((book) => ({
           issueId: Number(book.issue_id), libId: Number(book.lib_id),
           versId: book.vers_id === null ? null : Number(book.vers_id), code: String(book.code), title: String(book.title),
@@ -410,14 +453,14 @@ export class GuidesService {
   }
 
   /** §45 날짜 이력과 같은 기간의 '필요하지만 없는' D-R5 이벤트. */
-  async history(query: GuideHistoryQueryDto): Promise<GuideHistoryDto> {
+  async history(query: GuideHistoryQueryDto, viewer?: RequestUser): Promise<GuideHistoryDto> {
     const span = query.span ?? 'month';
     const anchor = query.anchor ?? todayKst();
     const { from, to } = this.range(span, anchor);
     const [guides, missing] = await Promise.all([
       this.guideRows(
         `WHERE COALESCE(${kstDateOf('lower(o.span)')},g.event_on,g.due_on,${kstDateOf('g.created_at')}) BETWEEN $1::date AND $2::date`,
-        [from, to],
+        [from, to], undefined, viewer,
       ),
       this.candidateRows(from, to, null, null, false),
     ]);
@@ -440,7 +483,7 @@ export class GuidesService {
   }
 
   /** §45 누락 카드 클릭 — 클라이언트 이유를 믿지 않고 현재 SER_OCC에서 다시 판정한다. */
-  async createDraft(userId: number, dto: GuideDraftCreateDto): Promise<GuideDto> {
+  async createDraft(userId: number, dto: GuideDraftCreateDto, viewer?: RequestUser): Promise<GuideDto> {
     const id = await this.anyRepo.manager.transaction(async (manager) => {
       const occurrences = await manager.query(
         `SELECT ser_id FROM ser_occ WHERE id=$1`, [dto.sourceOccurrenceId],
@@ -483,7 +526,7 @@ export class GuidesService {
       if (!won) throw new ConflictException({ code: 'GUIDE_CREATE_RACE', message: '안내 초안 생성 결과를 확인할 수 없습니다' });
       return Number(won.id);
     });
-    const [guide] = await this.guideRows(`WHERE g.id=$1`, [id]);
+    const [guide] = await this.guideRows(`WHERE g.id=$1`, [id], undefined, viewer);
     if (!guide) throw new NotFoundException('생성한 안내를 찾을 수 없습니다');
     return guide;
   }
@@ -560,7 +603,7 @@ export class GuidesService {
    * 남고 그 말이 학부모에게 나간다. 원본이 자기 머리말로 시작할 때만 앞자락을 갈아 끼우고,
    * 사람이 머리말까지 고쳐 써서 앞자락이 안 맞으면 그대로 옮기며 `headReplaced:false` 로 알린다.
    */
-  async copyBody(userId: number, id: number): Promise<GuideCopyResultDto> {
+  async copyBody(userId: number, id: number, viewer?: RequestUser): Promise<GuideCopyResultDto> {
     const copiedIds: number[] = [];
     const skipped: GuideCopyResultDto['skipped'] = [];
     let headReplaced = false;
@@ -634,7 +677,7 @@ export class GuidesService {
     });
 
     const copied = copiedIds.length
-      ? await this.guideRows(`WHERE g.id = ANY($1::bigint[])`, [copiedIds])
+      ? await this.guideRows(`WHERE g.id = ANY($1::bigint[])`, [copiedIds], undefined, viewer)
       : [];
     return { copied, skipped, headReplaced };
   }
@@ -846,7 +889,7 @@ export class GuidesService {
    * 여기가 정한다. 이미 보낸 안내는 **고치지 않는다** — 학부모가 받은 말과 장부가 갈린다.
    * 되돌리기가 필요하면 새 안내를 만드는 것이 원문의 방식이다(§53 규칙 줄과 같은 결).
    */
-  async writeBody(userId: number, id: number, dto: GuideBodyDto): Promise<GuidesDto['guides'][number]> {
+  async writeBody(userId: number, id: number, dto: GuideBodyDto, viewer?: RequestUser): Promise<GuidesDto['guides'][number]> {
     /*
      * 상태 판정도 행 잠금 뒤 **같은 트랜잭션**에서 한다. 발송과 동시에 쓰기가 들어와도
      * sent/read를 ready로 되돌리지 않는다. 이력도 같은 트랜잭션에서 남긴다.
@@ -869,9 +912,72 @@ export class GuidesService {
       if (!rows[0]) throw new ConflictException({ code: 'GUIDE_STATE_CHANGED', message: '안내 상태가 변경되었습니다' });
       await m.query(histSql(), ['guide', id, 'guide_write', userId]);
     });
-    const [found] = await this.guideRows(`WHERE g.id=$1`, [id]);
+    const [found] = await this.guideRows(`WHERE g.id=$1`, [id], undefined, viewer);
     if (!found) throw new NotFoundException('안내를 찾을 수 없습니다');
     return found;
+  }
+
+  private static assertGuideId(id: number): void {
+    if (!Number.isSafeInteger(id) || id <= 0) throw new BadRequestException('안내 id는 양의 안전정수여야 합니다');
+  }
+
+  /** 내부 전달은 GUIDE 수신자를 유지한다. 외부 발송과 PNOTI는 건드리지 않는다. */
+  async sendGuide(viewer: RequestUser, id: number): Promise<GuideDto> {
+    if (!GuidesService.guideCapabilities(viewer).canManage) throw new ForbiddenException('안내를 발송할 권한이 없습니다');
+    GuidesService.assertGuideId(id);
+    return this.anyRepo.manager.transaction(async (m) => {
+      const [guide] = await m.query('SELECT id,state,teacher_id,body FROM guide WHERE id=$1 FOR UPDATE', [id]) as R[];
+      if (!guide) throw new NotFoundException('안내를 찾을 수 없습니다');
+      // 이미 전달된 안내는 수신자 활동 상태가 바뀌었어도 다시 발송하거나 과거 이력을 채우지 않는다.
+      if (!(GUIDE_DONE_DB as readonly string[]).includes(String(guide.state))) {
+        const recipients = guide.state === 'ready' && guide.teacher_id != null
+          ? await m.query('SELECT id,active,role FROM staff WHERE id=$1 FOR SHARE', [guide.teacher_id]) as R[] : [];
+        const gate = GuidesService.guideCapabilities(viewer, {
+          state: String(guide.state), teacherId: guide.teacher_id == null ? null : Number(guide.teacher_id),
+          body: (guide.body as string) ?? null, recipientActive: recipients[0]?.active === true,
+          recipientRole: (recipients[0]?.role as string) ?? null,
+        });
+        if (!gate.canSend) throw new ConflictException({ code: gate.sendBlockedCode, message: gate.sendBlockedReason });
+        const changed = writtenRows<R>(await m.query(`UPDATE guide SET state='sent' WHERE id=$1 AND state='ready' RETURNING id`, [id]));
+        if (!changed[0]) throw new ConflictException({ code: 'GUIDE_STATE_CHANGED', message: '안내 상태가 변경되었습니다' });
+        await m.query(histSql(), ['guide', id, 'guide_send', viewer.id]);
+        await m.query(`INSERT INTO noti(to_id,from_id,body,link,category) VALUES ($1,$2,$3,$4,'schedule')`,
+          [guide.teacher_id, viewer.id, '수업 안내가 도착했습니다', `/teacher/guides?guideId=${id}`]);
+      }
+      const [result] = await this.guideRows('WHERE g.id=$1', [id], m, viewer);
+      if (!result) throw new NotFoundException('안내를 찾을 수 없습니다');
+      return result;
+    });
+  }
+
+  /** 현재 담당 학생 자료와 분리된, 저장된 수신자 본인의 sent/read 안내만 읽는다. */
+  async receivedGuides(viewer: RequestUser): Promise<ReceivedGuidesDto> {
+    if (!GuidesService.guideCapabilities(viewer).actualTeacher) throw new ForbiddenException('강사 전용 화면입니다');
+    return { items: await this.guideRows('WHERE g.teacher_id=$1 AND g.state=ANY($2::guide_state_t[])',
+      [viewer.id, [...GUIDE_DONE_DB]], undefined, viewer) };
+  }
+
+  /** 확인은 수신 강사 본인만 한다. 알림 열람과 별개이며 중복 확인은 새 이력을 만들지 않는다. */
+  async acknowledgeGuide(viewer: RequestUser, id: number): Promise<GuideDto> {
+    if (!GuidesService.guideCapabilities(viewer).actualTeacher) throw new ForbiddenException('강사 전용 화면입니다');
+    GuidesService.assertGuideId(id);
+    return this.anyRepo.manager.transaction(async (m) => {
+      const [guide] = await m.query('SELECT id,state,teacher_id,body FROM guide WHERE id=$1 AND teacher_id=$2 FOR UPDATE', [id, viewer.id]) as R[];
+      if (!guide) throw new NotFoundException('안내를 찾을 수 없습니다');
+      if (guide.state !== 'read') {
+        const gate = GuidesService.guideCapabilities(viewer, {
+          state: String(guide.state), teacherId: Number(guide.teacher_id), body: (guide.body as string) ?? null,
+          recipientActive: true, recipientRole: viewer.role,
+        });
+        if (!gate.canAck) throw new ConflictException({ code: 'GUIDE_NOT_SENT', message: '발송된 안내만 확인할 수 있습니다' });
+        const changed = writtenRows<R>(await m.query(`UPDATE guide SET state='read' WHERE id=$1 AND state='sent' RETURNING id`, [id]));
+        if (!changed[0]) throw new ConflictException({ code: 'GUIDE_STATE_CHANGED', message: '안내 상태가 변경되었습니다' });
+        await m.query(histSql(), ['guide', id, 'guide_ack', viewer.id]);
+      }
+      const [result] = await this.guideRows('WHERE g.id=$1 AND g.teacher_id=$2', [id, viewer.id], m, viewer);
+      if (!result) throw new NotFoundException('안내를 찾을 수 없습니다');
+      return result;
+    });
   }
 
 }

@@ -10203,6 +10203,103 @@
         ]
       }
     },
+    "/guides/{id}/send": {
+      "post": {
+        "operationId": "GuidesController_sendGuide",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "code GUIDE_NOT_READY | GUIDE_BODY_EMPTY | GUIDE_RECIPIENT_UNAVAILABLE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "수업 안내를 저장된 수신 강사에게 내부 전달한다. 반복 요청은 기존 결과를 반환한다",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
     "/guides/zoom-notice": {
       "post": {
         "description": "강사 수신함에 줄이 남는다(NOTI · PNOTI sent_at) — 강사 화면의 알림 칸은 N-26 이 닫혀야 붙는다. 학부모 줄은 「보낼 것」으로 남는다 — 수신처가 없다(N-42). 회차 키는 (serId, onDate) 다. 비밀번호는 본문에 싣지 않는다.",
@@ -12899,6 +12996,178 @@
           }
         },
         "summary": "수업 안내 — 이번 주 담당 학생·교재·진단·수업 설정 (강사 덱 §10~13)",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
+    "/teacher/guides/received": {
+      "get": {
+        "operationId": "TeacherController_receivedGuides",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceivedGuidesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "내부 전달받은 본인 GUIDE — 현재 담당 학생 자료와 구분한다",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
+    "/teacher/guides/{id}/ack": {
+      "post": {
+        "operationId": "TeacherController_acknowledgeGuide",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "안내 없음 또는 본인 수신 대상 아님"
+          },
+          "409": {
+            "description": "code GUIDE_NOT_SENT"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "본인에게 전달된 수업 안내를 확인한다. 반복 확인은 기존 결과를 반환한다",
         "tags": [
           "teacher"
         ]
@@ -24704,6 +24973,25 @@
             "type": "boolean",
             "description": "아직 안 보냄 (GUIDE_PENDING_DB 파생) — 화면은 이 값만 읽는다"
           },
+          "canSend": {
+            "type": "boolean",
+            "description": "현재 사용자에게 최초 내부 발송 전이가 허용되는가"
+          },
+          "canAck": {
+            "type": "boolean",
+            "description": "현재 수신 강사에게 최초 확인 전이가 허용되는가"
+          },
+          "sendBlockedReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "발송 불가 사유. canSend=true이면 null"
+          },
+          "acknowledgedAfterSeconds": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "description": "최초 GUIDE 발송부터 확인까지 초. 시각 누락/역전이면 null"
+          },
           "studentName": {
             "type": "string",
             "nullable": true
@@ -24797,6 +25085,10 @@
           "reason",
           "state",
           "pending",
+          "canSend",
+          "canAck",
+          "sendBlockedReason",
+          "acknowledgedAfterSeconds",
           "createdAt",
           "overdueDays",
           "siblingCount"
@@ -28318,6 +28610,21 @@
           "weekFrom",
           "weekTo",
           "students"
+        ]
+      },
+      "ReceivedGuidesDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "로그인 강사에게 내부 전달된 sent/read 안내만",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideDto"
+            }
+          }
+        },
+        "required": [
+          "items"
         ]
       },
       "TeacherSuggestionDto": {

@@ -9,9 +9,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Ser } from '../../entities';
 import { TeacherController } from './teacher.controller';
 import { TeacherService } from './teacher.service';
+import { GuidesModule } from '../guides/guides.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Ser])],
+  imports: [TypeOrmModule.forFeature([Ser]), GuidesModule],
   controllers: [TeacherController],
   providers: [TeacherService],
 })

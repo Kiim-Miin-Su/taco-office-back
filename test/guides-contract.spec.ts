@@ -19,7 +19,7 @@ describe('§43~§45 안내 HTTP 계약 (C78)', () => {
     expect(reflector.get(PERM_KEY, GuidesController.prototype[handler])).toEqual(['canAdminPage']);
   });
 
-  it.each(['createDraft', 'createTemplate', 'patchTemplate', 'writeBody', 'copyBody', 'sendZoomNotice'] as const)(
+  it.each(['createDraft', 'createTemplate', 'patchTemplate', 'writeBody', 'copyBody', 'sendZoomNotice', 'sendGuide'] as const)(
     '%s 쓰기는 관리자 화면과 전체 CRUD 권한을 모두 요구한다',
     (handler) => {
       expect(reflector.get(PERM_KEY, GuidesController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
@@ -50,13 +50,13 @@ describe('§43~§45 안내 HTTP 계약 (C78)', () => {
     } as unknown as GuidesService;
     const controller = new GuidesController(service);
     const user = { id: 71, name: '안내 담당', role: 'manager' };
-    await controller.all();
-    await controller.students();
-    await controller.history({ span: 'week', anchor: '2026-09-14' });
+    await controller.all(user);
+    await controller.students(user);
+    await controller.history(user, { span: 'week', anchor: '2026-09-14' });
     await controller.createDraft(user, { sourceOccurrenceId: 91, studentId: 19 });
-    expect(service.all).toHaveBeenCalledWith();
-    expect(service.students).toHaveBeenCalledWith();
-    expect(service.history).toHaveBeenCalledWith({ span: 'week', anchor: '2026-09-14' });
-    expect(service.createDraft).toHaveBeenCalledWith(71, { sourceOccurrenceId: 91, studentId: 19 });
+    expect(service.all).toHaveBeenCalledWith(undefined, user);
+    expect(service.students).toHaveBeenCalledWith(user);
+    expect(service.history).toHaveBeenCalledWith({ span: 'week', anchor: '2026-09-14' }, user);
+    expect(service.createDraft).toHaveBeenCalledWith(71, { sourceOccurrenceId: 91, studentId: 19 }, user);
   });
 });
