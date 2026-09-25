@@ -178,8 +178,12 @@ export class FilesService {
               EXISTS (SELECT 1 FROM expense e WHERE e.receipt_url=$2) AS expense_linked,
               EXISTS (SELECT 1 FROM expense e WHERE e.receipt_url=$2 AND e.requester_id=$3) AS expense_requester,
               EXISTS (SELECT 1 FROM pdflog p WHERE p.kind='report_png' AND p.file_url=$2) AS report_linked,
+              -- PDFLOG.ref_id 는 발송(RSEND) id 다 — 리포트는 그 발송의 rep_ids 로 찾는다 (보안 검수 0925 · D1)
               EXISTS (
-                SELECT 1 FROM pdflog p JOIN rep r ON r.id=p.ref_id
+                SELECT 1 FROM pdflog p
+                  JOIN rsend s ON s.id=p.ref_id
+                  JOIN LATERAL jsonb_array_elements_text(s.rep_ids) AS sent(rep_id) ON true
+                  JOIN rep r ON r.id=sent.rep_id::bigint
                  WHERE p.kind='report_png' AND p.file_url=$2 AND r.teacher_id=$3
               ) AS report_teacher,
               EXISTS (SELECT 1 FROM cons_file cf WHERE cf.file_id=f.id) AS consulting_linked,

@@ -199,6 +199,51 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
     expect(n).toBe(0);
   });
 
+  /*
+   * 보안 검수 2026-09-25 (TBO-52 audit-0925 D1 🔴) — PDFLOG.ref_id 는 **발송(RSEND) id** 다
+   * (reports.service deliver/resend). 예전 판정은 그 값을 리포트(REP) id 로 읽어서
+   * 「발송 id 와 우연히 같은 번호의 리포트」 담당 강사가 남의 학생 PNG 를 열었고, 정작 쓴 강사는 막혔다.
+   * 판정은 RSEND.rep_ids 에 든 리포트의 담당 강사로 한다.
+   */
+  it('리포트 PNG — 발송에 든 리포트의 담당 강사만 연다 (ref_id 는 RSEND id · 보안 0925)', async () => {
+    const AUTHOR = 73, OTHER = 74, COLLIDE = 9_730_001;
+    await q.query(
+      `INSERT INTO staff (id,name,email,role) VALUES ($1,'쓴 강사','file73@t.kr','teacher'), ($2,'남 강사','file74@t.kr','teacher')
+       ON CONFLICT (id) DO NOTHING`, [AUTHOR, OTHER],
+    );
+    await q.query(
+      `INSERT INTO kind (key,name,color,cap,grp,rep,rep_form,sort)
+       VALUES ('class','정규 수업','#4A5461',4,'lesson',true,'dev',1) ON CONFLICT (key) DO NOTHING`,
+    );
+    const ser = async (teacher: number) => Number((await q.query(
+      `INSERT INTO ser (kind_key,teacher_id,mode,start_min,end_min,rrule,from_date,to_date,title)
+       VALUES ('class',$1,'offline',540,600,'ONCE','2026-09-01','2026-09-01','파일 권한') RETURNING id`, [teacher],
+    ))[0].id);
+    const [authorRep] = await q.query(
+      `INSERT INTO rep (ser_id,on_date,teacher_id,kind_key,body) VALUES ($1,'2026-09-01',$2,'class','{}') RETURNING id`,
+      [await ser(AUTHOR), AUTHOR],
+    );
+    // 발송 id 와 **같은 번호**의 리포트를 남 강사가 갖고 있다 — 예전 판정이 이 줄로 열어 줬다
+    await q.query(
+      `INSERT INTO rep (id,ser_id,on_date,teacher_id,kind_key,body) VALUES ($1,$2,'2026-09-01',$3,'class','{}')`,
+      [COLLIDE, await ser(OTHER), OTHER],
+    );
+    await q.query(
+      `INSERT INTO rsend (id,student_id,on_date,rep_ids,channel,body,sent_by,request_key)
+       VALUES ($1,1,'2026-09-01',$2::jsonb,'blob','본문',$3,'00000000-0000-4000-8000-000000009731')`,
+      [COLLIDE, JSON.stringify([Number(authorRep.id)]), ME],
+    );
+    const ref = await svc().upload(null, { kind: 'report-png', name: '20260901_학생.png', base64: Buffer.from('png').toString('base64') });
+    await q.query(`INSERT INTO pdflog (kind,ref_id,file_url) VALUES ('report_png',$1,$2)`, [COLLIDE, ref.url]);
+
+    await expect(svc().readAuthorized({ id: OTHER, name: '남 강사', role: 'teacher' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+    await expect(svc().readAuthorized({ id: AUTHOR, name: '쓴 강사', role: 'teacher' }, ref.id))
+      .resolves.toMatchObject({ kind: 'report-png' });
+    await expect(svc().readAuthorized({ id: ME, name: '매니저', role: 'manager' }, ref.id))
+      .resolves.toMatchObject({ kind: 'report-png' });
+  });
+
   it('지우면 본문도 같이 사라진다 — 가리키는 행과 같은 트랜잭션에서 지운다', async () => {
     const ref = await svc().upload(ME, { kind: 'expense-receipt', name: '영수증.png', base64: Buffer.from('img').toString('base64') });
     await svc().remove(ref.id);

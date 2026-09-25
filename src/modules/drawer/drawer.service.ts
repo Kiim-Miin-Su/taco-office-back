@@ -310,6 +310,8 @@ export class DrawerService {
     }));
 
     // 지금 시급은 **볼 수 있는 사람에게만** 싣는다(canWage · D-R39) — 못 보면 조회 자체를 안 한다. 회차의 시급과 같은 정의(오늘 이하의 마지막 줄 · lib/wage)
+    // 구성원 목록(§17)도 전체를 볼 수 있는 사람(canCrudAll)에게만 싣는다 — 강사에게는 **자기 한 줄**뿐이다.
+    // 이메일은 로그인 아이디다. 강사 화면은 서랍을 그리지 않지만 경로는 열려 있으므로 SELECT 단계에서 뺀다 (보안 검수 0925 · D-R39)
     const members = (await this.q(
       `SELECT s.id, s.name, s.email, s.role::text AS role, s.title, s.tz, s.active,
               w.rate AS wage_rate, to_char(w.from_date,'YYYY-MM-DD') AS wage_from,
@@ -320,8 +322,9 @@ export class DrawerService {
             WHERE $2::boolean AND staff_id = s.id AND from_date <= $1::date
             ORDER BY from_date DESC LIMIT 1
          ) w ON true
+        WHERE $3::boolean OR s.id = $4
         ORDER BY s.active DESC, s.id`,
-      [todayKst(), canWage],
+      [todayKst(), canWage, canSeeAll, viewerId],
     )).map((r) => ({
       id: Number(r.id), name: String(r.name), email: String(r.email),
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
@@ -378,13 +381,15 @@ export class DrawerService {
 
     // 줌 — 로그인 정보(login_secret · meeting_pw_enc)는 **SELECT 에 넣지 않는다**.
     // 학생 참가 링크와 같은 화면에 두지 않는 것이 규칙이다 (erd V9).
+    // 참가 링크도 §21 을 다루는 사람(canCrudAll)에게만 — 강사에게는 이름과 건수만 간다 (보안 검수 0925 · D-R39)
     const zoomAccounts = (await this.q(
-      `SELECT z.id, z.label, z.join_url, z.active,
+      `SELECT z.id, z.label, CASE WHEN $1::boolean THEN z.join_url END AS join_url, z.active,
               (SELECT count(*) FROM ser_occ o WHERE o.zacc_id = z.id AND NOT o.canceled)::int AS assigned,
               (SELECT count(*) FROM ser_occ a JOIN ser_occ b
                       ON a.zacc_id = b.zacc_id AND a.id < b.id AND a.span && b.span
                 WHERE a.zacc_id = z.id AND NOT a.canceled AND NOT b.canceled)::int AS overlaps
          FROM zacc z ORDER BY z.active DESC, z.id`,
+      [canSeeAll],
     )).map((r) => ({
       id: Number(r.id), label: String(r.label), joinUrl: str(r.join_url),
       active: r.active === true, assigned: Number(r.assigned), overlaps: Number(r.overlaps),

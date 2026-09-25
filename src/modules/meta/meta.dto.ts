@@ -88,6 +88,20 @@ export class CancelTreatDto {
   @ApiProperty({ description: '칸 아래 한 줄 — 무엇이 일어나는지' }) sub!: string;
 }
 
+/**
+ * 리포트 지각 제출 차감 한 구간 (D-R32) — 판정 정본 `lib/rules.LATE_REPORT_TIERS` 를 **그대로** 싣는다.
+ * 리포트 화면 최상단 안내와 수업 히스토리 규칙 표가 이 배열만 읽는다 — 화면에 금액 사본을 두지 않는다
+ * (대표 지시 2026-09-25: 「모든 Frontend 는 백엔드를 바라본다」). 차례는 작은 것부터.
+ */
+export class LateReportTierDto {
+  @ApiProperty({ description: '수업 종료 후 이 분(分) 이상이면 이 구간' }) fromMinutes!: number;
+  @ApiProperty({ description: '차감액(원) — 0 이면 차감 없음' }) amount!: number;
+  @ApiProperty({ description: '규칙 표 구간 낱말 — 예 「1시간 이상 ~ 4시간 미만」' }) range!: string;
+  @ApiProperty({ description: '안내 띠 짧은 낱말 — 예 「1시간 지각 시」' }) when!: string;
+  @ApiProperty({ description: '금액 낱말 — 예 「5,000원 차감」' }) cut!: string;
+  @ApiProperty({ enum: ['ok', 'warn', 'bad'], description: '색 — 화면은 이 값만 본다' }) tone!: 'ok' | 'warn' | 'bad';
+}
+
 export class MetaDto {
   @ApiProperty({ type: [KindDto] }) kinds!: KindDto[];
   @ApiProperty({ type: [SubDto] }) subs!: SubDto[];
@@ -98,4 +112,5 @@ export class MetaDto {
   @ApiProperty({ type: [InvTypeDto], description: '청구 종류 넷 — 낱말은 서버가 만든다 (D-R18)' }) invTypes!: InvTypeDto[];
   @ApiProperty({ type: [CancelReasonDto], description: '휴강 사유 다섯과 차감 가능 여부 (C92)' }) cancelReasons!: CancelReasonDto[];
   @ApiProperty({ type: [CancelTreatDto], description: '휴강 처리 셋 — 이월 · 차감 · 보강 이관 (C92)' }) cancelTreats!: CancelTreatDto[];
+  @ApiProperty({ type: [LateReportTierDto], description: '리포트 지각 제출 차감 셋 — 작은 것부터 (D-R32 · 2026-09-25)' }) lateReportTiers!: LateReportTierDto[];
 }

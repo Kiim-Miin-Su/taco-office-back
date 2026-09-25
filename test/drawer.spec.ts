@@ -24,6 +24,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { isKnownApWord } from '../src/lib/approval';
 import { todayKst } from '../src/lib/kst';
+import { tierFor } from '../src/lib/rules';
 import { DrawerController } from '../src/modules/drawer/drawer.controller';
 import type { DrawerService } from '../src/modules/drawer/drawer.service';
 import type { ScheduleService } from '../src/modules/schedule/schedule.service';
@@ -349,6 +350,48 @@ d('우측 서랍 — §14~§21', () => {
     r.body.todos.forEach((t: { fromId: number; toId: number }) =>
       expect([t.fromId, t.toId]).toContain(T));
     r.body.notis.forEach((n: { toId: number }) => expect(n.toId).toBe(T));
+  });
+
+  /*
+   * 보안 검수 2026-09-25 (TBO-52 audit-0925 🔴) — 강사 화면은 서랍을 그리지 않지만 경로는 열려 있다.
+   * 그 응답에 **다른 구성원의 이메일(로그인 아이디)과 학생 줌 참가 링크**가 실려 나갔다.
+   * 할 일·알림처럼 「감추는 게 아니라 없다」(D-R39) — 서버가 SELECT 단계에서 뺀다.
+   */
+  it('보안 0925 — 강사 응답에는 남의 이메일과 줌 참가 링크가 없다 (D-R39)', async () => {
+    const r = await get('/drawer', TEACHER).expect(200);
+    expect(r.body.members.map((m: { id: number }) => m.id)).toEqual([T]);
+    r.body.zoomAccounts.forEach((z: { joinUrl?: string | null }) => expect(z.joinUrl ?? null).toBeNull());
+    const body = JSON.stringify(r.body);
+    const others: Array<{ email: string }> = await ds.query('SELECT email FROM staff WHERE id <> $1', [T]);
+    expect(others.length).toBeGreaterThan(0);
+    others.forEach(({ email }) => expect(body).not.toContain(email));
+    const links: Array<{ join_url: string }> = await ds.query('SELECT join_url FROM zacc WHERE join_url IS NOT NULL');
+    links.forEach(({ join_url }) => expect(body).not.toContain(join_url));
+
+    // 관리 화면(§17 구성원 · §21 줌)은 그대로 받는다 — 막은 것은 강사 projection 뿐이다
+    const m = await get('/drawer', MANAGER).expect(200);
+    expect(m.body.members.length).toBeGreaterThan(1);
+    if (links.length > 0) expect(m.body.zoomAccounts.some((z: { joinUrl?: string | null }) => Boolean(z.joinUrl))).toBe(true);
+  });
+
+  /* 같은 검수의 둘째 줄 — 코드표(/meta)가 학생 전원과 줌 회의 번호를 강사에게 실어 보냈다 */
+  it('보안 0925 — 강사의 코드표에는 학생 명단과 줌 회의 번호가 없다 (D-R39)', async () => {
+    const t = (await get('/meta', TEACHER).expect(200)).body;
+    expect(t.students).toEqual([]);
+    t.zaccs.forEach((z: { meetingId?: string | null }) => expect(z.meetingId ?? null).toBeNull());
+    // 강사 화면이 실제로 쓰는 낱말(과목·종류·줌 이름)은 그대로 온다
+    expect(t.subs.length + t.kinds.length).toBeGreaterThan(0);
+    // 리포트 지각 차감(2026-09-25) — 화면은 금액 사본 없이 이 배열만 그린다. 판정 함수와 같은 금액이다
+    expect(t.lateReportTiers.map((x: { when: string; cut: string; amount: number }) => [x.when, x.cut, x.amount])).toEqual([
+      ['1시간 안에 제출', '차감 없음', 0], ['1시간 지각 시', '5,000원 차감', 5000], ['4시간 이후', '10,000원 차감', 10000],
+    ]);
+    t.lateReportTiers.forEach((x: { fromMinutes: number; amount: number }) => expect(tierFor(x.fromMinutes).amount).toBe(x.amount));
+
+    const m = (await get('/meta', MANAGER).expect(200)).body;
+    const [{ n }] = await ds.query('SELECT count(*)::int n FROM stu');
+    expect(m.students).toHaveLength(n);
+    const [{ k }] = await ds.query('SELECT count(*)::int k FROM zacc WHERE active AND meeting_id IS NOT NULL');
+    expect(m.zaccs.filter((z: { meetingId?: string | null }) => z.meetingId != null)).toHaveLength(k);
   });
 
   it('알림 색은 링크에서 파생되어 늘 셋 중 하나다', async () => {

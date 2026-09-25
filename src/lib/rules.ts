@@ -509,12 +509,18 @@ export interface LateTier {
   short: string;
   say: string;
   tone: 'ok' | 'warn' | 'bad';
+  /** 규칙 표의 구간 낱말 — 수업 히스토리 「리포트 지각 차감 규칙」 (D-R18: 낱말은 서버가 만든다) */
+  range: string;
+  /** 안내 띠의 짧은 낱말 — 리포트 화면 최상단 (대표 지시 2026-09-25: 「1시간 지각 시 5,000원 · 4시간 이후 10,000원」) */
+  when: string;
+  /** 금액 낱말 — 「5,000원 차감」 */
+  cut: string;
 }
 
 export const LATE_REPORT_TIERS: LateTier[] = [
-  { fromMinutes: 240, amount: 10000, short: '4시간 이상', say: '− 10,000원', tone: 'bad' },
-  { fromMinutes: 60, amount: 5000, short: '1시간 이상', say: '−  5,000원', tone: 'warn' },
-  { fromMinutes: 0, amount: 0, short: '1시간 이내', say: '차감 없음', tone: 'ok' },
+  { fromMinutes: 240, amount: 10000, short: '4시간 이상', say: '− 10,000원', tone: 'bad', range: '4시간 이상', when: '4시간 이후', cut: '10,000원 차감' },
+  { fromMinutes: 60, amount: 5000, short: '1시간 이상', say: '−  5,000원', tone: 'warn', range: '1시간 이상 ~ 4시간 미만', when: '1시간 지각 시', cut: '5,000원 차감' },
+  { fromMinutes: 0, amount: 0, short: '1시간 이내', say: '차감 없음', tone: 'ok', range: '수업 종료 후 1시간 미만', when: '1시간 안에 제출', cut: '차감 없음' },
 ];
 
 /** 화면에 뿌리는 표는 읽기 쉬운 순서(작은 것부터) — 판정은 위 배열이 한다 */

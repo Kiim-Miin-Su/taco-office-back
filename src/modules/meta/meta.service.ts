@@ -18,7 +18,7 @@ import { INV_TYPES, INV_TYPE_LABEL, INV_TYPE_SUB } from '../accounting/accountin
 import { permsOf } from '../../common/perm';
 import {
   ATTENDANCE_CANCEL_REASONS, ATTENDANCE_CANCEL_REASON_LABEL, DEDUCTIBLE_CANCEL_REASONS,
-  CANCEL_TREATS, CANCEL_TREAT_LABEL, CANCEL_TREAT_SUB,
+  CANCEL_TREATS, CANCEL_TREAT_LABEL, CANCEL_TREAT_SUB, PENALTY_RULE,
 } from '../../lib/rules';
 import type { MetaDto } from './meta.dto';
 
@@ -33,7 +33,12 @@ export class MetaService {
     @InjectRepository(Stu) private readonly students: Repository<Stu>,
   ) {}
 
-  async all(): Promise<MetaDto> {
+  /**
+   * @param canSeeRoster 관리 화면(canAdminPage)인가. 아니면 **학생 명단과 줌 회의 번호를 싣지 않는다** —
+   *   강사 화면이 쓰는 것은 과목·종류·줌 이름뿐이고, 학생 이름은 자기 수업 응답에서만 받는다.
+   *   못 보면 조회 자체를 안 한다 (보안 검수 0925 · D-R39 「감추는 게 아니라 없다」). 기본값은 닫힘이다.
+   */
+  async all(canSeeRoster = false): Promise<MetaDto> {
 
     const [kinds, subs, rooms, zaccs, staff, students] = await Promise.all([
       this.kinds.find({ order: { sort: 'ASC' } }),
@@ -41,13 +46,13 @@ export class MetaService {
       this.rooms.find({ where: { active: true }, order: { id: 'ASC' } }),
       this.zaccs.find({ where: { active: true }, order: { id: 'ASC' } }),
       this.staff.find({ where: { active: true }, order: { id: 'ASC' } }),
-      this.students.find({ order: { id: 'ASC' } }),
+      canSeeRoster ? this.students.find({ order: { id: 'ASC' } }) : Promise.resolve([] as Stu[]),
     ]);
     return {
       kinds: kinds.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, extra: k.extra === true })),
       subs: subs.map((s) => ({ key: s.key, name: s.name, color: s.color })),
       rooms: rooms.map((r) => ({ id: Number(r.id), branch: r.branch, name: r.name, capacity: r.capacity })),
-      zaccs: zaccs.map((z) => ({ id: Number(z.id), label: z.label, meetingId: z.meetingId })),
+      zaccs: zaccs.map((z) => ({ id: Number(z.id), label: z.label, meetingId: canSeeRoster ? z.meetingId : null })),
       staff: staff.map((s) => {
         const perms = permsOf(s.role, {
           canMoney: s.canMoney, canWage: s.canWage, canApprove: s.canApprove,
@@ -68,6 +73,8 @@ export class MetaService {
         key, label: ATTENDANCE_CANCEL_REASON_LABEL[key], deductible: DEDUCTIBLE_CANCEL_REASONS.includes(key),
       })),
       cancelTreats: CANCEL_TREATS.map((key) => ({ key, label: CANCEL_TREAT_LABEL[key], sub: CANCEL_TREAT_SUB[key] })),
+      // 리포트 지각 차감 — 판정 정본을 그대로 (작은 것부터). 화면은 금액을 적지 않고 이 배열을 그린다 (D-R32 · 2026-09-25)
+      lateReportTiers: PENALTY_RULE.map(({ fromMinutes, amount, range, when, cut, tone }) => ({ fromMinutes, amount, range, when, cut, tone })),
     };
   }
 }

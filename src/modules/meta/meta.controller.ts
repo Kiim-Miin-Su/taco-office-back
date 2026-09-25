@@ -6,6 +6,8 @@
 
 import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { CurrentUser } from '../../auth/current-user.decorator';
+import { hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { MetaDto } from './meta.dto';
 import { MetaService } from './meta.service';
 
@@ -19,9 +21,14 @@ export class MetaController {
   constructor(private readonly svc: MetaService) {}
 
   @Get()
-  @ApiOperation({ summary: '코드표 — 수업 종류 · 과목 · 강의실 · 줌 · 구성원 · 학생' })
+  @ApiOperation({
+    summary: '코드표 — 수업 종류 · 과목 · 강의실 · 줌 · 구성원 · 학생',
+    description: '학생 명단과 줌 회의 번호는 관리 화면(canAdminPage)에만 싣는다 — 강사에게는 students 가 빈 배열, meetingId 가 null 이다 (보안 검수 0925 · D-R39).',
+  })
   @ApiOkResponse({ type: MetaDto })
-  get(): Promise<MetaDto> {
-    return this.svc.all();
+  get(@CurrentUser() user: RequestUser): Promise<MetaDto> {
+    // 비교는 hasPerm 한 곳에서만 — 예외 권한(user.perms)까지 같은 판정을 탄다 (D-R39)
+    const canSeeRoster = isRole(user.role) && hasPerm(user.role, 'canAdminPage', user.perms);
+    return this.svc.all(canSeeRoster);
   }
 }
