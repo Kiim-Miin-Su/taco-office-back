@@ -56,6 +56,13 @@ export class InvoiceDto {
    * C50 이 고쳐 둔 「회계 화면에 들어갈 때마다 코드표를 받아 오던」 자리로 되돌아간다.
    */
   @ApiProperty({ description: '상태의 이름 — 낱말은 서버가 만든다 (D-R18)' }) stateLabel!: string;
+  /*
+   * 청구 **종류** — 원문 §53 카드마다의 「수업료 청구」·「컨설팅비 청구」 칩 (g5 53-02 · x5).
+   * 보드 카드(`InvBoardCardDto`)는 이미 들고 오는데 표 줄만 없었다 — 같은 청구서를 두 화면이 다르게 보였다.
+   * 낱말은 보드 카드와 같은 `INV_TYPE_LABEL` 이다 (D-R18). 종류는 돈이 아니라 금액 권한과 무관하게 온다.
+   */
+  @ApiProperty({ description: '청구 종류 코드(INV_TYPES 넷 중 하나) — 이름은 invTypeLabel 을 쓴다' }) invType!: string;
+  @ApiProperty({ description: '청구 종류 이름 — 「수업료 청구」·「컨설팅비 청구」 (§53 칩 · 보드 카드와 같은 낱말)' }) invTypeLabel!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) issuedOn?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) dueOn?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) paidAt?: string | null;
@@ -282,6 +289,36 @@ export class PaymentCreateDto {
   reason?: string;
 }
 
+/**
+ * §55 「+ 결제 등록」 — **청구서 없이 들어온 돈**(교재비 · 조정 등)을 매니저가 직접 적는다.
+ *
+ * A-D1(2026-08-25 확정)이 「청구서 발행 + 매니저 직접 입력 둘 다」를 정했고 `pay.inv_id` 가 nullable 인 것이 그 자리다.
+ * 청구서가 없으니 **무엇에 대한 돈인지(`reason`)가 필수**다 — 없으면 장부에 이유 없는 돈이 남는다.
+ * 금액은 사람이 확인한 값 그대로이고 서버가 계산하지 않는다(가격 규칙을 새로 만들지 않는다).
+ * 분류는 저장하지 않는다 — `inv_id IS NULL` 이 곧 §55 의 「기타」다(N-37 ③ · `payCategory` 한 곳).
+ */
+export class ManualPaymentCreateDto {
+  @ApiProperty({ description: '누구의 돈인가 — 학생 번호' })
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  studentId!: number;
+
+  @ApiProperty({ description: '들어온 금액(원) — 사람이 확인한 값 그대로' })
+  @IsInt() @Min(1) @Max(1_000_000_000)
+  amount!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '입금일' })
+  @IsCalendarDate()
+  paidOn!: string;
+
+  @ApiPropertyOptional({ enum: PAY_METHODS })
+  @IsOptional() @IsIn(PAY_METHODS as unknown as string[])
+  method?: string;
+
+  @ApiProperty({ description: '무엇에 대한 돈인가 — 교재비 · 조정 등. 청구서가 없으니 필수(공백뿐이면 409 PAY_REASON_REQUIRED)' })
+  @IsString() @MaxLength(500)
+  reason!: string;
+}
+
 /** 나간 돈 한 줄 — 법인카드 신청분은 `requestedAmount` 가 채워져 있다 (§56) */
 export class ExpenseDto {
   @ApiProperty() id!: number;
@@ -455,6 +492,14 @@ export class TuitionRowDto {
    */
   @ApiPropertyOptional({ type: String, nullable: true, description: '이월 단추가 설 자리인데 막힌 이유 — 마감 · 받는 달 수업료 청구서가 이미 나감. 설 자리가 아니거나 누를 수 있으면 null (PB-04)' })
   carryBlockedReason?: string | null;
+  /*
+   * **넘길 돈이 있는 줄인가** — 원문 §54 는 그 줄을 **위로 모으고 옅게 칠한다**(g5 54-02 · x5).
+   * 차례는 서버가 정하고(줄 순서) 칠할지도 서버가 말한다 — 금액(`carryAmount`)은 권한이 없으면 null 이라
+   * 화면이 금액으로 판정하면 권한마다 모양이 갈린다. 결강 수가 이미 보이는 자리라 새로 드러나는 것이 없다.
+   * 선택 칸으로 둔 까닭은 형제 `carriedAt` 과 같은 표기다 — 서버는 언제나 보낸다.
+   */
+  @ApiPropertyOptional({ type: Boolean, description: '넘길 돈이 있는 줄 — 원문 §54 처럼 위로 모이고 옅게 칠한다 (금액 권한과 무관)' })
+  carryPending?: boolean;
   @ApiPropertyOptional({
     type: String, nullable: true,
     description: '이미 넘겼으면 그 시각 — 한 달은 한 번만 넘긴다',

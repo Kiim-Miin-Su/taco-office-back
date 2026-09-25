@@ -14,7 +14,7 @@ import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import { Perm, canCeoCloseMonth, canCeoConfirmPayout, canCeoFileExpenseForOther, canCeoVoidInvoice, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   AccountingDto, CarryRowDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
-  OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
+  ManualPaymentCreateDto, OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, PaymentDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
   InvoiceBatchDto, InvoiceBatchResultDto, InvoiceVoidDto,
   PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto, PayoutMonthParamsDto, PayoutDetailDto, PayoutDetailParamsDto,
@@ -314,6 +314,20 @@ export class AccountingController {
   async addPayment(@CurrentUser() user: RequestUser, @Body() dto: PaymentCreateDto): Promise<InvoiceDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.addPayment(user.id, dto, canSee);
+  }
+
+  @Post('payments/manual')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '청구서 없이 들어온 돈 한 줄 — §55 「+ 결제 등록」 (A-D1 ② 매니저 직접 입력)',
+    description: '`pay.inv_id` 는 비운다 — §55 분류는 「기타」다. 무엇에 대한 돈인지(reason)가 필수이고 같은 트랜잭션에 LOG(PAY create).',
+  })
+  @ApiCreatedResponse({ type: PaymentDto, description: '저장된 입금 줄 — 목록의 줄과 같은 모양' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'code STUDENT_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code PAY_REASON_REQUIRED(사유가 공백뿐)' })
+  async addManualPayment(@CurrentUser() user: RequestUser, @Body() dto: ManualPaymentCreateDto): Promise<PaymentDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.addManualPayment(user.id, dto, canSee);
   }
 
   @Delete('payments/:id')

@@ -30,7 +30,7 @@ import { consultingCovered, invoiceLines, linesTotal, type LineSlice, type Query
 import type {
   AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, InvoiceIssueDto,
   CarryRowDto, InvBoardDto, OtherIncomeDto,
-  PaymentCreateDto, PaymentDto, PayoutDto,
+  ManualPaymentCreateDto, PaymentCreateDto, PaymentDto, PayoutDto,
   TuitionCarryDto,
   TuitionDto, TuitionRowDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
@@ -157,8 +157,15 @@ async function liveTuitionInvoiceStudents(m: Queryer, yearMonth: string, student
 }
 
 /** 한 청구서를 조회하는 SQL — 목록과 입금 쓰기 응답이 **같은 모양**을 쓰도록 한 곳에 둔다 */
+/** §57 「그 밖의 수입」 줄 차례 — 원문 컷의 위에서 아래 (g5 57-01). 표에 없는 종류는 맨 뒤 */
+const OTHER_INCOME_ORDER: readonly string[] = ['diag_intake', 'consulting', 'exam_fee'];
+const otherIncomeRank = (key: string): number => {
+  const i = OTHER_INCOME_ORDER.indexOf(key);
+  return i < 0 ? OTHER_INCOME_ORDER.length : i;
+};
+
 const INV_SELECT = `
-  SELECT i.id, i.student_id, s.name AS student_name, s.grade, i.year_month, i.title,
+  SELECT i.id, i.student_id, s.name AS student_name, s.grade, i.year_month, i.title, i.inv_type,
          i.amount, i.paid_amount, i.state,
          to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
          to_char(i.due_on,'YYYY-MM-DD') AS due_on,
@@ -281,6 +288,9 @@ export class AccountingService {
       amount: money(r.amount), paidAmount: money(r.paid_amount), state: String(r.state),
       // 낱말은 서버가 만든다 — 화면이 코드값을 찍거나 제 코드표를 갖지 않는다 (D-R18)
       stateLabel: INV_STATE_LABEL[String(r.state)] ?? String(r.state),
+      // 청구 종류와 그 이름 — 보드 카드와 같은 낱말 (g5 53-02 · D-R18). 종류는 돈이 아니라 금액 권한과 무관하다
+      invType: String(r.inv_type),
+      invTypeLabel: INV_TYPE_LABEL[String(r.inv_type)] ?? String(r.inv_type),
       // 잔액도 금액이다 — 권한이 없으면 내려보내지 않는다 (빼기로 복원되면 가린 뜻이 없다)
       remaining: canSeeAmounts ? Number(r.amount) - Number(r.paid_amount) : null,
       issuedOn: (r.issued_on as string | null) ?? null,
@@ -744,6 +754,42 @@ export class AccountingService {
   }
 
   /**
+   * 청구서 없이 들어온 돈 — §55 「+ 결제 등록」 (A-D1 ② · 2026-08-25 확정 「청구서 발행 + 매니저 직접 입력 둘 다」).
+   *
+   * 청구서 경로(`addPayment`)와 달리 **누계·상태 전이가 없다** — 붙을 청구서가 없기 때문이다. 그래서 막는 것은
+   * 「누구의 돈인가(학생이 있는가)」와 「무엇에 대한 돈인가(사유)」 둘뿐이고, 금액은 사람이 확인한 값 그대로 둔다
+   * (가격 규칙을 새로 만들지 않는다). 넣은 사람이 곧 확인한 사람이다 — 청구서 경로와 같은 모양(entered = confirmed).
+   * 마감 달이어도 막지 않는다 — 입금은 월 마감이 잠그는 것이 아니다(C92-d 「안 막는 것: 입금」).
+   * 분류는 저장하지 않는다 — `inv_id IS NULL` 이 곧 「기타」(`payCategory` 한 곳 · N-37 ③).
+   */
+  async addManualPayment(userId: number, dto: ManualPaymentCreateDto, canSeeAmounts: boolean): Promise<PaymentDto> {
+    const reason = dto.reason.trim();
+    if (!reason) {
+      throw new ConflictException({ code: 'PAY_REASON_REQUIRED', message: '청구서 없이 들어온 돈은 무엇에 대한 돈인지 적어야 합니다' });
+    }
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1`, [dto.studentId])) as Array<{ id: string; name: string }>;
+      if (!stu) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
+      const [row] = (await m.query(
+        `INSERT INTO pay (inv_id, student_id, amount, paid_on, method, reason, entered_by, entered_at, confirmed_by, confirmed_at)
+         VALUES (NULL, $1, $2, $3::date, $4, $5, $6, now(), $6, now())
+         RETURNING id, to_char(paid_on,'YYYY-MM-DD') AS paid_on`,
+        [dto.studentId, dto.amount, dto.paidOn, dto.method ?? null, reason, userId],
+      )) as Array<{ id: string; paid_on: string }>;
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'PAY',$2,'create',$3::jsonb)`,
+        [userId, row.id, JSON.stringify({ invId: null, studentId: dto.studentId, amount: dto.amount, paidOn: dto.paidOn, method: dto.method ?? null, reason })],
+      );
+      const category = payCategory(null, false);
+      return {
+        id: Number(row.id), paidOn: row.paid_on, studentId: Number(stu.id), studentName: stu.name,
+        amount: canSeeAmounts ? dto.amount : null, method: dto.method ?? null, reason, invId: null,
+        category, categoryLabel: PAY_CATEGORY_LABEL[category] ?? category,
+      };
+    });
+  }
+
+  /**
    * 잘못 적은 입금 줄을 지운다 — **부분 납부(partial) 인 동안만**.
    *
    * 완납으로 굳은 청구서는 되돌리지 않는다 (erd INV Note: 「상태 전이는 unpaid → partial → paid 와 → void 뿐이며
@@ -1070,6 +1116,8 @@ export class AccountingService {
         // 단가가 둘 이상이면 화면이 하나를 적지 않는다 — 곱해서 안 맞는 숫자를 세우지 않는다
         priceCount: new Set(priced.map((l) => Number(l.unit_price))).size,
         doneAmount: money(done), carryAmount: money(carry),
+        // 원문 §54 는 넘길 돈이 있는 줄을 위로 모으고 옅게 칠한다 — 판정은 여기 한 곳 (g5 54-02 · x5)
+        carryPending: carry > 0,
         /*
          * **받아 놓고 못 해 준 수업**만 이월이다 (N-39). 완납이 아니면 이월할 것이 없고,
          * 못 해 준 수업이 없어도 없다. 이미 넘겼으면 다시 못 넘긴다 — 같은 돈이 두 번 넘어간다.
@@ -1098,6 +1146,13 @@ export class AccountingService {
           : [],
       });
     }
+
+    /*
+     * 줄 차례 — **넘길 돈이 있는 줄이 위로**(원문 §54 · g5 54-02). 그 안과 나머지는 학생 차례 그대로다
+     * (정렬은 안정적이라 이름순이 흐트러지지 않는다). 화면이 다시 정렬하지 않는다 — 권한 없는 사람은 금액이
+     * null 이라 화면이 금액으로 정렬하면 권한마다 차례가 갈린다.
+     */
+    items.sort((a, b) => Number(b.carryPending === true) - Number(a.carryPending === true));
 
     return {
       month, today, daysPast, daysLeft,
@@ -1486,7 +1541,14 @@ export class AccountingService {
    * 지금 이 줄은 §52 머리 여섯 칸과 같은 **전 기간**이다 (C43 이 같은 이유로 월 라벨을 달지 않았다).
    */
   async otherIncome(canSeeAmounts: boolean, span: IncomeSpan = 'month'): Promise<OtherIncomeDto> {
-    const types = [...INV_TYPES_OTHER];
+    /*
+     * 줄 차례는 원문 컷 그대로 — 진단고사 + 상담 비용 → 컨설팅비 → MAP + CAT (g5 57-01 · x5).
+     * `INV_TYPES` 자체의 차례는 다른 곳(§53 발행 창 · /meta)이 쓰므로 건드리지 않고 이 화면의 차례만 둔다.
+     * 종류 집합은 여전히 `INV_TYPES_OTHER` 가 정한다 — 차례 표에 없는 종류가 생기면 맨 뒤에 선다(사라지지 않는다).
+     */
+    const types = [...INV_TYPES_OTHER].sort(
+      (a, b) => otherIncomeRank(a) - otherIncomeRank(b),
+    );
     const rows = (await this.inv.query(
       `SELECT i.id, i.inv_type, i.title, i.amount, i.paid_amount,
               i.state::text AS state,
@@ -1909,11 +1971,12 @@ export class AccountingService {
         `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'WAGE',$2,'create',$3::jsonb)`,
         [userId, made.id, JSON.stringify({ staffId: dto.staffId, rate: dto.rate, fromDate: made.fromDate, reason: dto.reason?.trim() || null })],
       );
-      // 강사에게 알린다 — 자기 시급이 언제부터 얼마로 바뀌는지는 본인이 알아야 한다 (§16 · 승인 경로와 같은 분류)
+      // 강사에게 알린다 — 자기 시급이 언제부터 얼마로 바뀌는지는 본인이 알아야 한다 (§16 · 승인 경로와 같은 분류).
+      // won() 은 늘 「…원」(받침 ㄴ)으로 끝나므로 조사는 「으로」다 (QA 0926 B-2 「45,000원 로」)
       if (dto.staffId !== userId) {
         await m.query(
           `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/teacher', 'request', $4)`,
-          [dto.staffId, userId, `기본 시급이 ${won(dto.rate)} 로 바뀝니다 — ${made.fromDate} 수업부터${dto.reason?.trim() ? ` · ${dto.reason.trim()}` : ''}`, NOTI_TITLE.wageChanged],
+          [dto.staffId, userId, `기본 시급이 ${won(dto.rate)}으로 바뀝니다 — ${made.fromDate} 수업부터${dto.reason?.trim() ? ` · ${dto.reason.trim()}` : ''}`, NOTI_TITLE.wageChanged],
         );
       }
       const [row] = (await m.query(`${AccountingService.WAGE_SELECT} WHERE w.id = $2`, [today, made.id])) as Array<Record<string, unknown>>;
