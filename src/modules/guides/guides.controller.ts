@@ -10,7 +10,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
   GuideActionDto, GuideActionParamsDto, GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
-  GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
+  GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto, ZoomNoticeBatchResultDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { GuidesService } from './guides.service';
 
@@ -164,6 +164,25 @@ export class GuidesController {
     @Body() dto: ZoomNoticeWriteDto,
   ): Promise<ZoomNoticeResultDto> {
     return this.svc.sendZoomNotice(user.id, dto);
+  }
+
+  @Post('zoom-notice/batch')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '강사 N명 한 번에 — 오늘 온라인 회차의 강사 줌 안내를 한 번에 (§43 매번 머리 · wave 6)',
+    description:
+      '입력은 없다 — 보낼 회차는 서버가 목록의 canSendTeacher 와 같은 문(sendGate)으로 고른다. '
+      + '줄마다 단건 줌 안내와 같은 쓰기·같은 트랜잭션 단위라 한 줄의 거절이 다른 줄을 되돌리지 않는다. '
+      + '못 보낸 줄은 서버 코드·문장으로 skipped 에 싣는다.',
+  })
+  @ApiBody({ required: false, schema: { type: 'object', additionalProperties: false } })
+  @ApiCreatedResponse({ type: ZoomNoticeBatchResultDto })
+  async sendZoomNoticeBatch(
+    @CurrentUser() user: RequestUser,
+    @Body() _body: GuideActionDto,
+  ): Promise<ZoomNoticeBatchResultDto> {
+    GuideActionDto.assertEmpty(_body);
+    return this.svc.sendZoomNoticeBatch(user);
   }
 
 }

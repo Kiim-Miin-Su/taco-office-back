@@ -32,6 +32,18 @@ describe('일정 실행 취소 토큰', () => {
     expect(readScheduleUndo(token, 2, 1_601_000)).toBeNull();
   });
 
+  it('예외 줄의 저장 번호만 다르면 stale 이 아니다 — 여러 단계 되돌리기(S5)', () => {
+    const exc = (id: number) => ({
+      id, serId: 7, onDate: '2026-09-15', canceled: false, newDate: null, startMin: null, endMin: null,
+      teacherSet: false, teacherId: null, roomSet: false, roomId: null, reason: null,
+      cancelKind: null, cancelTreat: null, makeupSerId: null, stuOut: [2],
+    });
+    const left = { ...state(), EXC: [exc(100)] };
+    const right = { ...state(), EXC: [exc(101)] };
+    expect(sameScheduleState(left, right)).toBe(true);
+    expect(sameScheduleState(left, { ...right, EXC: [{ ...exc(101), stuOut: [] }] })).toBe(false);
+  });
+
   it('같은 행의 값이 달라지면 stale 상태다', () => {
     const left = state();
     const right = state();

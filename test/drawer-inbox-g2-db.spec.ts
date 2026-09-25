@@ -135,7 +135,10 @@ d('§14 · §16 서랍 응답 — 사유 · 자료 요청 제목 · 알림 제�
        VALUES ('exam', '2학기 중간', '2026-10-02', $2, $1) RETURNING id`,
       [TEACHER, HEAD],
     )) as Array<{ id: string }>;
-    const rows = await inboxOf();
+    // 자료 요청은 §14 승인 대기함에 들지 않는다(원문 슬라이드 14 의 원천은 REQ · SER — g2 14-2 · wave 5).
+    // 한 줄의 모양(제목·부제·사유)은 같은 원장 행이라 결재 목록(`approvals.waiting`)에서 본다.
+    const rows = (await svc().all(HEAD, true, true)).approvals.waiting.filter((r) => r.byId === TEACHER);
+    expect((await inboxOf()).some((r) => r.kind === 'gpapack')).toBe(false);
     const a = rows.find((r) => r.kind === 'gpapack' && r.id === Number(same.id))!;
     expect(a.title).toBe('시험 대비 자료 요청');
     // 부제는 원문 §75 그대로 「학생 · 기한」 — 학생이 안 붙은 묶음이라 기한만 선다

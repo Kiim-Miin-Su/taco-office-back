@@ -173,9 +173,12 @@ export const RATES = [
   { kindKey: 'mock',       subKey: 'mock-sat',  unitPrice: 45000, fromDate: '2026-01-01' },
 ];
 
-/** 시간대 그룹 — 구성원 · 시간대 화면(§17) */
+/**
+ * 시간대 그룹 — 구성원 · 시간대 화면(§17).
+ * 이름은 원문 §17 낱말이다 — 「서울」(「관리자 화면은 서울 KST 고정입니다」 · g2 17-1 · 마이그레이션 1763200000000).
+ */
 export const TZGS = [
-  { id: 1, name: '한국 (KST)', tz: 'Asia/Seoul' },
+  { id: 1, name: '서울', tz: 'Asia/Seoul' },
   { id: 2, name: '미국 동부',   tz: 'America/New_York' },
   { id: 3, name: '미국 서부',   tz: 'America/Los_Angeles' },
 ];

@@ -38,6 +38,13 @@ export const MKT_ITEM_LABEL: Record<string, string> = {
   print: '인쇄물',
 };
 
+/**
+ * 「+ 오늘 한 것」(§59 · x5)이 받는 코드 — **위 이름표의 키 그대로**다(표가 곧 목록 · 한 벌).
+ * 새 어휘를 여기서 짓지 않는다 — 원문 어휘로 맞추는 일은 N-29 ① 이 열려 있다.
+ */
+export const MKT_CHANNELS = Object.keys(MKT_CHANNEL_LABEL) as readonly string[];
+export const MKT_ITEMS = Object.keys(MKT_ITEM_LABEL) as readonly string[];
+
 /** 모르는 코드값이면 코드값을 그대로 보인다 — 비어 보이느니 낯설게 보이는 편이 낫다 */
 export const mktChannelLabel = (channel: string): string => MKT_CHANNEL_LABEL[channel] ?? channel;
 export const mktItemLabel = (item: string): string => MKT_ITEM_LABEL[item] ?? item;

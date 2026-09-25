@@ -16,6 +16,7 @@ import { NOTI_TITLE } from '../../lib/noti';
 import { todoSourceLabel } from '../../lib/todo';
 import {
   MFB_KIND_LABEL, mfbStateLabel, mktChannelLabel, mktItemLabel, mktTitle,
+  MKT_CHANNEL_LABEL, MKT_CHANNELS, MKT_ITEM_LABEL, MKT_ITEMS,
   type MfbKind,
 } from '../../lib/marketing-words';
 import {
@@ -23,26 +24,29 @@ import {
   PLAN_WRITABLE_STAGES, planLockedMessage, planNextStages,
 } from '../../lib/plan-words';
 import { CPL_AREAS, CPL_AREA_LABEL, CPL_OPEN_STAGES, CPL_SEVERITIES, CPL_SEVERITY_LABEL, CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel, cplSeverityLabel } from '../../lib/complaint-words';
+import { CPL_REQUESTERS, CPL_REQUESTER_LABEL, cplRequesterLabel } from '../../lib/complaint-words';
 import {
   INTAKE_FUNNEL_STAGES, INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel,
   LEAD_SOURCES, LEAD_SOURCE_LABEL, LEAD_SOURCE_TOUCH_KIND, LEAD_SOURCE_UNSET, LEAD_SOURCE_UNSET_LABEL,
   LEAD_TOUCH_KINDS, LEAD_TOUCH_KIND_LABEL, intakeStageLabel, leadNextStages, leadSourceLabel, leadTouchKindLabel,
   LEAD_REASON_KINDS, LEAD_REASON_KIND_LABEL, LEAD_REASON_KIND_UNSET, LEAD_REASON_KIND_UNSET_LABEL,
   leadDueLabel, leadReasonKindLabel, leadRecontactDone, leadRecheckOn, leadStageDue, LEAD_APPT_KINDS, LEAD_APPT_KIND_LABEL,
-  type LeadSource,
+  intakeEnrollRate, leadAftercareRows,
+  type LeadAftercareCounts, type LeadSource,
 } from '../../lib/intake-words';
+import { leadCardActions, leadLessonLineLabel } from '../../lib/intake-words';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
 import { LEAD_DIAG_LATEST_JOIN, leadDiagFromRow } from './lead-diag.service';
 import { LEAD_APPTS_JSON, LEAD_PLAN_JSON, leadApptsFromRow, leadPlanFromRow } from './lead-plan.service';
 import { INV_OPEN } from '../../lib/rules';
-import { kstDateOf, sqlWordList } from '../../lib/sql';
+import { kstDateOf, serStuEndedOn, sqlWordList } from '../../lib/sql';
 import {
   dueLabel, planDueKindLabel, planDueState, planStageLabel,
   type PlanDueState,
 } from '../../lib/plan-words';
 import {
-  MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, MT_TYPES, MT_TYPE_LABEL, MT_TYPE_SUB,
-  mtAttendState, mtTypeLabel, mtTypeOptions, type MtType,
+  MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, MT_TYPES, MT_TYPE_SHORT, MT_TYPE_SUB,
+  mtAttendState, mtTypeLabel, mtTypeOptions, mtTypeShort, type MtType,
 } from '../../lib/meeting-words';
 import type {
   IntakeAlertDto, IntakeFailReasonDto, IntakeHeadDto,
@@ -53,6 +57,7 @@ import type {
   PlanStageMoveDto, PlanTaskCreateDto, PlanTaskDto,
   MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
+  MarketingCreateDto, MarketingDto,
   PlanCreateDto, PlanCreateResultDto,
 } from './ops.dto';
 
@@ -237,31 +242,14 @@ export class OpsService {
     // §59 도 기간을 탄다 — 활동한 날(`on_date`)로 가른다. 여기만 빠져 있어 칩이 「9월」이라 말하면서
     // 8월 활동을 그대로 보였다 (59-1). 날짜가 없는 옛 활동은 다른 목록처럼 가르지 않는다(rangeClause)
     const mktScope = scoped('m.on_date');
-    const marketing = (await this.q(
-      `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.by_id, b.name AS by_name
-         FROM mkt m LEFT JOIN staff b ON b.id = m.by_id
-        ${mktScope.where}
-        ORDER BY (m.result->>'enrolled')::int DESC NULLS LAST, m.id`, mktScope.params,
-    )).map((r) => {
-      const res = (r.result ?? {}) as Record<string, number>;
-      const enrolled = res.enrolled ?? 0;
-      const cost = res.cost ?? 0;
-      const channel = String(r.channel);
-      const item = String(r.item);
-      const title = (r.title as string) ?? null;
-      return {
-        id: Number(r.id), channel, item, url: (r.url as string) ?? null,
-        // 낱말은 여기서 한 번만 만든다 — 화면이 코드를 한글로 옮기지 않는다 (D-R18 · C53)
-        channelLabel: mktChannelLabel(channel), itemLabel: mktItemLabel(item),
-        title, name: mktTitle(title, channel, item),
-        byId: leadId(r.by_id, true), byName: (r.by_name as string) ?? null,
-        impressions: res.impressions ?? null, clicks: res.clicks ?? null,
-        inquiries: res.inquiries ?? null, enrolled,
-        // 비용은 대표만 (D-R39) — 서버가 안 내려보낸다
-        cost: canSeeAmounts ? cost : null,
-        costPerEnroll: canSeeAmounts && enrolled > 0 ? Math.round(cost / enrolled) : null,
-      };
-    });
+    const marketing = await this.marketingRows(mktScope.where, mktScope.params, canSeeAmounts);
+    /* §59 필터 띠 「어디에 · 누가」와 머리의 항목 범례 · 「N건 M일 진행」(x5 · g6 59-4 · 59-5) —
+       **받은 줄(같은 기간)에서 센다** · 왕복을 늘리지 않는다(ops-contract 가 조회 수를 센다) · 화면은 세지 않는다 (D-R37) */
+    const mktChannelCounts = OpsService.countBy(marketing, (m) => m.channel, (m) => m.channelLabel);
+    const mktByCounts = OpsService.countBy(
+      marketing, (m) => (m.byId == null ? '__none__' : String(m.byId)), (m) => m.byName ?? '담당 없음');
+    const mktItemCounts = OpsService.countBy(marketing, (m) => m.item, (m) => m.itemLabel);
+    const mktDays = new Set(marketing.map((m) => m.onDate).filter((v): v is string => !!v)).size;
 
     const feedback = await this.feedbackThreads(viewerId);
     const feedbackNeedsFix = feedback.filter((t) => t.state === 'needs_fix').length;
@@ -283,6 +271,8 @@ export class OpsService {
       cplStages: CPL_STAGES.map((key) => ({ key, label: CPL_STAGE_LABEL[key], sub: CPL_STAGE_SUB[key] })),
       cplAreas: CPL_AREAS.map((key) => ({ key, label: CPL_AREA_LABEL[key] })),
       cplSeverities: CPL_SEVERITIES.map((key) => ({ key, label: CPL_SEVERITY_LABEL[key] })),
+      // 문의자 관계 둘 (wave 6 · 67-5) — 「+ 접수」·처리 창의 낱말. 화면이 제 표를 들지 않는다 (D-R18)
+      cplRequesters: CPL_REQUESTERS.map((key) => ({ key, label: CPL_REQUESTER_LABEL[key] })),
       planDues, planOverdue, meetings, marketing,
       feedback, feedbackNeedsFix, canComment,
       suggestions, canSeeAmounts,
@@ -296,7 +286,92 @@ export class OpsService {
       // 단추가 서는지도 서버다 (D-R39) — 지금은 이 화면을 볼 수 있으면 만들 수 있다
       canCreateMeeting: true, canCreatePlan: true,
       cplOverdue, planPending, mtMyWaiting, mtMinutesCount,
+      // §59 「+ 오늘 한 것」 폼의 낱말과 단추 (x5 · 59-3) — 어휘는 지금 코드의 이름표다(원문 어휘 맞춤은 N-29 ①)
+      mktChannels: MKT_CHANNELS.map((key) => ({ key, label: MKT_CHANNEL_LABEL[key] })),
+      mktItems: MKT_ITEMS.map((key) => ({ key, label: MKT_ITEM_LABEL[key] })),
+      canCreateMarketing: true,
+      mktChannelCounts, mktByCounts, mktItemCounts, mktDays,
     };
+  }
+
+  /**
+   * §59 활동 한 줄 — 목록(`GET /ops`)과 「+ 오늘 한 것」 응답이 **같은 SELECT·같은 변환**을 쓴다
+   * (C90 `leadRows` 와 같은 규약 · x5). 쓰기 응답이 다른 모양이면 화면이 두 벌을 들고 간다.
+   */
+  private async marketingRows(where: string, params: unknown[], canSeeAmounts: boolean): Promise<MarketingDto[]> {
+    return (await this.q(
+      `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.by_id, b.name AS by_name,
+              to_char(m.on_date,'YYYY-MM-DD') AS on_date
+         FROM mkt m LEFT JOIN staff b ON b.id = m.by_id
+        ${where}
+        ORDER BY (m.result->>'enrolled')::int DESC NULLS LAST, m.id`, params,
+    )).map((r) => {
+      const res = (r.result ?? {}) as Record<string, number>;
+      const enrolled = res.enrolled ?? 0;
+      const cost = res.cost ?? 0;
+      const channel = String(r.channel);
+      const item = String(r.item);
+      const title = (r.title as string) ?? null;
+      return {
+        id: Number(r.id), channel, item, url: (r.url as string) ?? null,
+        // 낱말은 여기서 한 번만 만든다 — 화면이 코드를 한글로 옮기지 않는다 (D-R18 · C53)
+        channelLabel: mktChannelLabel(channel), itemLabel: mktItemLabel(item),
+        title, name: mktTitle(title, channel, item),
+        onDate: (r.on_date as string) ?? null,
+        byId: leadId(r.by_id, true), byName: (r.by_name as string) ?? null,
+        impressions: res.impressions ?? null, clicks: res.clicks ?? null,
+        inquiries: res.inquiries ?? null, enrolled,
+        // 비용은 대표만 (D-R39) — 서버가 안 내려보낸다
+        cost: canSeeAmounts ? cost : null,
+        costPerEnroll: canSeeAmounts && enrolled > 0 ? Math.round(cost / enrolled) : null,
+      };
+    });
+  }
+
+  /** 칩 줄 건수 — 건수가 있는 것만 · 많은 순 · 같으면 이름 · 키 (§64 담당 칩 `ownerCounts` 와 같은 차례) */
+  private static countBy<T>(rows: T[], keyOf: (r: T) => string, labelOf: (r: T) => string): OpsCountDto[] {
+    const counts = new Map<string, OpsCountDto>();
+    for (const r of rows) {
+      const key = keyOf(r);
+      const cur = counts.get(key);
+      if (cur) cur.count += 1;
+      else counts.set(key, { key, label: labelOf(r), count: 1 });
+    }
+    return [...counts.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label) || a.key.localeCompare(b.key));
+  }
+
+  /**
+   * §59 「+ 오늘 한 것」 — 활동 등록 · URL 첨부 (g6 59-3 · P1 · x5).
+   *
+   * 날짜를 안 주면 **오늘**이다(단추 이름 그대로) · 담당을 안 주면 **나**다(§60 「담당자 답변」을 쓸 사람).
+   * 그만둔 사람에게는 달지 않는다 — 이 파일의 다른 담당 자리와 같은 판정(S4). 감사 줄은 같은 트랜잭션이다 —
+   * 밖에서 남기면 쓰기는 되돌아가고 줄만 남는다(S7). 성과·메모는 받지 않는다(메모 칸은 N-29 결정 전).
+   */
+  async createMarketing(viewerId: number, canSeeAmounts: boolean, dto: MarketingCreateDto): Promise<MarketingDto> {
+    const title = dto.title.trim();
+    if (!title) throw new ConflictException({ code: 'MKT_TITLE_REQUIRED', message: '무엇을 했는지 적어 주세요' });
+    // DTO 가 이미 막지만 서비스도 한 번 더 본다 — 모르는 코드가 표에 들어가면 화면이 코드값을 찍는다 (D-R18)
+    if (!MKT_CHANNELS.includes(dto.channel) || !MKT_ITEMS.includes(dto.item)) {
+      throw new ConflictException({ code: 'MKT_WORD_UNKNOWN', message: '채널과 항목은 목록에서 고르세요' });
+    }
+    const byId = dto.byId ?? viewerId;
+    const onDate = dto.onDate ?? todayKst();
+    const url = dto.url?.trim() ? dto.url.trim() : null;
+    const id = await this.lead.manager.transaction(async (em) => {
+      const [by] = (await em.query(`SELECT id FROM staff WHERE id = $1 AND active`, [byId])) as R[];
+      if (!by) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
+      const [row] = (await em.query(
+        `INSERT INTO mkt (channel, item, url, on_date, title, by_id) VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING id`,
+        [dto.channel, dto.item, url, onDate, title, byId],
+      )) as Array<{ id: string }>;
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1, 'MKT', $2, 'create', $3::jsonb)`,
+        [viewerId, row.id, JSON.stringify({ title, channel: dto.channel, item: dto.item, url, onDate, byId })],
+      );
+      return leadId(row.id);
+    });
+    const [created] = await this.marketingRows('WHERE m.id = $1', [id], canSeeAmounts);
+    return created;
   }
 
   /**
@@ -383,7 +458,8 @@ export class OpsService {
     );
     const got = new Map(rows.map((r) => [String(r.mt_type), Number(r.n)]));
     return {
-      counts: MT_TYPES.map((key) => ({ key, label: MT_TYPE_LABEL[key], count: got.get(key) ?? 0 })),
+      // 칩 줄은 **짧은 이름**이다 — 원문 §63 「전체 · ●기획 · ●컨설팅 …」 (g6 63-7 · x5). 폼(mtTypes)은 긴 이름 그대로
+      counts: MT_TYPES.map((key) => ({ key, label: MT_TYPE_SHORT[key], count: got.get(key) ?? 0 })),
       minutes: rows.reduce((n, r) => n + Number(r.minutes ?? 0), 0),
       myWaiting: rows.reduce((n, r) => n + Number(r.my_waiting ?? 0), 0),
     };
@@ -416,6 +492,7 @@ export class OpsService {
         id: Number(r.id), mtType: String(r.mt_type),
         // 낱말은 서버가 만든다 — 한동안 이 표가 「general」 「plan」을 그대로 찍고 있었다 (D-R18 · C57)
         mtTypeLabel: mtTypeLabel(String(r.mt_type)),
+        mtTypeShort: mtTypeShort(String(r.mt_type)),
         title: (r.title as string) ?? null,
         onDate,
         attendees: Number(r.attendees), confirmed: Number(r.confirmed), waiting: Number(r.waiting),
@@ -587,7 +664,9 @@ export class OpsService {
     return (await this.q(
       `SELECT c.id, c.area, c.student_id, s.name AS student_name, c.stage, c.body, c.action, c.result,
               to_char(c.created_at,'YYYY-MM-DD') AS created_at, c.owner_id, o.name AS owner_name,
-              to_char(c.due_on,'YYYY-MM-DD') AS due_on, c.severity, c.teacher_changed
+              to_char(c.due_on,'YYYY-MM-DD') AS due_on, c.severity, c.teacher_changed,
+              -- 문의자 관계 · 마무리한 날(KST) — wave 6 (67-5 · 67-6). 옛 행은 둘 다 NULL 그대로다 (N-25)
+              c.requester, to_char(${kstDateOf('c.closed_at')},'YYYY-MM-DD') AS closed_on
          FROM cpl c
          LEFT JOIN stu s ON s.id = c.student_id
          LEFT JOIN staff o ON o.id = c.owner_id
@@ -614,8 +693,19 @@ export class OpsService {
         /* 「수강 종료 · 환불」 단추 — 돈 권한 · 아직 안 끝난 건 · 학생이 붙어 있는 건 (S5 · D-R39).
            환불 창이 부르는 경로가 `canMoney` 라 이 셋이 서버의 조건과 같은 질문이다. */
         canWithdraw: canMoney && open && r.student_id != null,
+        // 누가 알렸는지 · 마무리한 날 — 낱말은 서버, 모르면 null(화면이 「미정」을 짓지 않는다 · wave 6)
+        requester: (r.requester as string) ?? null,
+        requesterLabel: cplRequesterLabel(r.requester as string | null),
+        closedOn: (r.closed_on as string) ?? null,
       };
     });
+  }
+
+  /** 문의자 관계 — DTO 가 먼저 막고 표의 CHECK 가 마지막에 막는다. 서비스도 한 번 더 본다(직접 호출 경로 · 67-5) */
+  private static assertRequester(requester: string | null | undefined): void {
+    if (requester != null && !(CPL_REQUESTERS as readonly string[]).includes(requester)) {
+      throw new ConflictException({ code: 'CPL_REQUESTER_INVALID', message: '문의자 관계는 어머니 · 아버지 중 하나입니다' });
+    }
   }
 
   private async complaintOne(id: number, canMoney = false): Promise<ComplaintDto> {
@@ -631,6 +721,7 @@ export class OpsService {
   async createComplaint(viewerId: number, canMoney: boolean, dto: ComplaintCreateDto): Promise<ComplaintDto> {
     const body = dto.body.trim();
     if (!body) throw new ConflictException({ code: 'CPL_BODY_REQUIRED', message: '내용을 적어 주세요' });
+    OpsService.assertRequester(dto.requester);
     if (dto.studentId != null) {
       const [stu] = await this.q(`SELECT id FROM stu WHERE id = $1`, [dto.studentId]);
       if (!stu) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '그 학생을 찾을 수 없습니다' });
@@ -638,9 +729,9 @@ export class OpsService {
     const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
     const id = await this.lead.manager.transaction(async (em) => {
       const [made] = (await em.query(
-        `INSERT INTO cpl (area, student_id, stage, body, owner_id, due_on, severity)
-         VALUES ($1, $2, 'received', $3, $4, $5::date, $6) RETURNING id`,
-        [dto.area, dto.studentId ?? null, body, owner?.id ?? null, dto.dueOn ?? null, dto.severity ?? null],
+        `INSERT INTO cpl (area, student_id, stage, body, owner_id, due_on, severity, requester)
+         VALUES ($1, $2, 'received', $3, $4, $5::date, $6, $7) RETURNING id`,
+        [dto.area, dto.studentId ?? null, body, owner?.id ?? null, dto.dueOn ?? null, dto.severity ?? null, dto.requester ?? null],
       )) as Array<{ id: string }>;
       const cplId = leadId(made.id);
       if (owner && owner.id !== viewerId) {
@@ -651,7 +742,7 @@ export class OpsService {
       }
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'CPL',$2,'create','{}'::jsonb,$3::jsonb)`,
-        [viewerId, cplId, JSON.stringify({ area: dto.area, studentId: dto.studentId ?? null, ownerId: owner?.id ?? null, dueOn: dto.dueOn ?? null, severity: dto.severity ?? null })],
+        [viewerId, cplId, JSON.stringify({ area: dto.area, studentId: dto.studentId ?? null, ownerId: owner?.id ?? null, dueOn: dto.dueOn ?? null, severity: dto.severity ?? null, requester: dto.requester ?? null })],
       );
       return cplId;
     });
@@ -664,13 +755,14 @@ export class OpsService {
    * 담당이 바뀌면 새 담당에게 알림. 판정은 고친 뒤의 값으로 한다 — 담당과 단계를 한 번에 보내도 된다.
    */
   async patchComplaint(viewerId: number, canMoney: boolean, id: number, dto: ComplaintPatchDto): Promise<ComplaintDto> {
-    const hasAny = ['stage', 'ownerId', 'action', 'result', 'dueOn', 'severity'].some((k) => (dto as Record<string, unknown>)[k] !== undefined);
+    const hasAny = ['stage', 'ownerId', 'action', 'result', 'dueOn', 'severity', 'requester'].some((k) => (dto as Record<string, unknown>)[k] !== undefined);
     if (!hasAny) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
+    OpsService.assertRequester(dto.requester);
     const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
     await this.lead.manager.transaction(async (em) => {
       const [cur] = (await em.query(
-        `SELECT id, stage, owner_id, action, result, to_char(due_on,'YYYY-MM-DD') AS due_on, severity FROM cpl WHERE id = $1 FOR UPDATE`, [id],
-      )) as Array<{ id: string; stage: string; owner_id: string | null; action: string | null; result: string | null; due_on: string | null; severity: string | null }>;
+        `SELECT id, stage, owner_id, action, result, to_char(due_on,'YYYY-MM-DD') AS due_on, severity, requester FROM cpl WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; stage: string; owner_id: string | null; action: string | null; result: string | null; due_on: string | null; severity: string | null; requester: string | null }>;
       if (!cur) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
       const next = {
         stage: dto.stage ?? cur.stage,
@@ -679,6 +771,7 @@ export class OpsService {
         result: dto.result === undefined ? cur.result : (dto.result?.trim() || null),
         dueOn: dto.dueOn === undefined ? cur.due_on : dto.dueOn,
         severity: dto.severity === undefined ? cur.severity : dto.severity,
+        requester: dto.requester === undefined ? cur.requester : dto.requester,
       };
       if (next.stage === 'acting' && next.ownerId == null) {
         throw new ConflictException({ code: 'CPL_OWNER_REQUIRED', message: '대응으로 옮기려면 담당을 정해야 합니다' });
@@ -686,9 +779,16 @@ export class OpsService {
       if (next.stage === 'closed' && !next.result) {
         throw new ConflictException({ code: 'CPL_RESULT_REQUIRED', message: '마무리하려면 결과를 적어야 합니다' });
       }
+      /*
+       * 마무리 날짜 (67-6 · wave 6) — 「결과」로 **옮기는 순간** 찍는다(입력 칸이 아니다 · 원본 §67 결과 칸 카드의 「08-12」).
+       * 결과 칸에 머무는 동안 글을 고쳐도 그 순간은 그대로 · 다시 열면 비운다(표의 cpl_closed_at_stage 가 열린 건의 날짜를 막는다).
+       * 세 갈래는 고정 조각이라 SQL 에 사용자 값이 섞이지 않는다.
+       */
+      const closedAtSql = next.stage !== 'closed' ? 'NULL' : cur.stage === 'closed' ? 'closed_at' : 'now()';
       await em.query(
-        `UPDATE cpl SET stage = $2, owner_id = $3, action = $4, result = $5, due_on = $6::date, severity = $7 WHERE id = $1`,
-        [id, next.stage, next.ownerId, next.action, next.result, next.dueOn, next.severity],
+        `UPDATE cpl SET stage = $2, owner_id = $3, action = $4, result = $5, due_on = $6::date, severity = $7, requester = $8,
+                        closed_at = ${closedAtSql} WHERE id = $1`,
+        [id, next.stage, next.ownerId, next.action, next.result, next.dueOn, next.severity, next.requester],
       );
       const ownerChanged = next.ownerId != null && next.ownerId !== leadId(cur.owner_id, true);
       if (ownerChanged && next.ownerId !== viewerId) {
@@ -700,8 +800,8 @@ export class OpsService {
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'CPL',$2,'update',$3::jsonb,$4::jsonb)`,
         [viewerId, id,
-          JSON.stringify({ stage: cur.stage, ownerId: leadId(cur.owner_id, true), dueOn: cur.due_on, severity: cur.severity }),
-          JSON.stringify({ stage: next.stage, ownerId: next.ownerId, dueOn: next.dueOn, severity: next.severity })],
+          JSON.stringify({ stage: cur.stage, ownerId: leadId(cur.owner_id, true), dueOn: cur.due_on, severity: cur.severity, requester: cur.requester }),
+          JSON.stringify({ stage: next.stage, ownerId: next.ownerId, dueOn: next.dueOn, severity: next.severity, requester: next.requester })],
       );
     });
     return this.complaintOne(id, canMoney);
@@ -734,8 +834,8 @@ export class OpsService {
       funnel: isIntakeFunnel(key),
       sub: INTAKE_STAGE_SUB[key],
     }));
-    const total = leads.length;
     const enrolled = funnel.find((f) => f.key === 'enrolled')?.count ?? 0;
+    const failedCount = funnel.find((f) => f.key === 'failed')?.count ?? 0;
 
     // 담당 칩 — 한 번 훑어 담는다. 역할 비교가 아니라 사람 묶기라 Map 으로 센다
     const bucket = new Map<string, { id: number | null; name: string; count: number }>();
@@ -847,7 +947,8 @@ export class OpsService {
 
     return {
       funnel,
-      enrollRate: total === 0 ? 0 : Math.round((enrolled / total) * 100),
+      // 등록 / (등록 + 등록 실패) — 원본 §23 「등록 3 · 실패 6 · 33%」 (23-19 · N-22 채택 방향). 식은 intake-words 한 곳
+      enrollRate: intakeEnrollRate(enrolled, failedCount),
       owners,
       alerts,
       // 낱말과 순서만 — 세는 일은 §24 화면이 **검색으로 걸러진 행** 위에서 한다 (IntakeStopDto 주석)
@@ -872,6 +973,9 @@ export class OpsService {
    */
   private async leadRows(where: string, params: unknown[], today = todayKst(), canSeeAmounts = false): Promise<LeadDto[]> {
     const pending = new Map<number, LeadDto>();
+    // 「오늘」을 칩과 같은 값으로 SQL 에도 넘긴다 — where 조각의 자리 뒤에 붙여 번호가 겹치지 않는다 (23-11 등록 수업)
+    const sqlParams = [...params, today];
+    const TODAY = `$${sqlParams.length}::date`;
     // 최신 진단 점수 한 줄은 같은 SELECT 에 LATERAL 로 붙인다 — 카드마다 묻지 않는다(DQ1 · 왕복 0)
     const rows = await this.q(
       `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason, l.owner_id, l.student_id, l.fail_from, l.source,
@@ -886,12 +990,31 @@ export class OpsService {
               CASE WHEN l.stage IN (${sqlWordList(INTAKE_FUNNEL_STAGES)}) THEN COALESCE(
                 (SELECT to_char(${kstDateOf('max(g.at)')},'YYYY-MM-DD') FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = l.stage),
                 CASE WHEN l.stage = 'first' THEN to_char(${kstDateOf('l.created_at')},'YYYY-MM-DD') END) END AS stage_entered_on,
+              -- 등록 카드의 사후 관리 줄(23-18) — 그 학생의 청구서 · 교재 · 안내를 **읽기만** 한다. 같은 SELECT 라 왕복 수 그대로
+              CASE WHEN l.stage = 'enrolled' AND l.student_id IS NOT NULL THEN json_build_object(
+                'inv',        (SELECT count(*) FROM inv i WHERE i.student_id = l.student_id),
+                'bookOk',     (SELECT count(*) FROM issue x WHERE x.student_id = l.student_id AND x.state = 'ok'),
+                'bookWait',   (SELECT count(*) FROM issue x WHERE x.student_id = l.student_id AND x.state IN ('wait','auto')),
+                'guideSent',  (SELECT count(*) FROM guide g WHERE g.student_id = l.student_id AND g.state IN ('sent','read')),
+                'guideDraft', (SELECT count(*) FROM guide g WHERE g.student_id = l.student_id AND g.state IN ('draft','ready'))
+              ) END AS aftercare,
+              -- 등록 카드의 「등록 수업」(23-11 · wave 6) — 그 학생의 지금 명단. 끝난 명단(수강 종료)·끝난 규칙은 빠진다. 시간표가 정본이고 읽기만 한다
+              CASE WHEN l.stage = 'enrolled' AND l.student_id IS NOT NULL THEN (
+                SELECT COALESCE(json_agg(json_build_object(
+                         'kind_name', k.name, 'sub_name', sb.name, 'rrule', s.rrule, 'teacher_name', t.name
+                       ) ORDER BY s.from_date, s.id), '[]'::json)
+                  FROM ser_stu ss JOIN ser s ON s.id = ss.ser_id JOIN kind k ON k.key = s.kind_key
+                  LEFT JOIN sub sb ON sb.key = s.sub_key LEFT JOIN staff t ON t.id = s.teacher_id
+                 WHERE ss.student_id = l.student_id
+                   AND NOT ${serStuEndedOn('ss', TODAY)}
+                   AND (s.to_date IS NULL OR s.to_date >= ${TODAY})
+              ) END AS lessons_json,
               ld.*
          FROM lead l LEFT JOIN staff o ON o.id = l.owner_id
          ${LEAD_DIAG_LATEST_JOIN}
         ${where}
         ORDER BY l.created_at DESC, l.id DESC`,
-      params,
+      sqlParams,
     );
     // 연결 ID 는 접촉 원장을 묻기 **전에** 검사한다 — 오염된 행이면 한 번의 조회로 끝나야 한다(ops-contract 회귀)
     const ids = rows.map((r) => { leadId(r.owner_id, true); leadId(r.student_id, true); return leadId(r.id); });
@@ -964,6 +1087,17 @@ export class OpsService {
         plan: leadPlanFromRow(r, canSeeAmounts),
         appts,
         recheckOn,
+        aftercare: r.aftercare ? leadAftercareRows(r.aftercare as LeadAftercareCounts) : null,
+        // 「등록 수업」 한 줄 (23-11) — 낱말은 배치안과 같은 함수. 단발은 줄이 없다(정기 수업이 아니다)
+        lessons: r.lessons_json == null ? null
+          : (Array.isArray(r.lessons_json) ? (r.lessons_json as R[]) : [])
+            .map((x) => leadLessonLineLabel({
+              subName: (x.sub_name as string) ?? null, kindName: (x.kind_name as string) ?? null,
+              rrule: String(x.rrule ?? ''), teacherName: (x.teacher_name as string) ?? null,
+            }))
+            .filter((label): label is string => label !== null),
+        // 카드 단추 줄 (23-14) — 서는지·낱말은 서버 한 곳. 「스케줄에 N건」의 N 은 위 일정 줄의 「미생성」 수와 같은 셈이다
+        cardActions: leadCardActions(stage, { unscheduledAppts: appts.filter((a) => !a.scheduled).length }),
       };
       if (failed && !failFrom) pending.set(id, dto);
       return dto;
@@ -1206,9 +1340,9 @@ export class OpsService {
       t.stateLabel = mfbStateLabel(t.state);
       if (last) t.at = last.at;
     }
-    // 고쳐야 할 것이 위로. 같은 상태면 최근 코멘트가 위로.
-    threads.sort((a, b) =>
-      a.state === b.state ? b.at.localeCompare(a.at) : a.state === 'needs_fix' ? -1 : 1);
+    /* 차례는 **최근 코멘트가 위**다 — 원문 §60 컷은 「고쳤습니다」(21:15)가 「확인 필요」(21:10) 위에 선다 (g6 60-1 · x5).
+       상태로 먼저 가르지 않는다 — 고쳐야 할 것은 머리 띠의 「고쳐야 할 것 N건」과 카드 칩이 말한다. */
+    threads.sort((a, b) => b.at.localeCompare(a.at));
     return threads;
   }
 
@@ -1398,13 +1532,15 @@ export class OpsService {
     const canDecideDue = canApprove && dueState === 'proposed' && !ownerBlocksDue;
     /* S6 — 「검토 요청」이 결재의 전제다. 전에는 `open`(draft·review·rework)이면 다 열려서
        **draft 를 review 를 건너뛰고 바로 승인**할 수 있었다: 올려도 그만 안 올려도 그만인 칸이었다. */
-    const reviewBlockedReason =
+    /* 「보완 요청」은 최종 승인과 **같은 문을 지나되 기한 승인을 보지 않는다** — 원문 규칙이 막는 것은
+       「최종 승인」뿐이다(슬라이드 61·65 · 컷 §65 의 살아 있는 「보완 요청」 · g6 65-7 · x5). */
+    const reworkBlockedReason =
       !canApprove ? '기획 결재는 대표만 합니다'
         : ownerBlocksReview ? '자기가 담당인 기획은 자기가 결재할 수 없습니다'
           : !open ? '이미 끝난 기획입니다'
             : stage !== 'review' ? '아직 검토 요청이 올라오지 않았습니다'
-              : dueState !== 'approved' ? '기한부터 승인하세요'
-                : null;
+              : null;
+    const reviewBlockedReason = reworkBlockedReason ?? (dueState !== 'approved' ? '기한부터 승인하세요' : null);
 
     /* 고칠 수 있는지도 **쓰기와 같은 집합**을 본다 — 막힌 문장은 `PATCH` 가 409 로 내는 그 문장이다 */
     const canEdit = PLAN_WRITABLE_STAGES.includes(stage);
@@ -1419,6 +1555,7 @@ export class OpsService {
       dueApprovedByName: (p.due_by_name as string) ?? null,
       overdueDays: open && due && due < today ? daysSince(due) : 0,
       canDecideDue, canReview: reviewBlockedReason === null, reviewBlockedReason,
+      canRework: reworkBlockedReason === null, reworkBlockedReason,
       reworkReason: (p.rework_reason as string) ?? null,
       canEdit, editBlockedReason: canEdit ? null : planLockedMessage(stage),
       nextStages: planNextStages(stage).map((key) => ({ key, label: PLAN_STAGE_LABEL[key] })),
@@ -1528,10 +1665,13 @@ export class OpsService {
         message: '자기가 담당인 기획은 자기가 결재할 수 없습니다 — 내는 사람과 결재하는 사람은 다릅니다',
       });
     }
-    if (!before.canReview) {
+    /* 결정마다 제 문을 본다 — 최종 승인은 기한 승인을 기다리고, 보완 요청은 기다리지 않는다 (g6 65-7 · x5).
+       막힌 문장은 읽기(`reviewBlockedReason`·`reworkBlockedReason`)와 같은 말이다 (S5 · D-R22). */
+    if (dto.decision === 'rework' ? !before.canRework : !before.canReview) {
+      const onlyDue = dto.decision === 'approve' && before.canRework;
       throw new ConflictException({
-        code: before.dueState === 'approved' ? 'NOT_REVIEWABLE' : 'DUE_NOT_APPROVED',
-        message: before.reviewBlockedReason ?? '지금은 결재할 수 없습니다',
+        code: onlyDue ? 'DUE_NOT_APPROVED' : 'NOT_REVIEWABLE',
+        message: (dto.decision === 'rework' ? before.reworkBlockedReason : before.reviewBlockedReason) ?? '지금은 결재할 수 없습니다',
       });
     }
     if (dto.decision === 'rework' && !dto.reason?.trim()) {

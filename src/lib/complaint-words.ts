@@ -68,3 +68,21 @@ export const CPL_SEVERITY_LABEL: Record<CplSeverity, string> = {
 };
 export const cplSeverityLabel = (severity: string | null | undefined): string | null =>
   severity ? (CPL_SEVERITY_LABEL[severity as CplSeverity] ?? severity) : null;
+
+/**
+ * 문의자 관계 — 누가 알렸는가 (원본 §67 카드 「고은설 **어머니**」 · 67-5 · wave 6).
+ *
+ * 컷 §67 이 보여 주는 말은 「어머니」 하나라 한 낱말로는 고를 거리가 없다. 같은 원본이 같은 뜻의 칸
+ * (§29 컨설팅 시작 「누가 요청」)에 **어머니 · 아버지** 둘을 보여 주므로 그 둘만 둔다 — 「학생」 같은 말은
+ * 원본 어디에도 없어 짓지 않는다(D-R44). 코드값도 컨설팅 요청자(`cons.requester`)와 같다.
+ * 저장값은 `CPL.requester`(`cpl_requester_words` CHECK · NULL 허용) — **옛 행은 NULL**, 모르는 것을 채우지 않는다(N-25).
+ * 표의 CHECK 가 이 둘을 한 번 더 지킨다 — 여기를 늘리면 마이그레이션도 함께 늘린다.
+ */
+export const CPL_REQUESTERS = ['mother', 'father'] as const;
+export type CplRequester = (typeof CPL_REQUESTERS)[number];
+export const CPL_REQUESTER_LABEL: Record<CplRequester, string> = {
+  mother: '어머니',
+  father: '아버지',
+};
+export const cplRequesterLabel = (requester: string | null | undefined): string | null =>
+  requester ? (CPL_REQUESTER_LABEL[requester as CplRequester] ?? requester) : null;

@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: guide-events.ts — GUIDE_LESSON_JOINS, GUIDE_EVENT_CTE, guideCoversEvent (util)
+ * 목적: guide-events.ts — GUIDE_LESSON_JOINS, GUIDE_EVENT_CTE, guideCoversEvent, guideKindLabel (util)
  * 책임/재사용: 「누구에게 안내가 필요한가」(첫 수업 · 강사 교체) SQL 한 벌. §45 누락 카드·§43 할 일·§34 현황판 안내 마크가 같은 식을 쓴다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -14,6 +14,15 @@ import { kstDateOf, START_MIN, serStuOn } from '../../lib/sql';
  * 강의실을 함께 싣는다 — 강의실은 그 회차의 것(`ser_occ.room_id`)을 먼저, 없으면 규칙의 것.
  * `ser` 별칭만 받는다 — 회차는 언제나 `o` 다.
  */
+/**
+ * 안내의 **종류 낱말** — 원문 §45 연동 줄 「mkGuide() 가 kind='quick'(강사 교체) 또는 'full'(첫 수업)로 생성」,
+ * §44 머리 칩 「● 포괄 안내」 · §40 이력 「간이 안내 / 포괄 안내」 (g4 §44-4).
+ * GUIDE 는 사유(`reason`)만 저장하고 종류는 사유에서 정해지므로 칸을 새로 두지 않는다 — 낱말은 여기 한 곳이다(D-R18).
+ * 모르는 사유는 짓지 않는다(null).
+ */
+const GUIDE_KIND_LABEL: Readonly<Record<string, string>> = { new: '포괄 안내', teacher_change: '간이 안내' };
+export const guideKindLabel = (reason: string): string | null => GUIDE_KIND_LABEL[reason] ?? null;
+
 export const GUIDE_LESSON_JOINS = (ser: string): string => `LEFT JOIN sub sb ON sb.key=${ser}.sub_key
     LEFT JOIN kind k ON k.key=${ser}.kind_key
     LEFT JOIN room rm ON rm.id=COALESCE(o.room_id,${ser}.room_id)`;

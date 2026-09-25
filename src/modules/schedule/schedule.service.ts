@@ -13,16 +13,42 @@ import {
   canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState, rosterPricing, tierFor, REP_STATE_LABEL_DB,
   type AttendanceCancelReason, type AttendanceResult, type CancelTreat, type RepStateDb,
 } from '../../lib/rules';
-import { isRecurring, type Ser } from '../../lib/recurrence';
+import { addD, isRecurring, parseRule, ruleHits, type IsoDate, type Ser } from '../../lib/recurrence';
 import type {
-  LessonPrepRowDto, LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, TrackedReportDto, TrackedStudentDto,
+  HolidayDto, LessonPrepRowDto, LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, ScheduleSeriesCountsDto,
+  ScheduleStudentBooksDto, ScheduleUnavRowDto, TrackedReportDto, TrackedStudentDto,
 } from './schedule.dto';
 import { START_MIN, END_MIN, kstDateOf, serStuEndedOn, serStuOn, spanOf, stuPausedOn } from '../../lib/sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
 import { progressPercent } from '../../lib/book';
+import { KIND_GROUPS, kindGroupLabel } from '../../lib/catalog-words';
 
 export interface OccQuery extends OccurrenceQueryDto {
   canCrudAttendance?: boolean;
+}
+
+/**
+ * 학생 손에 있는 교재 — **배부 완료(ISSUE ok)만**이다. 승인 대기·전달 대기는 아직 학생에게 없다.
+ * §79 「교재 N」 · §12 준비 「교재 배정」 · §10 머리 「교재 없음」이 이 한 조각을 쓴다 — 셋이 갈리면
+ * 같은 학생이 한 화면에서는 교재가 있고 다른 화면에서는 없다.
+ */
+const bookHeld = (alias: string) => `${alias}.state = 'ok'`;
+
+/** §10 개인 머리 낱말 — 원문 `§10 학생별 시간표` 컷 「홍채원 [K] 교재 없음」 그대로 */
+export const STUDENT_NO_BOOK_LABEL = '교재 없음';
+
+/**
+ * 규칙상 `today`(포함) 이후에 놓일 날이 하나라도 남았는가 — 판정은 규칙 엔진 `ruleHits` 하나다(투영과 같은 판정).
+ * 끝날이 없는 반복은 한 주기(주 간격 × 7일) 안에 반드시 한 번 맞으므로 거기까지만 훑는다.
+ * 단발은 그 날이 오늘 이후인가, 시작 전에 통째로 접힌 규칙(끝날 < 시작일)은 늘 거짓이다.
+ */
+export function seriesHasDateFrom(ser: Pick<Ser, 'rrule' | 'fromDate' | 'toDate'>, today: IsoDate): boolean {
+  const { interval } = parseRule(ser.rrule);
+  const start = ser.fromDate > today ? ser.fromDate : today;
+  const reach = addD(start, 7 * interval + 7);
+  const end = ser.toDate && ser.toDate < reach ? ser.toDate : reach;
+  for (let day = start; day <= end; day = addD(day, 1)) if (ruleHits(ser as Ser, day)) return true;
+  return false;
 }
 
 /** DB 가 돌려준 한 줄 — 컬럼 이름은 아래 SQL 과 짝이다 */
@@ -48,6 +74,118 @@ export class ScheduleService {
 
   private q<T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.occ.query(sql, p) as Promise<T[]>;
+  }
+
+  /**
+   * 공휴일 이름표 — 기간 안의 날만 (원문 §09 「광복절」·「광복절 대체」 칩 · §10 요일 머리).
+   * 표시만 한다: 일정을 막거나 회차를 바꾸지 않는다. 한 날에 이름이 둘이면 둘 다 돌려준다.
+   */
+  async holidays(from: string, to: string): Promise<HolidayDto[]> {
+    const rows = await this.q<{ date: string; name: string }>(
+      `SELECT to_char(on_date, 'YYYY-MM-DD') AS date, name
+         FROM holiday
+        WHERE on_date BETWEEN $1::date AND $2::date
+        ORDER BY on_date, name`,
+      [from, to],
+    );
+    return rows.map((r) => ({ date: String(r.date), name: String(r.name) }));
+  }
+
+  /**
+   * 강사 불가 시간 — **관리자 읽기** (원문 §07 데이터 「읽기: … UNAV」 · §11 「UNAV(불가 시간)」 · G37).
+   *
+   * 지금까지 UNAV 는 강사 본인 화면(`GET /teacher/unavailable`)에서만 읽혀 **적어 낸 강사만 알고
+   * 잡는 사람은 몰랐다**(저장 뒤 경고 띠 하나뿐). 시간표의 「가능 시간」 겹쳐 보기와 「빈 시간 찾기」가
+   * 이것을 읽는다. **막지 않는다** — UNAV 는 DB 제약이 아니고, 겹침 판정은 쓰기 때 경고로만 한다.
+   * 날짜가 없는 옛 줄(N-20 legacy)은 격자 어디에도 놓을 수 없어 싣지 않는다.
+   */
+  async unavailable(q: { from: string; to: string; teacherId?: number }): Promise<ScheduleUnavRowDto[]> {
+    const params: unknown[] = [q.from, q.to];
+    let who = '';
+    if (q.teacherId) { params.push(q.teacherId); who = `AND u.staff_id = $${params.length}`; }
+    const rows = await this.q<Record<string, unknown>>(
+      `SELECT u.id, u.staff_id, st.name AS teacher_name, to_char(u.on_date, 'YYYY-MM-DD') AS date,
+              u.start_min, u.end_min, u.reason
+         FROM unav u
+         JOIN staff st ON st.id = u.staff_id
+        WHERE u.on_date BETWEEN $1::date AND $2::date ${who}
+        ORDER BY u.on_date, u.start_min, st.name, u.id`,
+      params,
+    );
+    return rows.map((r) => ({
+      id: Number(r.id),
+      teacherId: Number(r.staff_id),
+      teacherName: String(r.teacher_name),
+      date: String(r.date),
+      startMin: Number(r.start_min),
+      endMin: Number(r.end_min),
+      reason: String(r.reason),
+    }));
+  }
+
+  /**
+   * §07 좌측 사이드바 「프로그램」·「과목」 수 — 보는 기간과 무관한 **일정 원본(SER) 수** (D-R44 · w5-7 결정).
+   * 원문 §07 「수업 24 · 상담·진단 6 · 회의 5」 합 35 = v2 slide 05 「SER 일정 원본 35」 · §08~§11 컷도 같은 수다.
+   *
+   * 원문 시드의 SER 35 줄은 전부 살아 있는 원본이었다. 우리 표에는 끝난 원본도 남는다 — 「향후」 편집이 규칙을
+   * 가르고(D-R17) 이력이 있는 수업은 지우지 않고 기간을 마감한다. 행을 다 세면 지운 수업·지난 단발이 수에 남는다.
+   * 그래서 「일정 원본」 = **오늘(KST) 이후에 놓일 날이 남은 SER**:
+   *   · 규칙상 날짜가 남았는가 — `seriesHasDateFrom`(규칙 엔진) · 투영 창 밖에서 시작하는 원본도 센다
+   *   · 또는 「이번만」 옮겨 실제로 오늘 이후에 놓인 회차가 있는가(휴강 제외) — 투영(ser_occ)의 실제 날짜
+   * 휴강·옮김은 원본의 예외다 — 남은 날이 휴강이어도 원본은 끝나지 않았다.
+   * 화면은 이 수를 그리기만 한다(이름·색은 코드표 `GET /meta`).
+   */
+  async seriesCounts(today: IsoDate = todayKst()): Promise<ScheduleSeriesCountsDto> {
+    const [kinds, subs, sers] = await Promise.all([
+      this.q<{ key: string; grp: string }>(`SELECT key, grp::text AS grp FROM kind ORDER BY sort, key`),
+      this.q<{ key: string }>(`SELECT key FROM sub WHERE active ORDER BY sort, key`),
+      this.q<{
+        kind_key: string; sub_key: string | null; rrule: string; from_date: string; to_date: string | null; placed_ahead: boolean;
+      }>(
+        `SELECT s.kind_key, s.sub_key, s.rrule,
+                to_char(s.from_date, 'YYYY-MM-DD') AS from_date,
+                to_char(s.to_date, 'YYYY-MM-DD') AS to_date,
+                EXISTS (SELECT 1 FROM ser_occ o
+                         WHERE o.ser_id = s.id AND NOT o.canceled
+                           AND ${kstDateOf('lower(o.span)')} >= $1::date) AS placed_ahead
+           FROM ser s`,
+        [today],
+      ),
+    ]);
+    const byKind = new Map<string, number>();
+    const bySub = new Map<string, number>();
+    for (const s of sers) {
+      const live = s.placed_ahead === true
+        || seriesHasDateFrom({ rrule: s.rrule, fromDate: s.from_date, toDate: s.to_date }, today);
+      if (!live) continue;
+      byKind.set(s.kind_key, (byKind.get(s.kind_key) ?? 0) + 1);
+      if (s.sub_key) bySub.set(s.sub_key, (bySub.get(s.sub_key) ?? 0) + 1);
+    }
+    const groups = KIND_GROUPS.map((grp) => {
+      const list = kinds.filter((k) => k.grp === grp).map((k) => ({ key: k.key, count: byKind.get(k.key) ?? 0 }));
+      return { grp, label: kindGroupLabel(grp), count: list.reduce((n, k) => n + k.count, 0), kinds: list };
+    }).filter((g) => g.kinds.length > 0);
+    return {
+      asOf: today,
+      total: groups.reduce((n, g) => n + g.count, 0),
+      groups,
+      subs: subs.map((s) => ({ key: s.key, count: bySub.get(s.key) ?? 0 })).filter((s) => s.count > 0),
+    };
+  }
+
+  /**
+   * §10 학생별 개인 머리 「교재 없음」 (원문 §10 데이터 줄 「ISSUE」). 학생이 없으면 null.
+   * 판정은 §79·§12 와 같은 `bookHeld` — 화면은 `label` 을 그대로 적는다.
+   */
+  async studentBooks(studentId: number): Promise<ScheduleStudentBooksDto | null> {
+    const [row] = await this.q<{ book_count: string | number }>(
+      `SELECT (SELECT count(*) FROM issue i WHERE i.student_id = st.id AND ${bookHeld('i')}) AS book_count
+         FROM stu st WHERE st.id = $1`,
+      [studentId],
+    );
+    if (!row) return null;
+    const bookCount = Number(row.book_count);
+    return { studentId, bookCount, label: bookCount === 0 ? STUDENT_NO_BOOK_LABEL : null };
   }
 
   /**
@@ -361,11 +499,11 @@ export class ScheduleService {
       const facts = (await this.q(
         `SELECT st.id,
                 (SELECT count(*) FROM issue i
-                  WHERE i.student_id = st.id AND i.state = 'ok') AS book_count,
+                  WHERE i.student_id = st.id AND ${bookHeld('i')}) AS book_count,
                 COALESCE((
                   SELECT json_agg(json_build_object('page', i.progress_page, 'pages', l.pages) ORDER BY i.id)
                     FROM issue i JOIN lib l ON l.id = i.lib_id
-                   WHERE i.student_id = st.id AND i.state = 'ok'
+                   WHERE i.student_id = st.id AND ${bookHeld('i')}
                      AND i.progress_page IS NOT NULL AND l.pages IS NOT NULL AND l.pages > 0
                 ), '[]'::json) AS progress_books,
                 EXISTS (
@@ -576,7 +714,7 @@ export class ScheduleService {
       ? ((await this.q(
           `SELECT st.name FROM stu st
             WHERE st.id = ANY($1::bigint[])
-              AND NOT EXISTS (SELECT 1 FROM issue i WHERE i.student_id = st.id AND i.state = 'ok')
+              AND NOT EXISTS (SELECT 1 FROM issue i WHERE i.student_id = st.id AND ${bookHeld('i')})
             ORDER BY st.name`,
           [ctx.roster],
         )) as Array<{ name: string }>).map((r) => r.name)

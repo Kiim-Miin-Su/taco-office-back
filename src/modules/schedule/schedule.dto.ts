@@ -161,6 +161,98 @@ export class OccurrenceQueryDto {
   @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number;
 }
 
+/**
+ * 기간 표시 자료 — 공휴일 이름표와 강사 불가 시간(관리자 읽기)이 같은 기간 질의를 쓴다.
+ * 화면의 회차 질의와 같은 날짜 방어(IsCalendarDate)를 재사용한다.
+ */
+export class ScheduleRangeQueryDto {
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-01' })
+  @IsCalendarDate() from!: string;
+
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-31' })
+  @IsCalendarDate() to!: string;
+}
+
+export class ScheduleUnavQueryDto extends ScheduleRangeQueryDto {
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '생략하면 그 기간의 모든 강사' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) teacherId?: number;
+}
+
+/** 원문 §09 월간 칸 「광복절」·「광복절 대체」 칩 · §10 요일 머리 — 서버 표 HOLIDAY 의 한 줄 */
+export class HolidayDto {
+  @ApiProperty({ ...DATE_SCHEMA }) date!: string;
+  @ApiProperty({ description: '공휴일 이름 — 화면이 그대로 칩에 적는다' }) name!: string;
+}
+
+export class HolidayListDto {
+  @ApiProperty({ ...DATE_SCHEMA }) from!: string;
+  @ApiProperty({ ...DATE_SCHEMA }) to!: string;
+  @ApiProperty({ type: [HolidayDto] }) items!: HolidayDto[];
+}
+
+/**
+ * 강사 불가 시간 한 줄 — **관리자 읽기** (원문 §07 데이터 「읽기: … UNAV」 · §11 「UNAV(불가 시간)」 · G37).
+ * 강사가 적어 낸 날짜(on_date)가 있는 줄만 — 날짜를 모르는 옛 줄은 격자에 놓을 수 없어 싣지 않는다(N-20).
+ */
+export class ScheduleUnavRowDto {
+  @ApiProperty(ID_SCHEMA) id!: number;
+  @ApiProperty(ID_SCHEMA) teacherId!: number;
+  @ApiProperty() teacherName!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '강사가 불가로 적은 날짜(KST)' }) date!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() endMin!: number;
+  @ApiProperty({ description: '강사가 적은 사유 — 화면이 그대로 보여 준다' }) reason!: string;
+}
+
+export class ScheduleUnavListDto {
+  @ApiProperty({ ...DATE_SCHEMA }) from!: string;
+  @ApiProperty({ ...DATE_SCHEMA }) to!: string;
+  @ApiProperty({ type: [ScheduleUnavRowDto] }) items!: ScheduleUnavRowDto[];
+}
+
+/** 일정 원본 수 한 칸 — 종류(kind) 또는 과목(sub) 코드 하나. 이름·색은 코드표(`GET /meta`)가 준다 */
+export class ScheduleSeriesCountDto {
+  @ApiProperty({ description: '종류 또는 과목 코드' }) key!: string;
+  @ApiProperty({ type: 'integer', minimum: 0 }) count!: number;
+}
+
+/** 원문 §07 사이드바의 묶음 한 줄 — 「수업 24」 · 그 아래 종류 줄들 */
+export class ScheduleSeriesGroupDto {
+  @ApiProperty({ description: '묶음 코드(kind.grp)' }) grp!: string;
+  @ApiProperty({ description: '묶음 낱말 — 「수업」·「상담·진단」·「회의」 (서버 lib/catalog-words 한 곳)' }) label!: string;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '이 묶음 종류들의 일정 원본 수 합' }) count!: number;
+  @ApiProperty({ type: [ScheduleSeriesCountDto], description: '묶음 안의 종류 전부(0 도 싣는다) · 코드표 차례' })
+  kinds!: ScheduleSeriesCountDto[];
+}
+
+/**
+ * §07 좌측 사이드바 「프로그램」·「과목」 수 — **보는 기간과 무관한 일정 원본(SER) 수** (D-R44 · w5-7 결정).
+ * 원문 §07 「수업 24 · 상담·진단 6 · 회의 5」 합 35 = v2 slide 05 「SER 일정 원본 35」이고 §08~§11 컷도 같은 수다.
+ * 「일정 원본」 = 오늘(KST) 이후에 놓일 날이 남은 SER(규칙상 날짜 또는 옮겨 놓인 회차) — 끝난 규칙은 세지 않는다.
+ */
+export class ScheduleSeriesCountsDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '「남은 날」을 판정한 기준일 — 오늘(KST)' }) asOf!: string;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '묶음 수의 합' }) total!: number;
+  @ApiProperty({ type: [ScheduleSeriesGroupDto], description: '수업 · 상담·진단 · 회의 차례' }) groups!: ScheduleSeriesGroupDto[];
+  @ApiProperty({ type: [ScheduleSeriesCountDto], description: '쓰는 과목(sub.active) 중 1 이상만 · 코드표 차례' })
+  subs!: ScheduleSeriesCountDto[];
+}
+
+/**
+ * §10 학생별 개인 머리의 「교재 없음」 (원문 §10 데이터 줄 「ISSUE」).
+ * 판정은 §79 「교재 N」·§12 준비 「교재 배정」과 같다 — 배부 완료(ISSUE ok)만 학생 손에 있는 교재다.
+ */
+export class ScheduleStudentBooksDto {
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '배부 완료(ISSUE ok) 교재 수' }) bookCount!: number;
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '머리에 적을 낱말 — 배부 완료 교재가 없으면 「교재 없음」, 있으면 null(원문 컷은 없는 경우만 적는다)',
+  })
+  label!: string | null;
+}
+
 /** URL의 식별자는 body와 동일한 안전 정수 범위다. 다섯 쓰기 경로가 재사용한다. */
 export class ScheduleParamsDto {
   @ApiProperty(ID_SCHEMA)
@@ -422,6 +514,14 @@ export class WriteResultDto {
     description: '직전 일정 쓰기 실행 취소 토큰. 같은 수업이 다시 바뀌지 않은 때만 10분 안에 한 번 사용한다.',
   })
   undoToken!: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: '그 토큰이 끝나는 시각 — 토큰 안의 만료와 같은 값. 화면의 「되돌리기 ▾」 목록은 지난 단계를 이 값으로 뺀다 (토큰이 없으면 null)',
+  })
+  undoExpiresAt!: string | null;
 
   @ApiProperty({
     type: [UnavWarnDto],

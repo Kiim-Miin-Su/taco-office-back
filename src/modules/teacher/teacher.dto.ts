@@ -32,14 +32,20 @@ export class TeacherLessonDto {
 }
 
 export class TeacherWeekDto {
-  @ApiProperty({ description: '이번 주(월~일) 취소 제외 수업 수' }) lessons!: number;
-  @ApiProperty({ description: '이번 주 총 시수(분)' }) minutes!: number;
-  @ApiProperty({ description: '이번 주 지나간 수업 중 미작성 후보 수' }) unwritten!: number;
+  @ApiProperty({ description: '이번 주(월~일) 열린 수업 수 — 휴강·출결 취소 제외' }) lessons!: number;
+  @ApiProperty({ description: '이번 주 열린 수업 총 시수(분)' }) minutes!: number;
+  @ApiProperty({ description: '이번 주 지나간 열린 수업 중 리포트 대상 종류(kind.rep)의 미작성 수 — 리포트 목록과 같은 판정' }) unwritten!: number;
+}
+
+/** 강사 덱 slide 8 hero 「오늘 수업 3건 · 시수 5.5시간」 — 세는 일은 서버다 (D-R37 · N-19) */
+export class TeacherDaySummaryDto {
+  @ApiProperty({ description: '오늘(KST) 열린 수업 수 — 휴강·출결 취소 제외' }) lessons!: number;
+  @ApiProperty({ description: '오늘 열린 수업 총 시수(분)' }) minutes!: number;
 }
 
 /** 홈 우측 「오늘 할 일」 — 판정은 전부 서버. 화면은 숫자만 읽는다. */
 export class TeacherTodoDto {
-  @ApiProperty({ description: '지나간 수업 중 리포트 미작성 후보 (REPORT_UNWRITTEN_CANDIDATE_DB)' }) unwrittenReports!: number;
+  @ApiProperty({ description: '지나간 열린 수업(휴강·출결 취소 제외) 중 리포트 대상 종류의 미작성 (REPORT_UNWRITTEN_CANDIDATE_DB)' }) unwrittenReports!: number;
   @ApiProperty({ description: '승인 대기(wait) 리포트' }) waitingApprovals!: number;
   @ApiProperty({ description: '진행 중(pending) 스케줄 변경 요청' }) openChangeRequests!: number;
   @ApiProperty({ description: '진행 중(pending) 내 요청 — 시급 변경·불가 시간 등(req)' }) openStaffRequests!: number;
@@ -102,6 +108,8 @@ export class TeacherHomeDto {
   @ApiProperty({ description: '기준일 YYYY-MM-DD (KST 오늘)' }) todayDate!: string;
   @ApiProperty({ type: [TeacherLessonDto], description: '오늘 수업 (시각 순)' }) today!: TeacherLessonDto[];
   @ApiProperty({ type: [TeacherLessonDto], description: '내일부터 7일' }) upcoming!: TeacherLessonDto[];
+  @ApiProperty({ type: TeacherDaySummaryDto, description: 'hero 「오늘 수업 N건 · 시수 N시간」 — today 목록과 같은 날·같은 판정' })
+  todaySummary!: TeacherDaySummaryDto;
   @ApiProperty({ type: TeacherWeekDto }) week!: TeacherWeekDto;
   @ApiProperty({ type: TeacherTodoDto }) todo!: TeacherTodoDto;
   @ApiProperty({ type: TeacherSettingsDto }) settings!: TeacherSettingsDto;
@@ -369,4 +377,31 @@ export class TeacherUnavDto {
   @ApiProperty({ description: '회차 14일 중 열린 날짜 수' }) openDays!: number;
   @ApiProperty({ type: [TeacherUnavBlockDto], description: '회차 안 내 등록 — 날짜·시각 순. 날짜 미상(legacy) 행은 싣지 않는다' })
   blocks!: TeacherUnavBlockDto[];
+}
+
+/* ══ 강사 머리줄 (강사 덱 모든 화면의 머리줄 · 메뉴 사용자 칸) ═══════════════ */
+
+/** 내게 온 알림 한 줄 — 서랍 §16 과 같은 NOTI 행이지만 **받는 사람이 나인 것만** 싣는다 (N-26 · D-R44) */
+export class TeacherNotiDto {
+  @ApiProperty() id!: number;
+  @ApiPropertyOptional({ ...S, description: '굵은 제목 한 줄 — 옛 행은 null(화면은 본문을 한 줄로 그린다)' }) title?: string | null;
+  @ApiProperty() body!: string;
+  @ApiPropertyOptional({ ...S, description: '원본으로 가는 앱 경로 — 강사가 열 수 없는 경로면 화면이 이동하지 않는다' })
+  link?: string | null;
+  @ApiProperty() read!: boolean;
+  @ApiProperty({ description: '받은 시각 YYYY-MM-DDTHH:MI:SS+09:00 (KST)' }) at!: string;
+  @ApiProperty({ description: '종류 낱말 — lib/noti 한 곳(서랍 §16 칩과 같은 표)' }) categoryLabel!: string;
+  @ApiPropertyOptional({ ...S, description: '보낸 사람 — 시스템이 보낸 것은 null' }) fromName?: string | null;
+}
+
+/** GET /teacher/shell — 머리줄 「◷ 시간대 · ₩ 시급 · 🔔 알림」과 메뉴 사용자 칸 (강사 전용, 서버가 본인 고정) */
+export class TeacherShellDto {
+  @ApiProperty({ description: 'IANA 시간대 — staff.tz' }) timezone!: string;
+  @ApiProperty({ description: '표기 「Seoul · UTC+9」 — 그 시각의 UTC 차이(서머타임 반영)를 서버가 짓는다' }) tzLabel!: string;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '오늘 적용되는 본인 시급(원/시간) — 없으면 null' })
+  wageRate?: number | null;
+  @ApiProperty({ type: [TeacherNotiDto], description: '내게 온 알림 — 최근 notiWindowDays 일, 안 읽은 것 먼저·새것 먼저' })
+  notis!: TeacherNotiDto[];
+  @ApiProperty({ description: '배지 수 — notis 중 안 읽은 줄 수' }) unread!: number;
+  @ApiProperty({ description: '목록 창(일) — 창 밖 알림은 지우지 않고 싣지 않는다 (N-7)' }) notiWindowDays!: number;
 }

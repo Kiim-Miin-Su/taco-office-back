@@ -35,7 +35,12 @@ export class ExecController {
     return this.svc.range(
       from, to,
       isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms),
-      { id: user.id, canApprove: isRole(user.role) && hasPerm(user.role, 'canApprove', user.perms) },
+      {
+        id: user.id,
+        canApprove: isRole(user.role) && hasPerm(user.role, 'canApprove', user.perms),
+        // 펼칠 줄의 컨설팅은 공개 범위 안에서만 싣는다 — 컨설팅 화면과 같은 판정(csCan)의 재료 (§76 · N-67)
+        canHide: isRole(user.role) && hasPerm(user.role, 'canHide', user.perms),
+      },
     );
   }
 

@@ -337,3 +337,85 @@ export function execAreaDetails(kind: ExecPeriodKind, f: ExecAreaFacts): Record<
     },
   };
 }
+
+/* ══ §70 지난주 대비 (N-66 의 주간 · D-R44 · 테스트 시나리오 K-107 · O-146) ══════════════════════
+ *
+ * 원본 §70 규칙 「직전 주(shift(d1,-7)~shift(d2,-7))를 같은 방식으로 집계해 비교」 · 동작 「머리 지표에 ▲▼ 증감률」.
+ * 원본 §69 일간 · §71 월간 머리에는 비교가 없다 — **주간에만** 선다(월간 비교 기준은 N-66 결정 대기로 남는다).
+ * 낱말은 컷의 세 칸이 정한다: 「지난주 ▼ 100%」(₩0 ← 지난주엔 있었다) · 「지난주 ▲ 25%」 · 「지난주 신규」(0 → 생김).
+ * 같은 값(0 과 0 포함)은 컷에 없다 — 「지난주와 같음」으로 적는다. 0 과 0 을 「신규」라 적으면 없던 일이 생긴 것처럼 읽힌다.
+ * 어느 쪽이든 모르면(금액을 볼 권한이 없어 세지 않았다) 비교하지 않는다 — 비율도 금액의 정보다(D-R39).
+ */
+export function execWeekDelta(cur: number | null, prev: number | null): string | null {
+  if (cur === null || prev === null) return null;
+  if (cur === prev) return '지난주와 같음';
+  if (prev === 0) return '지난주 신규';
+  const pct = Math.round((Math.abs(cur - prev) / Math.abs(prev)) * 100);
+  return `지난주 ${cur > prev ? '▲' : '▼'} ${pct}%`;
+}
+
+/* ══ 영역 카드의 펼칠 줄 (N-67 · D-R44 · 테스트 시나리오 K-111) ═══════════════════════════════════
+ *
+ * 원본 §69~§71 카드마다 「기한 지난 청구서 2건 펼치기 ▾」 — **배지와 같은 집합**의 줄이다. 0 이면 그 줄 자체가 없다
+ * (§69 마케팅 · §71 회계 카드). 수업은 배지가 17(일) · 43(주) · 155(월)인데 펼칠 줄은 늘 「8건」이다 — 줄은 여덟에서 끊는다.
+ * 줄 모양은 영역마다 다르지만 서버가 공통 {title · sub · go} 로 접는다(N-67 ①) — 카드는 한 모양만 그린다.
+ * 「펼치기 ▾」는 동작 낱말이라 화면이 붙인다. go 는 그 줄의 원본 화면이다(D-R27 — 대표 보고 안에서 처리하지 않는다).
+ */
+export const EXEC_AREA_ITEM_LIMIT = 8;
+
+export interface ExecAreaItem {
+  key: string;
+  title: string;
+  sub: string | null;
+  go: string;
+}
+
+/** 펼칠 줄 머리의 명사 — 원본 컷 여섯 카드의 글자 그대로. 기간 앞말은 마케팅만 붙는다(「이번 주 올린 것 4건」) */
+const EXEC_AREA_ITEMS_WORD: Record<ExecAreaKey, (w: string) => string> = {
+  money: () => '기한 지난 청구서',
+  mkt: (w) => `${w} 올린 것`,
+  ops: () => '결재 대기 · 기한 지난 할 일',
+  consulting: () => '수납 전이라 잠긴 컨설팅',
+  complaint: () => '안 끝난 컴플레인',
+  lesson: () => '준비가 덜 된 수업',
+};
+
+/** 「기한 지난 청구서 2건」 — 줄 수를 센다(원본 수업 카드: 배지 17 · 줄 8건). 줄이 없으면 null(펼칠 것이 없다) */
+export function execAreaItemsLabel(key: ExecAreaKey, kind: ExecPeriodKind, n: number): string | null {
+  return n === 0 ? null : `${EXEC_AREA_ITEMS_WORD[key](EXEC_PERIOD_WORD[kind])} ${n}건`;
+}
+
+/** 현황판 한 줄 중 펼칠 줄이 읽는 칸 — `BoardRowDto` 의 부분이다 */
+export interface ExecLessonRow {
+  serId: number;
+  date: string;
+  startAt: string;
+  subName?: string | null;
+  kindName?: string | null;
+  canceled: boolean;
+  missing: number;
+  marks: ReadonlyArray<{ key: string; done: boolean; na: boolean }>;
+}
+
+/**
+ * 수업 카드의 펼칠 줄 — 현황판 줄에서 **배지(`missingCount`)와 같은 거르기**(휴강 아님 · 덜 된 것)로 여덟.
+ * 판정은 현황판(`clChk()`)이 이미 했다 — 여기서는 덜 된 축의 낱말만 붙인다(교재 · 안내 · 줌 · 리포트 차례).
+ */
+export function execLessonItems(rows: readonly ExecLessonRow[]): ExecAreaItem[] {
+  return rows
+    .filter((r) => !r.canceled && r.missing > 0)
+    .slice(0, EXEC_AREA_ITEM_LIMIT)
+    .map((r) => ({
+      key: `lesson-${r.serId}-${r.date}`,
+      title: `${r.date.slice(5)} ${r.startAt} ${r.subName ?? r.kindName ?? '수업'}`,
+      sub: r.marks.filter((m) => !m.na && !m.done).map((m) => EXEC_LESSON_MARK_LABEL[m.key] ?? m.key).join(' · ') || null,
+      go: '/board',
+    }));
+}
+
+/**
+ * §71 상담 퍼널의 셋째 줄 — 원본 컷과 슬라이드 글 「유입 → 1차 → 2차·진단 → 등록」(71-5 · D-R44).
+ * 「2차 · 진단」은 2차 상담에 **닿은** 건이다. 2차 대기는 세지 않는다 — 같은 컷의 「어디서 놓쳤나」가 「2차 안 옴」을 따로
+ * 세므로, 기다리다 오지 않은 건을 2차에 닿았다고 세면 두 판이 서로 다른 말을 한다.
+ */
+export const EXEC_FUNNEL_SECOND_LABEL = '2차 · 진단';

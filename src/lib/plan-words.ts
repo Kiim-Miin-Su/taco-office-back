@@ -118,10 +118,14 @@ export function dueLabel(daysLeft: number): string {
 export const PLAN_DUE_STATES = ['none', 'proposed', 'approved'] as const;
 export type PlanDueState = (typeof PLAN_DUE_STATES)[number];
 
+/*
+ * 낱말은 원문 §61 카드 칩 셋 그대로다 — 「기한 제안」·「기한 반려」·「기한 승인」 (g6 61-3 · D-R44).
+ * 한동안 approved 가 「기한 승인됨」이었다 — 같은 칩 줄에서 한 낱말만 꼴이 달랐다.
+ */
 export const PLAN_DUE_STATE_LABEL: Record<PlanDueState, string> = {
   none: '기한 없음',
   proposed: '기한 제안',
-  approved: '기한 승인됨',
+  approved: '기한 승인',
 };
 
 export function planDueState(dueOn: string | null, approvedAt: unknown): PlanDueState {

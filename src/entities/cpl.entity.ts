@@ -16,6 +16,10 @@ import { CPL_AREA_T_VALUES } from './enums';
 @Entity({ name: 'cpl' })
 /** 심각도 낱말은 `lib/complaint-words` 한 곳 — 표는 마지막 방어다 (v4.32 · C93). NULL 은 「모른다」(옛 행 · N-25) */
 @Check('cpl_severity_words', "severity IS NULL OR severity IN ('light','normal','severe')")
+/** 문의자 관계 둘 — 어머니 · 아버지 (v4.49 · wave 6 67-5). NULL 은 「모른다」(옛 행 · N-25) */
+@Check('cpl_requester_words', "requester IS NULL OR requester IN ('mother','father')")
+/** 마무리 시각은 「결과」 건에만 — 열린 건이 마무리 날짜를 들면 거짓이다 (v4.49 · wave 6 67-6) */
+@Check('cpl_closed_at_stage', "closed_at IS NULL OR stage = 'closed'")
 export class Cpl {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
@@ -56,6 +60,14 @@ export class Cpl {
   /** light | normal | severe — 원본 §67 카드의 가벼움 · 보통 · 심각. 옛 행은 NULL (v4.32 · C93) */
   @Column({ type: 'varchar', length: 8, nullable: true })
   severity: string | null;
+
+  /** mother | father — 원본 §67 카드 「고은설 어머니」의 누가 알렸는지(§29 「누가 요청」과 같은 말). 옛 행은 NULL (v4.49 · wave 6) */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  requester: string | null;
+
+  /** 「결과」로 옮긴 순간 — 서버가 찍고 다시 열면 비운다(입력 칸 아님). 옛 「결과」 행은 NULL — 모른다 (v4.49 · wave 6 67-6) */
+  @Column({ type: 'timestamptz', nullable: true })
+  closedAt: Date | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;

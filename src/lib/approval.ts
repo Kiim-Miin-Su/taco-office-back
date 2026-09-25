@@ -331,6 +331,15 @@ export interface ApInboxCategoryCount {
  */
 export const AP_ACTIONABLE_KINDS: ApKind[] = ['req', 'chreq'];
 
+/**
+ * §14 승인 대기함에 **드는** 갈래 — 원문 슬라이드 14 「데이터: REQ(강사 요청), SER를 훑어 실시간 계산」.
+ *
+ * 강사가 올린 요청(요청 · 변경 요청 · 건의)과 SER 를 훑어 계산한 「빠진 것」뿐이다.
+ * 자료 요청(gpapack)은 여기 없다 — §75 결재 흐름의 「자료 요청 → 실장에게」 줄로만 선다(g2 14-2).
+ * 레일 배지(`inboxCount`)도 이 목록에서 세므로 두 곳이 갈리지 않는다.
+ */
+export const AP_INBOX_KINDS: readonly ApKind[] = ['req', 'chreq', 'suggestion', 'missing'];
+
 export interface ApFlow {
   /** 되돌아온 것 → 기다리는 것 → 내가 올린 것 순 (§75) */
   back: CategorizedApRow[];
@@ -399,9 +408,17 @@ export function approvalFlowProjection(
     (APPROVAL_FLOW_KINDS as readonly ApKind[]).includes(row.kind));
   const item = (row: ApRow & { kind: ApprovalFlowKind }, state: ApprovalFlowItem['state']): ApprovalFlowItem => {
     const to = APPROVAL_FLOW_RECIPIENT[row.kind];
+    /*
+     * 강사 요청 줄은 원문 §75 그대로 **제목 「강사 요청」 + 회색 부제 요청자**다(g2 75-6 · D-R44).
+     * 무엇을 바라는지는 §14 카드가 말하고(같은 행의 `title`·`asked`), §75 는 누가 누구에게 올렸는지를 본다.
+     * 요청자를 모르는 옛 줄은 부제를 비운다 — 이름을 지어내지 않는다. 다른 갈래는 행의 제목·부제 그대로다.
+     */
+    const teacherReq = row.kind === 'req';
     return {
       kind: row.kind, kindLabel: APPROVAL_FLOW_KIND_LABEL[row.kind], id: row.id,
-      title: row.title, sub: row.sub, byId: row.byId,
+      title: teacherReq ? APPROVAL_FLOW_KIND_LABEL.req : row.title,
+      sub: teacherReq ? row.byName : row.sub,
+      byId: row.byId,
       // RPT에는 아직 제출자 FK가 없다. 화면이 추정하지 않도록 경계를 값으로 내린다.
       byName: row.byName ?? '알 수 없음',
       to, toName: APPROVAL_FLOW_RECIPIENT_NAME[to], toLabel: APPROVAL_FLOW_RECIPIENT_LABEL[to],
@@ -432,11 +449,18 @@ export function approvalFlowProjection(
   return { canView: true, tiles, back, waiting, mine, total: waiting.length, backCount: back.length };
 }
 
-/** §14의 분류는 저장 표 이름이 아니라 업무 의미다. 이 함수 한 곳에서만 대응한다. */
+/**
+ * §14의 분류는 저장 표 이름이 아니라 업무 의미다. 이 함수 한 곳에서만 대응한다.
+ *
+ * **자료 요청(gpapack)은 「GPA 요청」이 아니다**(g2 14-2 · D-R44). 원문 §14 의 GPA 요청 카드는
+ * 강사가 올린 GPA 회차 요청(「Sophia · 박하경 · Quiz 대비 · 20:00–20:40 → 줌 배정 후 확정」)이고,
+ * 같은 두 줄이 §75 에서는 「강사 요청」으로 선다 — 원천이 REQ(강사 요청)다. 자료 요청은 §75 의
+ * 「자료 요청 → 실장에게」 갈래라 여기서는 「기타」로 두고, §14 목록에는 넣지 않는다(`AP_INBOX_KINDS`).
+ * GPA 회차를 요청하는 강사 쪽 입력은 제품에 아직 없다 — 그래서 「GPA 요청」 칩은 0 으로 선다(칩은 어휘다).
+ */
 export function approvalInboxCategory(row: ApRow): ApInboxCategory {
   if (row.kind === 'missing') return 'missing';
   if (row.kind === 'suggestion') return 'suggestion';
-  if (row.kind === 'gpapack') return 'gpa_request';
   if (row.kind === 'chreq') return 'schedule_change';
   if (row.kind === 'req') {
     if (row.reqType === 'tz_change') return 'tz_change';
@@ -532,9 +556,8 @@ export function apFlow(
   const byAtDesc = (a: ApRow, b: ApRow) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0);
   back.sort(byAtDesc); waiting.sort(byAtDesc); mine.sort(byAtDesc);
 
-  const inboxKinds: ApKind[] = ['req', 'chreq', 'gpapack', 'suggestion', 'missing'];
   const inbox = canApprove
-    ? categorizedRows.filter((r) => inboxKinds.includes(r.kind) && r.state !== 'done').sort(byAtDesc)
+    ? categorizedRows.filter((r) => AP_INBOX_KINDS.includes(r.kind) && r.state !== 'done').sort(byAtDesc)
     : [];
   const categories = AP_INBOX_CATEGORIES.map((key) => ({
     key,

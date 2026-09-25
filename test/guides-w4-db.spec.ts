@@ -97,6 +97,21 @@ d('§43 안내 없음 줄 · §44 진단 점수 카드 (g4 43-2 · 44-2)', () =>
     expect(after.todoCount).toBe(before.todoCount);
   });
 
+  /**
+   * g4 §44-4 — 원문 §45 연동 줄 「mkGuide() 가 kind='quick'(강사 교체) 또는 'full'(첫 수업)로 생성」, §44 머리 칩 「● 포괄 안내」.
+   * 작성된 안내의 종류 낱말은 서버가 사유에서 한 곳으로 낸다 — 화면이 사유 → 종류 표를 다시 적지 않는다(D-R18).
+   */
+  it('44-4 안내 줄은 종류 낱말을 싣는다 — 첫 수업 = 포괄 안내 · 강사 교체 = 간이 안내', async () => {
+    const before = await svc().all();
+    const target = before.missing.find((row) => row.serId === serId && row.studentId === s1)!;
+    await svc().createDraft(manager, { sourceOccurrenceId: target.sourceOccurrenceId, studentId: s1 });
+    const guide = (await svc().all()).guides.find((g) => g.serId === serId && g.studentId === s1)!;
+    expect(guide).toMatchObject({ reason: 'new', kindLabel: '포괄 안내' });
+    await q.query(`UPDATE guide SET reason='teacher_change' WHERE id=$1`, [guide.id]);
+    const changed = (await svc().all()).guides.find((g) => g.id === guide.id)!;
+    expect(changed).toMatchObject({ reason: 'teacher_change', kindLabel: '간이 안내' });
+  });
+
   it('43-2 강사 범위(teacherId)면 그 강사의 누락만 싣는다', async () => {
     const other = await svc().all(manager);
     expect(other.missing).toEqual([]);

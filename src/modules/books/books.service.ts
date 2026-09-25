@@ -462,7 +462,7 @@ export class BooksService {
       `SELECT s.id AS student_id, s.name, s.grade,
               i.id, i.lib_id, i.vers_id, i.state, i.progress_page,
               to_char(i.issued_on,'YYYY-MM-DD') AS issued_on, to_char(i.returned_on,'YYYY-MM-DD') AS returned_on,
-              l.title, l.pages, v.edition, v.file_url, v.se_file_id, v.te_file_id,
+              l.title, l.pages, l.level AS lib_level, v.edition, v.file_url, v.se_file_id, v.te_file_id,
               (SELECT st.name FROM ser_stu ss JOIN ser sr ON sr.id=ss.ser_id JOIN staff st ON st.id=sr.teacher_id
                 WHERE ss.student_id=s.id ORDER BY sr.id LIMIT 1) AS teacher_name,
               (SELECT to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI')
@@ -492,12 +492,13 @@ export class BooksService {
     }
     const active = rows.filter((r) => r.id != null);
     const bookMap = new Map<number, {
-      libId: number; title: string; studentCount: number; values: number[]; pages: number | null;
+      libId: number; title: string; level: string | null; studentCount: number; values: number[]; pages: number | null;
       students: Array<{ studentId: number; name: string; percent: number | null; elapsedDays: number | null }>;
     }>();
     for (const r of active) {
+      // level — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). LIB 원문 그대로
       const libId = Number(r.lib_id); const old = bookMap.get(libId) ?? {
-        libId, title: String(r.title), studentCount: 0, values: [],
+        libId, title: String(r.title), level: r.lib_level == null ? null : String(r.lib_level), studentCount: 0, values: [],
         pages: r.pages == null ? null : Number(r.pages), students: [],
       };
       old.studentCount += 1;
@@ -706,12 +707,13 @@ export class BooksService {
     if (!r) throw new NotFoundException('자료 전달을 찾을 수 없습니다');
     const students = await m.query(`SELECT s.id,s.name,s.grade FROM gpapack_student gs JOIN stu s ON s.id=gs.student_id WHERE gs.gpapack_id=$1 ORDER BY s.name`, [id]) as R[];
     const books = await m.query(
-      `SELECT l.id,l.code,l.title,gl.vers_id,v.se_file_id,v.te_file_id
+      `SELECT l.id,l.code,l.title,l.level,gl.vers_id,v.se_file_id,v.te_file_id
          FROM gpapack_lib gl JOIN lib l ON l.id=gl.lib_id LEFT JOIN vers v ON v.id=gl.vers_id
         WHERE gl.gpapack_id=$1 ORDER BY l.title`, [id],
     ) as R[];
     const state = String(r.state) as PackState; const packType = String(r.pack_type) as PackType;
-    const packBooks = books.map((b) => ({ id: Number(b.id), code: String(b.code), title: String(b.title), versId: b.vers_id == null ? null : Number(b.vers_id), seFileId: b.se_file_id == null ? null : Number(b.se_file_id), teFileId: b.te_file_id == null ? null : Number(b.te_file_id) }));
+    // 교재 줄의 레벨 글자 사각(원문 §41 카드 · g4 §41-3) — LIB 원문 그대로, 없으면 null
+    const packBooks = books.map((b) => ({ id: Number(b.id), code: String(b.code), title: String(b.title), level: b.level == null ? null : String(b.level), versId: b.vers_id == null ? null : Number(b.vers_id), seFileId: b.se_file_id == null ? null : Number(b.se_file_id), teFileId: b.te_file_id == null ? null : Number(b.te_file_id) }));
     const blockers = [
       ...(!r.effective_on ? ['적용일'] : []),
       ...(r.coordinator_id == null ? ['받는 코디네이터'] : []),

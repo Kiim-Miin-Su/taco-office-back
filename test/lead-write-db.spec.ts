@@ -153,15 +153,15 @@ d('C90 상담 입구 — 신규 문의 · 단계 이동 · 접촉 원장 · §71
     await q.query(`UPDATE lead SET created_at = $1 WHERE id IN ($2,$3)`, [at('2026-03-20'), a.id, b.id]);
     await q.query(`UPDATE lead SET created_at = $1 WHERE name = '새C'`, [at('2026-04-02')]);   // 다음 달 유입 — 3월 판에 없다
     const m = (await exec().range('2026-03-01', '2026-03-31', true)).monthly!;
+    // 원본 §71 퍼널은 네 줄이다 — 「유입 → 1차 → 2차·진단 → 등록」(71-5 · wave 5). 2차 대기는 줄로 세지 않는다
     expect(m.funnel.map((r) => [r.key, r.label, r.count, r.pct])).toEqual([
       ['inflow', '유입', 5, 100],
       ['first', '1차 상담', 2, 40],       // 새 A·B 만 기록이 있다 — 옛 건은 지금 단계가 1차가 아니다
-      ['wait2nd', '2차 대기', 2, 40],     // 새 A(기록) + 옛대기(지금 단계)
-      ['second', '2차 상담', 2, 40],      // 새 A·B — 옛보류는 거쳤는지 모른다
+      ['second', '2차 · 진단', 2, 40],    // 새 A·B — 옛보류는 거쳤는지 모르고, 옛대기는 아직 2차에 닿지 않았다
       ['enrolled', '등록', 1, 20],        // 옛등록(지금 단계)
     ]);
     expect(m.funnelSince).toBe(TODAY);
     const apr = (await exec().range('2026-04-01', '2026-04-30', true)).monthly!;
-    expect(apr.funnel.map((r) => r.count)).toEqual([1, 1, 0, 0, 0]);
+    expect(apr.funnel.map((r) => r.count)).toEqual([1, 1, 0, 0]);
   });
 });

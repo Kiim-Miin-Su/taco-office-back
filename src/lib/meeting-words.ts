@@ -32,6 +32,21 @@ export const MT_TYPE_LABEL: Record<MtType, string> = {
 export const mtTypeLabel = (t: string): string => MT_TYPE_LABEL[t as MtType] ?? t;
 
 /**
+ * **짧은 이름** — 원문 §63 의 종류 칩 줄(「전체 · ●기획 · ●컨설팅 · ●마케팅 · ●개발 · ●일반」)과
+ * 줄 머리 칩(「기획」)은 「회의」를 떼고 부른다 (g6 63-7 · D-R44). 긴 이름(§66 머리 「일반 회의」)은 그대로 둔다 —
+ * 두 자리가 다른 낱말을 쓰는 것이 원문이다. 낱말을 만드는 자리는 여전히 서버 한 곳이다 (D-R18).
+ */
+export const MT_TYPE_SHORT: Record<MtType, string> = {
+  plan: '기획',
+  consulting: '컨설팅',
+  marketing: '마케팅',
+  dev: '개발',
+  general: '일반',
+};
+
+export const mtTypeShort = (t: string): string => MT_TYPE_SHORT[t as MtType] ?? t;
+
+/**
  * **두 벌을 잇는 표** (C96).
  *
  * 바로 위 주석이 「같은 다섯 갈래를 두 표가 각자 부른다」고 적어 두었지만 **잇는 표는 없었다.**

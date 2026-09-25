@@ -45,16 +45,19 @@ export function notiTone(link: string | null | undefined): NotiTone {
  * `NOTI.category`가 정본이다. **재알람**은 같은 `/reports/unwritten` 링크라도 최초 독촉과
  * 다른 업무 사건이라 링크로는 구분할 수 없다. C76에서 컬럼을 추가해 발송자가 분류를 명시한다.
  * 과거 배포에서 컬럼이 없던 행만 링크 fallback으로 읽으며, 몸통 글자를 런타임에 해석하지 않는다.
+ *
+ * **차례도 원문이다**(g2 16-3) — §16 컷의 칩 줄이 「작성 독촉 · 재알람 · 리포트 · **요청 처리 · 일정 변경**」이다.
+ * 화면은 이 배열 차례대로 칩을 그리므로 차례를 바꾸는 자리는 여기 하나다.
  */
-export const NOTI_CATEGORIES = ['report_due', 're_alarm', 'report', 'schedule', 'request', 'etc'] as const;
+export const NOTI_CATEGORIES = ['report_due', 're_alarm', 'report', 'request', 'schedule', 'etc'] as const;
 export type NotiCategory = (typeof NOTI_CATEGORIES)[number];
 
 export const NOTI_CATEGORY_LABEL: Record<NotiCategory, string> = {
   report_due: '작성 독촉',
   re_alarm: '재알람',
   report: '리포트',
-  schedule: '일정 변경',
   request: '요청 처리',
+  schedule: '일정 변경',
   etc: '시스템',   // 원문 M-128 의 여섯째 낱말이다 — 「알림」이라 적던 것을 되돌렸다 (C99 · D-R18)
 };
 

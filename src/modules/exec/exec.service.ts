@@ -11,11 +11,17 @@ import { Lead } from '../../entities';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import { NOTI_TITLE } from '../../lib/noti';
 import {
-  consLockedWhere, cplOpenWhere, EXEC_AREA_KEYS, EXEC_AREAS, EXEC_LESSON_MARK_LABEL, EXEC_PERIOD_WORD, EXEC_SHEET_TITLE,
-  execAreaDetails, execDayLabel, execPeriodKind, execPeriodLabel, filledAreas, invOpenWhere, invOverdueWhere, isWholeMonth,
-  planRunningWhere, planWaitingWhere, type ExecAreaFacts, type ExecAreaKey, type ExecPeriodKind,
+  consLockedWhere, cplOpenWhere, EXEC_AREA_ITEM_LIMIT, EXEC_AREA_KEYS, EXEC_AREAS, EXEC_FUNNEL_SECOND_LABEL, EXEC_LESSON_MARK_LABEL,
+  EXEC_PERIOD_WORD, EXEC_SHEET_TITLE, execAreaDetails, execAreaItemsLabel, execDayLabel, execLessonItems, execPeriodKind,
+  execPeriodLabel, execWeekDelta, filledAreas, invOpenWhere, invOverdueWhere, isWholeMonth, krw,
+  planRunningWhere, planWaitingWhere, todoOverdueWhere,
+  type ExecAreaFacts, type ExecAreaItem, type ExecAreaKey, type ExecPeriodKind,
 } from '../../lib/exec-areas';
-import { mktChannelLabel } from '../../lib/marketing-words';
+import { mktChannelLabel, mktTitle } from '../../lib/marketing-words';
+import { cplAreaLabel, cplStageLabel } from '../../lib/complaint-words';
+import { csCan, type ConsShare } from '../../lib/rules';
+import { addDays } from '../../lib/kst';
+import { consultingTypeLabel } from '../consulting/consulting.rules';
 import { BOARD_MARK_KEYS } from '../board/board.rules';
 import type { BoardDto } from '../board/board.dto';
 import { INTAKE_FUNNEL_STAGES, INTAKE_STAGE_LABEL, INTAKE_STOPS, INTAKE_STOP_UNSET, intakeStopLabel } from '../../lib/intake-words';
@@ -30,7 +36,15 @@ import { BoardService } from '../board/board.service';
  * 선택 인자인 이유는 이 서비스를 직접 새로 만들어 쓰는 DB 스위트가 여럿이라서다.
  * **안 주면 단추를 닫는다** — 모르는 쪽으로 열면 눌렀을 때 서버가 거절해 그 자리가 다음 불일치가 된다.
  */
-export type ExecViewer = { id: number; canApprove: boolean };
+export type ExecViewer = {
+  id: number;
+  canApprove: boolean;
+  /**
+   * §76 canHide — 비공개 컨설팅 열람. 펼칠 줄(N-67)이 컨설팅 줄을 **공개 범위(csCan) 안에서만** 싣기 위해 받는다 —
+   * 컨설팅 화면에서 안 보이는 건의 학생 이름이 대표 보고 줄로 새면 안 된다. 모르면 없는 것으로 본다.
+   */
+  canHide?: boolean;
+};
 import type {
   ExecAreaMemoDto, ExecDto, ExecInboxDto, ExecMemoWriteDto, ExecMonthlyDto,
   ExecReportWriteResultDto, ExecReviewDto, ExecStatDto, ExecSubmitDto,
@@ -57,6 +71,13 @@ const REVENUE_SQL = `
          ((SELECT count(*) FROM pay WHERE paid_on BETWEEN $1::date AND $2::date)
         + (SELECT count(*) FROM cons_pay p JOIN cons c ON c.id = p.cons_id
             WHERE c.deleted_at IS NULL AND p.paid_on BETWEEN $1::date AND $2::date))::int AS n`;
+
+/**
+ * 기간에 들어온 문의 · 올린 마케팅 — 머리 「신규 문의」·「마케팅 게시」와 **주간 지난주 값**이 같은 문장을 읽는다
+ * (원본 §70 규칙 「직전 주를 **같은 방식으로** 집계해 비교」 · N-66 주간). `$1`·`$2` = 기간.
+ */
+const LEADS_IN_SQL = `SELECT count(*)::text n FROM lead WHERE created_at::date BETWEEN $1::date AND $2::date`;
+const POSTS_IN_WHERE = `on_date BETWEEN $1::date AND $2::date`;
 
 /**
  * 여섯 칸을 **언제나 다** 만든다 — 안 적은 칸은 빈 문자열이다.
@@ -176,12 +197,12 @@ export class ExecService {
     const [mkt] = await this.q(
       `SELECT count(*)::int AS posts, count(DISTINCT channel)::int AS channels,
               (SELECT count(*) FROM mfb WHERE kind = 'comment' AND (at AT TIME ZONE 'Asia/Seoul')::date BETWEEN $1::date AND $2::date)::int AS comments
-         FROM mkt WHERE on_date BETWEEN $1::date AND $2::date`,
+         FROM mkt WHERE ${POSTS_IN_WHERE}`,
       [from, to],
     );
     // 「blog 1건이 가장 많습니다」 — 같은 수면 채널 코드 순(매번 같은 답이어야 한다)
     const [top] = await this.q(
-      `SELECT channel, count(*)::int AS n FROM mkt WHERE on_date BETWEEN $1::date AND $2::date
+      `SELECT channel, count(*)::int AS n FROM mkt WHERE ${POSTS_IN_WHERE}
         GROUP BY channel ORDER BY n DESC, channel LIMIT 1`,
       [from, to],
     );
@@ -247,41 +268,153 @@ export class ExecService {
   }
 
   /**
+   * §70 지난주 값 — **같은 문장을 −7일 기간에 한 번 더** 부른다(원본 §70 규칙 「직전 주(shift(d1,-7)~shift(d2,-7))를
+   * 같은 방식으로 집계해 비교」 · N-66 의 주간 · D-R44). 입금은 금액이라 볼 권한이 없으면 세지 않는다(null).
+   */
+  private async weekPrev(
+    from: string, to: string, canSeeAmounts: boolean,
+  ): Promise<{ revenue: number | null; leads: number; posts: number }> {
+    const pf = addDays(from, -7);
+    const pt = addDays(to, -7);
+    const [rev] = await this.q(REVENUE_SQL, [pf, pt, canSeeAmounts]);
+    const leads = await this.one(LEADS_IN_SQL, [pf, pt]);
+    const posts = await this.one(`SELECT count(*)::text n FROM mkt WHERE ${POSTS_IN_WHERE}`, [pf, pt]);
+    const revenue = canSeeAmounts && rev?.total !== null && rev?.total !== undefined ? Number(rev.total) : null;
+    return { revenue, leads, posts };
+  }
+
+  /**
+   * §69~§71 카드의 **펼칠 줄** (N-67 · D-R44 · K-111) — 배지와 **같은 판정 조각**으로 뽑고 여덟에서 끊는다.
+   *
+   * - 금액은 볼 권한이 없으면 세지도 싣지도 않는다(`CASE WHEN $n::boolean`) — 줄 부제에서도 빠지고, 누가 못 냈는지
+   *   (학생 이름)도 싣지 않는다. 금액 권한이 없는 사람에게 「누가 안 냈는가」는 금액과 같은 정보다(D-R39).
+   * - 컨설팅 줄은 **공개 범위(csCan) 안에서만** 싣는다 — 컨설팅 화면에서 안 보이는 건의 학생이 여기로 새지 않게.
+   * - go 는 원본 화면이다(D-R27). 줄 하나를 곧장 여는 질의가 있는 화면(`/ops?tab=plan&plan=`)은 그것을 쓰고,
+   *   없는 화면은 그 목록으로 보낸다 — 없는 질의를 지어 붙이지 않는다.
+   */
+  private async areaItems(
+    from: string, to: string, canSeeAmounts: boolean, board: BoardDto, viewer?: ExecViewer,
+  ): Promise<Record<ExecAreaKey, ExecAreaItem[]>> {
+    const L = EXEC_AREA_ITEM_LIMIT;
+    const md = (iso: string) => iso.slice(5);
+    const inv = await this.q(
+      `SELECT i.id, i.title, st.name AS student, to_char(i.due_on,'YYYY-MM-DD') AS due_on, ($1::date - i.due_on)::int AS late,
+              CASE WHEN $2::boolean THEN (i.amount - i.paid_amount) END::bigint AS left_amount
+         FROM inv i LEFT JOIN stu st ON st.id = i.student_id
+        WHERE ${invOverdueWhere('i')}
+        ORDER BY i.due_on, i.id LIMIT ${L}`,
+      [to, canSeeAmounts],
+    );
+    const mkt = await this.q(
+      `SELECT id, title, channel, item, to_char(on_date,'YYYY-MM-DD') AS on_date
+         FROM mkt WHERE ${POSTS_IN_WHERE} ORDER BY on_date, id LIMIT ${L}`,
+      [from, to],
+    );
+    // 결재 대기 기획이 먼저, 그다음 기한 지난 할 일(오래된 기한 먼저) — 배지 「결재 대기 + 기한 지난 할 일」의 두 조각 그대로
+    const ops = await this.q(
+      `SELECT * FROM (
+         SELECT 'plan' AS kind, p.id, p.title, NULL::text AS due_on, 0 AS late FROM plan p WHERE ${planWaitingWhere('p')}
+         UNION ALL
+         SELECT 'todo', t.id, t.title, to_char(t.due_on,'YYYY-MM-DD'), ($1::date - t.due_on)::int FROM todo t WHERE ${todoOverdueWhere('t')}
+       ) x ORDER BY (kind = 'todo'), due_on NULLS FIRST, id LIMIT ${L}`,
+      [to],
+    );
+    const cons = await this.q(
+      `SELECT c.id, c.cons_type, c.contract_step, c.share, c.owner_id,
+              EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
+              (SELECT string_agg(st.name, ', ' ORDER BY st.name) FROM cons_stu cs JOIN stu st ON st.id = cs.student_id
+                WHERE cs.cons_id = c.id) AS names
+         FROM cons c WHERE ${consLockedWhere('c')}
+        ORDER BY c.created_at, c.id`,
+      [viewer?.id ?? 0],
+    );
+    const cpl = await this.q(
+      `SELECT c.id, c.area, c.stage, st.name AS student, to_char(c.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS got_on
+         FROM cpl c LEFT JOIN stu st ON st.id = c.student_id
+        WHERE ${cplOpenWhere('c')} ORDER BY c.created_at, c.id LIMIT ${L}`,
+    );
+    const late = (r: R) => `기한 ${md(String(r.due_on))} · ${Number(r.late)}일 지남`;
+    return {
+      money: inv.map((r) => ({
+        key: `inv-${Number(r.id)}`,
+        title: canSeeAmounts && r.student ? `${String(r.student)} · ${String(r.title)}` : String(r.title),
+        sub: r.left_amount === null || r.left_amount === undefined ? late(r) : `${krw(Number(r.left_amount))} · ${late(r)}`,
+        go: '/accounting?tab=inv',
+      })),
+      mkt: mkt.map((r) => ({
+        key: `mkt-${Number(r.id)}`,
+        title: mktTitle(r.title as string | null, String(r.channel), String(r.item)),
+        sub: `${mktChannelLabel(String(r.channel))} · ${md(String(r.on_date))}`,
+        go: '/ops?tab=mkt',
+      })),
+      ops: ops.map((r) => (r.kind === 'plan'
+        ? { key: `plan-${Number(r.id)}`, title: String(r.title), sub: '결재 대기', go: `/ops?tab=plan&plan=${Number(r.id)}` }
+        : { key: `todo-${Number(r.id)}`, title: String(r.title), sub: late(r), go: '/ops?tab=todo' })),
+      consulting: cons
+        .filter((r) => csCan(String(r.share) as ConsShare, {
+          isOwner: viewer !== undefined && Number(r.owner_id) === viewer.id,
+          isPicked: r.is_picked === true,
+          canHide: viewer?.canHide === true,
+          canMoney: canSeeAmounts,
+        }))
+        .slice(0, L)
+        .map((r) => ({
+          key: `cons-${Number(r.id)}`,
+          title: `${(r.names as string | null) ?? '학생 미정'} · ${consultingTypeLabel(String(r.cons_type))}`,
+          sub: `계약 ${r.contract_step === null ? '—' : Number(r.contract_step)}/5단계 · 수납 전`,
+          go: '/consulting',
+        })),
+      complaint: cpl.map((r) => ({
+        key: `cpl-${Number(r.id)}`,
+        title: `${(r.student as string | null) ?? '학생 미정'} · ${cplAreaLabel(String(r.area))}`,
+        sub: `${cplStageLabel(String(r.stage))} · 접수 ${md(String(r.got_on))}`,
+        go: '/ops?tab=complaint',
+      })),
+      lesson: execLessonItems(board.rows),
+    };
+  }
+
+  /**
    * 시트 머리 지표 넷 — **기간마다 원문 칸이 다르다** (69-6 · 70-1 · 71-1).
    * 새로 세는 것은 없다: 영역 사실 · 수입 · 현황판 · 기존 통계에서 **같은 값**을 가져온다
    * (결재 대기·안 끝난 컴플레인은 운영·컴플레인 카드 타일과 같은 수다 — N-19).
-   * 주간의 「지난주 ▼ 100%」 비교(N-66)는 결정 대기라 싣지 않는다.
+   * 주간만 입금 · 신규 문의 · 마케팅 게시를 **지난주와 견준다**(원본 §70 「지난주 ▼ 100%」 · N-66 의 주간 · D-R44).
+   * 일간 · 월간 컷의 머리에는 비교가 없다 — 월간의 비교 기준은 N-66 결정 대기로 남는다.
    */
   private static head(
     kind: ExecPeriodKind, f: ExecAreaFacts, board: BoardDto, stats: ExecStatDto[],
+    prev: { revenue: number | null; leads: number; posts: number } | null = null,
   ): ExecStatDto[] {
     const w = EXEC_PERIOD_WORD[kind];
     const stat = (key: string) => stats.find((x) => x.key === key)?.value ?? null;
-    const revenue: ExecStatDto = { key: 'revenue', label: kind === 'day' ? '오늘 들어온 돈' : `${w} 입금`, value: f.money.inSum, unit: '원', money: true, total: null, note: null };
+    /** 지난주와 견준 부제 — 비교하지 않는 기간이면 둘 다 null */
+    const vs = (cur: number | null, p: number | null | undefined): Pick<ExecStatDto, 'prev' | 'note'> =>
+      (prev ? { prev: p ?? null, note: execWeekDelta(cur, p ?? null) } : { prev: null, note: null });
+    const revenue: ExecStatDto = { key: 'revenue', label: kind === 'day' ? '오늘 들어온 돈' : `${w} 입금`, value: f.money.inSum, unit: '원', money: true, total: null, note: null, prev: null };
     if (kind === 'month') {
       const margin = stat('margin');
       return [
         { ...revenue, label: '매출 (입금)' },
-        { key: 'payout', label: '강사료', value: stat('payout'), unit: '원', money: true, total: null, note: null },
-        { key: 'expense', label: '지출', value: stat('expense'), unit: '원', money: true, total: null, note: null },
+        { key: 'payout', label: '강사료', value: stat('payout'), unit: '원', money: true, total: null, note: null, prev: null },
+        { key: 'expense', label: '지출', value: stat('expense'), unit: '원', money: true, total: null, note: null, prev: null },
         // 이익률은 「이익」 칸의 부제다 — 원본 §71 「−268%」. 수입이 0 이면 비율이 없다(null)
-        { key: 'profit', label: '이익', value: stat('profit'), unit: '원', money: true, total: null, note: margin === null ? null : `${margin}%` },
+        { key: 'profit', label: '이익', value: stat('profit'), unit: '원', money: true, total: null, note: margin === null ? null : `${margin}%`, prev: null },
       ];
     }
     if (kind === 'week') {
       return [
-        revenue,
-        { key: 'leads', label: '신규 문의', value: stat('leads'), unit: '건', money: false, total: null, note: null },
-        { key: 'posts', label: '마케팅 게시', value: f.mkt.posts, unit: '건', money: false, total: null, note: null },
-        // 「수업 준비 6/49 · 다 된 것」 — 현황판의 판정(네 축이 다 선 수업 / 수업)을 그대로 쓴다 (C85-c)
-        { key: 'prep', label: '수업 준비', value: board.summary.doneLessons, unit: '건', money: false, total: board.summary.lessons, note: '다 된 것' },
+        { ...revenue, ...vs(revenue.value ?? null, prev?.revenue) },
+        { key: 'leads', label: '신규 문의', value: stat('leads'), unit: '건', money: false, total: null, ...vs(stat('leads'), prev?.leads) },
+        { key: 'posts', label: '마케팅 게시', value: f.mkt.posts, unit: '건', money: false, total: null, ...vs(f.mkt.posts, prev?.posts) },
+        // 「수업 준비 6/49 · 다 된 것」 — 현황판의 판정(네 축이 다 선 수업 / 수업)을 그대로 쓴다 (C85-c). 원본은 이 칸을 견주지 않는다
+        { key: 'prep', label: '수업 준비', value: board.summary.doneLessons, unit: '건', money: false, total: board.summary.lessons, note: '다 된 것', prev: null },
       ];
     }
     return [
       revenue,
-      { key: 'unpaid', label: '못 받은 돈', value: f.money.unpaidSum, unit: '원', money: true, total: null, note: null },
-      { key: 'waiting', label: '결재 대기', value: f.ops.waiting, unit: '건', money: false, total: null, note: null },
-      { key: 'complaints', label: '안 끝난 컴플레인', value: f.complaint.open, unit: '건', money: false, total: null, note: null },
+      { key: 'unpaid', label: '못 받은 돈', value: f.money.unpaidSum, unit: '원', money: true, total: null, note: null, prev: null },
+      { key: 'waiting', label: '결재 대기', value: f.ops.waiting, unit: '건', money: false, total: null, note: null, prev: null },
+      { key: 'complaints', label: '안 끝난 컴플레인', value: f.complaint.open, unit: '건', money: false, total: null, note: null, prev: null },
     ];
   }
 
@@ -550,10 +683,14 @@ export class ExecService {
    */
   private async monthly(from: string, to: string): Promise<ExecMonthlyDto | null> {
     if (!this.wholeMonth(from, to)) return null;
+    /*
+     * 원본 §71 퍼널은 **네 줄**이다 — 「유입 → 1차 → 2차·진단 → 등록」(컷 · 슬라이드 글 · 71-5 · D-R44).
+     * 「2차 · 진단」은 2차 상담에 **닿은** 건이다(`second`). 2차 대기는 줄로 세지 않는다 — 같은 컷의 「어디서 놓쳤나」가
+     * 「2차 안 옴」을 따로 세므로, 기다리다 안 온 건을 2차에 닿았다고 세면 두 판이 서로 다른 말을 한다.
+     */
     const funnelRows = await this.q(
       `SELECT count(*)::int AS inflow,
               count(*) FILTER (WHERE l.stage = 'first' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'first'))::int AS first,
-              count(*) FILTER (WHERE l.stage = 'wait2nd' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'wait2nd'))::int AS wait2nd,
               count(*) FILTER (WHERE l.stage = 'second' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'second'))::int AS second,
               count(*) FILTER (WHERE l.stage = 'enrolled' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'enrolled'))::int AS enrolled,
               (SELECT to_char(min(at) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') FROM lead_stage_log WHERE stage = ANY($3)) AS since
@@ -566,8 +703,9 @@ export class ExecService {
     const pct = (n: number) => (inflow === 0 ? 0 : Math.round((n / inflow) * 100));
     const funnel = [
       { key: 'inflow', label: '유입', count: inflow, pct: pct(inflow) },
-      ...(['first', 'wait2nd', 'second', 'enrolled'] as const).map((key) => ({
-        key, label: INTAKE_STAGE_LABEL[key], count: Number(f[key] ?? 0), pct: pct(Number(f[key] ?? 0)),
+      ...(['first', 'second', 'enrolled'] as const).map((key) => ({
+        key, label: key === 'second' ? EXEC_FUNNEL_SECOND_LABEL : INTAKE_STAGE_LABEL[key],
+        count: Number(f[key] ?? 0), pct: pct(Number(f[key] ?? 0)),
       })),
     ];
     const funnelSince = (f.since as string) ?? null;
@@ -613,7 +751,8 @@ export class ExecService {
                  LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
                 WHERE o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
                   AND COALESCE(a.result,'completed') <> 'canceled'`, [from, to]),
-      this.one(`SELECT count(*)::text n FROM lead WHERE created_at::date BETWEEN $1::date AND $2::date`, [from, to]),
+      // 주간의 지난주 값(weekPrev)이 같은 문장을 −7일에 부른다 — §70 「같은 방식으로」
+      this.one(LEADS_IN_SQL, [from, to]),
       // 「등록」은 상담이 들어온 날이 아니라 수강이 **시작된** 날로 센다.
       // lead.created_at 으로 세면 작년에 상담한 학생이 이번 달 등록으로 잡히지 않는다.
       this.one(`SELECT count(*)::text n FROM enr WHERE started_on BETWEEN $1::date AND $2::date`, [from, to]),
@@ -739,7 +878,11 @@ export class ExecService {
     const kind = execPeriodKind(from, to);
     const facts = await this.areaFacts(from, to, canSeeAmounts, board, revenueFacts);
     const details = execAreaDetails(kind, facts);
-    const areas = counts.map((a) => ({ ...a, headline: details[a.key].headline, tiles: details[a.key].tiles }));
+    const items = await this.areaItems(from, to, canSeeAmounts, board, viewer);
+    const areas = counts.map((a) => ({
+      ...a, headline: details[a.key].headline, tiles: details[a.key].tiles,
+      itemsLabel: execAreaItemsLabel(a.key, kind, items[a.key].length), items: items[a.key],
+    }));
     const inbox = await this.inbox();
     // 이 기간의 보고가 있으면 그 기재 수를, 없으면 0 — 「담당 x/6 기재」 (§69 머리)
     const here = inbox.find((r) => r.onDate >= from && r.onDate <= to);
@@ -749,7 +892,7 @@ export class ExecService {
       periodKind: kind,
       sheetTitle: EXEC_SHEET_TITLE[kind],
       periodLabel: execPeriodLabel(kind, from, to),
-      head: ExecService.head(kind, facts, board, stats),
+      head: ExecService.head(kind, facts, board, stats, kind === 'week' ? await this.weekPrev(from, to, canSeeAmounts) : null),
       stats, reports,
       areas,
       reviewCount: areas.reduce((a, x) => a + x.count, 0),

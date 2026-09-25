@@ -7,9 +7,11 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { Reflector } from '@nestjs/core';
+import { Test } from '@nestjs/testing';
 import { PERM_KEY } from '../src/common/perm';
+import { buildOpenApi } from '../src/openapi';
 import { GuidesController } from '../src/modules/guides/guides.controller';
-import { GuideBodyDto, GuideDraftCreateDto, GuideHistoryQueryDto, ZoomNoticeWriteDto } from '../src/modules/guides/guides.dto';
+import { GuideActionDto, GuideBodyDto, GuideDraftCreateDto, GuideHistoryQueryDto, ZoomNoticeWriteDto } from '../src/modules/guides/guides.dto';
 import { GuidesService } from '../src/modules/guides/guides.service';
 
 describe('§43~§45 안내 HTTP 계약 (C78)', () => {
@@ -19,7 +21,7 @@ describe('§43~§45 안내 HTTP 계약 (C78)', () => {
     expect(reflector.get(PERM_KEY, GuidesController.prototype[handler])).toEqual(['canAdminPage']);
   });
 
-  it.each(['createDraft', 'createTemplate', 'patchTemplate', 'writeBody', 'copyBody', 'sendZoomNotice', 'sendGuide'] as const)(
+  it.each(['createDraft', 'createTemplate', 'patchTemplate', 'writeBody', 'copyBody', 'sendZoomNotice', 'sendZoomNoticeBatch', 'sendGuide'] as const)(
     '%s 쓰기는 관리자 화면과 전체 CRUD 권한을 모두 요구한다',
     (handler) => {
       expect(reflector.get(PERM_KEY, GuidesController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
@@ -66,5 +68,65 @@ describe('§43~§45 안내 HTTP 계약 (C78)', () => {
     expect(service.students).toHaveBeenCalledWith(user);
     expect(service.history).toHaveBeenCalledWith({ span: 'week', anchor: '2026-09-14' }, user);
     expect(service.createDraft).toHaveBeenCalledWith(71, { sourceOccurrenceId: 91, studentId: 19 }, user);
+  });
+
+  it('§43-6 「강사 N명 한 번에」는 입력을 받지 않고 요청한 사람을 서비스에 넘긴다 — 고를 회차는 서버가 정한다 (wave 6)', async () => {
+    const service = { sendZoomNoticeBatch: jest.fn().mockResolvedValue({ sent: [], skipped: [], teacherCount: 0, parentNotices: 0 }) } as unknown as GuidesService;
+    const controller = new GuidesController(service);
+    const user = { id: 72, name: '안내 담당', role: 'manager' };
+    await controller.sendZoomNoticeBatch(user, {} as GuideActionDto);
+    expect(service.sendZoomNoticeBatch).toHaveBeenCalledWith(user);
+    // 화면이 회차 목록을 실어 보내면 거절한다 — 무엇을 보낼지 고르는 것은 서버의 같은 문(sendGate)이다
+    await expect(controller.sendZoomNoticeBatch(user, { serIds: [1] } as unknown as GuideActionDto)).rejects.toThrow('입력 필드를 받지 않습니다');
+    expect(service.sendZoomNoticeBatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * wave 6 — 생성 계약(OpenAPI)이 말하는 모양을 실제 Swagger builder 로 본다.
+ * 서비스는 대역이고 여기서는 DTO 데코레이터가 만든 스키마만 본다.
+ */
+describe('§43-6 · §44-4 OpenAPI 계약 (wave 6)', () => {
+  let doc: ReturnType<typeof buildOpenApi>;
+  const schema = (name: string) => {
+    const found = doc.components?.schemas?.[name];
+    if (!found || '$ref' in found) throw new Error(`${name} schema 누락`);
+    return found;
+  };
+
+  beforeAll(async () => {
+    const mod = await Test.createTestingModule({
+      controllers: [GuidesController],
+      providers: [{ provide: GuidesService, useValue: {} }],
+    }).compile();
+    const app = mod.createNestApplication();
+    await app.init();
+    doc = buildOpenApi(app);
+    await app.close();
+  });
+
+  it('GuideDto.kindLabel 은 필수 nullable 이다 — 서버는 언제나 싣고(mapGuide 한 곳) 모르는 사유만 null 이다', () => {
+    const guide = schema('GuideDto');
+    expect(guide.required).toContain('kindLabel');
+    expect(guide.properties?.kindLabel).toMatchObject({ type: 'string', nullable: true });
+  });
+
+  it('POST /guides/zoom-notice/batch — 보낸 줄·건너뛴 줄(서버 이유)·강사 수를 돌려준다', () => {
+    const post = doc.paths['/guides/zoom-notice/batch']?.post;
+    expect(post?.responses['201']).toMatchObject({
+      content: { 'application/json': { schema: { $ref: '#/components/schemas/ZoomNoticeBatchResultDto' } } },
+    });
+    expect(schema('ZoomNoticeBatchResultDto').required).toEqual(expect.arrayContaining(['sent', 'skipped', 'teacherCount', 'parentNotices']));
+    const row = schema('ZoomNoticeBatchRowDto');
+    expect(row.required).toEqual(expect.arrayContaining(['serId', 'onDate', 'startMin', 'studentNames', 'code', 'reason']));
+    expect(row.properties?.reason).toMatchObject({ type: 'string', nullable: true });
+  });
+
+  it('GuidesDto.zoomBatch — 「강사 N명」의 N·회차 수·막힌 이유를 서버가 센다', () => {
+    const guides = schema('GuidesDto');
+    expect(guides.properties?.zoomBatch).toBeDefined();
+    const info = schema('ZoomNoticeBatchInfoDto');
+    expect(info.required).toEqual(expect.arrayContaining(['teacherCount', 'lessonCount', 'canSend', 'blockedReason']));
+    expect(info.properties?.blockedReason).toMatchObject({ type: 'string', nullable: true });
   });
 });

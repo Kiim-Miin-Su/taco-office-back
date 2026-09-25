@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { hasPerm, isRole } from '../../common/perm';
-import { overdueDays as daysSince, todayKst } from '../../lib/kst';
+import { todayKst } from '../../lib/kst';
 import { END_MIN, START_MIN, kstAt, kstDateOf } from '../../lib/sql';
 import { CONS_SHARES, csCan, csCanAmount, csCanFull, type ConsShare, type ConsViewer } from '../../lib/rules';
 import { INV_TYPE_LABEL } from '../accounting/accounting.dto';
@@ -25,7 +25,8 @@ import {
   CONSULTING_CONTRACT_STEPS, CONSULTING_CONTRACT_STEP_SUB,
   CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB,
   CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
-  consSessDoneSql, consShareLabel, consShareMeaning, consultingCloseIssue, consultingContractStepLabel, consultingRecordIssue,
+  consSessDoneSql, consShareChipLabel, consShareLabel, consShareMeaning, consultingAgeDays, consultingCloseIssue, consultingContractStepLabel, consultingRecordIssue,
+  consultingRequesterWords, consultingTypeLabel, consultingTypeWords,
   consultingSessionRecorded,
   consultingRemainingMessage, consultingRequesterLabel,
   consultingSessionAddIssue, consultingSessionDone, consultingSessionIssue, consultingStageLabel,
@@ -581,9 +582,12 @@ export class ConsultingService {
     const rows = await this.q(
       `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
               c.requester,
+              to_char(c.start_on,'YYYY-MM-DD')    AS start_on,
               to_char(c.end_on,'YYYY-MM-DD')      AS end_on,
               to_char(c.created_at,'YYYY-MM-DD')  AS created_at,
               o.name AS owner_name,
+              -- §27 탭 머리 「학생 N명」(26-03) — 학생별 화면(students)과 같은 cons_stu 를 같은 csCan 판정 뒤에 센다
+              COALESCE((SELECT array_agg(cs.student_id) FROM cons_stu cs WHERE cs.cons_id = c.id), '{}') AS student_ids,
               -- 원본 카드의 금액쌍 왼쪽 반. 청구서 입금과 **다른 표**다 (CONS_PAY)
               COALESCE((SELECT sum(p.amount) FROM cons_pay p WHERE p.cons_id = c.id), 0) AS paid_amount,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
@@ -655,11 +659,14 @@ export class ConsultingService {
         canOpen: full,
         /* 원본 §26 카드의 낱말과 수 — 화면이 만들지 않는다 (D-R18 · D-R37 · C86-e) */
         stageLabel: consultingStageLabel(record.stage),
-        typeLabel: CONSULTING_TYPE_LABEL[String(r.cons_type) as ConsultingType] ?? String(r.cons_type),
+        typeLabel: consultingTypeLabel(String(r.cons_type)),
         shareLabel: consShareLabel(share),
+        // 카드 칩만 원본의 짧은 낱말 「수납만」(26-08)
+        shareChipLabel: consShareChipLabel(share),
         contractStepLabel: consultingContractStepLabel(record.contractStep),
         requesterLabel: consultingRequesterLabel(r.requester as string | null),
-        ageDays: daysSince(String(r.created_at)),
+        // 「N일 지남」 — 계약 시작일부터(시작 전 · 미정이면 null). 건이 생긴 날로 세면 새 건이 전부 「0일 지남」이었다 (26-10 · qa-w3)
+        ageDays: consultingAgeDays((r.start_on as string) ?? null, today),
         // 받은 돈도 **계약 금액과 같은 권한**을 탄다 — 한쪽만 보이면 나머지가 빼기로 드러난다
         paidAmount: money ? Number(r.paid_amount ?? 0) : null,
         // 내용이 안 열리면 회차 기록도 내려보내지 않는다 — 화면에서 감추는 건 감춘 게 아니다
@@ -680,6 +687,11 @@ export class ConsultingService {
       })),
       // 공개 범위 넷의 이름과 뜻 — §29 칩 아래 한 줄(29-06)도 §30 배너와 같은 낱말이다 (D-R18)
       shares: CONS_SHARES.map((key) => ({ key, label: consShareLabel(key), meaning: consShareMeaning(key) ?? '' })),
+      // §29 고르개 낱말 — 종류 10(가운뎃점 앞뒤 띄움 · 29-02) · 요청자 2. 화면은 이 차례·이름 그대로 칩을 세운다
+      types: consultingTypeWords(),
+      requesters: consultingRequesterWords(),
+      // §27 탭 머리 「학생 N명」 — 탭을 열기 전에도 선다(26-03). 볼 수 있는 건의 학생만, 한 사람은 한 번 (students() 와 같은 셈)
+      studentCount: new Set(visible.flatMap(({ r }) => ((r.student_ids as Array<string | number>) ?? []).map(Number))).size,
     };
   }
 
@@ -818,6 +830,7 @@ export class ConsultingService {
         // 학생 이름은 이미 목록이 쓰는 배열 그대로다 — 여럿이면 원문 표의 한 칸에 쉼표로 든다
         studentName: ((r.student_names as string[]) ?? []).join(', '),
         consType: String(r.cons_type),
+        typeLabel: consultingTypeLabel(String(r.cons_type)),
         stage,
         stageLabel: consultingStageLabel(stage),
         amount: money ? amount : null,
@@ -1097,6 +1110,7 @@ export class ConsultingService {
       return {
         id: Number(r.id),
         consType: String(r.cons_type),
+        typeLabel: consultingTypeLabel(String(r.cons_type)),
         stage: record.stage,
         stageLabel: consultingStageLabel(record.stage),
         createdOn: String(r.created_on),

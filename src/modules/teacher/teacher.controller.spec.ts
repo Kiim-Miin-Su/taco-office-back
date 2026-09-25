@@ -16,6 +16,7 @@ describe('TeacherController — 강사 전용 표면', () => {
   const hist = { month: '2026-09', stats: {}, lessons: [], settlement: {} };
   const svc = {
     home: jest.fn().mockResolvedValue(dto),
+    shell: jest.fn().mockResolvedValue({ timezone: 'Asia/Seoul', tzLabel: 'Seoul · UTC+9', wageRate: null, notis: [], unread: 0, notiWindowDays: 30 }),
     history: jest.fn().mockResolvedValue(hist),
     suggestions: jest.fn().mockResolvedValue({ used: 0, items: [] }),
     createSuggestion: jest.fn().mockResolvedValue({ id: 1 }),
@@ -41,6 +42,16 @@ describe('TeacherController — 강사 전용 표면', () => {
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 403 — 다른 강사 데이터를 조회할 경로가 없다', async (role) => {
     await expect(ctrl.home(user(role))).rejects.toBeInstanceOf(ForbiddenException);
     expect(svc.home).not.toHaveBeenCalled();
+  });
+
+  it('머리줄(시간대·시급·내 알림)도 자기 id 로만 위임된다', async () => {
+    await ctrl.shell(user('teacher', 42));
+    expect((svc.shell as jest.Mock).mock.calls).toEqual([[42]]);
+  });
+
+  it.each(['manager', 'admin', 'ceo'] as const)('%s 는 강사 머리줄도 403 — 남의 시급·알림을 읽을 경로가 없다', async (role) => {
+    await expect(ctrl.shell(user(role))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(svc.shell).not.toHaveBeenCalled();
   });
 
   it('히스토리도 자기 id·요청 월로 위임된다', async () => {

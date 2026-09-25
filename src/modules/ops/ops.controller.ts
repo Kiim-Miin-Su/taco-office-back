@@ -15,6 +15,7 @@ import {
   PlanDetailDto, PlanDueDecisionDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
   MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto, PlanTaskCreateDto,
+  MarketingCreateDto, MarketingDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
 import { EnrollResultDto, LeadEnrollDto } from './enroll.dto';
@@ -235,6 +236,23 @@ export class OpsController {
   @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND | CPL_NOT_FOUND' })
   teacherChange(@CurrentUser() user: RequestUser, @Body() dto: TeacherChangeDto): Promise<TeacherChangeResultDto> {
     return this.tcSvc.apply(user.id, dto);
+  }
+
+  /* ══ §59 「+ 오늘 한 것」 (x5 · g6 59-3) ═══════════════════════════════ */
+
+  @Post('marketing')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§59 「+ 오늘 한 것」 — 마케팅 활동 한 줄 · URL 첨부',
+    description:
+      '날짜를 안 주면 오늘, 담당을 안 주면 나다. 채널·항목은 지금 코드 일곱·일곱이다(원문 어휘 맞춤은 열린 결정 N-29 ①). '
+      + '그만둔 사람은 담당이 될 수 없다. 응답은 GET /ops 의 marketing 줄과 같은 모양이다. 감사 줄(LOG MKT create)이 같은 트랜잭션이다.',
+  })
+  @ApiCreatedResponse({ type: MarketingDto })
+  @ApiConflictResponse({ description: 'code MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN' })
+  @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND — 담당이 없거나 그만둔 사람' })
+  createMarketing(@CurrentUser() user: RequestUser, @Body() dto: MarketingCreateDto): Promise<MarketingDto> {
+    return this.svc.createMarketing(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto);
   }
 
   /* ══ §60 대표 피드백 ═══════════════════════════════════════════════════ */

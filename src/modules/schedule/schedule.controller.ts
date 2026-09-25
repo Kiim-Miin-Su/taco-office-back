@@ -13,6 +13,8 @@ import {
   AttendanceMutationResultDto, AttendanceWriteDto, HorizonDto, OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceListDto,
   OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
   WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto, ScheduleUndoDto,
+  HolidayListDto, ScheduleRangeQueryDto, ScheduleUnavListDto, ScheduleUnavQueryDto,
+  ScheduleSeriesCountsDto, ScheduleStudentBooksDto,
   LessonTrackingDto, LessonTrackingQueryDto,
   ConflictPreviewDto, ConflictQueryDto,
   DayCancelDto, DayCancelResultDto,
@@ -72,6 +74,70 @@ export class ScheduleController {
       canCrudAttendance,
     });
     return { from, to, items };
+  }
+
+  /**
+   * 공휴일 이름표 — 원문 §09 월간 칸 칩 · §10 요일 머리 (g1 §09 #2 · §10 #8).
+   * 로그인한 누구나 읽는다 — 날짜의 사실이고 권한으로 가를 값이 없다.
+   */
+  @Get('holidays')
+  @ApiOperation({ summary: '공휴일 이름표 — 기간 안의 날만 (표시 전용 · 일정을 막지 않는다)' })
+  @ApiOkResponse({ type: HolidayListDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_RANGE: from 이 to 보다 뒤' })
+  async holidays(@Query() query: ScheduleRangeQueryDto): Promise<HolidayListDto> {
+    if (query.from > query.to) {
+      throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
+    }
+    return { from: query.from, to: query.to, items: await this.svc.holidays(query.from, query.to) };
+  }
+
+  /**
+   * 강사 불가 시간 — **관리자 읽기** (원문 §07·§11 데이터 줄의 UNAV · G37).
+   * 관리자 시간표에 들어올 수 있는 사람만 — 강사는 자기 불가 시간을 `GET /teacher/unavailable` 에서 본다.
+   * 막지 않는다: 「가능 시간」 겹쳐 보기와 「빈 시간 찾기」가 읽는 설명 자료다.
+   */
+  @Get('unavailable')
+  @Perm('canAdminPage')
+  @ApiOperation({ summary: '강사 불가 시간(관리자 읽기) — 「가능 시간」 겹쳐 보기 · 빈 시간 찾기' })
+  @ApiOkResponse({ type: ScheduleUnavListDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_RANGE: from 이 to 보다 뒤' })
+  async unavailable(@Query() query: ScheduleUnavQueryDto): Promise<ScheduleUnavListDto> {
+    if (query.from > query.to) {
+      throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
+    }
+    const items = await this.svc.unavailable({ from: query.from, to: query.to, teacherId: query.teacherId });
+    return { from: query.from, to: query.to, items };
+  }
+
+  /**
+   * §07 좌측 사이드바의 「프로그램」·「과목」 수 — 보는 기간과 무관한 일정 원본(SER) 수 (D-R44 · w5-7 결정).
+   * 관리자 시간표에만 있는 사이드바라 그 화면에 들어올 수 있는 사람만 — 강사는 403.
+   */
+  @Get('series-counts')
+  @Perm('canAdminPage')
+  @ApiOperation({
+    summary: '§07 사이드바 — 종류·과목별 일정 원본(SER) 수 (기간 무관)',
+    description: '일정 원본 = 오늘(KST) 이후에 놓일 날이 남은 SER(규칙상 날짜 또는 옮겨 놓인 회차). 끝난 규칙·지난 단발은 세지 않는다. '
+      + '묶음 수·합계도 서버가 센다 — 화면은 그리기만 한다. 이름·색은 GET /meta.',
+  })
+  @ApiOkResponse({ type: ScheduleSeriesCountsDto })
+  seriesCounts(): Promise<ScheduleSeriesCountsDto> {
+    return this.svc.seriesCounts();
+  }
+
+  /** §10 학생별 개인 머리 「교재 없음」 — 원문 §10 데이터 줄의 ISSUE. 관리자 시간표만 쓴다 */
+  @Get('students/:studentId/books')
+  @Perm('canAdminPage')
+  @ApiOperation({
+    summary: '§10 개인 머리 — 학생의 배부 완료(ISSUE ok) 교재 수와 「교재 없음」 낱말',
+    description: '판정은 §79 「교재 N」·§12 준비 「교재 배정」과 같다. label 은 교재가 없을 때만 「교재 없음」, 있으면 null.',
+  })
+  @ApiOkResponse({ type: ScheduleStudentBooksDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND: 학생이 없습니다' })
+  async studentBooks(@Param() params: StudentParamsDto): Promise<ScheduleStudentBooksDto> {
+    const out = await this.svc.studentBooks(params.studentId);
+    if (!out) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생이 없습니다' });
+    return out;
   }
 
   /* ══ 쓰기 — 자원 + scope 한 형태로만 받는다 (D-R16 · D-R21) ═══════════

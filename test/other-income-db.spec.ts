@@ -76,7 +76,9 @@ d('§57 그 밖의 수입 (C66)', () => {
 
   it('청구서가 하나도 없어도 **줄 셋이 선다** — 종류는 어휘이지 데이터가 아니다', async () => {
     const all = await rows();
-    expect(all.map((r) => r.key)).toEqual([...INV_TYPES_OTHER]);
+    // 줄 차례는 원문 컷 그대로(진단고사 + 상담 → 컨설팅비 → MAP + CAT · g5 57-01 · x5) — 집합은 INV_TYPES_OTHER 그대로다
+    expect(all.map((r) => r.key)).toEqual(['diag_intake', 'consulting', 'exam_fee']);
+    expect([...all.map((r) => r.key)].sort()).toEqual([...INV_TYPES_OTHER].sort());
     expect(all.every((r) => r.count === 0 && r.amount === 0 && r.groups.length === 0)).toBe(true);
   });
 

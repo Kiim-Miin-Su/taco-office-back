@@ -15,14 +15,17 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { GpaCycle } from '../../entities';
 import { addDays, todayKst } from '../../lib/kst';
-import { END_MIN, kstAt, writtenRows } from '../../lib/sql';
+import { END_MIN, kstAt, serStuOn, START_MIN, writtenRows } from '../../lib/sql';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
 import type {
-  GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
+  GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaLessonDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
 } from './gpa.dto';
 
 type R = Record<string, unknown>;
 const md = (iso: string) => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}`;
+
+/** 소비 기록이 붙는 수업의 종류 — 원문 §82 데이터 「SER(kind='gpa')」 */
+const GPA_KIND = 'gpa';
 
 @Injectable()
 export class GpaService {
@@ -92,7 +95,7 @@ export class GpaService {
     const at = anchor ?? todayKst();
     const cy = await this.cycleAt(at);
     if (!cy) {
-      return { cycle: null, hasPrev: false, hasNext: false, services, totalAlloc: 0, totalUsed: 0, totalWait: 0, totalRemain: 0, totalUses: 0, students: [], uses: [] };
+      return { cycle: null, hasPrev: false, hasNext: false, services, totalAlloc: 0, totalUsed: 0, totalWait: 0, totalRemain: 0, totalUses: 0, students: [], uses: [], lessons: [] };
     }
     const cycleId = Number(cy.id);
     const [nav] = await this.q(
@@ -174,7 +177,34 @@ export class GpaService {
       totalUses: uses.length,
       students: rows,
       uses: uses.map((r) => this.useRow(r, viewerId)),
+      lessons: await this.lessons(String(cy.f), String(cy.t)),
     };
+  }
+
+  /**
+   * 기록 창 「수업 연결」 줄 — 이 사이클 창 안의 GPA 회차가 **그날 놓인 자리**(`ser_occ`)와 그날 명단(수강 기간 안).
+   * 휴강 회차는 뺀다 — 열리지 않은 회차에 소비를 붙이면 포인트가 하지 않은 수업에서 깎인다.
+   */
+  private async lessons(from: string, to: string): Promise<GpaLessonDto[]> {
+    const rows = await this.q(
+      `SELECT o.ser_id, o.on_date::text AS on_date, ${START_MIN} AS start_min, ${END_MIN} AS end_min,
+              COALESCE(NULLIF(btrim(s.title), ''), sb.name, k.name) AS name,
+              ARRAY(SELECT ss.student_id FROM ser_stu ss
+                     WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+                     ORDER BY ss.student_id) AS student_ids
+         FROM ser_occ o
+         JOIN ser s ON s.id = o.ser_id
+         JOIN kind k ON k.key = s.kind_key
+         LEFT JOIN sub sb ON sb.key = s.sub_key
+        WHERE s.kind_key = $3 AND o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
+        ORDER BY o.on_date, start_min, o.ser_id`,
+      [from, to, GPA_KIND],
+    );
+    return rows.map((r) => ({
+      serId: Number(r.ser_id), onDate: String(r.on_date),
+      startMin: Number(r.start_min), endMin: Number(r.end_min), name: String(r.name),
+      studentIds: ((r.student_ids as Array<string | number> | null) ?? []).map(Number),
+    }));
   }
 
   /**
@@ -222,6 +252,18 @@ export class GpaService {
     if (!svc) throw new NotFoundException('서비스 규정을 찾을 수 없습니다');
     const [stu] = await this.q(`SELECT id FROM stu WHERE id = $1`, [dto.studentId]);
     if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
+    if (dto.serId !== undefined) {
+      /*
+       * 잇는 회차는 **있어야 하고 GPA 수업이어야** 한다(원문 §82 「SER(kind='gpa')」). 없는 id 는 FK 가 막지만
+       * 그 거절은 사람이 읽을 문장이 아니고, 다른 종류의 수업은 FK 로 못 막는다 — 정규 수업에 GPA 포인트가 붙으면
+       * 회차 내역의 끝 시각이 그 수업에서 읽혀 거짓이 된다.
+       */
+      const [ser] = await this.q<{ kind_key: string }>(`SELECT kind_key FROM ser WHERE id = $1`, [dto.serId]);
+      if (!ser) throw new NotFoundException({ code: 'SER_NOT_FOUND', message: '연결할 수업을 찾을 수 없습니다' });
+      if (ser.kind_key !== GPA_KIND) {
+        throw new ConflictException({ code: 'GPA_SER_NOT_GPA', message: 'GPA 수업의 회차만 연결할 수 있습니다' });
+      }
+    }
     await this.q(
       `INSERT INTO gpa_use (cycle_id, student_id, ser_id, svc_key, points, on_date, start_min, coord_id, note_url, state)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'wait')`,

@@ -35,7 +35,7 @@ import { NOTI_TITLE } from '../../lib/noti';
 import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { loadState, persist } from './schedule.state.repo';
-import { issueScheduleUndo, readScheduleUndo, sameScheduleState } from './schedule.undo';
+import { issueScheduleUndoStep, readScheduleUndo, sameScheduleState } from './schedule.undo';
 import { assertScheduleReferences } from './schedule.references';
 import { horizon, project } from './schedule.project';
 import type {
@@ -319,10 +319,13 @@ export class ScheduleWriteService {
         });
       }
       const afterSnapshot = actorId && undoable ? await loadState(q, snapshotIds) : null;
+      // 토큰과 만료를 한 번에 — 「되돌리기 ▾」 목록이 지난 단계를 서버 값으로 뺀다 (g1 S5)
+      const step = actorId && afterSnapshot ? issueScheduleUndoStep(actorId, before, afterSnapshot) : null;
 
       const base = {
         effScope, log, projected, serIds: touched,
-        undoToken: actorId && afterSnapshot ? issueScheduleUndo(actorId, before, afterSnapshot) : null,
+        undoToken: step?.token ?? null,
+        undoExpiresAt: step?.expiresAt ?? null,
         unavailable: await unavailableOverlaps(q, touched),
       };
       const result = enrich ? await enrich(q, fresh, base) : base as T;
@@ -786,6 +789,7 @@ export class ScheduleWriteService {
         projected,
         serIds: touched,
         undoToken: null,
+        undoExpiresAt: null,
         unavailable: await unavailableOverlaps(q, touched),
       };
       await q.commitTransaction();

@@ -5,6 +5,7 @@
  */
 
 import { daysUntil } from './kst';
+import { parseRule, ruleLabel } from './recurrence';
 
 /**
  * 상담 단계 여섯 — **낱말과 순서가 사는 단 하나의 자리** (원본 §23).
@@ -273,6 +274,62 @@ export function leadPlanLineLabel(line: { subName?: string | null; kindName?: st
   return `${what} 주${line.perWeek}${line.teacherName ? ` · ${line.teacherName}` : ''}`;
 }
 
+/**
+ * 등록 카드의 「등록 수업」 한 줄 (23-11 · wave 6) — 원본 §23 등록 카드 「모의수업 A 주1 · KJ」 · 「MAP Reading 주3 · Allissa」.
+ * 배치안 줄과 **같은 모양**이라 같은 함수(`leadPlanLineLabel`)로 만든다 — 등록 전의 초안과 등록 뒤의 수업이 같은 말로 읽힌다.
+ * 「주N」은 매주 규칙의 요일 수다. 매일 · 격주는 「주N」이 거짓이 되므로 규칙 낱말(`ruleLabel` — 「2주마다 토」 · 「매일」)을 쓰고,
+ * 단발(ONCE)은 정기 수업이 아니라 줄을 세우지 않는다(null). 규칙은 시간표가 정본이고 여기는 읽기만 한다.
+ */
+export function leadLessonLineLabel(line: { subName?: string | null; kindName?: string | null; rrule: string; teacherName?: string | null }): string | null {
+  const rule = parseRule(line.rrule);
+  if (rule.freq === 'ONCE') return null;
+  if (rule.freq === 'WEEKLY' && rule.interval === 1 && rule.days.length > 0) {
+    return leadPlanLineLabel({ subName: line.subName, kindName: line.kindName, perWeek: rule.days.length, teacherName: line.teacherName });
+  }
+  const what = line.subName ?? line.kindName ?? '과목 미정';
+  return `${what} ${ruleLabel({ rrule: line.rrule })}${line.teacherName ? ` · ${line.teacherName}` : ''}`;
+}
+
+/**
+ * 카드 단추 줄 (23-14 · wave 6) — 원본 §23 카드 아래의 단계별 단추. **서는 단추와 낱말은 이 표 한 곳**이다 (D-R18 · D-R39).
+ * 컷 그대로: 1차 「(1차 카드 작성) · 2차 · 진단 잡기 · 바로 등록 · 여기서 종료」 / 2차 대기 「스케줄에 N건 만들기 · 2차 진행」 /
+ * 2차 상담 「(2차 카드 작성) · 보류 · 등록 · 실패」 / 보류 「등록 · 실패 · 연장 +2일」 / 등록 「사후 관리」 / 등록 실패 「내역 · 상태 · 되살리기」.
+ * 「1차/2차 카드 작성」은 양식 원문이 없어(23-17) 서버에 동작이 없다 — 표에 넣지 않는다(눌러도 아무 일 없는 단추를 세우지 않는다).
+ * 단추마다 **이미 있는 서버 경로** 하나로 간다: appt → 2차·진단 일정(서랍) · enroll → 등록 확정 · fail → 실패 분류(중단 지점은 서랍에서 고른다) ·
+ * schedule → 「스케줄에 N건 만들기」 · move → 단계 이동 · extend → 「연장 +2일」 · touch → 접촉 기록(서랍) · detail → 서랍 · resume → 되살리기.
+ */
+export const LEAD_CARD_ACTION_KEYS = ['appt', 'enroll', 'fail', 'schedule', 'move', 'extend', 'touch', 'detail', 'resume'] as const;
+export type LeadCardActionKey = (typeof LEAD_CARD_ACTION_KEYS)[number];
+
+const LEAD_CARD_ACTIONS: Record<IntakeStage, ReadonlyArray<{ key: LeadCardActionKey; label: string; to?: IntakeStage }>> = {
+  first: [{ key: 'appt', label: '2차 · 진단 잡기' }, { key: 'enroll', label: '바로 등록' }, { key: 'fail', label: '여기서 종료' }],
+  wait2nd: [{ key: 'schedule', label: '스케줄에 만들기' }, { key: 'move', label: '2차 진행', to: 'second' }],
+  second: [{ key: 'move', label: '보류', to: 'hold' }, { key: 'enroll', label: '등록' }, { key: 'fail', label: '실패' }],
+  hold: [{ key: 'enroll', label: '등록' }, { key: 'fail', label: '실패' }, { key: 'extend', label: '연장 +2일' }],
+  enrolled: [{ key: 'touch', label: '사후 관리' }],
+  failed: [{ key: 'detail', label: '내역 · 상태' }, { key: 'resume', label: '되살리기' }],
+};
+
+/**
+ * 한 카드의 단추 줄 — 서버가 받아 주는 것만 선다.
+ * - 단계 이동(`move`)은 **전이표(`LEAD_NEXT_STAGES`) 안의 곳만** — 이 표가 새 전이를 만들 수 없다(표에서 빠지면 단추도 빠진다).
+ * - 「스케줄에 N건 만들기」는 시간표에 아직 없는 일정이 있을 때만 — 서버가 `LEAD_APPT_NONE` 으로 막는 바로 그 조건이다.
+ * - 나머지는 그 단계에서 각 쓰기 경로가 받아 주는 단계와 같다(등록 확정 = 등록 아닌 건 · 실패 = 깔때기 안 · 연장 = 보류 · 되살리기 = 실패).
+ */
+export function leadCardActions(stage: string, opts: { unscheduledAppts: number }): Array<{ key: LeadCardActionKey; label: string; to: string | null }> {
+  const next = leadNextStages(stage);
+  const out: Array<{ key: LeadCardActionKey; label: string; to: string | null }> = [];
+  for (const a of LEAD_CARD_ACTIONS[stage as IntakeStage] ?? []) {
+    if (a.key === 'move' && !(a.to && next.includes(a.to))) continue;
+    if (a.key === 'schedule') {
+      if (opts.unscheduledAppts > 0) out.push({ key: 'schedule', label: `스케줄에 ${opts.unscheduledAppts}건 만들기`, to: null });
+      continue;
+    }
+    out.push({ key: a.key, label: a.label, to: a.to ?? null });
+  }
+  return out;
+}
+
 /** 일정 종류 — 원본 §23 2차 대기 카드의 왼쪽 낱말 「진단」 · 「2차」 */
 export const LEAD_APPT_KINDS = ['diag', 'second'] as const;
 export type LeadApptKind = (typeof LEAD_APPT_KINDS)[number];
@@ -292,4 +349,56 @@ export const LEAD_APPT_SER_CODE: Record<LeadApptKind, { kindKey: string; subKey:
 export function leadApptPlaceLabel(mode: string, roomName: string | null): string {
   if (mode === 'online') return '온라인 줌';
   return roomName ?? '장소 미정';
+}
+
+/**
+ * 등록률 — **등록 / (등록 + 등록 실패)** · 정수 반올림 · 분모 0 이면 0 (23-19 · N-22 · D-R44).
+ *
+ * 원본 §23 은 「전체 18 · 등록 3 · 등록 실패 6 · 등록률 33%」다. 33% 가 나오는 등록률 식은 **끝난 건 중 등록**
+ * (3 / (3 + 6))뿐이다 — 등록 / 전체는 17% 이고, 실패 / 전체(6 / 18 = 33%)는 등록률이 아니다.
+ * 채택문(§4-17)의 「원본 33% 재현 방향」대로 진행 중인 건(깔때기 안)을 분모에서 뺀다 — 아직 결과가 없는 건을 실패처럼 세지 않는다.
+ */
+export function intakeEnrollRate(enrolled: number, failed: number): number {
+  const closed = enrolled + failed;
+  return closed === 0 ? 0 : Math.round((enrolled / closed) * 100);
+}
+
+/**
+ * 등록 카드의 사후 관리 줄 (23-18 · 원본 §23 「청구서 없음 · 교재 없음 · 안내 없음」) — 표시 낱말이 사는 단 하나의 자리.
+ * 셋 다 그 학생의 원장에서 **읽기만** 한다: 청구서(INV) · 교재 배부(ISSUE) · 수업 안내(GUIDE).
+ * 청구서 「없음」은 머리 경고 「등록했는데 청구서 없음」과 **같은 판정**(그 학생의 청구서 행이 하나도 없음)이다 — 두 자리가 다른 수를 말하지 않는다(D-R37).
+ * 해피콜(첫 수업 + 7일 · A-14)은 「했는가」를 적을 원장이 없고, 월간 상담은 규칙이 정해지지 않아(DQ2) 줄을 세우지 않는다 — 지어내지 않는다.
+ */
+export const LEAD_AFTERCARE_KEYS = ['invoice', 'book', 'guide'] as const;
+export type LeadAftercareKey = (typeof LEAD_AFTERCARE_KEYS)[number];
+export const LEAD_AFTERCARE_LABEL: Record<LeadAftercareKey, string> = { invoice: '청구서', book: '교재', guide: '안내' };
+
+export interface LeadAftercareCounts {
+  /** 그 학생의 청구서 행 수(상태 무관 — 경고 「청구서 없음」과 같은 판정) */
+  inv: number;
+  /** 배부된 교재(ok) */
+  bookOk: number;
+  /** 배정을 기다리는 교재(wait · auto) */
+  bookWait: number;
+  /** 보낸 안내(sent · read) */
+  guideSent: number;
+  /** 쓰는 중인 안내(draft · ready) */
+  guideDraft: number;
+}
+
+export function leadAftercareRows(c: LeadAftercareCounts): Array<{ key: LeadAftercareKey; label: string; value: string; done: boolean }> {
+  const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const inv = n(c.inv); const bookOk = n(c.bookOk); const bookWait = n(c.bookWait);
+  const guideSent = n(c.guideSent); const guideDraft = n(c.guideDraft);
+  return [
+    { key: 'invoice', label: LEAD_AFTERCARE_LABEL.invoice, value: inv > 0 ? `${inv}건` : '없음', done: inv > 0 },
+    {
+      key: 'book', label: LEAD_AFTERCARE_LABEL.book,
+      value: bookOk > 0 ? `${bookOk}권` : bookWait > 0 ? '배정 대기' : '없음', done: bookOk > 0,
+    },
+    {
+      key: 'guide', label: LEAD_AFTERCARE_LABEL.guide,
+      value: guideSent > 0 ? '보냄' : guideDraft > 0 ? '쓰는 중' : '없음', done: guideSent > 0,
+    },
+  ];
 }

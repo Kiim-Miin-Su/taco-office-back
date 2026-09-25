@@ -110,11 +110,17 @@ export class ConsultingDto {
   @ApiProperty({ description: '단계 이름 — 「계약 · 진행 · 종료」' }) stageLabel!: string;
   @ApiProperty({ description: '종류 이름 — 「에세이 지도」' }) typeLabel!: string;
   @ApiProperty({ description: '공개 범위 이름 — 「수납만 공개」' }) shareLabel!: string;
+  @ApiProperty({ description: '§26 카드 공개 칩 낱말 — 원본 「수납만」(짧은 낱말 · 26-08). 원본에 없는 범위는 이름 그대로' })
+  shareChipLabel!: string;
   @ApiPropertyOptional({ ...S, description: '계약 단계 이름 — 「피드백」. 미정이면 null' })
   contractStepLabel?: string | null;
   @ApiPropertyOptional({ ...S, description: '요청자 — 「어머니」. 안 적혔으면 null' })
   requesterLabel?: string | null;
-  @ApiProperty({ description: '시작한 지 며칠 — 원본 「60일 지남」 (D-R37)' }) ageDays!: number;
+  @ApiProperty({
+    type: 'integer', nullable: true,
+    description: '시작한 지 며칠 — 원본 「60일 지남」 (D-R37). 계약 시작일(start_on)부터 센다. 시작일이 없거나 아직 시작 전이면 null(칸을 세우지 않는다)',
+  })
+  ageDays!: number | null;
   @ApiPropertyOptional({
     ...N,
     description: '받은 돈 합 — 원본 카드의 「₩400,000 / ₩800,000」 왼쪽 반. `amount` 와 **같은 권한**을 탄다 (D-R39)',
@@ -143,6 +149,12 @@ export class ConsultingShareWordDto {
   @ApiProperty({ description: '「관리자 누구나 봅니다」 …' }) meaning!: string;
 }
 
+/** §29 고르개 낱말 한 줄 — 종류 · 요청자 (29-02 · 화면이 표를 따로 들지 않는다 · D-R18) */
+export class ConsultingWordDto {
+  @ApiProperty() key!: string;
+  @ApiProperty({ description: '「편입 · 전학」 · 「어머니」 …' }) label!: string;
+}
+
 export class ConsultingListDto {
   @ApiProperty({ type: [ConsultingDto] }) items!: ConsultingDto[];
   @ApiProperty({ description: '금액을 볼 수 있는가 (D-R39)' }) canSeeAmounts!: boolean;
@@ -152,6 +164,15 @@ export class ConsultingListDto {
   stages!: ConsultingStageDto[];
   @ApiPropertyOptional({ type: [ConsultingShareWordDto], description: '공개 범위 넷의 이름과 뜻 — §29 「누가 볼 수 있나」 칩과 그 아래 한 줄(29-06). 「전체 비공개」를 고를 수 있는지는 canSetPrivate' })
   shares?: ConsultingShareWordDto[];
+  @ApiPropertyOptional({ type: [ConsultingWordDto], description: '§29 「어떤 컨설팅」 종류 10 — 원본 차례 · 이름(가운뎃점 앞뒤 띄움 · 29-02)' })
+  types?: ConsultingWordDto[];
+  @ApiPropertyOptional({ type: [ConsultingWordDto], description: '§29 「누가 요청」 둘 — 「어머니 · 아버지」' })
+  requesters?: ConsultingWordDto[];
+  @ApiPropertyOptional({
+    type: 'integer', minimum: 0,
+    description: '§27 학생별 탭 머리 「학생 N명」 — 이 사람이 볼 수 있는 건(csCan)의 학생 수. `GET /consulting/students` 의 줄 수와 같은 셈이다(26-03 · D-R37)',
+  })
+  studentCount?: number;
 }
 
 /* ══ §29 생성 · §30 계약 5단계 (C79-product) ═══════════════════════════ */
@@ -318,6 +339,7 @@ export class ConsAccountRowDto {
   @ApiProperty() id!: number;
   @ApiProperty({ description: '학생 — 여럿이면 쉼표로 잇는다' }) studentName!: string;
   @ApiProperty({ description: '종류 코드' }) consType!: string;
+  @ApiProperty({ description: '종류 이름 — 「에세이 지도」 (서버 낱말 · 29-02)' }) typeLabel!: string;
   @ApiProperty({ type: String, enum: CONSULTING_STAGES }) stage!: ConsultingStage;
   @ApiProperty({ description: '단계 이름 — 낱말은 서버가 만든다 (D-R18)' }) stageLabel!: string;
 
@@ -368,6 +390,7 @@ export class ConsPaymentCreateDto {
 export class ConsStudentCaseDto {
   @ApiProperty() id!: number;
   @ApiProperty({ description: '종류 코드' }) consType!: string;
+  @ApiProperty({ description: '종류 이름 — 「국제학교 지원」 (서버 낱말 · 29-02)' }) typeLabel!: string;
   @ApiProperty({ type: String, enum: CONSULTING_STAGES }) stage!: ConsultingStage;
   @ApiProperty({ description: '단계 이름 — 낱말은 서버가 만든다 (D-R18)' }) stageLabel!: string;
   @ApiProperty({ description: '건이 생긴 날 — 계약 시작일이 아니다(그것은 startOn)', example: '2026-07-12' })

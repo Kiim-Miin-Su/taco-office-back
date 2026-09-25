@@ -39,18 +39,26 @@ export const CONSULTING_TYPES = [
   'exam', 'roadmap', 'college', 'portfolio', 'visa',
 ] as const;
 export type ConsultingType = (typeof CONSULTING_TYPES)[number];
+/**
+ * 종류 이름 — 원본 §29 칩 그대로. 가운뎃점은 **앞뒤를 띄운다**(「편입 · 전학」 · 「비자 · 서류」 · 29-02).
+ * 화면(front `lib/consulting.ts`)이 같은 표를 따로 들고 있다가 이 표와 갈렸다 — 이제 화면은 목록 응답의
+ * `types` · 줄마다의 `typeLabel` 만 읽는다 (D-R18).
+ */
 export const CONSULTING_TYPE_LABEL: Record<ConsultingType, string> = {
   admissions: '국제학교 지원',
   boarding: '미국 보딩스쿨',
-  transfer: '편입·전학',
+  transfer: '편입 · 전학',
   essay: '에세이 지도',
   interview: '인터뷰 대비',
   exam: '입학시험 대비',
   roadmap: '연간 로드맵',
   college: '대학 지원',
   portfolio: '포트폴리오',
-  visa: '비자·서류',
+  visa: '비자 · 서류',
 };
+/** 모르는(옛) 종류 코드는 코드 그대로 둔다 — 조회는 저장 값을 줄이지 않는다 */
+export const consultingTypeLabel = (type: string): string =>
+  CONSULTING_TYPE_LABEL[type as ConsultingType] ?? type;
 export const INTERNATIONAL_SCHOOL_ITEMS = [
   '지원서 작성', '학업 성적 공증', '추천서 2부', '자기소개 에세이',
   '활동 증빙 자료', '여권 사본', '재학 증명서',
@@ -65,6 +73,15 @@ export const CONSULTING_REQUESTER_LABEL: Record<ConsultingRequester, string> = {
 };
 export const consultingRequesterLabel = (v: string | null | undefined): string | null =>
   v == null ? null : (CONSULTING_REQUESTER_LABEL[v as ConsultingRequester] ?? v);
+
+/**
+ * §29 고르개의 낱말 두 벌 — 종류 10 · 요청자 2. 목록 응답(`ConsultingListDto.types · requesters`)이 이 차례 그대로 싣는다.
+ * 화면이 같은 표를 들고 있으면 이름이 갈린다(29-02 가운뎃점이 실제로 갈렸다 · D-R18).
+ */
+export const consultingTypeWords = (): Array<{ key: string; label: string }> =>
+  CONSULTING_TYPES.map((key) => ({ key, label: CONSULTING_TYPE_LABEL[key] }));
+export const consultingRequesterWords = (): Array<{ key: string; label: string }> =>
+  CONSULTING_REQUESTERS.map((key) => ({ key, label: CONSULTING_REQUESTER_LABEL[key] }));
 
 /**
  * §30 계약 5단계의 이름 — 원본 그대로 「계약서 준비 · 피드백 · 전달 · 서명 · 수납」.
@@ -95,6 +112,14 @@ export const CONS_SHARE_LABEL: Record<string, string> = {
   private: '전체 비공개',
 };
 export const consShareLabel = (share: string): string => CONS_SHARE_LABEL[share] ?? share;
+
+/**
+ * §26 카드의 공개 칩 낱말 — 원본은 「**수납만**」(짧은 낱말)이다 (26-08 · D-R44).
+ * 원본 카드에 보이는 제한 범위는 수납만 하나라, 나머지(지정 공개 · 전체 비공개)는 **지어내지 않고** 이름 그대로 둔다.
+ * 머리·배너·고르개는 계속 긴 이름(`CONS_SHARE_LABEL`)이다 — 칩 한 자리만 짧다.
+ */
+export const CONS_SHARE_CHIP_LABEL: Record<string, string> = { money_only: '수납만' };
+export const consShareChipLabel = (share: string): string => CONS_SHARE_CHIP_LABEL[share] ?? consShareLabel(share);
 
 /**
  * 공개 범위의 뜻 한 줄 — 슬라이드 32 설명 넷 그대로. §29 칩 아래 · §30·§31 공개 범위 한 줄 배너가 같이 쓴다 (29-06 · 30-06).
@@ -137,6 +162,18 @@ export function consultingSessionIssue(sequences: readonly unknown[]): string | 
 }
 
 /* ══ §31 회차 · 종료 — C95 (테스트 시나리오 I-91 · I-95 · N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」) ══ */
+
+/**
+ * §26 카드 · §30 머리의 「N일 지남」 — **계약 시작일(`cons.start_on`)부터 오늘까지** (DTO 설명 「시작한 지 며칠」 그대로).
+ *
+ * 예전에는 `created_at`(건이 생긴 날)으로 셌다 — 시드와 새 건이 모두 「0일 지남」이 되어(qa-w3 관찰) 말할 것이 없었다.
+ * 시작일이 없거나(옛 건) **아직 시작 전**(계약 단계의 예정 시작일)이면 null — 「−5일 지남」이나 「0일 지남」을 지어내지 않는다.
+ * 원본 컷의 수(60 · 50)는 「종료일 − 오늘」과 맞아 산식 자체는 확인이 필요하다(26-10) — 바꿀 자리는 이 함수 하나다.
+ */
+export function consultingAgeDays(startOn: string | null | undefined, today: string): number | null {
+  if (!startOn || startOn > today) return null;
+  return Math.round((new Date(`${today}T00:00:00Z`).getTime() - new Date(`${startOn}T00:00:00Z`).getTime()) / 86400000);
+}
 
 /** 회차 기록의 「이미 한 회차」 — 날짜가 오늘 이하(또는 미정)인 행. 앞으로 잡아 둔 날짜는 아직 한 것이 아니다 (기록 ≠ 완료 · N-18). */
 export function consultingSessionDone(onDate: string | null, today: string): boolean {

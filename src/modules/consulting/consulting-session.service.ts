@@ -246,9 +246,16 @@ export class ConsultingSessionService {
   ): Promise<void> {
     const ownerId = c.owner_id == null ? viewerId : Number(c.owner_id);
     const title = `${nextUntilTodoPrefix(seq)}${text}`.slice(0, TODO_TITLE_MAX);
+    /*
+     * 기한 = 이 회차 **뒤** 이면서 **오늘이나 그 뒤**인 첫 회차 날짜 (슬라이드 31 「'다음까지'」 · D-R44).
+     * 지난 회차를 뒤늦게 적으면 「그 뒤 첫 회차」도 이미 지난 날일 수 있다 — 그 날을 기한으로 두면 할 일이
+     * **태어나자마자 기한 지남**이 된다(qa-w3 관찰 · 운영 배지 +1). 할 일은 지금 생기므로 「다음」은 아직 오지 않은 다음 만남이다.
+     * 앞으로 잡힌 회차가 없으면 기한 없음(지어내지 않는다).
+     */
     const [nextSess] = (await m.query(
-      `SELECT to_char(min(on_date),'YYYY-MM-DD') AS on_date FROM cons_sess WHERE cons_id = $1 AND on_date > COALESCE($2::date, '-infinity'::date)`,
-      [consId, onDate],
+      `SELECT to_char(min(on_date),'YYYY-MM-DD') AS on_date FROM cons_sess
+        WHERE cons_id = $1 AND on_date > COALESCE($2::date, '-infinity'::date) AND on_date >= $3::date`,
+      [consId, onDate, todayKst()],
     )) as Array<{ on_date: string | null }>;
     const dueOn = nextSess?.on_date ?? null;
     const updated = writtenRows<{ id: string }>(await m.query(

@@ -85,6 +85,21 @@ export class GpaUseDto {
   canApprove!: boolean;
 }
 
+/**
+ * 기록 창 「수업 연결」의 한 줄 — 이 사이클 창 안의 **GPA 회차**(SER kind='gpa' 가 그날 놓인 자리 · 휴강 제외).
+ * 원문 §82 데이터 「SER(kind='gpa') · ptOf(회차별 소비)」 — 소비 기록은 회차에 붙는다. 고르면 날짜·시작이 그 회차로 채워지고
+ * `serId` 가 실린다(qa-w3 관찰 「GPA 기록 창에 수업 연결 칸이 없다」 · wave 5).
+ */
+export class GpaLessonDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty({ description: 'YYYY-MM-DD — 회차가 놓인 날' }) onDate!: string;
+  @ApiProperty({ description: '시작 KST 분' }) startMin!: number;
+  @ApiProperty({ description: '끝 KST 분 — 자정은 1440' }) endMin!: number;
+  @ApiProperty({ description: '수업 이름 — 일정 제목 · 과목 · 종류 중 있는 것' }) name!: string;
+  @ApiProperty({ type: [Number], description: '그날 명단(수강 기간 안) 학생 — 기록 창은 고른 학생이 든 회차만 보인다' })
+  studentIds!: number[];
+}
+
 export class GpaBoardQueryDto {
   @ApiPropertyOptional({ description: '조회할 사이클 안의 아무 날짜 YYYY-MM-DD — 없으면 오늘(KST)' })
   @IsOptional()
@@ -113,6 +128,11 @@ export class GpaBoardDto {
       + '초과가 맨 앞에 온다 — 먼저 손봐야 할 것이 먼저 보여야 한다.',
   }) students!: GpaStudentDto[];
   @ApiProperty({ type: [GpaUseDto], description: '사이클 내 소비 — 날짜·시간 순 (gpTimeline 입력)' }) uses!: GpaUseDto[];
+  @ApiProperty({
+    type: [GpaLessonDto],
+    description: '이 사이클 창 안의 GPA 회차 — 기록 창 「수업 연결」 줄(날짜·시간 순 · 휴강 제외). 사이클이 없으면 빈 배열',
+  })
+  lessons!: GpaLessonDto[];
 }
 
 export class GpaUseCreateDto {
@@ -127,7 +147,7 @@ export class GpaUseCreateDto {
   @ApiPropertyOptional({ description: 'KST 분 (0~1439)' })
   @IsOptional() @IsInt() @Min(0) @Max(1439)
   startMin?: number;
-  @ApiPropertyOptional({ description: "kind='gpa' 회차 SER id" })
+  @ApiPropertyOptional({ description: "kind='gpa' 회차 SER id — 없는 회차는 404 SER_NOT_FOUND · GPA 가 아닌 수업은 409 GPA_SER_NOT_GPA" })
   @IsOptional() @IsInt() @Min(1)
   serId?: number;
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: 500, description: '선택 기록지 HTTP(S) URL — 원문 500자 이내. 생략/null/공백은 비움' })

@@ -89,9 +89,15 @@ export class ExecStatDto {
   total?: number | null;
   @ApiPropertyOptional({
     ...S,
-    description: '값 아래 한 줄 — 「다 된 것」 · 이익의 「-268%」(원본 §70 · §71). 서버가 짓는다. 없으면 null',
+    description: '값 아래 한 줄 — 「다 된 것」 · 이익의 「-268%」 · 주간의 「지난주 ▲ 25%」(원본 §70 · §71). 서버가 짓는다. 없으면 null',
   })
   note?: string | null;
+  @ApiPropertyOptional({
+    ...N,
+    description: '견준 값 — **주간 머리**의 입금 · 신규 문의 · 마케팅 게시만 직전 주(−7일)의 같은 셈을 싣는다(원본 §70 · N-66 주간). '
+      + '비교하지 않는 칸 · 일간 · 월간 · 금액을 볼 권한이 없는 입금은 null',
+  })
+  prev?: number | null;
 }
 
 /**
@@ -110,6 +116,21 @@ export class ExecAreaTileDto {
   display!: string | null;
 }
 
+/**
+ * §69~§71 영역 카드의 펼칠 줄 한 줄 — 「기한 지난 청구서 2건 펼치기 ▾」 안쪽 (N-67 · K-111).
+ * 영역마다 원장이 달라도 서버가 {title · sub · go} 셋으로 접는다 — 카드는 한 모양만 그린다.
+ */
+export class ExecAreaItemDto {
+  @ApiProperty({ description: '영역 안에서 겹치지 않는 열쇠 — 「inv-12」 · 「plan-3」' }) key!: string;
+  @ApiProperty({ description: '줄 제목 — 「양찬욱 · 8월 수업료」 · 「봄 설명회 기획」' }) title!: string;
+  @ApiProperty({
+    ...S,
+    description: '줄 부제 — 「₩300,000 · 기한 08-10 · 11일 지남」. 금액을 볼 권한이 없으면 금액이 빠진다 (D-R39). 없으면 null',
+  })
+  sub!: string | null;
+  @ApiProperty({ description: '누르면 가는 원본 화면 — 이동만 한다 (D-R27)' }) go!: string;
+}
+
 /** §69 6영역 한 칸 — 저장하지 않고 매번 센다 (D-R4 · DEV-SPEC §5.3) */
 export class ExecAreaDto {
   @ApiProperty({ description: 'money · mkt · ops · consulting · complaint · lesson (대표 관심순 고정 · D-R25)' }) key!: string;
@@ -124,6 +145,17 @@ export class ExecAreaDto {
   headline!: string;
   @ApiProperty({ type: () => [ExecAreaTileDto], description: '카드 안 타일 2~3 — 순서·낱말은 서버가 정한다 (69-8)' })
   tiles!: ExecAreaTileDto[];
+  @ApiProperty({
+    ...S,
+    description: '펼칠 줄 머리 — 「기한 지난 청구서 2건」 · 「이번 주 올린 것 4건」(원본 §69~§71). 「펼치기 ▾」는 화면이 붙인다. '
+      + '줄이 없으면 null — 그 카드에는 펼칠 줄이 서지 않는다 (N-67 · D-R44)',
+  })
+  itemsLabel!: string | null;
+  @ApiProperty({
+    type: () => [ExecAreaItemDto],
+    description: '펼칠 줄 — 배지와 같은 판정 조각으로 뽑은 것(마케팅은 이 기간 올린 것) · 여덟에서 끊는다(원본 수업 「8건」)',
+  })
+  items!: ExecAreaItemDto[];
 }
 
 /**
@@ -171,7 +203,7 @@ export class ExecLostRowDto {
  * 「지금 그 단계」는 사실이고 「보류·등록이면 2차를 거쳤겠지」는 가정이라 후자는 세지 않는다(C86-b 가 거절한 그 셈).
  */
 export class ExecFunnelRowDto {
-  @ApiProperty({ description: 'inflow | first | wait2nd | second | enrolled' }) key!: string;
+  @ApiProperty({ description: 'inflow | first | second | enrolled — second 는 「2차 · 진단」(2차 상담에 닿은 건 · 71-5)' }) key!: string;
   @ApiProperty() label!: string;
   @ApiProperty() count!: number;
   @ApiProperty({ description: '유입 대비 % — 정수 반올림 · 유입 0 이면 0' }) pct!: number;
@@ -182,7 +214,7 @@ export class ExecMonthlyDto {
   @ApiProperty({ description: '그중 지금 등록 실패인 건 수 — 아래 줄들의 합과 같다 (N-19)' }) lost!: number;
   @ApiProperty({ type: [ExecLostRowDto], description: '중단 지점별 — 0 인 갈래는 서지 않는다' })
   lostRows!: ExecLostRowDto[];
-  @ApiProperty({ type: [ExecFunnelRowDto], description: '상담 퍼널 — 유입 · 1차 상담 · 2차 대기 · 2차 상담 · 등록 (도달 기록 기준 · C90)' })
+  @ApiProperty({ type: [ExecFunnelRowDto], description: '상담 퍼널 네 줄 — 유입 · 1차 상담 · 2차 · 진단 · 등록 (원본 §71 · 71-5 · 도달 기록 기준 · C90)' })
   funnel!: ExecFunnelRowDto[];
   @ApiPropertyOptional({ type: String, nullable: true, description: '도달 기록이 시작된 날 — 그 전 건은 지금 단계로만 센다 (N-45 · N-25 보정 0). 기록이 없으면 null' })
   funnelSince?: string | null;

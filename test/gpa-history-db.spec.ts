@@ -51,14 +51,16 @@ d('§82 회차 내역 — 끝 시각은 연결 회차에서 읽는다 (82-8)', (
     cycleId = Number(((await q.query(
       `INSERT INTO gpa_cycle (no, from_date, to_date) VALUES (8, '2026-11-02', '2026-11-29') RETURNING id`,
     )) as Array<{ id: string }>)[0].id);
-    // 스크래치 DB 는 마이그레이션만 돼 있다 — 이 스위트의 종류를 스스로 둔다(트랜잭션이 끝나면 사라진다)
-    await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ('gpa_hist_qa','GPA 회차 QA','#333333',4,'lesson',false)
+    // 스크래치 DB 는 마이그레이션만 돼 있다 — 이 스위트의 종류를 스스로 둔다(트랜잭션이 끝나면 사라진다).
+    // 기록에 잇는 회차는 GPA 수업(kind='gpa')이어야 한다 — 서버가 막는다(wave 5 · 수업 연결 칸)
+    await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ('gpa','GPA','#816BB0',4,'lesson',true)
                    ON CONFLICT (key) DO NOTHING`);
     serId = Number(((await q.query(
       `INSERT INTO ser (kind_key, teacher_id, mode, start_min, end_min, rrule, from_date, to_date, title)
-       VALUES ('gpa_hist_qa', $1, 'offline', 1080, 1125, 'ONCE', '2026-11-05', '2026-11-05', 'GPA 회차') RETURNING id`,
+       VALUES ('gpa', $1, 'offline', 1080, 1125, 'ONCE', '2026-11-05', '2026-11-05', 'GPA 회차') RETURNING id`,
       [coordId],
     )) as Array<{ id: string }>)[0].id);
+    await q.query(`INSERT INTO ser_stu (ser_id, student_id) VALUES ($1, $2)`, [serId, studentId]);
     await q.query(
       `INSERT INTO ser_occ (ser_id, on_date, teacher_id, canceled, span)
        VALUES ($1, '2026-11-05', $2, false,
@@ -109,5 +111,34 @@ d('§82 회차 내역 — 끝 시각은 연결 회차에서 읽는다 (82-8)', (
     expect(made.endMin).toBe(1125);
     const ok = await svc().setUseState(made.id, approverId, { state: 'ok' });
     expect(ok).toMatchObject({ state: 'ok', endMin: 1125 });
+  });
+
+  /*
+   * qa-w3 관찰 「GPA 기록 창에 수업 연결 칸이 없다」 — `GpaUseCreateDto.serId` 는 받지만 화면이 보낼 줄이 없었다.
+   * 보드가 이 사이클 창 안의 GPA 회차(그날 놓인 자리 · 휴강 제외)를 명단과 함께 준다 — 화면은 고른 학생의 회차만 보인다.
+   */
+  it('보드는 이 사이클의 GPA 회차를 「수업 연결」 줄로 준다 — 시작 · 끝 · 그날 명단 · 휴강은 빠진다', async () => {
+    const b = await svc().board('2026-11-10');
+    expect(b.lessons).toEqual([
+      { serId, onDate: '2026-11-05', startMin: 1080, endMin: 1125, name: 'GPA 회차', studentIds: [studentId] },
+    ]);
+    await q.query(`UPDATE ser_occ SET canceled = true WHERE ser_id = $1`, [serId]);
+    expect((await svc().board('2026-11-10')).lessons).toEqual([]);
+  });
+
+  it('기록에 잇는 회차는 있어야 하고 GPA 수업이어야 한다 — 없는 회차 404 · 다른 종류 409 (서버 방어)', async () => {
+    await expect(svc().createUse(coordId, { cycleId, studentId, svcKey: 'hw', onDate: '2026-11-05', serId: 999_999_999 }))
+      .rejects.toMatchObject({ response: { code: 'SER_NOT_FOUND' } });
+    await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ('gpa_hist_other','다른 수업','#333333',4,'lesson',false)
+                   ON CONFLICT (key) DO NOTHING`);
+    const [other] = (await q.query(
+      `INSERT INTO ser (kind_key, teacher_id, mode, start_min, end_min, rrule, from_date, to_date, title)
+       VALUES ('gpa_hist_other', $1, 'offline', 1080, 1125, 'ONCE', '2026-11-05', '2026-11-05', '정규') RETURNING id`,
+      [coordId],
+    )) as Array<{ id: string }>;
+    await expect(svc().createUse(coordId, { cycleId, studentId, svcKey: 'hw', onDate: '2026-11-05', serId: Number(other.id) }))
+      .rejects.toMatchObject({ response: { code: 'GPA_SER_NOT_GPA' } });
+    const rows = (await q.query(`SELECT count(*)::int AS n FROM gpa_use WHERE cycle_id = $1`, [cycleId])) as Array<{ n: number }>;
+    expect(rows[0].n).toBe(0);
   });
 });

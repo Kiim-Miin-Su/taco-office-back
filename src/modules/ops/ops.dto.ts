@@ -7,12 +7,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
-import { CPL_AREAS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
-import { INTAKE_FUNNEL_STAGES, LEAD_REASON_KINDS, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
-import { MFB_STATES } from '../../lib/marketing-words';
+import { CPL_AREAS, CPL_REQUESTERS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
+import { INTAKE_FUNNEL_STAGES, LEAD_CARD_ACTION_KEYS, LEAD_REASON_KINDS, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
+import { MFB_STATES, MKT_CHANNELS, MKT_ITEMS } from '../../lib/marketing-words';
 import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_STAGES } from '../../lib/plan-words';
 import { MINUTES_TEMPLATES, MT_ATTEND_STATES, MT_TYPES } from '../../lib/meeting-words';
-import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
+import { DATE_SCHEMA, IsCalendarDate, IsSafeHttpUrl } from '../../common/validation';
 import { LeadDiagDto } from './lead-diag.dto';
 import { LeadApptDto, LeadPlanLineDto } from './lead-plan.dto';
 import { UnavWarnDto } from '../schedule/schedule.dto';
@@ -84,6 +84,40 @@ export class LeadDto {
   appts?: LeadApptDto[];
   @ApiPropertyOptional({ ...S, format: 'date', description: '보류 재확인 날짜(23-16) — 적어 둔 날짜 또는 보류에 들어온 날 + 2일. 보류가 아니거나 들어온 날을 모르면 null' })
   recheckOn?: string | null;
+  /* 1:1 대조 wave 5 (23-18) — 등록 카드의 사후 관리 줄. 그 학생의 청구서 · 교재 · 안내 원장을 읽기만 한다 */
+  @ApiPropertyOptional({
+    type: () => [LeadAftercareRowDto], nullable: true,
+    description: '등록 카드의 줄(원본 §23 「청구서 없음 · 교재 없음 · 안내 없음」) — 차례 청구서 · 교재 · 안내. 등록 건이 아니거나 학생이 안 붙었으면 null. 해피콜·월간 상담 줄은 원장·규칙이 없어 싣지 않는다',
+  })
+  aftercare?: LeadAftercareRowDto[] | null;
+  /* 1:1 대조 wave 6 (23-11 · 23-14) — 등록 카드의 「등록 수업」 한 줄 · 카드 단추 줄. 둘 다 서버가 만든다(D-R18 · D-R39) */
+  @ApiPropertyOptional({
+    type: [String], nullable: true,
+    description: '등록 카드의 「등록 수업」(원본 §23 「모의수업 A 주1 · KJ」) — 그 학생의 지금 명단(SER_STU · 끝난 명단·규칙 · 단발 제외)을 한 줄씩. '
+      + '「주N」은 매주 규칙의 요일 수 · 매일/격주는 규칙 낱말. 등록 건이 아니거나 학생이 안 붙었으면 null',
+  })
+  lessons?: string[] | null;
+  @ApiPropertyOptional({
+    type: () => [LeadCardActionDto],
+    description: '카드 단추 줄(원본 §23 단계별 단추) — 서는 단추와 낱말은 서버 한 곳(lib/intake-words.leadCardActions). 단계 이동은 nextStages 안에서만',
+  })
+  cardActions?: LeadCardActionDto[];
+}
+
+/** 카드 단추 하나 (23-14) — key 가 부를 경로를 정한다. 낱말·서는지는 서버다 */
+export class LeadCardActionDto {
+  @ApiProperty({ enum: [...LEAD_CARD_ACTION_KEYS], description: 'appt(2차·진단 일정) · enroll(등록 확정) · fail(실패 분류) · schedule(스케줄에 만들기) · move(단계 이동) · extend(연장 +2일) · touch(접촉 기록) · detail(상세) · resume(되살리기)' })
+  key!: string;
+  @ApiProperty({ description: '단추 낱말 — 「2차 진행」 · 「연장 +2일」 · 「스케줄에 1건 만들기」' }) label!: string;
+  @ApiPropertyOptional({ ...S, description: 'move 의 도착 단계 — 언제나 그 건의 nextStages 안이다. 다른 단추는 null' }) to?: string | null;
+}
+
+/** 등록 카드 사후 관리 한 줄 (23-18) — 낱말은 서버(`lib/intake-words.leadAftercareRows`) */
+export class LeadAftercareRowDto {
+  @ApiProperty({ enum: ['invoice', 'book', 'guide'] }) key!: string;
+  @ApiProperty({ description: '「청구서」 · 「교재」 · 「안내」' }) label!: string;
+  @ApiProperty({ description: '「없음」 · 「2건」 · 「1권」 · 「배정 대기」 · 「보냄」 · 「쓰는 중」' }) value!: string;
+  @ApiProperty({ description: '됐는가 — 줄 바탕 색(됨 = 초록 · 아직 = 회색)을 가른다' }) done!: boolean;
 }
 
 /** 「스케줄에 N건 만들기」 결과 (23-15) — 갱신된 상담 한 줄 · 이번에 만든 회차 수 · 담당의 불가 시간 경고(막지 않는다 · 시간표 쓰기와 같은 규약) */
@@ -231,6 +265,13 @@ export class ComplaintDto {
       + '그 창이 부르는 경로가 canMoney 라 화면이 권한을 안 보면 창이 뜨자마자 403 이 난다',
   })
   canWithdraw!: boolean;
+  /* wave 6 — 문의자 관계 · 마무리 날짜 (원본 §67 카드 「고은설 어머니」 · 결과 칸 「08-12」 · 67-5 · 67-6). 옛 행은 null (N-25) */
+  @ApiPropertyOptional({ ...S, enum: [...CPL_REQUESTERS], description: 'mother | father — 누가 알렸는지(코드값). 모르면 null' })
+  requester?: string | null;
+  @ApiPropertyOptional({ ...S, description: '「어머니」 · 「아버지」 — 낱말은 서버 (D-R18). 모르면 null(카드에 서지 않는다)' })
+  requesterLabel?: string | null;
+  @ApiPropertyOptional({ ...S, format: 'date', description: '마무리한 날(KST) — 「결과」로 옮긴 순간 서버가 찍는다(입력 칸 아님). 열린 건 · 옛 「결과」 행(모름)은 null' })
+  closedOn?: string | null;
 }
 
 /** §67 「+ 접수」 (C93 · J-96 · N-46 ①) — 상태는 받지 않는다: 접수는 언제나 `received` */
@@ -258,6 +299,10 @@ export class ComplaintCreateDto {
   @ApiPropertyOptional({ enum: [...CPL_SEVERITIES], nullable: true, description: '가벼움 · 보통 · 심각 — 코드값' })
   @IsOptional() @IsIn([...CPL_SEVERITIES], { message: '심각도는 가벼움 · 보통 · 심각 중 하나입니다' })
   severity?: string | null;
+
+  @ApiPropertyOptional({ enum: [...CPL_REQUESTERS], nullable: true, description: '문의자 관계(67-5) — 어머니 · 아버지 코드값. 낱말은 GET /ops.cplRequesters · 모르면 비운다' })
+  @IsOptional() @IsIn([...CPL_REQUESTERS], { message: '문의자 관계는 어머니 · 아버지 중 하나입니다' })
+  requester?: string | null;
 }
 
 /** §67 카드 처리 — 담당 · 단계 · 조치 · 결과 · 기한 · 심각도 (C93 · J-101). 보낸 칸만 고친다 */
@@ -285,6 +330,10 @@ export class ComplaintPatchDto {
   @ApiPropertyOptional({ enum: [...CPL_SEVERITIES], nullable: true })
   @IsOptional() @IsIn([...CPL_SEVERITIES], { message: '심각도는 가벼움 · 보통 · 심각 중 하나입니다' })
   severity?: string | null;
+
+  @ApiPropertyOptional({ enum: [...CPL_REQUESTERS], nullable: true, description: '문의자 관계(67-5) — null 이면 비운다. 마무리 날짜는 받지 않는다(「결과」로 옮길 때 서버가 찍는다)' })
+  @IsOptional() @IsIn([...CPL_REQUESTERS], { message: '문의자 관계는 어머니 · 아버지 중 하나입니다' })
+  requester?: string | null;
 }
 
 export class CplWordDto {
@@ -404,10 +453,19 @@ export class PlanDetailDto {
   /* 단추가 열리는지는 **서버가 정한다** — 화면이 역할과 기한 상태를 다시 조합하지 않는다 (D-R39) */
   @ApiProperty({ description: '기한을 승인·반려할 수 있는가 — 대표이고 아직 제안 상태일 때' })
   canDecideDue!: boolean;
-  @ApiProperty({ description: '최종 승인·보완 요청을 할 수 있는가 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65)' })
+  @ApiProperty({ description: '최종 승인을 할 수 있는가 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65)' })
   canReview!: boolean;
   @ApiProperty({ description: '단추가 닫혀 있는 이유 — 열려 있으면 null', nullable: true, type: String })
   reviewBlockedReason!: string | null;
+  /*
+   * 「보완 요청」은 **따로 연다** (g6 65-7 · x5). 원문 규칙이 막는 것은 「최종 승인」뿐이다 —
+   * 「기한을 먼저 승인해야 **최종 승인** 버튼이 열립니다」(슬라이드 61·65) · 컷 §65 의 「보완 요청」은 기한 승인 전에도
+   * 살아 있다. 권한·자기 결재·검토 요청 단계는 최종 승인과 같이 본다. 막힌 문장은 쓰기(409)와 같은 말이다.
+   */
+  @ApiProperty({ description: '보완 요청을 할 수 있는가 — 기한 승인과 무관하다(원문 규칙은 최종 승인만 막는다)' })
+  canRework!: boolean;
+  @ApiProperty({ description: '보완 요청 단추가 닫혀 있는 이유 — 열려 있으면 null', nullable: true, type: String })
+  reworkBlockedReason!: string | null;
 
   /* ── S6 「기획이 결재까지 간다」 ────────────────────────────────────── */
 
@@ -521,6 +579,8 @@ export class MeetingDto {
   @ApiProperty() id!: number;
   @ApiProperty({ enum: MT_TYPES, description: '코드값 — 이름은 mtTypeLabel 을 쓴다' }) mtType!: string;
   @ApiProperty({ description: '회의 종류 이름 — 낱말은 서버가 만든다 (D-R18 · C57)' }) mtTypeLabel!: string;
+  @ApiProperty({ description: '짧은 이름 — 원문 §63 줄 머리 칩 「기획」 (g6 63-7 · x5). §66 머리는 긴 이름(mtTypeLabel)' })
+  mtTypeShort!: string;
   @ApiPropertyOptional(S) title?: string | null;
   @ApiPropertyOptional(S) onDate?: string | null;
   @ApiProperty() attendees!: number;
@@ -559,6 +619,7 @@ export class MarketingDto {
   @ApiProperty({ description: '항목 이름' }) itemLabel!: string;
   @ApiPropertyOptional({ ...S, description: '활동 이름 — 원문 §59·§60 카드 제목 (옛 행은 null)' }) title?: string | null;
   @ApiProperty({ description: '카드에 쓰는 이름 — title 이 없으면 채널·항목으로 부른다' }) name!: string;
+  @ApiPropertyOptional({ ...S, description: '한 날 — 기간을 가르는 날(§59 「일·주·월」) · 옛 행은 null (x5)' }) onDate?: string | null;
   @ApiPropertyOptional(N) byId?: number | null;
   @ApiPropertyOptional({ ...S, description: '담당자 — §60 답변을 쓸 수 있는 사람' }) byName?: string | null;
   @ApiPropertyOptional(S) url?: string | null;
@@ -568,6 +629,40 @@ export class MarketingDto {
   @ApiPropertyOptional(N) enrolled?: number | null;
   @ApiPropertyOptional({ ...N, description: '집행 비용 — 대표만 (D-R39)' }) cost?: number | null;
   @ApiPropertyOptional({ ...N, description: '등록당 비용' }) costPerEnroll?: number | null;
+}
+
+/**
+ * §59 「+ 오늘 한 것」 — 활동 등록 · URL 첨부 (g6 59-3 · P1 · x5).
+ *
+ * 채널·항목은 **지금 표에 들어 있는 코드 일곱·일곱**이다 — 원문 어휘로 맞추는 일은 열린 결정(N-29 ①)이라
+ * 여기서 새 어휘를 짓지 않는다(기존 어휘 입력은 그 결정과 무관하게 막히지 않는다 · g6 59-3 비고).
+ * 성과(노출·문의·등록·비용)와 메모(MMEMO)는 받지 않는다 — 메모 칸은 N-29 결정 전이고 성과는 나중에 적는 값이다.
+ */
+export class MarketingCreateDto {
+  @ApiProperty({ maxLength: 120, description: '활동 이름 — 카드 제목' })
+  @IsString() @MinLength(1, { message: '무엇을 했는지 적어 주세요' }) @MaxLength(120)
+  title!: string;
+
+  @ApiProperty({ enum: [...MKT_CHANNELS], description: '어디에 — 낱말은 GET /ops.mktChannels' })
+  @IsIn([...MKT_CHANNELS], { message: '채널을 목록에서 고르세요' })
+  channel!: string;
+
+  @ApiProperty({ enum: [...MKT_ITEMS], description: '무엇을 — 낱말은 GET /ops.mktItems' })
+  @IsIn([...MKT_ITEMS], { message: '항목을 목록에서 고르세요' })
+  item!: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 2000, description: '올린 글·광고의 주소 — HTTP(S) · 비우면 없음' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  @IsSafeHttpUrl({ allowBlank: true, message: 'URL은 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다' })
+  url?: string | null;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '한 날 — 없으면 오늘(「오늘 한 것」)' })
+  @IsOptional() @IsCalendarDate()
+  onDate?: string | null;
+
+  @ApiPropertyOptional({ ...N, description: '담당 — 없으면 나. §60 답변을 쓸 수 있는 사람' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  byId?: number | null;
 }
 
 /* ══ §66 회의 상세 (C57) ═══════════════════════════════════════════════ */
@@ -797,7 +892,7 @@ export class IntakeFailReasonDto {
 
 export class IntakeHeadDto {
   @ApiProperty({ type: [IntakeFunnelStepDto] }) funnel!: IntakeFunnelStepDto[];
-  @ApiProperty({ description: '등록률 % — 등록 / 전체, 정수 반올림. 전체 0 이면 0' }) enrollRate!: number;
+  @ApiProperty({ description: '등록률 % — 등록 / (등록 + 등록 실패), 정수 반올림. 끝난 건이 없으면 0. 진행 중인 건은 분모에 넣지 않는다(원본 §23 「등록 3 · 실패 6 · 33%」 · 23-19)' }) enrollRate!: number;
   @ApiProperty({ type: [IntakeOwnerDto], description: '담당 칩 — 「전체」는 화면이 붙인다' }) owners!: IntakeOwnerDto[];
   @ApiProperty({ type: [IntakeAlertDto] }) alerts!: IntakeAlertDto[];
   @ApiProperty({ type: [IntakeStopDto], description: '§24 중단 지점 넷 — 낱말과 순서 (D-R18 · D-R25)' })
@@ -856,6 +951,8 @@ export class OpsDto {
   cplAreas!: CplWordDto[];
   @ApiProperty({ type: [CplWordDto], description: '심각도 셋 — 가벼움 · 보통 · 심각 (원본 §67 · C93)' })
   cplSeverities!: CplWordDto[];
+  @ApiPropertyOptional({ type: [CplWordDto], description: '문의자 관계 둘 — 어머니 · 아버지 (원본 §67 카드 · §29 「누가 요청」 · wave 6 67-5). 「+ 접수」·처리 창의 낱말' })
+  cplRequesters?: CplWordDto[];
   @ApiProperty({ type: [PlanDueRowDto], description: '§62 기획 기한 — 기획 마감과 과제 기한을 날짜 순으로 섞은 표' })
   planDues!: PlanDueRowDto[];
   @ApiProperty({ description: '기한 지난 것 — 서버가 센다 (D-R37)' }) planOverdue!: number;
@@ -894,6 +991,22 @@ export class OpsDto {
   mtMyWaiting?: number;
   @ApiPropertyOptional({ type: Number, description: '속기록을 쓴 회의 수 — 원본 §63 「54회 · 속기록 32」의 뒤 수 (같은 기간)' })
   mtMinutesCount?: number;
+
+  /* x5 · g6 59-3 · 59-4 · 59-5 — §59 마케팅. 수와 낱말은 서버가 만든다 (D-R37 · D-R18). 선택 칸인 까닭은 위 넷과 같다. */
+  @ApiPropertyOptional({ type: [CplWordDto], description: '「+ 오늘 한 것」 폼의 채널 일곱 — 지금 코드의 이름표(원문 어휘 맞춤은 N-29 ①)' })
+  mktChannels?: CplWordDto[];
+  @ApiPropertyOptional({ type: [CplWordDto], description: '「+ 오늘 한 것」 폼의 항목 일곱' })
+  mktItems?: CplWordDto[];
+  @ApiPropertyOptional({ type: Boolean, description: '「+ 오늘 한 것」이 서는가 — 단추도 서버가 정한다 (D-R39)' })
+  canCreateMarketing?: boolean;
+  @ApiPropertyOptional({ type: [OpsCountDto], description: '§59 「어디에」 — 고른 기간의 채널별 활동 수. 건수가 있는 채널만(원문 띠) · 많은 순' })
+  mktChannelCounts?: OpsCountDto[];
+  @ApiPropertyOptional({ type: [OpsCountDto], description: '§59 「누가」 — 고른 기간의 담당별 활동 수. key 는 담당 ID 또는 __none__ · 많은 순' })
+  mktByCounts?: OpsCountDto[];
+  @ApiPropertyOptional({ type: [OpsCountDto], description: '§59 머리 오른쪽 항목 범례 — 고른 기간의 항목별 활동 수 · 많은 순' })
+  mktItemCounts?: OpsCountDto[];
+  @ApiPropertyOptional({ type: Number, description: '§59 머리 「N건 · M일 진행」의 M — 고른 기간에 활동이 있었던 날 수' })
+  mktDays?: number;
 }
 
 /**

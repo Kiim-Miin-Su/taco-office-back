@@ -360,4 +360,25 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     expect(packs.coordinators.find((row) => row.key === String(coordinator)))
       .toMatchObject({ label: '수령 코디', count: 3, unreceived: 1 });
   });
+
+  /** g4 §38-7 — 원문 「교재별 진도율」 카드는 레벨 배지 + 제목, 레벨색 왼쪽 띠다. 레벨은 LIB 원문 그대로, 없으면 null */
+  it('§38-7 교재별 진도율은 교재 레벨을 싣는다', async () => {
+    await q.query(`UPDATE lib SET level='Master' WHERE id=$1`, [libA]);
+    await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'ok' });
+    await svc().createIssue(owner, { studentId: studentA, libId: libB, state: 'ok' });
+    const books = (await svc().tracking()).books;
+    expect(books.find((book) => book.libId === libA)).toMatchObject({ level: 'Master' });
+    expect(books.find((book) => book.libId === libB)).toMatchObject({ level: null });
+  });
+
+  /** g4 §41-3 — 원문 카드의 교재 줄은 레벨 글자 사각(P·F·M)으로 시작한다. 레벨은 LIB 원문 그대로, 없으면 null */
+  it('§41-3 자료 전달의 교재 줄은 교재 레벨을 싣는다', async () => {
+    await q.query(`UPDATE lib SET level='Practice' WHERE id=$1`, [libA]);
+    const made = await svc().createPack(owner, {
+      packType: 'exam', title: '레벨 묶음', coordinatorId: coordinator, studentIds: [studentA], libIds: [libA, libB], effectiveOn: EFFECTIVE_ON,
+    });
+    const pack = (await svc().packs(owner)).items.find((row) => row.id === made.id)!;
+    expect(pack.books.find((book) => book.id === libA)).toMatchObject({ level: 'Practice' });
+    expect(pack.books.find((book) => book.id === libB)).toMatchObject({ level: null });
+  });
 });

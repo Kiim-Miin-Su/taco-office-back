@@ -15,7 +15,7 @@ import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
   TeacherDiagCreateDto, TeacherGuideDiagDto,
   TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
-  TeacherSettingReqCreateDto, TeacherSettingRequestDto,
+  TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherShellDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto, TeacherUnavQueryDto,
 } from './teacher.dto';
@@ -37,6 +37,18 @@ export class TeacherController {
    */
   private assertTeacher(user: RequestUser): void {
     if (!isRole(user.role) || canAdminPage(user.role)) throw new ForbiddenException('강사 전용 화면입니다');
+  }
+
+  @Get('shell')
+  @ApiOperation({
+    summary: '강사 머리줄 — 시간대 · 오늘 시급 · 내게 온 알림 (강사 덱 모든 화면의 머리줄 · 메뉴 사용자 칸)',
+    description: '알림은 받는 사람이 본인인 NOTI 행만 싣는다(관리자 서랍의 다른 칸은 없다). 읽음 처리는 PATCH /drawer/notis/{id}/read · /drawer/notis/read-all(본인 한정)을 쓴다.',
+  })
+  @ApiOkResponse({ type: TeacherShellDto })
+  @ApiForbiddenResponse({ description: '강사 전용 — 관리 화면 사용자는 서랍 알림을 쓴다' })
+  async shell(@CurrentUser() user: RequestUser): Promise<TeacherShellDto> {
+    this.assertTeacher(user);
+    return this.svc.shell(user.id);
   }
 
   @Get('home')

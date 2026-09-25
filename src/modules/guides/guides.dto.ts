@@ -44,6 +44,12 @@ export class GuideDto {
   @ApiProperty() studentId!: number;
   @ApiPropertyOptional(N) teacherId?: number | null;
   @ApiProperty({ description: 'new(첫 수업) | teacher_change(강사 교체)' }) reason!: string;
+  /* 필수 nullable (wave 6) — 서버는 언제나 싣는다(mapGuide 한 곳). 선택으로 두면 화면 시험 표본이 이 칸을 빠뜨린 채 조용히 낡는다 */
+  @ApiProperty({
+    ...S,
+    description: '안내 종류 낱말 — 첫 수업 = 「포괄 안내」 · 강사 교체 = 「간이 안내」(원문 §45 kind full/quick · §44 머리 칩). 모르는 사유는 null',
+  })
+  kindLabel!: string | null;
   @ApiProperty({ enum: ['draft', 'ready', 'sent', 'read'], description: 'draft·ready 가 아직 안 보낸 것' }) state!: string;
   /** 「보내야 함」의 정본 — 서버 GUIDE_PENDING_DB 파생. 화면은 상태 목록을 다시 정의하지 않는다. */
   @ApiProperty({ description: '아직 안 보냄 (GUIDE_PENDING_DB 파생) — 화면은 이 값만 읽는다' }) pending!: boolean;
@@ -171,6 +177,21 @@ export class GuideDeliveryCapabilitiesDto {
   @ApiPropertyOptional(S) reason?: string | null;
 }
 
+/**
+ * §43 매번 머리 「강사 N명 한 번에」(원문 §43 · wave 6 §43-6) — 단추가 서는지와 N 을 **서버가** 센다(D-R37 · D-R39).
+ * 고르는 문은 회차 줄의 `canSendTeacher` 와 같은 `sendGate` 하나다 — 화면이 줄을 다시 세면 단추의 N 과 실제로 나간 수가 갈린다.
+ */
+export class ZoomNoticeBatchInfoDto {
+  @ApiProperty({ type: 'integer', minimum: 0, description: '「강사 N명」의 N — 지금 보낼 수 있는 오늘 온라인 회차의 서로 다른 강사 수' })
+  teacherCount!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '지금 보낼 수 있는 회차 수(canSendTeacher 인 줄)' })
+  lessonCount!: number;
+  @ApiProperty({ description: '누를 수 있는가 — 발송 권한(canAdminPage·canCrudAll)이 있고 보낼 회차가 하나라도 있을 때만 true' })
+  canSend!: boolean;
+  @ApiProperty({ ...S, description: '못 누르는 이유 — 누를 수 있으면 null' })
+  blockedReason!: string | null;
+}
+
 export class GuidesDto {
   @ApiProperty({ type: [GuideDto], description: '한 번만 나가는 안내' }) guides!: GuideDto[];
   @ApiProperty({ type: [PerLessonNoticeDto], description: '회차마다 나가는 안내' }) perLesson!: PerLessonNoticeDto[];
@@ -187,6 +208,12 @@ export class GuidesDto {
   stats!: GuideStatsDto;
   @ApiProperty({ type: GuideDeliveryCapabilitiesDto })
   deliveryCapabilities!: GuideDeliveryCapabilitiesDto;
+  /*
+   * 선택 칸 — 서버는 언제나 싣는다(all() 한 곳). 범위 밖 화면 시험 표본(components/guardians)이 이 칸 없이 GuidesDto 를
+   * 만들고 있어 그 표본이 고쳐질 때까지 선택으로 둔다(넘김 · wave 6). 없으면 화면은 단추를 세우지 않는다.
+   */
+  @ApiPropertyOptional({ type: ZoomNoticeBatchInfoDto, description: '§43 매번 머리 「강사 N명 한 번에」 — N·회차 수·막힌 이유 (wave 6)' })
+  zoomBatch?: ZoomNoticeBatchInfoDto;
 }
 
 export class GuideBookDto {
@@ -385,4 +412,34 @@ export class ZoomNoticeResultDto {
   lesson!: PerLessonNoticeDto;
   @ApiProperty({ description: '강사에게 남긴 줄 수 — 회차마다 하나(pnoti_teacher_once)' }) teacherNotices!: number;
   @ApiProperty({ description: '학부모에게 「보낼 것」으로 남긴 줄 수 — 실제 발송은 아직 없다(N-42)' }) parentNotices!: number;
+}
+
+/**
+ * §43-6 「강사 N명 한 번에」의 한 줄 — 보냈거나(code·reason null) 건너뛴(서버 코드·문장) 오늘 온라인 회차.
+ * 회차 키는 단건과 같은 `(serId, onDate)` 다(C82-b · S5).
+ */
+export class ZoomNoticeBatchRowDto {
+  @ApiProperty(ID_SCHEMA) serId!: number;
+  @ApiProperty({ ...DATE_SCHEMA, description: '**회차 키**의 날짜(`ser_occ.on_date`) — 단건 줌 안내와 같은 키' }) onDate!: string;
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439 }) startMin!: number;
+  @ApiProperty({ ...N, description: '그 회차의 강사 — 없으면 null' }) teacherId!: number | null;
+  @ApiProperty({ ...S }) teacherName!: string | null;
+  @ApiProperty({ description: '그 회차 명단의 학생 이름(쉼표로 잇는다) — 결과 띠가 어느 수업인지 말하게' }) studentNames!: string;
+  @ApiProperty({
+    ...S,
+    description: '건너뛴 까닭의 코드 — ZOOM_NOTICE_ALREADY · ZOOM_NOTICE_NO_ACCOUNT · ZOOM_NOTICE_NO_TEACHER · ZOOM_NOTICE_CANCELED · ZOOM_NOTICE_NOT_ONLINE · OCCURRENCE_NOT_FOUND. 보냈으면 null',
+  })
+  code!: string | null;
+  @ApiProperty({ ...S, description: '건너뛴 까닭 — 서버 문장 그대로(단건 쓰기·단추의 막힌 이유와 같은 말). 보냈으면 null' })
+  reason!: string | null;
+}
+
+export class ZoomNoticeBatchResultDto {
+  @ApiProperty({ type: [ZoomNoticeBatchRowDto], description: '이번에 보낸 회차 — 줄마다 제 트랜잭션이라 다른 줄의 거절에 되돌아가지 않는다' })
+  sent!: ZoomNoticeBatchRowDto[];
+  @ApiProperty({ type: [ZoomNoticeBatchRowDto], description: '건너뛴 회차와 서버 이유 — 이미 보냄 · 계정/강사 없음 · 그 사이 바뀐 회차' })
+  skipped!: ZoomNoticeBatchRowDto[];
+  @ApiProperty({ type: 'integer', minimum: 0, description: '이번에 받은 서로 다른 강사 수' }) teacherCount!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '학부모에게 「보낼 것」으로 남긴 줄 수의 합 — 실제 발송은 아직 없다(N-42)' })
+  parentNotices!: number;
 }

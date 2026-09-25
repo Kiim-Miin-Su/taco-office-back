@@ -13,14 +13,17 @@ import {
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import { payoutSheet } from '../../lib/payout-sheet';
-import { serStuOn } from '../../lib/sql';
+import { kstAt, serStuOn } from '../../lib/sql';
 import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
+import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory } from '../../lib/noti';
+import { wageRateAt } from '../../lib/wage';
 import type {
   TeacherDiagCreateDto, TeacherGuideDiagDto, TeacherGuideStudentDto, TeacherGuidesDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
   TeacherHistoryDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
+  TeacherNotiDto, TeacherShellDto,
 } from './teacher.dto';
 import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS } from '../../lib/teacher-policy';
 
@@ -41,12 +44,89 @@ type R = Record<string, unknown>;
 /** 회차의 담당 강사 — 회차 오버라이드가 있으면 그것, 없으면 규칙의 강사 (ser_occ.teacher_id ?? ser.teacher_id). */
 const TEACHER_OF = 'COALESCE(o.teacher_id, s.teacher_id)';
 
+/**
+ * 「열린 수업」 — 휴강(ser_occ.canceled)도 **출결 취소**(att.result = 'canceled')도 아닌 회차. `LEFT JOIN att a` 와 같이 쓴다.
+ * 홈 hero·이번 주 칩·「리포트 미작성」이 이 한 줄을 쓴다 — 캘린더 머리(teacherSchedule 의 countsForPay)와
+ * 리포트 목록(REPORT_CANCELED_SQL)이 이미 출결 취소를 빼고 세므로, 여기만 빠뜨리면 같은 강사의 같은 날이 화면마다 다른 수가 된다(N-19).
+ */
+const HELD = `NOT o.canceled AND COALESCE(a.result, 'completed') <> 'canceled'`;
+const ATT_JOIN = 'LEFT JOIN att a ON a.ser_id = o.ser_id AND a.on_date = o.on_date';
+/**
+ * 리포트 대상인 종류인가(kind.rep) — `LEFT JOIN rep r` 뒤에 붙인다. 리포트 목록(effectiveRepStateFromEnded)은
+ * 대상이 아닌 종류(자습·회의)를 na 로 읽는데 홈은 이 판정 없이 「rep 행 없음 = 미작성」으로 세고 있었다(wave 6 재현).
+ * 리포트 쪽과 같은 키(COALESCE(r.kind_key, s.kind_key))로 읽는다.
+ */
+const KIND_JOIN = 'JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)';
+
+/**
+ * 머리줄 시간대 표기 — 강사 덱 머리줄 「◷ Seoul · UTC+9」 · 메뉴 사용자 칸 「시간대 Seoul UTC+9」.
+ * 도시는 IANA 이름의 끝 마디, 차이는 **그 시각**의 UTC 차이다(서머타임이 있는 곳은 철마다 바뀐다).
+ * 화면이 `Asia/Seoul → Seoul UTC+9` 같은 표를 따로 들면 시간대를 더할 때 한쪽이 빠진다 — 그래서 서버가 짓는다.
+ * 런타임이 모르는 이름이면 이름을 그대로 돌려준다(머리줄이 깨지지 않게).
+ */
+export function tzLabelOf(tz: string, at: Date = new Date()): string {
+  let offset: string | undefined;
+  try {
+    offset = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'shortOffset' })
+      .formatToParts(at).find((part) => part.type === 'timeZoneName')?.value;
+  } catch {
+    return tz;
+  }
+  if (!offset) return tz;
+  const city = (tz.split('/').pop() ?? tz).replace(/_/g, ' ');
+  // Intl 은 「GMT+9」 · 차이가 없으면 「GMT」 — 원문 낱말은 UTC 다
+  const utc = offset === 'GMT' ? 'UTC+0' : offset.replace('GMT', 'UTC');
+  return `${city} · ${utc}`;
+}
+
 @Injectable()
 export class TeacherService {
   constructor(@InjectRepository(Ser) private readonly anyRepo: Repository<Ser>) {}
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
+  }
+
+  /**
+   * 강사 머리줄 — 시간대 · 오늘 시급 · **내게 온** 알림 (강사 덱 머리줄 🔔 · N-26 을 D-R44 로 좁게 읽음).
+   * 알림은 서랍 §16 과 같은 NOTI 행·같은 창(NOTI_WINDOW_DAYS)·같은 종류 낱말을 쓰되 `to_id = 나` 만 싣는다 —
+   * 관리자 서랍의 다른 칸(승인 대기함·구성원·줌…)은 강사에게 짓지 않는다(원문 강사 화면 7개에 없다).
+   * 읽음 처리는 서랍의 본인 한정 경로(`PATCH /drawer/notis/:id/read` · `read-all`)를 그대로 쓴다.
+   */
+  async shell(teacherId: number): Promise<TeacherShellDto> {
+    const [me] = await this.q(`SELECT tz FROM staff WHERE id = $1`, [teacherId]);
+    const timezone = String(me?.tz ?? KST);
+    // 시급은 회차·히스토리와 같은 정의(오늘 이하의 마지막 줄) — lib/wage 한 곳
+    const wageRate = await wageRateAt(this.anyRepo, teacherId, todayKst());
+    const notis = (await this.q(
+      `SELECT n.id, n.title, n.body, n.link, n.category, n.read_at, f.name AS from_name,
+              ${kstAt('n.created_at')} AS at
+         FROM noti n LEFT JOIN staff f ON f.id = n.from_id
+        WHERE n.to_id = $1
+          AND n.created_at >= now() - make_interval(days => $2::int)
+        ORDER BY (n.read_at IS NULL) DESC, n.created_at DESC, n.id DESC`,
+      [teacherId, NOTI_WINDOW_DAYS],
+    )).map((r): TeacherNotiDto => {
+      const link = (r.link as string | null) ?? null;
+      return {
+        id: Number(r.id),
+        title: (r.title as string | null) ?? null,
+        body: String(r.body),
+        link,
+        read: r.read_at !== null,
+        at: String(r.at),
+        categoryLabel: NOTI_CATEGORY_LABEL[notiCategory(r.category as string | null, link)],
+        fromName: (r.from_name as string | null) ?? null,
+      };
+    });
+    return {
+      timezone,
+      tzLabel: tzLabelOf(timezone),
+      wageRate,
+      notis,
+      unread: notis.filter((noti) => !noti.read).length,
+      notiWindowDays: NOTI_WINDOW_DAYS,
+    };
   }
 
   /** 강사 홈 — 서버가 teacherId 로 고정한다. 화면은 거르지 않는다 (D-R39). */
@@ -93,15 +173,21 @@ export class TeacherService {
       repState: String(r.rep_state),
     }));
 
+    // 오늘(hero)과 이번 주(다가오는 수업 칩)를 한 문장에서 센다 — 같은 판정(HELD)이라 두 숫자가 갈리지 않는다
     const [week] = await this.q(
-      `SELECT COUNT(*) FILTER (WHERE NOT o.canceled)::int AS lessons,
+      `SELECT COUNT(*) FILTER (WHERE ${HELD})::int AS lessons,
               COALESCE(SUM(EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)
-                       FILTER (WHERE NOT o.canceled), 0)::int AS minutes,
-              COUNT(*) FILTER (WHERE NOT o.canceled AND upper(o.span) < now()
-                                 AND COALESCE(r.state::text,'none') = ANY($3))::int AS unwritten
+                       FILTER (WHERE ${HELD}), 0)::int AS minutes,
+              COUNT(*) FILTER (WHERE ${HELD} AND k.rep AND upper(o.span) < now()
+                                 AND COALESCE(r.state::text,'none') = ANY($3))::int AS unwritten,
+              COUNT(*) FILTER (WHERE ${HELD} AND o.on_date = $2::date)::int AS today_lessons,
+              COALESCE(SUM(EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)
+                       FILTER (WHERE ${HELD} AND o.on_date = $2::date), 0)::int AS today_minutes
          FROM ser_occ o
          JOIN ser s      ON s.id = o.ser_id
          LEFT JOIN rep r ON r.ser_id = o.ser_id AND r.on_date = o.on_date
+         ${KIND_JOIN}
+         ${ATT_JOIN}
         WHERE ${TEACHER_OF} = $1
           AND o.on_date BETWEEN date_trunc('week',$2::date)::date
                             AND date_trunc('week',$2::date)::date + 6`,
@@ -112,7 +198,9 @@ export class TeacherService {
       `SELECT (SELECT COUNT(*)::int
                  FROM ser_occ o JOIN ser s ON s.id = o.ser_id
                  LEFT JOIN rep r ON r.ser_id = o.ser_id AND r.on_date = o.on_date
-                WHERE ${TEACHER_OF} = $1 AND NOT o.canceled AND upper(o.span) < now()
+                 ${KIND_JOIN}
+                 ${ATT_JOIN}
+                WHERE ${TEACHER_OF} = $1 AND ${HELD} AND k.rep AND upper(o.span) < now()
                   AND COALESCE(r.state::text,'none') = ANY($2)) AS unwritten_reports,
               (SELECT COUNT(*)::int FROM rep WHERE teacher_id = $1 AND state = 'wait') AS waiting_approvals,
               (SELECT COUNT(*)::int FROM chreq WHERE by_id = $1 AND state = 'pending') AS open_change_requests,
@@ -137,6 +225,10 @@ export class TeacherService {
       todayDate: today,
       today: lessons.filter((l) => l.onDate === today),
       upcoming: lessons.filter((l) => l.onDate > today),
+      todaySummary: {
+        lessons: Number(week?.today_lessons ?? 0),
+        minutes: Number(week?.today_minutes ?? 0),
+      },
       week: {
         lessons: Number(week?.lessons ?? 0),
         minutes: Number(week?.minutes ?? 0),

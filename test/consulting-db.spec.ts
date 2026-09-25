@@ -69,8 +69,10 @@ d('§26 DB 제약과 migration 11', () => {
    * 「N일 지남」·받은 돈이 전부 서버에서 온다 (D-R18 · D-R37).
    */
   it('카드의 낱말과 수가 전부 서버에서 온다 — 금액쌍은 한 권한을 함께 탄다 (§26)', async () => {
+    // 「N일 지남」은 계약 시작일부터 센다(26-10 · wave 5) — 열이틀 전에 시작한 건
     await q.query(
-      `UPDATE cons SET cons_type='essay', contract_step=2, amount=900000, requester='mother', share='money_only' WHERE id=$1`,
+      `UPDATE cons SET cons_type='essay', contract_step=2, amount=900000, requester='mother', share='money_only',
+              start_on = (now() AT TIME ZONE 'Asia/Seoul')::date - 12 WHERE id=$1`,
       [id],
     );
     await q.query(`INSERT INTO staff (id,name,email,role) VALUES (1,'검사자','c86e@t.kr','manager') ON CONFLICT (id) DO NOTHING`);
@@ -79,11 +81,11 @@ d('§26 DB 제약과 migration 11', () => {
     const seen = (await new ConsultingService(q.manager.getRepository(Lead)).all(1, true, true))
       .items.find((r) => r.id === id)!;
     expect(seen).toMatchObject({
-      stageLabel: '계약', typeLabel: '에세이 지도', shareLabel: '수납만 공개',
+      stageLabel: '계약', typeLabel: '에세이 지도', shareLabel: '수납만 공개', shareChipLabel: '수납만',
       contractStepLabel: '피드백', requesterLabel: '어머니',
       amount: 900000, paidAmount: 400000,
     });
-    expect(seen.ageDays).toBeGreaterThanOrEqual(0);
+    expect(seen.ageDays).toBe(12);
 
     // 금액을 못 보면 **둘 다** 가려진다 — 한쪽만 보이면 나머지가 빼기로 드러난다
     const hidden = (await new ConsultingService(q.manager.getRepository(Lead)).all(1, false, true))

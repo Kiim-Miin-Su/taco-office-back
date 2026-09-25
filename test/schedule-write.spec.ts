@@ -173,6 +173,73 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(await q('SELECT id FROM ser WHERE id=$1', [created.id])).toEqual([]);
   });
 
+  /*
+   * 원문 셸 「⟲ 되돌리기 ▾」(g1 S5) — 여러 단계를 **뒤에서부터 차례로** 되돌린다.
+   * 뒤 작업(B)이 앞 작업(A)이 만든 예외 줄을 지웠으면(그날만 빼기 → 그날만 되돌리기 = 효과 없는 EXC 제거),
+   * B 를 되돌릴 때 그 줄이 **새 id 로** 다시 생긴다. 예외의 키는 (규칙, 원래 날짜)라 id 는 뜻이 없는데
+   * 이 id 까지 견주면 A 의 토큰이 「그 뒤 바뀌었다」로 잘못 막힌다.
+   */
+  it('여러 단계 되돌리기 — 뒤 작업이 지운 예외를 되살린 뒤에도 앞 작업을 되돌릴 수 있다 (S5)', async () => {
+    const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [ROSTER_STUDENT] });
+    const outRows = () => q(
+      `SELECT o.student_id FROM exc_stu_out o JOIN exc e ON e.id=o.exc_id WHERE e.ser_id=$1`, [id]);
+    const a = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'dropOnce', onDate: from, studentId: ROSTER_STUDENT }).expect(200);
+    const b = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'undoOnce', onDate: from, studentId: ROSTER_STUDENT }).expect(200);
+    // 효과가 없어진 예외는 지워진다 — 이 시험의 전제
+    expect(await q('SELECT id FROM exc WHERE ser_id=$1', [id])).toEqual([]);
+    // 토큰마다 서버가 정한 만료 시각을 준다 — 화면은 이 값으로 지난 단계를 목록에서 뺀다
+    expect(Date.parse(a.body.undoExpiresAt as string)).toBeGreaterThan(Date.now());
+
+    await api('post', '/schedule/undo').send({ token: b.body.undoToken }).expect(201);
+    expect(await outRows()).toEqual([{ student_id: String(ROSTER_STUDENT) }]);
+    await api('post', '/schedule/undo').send({ token: a.body.undoToken }).expect(201);
+    expect(await outRows()).toEqual([]);
+    expect(await q('SELECT id FROM exc WHERE ser_id=$1', [id])).toEqual([]);
+  });
+
+  /* 원문 §09 월간 칸 「광복절」·「광복절 대체」 칩 · §10 요일 머리 (g1 §09 #2 · §10 #8) — 서버 표에서 읽는다 */
+  it('공휴일 이름표는 기간 안의 날만 돌려주고, 누구나 읽으며, 날짜가 틀리면 400 이다', async () => {
+    const res = await get('/schedule/holidays?from=2026-08-01&to=2026-08-31').expect(200);
+    expect(res.body.items).toEqual([
+      { date: '2026-08-15', name: '광복절' },
+      { date: '2026-08-17', name: '광복절 대체' },
+    ]);
+    await request(app.getHttpServer()).get('/schedule/holidays?from=2026-09-24&to=2026-09-26')
+      .set('Authorization', `Bearer ${teacherToken}`).expect(200)
+      .then((r) => expect(r.body.items.map((h: { name: string }) => h.name)).toEqual(['추석 연휴', '추석', '추석 연휴']));
+    expect((await get('/schedule/holidays?from=2026-02-30&to=2026-03-01')).status).toBe(400);
+    const reversed = await get('/schedule/holidays?from=2026-09-01&to=2026-08-01').expect(400);
+    expect(reversed.body.code).toBe('BAD_RANGE');
+  });
+
+  /* 원문 §07·§11 데이터 줄의 UNAV — 관리자 읽기(G37). 「가능 시간」 겹쳐 보기와 빈 시간 찾기가 읽는다 */
+  it('강사 불가 시간 관리자 읽기 — 날짜 있는 줄만 · 강사로 좁힘 · 강사 본인은 403', async () => {
+    const day = plus(kst(), 10);
+    await q(`DELETE FROM unav WHERE staff_id = $1`, [T2]);
+    try {
+      await q(
+        `INSERT INTO unav (staff_id, dow, on_date, start_min, end_min, reason)
+         VALUES ($1, EXTRACT(DOW FROM $2::date), $2::date, 840, 960, '병원 예약'),
+                ($1, 3, NULL, 600, 660, '옛 줄 — 날짜 없음')`,
+        [T2, day],
+      );
+      const res = await get(`/schedule/unavailable?from=${day}&to=${day}`).expect(200);
+      const mine = (res.body.items as Array<Record<string, unknown>>).filter((r) => r.teacherId === T2);
+      expect(mine).toEqual([expect.objectContaining({
+        teacherId: T2, teacherName: '쓰기강사', date: day, startMin: 840, endMin: 960, reason: '병원 예약',
+      })]);
+      const only = await get(`/schedule/unavailable?from=${day}&to=${day}&teacherId=${T1}`).expect(200);
+      expect(only.body.items).toEqual([]);
+      await request(app.getHttpServer()).get(`/schedule/unavailable?from=${day}&to=${day}`)
+        .set('Authorization', `Bearer ${teacherToken}`).expect(403);
+      expect((await get(`/schedule/unavailable?from=${day}&to=${day}&teacherId=0`)).status).toBe(400);
+    } finally {
+      await q(`DELETE FROM unav WHERE staff_id = $1`, [T2]);
+    }
+  });
+
   it('토큰 뒤 같은 수업이 다시 바뀌면 오래된 Ctrl/⌘+Z가 새 변경을 덮지 않는다', async () => {
     const { id, from } = await makeSer({ kindKey: 'meeting', teacherId: null, studentIds: [] });
     const first = await api('patch', `/schedule/${id}`)

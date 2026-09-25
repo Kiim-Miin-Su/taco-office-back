@@ -214,6 +214,8 @@ export class BookProgressStudentDto {
 export class BookProgressDto {
   @ApiProperty() libId!: number;
   @ApiProperty() title!: string;
+  @ApiPropertyOptional({ ...S, description: '교재 레벨 원문(lib.level) — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). 없으면 null' })
+  level?: string | null;
   @ApiProperty() studentCount!: number;
   @ApiPropertyOptional(N) minPercent?: number | null;
   @ApiPropertyOptional(N) maxPercent?: number | null;
@@ -267,6 +269,8 @@ export class BookPackLibDto {
   @ApiProperty() id!: number;
   @ApiProperty() code!: string;
   @ApiProperty() title!: string;
+  @ApiPropertyOptional({ ...S, description: '교재 레벨 원문(lib.level) — 카드 교재 줄의 레벨 글자 사각(원문 §41 · g4 §41-3). 없으면 null' })
+  level?: string | null;
   @ApiPropertyOptional(N) versId?: number | null;
   @ApiPropertyOptional(N) seFileId?: number | null;
   @ApiPropertyOptional(N) teFileId?: number | null;

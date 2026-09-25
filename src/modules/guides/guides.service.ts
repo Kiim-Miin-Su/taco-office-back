@@ -16,10 +16,11 @@ import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
   GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
   GuideHistorySpan, GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
-  PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
+  PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeBatchInfoDto, ZoomNoticeBatchResultDto, ZoomNoticeBatchRowDto,
+  ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { guideAutoFill, guideAutoFills } from '../../lib/guide-body';
-import { GUIDE_EVENT_CTE, GUIDE_LESSON_JOINS, guideCoversEvent } from './guide-events';
+import { GUIDE_EVENT_CTE, GUIDE_LESSON_JOINS, guideCoversEvent, guideKindLabel } from './guide-events';
 import { latestLeadDiagForStudent } from '../ops/lead-diag.service';
 
 /**
@@ -185,6 +186,11 @@ export class GuidesService {
       }));
       const recorded = notices.length > 0 && notices.every((notice) => notice.sentAt !== null);
       const firstNotice = notices.find((notice) => notice.id !== null);
+      const gate = GuidesService.sendGate({
+        alreadySent: first.teacher_sent_at != null,
+        zaccId: first.zacc_id == null ? null : Number(first.zacc_id),
+        teacherId: first.teacher_id == null ? null : Number(first.teacher_id),
+      });
       return {
         id: Number(first.source_occurrence_id), sourceOccurrenceId: Number(first.source_occurrence_id),
         serId: Number(first.ser_id), onDate: String(first.on_date),
@@ -201,11 +207,8 @@ export class GuidesService {
         parentDeliveryRecorded: recorded,
         // 강사 줄이 실제로 생기고 sent_at 이 찍혔을 때만 참이다 (F-63 — 그 전에는 쓰는 길이 0이었다)
         teacherDeliveryRecorded: first.teacher_sent_at != null,
-        ...GuidesService.sendGate({
-          alreadySent: first.teacher_sent_at != null,
-          zaccId: first.zacc_id == null ? null : Number(first.zacc_id),
-          teacherId: first.teacher_id == null ? null : Number(first.teacher_id),
-        }),
+        canSendTeacher: gate.canSendTeacher,
+        sendBlockedReason: gate.sendBlockedReason,
         channel: firstNotice?.channel ?? 'app',
         studentName: notices.map((notice) => notice.studentName).join(', '),
         serTitle: (first.ser_title as string) ?? null,
@@ -279,7 +282,7 @@ export class GuidesService {
     return {
       id: Number(r.id), serId: r.ser_id == null ? null : Number(r.ser_id), studentId: Number(r.student_id),
       teacherId,
-      reason: String(r.reason), state: String(r.state), pending,
+      reason: String(r.reason), kindLabel: guideKindLabel(String(r.reason)), state: String(r.state), pending,
       canSend: gate.canSend, canAck: gate.canAck, sendBlockedReason: gate.sendBlockedReason,
       acknowledgedAfterSeconds: Number.isFinite(elapsed) && elapsed >= 0 ? Math.floor(elapsed) : null,
       studentName: (r.student_name as string) ?? null,
@@ -346,6 +349,34 @@ export class GuidesService {
         const parentExternal = this.sender.ready('email') || this.sender.ready('sms');
         return { parentExternal, teacherExternal: false, reason: parentExternal ? null : PARENT_CHANNELS_OFF };
       })(),
+      // §43 매번 머리 「강사 N명 한 번에」 — 회차 줄과 같은 문(sendGate)으로 센다 (wave 6 §43-6)
+      zoomBatch: GuidesService.zoomBatchInfo(perLesson, viewer),
+    };
+  }
+
+  /**
+   * 「강사 N명 한 번에」의 N·회차 수·막힌 이유 (wave 6 §43-6 · D-R37 · D-R39).
+   *
+   * 고르는 것은 줄마다의 `canSendTeacher`(= `sendGate`) 그대로다 — 단추의 N 과 일괄 발송이 실제로 고르는 줄이 같은 문을 지난다.
+   * N 은 **사람 수**다(원문 「강사 9명」) — 한 강사가 오늘 온라인 수업 둘이면 한 명으로 센다. 권한 문장은 안내 발송과 같은 말이다.
+   */
+  private static zoomBatchInfo(perLesson: PerLessonNoticeDto[], viewer?: RequestUser): ZoomNoticeBatchInfoDto {
+    const ready = perLesson.filter((row) => row.canSendTeacher);
+    const manage = GuidesService.guideCapabilities(viewer);
+    let blockedReason: string | null = null;
+    if (!manage.canManage) blockedReason = manage.sendBlockedReason;
+    else if (perLesson.length === 0) blockedReason = '오늘 온라인 수업이 없습니다';
+    else if (ready.length === 0) {
+      const left = perLesson.filter((row) => !row.teacherDeliveryRecorded).length;
+      blockedReason = left === 0
+        ? '오늘 강사 안내를 모두 보냈습니다'
+        : `보낼 수 있는 회차가 없습니다 — 남은 ${left}건은 줌 계정이나 강사가 아직 정해지지 않았습니다`;
+    }
+    return {
+      teacherCount: new Set(ready.map((row) => row.teacherId)).size,
+      lessonCount: ready.length,
+      canSend: blockedReason === null,
+      blockedReason,
     };
   }
 
@@ -724,11 +755,12 @@ export class GuidesService {
    * 화면이 「온라인인가 · 줌 계정이 있는가」를 다시 보면 눌리는데 거절당하는 단추가 생긴다.
    */
   private static sendGate(f: { alreadySent: boolean; zaccId: number | null; teacherId: number | null }):
-    { canSendTeacher: boolean; sendBlockedReason: string | null } {
-    if (f.alreadySent) return { canSendTeacher: false, sendBlockedReason: '이미 보냈습니다' };
-    if (f.teacherId === null) return { canSendTeacher: false, sendBlockedReason: '강사가 아직 정해지지 않았습니다' };
-    if (f.zaccId === null) return { canSendTeacher: false, sendBlockedReason: '줌 계정이 아직 배정되지 않았습니다' };
-    return { canSendTeacher: true, sendBlockedReason: null };
+    { canSendTeacher: boolean; sendBlockedReason: string | null; sendBlockedCode: string | null } {
+    /* 코드도 여기 한 곳이다 — 단건 쓰기의 409 와 일괄 발송의 「건너뜀」 줄이 같은 코드를 쓴다 (wave 6 §43-6) */
+    if (f.alreadySent) return { canSendTeacher: false, sendBlockedReason: '이미 보냈습니다', sendBlockedCode: 'ZOOM_NOTICE_ALREADY' };
+    if (f.teacherId === null) return { canSendTeacher: false, sendBlockedReason: '강사가 아직 정해지지 않았습니다', sendBlockedCode: 'ZOOM_NOTICE_NO_TEACHER' };
+    if (f.zaccId === null) return { canSendTeacher: false, sendBlockedReason: '줌 계정이 아직 배정되지 않았습니다', sendBlockedCode: 'ZOOM_NOTICE_NO_ACCOUNT' };
+    return { canSendTeacher: true, sendBlockedReason: null, sendBlockedCode: null };
   }
 
   /**
@@ -750,6 +782,72 @@ export class GuidesService {
    * 평문 `text` 다 — 옮기면 암호화가 없던 일이 된다.
    */
   async sendZoomNotice(userId: number, dto: ZoomNoticeWriteDto): Promise<ZoomNoticeResultDto> {
+    const { teacherNotices, parentNotices } = await this.recordZoomNotice(userId, dto);
+
+    /* 목록과 같은 함수로 그 회차를 다시 읽는다 — **방금 쓴 키 그대로** 집는다(옮긴 회차도 찾는다) */
+    const rows = await this.perLessonRows({ serId: dto.serId, onDate: dto.onDate });
+    const lesson = rows.find((row) => row.serId === dto.serId);
+    if (!lesson) throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '해당 회차를 찾을 수 없습니다' });
+    return { lesson, teacherNotices, parentNotices };
+  }
+
+  /**
+   * §43 매번 머리 「강사 N명 한 번에」 (원문 §43 · wave 6 §43-6).
+   *
+   * 오늘 온라인 회차 중 **지금 보낼 수 있는 줄**(`sendGate` — 목록의 `canSendTeacher` 와 같은 문)만 골라 단건 줌 안내와
+   * **같은 쓰기**(`recordZoomNotice`)로 한 줄씩 보낸다. 줄마다 제 트랜잭션이다 — 한 줄이 거절돼도 이미 보낸 줄과
+   * 뒤의 줄은 되돌아가지 않는다(단건 쓰기의 원자 단위 그대로). 목록을 읽은 뒤 그 사이 남이 먼저 보냈거나 회차가
+   * 바뀐 줄은 쓰기가 다시 판정해 거절하고, 그 **서버 코드·문장 그대로** 「건너뜀」에 싣는다. 처음부터 막힌 줄
+   * (이미 보냄 · 강사/계정 없음)도 같은 문의 이유로 싣는다. 예상 밖 오류(4xx 가 아닌 것)는 삼키지 않고 던진다 —
+   * 그때까지 보낸 줄은 커밋돼 있고 화면은 목록을 다시 읽어 사실을 본다.
+   */
+  async sendZoomNoticeBatch(viewer: RequestUser): Promise<ZoomNoticeBatchResultDto> {
+    // 가드(@Perm) 뒤의 두 번째 문 — 안내 발송과 같은 판정(canAdminPage·canCrudAll)
+    if (!GuidesService.guideCapabilities(viewer).canManage) throw new ForbiddenException('안내를 발송할 권한이 없습니다');
+    const rows = await this.perLessonRows({ drawnOn: todayKst(), teacherId: null });
+    const sent: ZoomNoticeBatchRowDto[] = [];
+    const skipped: ZoomNoticeBatchRowDto[] = [];
+    let parentNotices = 0;
+    for (const row of rows) {
+      const base = {
+        serId: row.serId, onDate: row.onDate, startMin: row.startMin,
+        teacherId: row.teacherId ?? null, teacherName: row.teacherName ?? null,
+        studentNames: row.notices.map((notice) => notice.studentName).join(', '),
+      };
+      const gate = GuidesService.sendGate({
+        alreadySent: row.teacherDeliveryRecorded, zaccId: row.zaccId ?? null, teacherId: row.teacherId ?? null,
+      });
+      if (!gate.canSendTeacher) {
+        skipped.push({ ...base, code: gate.sendBlockedCode, reason: gate.sendBlockedReason });
+        continue;
+      }
+      try {
+        const done = await this.recordZoomNotice(viewer.id, { serId: row.serId, onDate: row.onDate });
+        parentNotices += done.parentNotices;
+        sent.push({ ...base, code: null, reason: null });
+      } catch (error) {
+        const refusal = GuidesService.refusalOf(error);
+        if (!refusal) throw error;
+        skipped.push({ ...base, ...refusal });
+      }
+    }
+    return { sent, skipped, teacherCount: new Set(sent.map((row) => row.teacherId)).size, parentNotices };
+  }
+
+  /** 쓰기가 거절한 까닭(409 · 404)을 코드·문장으로 — 그 밖의 오류는 null(던진다) */
+  private static refusalOf(error: unknown): { code: string | null; reason: string } | null {
+    if (!(error instanceof ConflictException) && !(error instanceof NotFoundException)) return null;
+    const body = error.getResponse() as { code?: string; message?: string | string[] } | string;
+    if (typeof body === 'string') return { code: null, reason: body };
+    const message = Array.isArray(body.message) ? body.message.join(' ') : body.message;
+    return { code: body.code ?? null, reason: message ?? error.message };
+  }
+
+  /**
+   * 줌 안내 한 회차를 **한 트랜잭션**으로 남긴다 — 단건(`sendZoomNotice`)과 일괄(`sendZoomNoticeBatch`)이 같은 쓰기를 쓴다.
+   * 판정(온라인 · 휴강 · sendGate)과 부모 SER 잠금·부분 유니크(pnoti_teacher_once)가 모두 여기 있다.
+   */
+  private async recordZoomNotice(userId: number, dto: ZoomNoticeWriteDto): Promise<{ teacherNotices: number; parentNotices: number }> {
     let teacherNotices = 0;
     let parentNotices = 0;
 
@@ -784,7 +882,7 @@ export class GuidesService {
       });
       if (!gate.canSendTeacher) {
         throw new ConflictException({
-          code: occ.teacher_id == null ? 'ZOOM_NOTICE_NO_TEACHER' : 'ZOOM_NOTICE_NO_ACCOUNT',
+          code: gate.sendBlockedCode,
           message: gate.sendBlockedReason ?? '줌 안내를 보낼 수 없습니다',
         });
       }
@@ -837,12 +935,7 @@ export class GuidesService {
       );
       await m.query(histSql(), ['pnoti', Number(teacherRows[0].id), 'guide_send', userId]);
     });
-
-    /* 목록과 같은 함수로 그 회차를 다시 읽는다 — **방금 쓴 키 그대로** 집는다(옮긴 회차도 찾는다) */
-    const rows = await this.perLessonRows({ serId: dto.serId, onDate: dto.onDate });
-    const lesson = rows.find((row) => row.serId === dto.serId);
-    if (!lesson) throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '해당 회차를 찾을 수 없습니다' });
-    return { lesson, teacherNotices, parentNotices };
+    return { teacherNotices, parentNotices };
   }
 
   /** 「09:30」 — 안내 본문의 시각 한 곳 */

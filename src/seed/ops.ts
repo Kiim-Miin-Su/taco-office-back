@@ -23,10 +23,15 @@ const occurrenceDate = (serId: number, side: 'past' | 'future', nth = 1) => {
   return hit;
 };
 
-/** 승인 요청 — 우측 서랍 §14 승인 대기함 */
+/**
+ * 승인 요청 — 우측 서랍 §14 승인 대기함.
+ * 교재 변경 요청의 studentName 은 **시드 학생의 이름**이어야 한다 — §38 트래킹 보드가 이 이름이 학생 하나를 가리킬 때만
+ * 그 학생 줄에 「강사 요청」 칩을 세운다(§38-8 · wave 6). 원문 컷의 표본 이름(강라율·고은성)은 시드 학생이 아니라 칩이 안 섰다.
+ * 낱말은 컷 그대로 두고 학생만 컷과 같은 모양(중1 교재 41% · 고2 교재 67%)으로 골랐다.
+ */
 export const REQS = [
-  { staffId: 7, reqType: 'book_change', payload: { studentName: '강라율', message: '너무 어렵습니다' }, state: 'pending', createdAt: D(0) },
-  { staffId: 7, reqType: 'book_change', payload: { studentName: '고은성', message: '다 풀었습니다' }, state: 'pending', createdAt: D(-1) },
+  { staffId: 7, reqType: 'book_change', payload: { studentName: '이서우', message: '너무 어렵습니다' }, state: 'pending', createdAt: D(0) },
+  { staffId: 7, reqType: 'book_change', payload: { studentName: '송지호', message: '다 풀었습니다' }, state: 'pending', createdAt: D(-1) },
   { staffId: 7,  reqType: 'wage_change', payload: { from: WAGES.find((w) => w.staffId === 7)!.rate, to: 45000 }, state: 'pending', createdAt: D(-2) },
   { staffId: 7,  reqType: 'unav_add',    payload: { dow: 3, startMin: 540, endMin: 720 }, state: 'pending', createdAt: D(-1) },
   { staffId: 7, reqType: 'wage_change', payload: { from: 35000, to: 37000 }, state: 'rejected', resolvedBy: 1, rejectReason: '3개월 뒤 재검토', createdAt: D(-9) },
@@ -251,17 +256,23 @@ export const MEETINGS: Array<{ id: number; mtType: string; title: string; onDate
  * 심각도(`severity` · light | normal | severe)는 접수 때 고르는 값이다 — 비워 두면 §67 카드의 칩이 하나도 안 섰다
  * (impl3-w8 · 67-8). 지난 건 하나(8)는 심각도를 모르는 옛 기록으로 남긴다 — 칩 없는 갈래도 화면에 보이게.
  */
+/*
+ * 문의자 관계(`requester` · 67-5)와 마무리 시각(`closedAt` · 67-6)은 w6-2 가 더한 칸이다 — 화면 확인용 표본을 섞어 둔다.
+ * 마무리 시각은 「결과」 칸의 건에만 적는다(`cpl_closed_at_stage` — 열린 건에 마무리 날짜가 있으면 거짓이다).
+ * 관계를 비워 둔 건도 남긴다 — 운영의 옛 행은 NULL 이고 화면이 「—」로 읽는 것을 함께 본다.
+ */
 export const COMPLAINTS: Array<{
   area: string; studentId: number | null; stage: string; body: string; action?: string; result?: string;
   teacherChanged: boolean; ownerId: number; createdAt: string; severity: 'light' | 'normal' | 'severe' | null;
+  requester?: 'mother' | 'father'; closedAt?: string;
 }> = [
-  { area: 'schedule', studentId: 9,  stage: 'received', body: '스케줄 변경을 통보받지 못했습니다.', teacherChanged: false, ownerId: 2, createdAt: D(-1), severity: 'severe' },
-  { area: 'teacher',  studentId: 5,  stage: 'received', body: '수업 시작이 10분씩 반복해서 늦습니다.', teacherChanged: false, ownerId: 4, createdAt: D(-1), severity: 'normal' },
-  { area: 'book',     studentId: 4,  stage: 'acting',   body: '교재 배송이 3일 지연됐습니다.', action: '통화 완료 · 재발송 처리 중', teacherChanged: false, ownerId: 4, createdAt: D(-5), severity: 'normal' },
+  { area: 'schedule', studentId: 9,  stage: 'received', body: '스케줄 변경을 통보받지 못했습니다.', teacherChanged: false, ownerId: 2, createdAt: D(-1), severity: 'severe', requester: 'mother' },
+  { area: 'teacher',  studentId: 5,  stage: 'received', body: '수업 시작이 10분씩 반복해서 늦습니다.', teacherChanged: false, ownerId: 4, createdAt: D(-1), severity: 'normal', requester: 'father' },
+  { area: 'book',     studentId: 4,  stage: 'acting',   body: '교재 배송이 3일 지연됐습니다.', action: '통화 완료 · 재발송 처리 중', teacherChanged: false, ownerId: 4, createdAt: D(-5), severity: 'normal', requester: 'mother' },
   { area: 'lesson',   studentId: 7,  stage: 'acting',   body: '그룹 수업 인원이 너무 많습니다.', action: '분반 검토 중 · 09-01 회신 약속', teacherChanged: false, ownerId: 3, createdAt: D(-6), severity: 'light' },
   { area: 'intake',   studentId: null, stage: 'acting', body: '상담 예약 시간이 착오로 잡혔습니다.', action: '사과 + 재예약 완료', teacherChanged: false, ownerId: 3, createdAt: D(-8), severity: 'light' },
-  { area: 'lesson',   studentId: 11, stage: 'closed',   body: '수업 취소 환불이 지연됩니다.', action: '환불 처리', result: '08-24 환불 완료', teacherChanged: false, ownerId: 2, createdAt: D(-12), severity: 'severe' },
-  { area: 'lesson',   studentId: 2,  stage: 'closed',   body: '리포트 내용이 부실합니다.', action: '재작성 요청', result: '08-22 재작성 전달', teacherChanged: true, ownerId: 3, createdAt: D(-14), severity: 'normal' },
+  { area: 'lesson',   studentId: 11, stage: 'closed',   body: '수업 취소 환불이 지연됩니다.', action: '환불 처리', result: '08-24 환불 완료', teacherChanged: false, ownerId: 2, createdAt: D(-12), severity: 'severe', requester: 'mother', closedAt: D(-9) },
+  { area: 'lesson',   studentId: 2,  stage: 'closed',   body: '리포트 내용이 부실합니다.', action: '재작성 요청', result: '08-22 재작성 전달', teacherChanged: true, ownerId: 3, createdAt: D(-14), severity: 'normal', requester: 'father', closedAt: D(-11) },
   { area: 'book',     studentId: 10, stage: 'closed',   body: '교재가 파본입니다.', action: '교체 발송', result: '08-20 교체 완료', teacherChanged: false, ownerId: 4, createdAt: D(-16), severity: null },
 ];
 

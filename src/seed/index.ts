@@ -54,6 +54,8 @@ export const SEEDED_TABLES = [
   'att', 'lead_stage_log', 'lead_touch', 'log', 'pdflog', 'rsend', 'zlog',
   // DQ3 보호자 발송 원장 — 시드는 안 넣는다(보낸 적 없는 발송을 지어내지 않는다)
   'guardian_send',
+  // W8 첫 설정 인증 코드 — 시드는 안 넣는다(보낸 적 없는 코드를 지어내지 않는다)
+  'auth_code',
 ] as const;
 
 const PW = 'taco1234!';
@@ -266,7 +268,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       mt_id: m.id, staff_id: a,
       confirmed: m.minutes !== null ? true : i === 0 ? false : null,
     }))));
-    await add('cpl', COMPLAINTS.map((c) => ({ area: c.area, student_id: c.studentId, stage: c.stage, body: c.body, action: (c as { action?: string }).action ?? null, result: (c as { result?: string }).result ?? null, teacher_changed: c.teacherChanged, owner_id: c.ownerId, created_at: `${c.createdAt}T00:00:00Z`, severity: c.severity })));
+    await add('cpl', COMPLAINTS.map((c) => ({ area: c.area, student_id: c.studentId, stage: c.stage, body: c.body, action: (c as { action?: string }).action ?? null, result: (c as { result?: string }).result ?? null, teacher_changed: c.teacherChanged, owner_id: c.ownerId, created_at: `${c.createdAt}T00:00:00Z`, severity: c.severity, requester: c.requester ?? null, closed_at: c.closedAt ? `${c.closedAt}T09:00:00Z` : null })));
     await add('suggestion', SUGGESTIONS.map((s) => ({ staff_id: s.staffId, category: s.category, body: s.body, state: s.state, reply: (s as { reply?: string }).reply ?? null, reply_by: num((s as { replyBy?: number }).replyBy), reply_at: (s as { replyAt?: string }).replyAt ? `${(s as { replyAt?: string }).replyAt}T00:00:00Z` : null, created_at: `${s.createdAt}T00:00:00Z` })));
     // 서명은 **시각과 사람이 짝**이다 — 한쪽만 넣으면 rpt_sign_pair 가 막는다 (C85-a)
     await add('rpt', REPORTS.map((r) => {

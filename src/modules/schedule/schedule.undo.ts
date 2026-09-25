@@ -33,21 +33,45 @@ export function canonicalScheduleState(state: State): State {
   };
 }
 
+/**
+ * stale 판정 — **업무 값**만 견준다.
+ * 예외 줄의 키는 (규칙, 원래 날짜)이고 `exc.id` 는 저장소가 붙인 번호일 뿐이다. 되돌리기가 지워졌던
+ * 예외를 되살리면 번호가 새로 붙는데(persist 의 upsert), 그 번호까지 견주면 **앞 단계 토큰이
+ * 「그 뒤 바뀌었다」로 잘못 막혀** 여러 단계 되돌리기(g1 S5)가 두 번째에서 멈춘다.
+ * 규칙 id(SER.id)는 되살릴 때 그대로 지키므로(restoreSerIds) 견주는 값에 남긴다.
+ */
+const comparable = (state: State) => {
+  const canon = canonicalScheduleState(state);
+  return { ...canon, EXC: canon.EXC.map(({ id: _id, ...row }) => row) };
+};
+
 export function sameScheduleState(left: State, right: State): boolean {
-  return JSON.stringify(canonicalScheduleState(left)) === JSON.stringify(canonicalScheduleState(right));
+  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
 }
 
 /** 토큰은 브라우저 메모리에만 머물며, 압축 뒤 HMAC으로 변조를 막는다. */
 export function issueScheduleUndo(actorId: number, before: State, after: State, now = Date.now()): string {
+  return issueScheduleUndoStep(actorId, before, after, now).token;
+}
+
+/**
+ * 토큰과 **그 토큰이 끝나는 시각**을 함께 낸다 (g1 S5 「⟲ 되돌리기 ▾」 여러 단계).
+ * 화면은 단계 목록에서 지난 것을 빼야 하는데, 10분이라는 수를 화면이 따로 들면 서버 규칙의 사본이 된다.
+ * 그래서 만료는 토큰 안의 `exp` 와 **같은 값**을 ISO 로 한 번 더 적어 보낸다(토큰을 화면이 풀지 않게).
+ */
+export function issueScheduleUndoStep(
+  actorId: number, before: State, after: State, now = Date.now(),
+): { token: string; expiresAt: string } {
+  const exp = Math.floor(now / 1000) + TTL_SECONDS;
   const payload: UndoPayload = {
     v: VERSION,
     actorId,
-    exp: Math.floor(now / 1000) + TTL_SECONDS,
+    exp,
     before: canonicalScheduleState(before),
     after: canonicalScheduleState(after),
   };
   const body = deflateRawSync(Buffer.from(JSON.stringify(payload))).toString('base64url');
-  return `${body}.${sign(body)}`;
+  return { token: `${body}.${sign(body)}`, expiresAt: new Date(exp * 1000).toISOString() };
 }
 
 function isState(value: unknown): value is State {
