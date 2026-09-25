@@ -6,6 +6,20 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-52 wave3 g3 상담 배치안·일정 (2026-09-25 · v4.47): 새 표 둘 + 칸 하나 — LEAD_PLAN(배치안 초안 줄 · 과목 · 주 N회 · 강사 · 단가 칸 없음(RATE 가 정본) · 23-16 · 24-07) · LEAD_APPT(2차 상담 · 진단고사 일정 · 종류마다 한 줄 · ser_id 가 비면 「미생성」 · 23-15) · LEAD.recheck_on(보류 재확인 날짜 · 「연장 +2일」 · 23-16). 옛 행 보정 0 · 마이그레이션은 v4.45 의 1762400000000 파일에 더했다.
+// TBO-52 wave3 g4 안내 두 상자 (2026-09-25 · v4.46): NULL 허용 칸 둘 — GUIDE.direction(§44 「지도 방향」) · GUIDE.admin_note(§44 「관리자 코멘트 · 강사만」 — 학부모 발송 본문·안내문 PNG 에 싣지 않는다) · 길이 CHECK 둘(guide_direction_len · guide_admin_note_len · 본문과 같은 4000자). 쓰기는 안내 작성(PUT /guides/{id}/body)이 보낸 칸만 · 보낸 안내는 셋 다 잠김. 옛 안내 NULL(보정 0 · N-25). 마이그레이션 1 (1762500000000-guide-direction).
+// TBO-52 wave3 상담·컨설팅 (2026-09-25 · v4.45): NULL 허용 칸 넷 — LEAD.grade(§23 카드 학년 칩 · 23-10) · LEAD.reason_kind(§24 실패 사유 분류 다섯 · lead_reason_kind_words CHECK · 24-05) · CONS_SESS.result · CONS_SESS.next_until(§31 회차 「결과」·「다음까지」 · 31-08 — 다음까지는 담당의 TODO 한 줄 + NOTI). 옛 행 NULL(보정 0 · N-25). 마이그레이션 1 (1762400000000-intake-consulting-w3).
+// TBO-52 wave3 g2 알림 제목 (2026-09-25 · v4.44): NOTI.title varchar(80) nullable 한 칸 — §16 카드의 굵은 제목(g2 대조 16-1). body 한 칸으로는 제목과 상세를 가를 수 없었고 본문 글자를 잘라 짐작하지 않는다. 옛 행 NULL(보정 0 · N-25) · 화면은 NULL 이면 본문을 한 줄로 그린다. 제목을 적는 쓰기는 서랍의 결재 결과 둘(요청 승인·반려 · 변경 요청 반영·반려)부터이고 나머지 알림 쓰기는 NULL 그대로다. 마이그레이션 1 (1762900000000-noti-title).
+// TBO-52 DQ3 학부모 수신 대상 (2026-09-25 · v4.43): 새 표 둘 — GUARDIAN(학생 한 명에 보호자 N명 · 대표 하나 guardian_one_primary 부분 유니크 · 연락처 최소 하나 guardian_contact_present · 받는 채널엔 그 연락처 guardian_email_channel/guardian_sms_channel · 휴대폰은 숫자만 · 삭제는 active=false) · GUARDIAN_SEND(보호자×채널 시도 한 번에 한 줄 · 가린 받는 곳만 · sent|failed|not_configured · (request_key, guardian_id, channel) 유니크로 재시도 멱등). 대표 답변 「복수 보호자 + 선택 발송, 현재 쓰는 이메일과 Naver SENS 만」 — 채널 CHECK 는 email·sms 둘뿐이고 채널을 더하는 자리는 back notify/sender.SEND_CHANNELS 한 곳에서 시작한다. PNOTI.sent_at 은 실제로 나간 줄(sent)이 하나라도 있을 때만 찍힌다(N-42). 마이그레이션 1 (1762300000000-guardian) · 기존 행 보정 0.
+// TBO-52 DQ1 상담 진단 점수 (2026-09-25 · v4.42): 새 표 LEAD_DIAG — 영어·수학·인터뷰 점수만 저장하고 레벨(foundation|practice|master)·교재는 담당자가 고른 값을 적는다. 만점·경계·자동 판정/배치 없음(A-04/A-05 「자동」은 의도적 제외). append-only · 최신 줄이 현재 값 · 등록 뒤에는 LEAD.student_id 를 따라 학생의 것으로 읽는다(DIAG 로 복사 0). 마이그레이션 1 (1762200000000-lead-diag) · 기존 행 보정 0.
+// TBO-51 S7 흔적을 남긴다 (2026-09-21): 표·컬럼 0 — **CONS_EVENT.event_type 에 낱말 둘**(item_done · item_undone). 컨설팅 항목 체크/해제(toggleItem)의 **해제가 done_by·done_at 을 NULL 로 되돌려** 누가 언제 끝냈다고 했는지가 행에서 통째로 사라지는데 어느 원장에도 줄이 없었다(전수 검수 §7). 필수 항목은 컨설팅 종료를 막는 조건이라 그 체크는 업무 판단이다. 남기는 자리를 log 가 아니라 **그 도메인의 원장**으로 고른 것은 이 파일의 다른 열한 쓰기가 전부 cons_event 에 남기기 때문이다 — 한 자리만 log 로 보내면 「이 건에 누가 무엇을 했나」가 두 표로 갈린다(C95 가 낸 길 그대로). 나머지 넷(LIB 수정 · ISSUE 진도 · GPA_USE 삭제 · MFB 고치기)은 **표를 안 건드리고 log 에** 남긴다 — hist 는 원문 §40 필터 칩의 낱말이라(HIST_ACTIONS) 칩에 없는 동작을 넣으면 그 줄이 「전체」에만 걸리고, before/after 칸도 없다. 마이그레이션 1 (1761900000000-cons-event-item-words).
+// TBO-51 P1 매니저에게도 모든 권한 (대표 결정 2026-09-21): 표·컬럼 0 — **CHECK 넷을 내린다**(rep_no_self_review · rpt_no_self_review · plan_due_no_self_approve · gpa_use_no_self_approve). 판정을 여는 자리는 common/perm/perm.ts 의 ceoGate 한 줄과 lib/approval.SELF_APPROVAL_GUARDED 배열 하나이고, **제약은 그 판정과 같이 움직인다** — 코드만 풀고 CHECK 를 남기면 단추는 서는데 표가 거절한다(S5 가 고친 결함). 지출의 둘(expense_no_self_review · expense_no_self_file_review)과 gpa_use_approve_pair 는 **그대로 둔다**. 마이그레이션 1 (1761800000000-self-approval-open) · 되돌리면 down 이 위반 행을 세어 경고하고 NOT VALID 로 다시 건다.
+// TBO-51 S2 돈이 새는 옆문 (2026-09-20): EXPENSE.filed_by(실제로 올린 사람 · expense_no_self_file_review CHECK · 옛 행 NULL 보정 0 · N-25). 대리 등록은 대표만이고(403 EXPENSE_PROXY_FORBIDDEN) 대신 올린 사람도 그 건을 심사하지 못한다 — 둘 중 하나만 하면 구멍이 남는다. 수강 종료가 청구서를 void 로 접는 경우는 대표만(409 WITHDRAW_NEEDS_CEO_VOID · 표 변경 0) · 입금 줄 삭제에 LOG(PAY delete · 표 변경 0). 새 표 0 · 컬럼 1 · 마이그레이션 1 (1761600000000-expense-filed-by).
+// TBO-51 S1 결재는 올린 사람이 못 한다 (2026-09-20): GPA_USE.approved_by/approved_at(승인 도장 · gpa_use_approve_pair/gpa_use_no_self_approve CHECK · 옛 행 NULL 보정 0 · N-25) + 세 CHECK — rep_no_self_review · rpt_no_self_review · plan_due_no_self_approve. 판정은 lib/approval.isSelfReview 한 곳이고 DB 가 직접 SQL 까지 막는다. 단추도 서버가 연다(canDecideDue · canReview · canApprove · D-R39). 새 표 0 · 컬럼 2 · 마이그레이션 1 (1761500000000-self-approval).
+// TBO-51 C96 운영에 만드는 길 (2026-09-19): MTREC.ser_id — 회의 기록을 **시간표의 회차**에 잇는다(ON DELETE SET NULL · mtrec_ser_once 부분 유니크 · 옛 5행 NULL 보정 0 · N-25). 컷 §63 의 「11:00–12:00」·「1호」·「온라인 TN」을 담으려고 start_min·end_min·room_id·zacc_id 네 칸을 새기지 **않는다** — SER 가 이미 갖고 ser_occ 의 EXCLUDE 가 겹침을 막는데, 네 칸을 새기면 같은 사실이 두 곳에 살고(D-R22) 회의가 수업의 줌을 조용히 겹쳐 잡는다. C95 의 CONS_SESS.ser_id 와 같은 길이다. 새 표 0 · 컬럼 1 · 마이그레이션 1 (1761400000000-mtrec-ser).
+// TBO-51 C90 상담 입구 (2026-09-18): LEAD.source(유입 경로 여섯 · lead_source_words CHECK · 옛 행 NULL 보정 0 · N-44) · 새 표 LEAD_TOUCH(사후 관리 접촉 원장 — 누가·언제·어떻게·한 줄·다음은 언제 · append-only) · LEAD_STAGE_LOG 가 이제 이름대로 도달을 기록한다(POST /ops/leads 가 first · PATCH /ops/leads/{id}/stage 가 다음 단계 · N-45) — §71 퍼널이 그 기록으로 센다. 새 표 1 · 컬럼 1 · 마이그레이션 1 (1761300000000-lead-source-touch).
+// TBO-51 C95 컨설팅 회차 기록·종료 + GPA 사이클 마감 (2026-09-18): GPA_CYCLE.closed_at/closed_by(마감 도장 · gpa_cycle_closed_pair/closed_stamp CHECK · 옛 닫힌 행 NULL 보정 0) · CONS_EVENT.event_type 에 session_added/session_written/closed. 회차 잡기는 새 표 0 — CONS_SESS(순번·누가·ser_id) + SER(있으면 연결 · 없으면 ONCE 회차) + TODO(src consulting) 를 한 트랜잭션에서 쓴다(원본 §2 「CONS.sess → SER → TODO」). 종료는 CONS.stage=done · end_on · PNOTI parent(학부모 안내) · cons_event closed. 새 표 0 · 컬럼 2.
+// TBO-51 C93 컴플레인 접수·강사 교체 (2026-09-18): CPL.due_on(대응 기한 · J-98) · CPL.severity(가벼움·보통·심각 · cpl_severity_words CHECK · 옛 행 NULL 보정 0) — POST/PATCH /ops/complaints 가 적는다. 강사 교체 마법사는 새 표 0 — SER/EXC(기존 patch) · GUIDE(teacher_change) · PNOTI(parent) · NOTI · CPL.teacher_changed 를 한 트랜잭션에서 쓴다. 새 표 0 · 컬럼 2.
 // TBO-51 C94-d 추가 수업·단가 예외·지출 등록 (2026-09-18): KIND.extra 깃발(추가 수업 — 시간표 배지·§54 추가 칸·청구서 별도 줄) · STURATE.reason/by_id/created_at(예외 사유 필수 · NOT VALID) · RATE/STURATE/EXPENSE 쓰기 경로. 새 표 0.
 // TBO-51 C94-c 수강 종료·환불 (2026-09-18): SER_STU 에 from_date/to_date — 「아주 빼기」로 행을 지우면 지난 달 셈이 바뀌므로(N-50 ①) 수강 종료는 to_date 를 적는다. 시간표·§54·청구서·단가 구간(인원)이 lib/sql.serStuOn 한 조각으로 그 날짜의 명단을 읽는다. 환불은 PAY 음수 줄 + INV 음수 줄(같은 트랜잭션) · ENR.ended_on.
 // TBO-51 C92-d 월 마감 (2026-09-18): MONTH_CLOSE 표 하나 — 마감 달의 회차·휴강·출결·청구서·이월·휴원 쓰기는 409 MONTH_CLOSED(lib/month-close 한 곳 · 스케줄은 마감 달 회차·예외 스냅숏 앞뒤 비교). 해제는 대표 전용·사유 필수·행을 지우지 않는다(N-140).
@@ -45,7 +59,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.22 (2026-09-14) — TBO-50 C82-b §12 준비 저장 정본(회차 지시·줌 안내 대상)
+// version : 4.47 (2026-09-25) — 같은 날 여섯 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -222,15 +236,23 @@ Table LEAD {
   fail_from   varchar(16) [note: 'N-25 — 실패 당시 이전 단계 명시값(전이 시 라이브 기록). 레거시 NULL=미분류 — stop_at 추정 이관 금지']
   stop_at     varchar(16) [note: '실패 시 중단 지점']
   reason      text
+  source      varchar(16) [note: 'v4.34 · kakao | phone | blog | instagram | referral | walkin — 컷 §23 유입 경로 여섯 (lead_source_words CHECK · NULL 허용). 옛 행은 NULL — 추정 보정 0 (N-25 · N-44). 낱말은 lib/intake-words 한 곳']
+  reason_kind varchar(16) [note: 'v4.45 · unreachable | other_academy | schedule | cost | timing — §24 실패 사유 분류 다섯 (lead_reason_kind_words CHECK · NULL 허용 · 24-05). reason(자유 글)은 설명 칸으로 남는다. 옛 실패 건 NULL — 사유 글에서 추정하지 않는다(N-25). 낱말은 lib/intake-words 한 곳']
+  grade       varchar(10) [note: 'v4.45 · §23 카드의 학년 칩 (23-10). STU.grade 와 같은 폭의 자유 글 — 표기 규약을 서버가 바꾸지 않는다 · 옛 건 NULL · 등록 확정 창이 학생 학년의 기본값으로 채운다']
+  recheck_on  date        [note: 'v4.47 · 보류 재확인 날짜 (23-16). NULL 이면 보류에 들어온 날(LEAD_STAGE_LOG) + 2일(슬라이드 23 「D+2에 수락 여부 확인」) — LeadDto.recheckOn 은 그 유효값이다. POST /ops/leads/{id}/hold/extend(「연장 +2일」)가 유효값 + 2일을 적고, 단계가 바뀌면(단계 이동·되살리기) 비운다']
   created_at  timestamptz [not null, default: `now()`]
   Note: '''
   시드 18건. 어느 단계에서 멈췄는지로 분류한다 (§24).
+  C90 (N-44 · N-45): 유입은 POST /ops/leads(언제나 stage=first · LEAD_STAGE_LOG first) · 단계 이동은 PATCH /ops/leads/{id}/stage(전이표 LEAD_NEXT_STAGES · 같은 트랜잭션에 LEAD_STAGE_LOG) ·
+  사후 관리는 LEAD_TOUCH. 「소개」가 누구 소개인지는 칸이 아니라 LEAD_TOUCH 의 한 줄이다(N-44 결정문).
   48F-3a3b-B1: id/student_id/name/school/owner_id/stage/stop_at/reason/created_at 9컬럼을 기존 entity/init migration과 대조.
   조회 LeadDto는 studentId/ownerId를 포함하고 ownerName(STAFF join)/ageDays(KST 접수 경과일)를 파생한다.
   48F-3a3c-C1: FQ는 name/school/ownerName/reason의 로컬 검색이다. 검색어/선택 상태는 비영속이며 컬럼 추가0.
   fail.from/at{} 대응은 N-25 채택(§4-17 · C35)으로 종결 — from=fail_from(전이 순간 서버 라이브 기록),
   at 역순=LEAD_STAGE_LOG(id 단조) 역순 판정(failed 제외). 레거시 stop_at 추정 이관 없음 — 미분류 보존.
-  created_at은 실패일이 아니다. 실패 사건·재연락 기록·당시 배치안의 영속 계약은 후속이며 Figma 표본을 레코드로 세지 않는다.
+  created_at은 실패일이 아니다. v4.45(wave3): 실패일은 LEAD_STAGE_LOG 의 마지막 failed 줄(LeadDto.failedAt · 24-04), 재연락 대기/완료는 그 뒤 LEAD_TOUCH 가 있는가(24-06),
+  단계 기한 띠는 지금 단계에 들어온 날(LEAD_STAGE_LOG 마지막 줄 · 1차는 created_at) + 슬라이드 23 SLA(1차 2 · 2차 대기 7 · 2차 상담 1 · 보류 2)로 서버가 파생한다(23-12 · 칸 추가 0).
+  등록 실패 건도 되살리기 없이 등록 확정한다(24-07) — 이력은 LEAD_STAGE_LOG(failed → enrolled)와 LOG before 에 남고 stop_at·fail_from 은 되살리기처럼 비운다. 당시 배치안은 v4.47 LEAD_PLAN 이다(23-16 · 24-07).
   위 student_id/owner_id ref는 목표 FK다. init migration에는 실제 FK가 없으며 이번에 운영 DB 무결성을 검증하거나 적용하지 않았다.
   '''
 }
@@ -247,6 +269,91 @@ Table LEAD_STAGE_LOG {
   상담 단계 도달 기록 — append-only (N-25 채택 · v2 §24). 순서 보장은 id 단조.
   «마지막 단계» 판정: fail_from 명시값 → 이 로그 역순(failed 제외) → 미분류.
   이력 없는 레거시 건은 미분류로 보존한다 — 추정 이관을 하지 않는다.
+  C90 (N-45): 실패·되살림·등록(C91)에 더해 유입(first)과 단계 이동이 여기 남는다 — 이름대로 도달 기록이 됐다.
+  §71 퍼널은 「이 달 들어온 건 중 그 단계의 기록이 있거나 지금 그 단계인 건」으로 세고 min(at) 를 「도달 기록 시작일」로 화면에 말한다(옛 건 보정 0).
+  '''
+}
+
+Table LEAD_TOUCH {
+  id      bigserial   [pk]
+  lead_id bigint      [not null, ref: > LEAD.id]
+  kind    varchar(16) [not null, note: 'call | kakao | sms | visit | book(상담 예약) | noshow(예약 불참) | memo — lead_touch_kind_words CHECK · 낱말은 lib/intake-words']
+  note    text        [not null, note: '한 줄 — lead_touch_note_present CHECK(빈 줄 금지)']
+  next_on date        [note: '다음 접촉·상담 예정일 — book 이면 상담 날짜. 「상담 오늘·지남」·「사후 관리 임박·밀림」은 마지막 접촉의 이 칸으로 서버가 센다']
+  by_id   bigint      [ref: > STAFF.id]
+  at      timestamptz [not null, default: `now()`]
+
+  indexes { (lead_id, id) }
+  Note: '''
+  v4.34 · C90 · N-44 결정문 — 상담 사후 관리 접촉 원장(누가 · 언제 · 어떻게 · 한 줄 · 다음은 언제) append-only.
+  단계 전이 로그(LEAD_STAGE_LOG)에 섞지 않는다 — 두 뜻이 한 표에서 갈린다. 끝난 건(등록 · 실패)에도 적는다(해피콜 · 재연락).
+  「+ 신규 문의」의 첫 접촉 한 줄은 유입 경로에서 「어떻게」를 정한다(카카오채널→카카오톡 · 전화→전화 · 워크인→방문 · 그 밖→메모).
+  시드는 넣지 않는다 — QA 가 만든 행은 seed --reset 이 비운다.
+  '''
+}
+
+Table LEAD_DIAG {
+  id         bigserial   [pk]
+  lead_id    bigint      [not null, ref: > LEAD.id, note: '상담 건 — 등록되면 LEAD.student_id 를 따라 그 학생의 진단으로 읽힌다(칸을 새로 채우지 않는다)']
+  english    integer     [note: '영어 점수 — 0 이상(lead_diag_score_nonneg). 만점·경계는 주어지지 않아 위 끝을 두지 않는다(DQ1)']
+  math       integer     [note: '수학 점수 — 0 이상']
+  interview  integer     [note: '인터뷰 점수 — 0 이상']
+  taken_on   date        [note: '진단고사를 본 날 — 모르면 NULL']
+  level      varchar(12) [note: 'foundation | practice | master — 담당자가 고른 값(lead_diag_level_words CHECK · NULL = 아직 고르지 않음). 낱말은 lib/lead-diag-words 한 곳. 점수에서 계산하지 않는다']
+  book_id    bigint      [ref: > LIB.id, note: '담당자가 고른 교재 — 등록 확정 때 교재 키를 안 보낸 첫 줄의 기본 교재가 된다(null 은 덮지 않는다)']
+  note       text        [note: '메모 — LOG 에는 싣지 않는다(연락처가 섞일 수 있다)']
+  created_by bigint      [not null, ref: > STAFF.id]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes { (lead_id, id) }
+  Note: '''
+  v4.42 · DQ1 대표 답변(2026-09-25) 「점수만 저장 + 담당자가 선택」 · N-53 · v2 §23 「진단고사 점수 입력」 · 테스트 시나리오 A-04.
+  append-only — 가장 최근 줄이 지금 값이다(GET /ops LeadDto.latestDiag · GET /ops/leads/{id}/diag 이력). POST /ops/leads/{id}/diag 가 LOG(LEAD diag)와 한 트랜잭션.
+  lead_diag_not_empty — 점수 셋·레벨·교재 중 하나는 있어야 한다. A-04/A-05 의 「자동 판정·자동 배치」는 의도적 제외다(부분 완료가 아니라 채택된 범위).
+  DIAG(강사 서술형 진단 리포트 · student_id NOT NULL)와 다른 표다 — 값을 옮겨 적지 않는다. 시드 3행(2차 상담·보류 건 · 레벨·교재는 담당자가 고른 표본 값).
+  '''
+}
+
+Table LEAD_PLAN {
+  id         bigserial   [pk]
+  lead_id    bigint      [not null, ref: > LEAD.id]
+  seq        smallint    [not null, note: '줄 차례 1~8 (lead_plan_seq_range) · (lead_id, seq) 유니크 lead_plan_lead_seq']
+  kind_key   varchar(16) [not null, ref: > KIND.key]
+  sub_key    varchar(20) [ref: > SUB.key, note: '과목 — 비우면 종류 이름으로 부른다']
+  per_week   smallint    [not null, note: '주 N회 1~7 (lead_plan_per_week_range). 요일·시각은 등록 확정 창에서 잡는다']
+  teacher_id bigint      [ref: > STAFF.id, note: '강사 — 비워도 된다(초안)']
+  created_by bigint      [not null, ref: > STAFF.id]
+  created_at timestamptz [not null, default: `now()`, note: '적은 때 — 「당시」 단가표(RATE)를 고르는 기준일(KST)']
+
+  Note: '''
+  v4.47 · wave3 g3 23-16 · 24-07 — 상담 배치안 초안 줄. 원본 §23 카드 「SAT Reading 주2 · Rebecca」 · §24 「당시 배치안」.
+  PUT /ops/leads/{id}/plan 이 한 건의 줄을 통째로 바꿔 적는다(LOG LEAD plan before/after · 깔때기 안 넷에서만 · 등록·실패 건은 409 LEAD_PLAN_LOCKED).
+  단가 칸이 없다 — 단가표(RATE)가 정본이라 두 곳이면 갈린다(D-R22). LeadPlanLineDto.unitPrice 는 적은 날의 RATE(1인 구간 · 과목 단가 우선)를 읽기 때 붙이고,
+  금액을 볼 수 있는 사람(canMoney)에게만 내려간다(D-R39). 월 합계는 산식 결정 전이라 내리지 않는다.
+  「+ 등록 확정」 창이 이 줄로 배치안 줄(종류 · 과목 · 강사)을 채운다 — 요일·시각은 사람이 잡는다. 시드 5행.
+  '''
+}
+
+Table LEAD_APPT {
+  id         bigserial   [pk]
+  lead_id    bigint      [not null, ref: > LEAD.id]
+  kind       varchar(8)  [not null, note: 'diag(진단고사) | second(2차 상담) — lead_appt_kind_words · (lead_id, kind) 유니크 lead_appt_lead_kind']
+  on_date    date        [not null]
+  start_min  smallint    [not null, note: 'lead_appt_time_range — 0 ≤ start < end ≤ 1440']
+  end_min    smallint    [not null]
+  mode       varchar(8)  [not null, default: 'offline', note: 'offline | online (lead_appt_mode_words) · 온라인이면 room_id NULL (lead_appt_online_no_room)']
+  room_id    bigint      [ref: > ROOM.id]
+  ser_id     bigint      [ref: > SER.id, note: '시간표 회차 — NULL 이면 「미생성」. 시간표에서 지우면 연결만 풀린다(ON DELETE SET NULL)']
+  created_by bigint      [not null, ref: > STAFF.id]
+  created_at timestamptz [not null, default: `now()`]
+
+  Note: '''
+  v4.47 · wave3 g3 23-15 — 원본 §23 2차 대기 카드의 「진단 08-24 10:00 · 본원 [미생성]」「2차 08-26 14:30 · 본원 [미생성]」.
+  PUT /ops/leads/{id}/appts 가 종류마다 한 줄을 적는다(이미 시간표에 만든 줄은 409 LEAD_APPT_SCHEDULED — 시간표에서 옮긴다).
+  POST /ops/leads/{id}/appts/schedule(「스케줄에 N건 만들기」)가 기존 시간표 쓰기(ScheduleWriteService.create · ONCE)로 회차를 만들고 ser_id 로 잇는다
+  (진단 = KIND diagx · SUB diag, 2차 = KIND consult · SUB intake · 강사 자리 = 상담 담당 · 겹침은 SER_OCC EXCLUDE 가 막는다 → 409 RESOURCE_CONFLICT).
+  이은 뒤의 날짜·시각·강의실은 시간표(SER_OCC)가 정본이다 — 카드는 그 회차를 읽는다. 2차 대기 카드의 기한 띠는 2차 일정이 있으면 「2차 상담 날짜 시각」이다.
+  시드 3행(2차 대기 두 건 · 전부 미생성).
   '''
 }
 
@@ -442,6 +549,59 @@ Table STU_PAUSE {
   '''
 }
 
+Table GUARDIAN {
+  id            bigserial    [pk]
+  student_id    bigint       [not null, ref: > STU.id]
+  name          varchar(40)  [not null, note: 'guardian_name_present CHECK — 공백만은 안 된다']
+  relation      varchar(20)  [note: '어머니 · 아버지 · 보호자 … 사람이 적는 짧은 말(코드 아님)']
+  email         varchar(254) [note: 'guardian_email_shape CHECK — notify/sender.isEmail 과 같은 모양']
+  phone         varchar(11)  [note: '숫자만 010xxxxxxxx — notify/sender.phoneDigits · guardian_phone_digits CHECK']
+  receive_email boolean      [not null, default: true, note: 'guardian_email_channel CHECK — 켜면 email 이 있어야 한다']
+  receive_sms   boolean      [not null, default: false, note: 'guardian_sms_channel CHECK — 켜면 phone 이 있어야 한다']
+  is_primary    boolean      [not null, default: false, note: '대표 보호자 — 발송 창에서 미리 체크된다']
+  active        boolean      [not null, default: true, note: 'false = 사용 중지. 지우지 않는다(GUARDIAN_SEND 가 가리킨다)']
+  created_by    bigint       [not null, ref: > STAFF.id]
+  created_at    timestamptz  [not null, default: `now()`]
+  indexes {
+    student_id [name: 'guardian_student_idx']
+    student_id [unique, name: 'guardian_one_primary', note: 'WHERE is_primary 부분 유니크 — 대표는 학생당 하나']
+  }
+  Note: '''
+  v4.43 · TBO-52 DQ3 — 대표 답변(2026-09-25) 「복수 보호자 + 선택 발송, 현재 쓰는 이메일과 Naver SENS 만」. N-42 의 수신처.
+  STU 에 칸 두 개를 붙이지 않고 표로 둔 까닭은 답이 「여러 명」이기 때문이다. 발송 때 사람이 보호자와 채널을 고른다.
+  guardian_contact_present CHECK: email 또는 phone 중 하나는 있다. guardian_primary_active CHECK: 사용 중지한 사람은 대표가 아니다.
+  연락처는 관리 API(@Perm canAdminPage+canCrudAll)에만 실린다 — 강사 응답 어디에도 없다. LOG 에는 가린 값만 적는다.
+  채널을 더할 때(예: 알림톡) receive_<채널>·연락처 칸과 CHECK 를 이 표에 함께 새긴다 — 지금은 만들지 않는다(대표 답변).
+  기존 행 0 (새 표).
+  '''
+}
+
+Table GUARDIAN_SEND {
+  id          bigserial    [pk]
+  request_key uuid         [not null, note: '한 번의 「보내기」 — 재시도는 같은 키로 와서 앞선 결과를 돌려받는다']
+  pnoti_id    bigint       [ref: > PNOTI.id, note: '§43 회차 학부모 안내에서 보냈으면 그 줄 — 안내문 등 다른 곳이면 null']
+  student_id  bigint       [not null, ref: > STU.id]
+  guardian_id bigint       [not null, ref: > GUARDIAN.id]
+  channel     varchar(10)  [not null, note: "guardian_send_channel CHECK IN ('email','sms') — notify/sender.SEND_CHANNELS"]
+  to_masked   varchar(80)  [not null, note: '가린 받는 곳 ab***@example.com · 010-****-1234 — 원문은 두지 않는다']
+  status      varchar(16)  [not null, note: "guardian_send_status CHECK IN ('sent','failed','not_configured')"]
+  provider_id varchar(200) [note: '메일 messageId · SENS requestId']
+  error       text         [note: '실패·미설정 까닭 — 받는 곳 원문은 가려서 적는다']
+  sent_by     bigint       [not null, ref: > STAFF.id]
+  sent_at     timestamptz  [not null, default: `now()`, note: '시도 시각 — 실패·미설정 줄도 갖는다']
+  indexes {
+    (request_key, guardian_id, channel) [unique, name: 'guardian_send_once']
+    (student_id, sent_at) [name: 'guardian_send_student_idx']
+    pnoti_id [name: 'guardian_send_pnoti_idx', note: 'WHERE pnoti_id IS NOT NULL']
+  }
+  Note: '''
+  v4.43 · TBO-52 DQ3 — 보호자 발송 원장. 보호자×채널 **시도 한 번에 한 줄**, append-only.
+  설정이 없어 시도하지 않은 것도 not_configured 로 남긴다 — 조용히 성공으로 적지 않는다(notify/sender 「보낸 척하지 않는다」).
+  PNOTI.sent_at 은 같은 요청에 sent 가 하나라도 있을 때만 찍힌다. 같은 request_key 는 requestKey 권고 잠금 + guardian_send_once 로
+  두 번 나가지 않는다. 시드는 넣지 않는다(보낸 적 없는 발송을 지어내지 않는다). 기존 행 0 (새 표).
+  '''
+}
+
 Table ATT {
   id            bigserial   [pk]
   ser_id        bigint      [not null, ref: > SER.id]
@@ -617,6 +777,8 @@ Table GUIDE {
   reason      varchar(20)   [not null, note: 'new(첫 수업) | teacher_change — 14자라 varchar(12) 에 안 들어갔다 (TBO-26)']
   state       guide_state_t [not null, default: 'draft']
   body        text
+  direction   text          [note: 'v4.46 · §44 「지도 방향」 상자 (g4 §44-3) · guide_direction_len CHECK(≤4000) · 옛 안내 NULL']
+  admin_note  text          [note: 'v4.46 · §44 「관리자 코멘트 · 강사만」 — 관리자와 받는 강사에게만 보인다. 학부모 발송 본문(body)·안내문 PNG 에 싣지 않는다 · guide_admin_note_len CHECK(≤4000) · 옛 안내 NULL']
   due_on      date
   event_on    date          [note: '첫 수업·강사 교체 사건일. SER_OCC 응답 키는 이 날짜와 ser_id로 서버가 재투영한다.']
   created_by  bigint        [ref: > STAFF.id]
@@ -630,7 +792,8 @@ Table GUIDE {
   **한 번 보내는 것**만 여기 있다. 첫 수업이거나 강사가 바뀐 학생만 대상 (D-R5).
   온라인 줌 링크처럼 **매번 나가는 것은 PNOTI** 다 (§43 「한 번 / 매번」 구분).
   초안 생성 시 서버가 현재 회차·수강생·담당 강사를 다시 검증하고 같은 논리 사건의 중복 생성을 막는다.
-  학부모/강사 실제 외부 전달 대상·전달 원장은 아직 미확정이므로 이 표가 전송 성공을 뜻하지 않는다.
+  학부모 외부 전달은 v4.43(DQ3)에서 GUARDIAN(수신처) + GUARDIAN_SEND(보호자×채널 시도 원장)로 옮겨 갔다 — 이 표의 상태는 전송 성공을 뜻하지 않는다.
+  강사 쪽 전달은 앱 안 알림(NOTI)이다.
   '''
 }
 
@@ -653,7 +816,9 @@ Table PNOTI {
   줌 안내 원장. 온라인 수업은 매번 보낸다 (D-R5). channel과 FK는 DB가 방어한다.
   대상이 둘이다 — `parent` 행은 학생을, `teacher` 행은 강사를 가리키고 섞이면 `pnoti_audience_target` 이 막는다.
   기존 행은 전부 `parent` 다: 이 표가 「학부모 안내」였고 `student_id` 가 NOT NULL 이었으므로 다른 값일 수 없었다 (추정 이관 아님).
-  **학부모 실제 외부 전달은 아직 만들지 않았다** — STU 에 수신처 칸이 없다 (N-42). §12 는 그 사실을 「학부모 없음」으로 적는다.
+  학부모 줄의 실제 외부 전달은 **보호자 선택 발송**이 한다 (v4.43 · DQ3 · N-42) — 수신처는 STU 칸이 아니라 GUARDIAN(학생당 N명)이고,
+  보호자×채널 시도는 GUARDIAN_SEND.pnoti_id 로 이 줄을 가리킨다. `sent_at` 은 그 원장에 `sent` 가 하나라도 있을 때만 찍히고
+  `channel` 은 처음 실제로 나간 채널(email|sms)로 바뀐다. 설정 없음·실패만 있으면 이 줄은 그대로 「보낼 것」이다(보낸 척하지 않는다).
   '''
 }
 
@@ -734,6 +899,7 @@ Table GPAPACK {
   title       varchar(120)[not null]
   memo        text
   state       varchar(12) [not null, default: 'pending', note: 'pending | delivered | received']
+  legacy_state varchar(12) [note: '이관 전 원문 상태. 승인과 실제 전달은 구분한다. 이미 옛33을 적용한 DB는 원문 미상 NULL']
   effective_on date       [note: '신규·수정행 필수. 레거시 null 추정 이관 금지용 NOT VALID CHECK']
   coordinator_id bigint   [ref: > STAFF.id, note: '신규·수정행 필수. 레거시 null 추정 이관 금지용 NOT VALID CHECK']
   created_by  bigint      [ref: > STAFF.id]
@@ -955,12 +1121,13 @@ Table EXPENSE {
   reason      text        [note: '신청액과 다를 때 필수']
   receipt_url text        [note: '없으면 승인 불가']
   requester_id bigint     [ref: > STAFF.id]
+  filed_by    bigint      [ref: > STAFF.id, note: 'v4.37 · **실제로 올린 사람** — 대표가 직원 대신 올릴 때 requester_id 와 갈린다 (ON DELETE RESTRICT · expense_no_self_file_review). 이 칸이 없던 동안 「남의 이름으로 올린 뒤 자기가 승인」이 A-5 를 비켜갔다. 옛 행은 NULL — 누가 올렸는지 모른다 (N-25 · 보정 0)']
   state       varchar(12) [not null, default: 'pending', note: 'pending | approved | rejected — CHECK expense_state_words. 대표 보고는 approved 만 센다']
   reviewer_id bigint      [ref: > STAFF.id]
   reviewed_at timestamptz
   created_at  timestamptz [not null, default: `now()`]
 
-  indexes { (state, created_at) (spend_on) }
+  indexes { (state, created_at) (spend_on) (filed_by) }
   Note: '''
   명세서의 EXPENSE(지출)에 **법인카드 승인 흐름을 얹었다** — 별도 표를 만들지 않는다.
 
@@ -971,6 +1138,7 @@ Table EXPENSE {
     expense_state_words         pending | approved | rejected
     expense_amount_le_requested amount <= requested_amount — 증액은 재신청 (A-D3)
     expense_no_self_review      reviewer_id <> requester_id — 본인 신청 자기 승인 금지
+    expense_no_self_file_review reviewer_id <> filed_by — v4.37 (S2) · **대신 올린 사람도 심사하지 못한다**
   레거시 misc 는 etc 로 **낱말만** 옮겼다(뜻 동일 · 1756800000000 선례). 추정 이관이 아니다.
   카드 **신청** 화면은 원본 61컷에 없어 미배선 — 이번 청크는 승인/반려뿐이다.
   '''
@@ -1029,8 +1197,8 @@ Table CONS_FEEDBACK {
 Table CONS_EVENT {
   id          bigserial   [pk]
   cons_id     bigint      [not null, ref: > CONS.id]
-  event_type  varchar(24) [not null, note: 'created | share_changed | file_added | file_removed | feedback_added | feedback_resolved | parent_delivered | payment_added | archived']
-  ref_id      bigint      [note: '파일·피드백·납부 원장 식별자. 종류별 다형 참조라 FK로 추정하지 않음']
+  event_type  varchar(24) [not null, note: 'created | share_changed | file_added | file_removed | feedback_added | feedback_resolved | parent_delivered | payment_added | archived | session_added | session_written | closed (v4.33 · C95 — 뒤 셋) | item_done | item_undone (v4.40 · S7 — 켬·끔을 두 낱말로 나눈다: append-only 원장에서 마지막 줄이 곧 지금 상태여야 하고, ref_id 만으로는 어느 쪽인지 알 수 없다)']
+  ref_id      bigint      [note: '파일·피드백·납부·회차·항목(v4.40) 원장 식별자. 종류별 다형 참조라 FK로 추정하지 않음']
   by_id       bigint      [not null, ref: > STAFF.id]
   created_at  timestamptz [not null, default: `now()`]
   indexes { (cons_id, created_at, id) }
@@ -1067,9 +1235,17 @@ Table CONS_SESS {
   what        text
   why         text
   how         text
-  ser_id      bigint      [ref: > SER.id, note: '회차 기록 시 스케줄이 생긴다']
+  ser_id      bigint      [ref: > SER.id, note: '회차 기록 시 스케줄이 생긴다 — v4.33(C95): 그날 담당의 컨설팅 회차가 있으면 그 SER, 없으면 하루짜리(ONCE) SER 를 시간표 쓰기 그대로 만든다']
+  result      text        [note: 'v4.45 · §31 회차 본문의 「결과」(인용 상자 · 31-08)']
+  next_until  text        [note: 'v4.45 · §31 「다음까지」(31-08) — PATCH …/sessions/{sessId} 가 새로 적거나 바꾸면 같은 트랜잭션에서 건 담당의 TODO(src=consulting · 제목 「컨설팅 N회차 다음까지 — …」 · 기한 = 그 뒤 첫 회차) 한 줄(있으면 제목만 고친다) + 담당 NOTI(etc) — 슬라이드 31 연동']
   indexes { (cons_id, seq) [unique, name: 'cons_sess_cons_seq_uniq'] }
-  Note: '회차별 육하원칙 기록. 실측: 기록하면 SER 35→36 · TODO 5→6.'
+  Note: '''
+  회차별 육하원칙 기록. 실측: 기록하면 SER 35→36 · TODO 5→6.
+  v4.33 (C95 · I-91) — POST /consulting/{id}/sessions 가 날짜 여러 개를 한 번에 적는다: seq 는 max+1 부터 날짜 오름차순, who 는 「담당 · 학생」을 서버가 조립,
+  날짜마다 담당의 할 일(TODO.src=consulting · cons_id) 한 줄. 육하원칙은 PATCH …/sessions/{sessId} 가 보낸 칸만 적고 셋이 다 차면 그 할 일을 접는다.
+  「한 회차」는 on_date 가 오늘 이하(또는 미정)인 행 — 앞으로 잡아 둔 날짜는 기록이지 완료가 아니다(N-18 「기록 ≠ 완료」). 종료(I-95)는 N-18 채택
+  「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정하고 앞으로 잡아 둔 회차가 남아 있으면 막는다. 표 변경 0.
+  '''
 }
 
 Table CPL {
@@ -1082,8 +1258,12 @@ Table CPL {
   result      text
   teacher_changed boolean [not null, default: false]
   owner_id    bigint      [ref: > STAFF.id]
+  due_on      date        [note: 'v4.32 · 대응 기한 (J-98) — 열린 건에만 「N일 지남」을 센다. 옛 행 NULL (N-25)']
+  severity    varchar(8)  [note: 'v4.32 · light | normal | severe — 원본 §67 카드의 가벼움 · 보통 · 심각 (cpl_severity_words CHECK · NULL 허용). 낱말은 lib/complaint-words 한 곳']
   created_at  timestamptz [not null, default: `now()`]
   Note: '''시드 8건. 접수 → 대응 → 결과.
+    v4.32 (C93) — POST /ops/complaints(「+ 접수」 · 언제나 received · 담당 알림 · LOG) · PATCH /ops/complaints/{id}(보낸 칸만 · acting 은 담당이, closed 는 결과가 있어야 한다 · J-101).
+    teacher_changed 는 강사 교체 마법사(POST /ops/teacher-change · cplId)가 처음 채운다 — 접수 건은 그 순간 대응으로 옮기고 담당이 비어 있으면 돌린 사람이 된다.
     v4.25 (C86-d) — 이 줄은 한동안 「open | acting | done」이라 선언돼 있었고 표에는 제약이 없었다.
     저장되는 말은 처음부터 received | acting | closed 였는데, lib/exec-areas 의 컴플레인 판정이
     선언을 믿고 stage <> 'done' 으로 세는 바람에 **끝난 건까지 전부 세어** 대표 보고 배지가 8 이었다
@@ -1092,17 +1272,22 @@ Table CPL {
 }
 
 Table PLAN {
-  id          bigserial   [pk]
-  title       varchar(120)[not null]
-  stage       varchar(12) [not null, note: 'draft | review | rework | ok | done']
-  goal        text
-  tasks       jsonb
-  research    text
-  ask         text        [note: '결정 요청']
-  due_on      date
-  owner_id    bigint      [ref: > STAFF.id]
-  created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 3건. 대표 결재 대기 수가 일일 보고의 판정 기준.'
+  id            bigserial   [pk]
+  title         varchar(120)[not null]
+  stage         varchar(12) [not null, note: 'v4.38 · draft | review | rework | approved | done — plan_stage_words CHECK (NOT VALID). 한동안 이 note 와 entity 주석이 둘 다 `ok` 라 적었다: 마이그레이션 1756700000000 이 ok·done 을 approved 로 접은 뒤였고 코드가 쓰는 낱말은 줄곧 approved 였다 (C86-d 와 같은 자리 — 선언과 데이터가 다르면 그 차이를 읽은 쪽이 조용히 틀린다)']
+  goal          text
+  tasks         jsonb
+  research      text        [note: 'v4.38 이전에는 시드만 채웠다 — 읽기와 화면 칸은 있는데 쓰는 API 가 없어 §65 「3 · 리서치」가 영원히 「—」였다. PATCH /ops/plans/:id 가 적는다']
+  ask           text        [note: '결정 요청']
+  due_on        date
+  owner_id      bigint      [ref: > STAFF.id]
+  rework_reason text        [note: 'v4.38 · 보완 요청 사유 — **다시 올릴 때 지워진다**(C85-a 가 RPT 에서 정한 것과 같다: 지난 반려 사유가 남아 있으면 지금 상태를 속인다). log.after->>reason 에서 되짚지 않는다 — 사유는 지워지는 업무 상태이고 log 는 지워지지 않는 감사 줄이며, log.after 의 생김새는 계약이 아니다. 옛 행 NULL (N-25 · 보정 0)']
+  created_at    timestamptz [not null, default: `now()`]
+  Note: '''시드 5건. 대표 결재 대기(stage='review') 수가 일일 보고의 판정 기준.
+    v4.38 (S6): 단계를 옮기는 표는 lib/plan-words.PLAN_NEXT_STAGES 한 벌이다 —
+    draft·rework → review(올린 쪽) · approved → done(올린 쪽) · **review → approved|rework 는 여기 없다**
+    (대표의 결재이고 reviewPlan 이 자기 결재 금지·기한 승인 선행·사유 필수를 지나서 옮긴다 · C90 LEAD_NEXT_STAGES 와 같은 규약).
+    「보완 N」 칩은 이 표가 아니라 LOG(entity='plan' · action='rework') 를 센다 — 횟수는 append-only 역사라 어긋날 수 없고 세는 칸을 파지 않는다.'''
 }
 
 Table MKT {
@@ -1134,6 +1319,7 @@ Table MTREC {
   minutes_at  timestamptz [note: '속기록을 마지막으로 저장한 시각 — created_at(행이 생긴 시각)과 다른 값이다']
   minutes_by  bigint      [ref: > STAFF.id, note: '마지막으로 저장한 사람']
   created_at  timestamptz [not null, default: `now()`]
+  ser_id      bigint      [ref: > SER.id, note: 'v4.35 · 그 회의가 놓인 시간표 회차 — 시각·강의실·온라인·겹침은 전부 SER/ser_occ 가 이미 갖는다 (ON DELETE SET NULL — 회차가 사라져도 속기록·참석은 기록으로 남는다 · mtrec_ser_once 부분 유니크 · 옛 행 NULL 보정 0 · N-25 · C96)']
   Note: '''
   시드 5건. 속기록 → 할 일 → 알림으로 퍼진다.
   TBO-48 C57 migration 1759200000000: mtrec_minutes_author_pair —
@@ -1184,6 +1370,7 @@ Table NOTI {
   id          bigserial   [pk]
   to_id       bigint      [not null, ref: > STAFF.id]
   from_id     bigint      [ref: > STAFF.id]
+  title       varchar(80) [note: '§16 카드의 굵은 제목 (v4.44 · g2 16-1). 옛 행·제목을 안 적는 쓰기는 null — 화면은 본문만 그린다']
   body        text        [not null]
   link        varchar(80)
   category    varchar(20) [not null, default: 'etc', note: '작성 독촉 · 재알람 · 리포트 · 일정 변경 · 요청 처리 · 기타. C76 migration 32 CHECK']
@@ -1302,8 +1489,14 @@ Table GPA_CYCLE {
   from_date   date      [not null]
   to_date     date      [not null, note: '4주']
   closed      boolean   [not null, default: false]
+  closed_at   timestamptz [note: 'v4.33 · 마감 시각 — POST /gpa/cycles/{id}/close 가 찍는다. 시드가 켠 옛 닫힘은 NULL (N-25)']
+  closed_by   bigint    [ref: > STAFF.id, note: 'v4.33 · 마감한 사람 (ON DELETE RESTRICT · closed_at 과 짝 — gpa_cycle_closed_pair · 찍혔으면 closed — gpa_cycle_closed_stamp)']
   indexes { (from_date, to_date) }
-  Note: '4주 사이클. 이월 없음 — 닫히면 잔여 포인트는 소멸한다 (D-R29).'
+  Note: '''
+  4주 사이클. 이월 없음 — 닫히면 잔여 포인트는 소멸한다 (D-R29).
+  v4.33 (C95 · O-150 「4주마다 — GPA 사이클 마감」) — 마감은 열려 있고 · 끝날이 지났고 · 승인 대기가 0 일 때만(끝나기 전에 닫으면 남은 날의 기록을 적을 사이클이 없다).
+  잔여는 board() 와 같은 셈(배정 − 승인 사용)이 그대로 소멸 포인트다. 뒤에 사이클이 없으면 끝날 다음 날부터 4주를 연다 · LOG(GPA_CYCLE close).
+  '''
 }
 
 Table GPA_ALLOC {
@@ -1328,11 +1521,14 @@ Table GPA_USE {
   coord_id    bigint      [ref: > STAFF.id]
   note_url    text        [note: '기록지']
   state       varchar(8)  [not null, default: 'wait', note: 'wait | ok — 대기는 타임라인에 점선']
-  indexes { (cycle_id, student_id, on_date) }
+  approved_by bigint      [ref: > STAFF.id, note: 'v4.36 · 승인한 사람 (ON DELETE RESTRICT · approved_at 과 짝 — gpa_use_approve_pair). 되돌리면(wait) 둘 다 지운다. v4.39 — 「적은 사람과 달라야 한다」(gpa_use_no_self_approve)는 대표 결정 2026-09-21 로 내렸다. 도장은 그대로 남는다']
+  approved_at timestamptz [note: 'v4.36 · 승인 시각 — PATCH /gpa/uses/{id} state=ok 가 찍는다. 옛 승인 행은 NULL (N-25 · 보정 0)']
+  indexes { (cycle_id, student_id, on_date) (approved_by) }
   Note: '''
   회차별 소비. ptOf() 가 읽고 gpTimeline() 이 날짜·시간순으로 잔여 막대를 그린다.
   배정을 넘기면 붉게 표시하고 추가 결제 또는 다음 사이클 조정을 안내한다.
   학부모 비공개 — 내부 자료로만 쓴다 (D-R30).
+  v4.36 (S1) — 이 경로는 2026-09-20 전까지 **누가 승인했는지 받지도 않아** 자기 기록을 자기가 승인할 수 있었다.
   '''
 }
 
@@ -1477,6 +1673,49 @@ Table SER_OCC {
 //   + trigger             현재 회차의 담당 강사·수강 학생을 다시 검증해 stale/범위 밖 초안을 DB에서도 거절
 //   ! 미확정              학부모 연락처·외부 제공자·학부모/강사 독립 전달 원장은 이번 버전에 만들지 않음
 //
+// v4.39 → v4.40 (2026-09-21 · TBO-51 S7 흔적을 남긴다) — 표 0 · 컬럼 0 · **CONS_EVENT.event_type 낱말 +2**: item_done · item_undone.
+//   전수 검수 §7 「흔적이 없는 쓰기」 다섯 중 **하나만 표를 건드린다.** toggleItem 의 해제 갈래가 cons_item.done_by·done_at 을 NULL 로 되돌려 「누가 언제 끝냈다고 했는지」가 행에서 사라지는데 원장에도 줄이 없었다.
+//   **어느 원장인가가 이 버전의 판단이다.** log 는 before/after 를 갖지만, 이 파일의 다른 열한 쓰기가 전부 cons_event 에 남긴다 — 한 자리만 log 로 보내면 「이 건에 누가 무엇을 했나」의 답이 두 표로 갈리고
+//   cons_event_cons_created_idx 가 이미 예고하는 활동 내역 화면이 항목 체크만 조용히 빠뜨린다. 낱말을 더하는 길은 C95(v4.33)가 이미 냈다.
+//   **나머지 넷은 표를 안 건드린다** — LIB edit · ISSUE progress · GPA_USE delete · MFB edit 는 전부 log(before/after)다. hist 로 보내지 않은 이유는 HIST_ACTIONS 가 **원문 §40 필터 칩 그대로**라 「교재 정보 수정」 같은 낱말이 없고(없는 칩을 지으면 그 줄은 「전체」에만 걸린다 · D-R44), hist 에는 before/after 칸이 아예 없어 **무엇이 무엇으로 바뀌었는지**를 담지 못하기 때문이다.
+//   **기존 행 보정 0** (N-25) — 지난 체크는 done_by·done_at 이 남아 있으면 그 행이 전부이고, 이미 해제된 것은 아무도 모른다. down 은 좁히는 일이라 **새 낱말 줄을 세어서 멈춘다**(지우지 않는다 — 감사 원장이다).
+//   새 표 0 · 컬럼 0 · 마이그레이션 1 (1761900000000-cons-event-item-words).
+// v4.38 → v4.39 (2026-09-21 · TBO-51 P1 매니저에게도 모든 권한 — 대표 결정) — 표 0 · 컬럼 0 · **CHECK 넷 DROP**: rep_no_self_review · rpt_no_self_review · plan_due_no_self_approve · gpa_use_no_self_approve.
+//   대표 결정 「우선은 매니저에게도 모든 권한 주기」와 「자기 결재 금지도 함께 푼다」. 코드에서 여는 자리는 두 곳뿐이다 — common/perm/perm.ts 의 **ceoGate 한 줄**(대표 전용 일곱 판정이 전부 이것을 부른다)과 lib/approval.**SELF_APPROVAL_GUARDED 배열**(지금 값 ['req','chreq','expense']).
+//   **표를 함께 여는 이유**: S1 이 코드와 CHECK 를 같이 걸었으므로 코드만 풀면 「읽기는 canReview: true 인데 UPDATE 가 23514 로 죽는」 자리가 된다 — S5 가 고친 「단추와 서버가 다른 답」의 DB 판이다. **판정과 제약은 언제나 같이 움직인다.**
+//   **안 내린 것 셋**: expense_no_self_review · expense_no_self_file_review(지출은 S1 이전부터 있던 A-5 규칙이라 이번 결정 밖) · gpa_use_approve_pair(「시각과 사람은 짝」은 자기 결재와 다른 이야기다 — 도장은 그대로 남는다).
+//   down 은 **데이터를 고치지 않는다** — 위반 행을 세어 경고만 하고 NOT VALID 로 다시 건다(기존 행은 면제 · 새 INSERT 는 검사 · C86-g). 되돌릴 때는 시드를 다시 돌려 볼 것.
+//   새 표 0 · 컬럼 0 · 마이그레이션 1 (1761800000000-self-approval-open).
+// v4.37 → v4.38 (2026-09-20 · TBO-51 S6 기획이 결재까지 간다) — PLAN.rework_reason (+ plan_stage_words CHECK · NOT VALID).
+//   기획은 만들 수는 있는데 **올릴 수가 없었다** — stage 쓰기가 createPlan(=draft)과 reviewPlan(=approved|rework) 둘뿐이라 stage='review' 로 가는 길이 없고, §69 운영 배지가 그 단계를 세므로 **API 로 만든 기획은 「결재 대기」에 영영 안 잡힌다**(2026-09-20 전수 검수 §5). 게다가 reviewPlan 이 PLAN_OPEN_STAGES 전부를 결재해 **draft 를 review 를 건너뛰고 바로 승인**할 수 있었다 — 「검토 요청」이 결재의 전제가 아니었다.
+//   전이표 PLAN_NEXT_STAGES 한 벌(PATCH /ops/plans/:id/stage)과 본문 쓰기(PATCH /ops/plans/:id — goal·research·ask·title·dueOn · PLAN_WRITABLE_STAGES=draft|rework)가 그 길을 낸다. research 는 읽기와 화면 칸만 있고 쓰는 API 가 없던 자리이고, 기한은 **승인 전에만** 고칠 수 있다(반려가 due_on 을 지운 뒤 새 날짜를 낼 길이 그때까지 없었다).
+//   컬럼은 하나뿐이다 — 보완 요청 사유. 「보완 N」 칩은 LOG 를 세어 컬럼 0 이다. CHECK 는 C86-d 와 같은 이유로 지금 굳힌다: S6 이 done 에 **처음으로 쓰는 길**을 내기 때문이다. NOT VALID · 기존 행 보정 0 (N-25) · 다른 낱말이 있으면 마이그레이션이 세어서 멈춘다.
+//   새 표 0 · 컬럼 1 · 마이그레이션 1 (1761700000000-plan-stage-flow). **제약을 새겼으므로 시드를 다시 돌려 본다**(C86-g).
+// v4.36 → v4.37 (2026-09-20 · TBO-51 S2 돈이 새는 옆문) — EXPENSE.filed_by (+ expense_no_self_file_review CHECK · FK RESTRICT · (filed_by) 인덱스).
+//   「본인 신청은 본인이 심사할 수 없다」(A-5 · expense_no_self_review)는 처음부터 있었는데, **`requesterId` 를 누가 보내든 그대로 받고 있었다** — 남의 이름으로 올린 뒤 자기가 승인하면 제도가 통째로 비켜간다(2026-09-20 전수 검수 §2 ②).
+//   대리 등록을 대표로 좁히는 것(`canCeoFileExpenseForOther` · 403 EXPENSE_PROXY_FORBIDDEN)만으로는 **대표 자신이 그 길을 그대로 쓴다** — 그래서 실제로 올린 사람을 행에 남기고 심사가 둘 다 본다.
+//   NOT VALID · 옛 행은 NULL(누가 올렸는지 어디에도 안 남아 있고 requester_id 로 미루어 채우는 것은 추정이다 · N-25 · 보정 0). 새 표 0 · 컬럼 1 · 마이그레이션 1 (1761600000000-expense-filed-by).
+// v4.35 → v4.36 (2026-09-20 · TBO-51 S1 결재는 올린 사람이 못 한다 — REP · RPT · PLAN · GPA) — GPA_USE.approved_by · GPA_USE.approved_at (+ gpa_use_approve_pair · gpa_use_no_self_approve CHECK · approved_by FK RESTRICT · (approved_by) 인덱스) · CHECK rep_no_self_review · rpt_no_self_review · plan_due_no_self_approve.
+//   전수 검수에서 같은 규칙이 **일곱 결재 갈래 중 셋에만** 있었다 — 지출에는 DB CHECK 까지 있는데(expense_no_self_review) 리포트·대표 보고·기획·GPA 넷에는 한 줄도 없었다. 규칙을 정해 놓고 한 곳에만 적용하면 다음 사람도 똑같이 빠뜨린다.
+//   판정은 lib/approval.isSelfReview 한 곳이고 DB CHECK 가 직접 SQL 까지 막는다. 셋 다 NOT VALID — 올린 사람을 모르는 옛 행(NULL)은 막지 않는다(N-25 · 보정 0). **NOT VALID 는 기존 행만 면제하고 새 INSERT 는 검사하므로 시드가 걸린다** — src/seed/outputs.ts 가 reviewerId 를 작성자와 다르게 고르도록 함께 고쳤다(C86-g 와 같은 자리).
+//   단추도 같은 질문을 한다 — PLAN_DETAIL.canDecideDue/canReview · EXEC_REPORT.canReview · GPA_USE.canApprove 는 전부 서버가 판정한다(D-R39). 새 표 0 · 컬럼 2 · 마이그레이션 1 (1761500000000-self-approval) · 기존 행 보정 0.
+// v4.34 → v4.35 (2026-09-19 · TBO-51 C96 운영에 만드는 길 — 회의 잡기 · 기획 올리기 · 기간/갈래 질의) — MTREC.ser_id (FK SER ON DELETE SET NULL · mtrec_ser_once 부분 유니크 · NULL 허용).
+//   N-46 ③ 을 **칸 넷이 아니라 한 칸**으로 읽는다. 컷 §63 이 요구하는 시각(11:00–12:00) · 강의실(1호) · 온라인(온라인 TN)은 SER 에 이미 있고, ser_occ 의 EXCLUDE 가 강사·강의실·줌 겹침을 이미 막는다.
+//   mtrec 에 start_min/end_min/room_id/zacc_id 를 새기면 ① 같은 사실이 두 곳(D-R22) ② 겹침을 아무도 안 막는다 — 회의가 수업이 쓰는 줌을 조용히 겹쳐 잡는다. C95 의 CONS_SESS.ser_id 와 같은 길이다.
+//   POST /ops/meetings 가 한 트랜잭션에서 ScheduleWriteService.create(ONCE · kind='meeting' · sub=MT_TYPE_SUB) → mtrec(ser_id) → mtattd(confirmed NULL = 응답 대기) 를 쓴다. 옛 5행은 NULL(보정 0 · 화면이 「시각 없음」이라 말한다).
+//   새 표 0 · 컬럼 1 · 마이그레이션 1 (1761400000000-mtrec-ser) · 기존 행 보정 0.
+// v4.33 → v4.34 (2026-09-18 · TBO-51 C90 상담 입구 — 신규 문의 · 유입 경로 · 접촉 원장 · 단계 이동 · §71 퍼널) — LEAD.source (+ lead_source_words CHECK · NULL 허용) · 새 표 LEAD_TOUCH (kind · note · next_on · by_id · at + lead_touch_kind_words · lead_touch_note_present CHECK · FK lead/staff · (lead_id, id) 인덱스).
+//   N-44 결정문 그대로 — 유입 경로 여섯과 사후 관리 접촉 원장. 옛 건은 source NULL(보정 0 · 「경로 없음」 칩이 그 사실을 말한다). next_on 은 결정문이 살린다고 한 「사후 관리 임박」 타일·경고 둘을 세는 데 필요한 「다음은 언제」다.
+//   N-45 결정문 그대로 — POST /ops/leads(first) · PATCH /ops/leads/{id}/stage(전이표 안에서만 · 같은 트랜잭션에 LEAD_STAGE_LOG). §71 퍼널은 도달 기록 + 지금 단계로 세고 「언제부터의 값」을 말한다.
+//   새 표 1 · 컬럼 1 · 마이그레이션 1 (1761300000000-lead-source-touch) · 기존 행 보정 0.
+// v4.32 → v4.33 (2026-09-18 · TBO-51 C95 컨설팅 회차 기록·종료 + GPA 사이클 마감) — GPA_CYCLE.closed_at · GPA_CYCLE.closed_by (+ gpa_cycle_closed_pair · gpa_cycle_closed_stamp CHECK · closed_by FK RESTRICT) · CONS_EVENT.event_type +3.
+//   회차 잡기(I-91)는 표를 새로 파지 않는다 — 원본 §2 「CONS.sess → SER → TODO」를 CONS_SESS + SER(있으면 연결 · 없으면 ScheduleWriteService.create ONCE) + TODO(src consulting) 로 한 트랜잭션에서 한다.
+//   종료(I-95)는 N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」 — CONS.stage=done · end_on · PNOTI parent(학부모 안내 · 발송처 N-42) · cons_event closed. 예외 종료는 N-18-a.
+//   GPA 마감(O-150)은 지금까지 시드만 켜던 closed 에 누가·언제를 붙인다 — 옛 닫힌 행은 도장 NULL(N-25). 새 표 0 · 컬럼 2 · 마이그레이션 1 (1761200000000-cons-close-gpa-close) · 기존 행 보정 0.
+// v4.31 → v4.32 (2026-09-18 · TBO-51 C93 컴플레인 접수·강사 교체) — CPL.due_on · CPL.severity (+ cpl_severity_words CHECK · NULL 허용).
+//   원본 §67 카드의 심각도(가벼움·보통·심각)와 PDF J-98 의 대응 기한 — 접수하는 길(POST /ops/complaints)이 생기면서 채울 수 있게 됐다(N-46 ③). 옛 행은 NULL 로 두고 화면은 「미정」이라 적지 않는다.
+//   강사 교체 마법사(J-97 · D-46 · N-132 · F-62)는 표를 새로 파지 않는다 — 원본 §2 「강사를 바꾸면 EXC + GUIDE + PNOTI + ISSUE 동시 변경」을 기존 patch(EXC/SER 분할)·GUIDE teacher_change·PNOTI parent·NOTI 로 한 트랜잭션에서 한다(ISSUE 는 강사 칸이 없어 읽기만).
+//   새 표 0 · 컬럼 2 · 마이그레이션 1 (1761100000000-cpl-due-severity) · 기존 행 보정 0.
 // v4.30 → v4.31 (2026-09-18 · TBO-51 C94-d 추가 수업·단가 예외·지출 등록) — KIND.extra · STURATE.reason/by_id/created_at (+ sturate_reason_present NOT VALID).
 //   추가 수업은 종류의 깃발이다(종류 행은 §18 이 만든다) — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 줄 「추가 수업 · 과목」(C-38). 단가 예외는 사유·누가·언제를 남긴다(H-81).
 //   RATE(기본 단가표)·STURATE·EXPENSE 쓰기 경로가 처음 열렸다 — 새 표 0 · 컬럼 4 · 마이그레이션 1 (1761000000000-kind-extra-sturate-reason) · 기존 행 보정 0.
@@ -1590,3 +1829,44 @@ Table SER_OCC {
 //      unpaid → partial → paid, 그리고 → void. 그 외 전이는 409.
 // ============================================================================
 // TBO-50 C81 §47 독촉: NOTI.request_key nullable + (request_key,to_id) partial unique로 기존 알림을 보존하고 같은 배치의 수신자별 중복을 차단한다. request_teacher_id는 전체(null)/선택 강사 요청 범위를 재시도 때 대조한다. 외부 발송이 아닌 내부 NOTI 원장이다.
+
+// v4.40 → v4.41 (2026-09-23): GPAPACK.legacy_state 1컬럼 보존, migration56 RPT 서명쌍 전이 trigger 및57 기존33 적용 DB 컬럼 동기화. 신규·변경 서명쌍은 엄격 검증하고 원문 미상 배우를 추정하지 않는다.
+
+// v4.41 → v4.42 (2026-09-25 · TBO-52 DQ1 상담 진단 점수 — 「점수만 저장 + 담당자가 선택」) — 새 표 LEAD_DIAG (lead_id · english · math · interview · taken_on · level · book_id · note · created_by · created_at
+//   + lead_diag_score_nonneg · lead_diag_level_words · lead_diag_not_empty CHECK · FK lead/lib/staff · (lead_id, id) 인덱스).
+//   N-53 을 「새 표」로 닫는다 — DIAG 는 student_id NOT NULL 인 강사 서술형 리포트라 등록 전 상담 건을 담을 자리가 없고, 두 진단을 한 표에 섞으면 같은 칸이 두 뜻이 된다.
+//   점수의 위 끝·레벨 경계·교재 대응은 주어지지 않았다 — 서버는 점수로 레벨을 정하지 않고 교재도 고르지 않는다. 등록 확정은 교재 키를 안 보낸 첫 줄에 최신 줄의 교재를 기본으로 요청한다.
+//   새 표 1 · 컬럼 0 · 마이그레이션 1 (1762200000000-lead-diag) · 기존 행 보정 0.
+
+// v4.42 → v4.43 (2026-09-25 · TBO-52 DQ3 학부모 수신 대상 — 「복수 보호자 + 선택 발송, 현재 쓰는 이메일과 Naver SENS 만」) — 새 표 둘.
+//   + GUARDIAN        학생 한 명에 보호자 N명 — guardian_name_present · guardian_contact_present · guardian_email_shape · guardian_phone_digits ·
+//                     guardian_email_channel · guardian_sms_channel · guardian_primary_active CHECK · guardian_one_primary(WHERE is_primary 부분 유니크) ·
+//                     guardian_student_idx. 삭제는 active=false — GUARDIAN_SEND 가 가리킨다.
+//   + GUARDIAN_SEND   보호자×채널 시도 한 번에 한 줄(append-only) — guardian_send_channel(email·sms) · guardian_send_status(sent·failed·not_configured) CHECK ·
+//                     guardian_send_once (request_key, guardian_id, channel) 유니크 · 가린 받는 곳(to_masked)만 · FK pnoti/stu/guardian/staff.
+//   ~ PNOTI Note      학부모 줄의 실제 외부 전달은 보호자 선택 발송이 한다 — sent_at 은 GUARDIAN_SEND 에 sent 가 하나라도 있을 때만, channel 은 처음 실제로 나간 채널.
+//                     PNOTI 컬럼·제약 변경 0.
+//   N-42 를 STU 칸이 아니라 새 표로 닫는다 — 답이 「여러 명」이라 STU 칸은 한 명만 담는다. 채널을 더하는 자리는 back notify/sender.SEND_CHANNELS 한 곳.
+//   새 표 2 · 컬럼 0 · 마이그레이션 1 (1762300000000-guardian) · 기존 행 보정 0.
+// v4.43 → v4.44 (2026-09-25 · TBO-52 wave3 g2 알림 제목) — 컬럼 하나.
+//   + NOTI.title      varchar(80) nullable · 제약 없음 — §16 카드의 굵은 제목(원문 「굵은 제목 + 상세 한 줄 + 메타」). body 는 그대로 상세 줄이다.
+//                     옛 행은 NULL(보정 0) · 화면은 NULL 이면 본문을 한 줄로 그린다. 제목을 적는 쓰기: drawer.service reviewRequest · reviewChangeRequest.
+//   표 0 · 컬럼 1 · 마이그레이션 1 (1762900000000-noti-title) · 기존 행 보정 0.
+// v4.44 → v4.45 (2026-09-25 · TBO-52 wave3 g3 상담·컨설팅) — 컬럼 넷 · CHECK 하나.
+//   + LEAD.grade        varchar(10) nullable — §23 카드 학년 칩(23-10).
+//   + LEAD.reason_kind  varchar(16) nullable + lead_reason_kind_words CHECK(unreachable|other_academy|schedule|cost|timing) — §24 실패 사유 분류(24-05).
+//   + CONS_SESS.result      text nullable — §31 「결과」(31-08).
+//   + CONS_SESS.next_until  text nullable — §31 「다음까지」 → 담당 TODO + NOTI(31-08).
+//   파생(칸 0): LeadDto.failedAt · recontact · stageDue(24-04 · 24-06 · 23-12) · ConsultingSessionDto.startMin/endMin/staffName/roomName(SER_OCC · 31-07) · ConsItemDto.doneAt(CONS_ITEM.done_at · 31-04) · ConsStudentCaseDto.sessionsDone(27-04).
+//   표 0 · 컬럼 4 · 마이그레이션 1 (1762400000000-intake-consulting-w3) · 기존 행 보정 0.
+// v4.45 → v4.46 (2026-09-25 · TBO-52 wave3 g4 안내 두 상자) — 컬럼 둘 · CHECK 둘.
+//   + GUIDE.direction   text nullable + guide_direction_len CHECK(≤4000) — §44 「지도 방향」(g4 §44-3).
+//   + GUIDE.admin_note  text nullable + guide_admin_note_len CHECK(≤4000) — §44 「관리자 코멘트 · 강사만」. body 한 칸으로는
+//                       학부모에게 나가는 말과 강사에게만 남기는 말을 가를 수 없었다(섞으면 관리자 메모가 학부모 발송 본문·PNG 에 실린다).
+//   쓰기: PUT /guides/{id}/body 의 선택 칸 둘(보낸 칸만 · 빈 글자·null 은 비움 · 보낸 안내는 잠김).
+//   표 0 · 컬럼 2 · 마이그레이션 1 (1762500000000-guide-direction) · 기존 행 보정 0.
+// v4.46 → v4.47 (2026-09-25 · TBO-52 wave3 g3 상담 배치안·일정) — 새 표 둘 · 컬럼 하나.
+//   + LEAD.recheck_on date nullable — §23 보류 「재확인 날짜」·「연장 +2일」(23-16). NULL = 보류에 들어온 날 + 2일.
+//   + LEAD_PLAN — 배치안 초안 줄(과목 · 주 N회 · 강사) · CHECK 둘 · UNIQUE(lead_id, seq). 단가는 RATE 에서 읽는다(칸 없음 · 23-16 · 24-07).
+//   + LEAD_APPT — 2차 상담 · 진단고사 일정 · CHECK 넷 · UNIQUE(lead_id, kind) · ser_id ON DELETE SET NULL(「미생성」 판정 · 23-15).
+//   표 2 · 컬럼 1 · 마이그레이션 0 새 파일(1762400000000-intake-consulting-w3 에 더함 · 앞 판을 돌린 DB 는 revert 뒤 run) · 기존 행 보정 0.

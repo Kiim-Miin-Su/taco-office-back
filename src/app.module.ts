@@ -34,6 +34,7 @@ import { FilesModule } from './modules/files/files.module';
 import { NotifyModule } from './modules/notify/notify.module';
 import { ZoomModule } from './modules/zoom/zoom.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
+import { GuardiansModule } from './modules/guardians/guardians.module';
 
 @Module({
   imports: [
@@ -95,6 +96,8 @@ import { CatalogModule } from './modules/catalog/catalog.module';
     ZoomModule,
     // §18 서랍의 「프로그램·과목 전체 열기」가 가는 자리 — 같은 결정으로 신설
     CatalogModule,
+    // 학생 보호자와 선택 발송 — DQ3 대표 답변 2026-09-25 (메일·SENS 만 · N-42)
+    GuardiansModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -42,6 +42,9 @@ export * from './issue.entity';
 export * from './kind.entity';
 export * from './lead-stage-log.entity';
 export * from './lead-touch.entity';
+export * from './lead-diag.entity';
+export * from './lead-plan.entity';
+export * from './lead-appt.entity';
 export * from './lead.entity';
 export * from './lib.entity';
 export * from './log.entity';
@@ -80,6 +83,8 @@ export * from './wage.entity';
 export * from './wrep.entity';
 export * from './stu-pause.entity';
 export * from './month-close.entity';
+export * from './guardian.entity';
+export * from './guardian-send.entity';
 export * from './zacc.entity';
 export * from './zassign.entity';
 export * from './zlog.entity';
@@ -89,6 +94,8 @@ import {
   Carry,
   StuPause,
   MonthClose,
+  Guardian,
+  GuardianSend,
   Autorep,
   Chreq,
   Cons,
@@ -122,6 +129,9 @@ import {
   Lead,
   LeadStageLog,
   LeadTouch,
+  LeadDiag,
+  LeadPlan,
+  LeadAppt,
   Lib,
   Log,
   Mfb,
@@ -167,6 +177,9 @@ export const ENTITIES = [
   Carry,
   StuPause,
   MonthClose,
+  // DQ3 (2026-09-25) — 보호자와 보호자별 발송 원장
+  Guardian,
+  GuardianSend,
   Att,
   Autorep,
   Chreq,
@@ -201,6 +214,11 @@ export const ENTITIES = [
   Lead,
   LeadStageLog,
   LeadTouch,
+  // DQ1 (2026-09-25) — 상담 단계 진단 점수 원장
+  LeadDiag,
+  // wave3 g3 (23-15 · 23-16) — 상담 배치안 초안 · 2차/진단 일정
+  LeadPlan,
+  LeadAppt,
   Lib,
   Log,
   Mfb,

@@ -13,6 +13,7 @@ import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { todayKst } from '../src/lib/kst';
 import { GuidesService } from '../src/modules/guides/guides.service';
+import { FakeSender } from './fake-sender';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -36,7 +37,7 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
   const libId = -1981;
   const TODAY = todayKst();
   let students: number[] = [];
-  const svc = () => new GuidesService(q.manager.getRepository(Lead));
+  const svc = () => new GuidesService(q.manager.getRepository(Lead), new FakeSender());
 
   /** 그날 그 학생의 초안 id */
   const draftOf = async (studentId: number): Promise<number> => {
@@ -86,6 +87,20 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
   });
   afterEach(async () => { if (q?.isTransactionActive) await q.rollbackTransaction(); if (q && !q.isReleased) await q.release(); });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
+
+  /* ── DQ3 · 학부모 외부 발송이 되는가 — 발송 경계(Sender.ready) 한 곳이 판정한다 ─────────── */
+
+  it('DQ3 학부모 발송 가능 여부는 채널 설정에서 온다 — 둘 다 없으면 막힌 이유, 하나라도 있으면 열린다 · 강사는 앱 안 알림이다', async () => {
+    const off = await svc().all();
+    expect(off.deliveryCapabilities).toEqual({
+      parentExternal: false, teacherExternal: false,
+      reason: expect.stringContaining('이메일·문자 발송 설정이 없어'),
+    });
+    const sender = new FakeSender();
+    sender.readyMap.email = true;
+    const on = await new GuidesService(q.manager.getRepository(Lead), sender).all();
+    expect(on.deliveryCapabilities).toEqual({ parentExternal: true, teacherExternal: false, reason: null });
+  });
 
   /* ── F-60 자동 채움 ─────────────────────────────────────────────────────── */
 
@@ -250,5 +265,28 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
     });
     // 현장 수업은 §43 회차 안내 목록에 아예 서지 않는다
     expect((await svc().all()).perLesson.find((row) => row.serId === serId)).toBeUndefined();
+  });
+  /* ── 「수업명 미정」 — 정규 수업은 SER.title 이 비어 있다 (g4 §43-3 · §44-1 · §45-1) ─────────── */
+
+  it('정규 수업의 안내에도 **과목·시각·강의실**이 실린다 — 「수업명 미정」이 서던 자리 (§43-3 · §44-1 · §45-1)', async () => {
+    // 정규 수업은 제목이 없다 — 화면이 기댈 것은 과목이다
+    await q.query(`UPDATE ser SET title = NULL WHERE id = $1`, [serId]);
+    const [room] = (await q.query(
+      `INSERT INTO room (branch, name) VALUES ('c98','3호') RETURNING id`,
+    )) as Array<{ id: string }>;
+    await q.query(`UPDATE ser_occ SET room_id = $2 WHERE ser_id = $1`, [serId, Number(room.id)]);
+    const expected = { serTitle: null, subName: 'SAT Reading', kindName: 'C98 수업', startMin: 600, roomName: '3호' };
+
+    const all = await svc().all();
+    expect(all.guides.find((g) => g.studentId === students[0])).toMatchObject(expected);
+    // §43 매번 줄 — 과목·강의실 (시각은 이미 있다)
+    expect(all.perLesson.find((row) => row.serId === serId)).toMatchObject({ subName: 'SAT Reading', roomName: '3호', startMin: 600 });
+    // §44 학생별
+    expect((await svc().students()).items.find((x) => x.studentId === students[0])!.latestGuide).toMatchObject(expected);
+    // §45 이력 — 쓴 것과 안 한 것 둘 다
+    await q.query(`DELETE FROM guide WHERE student_id = $1`, [students[2]]);
+    const hist = await svc().history({ span: 'day', anchor: TODAY });
+    expect(hist.days.flatMap((x) => x.items).find((g) => g.studentId === students[0])).toMatchObject(expected);
+    expect(hist.missing.find((x) => x.studentId === students[2])).toMatchObject(expected);
   });
 });

@@ -10,8 +10,8 @@ import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
 import {
   ATTENDANCE_CANCEL_REASON_LABEL, CANCEL_TREAT_LABEL, GUIDE_DONE_DB, REPORT_WRITTEN_DB, guideLabel,
-  canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState, rosterPricing, tierFor,
-  type AttendanceCancelReason, type AttendanceResult, type CancelTreat,
+  canEditAttendance, effectiveRepStateFromEnded, isPast, isWrittenDbState, rosterPricing, tierFor, REP_STATE_LABEL_DB,
+  type AttendanceCancelReason, type AttendanceResult, type CancelTreat, type RepStateDb,
 } from '../../lib/rules';
 import { isRecurring, type Ser } from '../../lib/recurrence';
 import type {
@@ -507,6 +507,9 @@ export class ScheduleService {
                   AND p.audience = 'parent' AND p.sent_at IS NOT NULL) AS parent_sent,
               (SELECT count(*)::int FROM pnoti p
                 WHERE p.ser_id = s.id AND p.on_date = $2::date
+                  AND p.audience = 'parent') AS parent_total,
+              (SELECT count(*)::int FROM pnoti p
+                WHERE p.ser_id = s.id AND p.on_date = $2::date
                   AND p.audience = 'teacher' AND p.sent_at IS NOT NULL) AS teacher_sent
          FROM ser s
          JOIN ser_occ o ON o.ser_id = s.id AND o.on_date = $2::date
@@ -595,15 +598,18 @@ export class ScheduleService {
 
     if (online) {
       /*
-       * 원문 「학부모 없음 · 강사 대기」.
-       * **학부모는 보낼 곳이 없다** — STU 에 수신처 칸이 아예 없다(C82-b · N-42).
-       * 「없음」은 안 보낸 것이 아니라 보낼 대상이 없다는 뜻이라 그대로 적는다.
+       * 원문 「학부모 없음 · 강사 대기」 모양 그대로 — 학부모 칸과 강사 칸을 나란히 적는다.
+       * DQ3(2026-09-25)로 학부모 수신처(보호자)와 선택 발송이 생겼다. 학부모 칸은 이제 그 회차의 학부모 안내 줄(PNOTI parent)
+       * 중 **실제로 나간 것**(`sent_at` — 보호자 발송이 한 건이라도 성공했을 때만 찍힌다)을 센다. 줄이 없으면 「없음」이다.
+       * 줄의 완료(done)는 전과 같이 강사 안내다 — 학부모 채널 설정이 없는 환경에서 준비가 영영 안 끝나지 않게 한다.
        */
       const teacherSent = Number(f.teacher_sent ?? 0) > 0;
+      const parentTotal = Number(f.parent_total ?? 0);
+      const parentSent = Number(f.parent_sent ?? 0);
       rows.push({
         key: 'zoomNoti', label: '줌 안내',
         done: teacherSent,
-        detail: `학부모 없음 · 강사 ${teacherSent ? '보냄' : '대기'}`,
+        detail: `${parentTotal === 0 ? '학부모 없음' : `학부모 ${parentSent}/${parentTotal} 보냄`} · 강사 ${teacherSent ? '보냄' : '대기'}`,
       });
     }
 
@@ -611,8 +617,13 @@ export class ScheduleService {
     rows.push({
       key: 'feedback', label: '강사 피드백',
       done: repState === 'ok',
-      // 원문 「ok · 08-21 10:35」 — 상태값과 시각을 그대로 적는다
-      detail: repState ? (f.rep_at ? `${repState} · ${f.rep_at}` : repState) : '아직 없습니다',
+      // 원문 「ok · 08-21 10:35」 모양 — 상태와 시각. 상태는 코드값 대신 낱말로 적는다(REP_STATE_LABEL_DB · QA 0925 H14)
+      detail: repState
+        ? (() => {
+          const word = REP_STATE_LABEL_DB[repState as RepStateDb] ?? repState;
+          return f.rep_at ? `${word} · ${f.rep_at}` : word;
+        })()
+        : '아직 없습니다',
     });
 
     return rows;

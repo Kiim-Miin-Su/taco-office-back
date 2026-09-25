@@ -16,10 +16,11 @@ import bcrypt from 'bcryptjs';
 import { KINDS, SUBS, ROOMS, ZACCS, STAFF, WAGES, RATES, TZGS, SEED_TODAY, rel } from './base';
 // rrule 은 recurrence.ts 가 읽는 형식으로만 쓴다 — 형식이 둘이면 회차가 통째로 사라진다
 import { addD, formatRule } from '../lib/recurrence';
-import { STUDENTS, ENROLLMENTS, LEADS } from './people';
+import { STUDENTS, ENROLLMENTS, LEADS, LEAD_DIAGS, LEAD_PLANS, LEAD_APPTS } from './people';
 import { SERS, UNAVS, STU_OUT, expand, resolveExceptions, applyExceptions } from './schedule';
 import { BOOK_FILES, BOOK_HISTORY, BOOK_VERSIONS, buildReports, GUIDES, PNOTIS, LIBS, ISSUES } from './outputs';
 import { INVOICES, INV_LINES, PAYMENTS, EXPENSES, PAYOUTS, STURATES } from './money';
+import { GUARDIANS } from './guardians';
 import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, MFBS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, CONS_PAYS, DIAGS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
 
 /**
@@ -40,13 +41,19 @@ export const SEEDED_TABLES = [
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
   'inv', 'inv_line', 'pay', 'expense', 'payout', 'carry',
   'req', 'chreq', 'gpapack', 'gpapack_student', 'gpapack_lib', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay',
-  'cons_file', 'cons_feedback', 'cons_event', 'diag',
+  'cons_file', 'cons_feedback', 'cons_event', 'diag', 'lead_diag',
+  // wave3 g3 (23-15 · 23-16) — 상담 배치안 초안 · 2차/진단 일정
+  'lead_plan', 'lead_appt',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
   'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
+  // DQ3 — 학생 보호자 (가짜 연락처만)
+  'guardian',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
   'gtpl', 'vers', 'hist', 'file', 'zassign', 'stu_pause', 'month_close',
   // 기록만 쌓이는 표들 — 안 비우면 dev DB 에 옛 QA 흔적이 끝없이 남는다
   'att', 'lead_stage_log', 'lead_touch', 'log', 'pdflog', 'rsend', 'zlog',
+  // DQ3 보호자 발송 원장 — 시드는 안 넣는다(보낸 적 없는 발송을 지어내지 않는다)
+  'guardian_send',
 ] as const;
 
 const PW = 'taco1234!';
@@ -223,12 +230,17 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       { gpapack_id: 2, lib_id: 4, vers_id: 5 },
     ]);
     await add('noti', NOTIS.map((n) => ({ to_id: n.toId, from_id: n.fromId, body: n.body, link: n.link, category: n.category, read_at: (n as { readAt?: string }).readAt ? `${(n as { readAt?: string }).readAt}T00:00:00Z` : null, created_at: `${n.createdAt}T00:00:00Z` })));
-    await add('cons', CONSULTINGS.map((c) => ({ id: c.id, cons_type: c.consType, stage: c.stage, contract_step: c.contractStep, amount: c.amount, sessions: c.sessions, end_on: c.endOn, owner_id: c.ownerId, share: c.share })));
+    await add('cons', CONSULTINGS.map((c) => ({ id: c.id, cons_type: c.consType, stage: c.stage, contract_step: c.contractStep, amount: c.amount, sessions: c.sessions, start_on: (c as { startOn?: string }).startOn ?? null, end_on: c.endOn, owner_id: c.ownerId, share: c.share, requester: c.requester })));
     await add('cons_stu', CONSULTINGS.flatMap((c) => c.students.map((s) => ({ cons_id: c.id, student_id: s }))));
     await add('cons_pick', CONS_PICKS.map((p) => ({ cons_id: p.consId, staff_id: p.staffId })));
     await add('cons_item', CONS_ITEMS.map((x) => ({ cons_id: x.consId, seq: x.seq, label: x.label, done: x.done, done_by: x.doneBy, done_at: x.doneAt })));
     await add('cons_pay', CONS_PAYS.map((p) => ({ cons_id: p.consId, amount: p.amount, paid_on: p.paidOn, memo: p.memo, by_id: 2 })));
     await add('diag', DIAGS.map((d) => ({ student_id: d.studentId, ser_id: d.serId, level_summary: d.levelSummary, strengths: d.strengths, weaknesses: d.weaknesses, curriculum: d.curriculum, created_by: d.createdBy })));
+    // 상담 진단 점수(DQ1) — 강사 진단 리포트(diag)와 다른 표다. 레벨·교재는 담당자가 고른 표본 값이다
+    await add('lead_diag', LEAD_DIAGS.map((d) => ({ lead_id: d.leadId, english: d.english, math: d.math, interview: d.interview, taken_on: rel(d.takenOn), level: d.level, book_id: d.bookId, note: d.note, created_by: d.createdBy, created_at: `${rel(d.takenOn)}T09:00:00Z` })));
+    // 배치안 초안 · 2차/진단 일정 (23-15 · 23-16) — 일정은 **시간표에 만들기 전**(ser_id NULL · 「미생성」)으로만 둔다
+    await add('lead_plan', LEAD_PLANS.map((p) => ({ lead_id: p.leadId, seq: p.seq, kind_key: p.kindKey, sub_key: p.subKey, per_week: p.perWeek, teacher_id: p.teacherId, created_by: p.createdBy, created_at: `${rel(p.on)}T02:00:00Z` })));
+    await add('lead_appt', LEAD_APPTS.map((a) => ({ lead_id: a.leadId, kind: a.kind, on_date: rel(a.onDate), start_min: a.startMin, end_min: a.endMin, mode: a.mode, room_id: a.roomId, created_by: a.createdBy })));
     await add('gpasvc', GPASVCS);
     await add('gpa_cycle', GPA_CYCLES.map((c) => ({ id: c.id, no: c.no, from_date: c.fromDate, to_date: c.toDate, closed: c.closed })));
     await add('gpa_alloc', GPA_ALLOCS.map((a) => ({ cycle_id: a.cycleId, student_id: a.studentId, coord_id: a.coordId, points: a.points })));
@@ -236,8 +248,15 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     await add('cons_sess', CONS_SESSIONS.map((s) => ({ cons_id: s.consId, seq: s.seq, on_date: s.onDate, who: s.who, what: s.what, why: s.why, how: s.how })));
     await add('mkt', MKTS.map((m) => ({ id: m.id, channel: m.channel, item: m.item, url: m.url, result: JSON.stringify(m.result), on_date: m.onDate, title: m.title ?? null, by_id: m.byId ?? null })));
     await add('mfb', MFBS.map((f) => ({ id: f.id, mkt_id: f.mktId, by_id: f.byId, kind: f.kind, parent_id: f.parentId, body: f.body, at: f.at })));
-    await add('plan', PLANS.map((p) => ({ id: p.id, title: p.title, stage: p.stage, goal: p.goal, research: p.research, ask: p.ask, due_on: p.dueOn, owner_id: p.ownerId })));
-    await add('mtrec', MEETINGS.map((m) => ({ id: m.id, mt_type: m.mtType, title: m.title, on_date: m.onDate, minutes: m.minutes })));
+    // 기한 승인은 **시각과 사람이 짝**이다(plan_due_approval_pair) — 한쪽만 적은 줄은 DB 가 막는다
+    await add('plan', PLANS.map((p) => {
+      const due = p as { dueApprovedAt?: string; dueApprovedBy?: number };
+      return {
+        id: p.id, title: p.title, stage: p.stage, goal: p.goal, research: p.research, ask: p.ask, due_on: p.dueOn, owner_id: p.ownerId,
+        due_approved_at: due.dueApprovedAt ? `${due.dueApprovedAt}T00:00:00Z` : null, due_approved_by: due.dueApprovedBy ?? null,
+      };
+    }));
+    await add('mtrec', MEETINGS.map((m) => ({ id: m.id, mt_type: m.mtType, title: m.title, on_date: m.onDate, minutes: m.minutes, ser_id: m.serId })));
     /* 참석은 **세 값**이다 — null(아직 답 안 함) · true(참석) · false(불참).
        한동안 시드가 `minutes !== null` 로 true/false 만 만들어서 **「응답 대기」가 데모에
        한 번도 안 나왔다.** 원문 §66 컷은 네 명이 전부 「응답 대기」다 (C57).
@@ -247,7 +266,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       mt_id: m.id, staff_id: a,
       confirmed: m.minutes !== null ? true : i === 0 ? false : null,
     }))));
-    await add('cpl', COMPLAINTS.map((c) => ({ area: c.area, student_id: c.studentId, stage: c.stage, body: c.body, action: (c as { action?: string }).action ?? null, result: (c as { result?: string }).result ?? null, teacher_changed: c.teacherChanged, owner_id: c.ownerId, created_at: `${c.createdAt}T00:00:00Z` })));
+    await add('cpl', COMPLAINTS.map((c) => ({ area: c.area, student_id: c.studentId, stage: c.stage, body: c.body, action: (c as { action?: string }).action ?? null, result: (c as { result?: string }).result ?? null, teacher_changed: c.teacherChanged, owner_id: c.ownerId, created_at: `${c.createdAt}T00:00:00Z`, severity: c.severity })));
     await add('suggestion', SUGGESTIONS.map((s) => ({ staff_id: s.staffId, category: s.category, body: s.body, state: s.state, reply: (s as { reply?: string }).reply ?? null, reply_by: num((s as { replyBy?: number }).replyBy), reply_at: (s as { replyAt?: string }).replyAt ? `${(s as { replyAt?: string }).replyAt}T00:00:00Z` : null, created_at: `${s.createdAt}T00:00:00Z` })));
     // 서명은 **시각과 사람이 짝**이다 — 한쪽만 넣으면 rpt_sign_pair 가 막는다 (C85-a)
     await add('rpt', REPORTS.map((r) => {
@@ -261,6 +280,8 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       };
     }));
     await add('todo', TODOS.map((t) => ({ title: t.title, from_id: t.fromId, to_id: t.toId, due_on: t.dueOn, done: t.done, src: t.src, mt_id: num((t as { mtId?: number }).mtId), plan_id: num((t as { planId?: number }).planId) })));
+    // 보호자 (DQ3) — 만든 사람은 관리자(2). 발송 원장은 비워 둔다
+    await add('guardian', GUARDIANS.map((g) => ({ student_id: g.studentId, name: g.name, relation: g.relation, email: g.email, phone: g.phone, receive_email: g.receiveEmail, receive_sms: g.receiveSms, is_primary: g.isPrimary, created_by: 2 })));
 
     // 손으로 넣은 id 뒤로 시퀀스를 밀어 둔다 — 안 하면 다음 INSERT 가 충돌한다
     for (const t of ['room', 'zacc', 'staff', 'stu', 'lead', 'ser', 'lib', 'file', 'vers', 'gpapack', 'inv', 'cons', 'plan', 'mtrec', 'gpa_cycle', 'mkt', 'mfb']) {

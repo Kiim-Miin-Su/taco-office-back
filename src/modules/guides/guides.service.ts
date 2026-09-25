@@ -4,12 +4,14 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { canAdminPage, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { histSql } from '../../lib/history';
+import { NOTI_TITLE } from '../../lib/noti';
+import { SENDER, type Sender } from '../notify/sender';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
   GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
@@ -17,6 +19,16 @@ import type {
   PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { guideAutoFill, guideAutoFills } from '../../lib/guide-body';
+import { GUIDE_EVENT_CTE, GUIDE_LESSON_JOINS, guideCoversEvent } from './guide-events';
+import { latestLeadDiagForStudent } from '../ops/lead-diag.service';
+
+/**
+ * §43 할 일에 세우는 「안내 없음」의 창 — 수업 날 기준 **최근 30일 ~ 앞으로 7일**.
+ * 판정(누가 필요한가)은 §45 와 같은 함수이고, 이 창은 할 일 목록이 몇 해 전 사건까지 끌고 오지 않게 하는 보기 범위다.
+ * 창 밖의 지난 누락은 §45 이력(기간 이동)에서 여전히 보인다.
+ */
+const TODO_MISSING_BACK_DAYS = 30;
+const TODO_MISSING_AHEAD_DAYS = 7;
 import { END_MIN, kstAt, kstDateOf, START_MIN, serStuOn, writtenRows } from '../../lib/sql';
 import { addDays, isIsoDate, overdueDays as overdue, todayKst } from '../../lib/kst';
 
@@ -26,40 +38,15 @@ type GuideActionSource = {
   recipientActive: boolean; recipientRole: string | null;
 };
 
-const DELIVERY_UNSUPPORTED = '학부모 연락처와 외부 발송 제공자 계약이 없어 실제 발송은 아직 지원하지 않습니다';
-
 /**
- * D-R5 누락 이벤트의 단일 계산식.
- * - SER_OCC의 현재 회차 투영과 그 회차의 학생 명단만 읽는다.
- * - 첫 참석 회차 또는 직전 참석 회차와 담당 강사가 달라진 회차만 이벤트다.
- * - GUIDE에는 재생성되는 SER_OCC.id 대신 `(ser_id,on_date,student_id,reason)`을 저장한다.
+ * 학부모 외부 발송이 **지금 되는가** — 판정은 발송 경계(`Sender.ready`) 한 곳이다 (DQ3 · 2026-09-25).
+ * 보호자(수신처)는 이제 있다(`guardian`). 남은 조건은 채널 설정뿐이라, 이메일·문자 둘 다 설정이 없을 때만 막힌 이유를 준다.
+ * 강사 안내는 앱 안 알림(NOTI)이 전달이다 — 강사 쪽 외부 채널은 만들지 않으므로 teacherExternal 은 늘 false 이고 이유 문장에 섞지 않는다.
  */
-const GUIDE_EVENT_CTE = `WITH rostered AS (
-  SELECT o.id AS source_occurrence_id, o.ser_id, o.on_date AS source_on,
-         to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS event_on,
-         o.teacher_id, ss.student_id, st.name AS student_name,
-         t.name AS teacher_name, s.title AS ser_title,
-         row_number() OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY o.on_date,o.id) AS seq,
-         lag(o.teacher_id) OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY o.on_date,o.id) AS previous_teacher_id
-    FROM ser_occ o
-    JOIN ser s ON s.id=o.ser_id
-    JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
-    JOIN stu st ON st.id=ss.student_id
-    LEFT JOIN staff t ON t.id=o.teacher_id
-    LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
-   WHERE NOT o.canceled
-     AND NOT EXISTS (
-       SELECT 1 FROM exc_stu_out xo
-        WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id
-     )
-), events AS (
-  SELECT *, CASE
-    WHEN seq=1 THEN 'new'
-    WHEN previous_teacher_id IS DISTINCT FROM teacher_id THEN 'teacher_change'
-    ELSE NULL
-  END AS reason
-  FROM rostered
-)`;
+const PARENT_CHANNELS_OFF = '이메일·문자 발송 설정이 없어 학부모 안내를 실제로 보내지 못합니다 — 보내면 「설정 없음」으로 기록됩니다';
+
+/* 수업 이름표(GUIDE_LESSON_JOINS)와 안내가 필요한 사건(GUIDE_EVENT_CTE)은 guide-events.ts 한 벌이다 —
+   현황판 §34 안내 마크도 같은 식을 쓴다. */
 
 /**
  * 「회차마다 나가는 안내」를 **무엇으로 찾는가** (S5).
@@ -74,7 +61,10 @@ type PerLessonScope =
 
 @Injectable()
 export class GuidesService {
-  constructor(@InjectRepository(Lead) private readonly anyRepo: Repository<Lead>) {}
+  constructor(
+    @InjectRepository(Lead) private readonly anyRepo: Repository<Lead>,
+    @Inject(SENDER) private readonly sender: Sender,
+  ) {}
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
@@ -85,7 +75,7 @@ export class GuidesService {
       ? (sql: string, p: unknown[]) => manager.query(sql, p) as Promise<R[]>
       : (sql: string, p: unknown[]) => this.q(sql, p);
     const rows = await run(
-      `SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.created_by,
+      `SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.created_by,
               (SELECT count(*)::int FROM guide sg
                 WHERE sg.ser_id=g.ser_id AND sg.event_on=g.event_on AND sg.reason=g.reason
                   AND sg.id<>g.id) AS sibling_count,
@@ -100,6 +90,7 @@ export class GuidesService {
               (SELECT st.name FROM hist h LEFT JOIN staff st ON st.id=h.by_id WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack' ORDER BY h.at,h.id LIMIT 1) AS acknowledged_by_name,
               (SELECT ${kstAt('min(h.at)')} FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack') AS acknowledged_at,
               s.name AS student_name,t.name AS teacher_name,r.title AS ser_title,cb.name AS created_by_name,
+              sb.name AS sub_name,k.name AS kind_name,COALESCE(${START_MIN},r.start_min) AS start_min,rm.name AS room_name,
               t.active AS recipient_active,t.role AS recipient_role
          FROM guide g
          LEFT JOIN stu s ON s.id=g.student_id
@@ -107,6 +98,7 @@ export class GuidesService {
          LEFT JOIN ser r ON r.id=g.ser_id
          LEFT JOIN staff cb ON cb.id=g.created_by
          LEFT JOIN ser_occ o ON o.ser_id=g.ser_id AND o.on_date=g.event_on
+         ${GUIDE_LESSON_JOINS('r')}
          ${where}
          ORDER BY g.created_at DESC,g.id DESC`,
       params,
@@ -146,6 +138,7 @@ export class GuidesService {
               to_char(o.on_date,'YYYY-MM-DD') AS on_date,
               ${START_MIN} AS start_min,${END_MIN} AS end_min,
               o.teacher_id,t.name AS teacher_name,r.title AS ser_title,k.name AS kind_name,
+              sb.name AS sub_name,rm.name AS room_name,
               o.zacc_id,z.label AS zacc_label,ss.student_id,st.name AS student_name,
               p.id AS notice_id,p.channel,p.body,${kstAt('p.sent_at')} AS sent_at,
               (SELECT ${kstAt('pt.sent_at')} FROM pnoti pt
@@ -154,6 +147,8 @@ export class GuidesService {
          FROM ser_occ o
          JOIN ser r ON r.id=o.ser_id AND r.mode='online'::class_mode_t
          JOIN kind k ON k.key=r.kind_key
+         LEFT JOIN sub sb ON sb.key=r.sub_key
+         LEFT JOIN room rm ON rm.id=COALESCE(o.room_id,r.room_id)
          JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
          JOIN stu st ON st.id=ss.student_id
          LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
@@ -197,6 +192,8 @@ export class GuidesService {
         teacherId: first.teacher_id == null ? null : Number(first.teacher_id),
         teacherName: (first.teacher_name as string) ?? null,
         kindName: (first.kind_name as string) ?? null,
+        subName: (first.sub_name as string) ?? null,
+        roomName: (first.room_name as string) ?? null,
         zaccId: first.zacc_id == null ? null : Number(first.zacc_id),
         zaccLabel: (first.zacc_label as string) ?? null,
         zoomAssigned: first.zacc_id != null,
@@ -259,6 +256,16 @@ export class GuidesService {
       canAck: isRecipient && guide?.state === 'sent', sendBlockedReason, sendBlockedCode };
   }
 
+  /** 수업 이름표 네 칸 — 한 번/매번/누락 줄이 같은 모양으로 싣는다 (GUIDE_LESSON_JOINS) */
+  private static lessonTag(r: R): { subName: string | null; kindName: string | null; startMin: number | null; roomName: string | null } {
+    return {
+      subName: (r.sub_name as string) ?? null,
+      kindName: (r.kind_name as string) ?? null,
+      startMin: r.start_min == null ? null : Number(r.start_min),
+      roomName: (r.room_name as string) ?? null,
+    };
+  }
+
   private mapGuide(r: R, viewer?: RequestUser): GuideDto {
     const pending = (GUIDE_PENDING_DB as readonly string[]).includes(String(r.state));
     const teacherId = r.teacher_id == null ? null : Number(r.teacher_id);
@@ -278,7 +285,10 @@ export class GuidesService {
       studentName: (r.student_name as string) ?? null,
       teacherName: (r.teacher_name as string) ?? null,
       serTitle: (r.ser_title as string) ?? null,
+      ...GuidesService.lessonTag(r),
       body,
+      direction: (r.direction as string) ?? null,
+      adminNote: (r.admin_note as string) ?? null,
       dueOn: (r.due_on as string) ?? null,
       eventOn: (r.event_on as string) ?? null,
       sourceOccurrenceId: r.source_occurrence_id == null ? null : Number(r.source_occurrence_id),
@@ -300,7 +310,15 @@ export class GuidesService {
     const only = teacherId !== undefined;
     const guides = await this.guideRows(`WHERE ($1::bigint IS NULL OR g.teacher_id=$1)`, [only ? teacherId : null], undefined, viewer);
 
-    const perLesson = await this.perLessonRows({ drawnOn: todayKst(), teacherId: only ? teacherId : null });
+    const today = todayKst();
+    const [perLesson, missing] = await Promise.all([
+      this.perLessonRows({ drawnOn: today, teacherId: only ? teacherId : null }),
+      // §43 「안내 없음」 — §45 누락 카드와 같은 판정, 할 일 창 안의 것만 (g4 §43-2)
+      this.candidateRows(
+        addDays(today, -TODO_MISSING_BACK_DAYS), addDays(today, TODO_MISSING_AHEAD_DAYS),
+        null, null, false, undefined, only ? teacherId! : null,
+      ),
+    ]);
     const teacherChanges = new Map<string, number>();
     for (const guide of guides.filter((guide) => guide.reason === 'teacher_change')) {
       const key = `${guide.studentId}|${guide.serId ?? 'none'}`;
@@ -317,16 +335,17 @@ export class GuidesService {
     return {
       guides,
       perLesson,
+      missing,
       todoCount:
         guides.filter((g) => g.pending).length +
+        missing.length +
         perLesson.filter((notice) => !notice.parentDeliveryRecorded || !notice.teacherDeliveryRecorded).length,
       scopedTeacherId: only ? teacherId! : null,
       stats,
-      deliveryCapabilities: {
-        parentExternal: false,
-        teacherExternal: false,
-        reason: DELIVERY_UNSUPPORTED,
-      },
+      deliveryCapabilities: (() => {
+        const parentExternal = this.sender.ready('email') || this.sender.ready('sms');
+        return { parentExternal, teacherExternal: false, reason: parentExternal ? null : PARENT_CHANNELS_OFF };
+      })(),
     };
   }
 
@@ -338,7 +357,7 @@ export class GuidesService {
                 row_number() OVER (PARTITION BY g.student_id ORDER BY g.created_at DESC,g.id DESC) AS rn
            FROM guide g
        )
-       SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.guide_count,g.created_by,
+       SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.guide_count,g.created_by,
               (SELECT count(*)::int FROM guide sg
                 WHERE sg.ser_id=g.ser_id AND sg.event_on=g.event_on AND sg.reason=g.reason
                   AND sg.id<>g.id) AS sibling_count,
@@ -353,11 +372,13 @@ export class GuidesService {
               (SELECT ${kstAt('min(h.at)')} FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack') AS acknowledged_at,
               st.name AS student_name,st.grade,st.guidance,st.lang,
               t.name AS teacher_name,s.title AS ser_title,cb.name AS created_by_name,
+              sb.name AS sub_name,k.name AS kind_name,COALESCE(${START_MIN},s.start_min) AS start_min,rm.name AS room_name,
               t.active AS recipient_active,t.role AS recipient_role
          FROM ranked g JOIN stu st ON st.id=g.student_id
          LEFT JOIN staff t ON t.id=g.teacher_id LEFT JOIN ser s ON s.id=g.ser_id
          LEFT JOIN staff cb ON cb.id=g.created_by
          LEFT JOIN ser_occ o ON o.ser_id=g.ser_id AND o.on_date=g.event_on
+         ${GUIDE_LESSON_JOINS('s')}
         WHERE g.rn=1 ORDER BY st.name,st.id`,
     );
     const ids = latest.map((row) => Number(row.student_id));
@@ -394,7 +415,13 @@ export class GuidesService {
       }));
     // §44 도 같은 작성 창을 연다 — 자동 채움이 §43 에만 서면 같은 창이 화면마다 다르게 열린다
     await this.attachAutoFill(items.map((item) => item.latestGuide));
-    return { items };
+    /*
+     * §44 진단 카드 셋 — DQ1 「점수만 저장」의 영어·수학·인터뷰 (g4 §44-2).
+     * 상담 진단을 `lead.student_id` 로 따라 읽는 함수 한 벌(ops/lead-diag.service)을 그대로 부른다 — 값을 DIAG 로
+     * 옮겨 적지 않는다(D-R22). 학생마다 한 번 묻는다(학생별 화면은 안내가 있는 학생만이라 수가 작다).
+     */
+    const scores = await Promise.all(items.map((item) => latestLeadDiagForStudent(this.anyRepo.manager, item.studentId)));
+    return { items: items.map((item, index) => ({ ...item, scores: scores[index] })) };
   }
 
   private range(span: GuideHistorySpan, anchor: string): { from: string; to: string } {
@@ -418,6 +445,7 @@ export class GuidesService {
     studentId: number | null,
     includeSatisfied: boolean,
     manager?: EntityManager,
+    teacherId: number | null = null,
   ): Promise<GuideMissingDto[]> {
     const run = manager
       ? manager.query.bind(manager) as (sql: string, params: unknown[]) => Promise<R[]>
@@ -425,30 +453,29 @@ export class GuidesService {
     const rows = await run(
       `${GUIDE_EVENT_CTE}
        SELECT e.source_occurrence_id,e.event_on,e.ser_id,e.student_id,e.student_name,
-              e.teacher_id,e.teacher_name,e.ser_title,e.reason
+              e.teacher_id,e.teacher_name,e.ser_title,e.reason,
+              e.sub_name,e.kind_name,e.start_min,e.room_name
          FROM events e
         WHERE e.reason IS NOT NULL
           AND ($1::date IS NULL OR e.event_on::date >= $1::date)
           AND ($2::date IS NULL OR e.event_on::date <= $2::date)
           AND ($3::bigint IS NULL OR e.source_occurrence_id=$3)
           AND ($4::bigint IS NULL OR e.student_id=$4)
-          AND ($5::boolean OR NOT EXISTS (
-            SELECT 1 FROM guide g
-             WHERE g.ser_id=e.ser_id AND g.event_on=e.source_on
-               AND g.student_id=e.student_id
-               /* 강사 교체(C93)는 규칙을 그 날짜에서 가르므로(D-R16 future) 새 규칙의 첫 회차가 「첫 수업」으로 잡힌다 —
-                  그 회차에 강사 교체 안내가 있으면 첫 수업 안내는 따로 필요 없다 */
-               AND (g.reason=e.reason OR g.reason='teacher_change')
-          ))
+          AND ($6::bigint IS NULL OR e.teacher_id=$6)
+          /* 강사 교체 안내가 첫 수업 안내를 덮는 규칙까지 guide-events.ts 한 곳 */
+          AND ($5::boolean OR NOT ${guideCoversEvent()})
         ORDER BY e.event_on DESC,e.source_occurrence_id,e.student_name`,
-      [from, to, sourceOccurrenceId, studentId, includeSatisfied],
+      [from, to, sourceOccurrenceId, studentId, includeSatisfied, teacherId],
     );
     return rows.map((row) => ({
       sourceOccurrenceId: Number(row.source_occurrence_id), eventOn: String(row.event_on),
       serId: Number(row.ser_id), studentId: Number(row.student_id), studentName: String(row.student_name),
       teacherId: row.teacher_id === null ? null : Number(row.teacher_id),
       teacherName: (row.teacher_name as string) ?? null, serTitle: (row.ser_title as string) ?? null,
+      ...GuidesService.lessonTag(row),
       reason: String(row.reason),
+      // 안내 기한 = 그 수업 날 (createDraft 가 due_on 을 event_on 으로 둔다) — 「마감 지남」 칩의 근거
+      overdueDays: overdue(String(row.event_on)),
     }));
   }
 
@@ -805,8 +832,8 @@ export class GuidesService {
       parentNotices = parentRows.length;
 
       await m.query(
-        `INSERT INTO noti (to_id, from_id, body, link, category) VALUES ($1, $2, $3, '/teacher', 'schedule')`,
-        [Number(occ.teacher_id), userId, `줌 안내 — ${lesson} · ${when} · ${account}`],
+        `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/teacher', 'schedule', $4)`,
+        [Number(occ.teacher_id), userId, `줌 안내 — ${lesson} · ${when} · ${account}`, NOTI_TITLE.zoomGuide],
       );
       await m.query(histSql(), ['pnoti', Number(teacherRows[0].id), 'guide_send', userId]);
     });
@@ -904,10 +931,18 @@ export class GuidesService {
           message: '이미 보낸 안내는 고칠 수 없습니다 — 새 안내를 만드세요',
         });
       }
+      /*
+       * §44 두 상자(지도 방향 · 관리자 코멘트)는 **보낸 칸만** 바꾼다 — 안 보낸 칸(undefined)은 그대로,
+       * 빈 글자·null 은 비운다 (g4 §44-3). 본문과 같은 잠금·같은 트랜잭션이라 보낸 안내는 셋 다 못 고친다.
+       */
+      const tidy = (value: string | null | undefined) => (value == null ? null : value.trim() || null);
       const rows = writtenRows<R>(await m.query(
-        `UPDATE guide SET body=$2,state='ready'::guide_state_t
+        `UPDATE guide SET body=$2,state='ready'::guide_state_t,
+                direction=CASE WHEN $4::boolean THEN $5::text ELSE direction END,
+                admin_note=CASE WHEN $6::boolean THEN $7::text ELSE admin_note END
           WHERE id=$1 AND state=ANY($3::guide_state_t[]) RETURNING id`,
-        [id, dto.body, [...GUIDE_PENDING_DB]],
+        [id, dto.body, [...GUIDE_PENDING_DB],
+          dto.direction !== undefined, tidy(dto.direction), dto.adminNote !== undefined, tidy(dto.adminNote)],
       ));
       if (!rows[0]) throw new ConflictException({ code: 'GUIDE_STATE_CHANGED', message: '안내 상태가 변경되었습니다' });
       await m.query(histSql(), ['guide', id, 'guide_write', userId]);
@@ -941,8 +976,8 @@ export class GuidesService {
         const changed = writtenRows<R>(await m.query(`UPDATE guide SET state='sent' WHERE id=$1 AND state='ready' RETURNING id`, [id]));
         if (!changed[0]) throw new ConflictException({ code: 'GUIDE_STATE_CHANGED', message: '안내 상태가 변경되었습니다' });
         await m.query(histSql(), ['guide', id, 'guide_send', viewer.id]);
-        await m.query(`INSERT INTO noti(to_id,from_id,body,link,category) VALUES ($1,$2,$3,$4,'schedule')`,
-          [guide.teacher_id, viewer.id, '수업 안내가 도착했습니다', `/teacher/guides?guideId=${id}`]);
+        await m.query(`INSERT INTO noti(to_id,from_id,body,link,category,title) VALUES ($1,$2,$3,$4,'schedule',$5)`,
+          [guide.teacher_id, viewer.id, '수업 안내가 도착했습니다', `/teacher/guides?guideId=${id}`, NOTI_TITLE.guideArrived]);
       }
       const [result] = await this.guideRows('WHERE g.id=$1', [id], m, viewer);
       if (!result) throw new NotFoundException('안내를 찾을 수 없습니다');

@@ -9,6 +9,7 @@ import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { todayKst } from '../src/lib/kst';
 import { GuidesService } from '../src/modules/guides/guides.service';
+import { FakeSender } from './fake-sender';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -32,7 +33,7 @@ d('§44·§45 안내 수직 계약 (C78)', () => {
   const teacherB = 1783;
   const serId = -1781;
   const kindKey = 'c78-guide';
-  const svc = () => new GuidesService(q.manager.getRepository(Lead));
+  const svc = () => new GuidesService(q.manager.getRepository(Lead), new FakeSender());
 
   beforeAll(async () => { ds = scratchDataSource(); await ds.initialize(); });
   beforeEach(async () => {

@@ -16,6 +16,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { GuidesService } from '../src/modules/guides/guides.service';
+import { FakeSender } from './fake-sender';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -36,7 +37,7 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
   let q: QueryRunner;
   let guideId: number;
 
-  const svc = () => new GuidesService(q.manager.getRepository(Lead));
+  const svc = () => new GuidesService(q.manager.getRepository(Lead), new FakeSender());
 
   beforeAll(async () => { ds = scratchDataSource(); await ds.initialize(); });
   beforeEach(async () => {

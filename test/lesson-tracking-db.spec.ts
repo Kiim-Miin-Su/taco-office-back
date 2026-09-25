@@ -370,6 +370,20 @@ d('§12 준비 줄 (C82-b)', () => {
     expect(t.prep.some((r) => r.key === 'directive')).toBe(false);
   });
 
+  it('「강사 피드백」 줄은 리포트 상태를 코드값이 아니라 낱말로 적는다 (QA 0925 H14 · g1 §12 #8)', async () => {
+    // 그 회차의 REP 한 줄의 상태를 바꿔 가며 본다
+    for (const [state, word] of [['plan', '수업 예정'], ['none', '리포트 미작성'], ['draft', '작성 중']] as const) {
+      await q.query(
+        `INSERT INTO rep (ser_id, on_date, teacher_id, state, body) VALUES ($1, $2::date, 72, $3::rep_state_t, '{}')
+         ON CONFLICT (ser_id, on_date) DO UPDATE SET state = EXCLUDED.state`,
+        [serId, onDate, state],
+      );
+      const row = (await svc().tracking(serId, onDate, true))!.prep.find((r) => r.key === 'feedback')!;
+      expect(row.detail?.startsWith(word)).toBe(true);
+      expect(row.detail).not.toMatch(/\b(plan|none|draft)\b/);
+    }
+  });
+
   it('온라인 수업은 「줌 안내」가 더 선다 — 여덟 줄', async () => {
     const online = await makeSer('online');
     const t = (await svc().tracking(online, onDate, true))!;
@@ -417,7 +431,7 @@ d('§12 준비 줄 (C82-b)', () => {
     expect(book.done).toBe(false);
   });
 
-  it('줌 안내는 학부모와 강사를 따로 적는다 — 학부모는 보낼 곳이 없다 (N-42)', async () => {
+  it('줌 안내는 학부모와 강사를 따로 적는다 — 학부모 칸은 실제로 나간 안내만 센다 (N-42 · DQ3)', async () => {
     const online = await makeSer('online');
     const before = (await svc().tracking(online, onDate, true))!;
     expect(before.prep.find((r) => r.key === 'zoomNoti')!.detail).toBe('학부모 없음 · 강사 대기');
@@ -431,6 +445,16 @@ d('§12 준비 줄 (C82-b)', () => {
     const row = after.prep.find((r) => r.key === 'zoomNoti')!;
     expect(row.detail).toBe('학부모 없음 · 강사 보냄');
     expect(row.done).toBe(true);
+
+    // DQ3 — 학부모 안내 줄이 생기면 **실제로 나간 것**(sent_at)만 센다. 보호자 발송이 성공해야 sent_at 이 찍힌다
+    await q.query(
+      `INSERT INTO pnoti (ser_id, on_date, audience, student_id, channel, body, sent_at)
+       SELECT $1, $2::date, 'parent', (SELECT min(id) FROM stu), 'email', '줌 링크', sent
+         FROM (VALUES (now()), (NULL::timestamptz)) v(sent)`,
+      [online, onDate],
+    );
+    const withParents = (await svc().tracking(online, onDate, true))!;
+    expect(withParents.prep.find((r) => r.key === 'zoomNoti')!.detail).toBe('학부모 1/2 보냄 · 강사 보냄');
   });
 
   it('강사 줌 안내는 회차마다 한 번이다 — 두 줄이 남지 않는다', async () => {
