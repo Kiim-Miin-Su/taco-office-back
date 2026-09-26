@@ -32,6 +32,7 @@ import { todoSourceLabel } from '../../lib/todo';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
 import { insertWage } from '../../lib/wage';
 import { INITIAL_PASSWORD, normalizeLoginEmail, normalizeMobile } from '../../lib/account-policy';
+import { PHONE_COUNTRIES } from '../../lib/phone';
 import { staffRecordTables } from '../../lib/staff-refs';
 import { maskEmail, maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
@@ -51,11 +52,18 @@ const staffNotFound = () => new NotFoundException({ code: 'STAFF_NOT_FOUND', mes
 const staffEmailTaken = () =>
   new ConflictException({ code: 'STAFF_EMAIL_TAKEN', message: '그 이메일로 이미 구성원이 있습니다 — 로그인 아이디는 하나여야 합니다' });
 
-/** 휴대폰 칸 — 비우면 null, 적었으면 숫자만(한국 휴대폰만). 모양이 아니면 400 — 번호 원문은 오류에 싣지 않는다 */
+/**
+ * 휴대폰 칸 — 비우면 null, 적었으면 저장 모양(한국 번호는 숫자만 · 해외 번호는 `+국가번호…` · N-103 · lib/phone).
+ * 모양이 아니면 400 — 번호 원문은 오류에 싣지 않는다
+ */
 function staffPhoneOf(raw: string | null | undefined): string | null {
   if (raw === null || raw === undefined || raw.trim() === '') return null;
   const phone = normalizeMobile(raw);
-  if (!phone) throw new BadRequestException({ code: 'STAFF_PHONE_INVALID', message: '휴대폰 번호 모양이 아닙니다 — 010으로 시작하는 번호를 적어 주세요' });
+  if (!phone) {
+    throw new BadRequestException({
+      code: 'STAFF_PHONE_INVALID', message: '휴대폰 번호 모양이 아닙니다 — 국가번호를 고르고 번호를 적어 주세요(한국은 010으로 시작)',
+    });
+  }
   return phone;
 }
 
@@ -482,6 +490,8 @@ export class DrawerService {
       members, memberGroups, tzGroups, kinds, changeReqs, zoomAccounts, workSummary,
       tz: KST,
       canAddMember: canSeeAll,
+      // 구성원 만들기 · 수정 창의 휴대폰 국가번호 목록 — 첫 설정과 같은 표(N-103 · lib/phone)
+      phoneCountries: PHONE_COUNTRIES.map((c) => ({ ...c })),
       canWage,
     };
   }
@@ -606,7 +616,9 @@ export class DrawerService {
 
   /**
    * 「수정」 — 보낸 칸만 바꾼다. 이메일(=아이디)을 바꾸면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀린다
-   * (확인한 것은 **옛 값**이다). 기록(log)에는 바뀐 칸만 남기고 연락처는 가린 모양으로만 적는다.
+   * (확인한 것은 **옛 값**이다). 그리고 **첫 설정을 다시 건다**(N-104 · 대표 결정 2026-09-26) — 그 사람은 다음 요청부터
+   * 첫 설정 화면으로 가서 새 아이디 · 휴대폰을 코드로 확인하고 새 비밀번호를 정한다(가드가 요청마다 계정 행을 읽는다).
+   * 확인되지 않은 연락처로 비밀번호 찾기가 가지 않게 하려는 것이다. 기록(log)에는 바뀐 칸만 남기고 연락처는 가린 모양으로만 적는다.
    */
   async updateStaff(viewerId: number, canWage: boolean, id: number, dto: StaffPatchDto): Promise<MemberDto> {
     const phone = dto.phone === undefined ? undefined : staffPhoneOf(dto.phone);
@@ -656,6 +668,9 @@ export class DrawerService {
       }
       if ('email' in changed) sets.push('email_verified = false');
       if ('phone' in changed) sets.push('phone_verified = false');
+      // N-104 — 연락처(아이디 · 휴대폰)가 바뀌면 첫 설정을 다시 건다. 세션은 끊지 않는다(가드가 다음 요청부터 첫 설정으로 보낸다)
+      const contactChanged = 'email' in changed || 'phone' in changed;
+      if (contactChanged) sets.push('must_change_credentials = true');
       try {
         await m.query(`UPDATE staff SET ${sets.join(', ')} WHERE id = $1`, params);
       } catch (e) {
@@ -671,9 +686,14 @@ export class DrawerService {
         before[key] = shown(key, cur[key] ?? null);
         after[key] = shown(key, value);
       }
+      const log: { before: Record<string, unknown>; after: Record<string, unknown> } = { before, after };
+      if (contactChanged) {
+        log.before = { ...before, mustChangeCredentials: row.must_change_credentials === true };
+        log.after = { ...after, mustChangeCredentials: true };
+      }
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'update',$3::jsonb,$4::jsonb)`,
-        [viewerId, id, JSON.stringify(before), JSON.stringify(after)],
+        [viewerId, id, JSON.stringify(log.before), JSON.stringify(log.after)],
       );
     });
     return this.memberOne(id, canWage, viewerId, true);

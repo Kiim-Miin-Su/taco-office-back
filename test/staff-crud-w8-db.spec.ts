@@ -182,6 +182,45 @@ d('W8 §17 사용자 표 CRUD — 만들기(넘겨줄 정보) · 수정 · 비�
     expect(cleared.body).toMatchObject({ title: null, phone: null });
   });
 
+  // N-104 (대표 결정 2026-09-26 「첫 설정 다시 걸기」) — 확인되지 않은 연락처로 비밀번호 찾기가 가지 않게
+  it('수정 N-104 — 이메일·휴대폰을 바꾸면 그 사람은 다음 요청부터 첫 설정을 다시 한다(세션은 그대로 · 다른 칸은 걸지 않는다)', async () => {
+    const id = await make('w8b-new-redo@t.kr', { phone: '01012120000' });
+    await q(`UPDATE staff SET must_change_credentials = false, email_verified = true, phone_verified = true WHERE id = $1`, [id]);
+    const token = await login('w8b-new-redo@t.kr', INITIAL_PASSWORD);
+    await api('get', '/drawer', token).expect(200);
+
+    // 연락처가 아닌 칸은 첫 설정을 걸지 않는다
+    const titled = await api('patch', `/drawer/staff/${id}`).send({ title: '영어' }).expect(200);
+    expect(titled.body.mustChangeCredentials).toBe(false);
+    await api('get', '/drawer', token).expect(200);
+
+    // 휴대폰(해외 번호 · N-103)을 바꾸면 — 그 사람의 다음 요청부터 첫 설정으로 막힌다. 세션은 끊지 않는다(me 는 열린다)
+    const phoned = await api('patch', `/drawer/staff/${id}`).send({ phone: '+1 415-555-0123' }).expect(200);
+    expect(phoned.body).toMatchObject({ phone: '+14155550123', mustChangeCredentials: true });
+    const blocked = await api('get', '/drawer', token).expect(403);
+    expect(blocked.body.code).toBe('CREDENTIALS_CHANGE_REQUIRED');
+    expect((await api('get', '/auth/me', token).expect(200)).body.mustChangeCredentials).toBe(true);
+    const [row] = await q<{ must_change_credentials: boolean; email_verified: boolean; phone_verified: boolean }>(
+      `SELECT must_change_credentials, email_verified, phone_verified FROM staff WHERE id = $1`, [id]);
+    expect(row).toEqual({ must_change_credentials: true, email_verified: true, phone_verified: false });
+    const [log] = await q<{ before: Record<string, unknown>; after: Record<string, unknown> }>(
+      `SELECT before, after FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action = 'update' ORDER BY id DESC LIMIT 1`, [id]);
+    expect(log.before).toMatchObject({ phone: '010-****-0000', mustChangeCredentials: false });
+    expect(log.after).toMatchObject({ phone: '+1 ****0123', mustChangeCredentials: true });
+    expect(JSON.stringify(log)).not.toMatch(/4155550123|01012120000/);
+
+    // 이미 첫 설정 중이어도 이메일을 바꾸면 그대로 걸린 채다(두 번 걸어도 같다)
+    const mailed = await api('patch', `/drawer/staff/${id}`).send({ email: 'w8b-new-redo2@t.kr' }).expect(200);
+    expect(mailed.body).toMatchObject({ email: 'w8b-new-redo2@t.kr', mustChangeCredentials: true });
+    // 목록 밖 나라 번호는 400 — 번호 원문은 오류에 싣지 않는다
+    const bad = await api('patch', `/drawer/staff/${id}`).send({ phone: '+84 912 345 678' }).expect(400);
+    expect(bad.body.code).toBe('STAFF_PHONE_INVALID');
+    expect(JSON.stringify(bad.body)).not.toContain('912345678');
+    // 서랍은 국가번호 목록을 싣는다 — 첫 줄 대한민국(N-103)
+    const drawer = (await api('get', '/drawer').expect(200)).body;
+    expect(drawer.phoneCountries[0]).toEqual({ code: '82', label: '대한민국' });
+  });
+
   it('수정의 거절 — 대표·관리자 줄 403 · 자기 역할 403 · 같은 이메일(대소문자 무시) 409 · 모르는 시간대 409 · 휴대폰 400 · 빈 수정 409 · 없는 id 404 · 강사 403 · 역할 ceo 400', async () => {
     const id = await make('w8b-new-rej@t.kr');
     const code = (c: string) => (r: request.Response) => expect(r.body.code).toBe(c);

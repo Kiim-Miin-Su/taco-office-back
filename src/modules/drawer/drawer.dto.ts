@@ -19,6 +19,7 @@ import {
 } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
+import { PhoneCountryDto } from '../../auth/dto/onboarding.dto';
 
 /** §14 처리의 두 갈래 — 낱말의 출처는 여기 하나다 */
 export const REQ_DECISIONS = ['approve', 'reject'] as const;
@@ -256,7 +257,7 @@ export class MemberDto {
   /* ── W8 사용자 표 CRUD (대표 지시 2026-09-26) — 줄마다 **서버가** 가른다. 화면은 role 을 보지 않는다 (D-R39) ── */
   @ApiPropertyOptional({ description: '첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩' })
   mustChangeCredentials?: boolean;
-  @ApiPropertyOptional({ ...S, description: '휴대폰(숫자만) — 전체를 다루는 사람(canCrudAll)에게만 싣는다. 그 밖에는 null' })
+  @ApiPropertyOptional({ ...S, description: '휴대폰(한국은 숫자만 · 해외는 +국가번호…) — 전체를 다루는 사람(canCrudAll)에게만 싣는다. 그 밖에는 null' })
   phone?: string | null;
   @ApiPropertyOptional({ ...S, description: '입사일 YYYY-MM-DD — 「수정」 창의 처음 값. 옛 계정은 null 일 수 있다' })
   hiredOn?: string | null;
@@ -317,8 +318,8 @@ export class StaffCreateDto {
   @IsOptional() @IsString() @MaxLength(40)
   tz?: string | null;
 
-  @ApiPropertyOptional({ ...S, maxLength: 20, description: '휴대폰 — 숫자만 남겨 저장한다(한국 휴대폰만 · 아니면 400)' })
-  @IsOptional() @IsString() @MaxLength(20)
+  @ApiPropertyOptional({ ...S, maxLength: 32, description: '휴대폰 — 한국 번호는 숫자만 남겨 저장, 해외 번호는 `+국가번호 번호`(N-103 · 나라는 phoneCountries). 모양이 아니면 400' })
+  @IsOptional() @IsString() @MaxLength(32)
   phone?: string | null;
 
   @ApiPropertyOptional({ ...S, description: '입사일 YYYY-MM-DD — 비우면 오늘. 불가 시간 2주 회차의 기산점' })
@@ -350,13 +351,13 @@ export class StaffPatchDto {
   @ValidateIf((_o, v) => v !== undefined) @IsString() @MinLength(1, { message: '이름을 적어 주세요' }) @MaxLength(40)
   name?: string;
 
-  @ApiPropertyOptional({ format: 'email', maxLength: 120, description: '로그인 아이디 — 유일(대소문자 무시). 바꾸면 이메일 확인이 풀린다' })
+  @ApiPropertyOptional({ format: 'email', maxLength: 120, description: '로그인 아이디 — 유일(대소문자 무시). 바꾸면 이메일 확인이 풀리고 그 사람은 다음 요청부터 첫 설정을 다시 한다(N-104)' })
   @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
   @ValidateIf((_o, v) => v !== undefined) @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
   email?: string;
 
-  @ApiPropertyOptional({ ...S, maxLength: 20, description: '휴대폰 — 숫자만 남겨 저장(한국 휴대폰만 · 아니면 400). null·빈 글이면 비운다. 바꾸면 휴대폰 확인이 풀린다' })
-  @IsOptional() @IsString() @MaxLength(20)
+  @ApiPropertyOptional({ ...S, maxLength: 32, description: '휴대폰 — 한국 번호는 숫자만 · 해외 번호는 `+국가번호 번호`(N-103). null·빈 글이면 비운다. 바꾸면 휴대폰 확인이 풀리고 그 사람은 다음 요청부터 첫 설정을 다시 한다(N-104)' })
+  @IsOptional() @IsString() @MaxLength(32)
   phone?: string | null;
 
   @ApiPropertyOptional({ ...S, maxLength: 20, description: '직함 — 권한과 무관 (D-R39). null·빈 글이면 비운다' })
@@ -479,6 +480,8 @@ export class DrawerDto {
   @ApiProperty({ description: '관리자 화면의 모든 시각은 KST 다 (D-R12)' }) tz!: string;
   @ApiProperty({ description: '§17 「+ 구성원」이 서는가 — canCrudAll (C97 · D-R39: 단추가 서는지도 서버)' }) canAddMember!: boolean;
   @ApiProperty({ description: '시급을 보고 고칠 수 있는가 — canWage. false 면 members.wageRate 는 전부 null (C97)' }) canWage!: boolean;
+  @ApiProperty({ type: [PhoneCountryDto], description: '§17 구성원 만들기 · 수정의 휴대폰 국가번호 목록 — 첫 설정과 같은 표(N-103)' })
+  phoneCountries!: PhoneCountryDto[];
 }
 
 /* ══ 쓰기 ═══════════════════════════════════════════════════════════════
