@@ -14,12 +14,14 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { OnboardingController } from './onboarding.controller';
 import { OnboardingService } from './onboarding.service';
+import { PasswordResetController } from './password-reset.controller';
+import { PasswordResetService } from './password-reset.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Staff]), PassportModule, JwtModule.register({})],
-  // 첫 설정(W8) — 발송은 전역 NotifyModule 의 SENDER 를 쓴다
-  controllers: [AuthController, OnboardingController],
-  providers: [AuthService, JwtStrategy, OnboardingService],
+  // 첫 설정(W8) · 비밀번호 찾기(N-101) — 발송은 전역 NotifyModule 의 SENDER 를 쓴다
+  controllers: [AuthController, OnboardingController, PasswordResetController],
+  providers: [AuthService, JwtStrategy, OnboardingService, PasswordResetService],
   exports: [AuthService],
 })
 export class AuthModule {}
