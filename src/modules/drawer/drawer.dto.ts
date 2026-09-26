@@ -241,7 +241,9 @@ export class NotiCategoryDto {
 export class MemberDto {
   @ApiProperty() id!: number;
   @ApiProperty() name!: string;
-  @ApiProperty() email!: string;
+  @ApiProperty({ description: '로그인 아이디 — 형식 자유(띄어쓰기만 없음) · 대소문자 무시 유일 (W10)' }) loginId!: string;
+  @ApiProperty({ ...S, description: '이메일 — 연락 · 인증용(W10 부터 아이디가 아니다). 만들 때 비워 둘 수 있어 null 일 수 있다' })
+  email!: string | null;
   @ApiProperty({ enum: ['teacher', 'manager', 'admin', 'ceo'] }) role!: string;
   @ApiPropertyOptional({ ...S, description: '직함은 권한이 아니다 (D-R39)' }) title?: string | null;
   @ApiPropertyOptional(S) tz?: string | null;
@@ -255,7 +257,7 @@ export class MemberDto {
   wageable?: boolean;
 
   /* ── W8 사용자 표 CRUD (대표 지시 2026-09-26) — 줄마다 **서버가** 가른다. 화면은 role 을 보지 않는다 (D-R39) ── */
-  @ApiPropertyOptional({ description: '첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩' })
+  @ApiPropertyOptional({ description: '첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩' })
   mustChangeCredentials?: boolean;
   @ApiPropertyOptional({ ...S, description: '휴대폰(한국은 숫자만 · 해외는 +국가번호…) — 전체를 다루는 사람(canCrudAll)에게만 싣는다. 그 밖에는 null' })
   phone?: string | null;
@@ -276,24 +278,15 @@ export class MemberDto {
 /** 새 구성원이 될 수 있는 역할 — 대표·관리자 계정은 이 길로 만들지 않는다(권한 상승 경로를 두지 않는다 · C97) */
 export const STAFF_CREATE_ROLES = ['teacher', 'manager'] as const;
 
-/**
- * 넘겨줄 정보 — 아이디(=이메일)와 초기 비밀번호 (W8 · 대표 지시 2026-09-26 「아이디 및 비밀번호 생성하여 넘겨줄 수 있게」).
- * **이 응답과 비밀번호 초기화 응답에만** 실린다 — 목록·기록(log)에는 없다. 첫 로그인 때 반드시 바꾸게 되어 있다.
- */
-export class StaffHandoverDto {
-  @ApiProperty({ description: '로그인 아이디 — 이메일' }) loginId!: string;
-  @ApiProperty({ description: '초기 비밀번호 — 서버 상수(운영 값). 첫 로그인 때 반드시 바꾼다' }) initialPassword!: string;
-}
-
-/** 「+ 구성원」의 응답 — 만든 줄(MemberDto) + 넘겨줄 정보 */
-export class StaffCreatedDto extends MemberDto {
-  @ApiProperty({ description: '로그인 아이디 — 이메일' }) loginId!: string;
-  @ApiProperty({ description: '초기 비밀번호 — 이 응답에만 실린다' }) initialPassword!: string;
-}
+/** 이메일 칸 — 빈 글은 null(비움)로 받는다. 적었으면 앞뒤 공백 없이 소문자(W10) */
+const emailOrNull = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? (value.trim().toLowerCase() || null) : value;
 
 /**
  * §17 「+ 구성원」 (C97 · 테스트 시나리오 D-41 「신규 강사 등록」).
- * **비밀번호 칸이 없다** (W8) — 서버가 늘 초기 비밀번호로 만들고 첫 로그인 때 바꾸게 한다. 보내면 400(허용 밖 필드).
+ * **아이디와 임시 비밀번호는 매니저가 정한다** (W10 · 대표 지시 2026-09-26 「매니저가 아이디 비번 만들면 db 에 저장 →
+ * 초기 설정 시 주요 인증 및 비번 재설정」). 아이디는 형식 자유(띄어쓰기만 없음) · 이메일은 선택이다. 비밀번호는 해시로만
+ * 저장하고 응답 · 기록에는 싣지 않는다 — 넘겨줄 비밀번호는 적은 화면만 안다. 첫 로그인 때 본인이 휴대폰 · 이메일을 확인하고 바꾼다.
  */
 export class StaffCreateDto {
   @ApiProperty({ maxLength: 40 })
@@ -301,10 +294,18 @@ export class StaffCreateDto {
   @IsString() @MinLength(1, { message: '이름을 적어 주세요' }) @MaxLength(40)
   name!: string;
 
-  @ApiProperty({ format: 'email', maxLength: 120, description: '로그인 아이디 — 유일' })
-  @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
-  @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
-  email!: string;
+  @ApiProperty({ example: 'kim.teacher', maxLength: 120, description: '로그인 아이디 — 형식 자유 · 띄어쓰기 없음 · 대소문자 무시 유일(W10). 규칙 문장은 서랍의 loginIdRule' })
+  @IsString({ message: '아이디를 적어 주세요' }) @MaxLength(120, { message: '아이디는 120자까지입니다' })
+  loginId!: string;
+
+  @ApiProperty({ example: '********', maxLength: 200, description: '임시 비밀번호 — 매니저가 정해 넘겨준다(W10). 규칙은 서랍의 tempPasswordRule(첫 설정과 같은 규칙). 응답 · 기록에는 싣지 않는다' })
+  @IsString({ message: '임시 비밀번호를 적어 주세요' }) @MaxLength(200, { message: '비밀번호가 너무 깁니다' })
+  password!: string;
+
+  @ApiPropertyOptional({ ...S, format: 'email', maxLength: 120, description: '이메일 — 선택(W10). 적으면 모양과 유일(대소문자 무시)을 본다. 첫 설정 때 본인이 적고 코드로 확인한다' })
+  @Transform(emailOrNull)
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
+  email?: string | null;
 
   @ApiProperty({ enum: [...STAFF_CREATE_ROLES], description: '강사 · 매니저 — 대표·관리자는 만들지 않는다' })
   @IsIn([...STAFF_CREATE_ROLES], { message: '역할은 강사 · 매니저 중 하나입니다' })
@@ -342,8 +343,8 @@ export class StaffParamsDto {
 }
 
 /**
- * 「수정」 — 보낸 칸만 바꾼다(생략 = 그대로). 이름·이메일·역할·시간대·입사일은 null 을 받지 않는다 —
- * 지우는 값이 아니기 때문이다. 직함·휴대폰은 null 또는 빈 글이면 비운다.
+ * 「수정」 — 보낸 칸만 바꾼다(생략 = 그대로). 이름·아이디·역할·시간대·입사일은 null 을 받지 않는다 —
+ * 지우는 값이 아니기 때문이다. 이메일·직함·휴대폰은 null 또는 빈 글이면 비운다.
  */
 export class StaffPatchDto {
   @ApiPropertyOptional({ maxLength: 40 })
@@ -351,10 +352,14 @@ export class StaffPatchDto {
   @ValidateIf((_o, v) => v !== undefined) @IsString() @MinLength(1, { message: '이름을 적어 주세요' }) @MaxLength(40)
   name?: string;
 
-  @ApiPropertyOptional({ format: 'email', maxLength: 120, description: '로그인 아이디 — 유일(대소문자 무시). 바꾸면 이메일 확인이 풀리고 그 사람은 다음 요청부터 첫 설정을 다시 한다(N-104)' })
-  @Transform(({ value }) => typeof value === 'string' ? value.trim().toLowerCase() : value)
-  @ValidateIf((_o, v) => v !== undefined) @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
-  email?: string;
+  @ApiPropertyOptional({ maxLength: 120, description: '로그인 아이디 — 형식 자유 · 띄어쓰기 없음 · 대소문자 무시 유일(W10). 연락처가 아니라서 바꿔도 확인 · 첫 설정은 그대로다 — 다음 로그인부터 새 아이디로 들어온다' })
+  @ValidateIf((_o, v) => v !== undefined) @IsString({ message: '아이디를 적어 주세요' }) @MaxLength(120, { message: '아이디는 120자까지입니다' })
+  loginId?: string;
+
+  @ApiPropertyOptional({ ...S, format: 'email', maxLength: 120, description: '이메일 — 연락 · 인증용 · 유일(대소문자 무시). null · 빈 글이면 비운다. 바꾸거나 비우면 이메일 확인이 풀리고 그 사람은 다음 요청부터 첫 설정을 다시 한다(N-104 · W10)' })
+  @Transform(emailOrNull)
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
+  email?: string | null;
 
   @ApiPropertyOptional({ ...S, maxLength: 32, description: '휴대폰 — 한국 번호는 숫자만 · 해외 번호는 `+국가번호 번호`(N-103). null·빈 글이면 비운다. 바꾸면 휴대폰 확인이 풀리고 그 사람은 다음 요청부터 첫 설정을 다시 한다(N-104)' })
   @IsOptional() @IsString() @MaxLength(32)
@@ -375,6 +380,16 @@ export class StaffPatchDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, description: '입사일 YYYY-MM-DD' })
   @ValidateIf((_o, v) => v !== undefined) @IsCalendarDate()
   hiredOn?: string;
+}
+
+/**
+ * 「비밀번호 초기화」 — 매니저가 임시 비밀번호를 적는다(W10 · 답변 2026-09-26 「매니저가 직접 적기」).
+ * 규칙은 만들기와 같다(서랍의 tempPasswordRule). 응답 · 기록에는 싣지 않는다.
+ */
+export class StaffPasswordResetDto {
+  @ApiProperty({ example: '********', maxLength: 200, description: '임시 비밀번호 — 규칙은 서랍의 tempPasswordRule. 응답 · 기록에는 싣지 않는다' })
+  @IsString({ message: '임시 비밀번호를 적어 주세요' }) @MaxLength(200, { message: '비밀번호가 너무 깁니다' })
+  password!: string;
 }
 
 /** 「사용 중지」·「다시 사용」 — 사용 중지된 계정은 다음 요청부터 인증이 막힌다(기존 활성 검사) */
@@ -482,6 +497,10 @@ export class DrawerDto {
   @ApiProperty({ description: '시급을 보고 고칠 수 있는가 — canWage. false 면 members.wageRate 는 전부 null (C97)' }) canWage!: boolean;
   @ApiProperty({ type: [PhoneCountryDto], description: '§17 구성원 만들기 · 수정의 휴대폰 국가번호 목록 — 첫 설정과 같은 표(N-103)' })
   phoneCountries!: PhoneCountryDto[];
+  @ApiProperty({ description: '§17 구성원 만들기 · 수정의 아이디 규칙 문장 — 화면은 그대로 적는다(W10 · D-R18)' })
+  loginIdRule!: string;
+  @ApiProperty({ description: '§17 구성원 만들기 · 비밀번호 초기화의 임시 비밀번호 규칙 문장 — 화면은 그대로 적는다(W10 · D-R18)' })
+  tempPasswordRule!: string;
 }
 
 /* ══ 쓰기 ═══════════════════════════════════════════════════════════════

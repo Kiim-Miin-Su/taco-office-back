@@ -21,7 +21,7 @@
  * NOT NULL 칸은 남는 대표로, 그 밖은 **아무것도 바꾸기 전에** 멈춘다. 전부 한 트랜잭션이다.
  */
 import bcrypt from 'bcryptjs';
-import { INITIAL_PASSWORD, normalizeLoginEmail } from './account-policy';
+import { INITIAL_PASSWORD, normalizeEmail } from './account-policy';
 import { writtenRows } from './sql';
 import { quoteIdent, STAFF_SOFT_REFS, type FkDeleteRule } from './staff-refs';
 // 가린 이메일은 발송 원장과 같은 규칙 한 벌을 쓴다(부수효과 없는 순수 함수)
@@ -135,7 +135,7 @@ export function parseGoLiveArgs(argv: readonly string[]): GoLiveArgs {
 export interface CeoLine {
   id: number;
   name: string;
-  /** 가린 이메일 — 콘솔에도 원문을 찍지 않는다 */
+  /** 가린 이메일 — 콘솔에도 원문을 찍지 않는다. 이메일이 빈 계정은 그렇다고 적는다(W10 부터 이메일은 비워 둘 수 있다) */
   emailMasked: string;
 }
 
@@ -226,17 +226,18 @@ export async function planGoLive(q: Queryable, keepEmail?: string | null): Promi
   const count = async (t: string) =>
     Number((await rowsOf<{ n: string }>(q, `SELECT count(*)::bigint AS n FROM ${quoteIdent(t)}`))[0]?.n ?? 0);
 
-  const activeCeos = (await rowsOf<{ id: string; name: string; email: string }>(q,
+  const masked = (email: string | null) => (email ? maskEmail(email) : '(이메일 없음)');
+  const activeCeos = (await rowsOf<{ id: string; name: string; email: string | null }>(q,
     `SELECT id, name, email FROM staff WHERE role = 'ceo' AND active ORDER BY id`,
-  )).map((r) => ({ id: Number(r.id), name: r.name, emailMasked: maskEmail(r.email) }));
+  )).map((r) => ({ id: Number(r.id), name: r.name, emailMasked: masked(r.email) }));
 
   let keptCeo: CeoLine | null = null;
   let keepEmailProblem: string | null = null;
   if (keepEmail) {
     // 역할 판정은 SQL 에서 한다 — 활성 대표만 남길 수 있다
     const [hit] = await rowsOf<{ id: string; name: string; email: string }>(q,
-      `SELECT id, name, email FROM staff WHERE lower(email) = $1 AND role = 'ceo' AND active`, [normalizeLoginEmail(keepEmail)]);
-    if (hit) keptCeo = { id: Number(hit.id), name: hit.name, emailMasked: maskEmail(hit.email) };
+      `SELECT id, name, email FROM staff WHERE lower(email) = $1 AND role = 'ceo' AND active`, [normalizeEmail(keepEmail)]);
+    if (hit) keptCeo = { id: Number(hit.id), name: hit.name, emailMasked: masked(hit.email) };
     else keepEmailProblem = '--keep-email 이 활성 대표 계정의 이메일이 아닙니다 — 아래 「활성 대표」 중 하나를 적으세요';
   }
 

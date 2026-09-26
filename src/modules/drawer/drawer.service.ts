@@ -31,14 +31,17 @@ import { START_MIN, END_MIN, kstAt, kstDateOf, writtenRows } from '../../lib/sql
 import { todoSourceLabel } from '../../lib/todo';
 import { KST, overdueDays, todayKst } from '../../lib/kst';
 import { insertWage } from '../../lib/wage';
-import { INITIAL_PASSWORD, normalizeLoginEmail, normalizeMobile } from '../../lib/account-policy';
+import {
+  LOGIN_ID_ISSUE_MESSAGE, LOGIN_ID_RULE_TEXT, PASSWORD_ISSUE_MESSAGE, TEMP_PASSWORD_RULE_TEXT,
+  loginIdIssue, normalizeEmail, normalizeLoginId, normalizeMobile, passwordIssue,
+} from '../../lib/account-policy';
 import { PHONE_COUNTRIES } from '../../lib/phone';
 import { staffRecordTables } from '../../lib/staff-refs';
 import { maskEmail, maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { STAFF_CREATE_ROLES } from './drawer.dto';
 import type {
-  ChreqReviewDto, DrawerDto, MemberDto, ReqReviewDto, StaffCreateDto, StaffCreatedDto, StaffHandoverDto, StaffPatchDto,
+  ChreqReviewDto, DrawerDto, MemberDto, ReqReviewDto, StaffCreateDto, StaffPatchDto,
   TodoCreateDto, TodoPatchDto,
 } from './drawer.dto';
 import bcrypt from 'bcryptjs';
@@ -49,8 +52,27 @@ const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
 const staffNotFound = () => new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
+const staffLoginIdTaken = () => new ConflictException({
+  code: 'STAFF_LOGIN_ID_TAKEN', message: '그 아이디는 이미 쓰고 있습니다 — 다른 아이디를 정해 주세요(대소문자만 다른 아이디도 같은 아이디입니다)',
+});
 const staffEmailTaken = () =>
-  new ConflictException({ code: 'STAFF_EMAIL_TAKEN', message: '그 이메일로 이미 구성원이 있습니다 — 로그인 아이디는 하나여야 합니다' });
+  new ConflictException({ code: 'STAFF_EMAIL_TAKEN', message: '그 이메일은 다른 구성원이 쓰고 있습니다 — 이메일은 한 사람에 하나입니다' });
+/** 유일 제약 위반(23505)을 칸에 맞는 409 로 — 동시에 같은 값을 넣은 사람이 있을 때. 오류 원문(값이 든다)은 싣지 않는다 */
+const staffUniqueTaken = (e: unknown) =>
+  (e as { constraint?: string }).constraint === 'staff_login_id_lower_key' ? staffLoginIdTaken() : staffEmailTaken();
+
+/** 아이디 칸 — 규칙에 맞으면 저장할 값(앞뒤 공백만 지움), 아니면 400. 규칙 · 문장은 `lib/account-policy` 한 곳 (W10) */
+function staffLoginIdOf(raw: string): string {
+  const issue = loginIdIssue(raw);
+  if (issue) throw new BadRequestException({ code: 'LOGIN_ID_RULE', message: LOGIN_ID_ISSUE_MESSAGE[issue] });
+  return normalizeLoginId(raw);
+}
+
+/** 매니저가 적은 임시 비밀번호 — 첫 설정의 새 비밀번호와 **같은 규칙**(`passwordIssue` 한 곳 · W10). 맞지 않으면 400 */
+function assertTempPassword(pw: string): void {
+  const issue = passwordIssue(pw);
+  if (issue) throw new BadRequestException({ code: 'PASSWORD_RULE', message: PASSWORD_ISSUE_MESSAGE[issue] });
+}
 
 /**
  * 휴대폰 칸 — 비우면 null, 적었으면 저장 모양(한국 번호는 숫자만 · 해외 번호는 `+국가번호…` · N-103 · lib/phone).
@@ -369,10 +391,10 @@ export class DrawerService {
 
     // 지금 시급은 **볼 수 있는 사람에게만** 싣는다(canWage · D-R39) — 못 보면 조회 자체를 안 한다. 회차의 시급과 같은 정의(오늘 이하의 마지막 줄 · lib/wage)
     // 구성원 목록(§17)도 전체를 볼 수 있는 사람(canCrudAll)에게만 싣는다 — 강사에게는 **자기 한 줄**뿐이다.
-    // 이메일은 로그인 아이디다. 강사 화면은 서랍을 그리지 않지만 경로는 열려 있으므로 SELECT 단계에서 뺀다 (보안 검수 0925 · D-R39)
+    // 아이디 · 이메일도 같다(W10 부터 둘은 다른 칸이다). 강사 화면은 서랍을 그리지 않지만 경로는 열려 있으므로 SELECT 단계에서 뺀다 (보안 검수 0925 · D-R39)
     // 휴대폰도 연락처라 전체를 다루는 사람(canCrudAll)에게만 싣는다 — 아니면 SELECT 단계에서 뺀다 (W8)
     const members = (await this.q(
-      `SELECT s.id, s.name, s.email, s.role::text AS role, s.title, s.tz, s.active,
+      `SELECT s.id, s.name, s.login_id, s.email, s.role::text AS role, s.title, s.tz, s.active,
               CASE WHEN $3::boolean THEN s.phone END AS phone, s.must_change_credentials,
               to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
               (s.role::text = ANY($5::text[])) AS manageable,
@@ -388,7 +410,7 @@ export class DrawerService {
         ORDER BY s.active DESC, s.id`,
       [todayKst(), canWage, canSeeAll, viewerId, [...STAFF_CREATE_ROLES]],
     )).map((r) => ({
-      id: Number(r.id), name: String(r.name), email: String(r.email),
+      id: Number(r.id), name: String(r.name), loginId: String(r.login_id), email: str(r.email),
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
       wageRate: canWage && r.wage_rate != null ? Number(r.wage_rate) : null,
       wageFrom: canWage ? str(r.wage_from) : null,
@@ -492,6 +514,9 @@ export class DrawerService {
       canAddMember: canSeeAll,
       // 구성원 만들기 · 수정 창의 휴대폰 국가번호 목록 — 첫 설정과 같은 표(N-103 · lib/phone)
       phoneCountries: PHONE_COUNTRIES.map((c) => ({ ...c })),
+      // 규칙 문장도 서버가 준다 — 화면이 규칙을 따로 적지 않는다 (W10 · D-R18)
+      loginIdRule: LOGIN_ID_RULE_TEXT,
+      tempPasswordRule: TEMP_PASSWORD_RULE_TEXT,
       canWage,
     };
   }
@@ -501,8 +526,10 @@ export class DrawerService {
   /**
    * §17 「+ 구성원」 (C97 · 테스트 시나리오 D-41 「신규 강사 등록」).
    * 역할은 강사·매니저뿐(DTO enum · 대표·관리자 계정은 이 길로 만들지 않는다 — 권한 상승 경로를 두지 않는다).
-   * 이메일은 유일(표 UNIQUE 가 마지막에 막는다 · 먼저 읽어 409 문장을 준다) · 시간대는 `tzg` 에 있는 값만(C41 과 같은 낱말 `TZ_UNKNOWN`).
-   * 비밀번호는 bcryptjs 해시로만 저장하고 어느 응답에도 싣지 않는다. 시급을 적었으면 **같은 트랜잭션**에 `insertWage`(입사일 또는 오늘부터 · 소급 없음).
+   * 아이디는 형식 자유(띄어쓰기만 없음) · 대소문자 무시 유일, 이메일은 선택(적으면 유일) — 표의 유일 색인이 마지막에 막고
+   * 먼저 읽어 409 문장을 준다(W10). 시간대는 `tzg` 에 있는 값만(C41 과 같은 낱말 `TZ_UNKNOWN`).
+   * 비밀번호는 매니저가 적은 임시 비밀번호를 bcryptjs 해시로만 저장하고 어느 응답 · 기록에도 싣지 않는다.
+   * 시급을 적었으면 **같은 트랜잭션**에 `insertWage`(입사일 또는 오늘부터 · 소급 없음).
    *
    * **시급을 적으려면 `canWage` 여야 한다**(S4). `insertWage` 를 타는 다른 두 경로 — `POST /accounting/wages`
    * (`@Perm('canAdminPage','canWage')`)와 §14 시급 요청 승인(`reviewRequest` 의 `WAGE_REVIEW_FORBIDDEN`) — 는 둘 다
@@ -510,7 +537,7 @@ export class DrawerService {
    * **그 예외가 존재하는 이유 자체를 우회한다.** 구성원을 만드는 것과 시급을 정하는 것은 다른 권한이므로
    * 만들기 자체는 막지 않고 **시급 칸만** 막는다 — 시급을 비우면 그대로 만들어진다.
    */
-  async createStaff(viewerId: number, canWage: boolean, dto: StaffCreateDto): Promise<StaffCreatedDto> {
+  async createStaff(viewerId: number, canWage: boolean, dto: StaffCreateDto): Promise<MemberDto> {
     const today = todayKst();
     if (dto.wageRate != null && !canWage) {
       throw new ForbiddenException({
@@ -518,6 +545,9 @@ export class DrawerService {
         message: '시급을 다룰 권한이 필요합니다 — 시급을 비우고 만든 뒤 시급 담당자가 「시급 수정」으로 세울 수 있습니다',
       });
     }
+    // 모양 거절은 DB 를 읽기 전에 — 아이디 · 임시 비밀번호 규칙은 lib/account-policy 한 곳 (W10)
+    const loginId = staffLoginIdOf(dto.loginId);
+    assertTempPassword(dto.password);
     // 휴대폰은 숫자만 저장한다 — 첫 설정의 문자 확인(SENS)이 같은 모양을 본다 (lib/account-policy)
     const phone = staffPhoneOf(dto.phone);
     const tz = dto.tz?.trim() || KST;
@@ -525,26 +555,30 @@ export class DrawerService {
     if (!known) {
       throw new ConflictException({ code: 'TZ_UNKNOWN', message: '시간대 목록에 없는 값입니다 — 구성원·시간대에서 먼저 추가하세요' });
     }
-    const email = normalizeLoginEmail(dto.email);
-    const [taken] = (await this.q(`SELECT id FROM staff WHERE lower(email) = $1`, [email])) as Array<{ id: string }>;
-    if (taken) throw staffEmailTaken();
+    const [idTaken] = (await this.q(`SELECT id FROM staff WHERE lower(login_id) = lower($1)`, [loginId])) as Array<{ id: string }>;
+    if (idTaken) throw staffLoginIdTaken();
+    const email = dto.email ? normalizeEmail(dto.email) : null;
+    if (email) {
+      const [taken] = (await this.q(`SELECT id FROM staff WHERE lower(email) = $1`, [email])) as Array<{ id: string }>;
+      if (taken) throw staffEmailTaken();
+    }
     const hiredOn = dto.hiredOn ?? today;
     /*
-     * 비밀번호는 **서버가** 정한다 (W8 · 대표 지시 2026-09-26) — 만드는 사람이 고른 비밀번호는 만든 사람도 안다.
-     * 초기 비밀번호로 만들고 첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 걸어 둔다. 첫 로그인 때 본인이 바꾼다.
+     * 비밀번호는 **매니저가 적은 임시 비밀번호**다 (W10 · 답변 2026-09-26) — 만든 사람도 아는 값이므로 첫 설정을 걸어 둔다.
+     * 첫 로그인 때 본인이 휴대폰 · 이메일을 코드로 확인하고 새 비밀번호로 바꾼다(지금 비밀번호와 같으면 막힌다).
      */
-    const hash = await bcrypt.hash(INITIAL_PASSWORD, 10);
+    const hash = await bcrypt.hash(dto.password, 10);
     const id = await this.anyRepo.manager.transaction(async (m: EntityManager) => {
       let made: { id: string };
       try {
         [made] = (await m.query(
-          `INSERT INTO staff (name, email, phone, role, title, tz, password_hash, hired_on, active, must_change_credentials)
-           VALUES ($1, $2, $3, $4::role_t, $5, $6, $7, $8::date, true, true) RETURNING id`,
-          [dto.name, email, phone, dto.role, dto.title?.trim() || null, tz, hash, hiredOn],
+          `INSERT INTO staff (name, login_id, email, phone, role, title, tz, password_hash, hired_on, active, must_change_credentials)
+           VALUES ($1, $2, $3, $4, $5::role_t, $6, $7, $8, $9::date, true, true) RETURNING id`,
+          [dto.name, loginId, email, phone, dto.role, dto.title?.trim() || null, tz, hash, hiredOn],
         )) as Array<{ id: string }>;
       } catch (e) {
-        // 동시에 같은 이메일로 만든 사람이 있으면 표의 유일 제약이 마지막에 막는다 — 오류 원문(값이 든다) 대신 같은 409 문장
-        if ((e as { code?: string }).code === '23505') throw staffEmailTaken();
+        // 동시에 같은 아이디 · 이메일로 만든 사람이 있으면 표의 유일 색인이 마지막에 막는다 — 오류 원문(값이 든다) 대신 같은 409 문장
+        if ((e as { code?: string }).code === '23505') throw staffUniqueTaken(e);
         throw e;
       }
       const staffId = Number(made.id);
@@ -560,9 +594,8 @@ export class DrawerService {
       return staffId;
     });
     // 만든 줄의 시급도 **볼 수 있는 사람에게만** 싣는다 — 여기서만 true 를 박으면 목록과 응답이 갈린다 (D-R39)
-    const member = await this.memberOne(id, canWage, viewerId, true);
-    // 넘겨줄 정보는 **이 응답에만** 싣는다 — 목록·기록(log)에는 없다
-    return { ...member, loginId: member.email, initialPassword: INITIAL_PASSWORD };
+    // 비밀번호는 싣지 않는다 — 넘겨줄 비밀번호는 적은 화면만 안다(W10)
+    return this.memberOne(id, canWage, viewerId, true);
   }
 
   /**
@@ -571,7 +604,7 @@ export class DrawerService {
    */
   private async memberOne(id: number, canWage: boolean, viewerId: number, canManage: boolean): Promise<MemberDto> {
     const [r] = await this.q(
-      `SELECT id, name, email, phone, role::text AS role, title, tz, active, must_change_credentials,
+      `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active, must_change_credentials,
               to_char(hired_on,'YYYY-MM-DD') AS hired_on,
               (role = 'teacher' AND active) AS wageable, (role::text = ANY($2::text[])) AS manageable
          FROM staff WHERE id = $1`,
@@ -583,7 +616,7 @@ export class DrawerService {
       [id, todayKst()],
     ) : [];
     return {
-      id: Number(r.id), name: String(r.name), email: String(r.email),
+      id: Number(r.id), name: String(r.name), loginId: String(r.login_id), email: str(r.email),
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
       wageRate: wage[0] ? Number(wage[0].rate) : null, wageFrom: wage[0] ? String(wage[0].from_date) : null,
       wageable: canWage && r.wageable === true,
@@ -602,7 +635,7 @@ export class DrawerService {
   /** 대상 줄을 잠그고 읽는다 — 없으면 404, 강사·매니저가 아니면 403 */
   private async lockManageable(m: EntityManager, id: number): Promise<Record<string, unknown>> {
     const [row] = (await m.query(
-      `SELECT id, name, email, phone, role::text AS role, title, tz, active, must_change_credentials,
+      `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active, must_change_credentials,
               to_char(hired_on,'YYYY-MM-DD') AS hired_on, (role::text = ANY($2::text[])) AS manageable
          FROM staff WHERE id = $1 FOR UPDATE`,
       [id, [...STAFF_CREATE_ROLES]],
@@ -615,21 +648,24 @@ export class DrawerService {
   }
 
   /**
-   * 「수정」 — 보낸 칸만 바꾼다. 이메일(=아이디)을 바꾸면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀린다
+   * 「수정」 — 보낸 칸만 바꾼다. 이메일을 바꾸거나 비우면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀린다
    * (확인한 것은 **옛 값**이다). 그리고 **첫 설정을 다시 건다**(N-104 · 대표 결정 2026-09-26) — 그 사람은 다음 요청부터
-   * 첫 설정 화면으로 가서 새 아이디 · 휴대폰을 코드로 확인하고 새 비밀번호를 정한다(가드가 요청마다 계정 행을 읽는다).
-   * 확인되지 않은 연락처로 비밀번호 찾기가 가지 않게 하려는 것이다. 기록(log)에는 바뀐 칸만 남기고 연락처는 가린 모양으로만 적는다.
+   * 첫 설정 화면으로 가서 이메일 · 휴대폰을 코드로 확인하고 새 비밀번호를 정한다(가드가 요청마다 계정 행을 읽는다).
+   * 확인되지 않은 연락처로 비밀번호 찾기가 가지 않게 하려는 것이다. **아이디는 연락처가 아니다**(W10) — 바꿔도 확인 · 첫 설정은
+   * 그대로이고 다음 로그인부터 새 아이디로 들어온다. 기록(log)에는 바뀐 칸만 남기고 연락처(이메일 모양 아이디 포함)는 가린 모양으로만 적는다.
    */
   async updateStaff(viewerId: number, canWage: boolean, id: number, dto: StaffPatchDto): Promise<MemberDto> {
     const phone = dto.phone === undefined ? undefined : staffPhoneOf(dto.phone);
+    const loginId = dto.loginId === undefined ? undefined : staffLoginIdOf(dto.loginId);
     await this.anyRepo.manager.transaction(async (m: EntityManager) => {
       const row = await this.lockManageable(m, id);
       const cur: Record<string, string | null> = {
-        name: str(row.name), email: str(row.email), phone: str(row.phone), title: str(row.title),
+        name: str(row.name), loginId: str(row.login_id), email: str(row.email), phone: str(row.phone), title: str(row.title),
         tz: str(row.tz), role: str(row.role), hiredOn: str(row.hired_on),
       };
       const next: Record<string, string | null | undefined> = {
-        name: dto.name, email: dto.email === undefined ? undefined : normalizeLoginEmail(dto.email), phone,
+        name: dto.name, loginId,
+        email: dto.email === undefined ? undefined : (dto.email ? normalizeEmail(dto.email) : null), phone,
         title: dto.title === undefined ? undefined : (dto.title?.trim() || null),
         tz: dto.tz?.trim(), role: dto.role, hiredOn: dto.hiredOn,
       };
@@ -651,13 +687,17 @@ export class DrawerService {
           throw new ConflictException({ code: 'TZ_UNKNOWN', message: '시간대 목록에 없는 값입니다 — 구성원·시간대에서 먼저 추가하세요' });
         }
       }
-      if ('email' in changed) {
+      if ('loginId' in changed) {
+        const [taken] = (await m.query(`SELECT id FROM staff WHERE lower(login_id) = lower($1) AND id <> $2`, [changed.loginId, id])) as Array<{ id: string }>;
+        if (taken) throw staffLoginIdTaken();
+      }
+      if ('email' in changed && changed.email !== null) {
         const [taken] = (await m.query(`SELECT id FROM staff WHERE lower(email) = $1 AND id <> $2`, [changed.email, id])) as Array<{ id: string }>;
         if (taken) throw staffEmailTaken();
       }
       // 칸 이름은 이 표에서만 온다 — 보낸 글이 SQL 이 되지 않는다(값은 전부 $n)
       const COLUMN: Record<string, string> = {
-        name: 'name', email: 'email', phone: 'phone', title: 'title', tz: 'tz', role: 'role', hiredOn: 'hired_on',
+        name: 'name', loginId: 'login_id', email: 'email', phone: 'phone', title: 'title', tz: 'tz', role: 'role', hiredOn: 'hired_on',
       };
       const sets: string[] = [];
       const params: unknown[] = [id];
@@ -668,18 +708,22 @@ export class DrawerService {
       }
       if ('email' in changed) sets.push('email_verified = false');
       if ('phone' in changed) sets.push('phone_verified = false');
-      // N-104 — 연락처(아이디 · 휴대폰)가 바뀌면 첫 설정을 다시 건다. 세션은 끊지 않는다(가드가 다음 요청부터 첫 설정으로 보낸다)
+      // N-104 — 연락처(이메일 · 휴대폰)가 바뀌면 첫 설정을 다시 건다. 세션은 끊지 않는다(가드가 다음 요청부터 첫 설정으로 보낸다).
+      // 아이디는 연락처가 아니라서 여기에 들지 않는다(W10)
       const contactChanged = 'email' in changed || 'phone' in changed;
       if (contactChanged) sets.push('must_change_credentials = true');
       try {
         await m.query(`UPDATE staff SET ${sets.join(', ')} WHERE id = $1`, params);
       } catch (e) {
-        // 동시에 같은 이메일로 바꾼 사람이 있으면 표의 UNIQUE 가 마지막에 막는다
-        if ((e as { code?: string }).code === '23505') throw staffEmailTaken();
+        // 동시에 같은 아이디 · 이메일로 바꾼 사람이 있으면 표의 유일 색인이 마지막에 막는다
+        if ((e as { code?: string }).code === '23505') throw staffUniqueTaken(e);
         throw e;
       }
+      // 이메일 모양의 아이디도 연락처다(옛 계정은 이메일이 아이디로 옮겨 와 있다) — 가린 모양으로 적는다
       const shown = (key: string, value: string | null) =>
-        value === null ? null : key === 'email' ? maskEmail(value) : key === 'phone' ? maskPhone(value) : value;
+        value === null ? null
+          : key === 'email' || (key === 'loginId' && value.includes('@')) ? maskEmail(value)
+            : key === 'phone' ? maskPhone(value) : value;
       const before: Record<string, string | null> = {};
       const after: Record<string, string | null> = {};
       for (const [key, value] of Object.entries(changed)) {
@@ -700,15 +744,17 @@ export class DrawerService {
   }
 
   /**
-   * 「비밀번호 초기화」 — 초기 비밀번호로 되돌리고 첫 설정을 다시 건다. 세션을 끊는 시각(credentials_changed_at)도
-   * 적는다 — 그 전에 받은 토큰은 인증에서 막힌다(W8-A). 자기 것은 첫 설정 흐름으로 바꾼다(SELF_RESET).
+   * 「비밀번호 초기화」 — 매니저가 적은 임시 비밀번호로 바꾸고 첫 설정을 다시 건다(W10 · 답변 2026-09-26 「매니저가 직접 적기」).
+   * 세션을 끊는 시각(credentials_changed_at)도 적는다 — 그 전에 받은 토큰은 인증에서 막힌다(W8-A).
+   * 자기 것은 첫 설정 흐름으로 바꾼다(SELF_RESET). 응답은 그 줄(MemberDto)이고 비밀번호는 싣지 않는다.
    */
-  async resetStaffPassword(viewerId: number, id: number): Promise<StaffHandoverDto> {
+  async resetStaffPassword(viewerId: number, canWage: boolean, id: number, password: string): Promise<MemberDto> {
     if (id === viewerId) {
       throw new ForbiddenException({ code: 'SELF_RESET', message: '자기 비밀번호는 여기서 초기화하지 않습니다 — 로그인한 뒤 첫 설정 화면에서 바꾸세요' });
     }
-    const hash = await bcrypt.hash(INITIAL_PASSWORD, 10);
-    const email = await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+    assertTempPassword(password);
+    const hash = await bcrypt.hash(password, 10);
+    await this.anyRepo.manager.transaction(async (m: EntityManager) => {
       const row = await this.lockManageable(m, id);
       await m.query(
         `UPDATE staff SET password_hash = $2, must_change_credentials = true, credentials_changed_at = now() WHERE id = $1`,
@@ -719,9 +765,8 @@ export class DrawerService {
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'password_reset',$3::jsonb,$4::jsonb)`,
         [viewerId, id, JSON.stringify({ mustChangeCredentials: row.must_change_credentials === true }), JSON.stringify({ mustChangeCredentials: true })],
       );
-      return String(row.email);
     });
-    return { loginId: email, initialPassword: INITIAL_PASSWORD };
+    return this.memberOne(id, canWage, viewerId, true);
   }
 
   /** 「사용 중지」·「다시 사용」 — 같은 값이면 아무것도 적지 않고 그대로 돌려준다(두 번 눌러도 같다) */

@@ -43,16 +43,24 @@ d('비밀번호 찾기 (N-101)', () => {
   const fake = new FakeSender();
   const PW = 'Current-pass-1234';
   const NEW_PW = 'Recovered-pass-55';
-  const IDS = { ready: 9_000_000_000_971, unverified: 9_000_000_000_972, abroad: 9_000_000_000_973, off: 9_000_000_000_974 } as const;
+  const IDS = {
+    ready: 9_000_000_000_971, unverified: 9_000_000_000_972, abroad: 9_000_000_000_973, off: 9_000_000_000_974,
+    freeId: 9_000_000_000_975, noEmail: 9_000_000_000_976,
+  } as const;
+  // 앞의 넷은 옮겨 온 옛 계정 모양(아이디 = 그때의 이메일) · 뒤의 둘은 W10 에 매니저가 아이디를 정해 만든 계정
   const PEOPLE = [
     // 첫 설정을 마친 계정 — 이메일 · 휴대폰 확인됨
-    { id: IDS.ready, name: '찾기', email: 'n101-ready@t.kr', phone: '01055556666', verified: true, active: true },
+    { id: IDS.ready, name: '찾기', loginId: 'n101-ready@t.kr', email: 'n101-ready@t.kr', phone: '01055556666', verified: true, active: true },
     // 첫 설정 전 계정 — 확인 안 됨(비밀번호 찾기를 쓸 수 없다)
-    { id: IDS.unverified, name: '확인전', email: 'n101-unverified@t.kr', phone: '01077778888', verified: false, active: true },
+    { id: IDS.unverified, name: '확인전', loginId: 'n101-unverified@t.kr', email: 'n101-unverified@t.kr', phone: '01077778888', verified: false, active: true },
     // 해외 번호 계정 (N-103)
-    { id: IDS.abroad, name: '해외', email: 'n101-abroad@t.kr', phone: '+14155550123', verified: true, active: true },
+    { id: IDS.abroad, name: '해외', loginId: 'n101-abroad@t.kr', email: 'n101-abroad@t.kr', phone: '+14155550123', verified: true, active: true },
     // 사용 중지 계정
-    { id: IDS.off, name: '중지', email: 'n101-off@t.kr', phone: '01099990000', verified: true, active: false },
+    { id: IDS.off, name: '중지', loginId: 'n101-off@t.kr', email: 'n101-off@t.kr', phone: '01099990000', verified: true, active: false },
+    // 형식 자유 아이디 — 이메일과 다르다 (W10)
+    { id: IDS.freeId, name: '자유', loginId: 'N101_자유아이디', email: 'n101-free@t.kr', phone: '01033334444', verified: true, active: true },
+    // 이메일이 없는 계정 — 휴대폰만으로는 찾을 수 없다(두 코드가 다 필요하다 · W10)
+    { id: IDS.noEmail, name: '이메일없음', loginId: 'n101-no-email', email: null, phone: '01022223333', verified: true, active: true },
   ];
   const ALL = PEOPLE.map((p) => p.id);
 
@@ -63,9 +71,9 @@ d('비밀번호 찾기 (N-101)', () => {
     const hash = await bcrypt.hash(PW, 4);
     for (const p of PEOPLE) {
       await ds.query(
-        `UPDATE staff SET email=$2, phone=$3, password_hash=$4, email_verified=$5, phone_verified=$5,
+        `UPDATE staff SET login_id=$7, email=$2, phone=$3, password_hash=$4, email_verified=$5, phone_verified=$5,
                 must_change_credentials=NOT $5, credentials_changed_at=NULL, active=$6 WHERE id=$1`,
-        [p.id, p.email, p.phone, hash, p.verified, p.active],
+        [p.id, p.email, p.phone, hash, p.verified, p.active, p.loginId],
       );
     }
     fake.readyMap = { email: true, sms: true };
@@ -86,8 +94,8 @@ d('비밀번호 찾기 (N-101)', () => {
     await ds.query('DELETE FROM staff WHERE id = ANY($1)', [ALL]);
     for (const p of PEOPLE) {
       await ds.query(
-        `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,'teacher','x',true)`,
-        [p.id, p.name, p.email],
+        `INSERT INTO staff (id, name, login_id, email, role, password_hash, active) VALUES ($1,$2,$3,$4,'teacher','x',true)`,
+        [p.id, p.name, p.loginId, p.email],
       );
     }
   });
@@ -101,8 +109,8 @@ d('비밀번호 찾기 (N-101)', () => {
     await app?.close();
   });
 
-  const askCode = (email: string, channel: string) =>
-    request(server()).post('/auth/password-reset/codes').send({ email, channel });
+  const askCode = (loginId: string, channel: string) =>
+    request(server()).post('/auth/password-reset/codes').send({ loginId, channel });
   const lastCode = (channel: 'email' | 'sms') => {
     const call = [...fake.calls].reverse().find((c) => c.channel === channel);
     return /\d{6}/.exec(call?.body ?? '')?.[0] ?? '';
@@ -112,13 +120,13 @@ d('비밀번호 찾기 (N-101)', () => {
     'SELECT channel, purpose, attempts, consumed_at FROM auth_code WHERE staff_id=$1 ORDER BY id', [id],
   ) as Promise<Array<{ channel: string; purpose: string; attempts: number; consumed_at: Date | null }>>;
   /** 두 코드를 받아 두고 맞는 본문을 만든다 */
-  const prepared = async (email = 'n101-ready@t.kr') => {
-    await askCode(email, 'email').expect(201);
-    await askCode(email, 'sms').expect(201);
-    return { email, emailCode: lastCode('email'), phoneCode: lastCode('sms'), password: NEW_PW };
+  const prepared = async (loginId = 'n101-ready@t.kr') => {
+    await askCode(loginId, 'email').expect(201);
+    await askCode(loginId, 'sms').expect(201);
+    return { loginId, emailCode: lastCode('email'), phoneCode: lastCode('sms'), password: NEW_PW };
   };
-  const login = async (email: string, password: string) => {
-    const res = await request(server()).post('/auth/login').send({ email, password }).expect(201);
+  const login = async (loginId: string, password: string) => {
+    const res = await request(server()).post('/auth/login').send({ loginId, password }).expect(201);
     return { access: res.body.accessToken as string, cookies: res.headers['set-cookie'] as unknown as string[], body: res.body };
   };
   /** 계정 여부가 새지 않는지 볼 때 — 만료 시각은 요청마다 다르므로 뺀 모양 */
@@ -199,14 +207,48 @@ d('비밀번호 찾기 (N-101)', () => {
     });
 
     it.each([
-      [{ email: 'not-an-email', channel: 'email' }],
-      [{ email: 'n101-ready@t.kr', channel: 'fax' }],
-      [{ email: 'n101-ready@t.kr' }],
-      [{ email: 'n101-ready@t.kr', channel: 'email', target: 'me@evil.kr' }],
+      [{ loginId: 'n101 ready@t.kr', channel: 'email' }],
+      [{ loginId: '', channel: 'email' }],
+      [{ channel: 'email' }],
+      [{ loginId: 'n101-ready@t.kr', channel: 'fax' }],
+      [{ loginId: 'n101-ready@t.kr' }],
+      [{ loginId: 'n101-ready@t.kr', channel: 'email', target: 'me@evil.kr' }],
     ])('잘못된 입력은 400 이고 보내지 않는다 — 받는 곳(target)을 따로 적을 수 없다: %p', async (body) => {
       await request(server()).post('/auth/password-reset/codes').send(body).expect(400);
       expect(fake.calls).toHaveLength(0);
       expect(await rows(IDS.ready)).toHaveLength(0);
+    });
+
+    it('띄어쓰기 든 아이디는 계정과 무관한 모양 거절 400 INVALID_LOGIN_ID — 폭 없는 공백도 같다 (W10)', async () => {
+      for (const loginId of ['n101 ready@t.kr', 'n101-ready\u200b@t.kr']) {
+        const res = await askCode(loginId, 'email').expect(400);
+        expect(res.body.code).toBe('INVALID_LOGIN_ID');
+        expect(res.body.message).toContain('띄어쓰기');
+      }
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it('형식 자유 아이디로 찾고 등록 · 확인된 이메일로 보낸다 — 이메일을 아이디 칸에 적으면 찾지 않는다(같은 201) (W10)', async () => {
+      const byId = shape((await askCode('n101_자유아이디', 'email').expect(201)).body);
+      expect(fake.calls).toHaveLength(1);
+      expect(fake.calls[0]).toMatchObject({ channel: 'email', to: 'n101-free@t.kr' });
+      fake.calls = [];
+      const byEmail = await askCode('n101-free@t.kr', 'sms').expect(201);
+      expect(shape(byEmail.body)).toMatchObject({ ...byId, channel: 'sms', message: expect.stringContaining('휴대폰') });
+      expect(fake.calls).toHaveLength(0);
+      expect((await rows(IDS.freeId)).map((r) => r.channel)).toEqual(['email']);
+    });
+
+    it('이메일이 없는 계정은 비밀번호 찾기를 쓸 수 없다 — 같은 201 · 아무것도 보내지 않는다 (W10)', async () => {
+      for (const channel of ['email', 'sms']) await askCode('n101-no-email', channel).expect(201);
+      expect(fake.calls).toHaveLength(0);
+      expect(await rows(IDS.noEmail)).toHaveLength(0);
+    });
+
+    it('옛 화면의 `email` 칸도 아이디로 받는다 — 배포 사이 호환(다음 배포 뒤 지운다)', async () => {
+      await request(server()).post('/auth/password-reset/codes').send({ email: 'n101-ready@t.kr', channel: 'email' }).expect(201);
+      expect(fake.calls).toHaveLength(1);
+      expect(fake.calls[0]).toMatchObject({ channel: 'email', to: 'n101-ready@t.kr' });
     });
 
     it('해외 번호 계정은 국제 문자 인증 문장으로 그 번호에 보낸다 (N-103)', async () => {
@@ -238,7 +280,7 @@ d('비밀번호 찾기 (N-101)', () => {
         expect(info.body.channels.map((c: { ready: boolean; notReadyReason: string }) => [c.ready, c.notReadyReason]))
           .toEqual([[false, SECRET_MISSING_REASON], [false, SECRET_MISSING_REASON]]);
         expect((await askCode('n101-ready@t.kr', 'email').expect(503)).body.code).toBe('AUTH_CODE_SECRET_MISSING');
-        const done = await complete({ email: 'n101-ready@t.kr', emailCode: '123456', phoneCode: '123456', password: NEW_PW }).expect(503);
+        const done = await complete({ loginId: 'n101-ready@t.kr', emailCode: '123456', phoneCode: '123456', password: NEW_PW }).expect(503);
         expect(done.body.code).toBe('AUTH_CODE_SECRET_MISSING');
         expect(fake.calls).toHaveLength(0);
       });
@@ -258,8 +300,8 @@ d('비밀번호 찾기 (N-101)', () => {
   describe('POST /auth/password-reset/complete — 거절', () => {
     it('규칙에 맞지 않는 비밀번호는 계정과 무관하게 400 PASSWORD_RULE (첫 설정과 같은 문장)', async () => {
       const body = await prepared();
-      for (const email of ['n101-ready@t.kr', 'n101-nobody@t.kr']) {
-        const res = await complete({ ...body, email, password: 'short1' }).expect(400);
+      for (const loginId of ['n101-ready@t.kr', 'n101-nobody@t.kr']) {
+        const res = await complete({ ...body, loginId, password: 'short1' }).expect(400);
         expect(res.body).toEqual({ code: 'PASSWORD_RULE', message: PASSWORD_ISSUE_MESSAGE.TOO_SHORT });
       }
     });
@@ -267,8 +309,8 @@ d('비밀번호 찾기 (N-101)', () => {
     it('없는 계정 · 확인 안 된 계정 · 사용 중지 계정 · 틀린 코드가 모두 같은 409 RESET_CODE_INVALID 한 문장이다', async () => {
       const body = await prepared();
       const want = { code: 'RESET_CODE_INVALID', message: RESET_CODE_INVALID_MESSAGE };
-      for (const email of ['n101-nobody@t.kr', 'n101-unverified@t.kr', 'n101-off@t.kr']) {
-        expect((await complete({ ...body, email }).expect(409)).body).toEqual(want);
+      for (const loginId of ['n101-nobody@t.kr', 'n101-unverified@t.kr', 'n101-off@t.kr', 'n101-no-email']) {
+        expect((await complete({ ...body, loginId }).expect(409)).body).toEqual(want);
       }
       const wrong = body.emailCode === '000000' ? '111111' : '000000';
       expect((await complete({ ...body, emailCode: wrong }).expect(409)).body).toEqual(want);
@@ -352,7 +394,7 @@ d('비밀번호 찾기 (N-101)', () => {
       await request(server()).post('/auth/refresh').set('Cookie', old.cookies).expect(401);
       // 새 비밀번호로 들어가고 옛 것은 안 된다 · 쓴 코드는 다시 쓰지 못한다
       await login('n101-ready@t.kr', NEW_PW);
-      await request(server()).post('/auth/login').send({ email: 'n101-ready@t.kr', password: PW }).expect(401);
+      await request(server()).post('/auth/login').send({ loginId: 'n101-ready@t.kr', password: PW }).expect(401);
       expect((await complete({ ...body, password: 'Another-pass-88' }).expect(409)).body.code).toBe('RESET_CODE_INVALID');
     });
 
@@ -366,6 +408,13 @@ d('비밀번호 찾기 (N-101)', () => {
     it('해외 번호 계정도 두 코드로 마친다 (N-103)', async () => {
       await complete(await prepared('n101-abroad@t.kr')).expect(204);
       await login('n101-abroad@t.kr', NEW_PW);
+    });
+
+    it('형식 자유 아이디 계정도 두 코드로 마치고 그 아이디로 들어온다 (W10)', async () => {
+      await complete(await prepared('N101_자유아이디')).expect(204);
+      await login('n101_자유아이디', NEW_PW);
+      const [s] = await ds.query('SELECT login_id, email FROM staff WHERE id=$1', [IDS.freeId]);
+      expect(s).toEqual({ login_id: 'N101_자유아이디', email: 'n101-free@t.kr' });
     });
   });
 

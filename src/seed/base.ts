@@ -136,7 +136,7 @@ export const ZACCS = [
  * 신규 개발 DB의 표본이다. 운영 계정/이력의 삭제·합병 매핑으로 사용하지 않는다.
  * 직함(title)은 표시용이고 권한은 role 에서 파생한다 (D-R39).
  * **교수실장 직함은 존재하지 않는다** — 안내 글에서도 쓰지 않는다.
- * 비밀번호는 전부 `taco1234!` — 개발용이라 같게 둔다.
+ * 비밀번호는 전부 `taco1234!` — 개발용이라 같게 둔다. 로그인 아이디는 이메일과 같다(W10 · seed/index 가 옮겨 적는다).
  */
 export const STAFF = [
   { id: 1, name: '김민선', email: 'ceo@tnacademy.kr',    role: 'ceo',     title: '대표',       hiredOn: '2019-03-02' },

@@ -11,9 +11,11 @@
  * 로그인 전 화면이 부른다(@Public). 그래서 **계정이 있는지 알려 주지 않는다** — 코드 받기는 계정이 없거나 · 확인되지 않았거나 ·
  * 한도에 걸렸거나 · 보내지 못했어도 같은 모양으로 답하고, 마치기는 코드 · 계정 문제를 한 문장으로 답한다(로그인 실패와 같은 원칙).
  * 모양 검사만 여기서 본다 — 비밀번호 규칙은 서비스가 `lib/account-policy` 한 곳으로 판정한다(첫 설정과 같다).
+ *
+ * 아이디는 형식이 자유다(W10) — `loginId` 로 받는다. `email` 은 옛 화면 호환 별칭(로그인과 같다 · 다음 배포 뒤 지운다).
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsString, Matches, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { SEND_CHANNELS, type SendChannel } from '../../modules/notify/sender';
 import { OnboardingChannelDto } from './onboarding.dto';
 
@@ -26,10 +28,16 @@ export class PasswordResetInfoDto {
 }
 
 export class PasswordResetCodeRequestDto {
-  @ApiProperty({ example: 'kim@tnacademy.kr', maxLength: 160, description: '로그인 아이디(이메일) — 코드는 이 계정에 **등록 · 확인된** 이메일 · 휴대폰으로만 간다' })
-  @IsString({ message: '아이디(이메일)를 적어 주세요' })
-  @MaxLength(160, { message: '아이디가 너무 깁니다' })
-  email!: string;
+  @ApiProperty({ example: 'kim.teacher', maxLength: 120, description: '로그인 아이디(형식 자유 · 대소문자 무시) — 코드는 이 계정에 **등록 · 확인된** 이메일 · 휴대폰으로만 간다' })
+  @ValidateIf((o: PasswordResetCodeRequestDto) => o.email === undefined)
+  @IsString({ message: '아이디를 적어 주세요' })
+  @MinLength(1, { message: '아이디를 적어 주세요' })
+  @MaxLength(120, { message: '아이디가 너무 깁니다' })
+  loginId?: string;
+
+  @ApiPropertyOptional({ deprecated: true, maxLength: 160, description: '옛 화면 호환 — loginId 와 같은 뜻(W10 이전 화면이 보낸다)' })
+  @IsOptional() @IsString() @MaxLength(160)
+  email?: string;
 
   @ApiProperty({ enum: SEND_CHANNELS, description: 'email = 등록된 이메일로 · sms = 등록된 휴대폰으로' })
   @IsIn(SEND_CHANNELS as unknown as string[], { message: '코드를 받을 곳은 이메일 또는 휴대폰입니다' })
@@ -53,10 +61,16 @@ export class PasswordResetCodeResultDto {
 const CODE = /^\d{6}$/;
 
 export class PasswordResetCompleteDto {
-  @ApiProperty({ example: 'kim@tnacademy.kr', maxLength: 160, description: '로그인 아이디(이메일) — 코드를 받은 계정' })
-  @IsString({ message: '아이디(이메일)를 적어 주세요' })
-  @MaxLength(160, { message: '아이디가 너무 깁니다' })
-  email!: string;
+  @ApiProperty({ example: 'kim.teacher', maxLength: 120, description: '로그인 아이디 — 코드를 받은 계정' })
+  @ValidateIf((o: PasswordResetCompleteDto) => o.email === undefined)
+  @IsString({ message: '아이디를 적어 주세요' })
+  @MinLength(1, { message: '아이디를 적어 주세요' })
+  @MaxLength(120, { message: '아이디가 너무 깁니다' })
+  loginId?: string;
+
+  @ApiPropertyOptional({ deprecated: true, maxLength: 160, description: '옛 화면 호환 — loginId 와 같은 뜻(W10 이전 화면이 보낸다)' })
+  @IsOptional() @IsString() @MaxLength(160)
+  email?: string;
 
   @ApiProperty({ example: '123456', pattern: '^\\d{6}$', description: '등록된 이메일로 받은 코드' })
   @IsString({ message: '이메일 인증 코드를 적어 주세요' })

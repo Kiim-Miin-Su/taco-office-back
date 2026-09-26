@@ -18,7 +18,6 @@ import { AppModule } from '../src/app.module';
 import { Lead } from '../src/entities';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { wageRateAt } from '../src/lib/wage';
-import { INITIAL_PASSWORD } from '../src/lib/account-policy';
 import { DEV_URL } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
@@ -37,6 +36,9 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
   const RETIRED = 984; // 비활성
   const STU = 9981;
   const NEW_EMAIL = 'new-teacher-c97@t.kr';
+  // W10 — 아이디 · 임시 비밀번호는 매니저가 정한다(아이디는 형식 자유 · 대소문자 무시 유일)
+  const NEW_LOGIN = '박수진.C97';
+  const TEMP_PW = 'Temp-pass-c97';
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> => ds.query(sql, p) as Promise<T[]>;
   const kst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
@@ -58,7 +60,10 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
   const made: number[] = [];
 
   const cleanupNewStaff = async () => {
-    const rows = await q<{ id: string }>(`SELECT id FROM staff WHERE lower(email) = $1`, [NEW_EMAIL]);
+    const rows = await q<{ id: string }>(
+      `SELECT id FROM staff WHERE lower(login_id) = ANY($1) OR lower(email) = $2`,
+      [[NEW_LOGIN.toLowerCase(), 'other-c97', 'mars-c97', 'x-c97'], NEW_EMAIL],
+    );
     for (const r of rows) {
       await q(`DELETE FROM wage WHERE staff_id = $1`, [r.id]);
       await q(`DELETE FROM noti WHERE to_id = $1 OR from_id = $1`, [r.id]);
@@ -133,20 +138,24 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${t}`).timeout({ response: 8000, deadline: 15000 });
 
   /* ── D-41 ─────────────────────────────────────────────────────────────── */
-  it('D-41 「+ 구성원」 — 강사 계정이 서고 초기 비밀번호로 로그인되며(첫 설정 대상), 해시는 응답에 없다 · 시급을 적으면 같은 트랜잭션에 WAGE 한 줄(입사일이 지났으면 오늘부터)', async () => {
-    // W8 — 비밀번호는 서버가 초기 비밀번호로 정한다(칸이 없다). 넘겨줄 정보만 이 응답에 실린다
+  it('D-41 「+ 구성원」 — 매니저가 정한 아이디 · 임시 비밀번호로 강사 계정이 서고 로그인되며(첫 설정 대상), 비밀번호 · 해시는 응답에 없다 · 시급을 적으면 같은 트랜잭션에 WAGE 한 줄(입사일이 지났으면 오늘부터)', async () => {
+    // W10 — 아이디 · 임시 비밀번호는 매니저가 적는다(대표 지시 2026-09-26). 응답은 만든 줄뿐이다 — 비밀번호는 적은 화면만 안다
     const res = await api('post', '/drawer/staff').send({
-      name: ' 박수진 ', email: NEW_EMAIL.toUpperCase(), role: 'teacher', title: '영어', tz: 'America/New_York',
+      name: ' 박수진 ', loginId: NEW_LOGIN, password: TEMP_PW, email: NEW_EMAIL.toUpperCase(), role: 'teacher', title: '영어', tz: 'America/New_York',
       hiredOn: plus(TODAY, -30), wageRate: 42000,
     }).expect(201);
-    expect(res.body).toMatchObject({ name: '박수진', email: NEW_EMAIL, role: 'teacher', title: '영어', tz: 'America/New_York', active: true, wageRate: 42000, wageFrom: TODAY, loginId: NEW_EMAIL, initialPassword: INITIAL_PASSWORD, mustChangeCredentials: true });
+    expect(res.body).toMatchObject({ name: '박수진', loginId: NEW_LOGIN, email: NEW_EMAIL, role: 'teacher', title: '영어', tz: 'America/New_York', active: true, wageRate: 42000, wageFrom: TODAY, mustChangeCredentials: true });
+    expect(res.body).not.toHaveProperty('initialPassword');
+    expect(res.body).not.toHaveProperty('password');
+    expect(JSON.stringify(res.body)).not.toContain(TEMP_PW);
     expect(JSON.stringify(res.body)).not.toMatch(/password_?hash|\$2[aby]\$/i);
-    const [row] = await q<{ password_hash: string; hired_on: string }>(`SELECT password_hash, to_char(hired_on,'YYYY-MM-DD') AS hired_on FROM staff WHERE id = $1`, [res.body.id]);
-    expect(row.password_hash).not.toContain(INITIAL_PASSWORD);
-    expect(await bcrypt.compare(INITIAL_PASSWORD, row.password_hash)).toBe(true);
+    const [row] = await q<{ password_hash: string; hired_on: string; login_id: string }>(`SELECT password_hash, login_id, to_char(hired_on,'YYYY-MM-DD') AS hired_on FROM staff WHERE id = $1`, [res.body.id]);
+    expect(row.password_hash).not.toContain(TEMP_PW);
+    expect(await bcrypt.compare(TEMP_PW, row.password_hash)).toBe(true);
+    expect(row.login_id).toBe(NEW_LOGIN);
     expect(row.hired_on).toBe(plus(TODAY, -30));
-    // 그 계정으로 들어온다 — 강사 화면(첫 설정은 W8 인증 흐름이 요구한다)
-    const login = await request(app.getHttpServer()).post('/auth/login').send({ email: NEW_EMAIL, password: INITIAL_PASSWORD }).expect(201);
+    // 그 계정으로 들어온다 — 대소문자는 가리지 않는다. 첫 설정은 인증 흐름이 요구한다
+    const login = await request(app.getHttpServer()).post('/auth/login').send({ loginId: NEW_LOGIN.toLowerCase(), password: TEMP_PW }).expect(201);
     expect(login.body.me?.role ?? login.body.user?.role ?? login.body.role).toBe('teacher');
     const wages = await q<{ rate: string; from_date: string; reason: string; approved_by: string }>(
       `SELECT rate, to_char(from_date,'YYYY-MM-DD') AS from_date, reason, approved_by FROM wage WHERE staff_id = $1`, [res.body.id]);
@@ -155,11 +164,12 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     expect(Number(wages[0].approved_by)).toBe(MANAGER);
     const [log] = await q<{ after: Record<string, unknown> }>(`SELECT after FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action = 'create'`, [res.body.id]);
     expect(log.after).toMatchObject({ role: 'teacher', wageRate: 42000, wageFrom: TODAY });
+    expect(JSON.stringify(log.after)).not.toContain(TEMP_PW);
     // 서랍 §17 — 볼 수 있는 사람(canWage)에게만 시급이 실린다
     const drawer = (await api('get', '/drawer').expect(200)).body;
     expect(drawer).toMatchObject({ canAddMember: true, canWage: true });
     const me = drawer.members.find((m: { id: number }) => m.id === res.body.id);
-    expect(me).toMatchObject({ name: '박수진', wageRate: 42000, wageFrom: TODAY, wageable: true });
+    expect(me).toMatchObject({ name: '박수진', loginId: NEW_LOGIN, wageRate: 42000, wageFrom: TODAY, wageable: true });
     // 「시급 수정」이 서는 줄은 표가 가른다 — 매니저·비활성 강사에는 서지 않고, 강사가 보면 아무 줄에도 서지 않는다 (D-R39)
     expect(drawer.members.find((m: { id: number }) => m.id === MANAGER)).toMatchObject({ wageable: false, wageRate: null });
     expect(drawer.members.find((m: { id: number }) => m.id === RETIRED)).toMatchObject({ wageable: false });
@@ -168,20 +178,23 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     expect(asTeacher.members.every((m: { wageable?: boolean; wageRate?: number | null }) => m.wageable === false && m.wageRate === null)).toBe(true);
   });
 
-  it('구성원 추가의 거절 — 같은 이메일 409 · 모르는 시간대 409 · 대표·관리자 역할은 DTO 가 400 · 강사 403 (비밀번호 칸의 400 은 staff-crud-w8-db.spec)', async () => {
-    await api('post', '/drawer/staff').send({ name: '중복', email: NEW_EMAIL, role: 'manager' }).expect(409)
+  it('구성원 추가의 거절 — 같은 아이디(대소문자 무시) · 같은 이메일 409 · 모르는 시간대 409 · 대표·관리자 역할은 DTO 가 400 · 강사 403 (아이디 · 임시 비밀번호 규칙의 400 은 staff-crud-w8-db.spec)', async () => {
+    const base = { password: TEMP_PW };
+    await api('post', '/drawer/staff').send({ ...base, name: '중복', loginId: NEW_LOGIN.toUpperCase(), role: 'manager' }).expect(409)
+      .expect((r) => expect(r.body.code).toBe('STAFF_LOGIN_ID_TAKEN'));
+    await api('post', '/drawer/staff').send({ ...base, name: '중복메일', loginId: 'other-c97', email: NEW_EMAIL, role: 'manager' }).expect(409)
       .expect((r) => expect(r.body.code).toBe('STAFF_EMAIL_TAKEN'));
-    await api('post', '/drawer/staff').send({ name: '화성', email: 'mars-c97@t.kr', role: 'teacher', tz: 'Mars/Olympus' }).expect(409)
+    await api('post', '/drawer/staff').send({ ...base, name: '화성', loginId: 'mars-c97', role: 'teacher', tz: 'Mars/Olympus' }).expect(409)
       .expect((r) => expect(r.body.code).toBe('TZ_UNKNOWN'));
-    await api('post', '/drawer/staff').send({ name: '대표', email: 'ceo2-c97@t.kr', role: 'ceo' }).expect(400);
-    await api('post', '/drawer/staff').send({ name: '관리', email: 'adm2-c97@t.kr', role: 'admin' }).expect(400);
-    await api('post', '/drawer/staff', teacherToken).send({ name: '강사가', email: 't-c97@t.kr', role: 'teacher' }).expect(403);
+    await api('post', '/drawer/staff').send({ ...base, name: '대표', loginId: 'ceo2-c97', role: 'ceo' }).expect(400);
+    await api('post', '/drawer/staff').send({ ...base, name: '관리', loginId: 'adm2-c97', role: 'admin' }).expect(400);
+    await api('post', '/drawer/staff', teacherToken).send({ ...base, name: '강사가', loginId: 't-c97', role: 'teacher' }).expect(403);
     // 거절은 아무것도 남기지 않는다
-    expect(await q(`SELECT id FROM staff WHERE email IN ('mars-c97@t.kr','ceo2-c97@t.kr','adm2-c97@t.kr','short-c97@t.kr','t-c97@t.kr')`)).toEqual([]);
+    expect(await q(`SELECT id FROM staff WHERE login_id IN ('other-c97','mars-c97','ceo2-c97','adm2-c97','t-c97')`)).toEqual([]);
     // 서비스로 곧장 불러도 역할 밖은 DTO 가 아니라 표(role_t)가 막는다 — 값이 enum 밖이면 22P02
     const svc = new DrawerService(ds.getRepository(Lead));
-    await expect(svc.createStaff(MANAGER, true, { name: 'x', email: 'x-c97@t.kr', role: 'nope' })).rejects.toBeTruthy();
-    expect(await q(`SELECT id FROM staff WHERE email = 'x-c97@t.kr'`)).toEqual([]);
+    await expect(svc.createStaff(MANAGER, true, { name: 'x', loginId: 'x-c97', password: TEMP_PW, role: 'nope' })).rejects.toBeTruthy();
+    expect(await q(`SELECT id FROM staff WHERE login_id = 'x-c97'`)).toEqual([]);
   });
 
   /* ── D-48 · I-8 ───────────────────────────────────────────────────────── */

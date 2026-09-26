@@ -49,6 +49,9 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
   const STU = 9971;
   const ids = [CEO, MGR, NOWAGE, TEACHER, RETIRED, NOHIDE];
   const NEW_EMAIL = 'sidedoor-new@t.kr';
+  /** 아이디와 임시 비밀번호는 매니저가 정한다(W10) — 아이디는 형식 자유 · 임시 비밀번호는 비밀번호 규칙을 지난다 */
+  const NEW_LOGIN = 'sidedoor-new';
+  const NEW_TEMP_PW = 'Sidedoor-w10a';
   let mtId = 0;
   const consIds: number[] = [];
 
@@ -59,7 +62,9 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
       .set('Authorization', `Bearer ${token}`);
 
   const dropNewStaff = async () => {
-    const rows = await q<{ id: string }>(`SELECT id FROM staff WHERE lower(email) = $1`, [NEW_EMAIL]);
+    const rows = await q<{ id: string }>(
+      `SELECT id FROM staff WHERE lower(email) = $1 OR lower(login_id) = $2`, [NEW_EMAIL, NEW_LOGIN],
+    );
     for (const r of rows) {
       await q(`DELETE FROM wage WHERE staff_id = $1`, [r.id]);
       await q(`DELETE FROM log WHERE entity = 'STAFF' AND entity_id = $1`, [r.id]);
@@ -161,13 +166,13 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
   /* ── ① 구성원 추가의 시급 ─────────────────────────────────────────── */
 
   it('① 시급 예외가 걸린 매니저는 「+ 구성원」으로도 시급을 못 세운다 — 만들기 자체는 막지 않는다', async () => {
-    // 비밀번호는 서버가 정한다(W8) — 본문에 싣지 않는다
-    const base = { name: '새강사', email: NEW_EMAIL, role: 'teacher' as const };
+    // 아이디 · 임시 비밀번호는 매니저가 적는다(W10 — W8 의 「서버가 정한 초기 비밀번호」를 대체) · 이메일은 선택이다
+    const base = { name: '새강사', loginId: NEW_LOGIN, password: NEW_TEMP_PW, email: NEW_EMAIL, role: 'teacher' as const };
 
     // 시급을 적으면 403 — 그리고 **아무것도 남지 않는다**(구성원도 안 생긴다)
     const blocked = await api('post', '/drawer/staff', noWage).send({ ...base, wageRate: 50000 }).expect(403);
     expect(blocked.body.code).toBe('WAGE_SET_FORBIDDEN');
-    expect(await q(`SELECT id FROM staff WHERE lower(email) = $1`, [NEW_EMAIL])).toEqual([]);
+    expect(await q(`SELECT id FROM staff WHERE lower(email) = $1 OR lower(login_id) = $2`, [NEW_EMAIL, NEW_LOGIN])).toEqual([]);
 
     // 시급을 비우면 같은 사람이 그대로 만든다 — 막는 것은 시급 칸 하나다
     const made = await api('post', '/drawer/staff', noWage).send(base).expect(201);

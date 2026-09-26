@@ -5,14 +5,14 @@
  */
 
 /**
- * 비밀번호 찾기 (N-101 · 대표 결정 2026-09-26).
+ * 비밀번호 찾기 (N-101 · 대표 결정 2026-09-26 · 아이디는 W10 부터 형식 자유).
  *
  * 「로그인 화면에 비밀번호 찾기 — 등록된 이메일과 휴대폰 코드를 **둘 다** 확인해야 새 비밀번호를 정한다 · 옛 세션은 끊는다 · 모든 역할」.
  *
  * 첫 설정(onboarding.service)과 같은 원장 · 같은 한도 · 같은 문장 함수(auth-code)를 쓰고, 다른 것은 셋이다.
  *   ① **로그인 전 경로다** — 그래서 계정이 있는지 말하지 않는다. 코드 받기는 계정이 없거나 · 확인되지 않았거나 · 한도에 걸렸거나 ·
  *      보내지 못했어도 **같은 모양**으로 답한다(설정 없음 503 만 따로 — 계정과 무관한 서버 상태다). 마치기는 계정 · 코드 문제를
- *      한 문장(RESET_CODE_INVALID)으로 답한다. 로그인이 「이메일 또는 비밀번호가 맞지 않습니다」 하나로 답하는 것과 같은 원칙이다.
+ *      한 문장(RESET_CODE_INVALID)으로 답한다. 로그인이 「아이디 또는 비밀번호가 맞지 않습니다」 하나로 답하는 것과 같은 원칙이다.
  *   ② **코드는 등록 · 확인된 곳으로만 간다** — 받는 곳을 적게 하지 않는다. 쓸 수 있는 계정은 사용 중이고 이메일 · 휴대폰을
  *      둘 다 확인한(첫 설정을 마친) 계정뿐이다. 관리자가 연락처를 바꾸면 확인이 풀리므로(N-104) 확인 안 된 곳으로 가지 않는다.
  *   ③ **첫 설정 상태는 그대로 둔다** — 비밀번호만 바꾸고 옛 세션을 끊는다(credentials_changed_at). 첫 설정을 건너뛰는 길이 아니다.
@@ -25,9 +25,9 @@ import { DataSource, type EntityManager } from 'typeorm';
 import { randomInt } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import {
-  PASSWORD_ISSUE_MESSAGE, PASSWORD_RULE_TEXT, normalizeLoginEmail, passwordIssue,
+  LOGIN_ID_ISSUE_MESSAGE, PASSWORD_ISSUE_MESSAGE, PASSWORD_RULE_TEXT, loginIdIssue, normalizeLoginId, passwordIssue,
 } from '../lib/account-policy';
-import { CHANNEL_SPECS, SENDER, isEmail, type SendChannel, type SendResult, type Sender } from '../modules/notify/sender';
+import { CHANNEL_SPECS, SENDER, type SendChannel, type SendResult, type Sender } from '../modules/notify/sender';
 import {
   CODE_MAX_ATTEMPTS, CODE_RESEND_SECONDS, CODE_TTL_MINUTES, authCodeSecret, codeChannels, codeLimitIssue, codeMessage,
   devEcho, insertCode, notConfigured, secretMissing, verifyCode,
@@ -64,17 +64,18 @@ export class PasswordResetService {
   ) {}
 
   /**
-   * 쓸 수 있는 계정 — 사용 중 · 이메일과 휴대폰을 둘 다 확인함 · 휴대폰이 있음. 아이디는 대소문자를 가리지 않는다(로그인과 같다).
+   * 쓸 수 있는 계정 — 사용 중 · 이메일과 휴대폰이 있고 둘 다 확인함. 아이디는 대소문자를 가리지 않는다(로그인과 같다 · W10).
    * `lock` 이면 계정 행을 잡는다 — 같은 계정의 발급 · 확인이 한 줄로 선다(한도를 병렬로 넘지 못하게).
    */
-  private async eligible(m: EntityManager | DataSource, email: string, lock = false): Promise<Eligible | null> {
+  private async eligible(m: EntityManager | DataSource, loginId: string, lock = false): Promise<Eligible | null> {
     const rows = (await m.query(
       `SELECT id, email, phone, password_hash FROM staff
-        WHERE lower(email) = $1 AND active AND email_verified AND phone_verified AND phone IS NOT NULL
+        WHERE lower(login_id) = lower($1) AND active
+          AND email IS NOT NULL AND email_verified AND phone IS NOT NULL AND phone_verified
         ${lock ? 'FOR UPDATE' : ''}`,
-      [email],
+      [loginId],
     )) as Array<{ id: string; email: string; phone: string; password_hash: string | null }>;
-    // lower(email) 유일 색인이 둘을 막지만 판정은 여기서도 닫는다(로그인과 같다)
+    // lower(login_id) 유일 색인이 둘을 막지만 판정은 여기서도 닫는다(로그인과 같다)
     if (rows.length !== 1) return null;
     const [r] = rows;
     return { id: Number(r.id), email: r.email, phone: r.phone, passwordHash: r.password_hash };
@@ -89,13 +90,17 @@ export class PasswordResetService {
     };
   }
 
+  /** 적은 아이디 — `loginId`(W10) 또는 옛 화면의 `email`. 모양 거절은 계정과 무관하다 — 계정 여부를 알려 주지 않는다 */
+  private loginIdOf(dto: { loginId?: string; email?: string }): string {
+    const raw = dto.loginId ?? dto.email ?? '';
+    const issue = loginIdIssue(raw);
+    if (issue) throw new BadRequestException({ code: 'INVALID_LOGIN_ID', message: LOGIN_ID_ISSUE_MESSAGE[issue] });
+    return normalizeLoginId(raw);
+  }
+
   async sendCode(dto: PasswordResetCodeRequestDto): Promise<PasswordResetCodeResultDto> {
     const channel = dto.channel;
-    const email = normalizeLoginEmail(dto.email);
-    // 모양 거절은 계정과 무관하다 — 계정 여부를 알려 주지 않는다
-    if (!isEmail(email)) {
-      throw new BadRequestException({ code: 'INVALID_EMAIL', message: '이메일 형식이 아닙니다 — 예: kim@tnacademy.kr' });
-    }
+    const loginId = this.loginIdOf(dto);
     // 서버 설정이 없으면 모두에게 같은 503 — 이것도 계정과 무관하다(N-105 · 첫 설정과 같은 문장)
     if (!authCodeSecret()) throw secretMissing();
     const ready = this.sender.ready(channel);
@@ -107,7 +112,7 @@ export class PasswordResetService {
     });
     const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
     const issued = await this.ds.transaction(async (m) => {
-      const s = await this.eligible(m, email, true);
+      const s = await this.eligible(m, loginId, true);
       if (!s) return null;
       // 발급 한도(60초 · 하루 10번 · 한 시간 5번)는 첫 설정과 같은 예산이다(계정 · 채널마다 · N-105).
       // 걸려도 같은 모양으로 답한다 — 다르게 답하면 그 아이디가 있다는 것이 드러난다
@@ -151,8 +156,8 @@ export class PasswordResetService {
     const issue = passwordIssue(dto.password);
     if (issue) throw new BadRequestException({ code: 'PASSWORD_RULE', message: PASSWORD_ISSUE_MESSAGE[issue] });
     if (!authCodeSecret()) throw secretMissing();
-    const email = normalizeLoginEmail(dto.email);
-    const found = await this.eligible(this.ds, email);
+    const loginId = this.loginIdOf(dto);
+    const found = await this.eligible(this.ds, loginId);
     if (!found) throw codeInvalid();
 
     // 느린 일(해시 · 비교)은 계정 행 잠금 밖에서 한다. 비교 결과는 두 코드를 확인한 뒤에만 쓴다
@@ -162,7 +167,7 @@ export class PasswordResetService {
     const changedAt = new Date();
 
     const outcome: { ok: true } | { error: HttpException } = await this.ds.transaction(async (m) => {
-      const s = await this.eligible(m, email, true);
+      const s = await this.eligible(m, loginId, true);
       if (!s || s.id !== found.id) return { error: codeInvalid() };
       const byEmail = await verifyCode(m, {
         staffId: s.id, channel: 'email', purpose: 'password_reset', to: s.email, submitted: dto.emailCode,

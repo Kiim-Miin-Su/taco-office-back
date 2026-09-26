@@ -29,7 +29,7 @@ import { ScheduleService } from '../schedule/schedule.service';
 import {
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
   ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
-  StaffActiveDto, StaffCreateDto, StaffCreatedDto, StaffHandoverDto, StaffParamsDto, StaffPatchDto,
+  StaffActiveDto, StaffCreateDto, StaffParamsDto, StaffPasswordResetDto, StaffPatchDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
   TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
 } from './drawer.dto';
@@ -75,16 +75,16 @@ export class DrawerController {
   @Post('staff')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
-    summary: '「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41 · W8)',
-    description: '이름 · 이메일(유일 · 로그인 아이디) · 역할 둘 · 직함 · 시간대(tzg) · 휴대폰(숫자만) · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). '
-      + '**비밀번호는 받지 않는다** — 서버가 초기 비밀번호로 만들고 첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 건다. '
-      + '응답에 넘겨줄 정보(loginId · initialPassword)가 이때만 실린다. 대표·관리자 계정은 이 길로 만들지 않는다.',
+    summary: '「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41 · W8 · W10)',
+    description: '이름 · 아이디(형식 자유 · 띄어쓰기 없음 · 대소문자 무시 유일) · 임시 비밀번호 · 이메일(선택 · 유일) · 역할 둘 · 직함 · 시간대(tzg) · 휴대폰 · 입사일 · '
+      + '기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). **아이디와 임시 비밀번호는 매니저가 정한다**(W10) — 비밀번호는 해시로만 저장하고 '
+      + '응답 · 기록에 싣지 않는다. 첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 건다. 대표·관리자 계정은 이 길로 만들지 않는다.',
   })
-  @ApiCreatedResponse({ type: StaffCreatedDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(허용 밖 필드 — password 포함) | STAFF_PHONE_INVALID' })
-  @ApiConflictResponse({ description: 'code STAFF_EMAIL_TAKEN | TZ_UNKNOWN | WAGE_SAME_DAY' })
+  @ApiCreatedResponse({ type: MemberDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드) | LOGIN_ID_RULE | PASSWORD_RULE | STAFF_PHONE_INVALID' })
+  @ApiConflictResponse({ description: 'code STAFF_LOGIN_ID_TAKEN | STAFF_EMAIL_TAKEN | TZ_UNKNOWN | WAGE_SAME_DAY' })
   @ApiForbiddenResponse({ description: 'code WAGE_SET_FORBIDDEN — 시급을 적었는데 canWage 가 없다 (S4)' })
-  createStaff(@CurrentUser() user: RequestUser, @Body() dto: StaffCreateDto): Promise<StaffCreatedDto> {
+  createStaff(@CurrentUser() user: RequestUser, @Body() dto: StaffCreateDto): Promise<MemberDto> {
     // 만들기는 canCrudAll, **시급은 canWage** — 다른 권한이므로 따로 넘긴다 (S4)
     return this.svc.createStaff(user.id, this.gate(user).canWage, dto);
   }
@@ -92,14 +92,15 @@ export class DrawerController {
   @Patch('staff/:id')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
-    summary: '§17 「수정」 — 강사·매니저 줄의 이름 · 이메일 · 휴대폰 · 직함 · 시간대 · 역할 · 입사일 (W8)',
-    description: '보낸 칸만 바꾼다. 대표·관리자 줄은 403 STAFF_PROTECTED, 자기 역할은 403 SELF_ROLE. 이메일을 바꾸면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀린다. 시급은 「시급 수정」에서만.',
+    summary: '§17 「수정」 — 강사·매니저 줄의 이름 · 아이디 · 이메일 · 휴대폰 · 직함 · 시간대 · 역할 · 입사일 (W8 · W10)',
+    description: '보낸 칸만 바꾼다. 대표·관리자 줄은 403 STAFF_PROTECTED, 자기 역할은 403 SELF_ROLE. 이메일을 바꾸거나 비우면 이메일 확인이, 휴대폰을 바꾸면 '
+      + '휴대폰 확인이 풀리고 첫 설정을 다시 건다(N-104). 아이디는 연락처가 아니라서 바꿔도 첫 설정은 그대로다(W10). 시급은 「시급 수정」에서만.',
   })
   @ApiOkResponse({ type: MemberDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드 · 역할 ceo/admin) | STAFF_PHONE_INVALID' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드 · 역할 ceo/admin) | LOGIN_ID_RULE | STAFF_PHONE_INVALID' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_ROLE' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'STAFF_EMAIL_TAKEN | TZ_UNKNOWN | EMPTY_PATCH' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'STAFF_LOGIN_ID_TAKEN | STAFF_EMAIL_TAKEN | TZ_UNKNOWN | EMPTY_PATCH' })
   updateStaff(
     @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Body() dto: StaffPatchDto,
   ): Promise<MemberDto> {
@@ -109,14 +110,18 @@ export class DrawerController {
   @Post('staff/:id/password-reset')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
-    summary: '§17 「비밀번호 초기화」 — 초기 비밀번호로 되돌리고 첫 설정을 다시 건다 (W8)',
-    description: '자기 것은 403 SELF_RESET(첫 설정 흐름으로 바꾼다), 대표·관리자 줄은 403 STAFF_PROTECTED. 그 계정의 이전 로그인은 끊긴다(credentials_changed_at). 응답은 넘겨줄 정보 — 기록(log)에는 비밀번호가 없다.',
+    summary: '§17 「비밀번호 초기화」 — 매니저가 적은 임시 비밀번호로 바꾸고 첫 설정을 다시 건다 (W8 · W10)',
+    description: '자기 것은 403 SELF_RESET(첫 설정 흐름으로 바꾼다), 대표·관리자 줄은 403 STAFF_PROTECTED. 그 계정의 이전 로그인은 끊긴다(credentials_changed_at). '
+      + '응답은 그 줄(MemberDto) — 비밀번호는 응답 · 기록(log) 어디에도 없다.',
   })
-  @ApiCreatedResponse({ type: StaffHandoverDto })
+  @ApiCreatedResponse({ type: MemberDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드) | PASSWORD_RULE' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_RESET' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
-  resetStaffPassword(@CurrentUser() user: RequestUser, @Param() p: StaffParamsDto): Promise<StaffHandoverDto> {
-    return this.svc.resetStaffPassword(user.id, p.id);
+  resetStaffPassword(
+    @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Body() dto: StaffPasswordResetDto,
+  ): Promise<MemberDto> {
+    return this.svc.resetStaffPassword(user.id, this.gate(user).canWage, p.id, dto.password);
   }
 
   @Patch('staff/:id/active')

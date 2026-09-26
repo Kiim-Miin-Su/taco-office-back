@@ -10,13 +10,13 @@ import type { RequestUser } from '../common/perm';
 import { IS_PUBLIC } from './public.decorator';
 import { ALLOW_WHILE_ONBOARDING } from './allow-while-onboarding.decorator';
 
-export const ONBOARDING_REQUIRED_MESSAGE = '첫 설정을 먼저 마쳐 주세요 — 아이디(이메일) · 비밀번호 · 휴대폰 · 이메일 확인';
+export const ONBOARDING_REQUIRED_MESSAGE = '첫 설정을 먼저 마쳐 주세요 — 휴대폰 · 이메일 확인과 새 비밀번호';
 
 /**
  * 첫 설정 잠금 (W8 · 대표 지시 2026-09-26).
  *
- * 「첫 로그인 시 아이디 및 비밀번호 강제 변경 · phone · email 인증 필수 — 변경 안 하면 홈 페이지 접속 불가」.
- * 화면이 돌려보내는 것만으로는 부족하다 — 초기 비밀번호를 아는 사람이 API 를 직접 부르면 그만이다.
+ * 「첫 로그인 시 주요 인증(휴대폰 · 이메일) 및 비밀번호 재설정 — 안 하면 홈 페이지 접속 불가」(W8 · W10).
+ * 화면이 돌려보내는 것만으로는 부족하다 — 임시 비밀번호를 아는 사람(만든 매니저 포함)이 API 를 직접 부르면 그만이다.
  * 그래서 **JwtAuthGuard 바로 뒤 · PermGuard 앞**에 둔다: request.user 가 채워진 뒤에 판정하고,
  * 권한 문장(「canCrudAll 권한이 필요합니다」)보다 먼저 「첫 설정」이라는 진짜 까닭을 말한다.
  *

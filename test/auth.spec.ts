@@ -73,7 +73,12 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
     manager: 9_000_000_000_902,
     admin: 9_000_000_000_903,
     ceo: 9_000_000_000_904,
+    // W10 — 형식 자유 아이디 · 이메일 없는 계정
+    freeId: 9_000_000_000_905,
+    noEmail: 9_000_000_000_906,
   } as const;
+  /** 한글 · 기호 · 대문자가 섞인 아이디 — 형식은 자유이고 띄어쓰기만 없다 (W10) */
+  const FREE_ID = '김선생.Kim#1';
 
   const PEOPLE = [
     { id: TEST_IDS.teacher, name: '김강사', email: 'teacher@t.kr', role: 'teacher' },
@@ -81,6 +86,8 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
     { id: TEST_IDS.admin, name: '김민수', email: 'admin@t.kr', role: 'admin' },
     { id: TEST_IDS.ceo, name: '최대표', email: 'ceo@t.kr', role: 'ceo' },
   ];
+
+  const ALL_IDS = Object.values(TEST_IDS);
 
   beforeAll(async () => {
     const mod = await Test.createTestingModule({
@@ -95,7 +102,8 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
 
     ds = app.get(DataSource);
     const hash = await bcrypt.hash(PW, 4);
-    await ds.query('DELETE FROM staff WHERE id = ANY($1)', [PEOPLE.map((p) => p.id)]);
+    await ds.query('DELETE FROM staff WHERE id = ANY($1)', [ALL_IDS]);
+    // 아이디를 적지 않으면 이메일이 아이디가 된다(옮겨 온 옛 계정과 같은 모양 · 트리거 staff_login_id_default)
     for (const p of PEOPLE) {
       await ds.query(
         `INSERT INTO staff (id, name, email, role, password_hash, active)
@@ -103,17 +111,23 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
         [p.id, p.name, p.email, p.role, hash],
       );
     }
+    await ds.query(
+      `INSERT INTO staff (id, name, login_id, email, role, password_hash, active) VALUES
+         ($1, '자유아이디', $3, 'free-id@t.kr', 'teacher', $5, true),
+         ($2, '이메일없음', $4, NULL, 'teacher', $5, true)`,
+      [TEST_IDS.freeId, TEST_IDS.noEmail, FREE_ID, 'no-email.teacher', hash],
+    );
   });
 
   afterAll(async () => {
-    await ds?.query('DELETE FROM staff WHERE id = ANY($1)', [PEOPLE.map((p) => p.id)]);
+    await ds?.query('DELETE FROM staff WHERE id = ANY($1)', [ALL_IDS]);
     await app?.close();
   });
 
-  const login = async (email: string) => {
+  const login = async (loginId: string) => {
     const res = await request(app.getHttpServer())
       .post('/auth/login')
-      .send({ email, password: PW })
+      .send({ loginId, password: PW })
       .expect(201);
     return res;
   };
@@ -122,10 +136,13 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
 
   describe('로그인', () => {
     it.each([
-      { email: 'not-email', password: PW },
-      { email: 'ceo@t.kr', password: 'short' },
-      { email: 'ceo@t.kr', password: 12345678 },
-      { email: 'ceo@t.kr', password: PW, extra: true },
+      { password: PW },
+      { loginId: '', password: PW },
+      { loginId: 'x'.repeat(121), password: PW },
+      { loginId: 12345678, password: PW },
+      { loginId: 'ceo@t.kr', password: 'short' },
+      { loginId: 'ceo@t.kr', password: 12345678 },
+      { loginId: 'ceo@t.kr', password: PW, extra: true },
     ])('잘못된 입력은 실제 오류 봉투400이고 로그인 서비스에 도달하지 않는다: %p', async (body) => {
       const spy = jest.spyOn(app.get(AuthService), 'login');
       try {
@@ -149,22 +166,48 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
     it('없는 계정과 틀린 비밀번호가 **같은 문구**로 답한다', async () => {
       const a = await request(app.getHttpServer())
         .post('/auth/login')
-        .send({ email: 'nobody@t.kr', password: PW })
+        .send({ loginId: 'nobody@t.kr', password: PW })
         .expect(401);
       const b = await request(app.getHttpServer())
         .post('/auth/login')
-        .send({ email: 'ceo@t.kr', password: 'wrong-password-x' })
+        .send({ loginId: 'ceo@t.kr', password: 'wrong-password-x' })
         .expect(401);
       expect(a.body.message).toBe(b.body.message);
+      expect(a.body.message).toBe('아이디 또는 비밀번호가 맞지 않습니다');
     });
 
-    it('형식이 아니면 400 이고 사람 말로 알려 준다', async () => {
+    it('빈 아이디 · 짧은 비밀번호는 400 이고 사람 말로 알려 준다', async () => {
       const res = await request(app.getHttpServer())
         .post('/auth/login')
-        .send({ email: '이메일아님', password: '짧음' })
+        .send({ loginId: '', password: '짧음' })
         .expect(400);
-      expect(res.body.message).toContain('이메일 형식이 아닙니다');
+      expect(res.body.message).toContain('아이디를 적어 주세요');
       expect(res.body.message).toContain('비밀번호는 8자 이상입니다');
+    });
+
+    /* ── W10 · 대표 지시 2026-09-26 「아이디 형식은 자유」 ── */
+    it('아이디는 형식이 자유다 — 한글 · 기호가 섞여도 들어오고, 대소문자 · 앞뒤 공백은 가리지 않는다', async () => {
+      for (const loginId of [FREE_ID, '김선생.KIM#1', '김선생.kim#1', `  ${FREE_ID}  `]) {
+        const res = await login(loginId);
+        expect(res.body.user.id).toBe(TEST_IDS.freeId);
+      }
+      // 이메일은 이제 아이디가 아니다 — 이 계정의 이메일로는 들어오지 못한다
+      await request(app.getHttpServer()).post('/auth/login').send({ loginId: 'free-id@t.kr', password: PW }).expect(401);
+    });
+
+    it('이메일이 없는 계정도 아이디로 들어온다 (이메일은 만들 때 선택 · W10)', async () => {
+      const res = await login('no-email.teacher');
+      expect(res.body.user.id).toBe(TEST_IDS.noEmail);
+    });
+
+    it('옛 화면의 `email` 칸도 같은 아이디로 받는다 — 배포 사이 호환(다음 배포 뒤 지운다)', async () => {
+      const old = await request(app.getHttpServer()).post('/auth/login').send({ email: 'ceo@t.kr', password: PW }).expect(201);
+      expect(old.body.user.id).toBe(TEST_IDS.ceo);
+      const free = await request(app.getHttpServer()).post('/auth/login').send({ email: FREE_ID, password: PW }).expect(201);
+      expect(free.body.user.id).toBe(TEST_IDS.freeId);
+      // 둘 다 오면 loginId 가 이긴다
+      const both = await request(app.getHttpServer()).post('/auth/login').send({ loginId: 'ceo@t.kr', email: 'nobody@t.kr', password: PW }).expect(201);
+      expect(both.body.user.id).toBe(TEST_IDS.ceo);
     });
   });
 
@@ -381,7 +424,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
     const before = await login('manager@t.kr');
     await ds.query('UPDATE staff SET active=false WHERE id=$1', [TEST_IDS.manager]);
     try {
-      await request(app.getHttpServer()).post('/auth/login').send({ email: 'manager@t.kr', password: PW }).expect(401);
+      await request(app.getHttpServer()).post('/auth/login').send({ loginId: 'manager@t.kr', password: PW }).expect(401);
       await request(app.getHttpServer()).post('/auth/refresh').set('Cookie', before.headers['set-cookie']).expect(401);
       await request(app.getHttpServer()).get('/auth/me').set('Authorization', `Bearer ${before.body.accessToken}`).expect(401);
     } finally { await ds.query('UPDATE staff SET active=true WHERE id=$1', [TEST_IDS.manager]); }
@@ -397,8 +440,10 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
   it('OpenAPI 로그인 입력과401/400/204 형상이 실제 auth 소비와 일치한다', () => {
     const doc = buildOpenApi(app);
     expect(doc.components?.schemas?.LoginDto).toMatchObject({ properties: {
-      email: { type: 'string', format: 'email' }, password: { type: 'string', minLength: 8 },
+      loginId: { type: 'string', maxLength: 120 }, email: { type: 'string', deprecated: true }, password: { type: 'string', minLength: 8 },
     } });
+    // 아이디는 형식이 자유다 — 이메일 모양을 요구하지 않는다(W10)
+    expect(JSON.stringify(doc.components?.schemas?.LoginDto)).not.toContain('"format":"email"');
     for (const [path, method] of [['/auth/login', 'post'], ['/auth/refresh', 'post'], ['/auth/me', 'get']] as const) {
       expect(doc.paths[path][method]?.responses['401']).toBeDefined();
     }

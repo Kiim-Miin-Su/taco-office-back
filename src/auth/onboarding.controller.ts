@@ -26,7 +26,7 @@ const unauthorized = { type: ApiErrorDto, description: 'UNAUTHORIZED: 로그인�
 const notRequired = 'ONBOARDING_NOT_REQUIRED(이미 첫 설정을 마친 계정)';
 
 /**
- * 계정 첫 설정 (W8 · 대표 지시 2026-09-26) — 「첫 로그인 시 아이디 및 비밀번호 강제 변경 · phone · email 인증 필수」.
+ * 계정 첫 설정 (W8 · W10 · 대표 지시 2026-09-26) — 「첫 로그인 시 주요 인증(휴대폰 · 이메일) 및 비밀번호 재설정」 · 아이디는 바꾸지 않는다.
  * 첫 설정 전 계정이 부를 수 있는 보호 경로는 이 셋과 `GET /auth/me` 뿐이다(OnboardingGuard).
  */
 @ApiTags('auth')
@@ -37,7 +37,7 @@ export class OnboardingController {
 
   @Get()
   @ApiOperation({
-    summary: '첫 설정 안내 — 해야 하는지 · 지금 아이디 · 비밀번호 규칙 · 코드 채널',
+    summary: '첫 설정 안내 — 해야 하는지 · 아이디(바꾸지 않는다) · 등록된 이메일 · 휴대폰(가린 모양) · 비밀번호 규칙 · 코드 채널',
     description: '낱말(채널 이름 · 못 보내는 까닭 · 비밀번호 규칙)은 서버가 준다. 첫 설정이 필요 없는 계정은 required=false.',
   })
   @ApiOkResponse({ type: OnboardingInfoDto })
@@ -48,7 +48,7 @@ export class OnboardingController {
 
   @Post('codes')
   @ApiOperation({
-    summary: '인증 코드 받기 — 새 아이디(이메일) 또는 휴대폰으로 6자리',
+    summary: '인증 코드 받기 — 확인할 이메일 또는 휴대폰으로 6자리',
     description: '코드와 받는 곳 원문은 저장하지 않는다(HMAC · 가린 모양만). 10분 유효 · 같은 채널 60초 간격 · 한 시간 5번 · 하루 10번'
       + '(계정 · 채널마다 · 비밀번호 찾기와 같은 예산 · N-105). 휴대폰은 해외 번호도 받는다(`+국가번호 번호` · N-103).',
   })
@@ -70,7 +70,7 @@ export class OnboardingController {
 
   @Post('complete')
   @ApiOperation({
-    summary: '첫 설정 마치기 — 새 아이디(이메일) · 새 비밀번호 · 휴대폰과 두 코드를 한 번에',
+    summary: '첫 설정 마치기 — 확인한 이메일 · 휴대폰과 두 코드 · 새 비밀번호를 한 번에(아이디는 그대로)',
     description: '성공하면 로그인과 같다: Access 는 본문, Refresh 는 httpOnly 쿠키. 그 전에 발급된 이 계정의 토큰은 모두 401 이 된다.',
   })
   @ApiCreatedResponse({ type: LoginResultDto })

@@ -5,9 +5,11 @@
  */
 
 /**
- * 계정 첫 설정 · 로그인 아이디 (W8 · 대표 지시 2026-09-26).
+ * 계정 첫 설정 · 로그인 아이디 (W8 · W10 · 대표 지시 2026-09-26).
  *
- * 「첫 로그인 시 아이디 및 비밀번호 강제 변경 · phone · email 인증 필수 — 바꾸지 않으면 홈에 들어갈 수 없다」를
+ * W10 부터 아이디는 매니저가 만들 때 정하고(형식 자유) 첫 설정은 **휴대폰 · 이메일 확인 + 새 비밀번호**다 — 아이디는 바꾸지 않는다.
+ *
+ * 「첫 로그인 시 비밀번호 강제 변경 · phone · email 인증 필수 — 바꾸지 않으면 홈에 들어갈 수 없다」를
  * HTTP 로 직접 두드려 본다. 화면이 돌려보내는 것만으로는 증명이 안 된다 — **서버가 403 으로 막는지**,
  * 코드 거절이 전부 제 이름으로 나오는지, 틀린 횟수가 실패한 요청 뒤에도 남는지, 옛 세션이 끊기는지를 센다.
  *
@@ -51,11 +53,13 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
   const fake = new FakeSender();
   const PW = 'Current-pass-1234';
   const NEW_PW = 'Brand-new-pass-77';
-  const IDS = { must: 9_000_000_000_961, normal: 9_000_000_000_962, other: 9_000_000_000_963 } as const;
+  const IDS = { must: 9_000_000_000_961, normal: 9_000_000_000_962, other: 9_000_000_000_963, noEmail: 9_000_000_000_964 } as const;
+  // 앞의 셋은 옮겨 온 옛 계정 모양(아이디 = 그때의 이메일) · 넷째는 W10 에 이메일 없이 만든 계정
   const PEOPLE = [
-    { id: IDS.must, name: '첫설정', email: 'w8-must@t.kr', role: 'manager', must: true },
-    { id: IDS.normal, name: '보통', email: 'W8-Mixed.Case@t.kr', role: 'manager', must: false },
-    { id: IDS.other, name: '남의계정', email: 'w8-taken@t.kr', role: 'teacher', must: false },
+    { id: IDS.must, name: '첫설정', loginId: 'w8-must@t.kr', email: 'w8-must@t.kr', role: 'manager', must: true },
+    { id: IDS.normal, name: '보통', loginId: 'W8-Mixed.Case@t.kr', email: 'W8-Mixed.Case@t.kr', role: 'manager', must: false },
+    { id: IDS.other, name: '남의계정', loginId: 'w8-taken@t.kr', email: 'w8-taken@t.kr', role: 'teacher', must: false },
+    { id: IDS.noEmail, name: '이메일없음', loginId: '새강사_01', email: null, role: 'teacher', must: true },
   ];
   const ALL = PEOPLE.map((p) => p.id);
 
@@ -66,9 +70,9 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
     const hash = await bcrypt.hash(PW, 4);
     for (const p of PEOPLE) {
       await ds.query(
-        `UPDATE staff SET email=$2, password_hash=$3, phone=NULL, must_change_credentials=$4, email_verified=false,
+        `UPDATE staff SET login_id=$2, email=$3, password_hash=$4, phone=NULL, must_change_credentials=$5, email_verified=false,
                 phone_verified=false, credentials_changed_at=NULL, active=true WHERE id=$1`,
-        [p.id, p.email, hash, p.must],
+        [p.id, p.loginId, p.email, hash, p.must],
       );
     }
     fake.readyMap = { email: true, sms: true };
@@ -89,8 +93,8 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
     await ds.query('DELETE FROM staff WHERE id = ANY($1)', [ALL]);
     for (const p of PEOPLE) {
       await ds.query(
-        `INSERT INTO staff (id, name, email, role, password_hash, active, must_change_credentials) VALUES ($1,$2,$3,$4,'x',true,$5)`,
-        [p.id, p.name, p.email, p.role, p.must],
+        `INSERT INTO staff (id, name, login_id, email, role, password_hash, active, must_change_credentials) VALUES ($1,$2,$3,$4,$5,'x',true,$6)`,
+        [p.id, p.name, p.loginId, p.email, p.role, p.must],
       );
     }
   });
@@ -103,8 +107,8 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
     await app?.close();
   });
 
-  const login = async (email: string, password = PW) => {
-    const res = await request(server()).post('/auth/login').send({ email, password }).expect(201);
+  const login = async (loginId: string, password = PW) => {
+    const res = await request(server()).post('/auth/login').send({ loginId, password }).expect(201);
     return { access: res.body.accessToken as string, cookies: res.headers['set-cookie'] as unknown as string[], body: res.body };
   };
   const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
@@ -121,13 +125,13 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
     'SELECT id, attempts, consumed_at FROM auth_code WHERE staff_id=$1 AND channel=$2 ORDER BY id', [IDS.must, channel],
   ) as Promise<Array<{ id: string; attempts: number; consumed_at: Date | null }>>;
 
-  describe('로그인 아이디 = 이메일 · 대소문자 구분 없음', () => {
+  describe('로그인 아이디 · 대소문자 구분 없음', () => {
     it('저장된 대소문자와 달라도 같은 계정으로 들어가고 틀린 비밀번호는 없는 계정과 같은 문구다', async () => {
       const ok = await login('w8-mixed.case@T.KR');
       expect(ok.body.user.id).toBe(IDS.normal);
       expect(ok.body.user.mustChangeCredentials).toBe(false);
-      const wrong = await request(server()).post('/auth/login').send({ email: 'W8-MIXED.CASE@t.kr', password: 'wrong-pass-999' }).expect(401);
-      const none = await request(server()).post('/auth/login').send({ email: 'w8-nobody@t.kr', password: PW }).expect(401);
+      const wrong = await request(server()).post('/auth/login').send({ loginId: 'W8-MIXED.CASE@t.kr', password: 'wrong-pass-999' }).expect(401);
+      const none = await request(server()).post('/auth/login').send({ loginId: 'w8-nobody@t.kr', password: PW }).expect(401);
       expect(wrong.body.message).toBe(none.body.message);
     });
 
@@ -135,8 +139,8 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
       const two = await ds.getRepository(Staff).find({ where: [{ id: IDS.normal }, { id: IDS.other }] });
       const spy = jest.spyOn(ds.getRepository(Staff), 'find').mockResolvedValueOnce(two);
       try {
-        const res = await request(server()).post('/auth/login').send({ email: 'w8-mixed.case@t.kr', password: PW }).expect(401);
-        const none = await request(server()).post('/auth/login').send({ email: 'w8-nobody@t.kr', password: PW }).expect(401);
+        const res = await request(server()).post('/auth/login').send({ loginId: 'w8-mixed.case@t.kr', password: PW }).expect(401);
+        const none = await request(server()).post('/auth/login').send({ loginId: 'w8-nobody@t.kr', password: PW }).expect(401);
         expect(res.body.message).toBe(none.body.message);
       } finally { spy.mockRestore(); }
     });
@@ -160,7 +164,7 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
       await request(server()).get('/auth/me').set(bearer(access)).expect(200);
       const info = await request(server()).get('/auth/onboarding').set(bearer(access)).expect(200);
       expect(info.body).toMatchObject({
-        required: true, loginId: 'w8-must@t.kr', phoneMasked: null, passwordRule: PASSWORD_RULE_TEXT,
+        required: true, loginId: 'w8-must@t.kr', emailMasked: 'w8***@t.kr', phoneMasked: null, passwordRule: PASSWORD_RULE_TEXT,
         codeTtlMinutes: 10, resendAfterSeconds: 60,
       });
       expect(info.body.channels).toEqual([
@@ -588,13 +592,32 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
       // 새 토큰으로는 잠금이 풀렸다
       await request(server()).get('/probe-onboarding/any').set(bearer(res.body.accessToken)).expect(200);
       await request(server()).post('/auth/refresh').set('Cookie', cookies).expect(201);
-      // 새 아이디 · 새 비밀번호로 다시 들어가고 옛 것은 안 된다
-      await login('W8-NEW.PERSON@t.kr', NEW_PW);
-      await request(server()).post('/auth/login').send({ email: 'w8-must@t.kr', password: PW }).expect(401);
+      // 아이디는 그대로다(W10 — 첫 설정은 아이디를 바꾸지 않는다) · 새 비밀번호로 다시 들어가고 옛 비밀번호는 안 된다
+      expect(s.login_id).toBe('w8-must@t.kr');
+      await login('w8-must@t.kr', NEW_PW);
+      await request(server()).post('/auth/login').send({ loginId: 'w8-must@t.kr', password: PW }).expect(401);
+      // 확인한 이메일은 연락처일 뿐 아이디가 아니다
+      await request(server()).post('/auth/login').send({ loginId: 'w8-new.person@t.kr', password: NEW_PW }).expect(401);
       // 끝난 계정은 다시 첫 설정을 못 한다
       expect((await complete(res.body.accessToken, {
         email: 'w8-new.person@t.kr', password: 'Another-pass-88', phone: '01012345678', emailCode, phoneCode,
       }).expect(409)).body.code).toBe('ONBOARDING_NOT_REQUIRED');
+    });
+
+    it('이메일 없이 만든 계정(W10)도 첫 설정에서 이메일을 적고 코드로 확인한다 — 아이디는 매니저가 정한 그대로다', async () => {
+      const first = await login('새강사_01');
+      expect(first.body.user).toMatchObject({ id: IDS.noEmail, mustChangeCredentials: true });
+      const info = await request(server()).get('/auth/onboarding').set(bearer(first.access)).expect(200);
+      expect(info.body).toMatchObject({ required: true, loginId: '새강사_01', emailMasked: null, phoneMasked: null });
+      await askCode(first.access, 'email', 'w10-teacher@t.kr').expect(201);
+      await askCode(first.access, 'sms', '010-5555-6666').expect(201);
+      const done = await complete(first.access, {
+        email: 'w10-teacher@t.kr', password: NEW_PW, phone: '010-5555-6666', emailCode: lastCode('email'), phoneCode: lastCode('sms'),
+      }).expect(201);
+      expect(done.body.user).toMatchObject({ id: IDS.noEmail, mustChangeCredentials: false });
+      const [s] = await ds.query('SELECT login_id, email, email_verified, phone_verified FROM staff WHERE id=$1', [IDS.noEmail]);
+      expect(s).toEqual({ login_id: '새강사_01', email: 'w10-teacher@t.kr', email_verified: true, phone_verified: true });
+      await login('새강사_01', NEW_PW);
     });
 
     it('자격이 다시 정해진 뒤(관리자 초기화 등)에는 그 전에 발급된 Access · Refresh 가 401 이다', async () => {

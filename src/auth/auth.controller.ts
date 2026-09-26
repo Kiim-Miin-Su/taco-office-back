@@ -26,12 +26,13 @@ export class AuthController {
 
   @Public()
   @Post('login')
-  @ApiOperation({ summary: '로그인 — Access 는 본문, Refresh 는 httpOnly 쿠키' })
+  @ApiOperation({ summary: '로그인 — 아이디(형식 자유 · 대소문자 무시) · Access 는 본문, Refresh 는 httpOnly 쿠키 (W10)' })
   @ApiCreatedResponse({ type: LoginResultDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST: 이메일·비밀번호 최소8자·추가 키 검증 실패.' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST: 아이디 없음·비밀번호 최소8자·추가 키 검증 실패.' })
   @ApiUnauthorizedResponse(authUnauthorized)
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response): Promise<LoginResultDto> {
-    const { accessToken, refreshToken, user } = await this.auth.login(dto.email, dto.password);
+    // 옛 화면은 email 로 보낸다 — 옛 계정의 아이디는 그 이메일이라 뜻이 같다(W10 · 배포 순서 호환)
+    const { accessToken, refreshToken, user } = await this.auth.login(dto.loginId ?? dto.email ?? '', dto.password);
     res.cookie(REFRESH_COOKIE, refreshToken, cookieOptions());
     return { accessToken, user };
   }

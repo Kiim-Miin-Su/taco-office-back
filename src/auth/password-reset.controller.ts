@@ -22,7 +22,7 @@ const unavailable = {
 };
 
 /**
- * 비밀번호 찾기 (N-101 · 대표 결정 2026-09-26) — 로그인 전 화면이 부른다(@Public · 토큰 없음).
+ * 비밀번호 찾기 (N-101 · 대표 결정 2026-09-26) — 로그인 전 화면이 부른다(@Public · 토큰 없음). 아이디는 형식 자유(W10).
  * 계정이 있는지 알려 주지 않는다: 코드 받기는 늘 같은 모양 · 마치기는 한 문장(RESET_CODE_INVALID).
  */
 @ApiTags('auth')
@@ -49,7 +49,7 @@ export class PasswordResetController {
       + '(계정 여부를 알려 주지 않는다). 코드와 받는 곳 원문은 저장하지 않는다.',
   })
   @ApiCreatedResponse({ type: PasswordResetCodeResultDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(입력 모양) · INVALID_EMAIL' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(입력 모양) · INVALID_LOGIN_ID(빈 아이디 · 띄어쓰기 · 120자 넘음 — 계정과 무관한 모양 거절)' })
   @ApiServiceUnavailableResponse(unavailable)
   codes(@Body() dto: PasswordResetCodeRequestDto): Promise<PasswordResetCodeResultDto> {
     return this.reset.sendCode(dto);
@@ -64,7 +64,7 @@ export class PasswordResetController {
       + '첫 설정 상태는 바꾸지 않는다.',
   })
   @ApiNoContentResponse({ description: '비밀번호를 바꿨다. 응답 본문 없음.' })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(입력 모양) · PASSWORD_RULE(규칙 문장 그대로)' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(입력 모양) · PASSWORD_RULE(규칙 문장 그대로) · INVALID_LOGIN_ID' })
   @ApiConflictResponse({
     type: ApiErrorDto,
     description: 'RESET_CODE_INVALID(계정 · 코드 문제를 가르지 않는 한 문장 · 틀린 횟수는 남는다) · SAME_AS_CURRENT(두 코드를 확인한 뒤에만)',

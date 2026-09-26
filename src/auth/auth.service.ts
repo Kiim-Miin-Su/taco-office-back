@@ -13,7 +13,7 @@ import { Staff } from '../entities';
 import { isRole, permsOf, type Role, type PermName, type RequestUser } from '../common/perm';
 import type { MeDto } from './dto/auth.dto';
 import { roleLabel } from '../lib/role-words';
-import { normalizeLoginEmail } from '../lib/account-policy';
+import { normalizeLoginId } from '../lib/account-policy';
 
 /** JWT 발급/검증 형상. role/perms는 호환용 snapshot이며 요청 권한의 권위는 현재 STAFF다. */
 export interface JwtPayload {
@@ -118,16 +118,19 @@ export class AuthService {
     return { accessToken: this.signAccess(s), refreshToken: this.signRefresh(s), user: this.toMe(s) };
   }
 
-  async login(email: string, password: string) {
-    // 아이디는 이메일이고 대소문자를 가리지 않는다(W8 · 대표 결정 2026-09-26) — 저장된 모양과 달라도 같은 계정이다.
-    // 둘 이상 맞으면 어느 쪽인지 고르지 않는다(lower(email) 유일 색인이 그런 행을 막지만 판정은 여기서도 닫는다).
+  async login(loginId: string, password: string) {
+    // 아이디는 형식이 자유이고(W10 · 대표 지시 2026-09-26) 대소문자를 가리지 않는다(W8) — 저장된 모양과 달라도 같은 계정이다.
+    // 비교는 DB 의 lower() 한 곳에서 한다 — JS 와 DB 의 소문자 규칙이 갈리는 글자가 있어도 색인과 같은 판정이다.
+    // 둘 이상 맞으면 어느 쪽인지 고르지 않는다(lower(login_id) 유일 색인이 그런 행을 막지만 판정은 여기서도 닫는다).
+    const id = normalizeLoginId(loginId);
+    const fail = () => new UnauthorizedException('아이디 또는 비밀번호가 맞지 않습니다');
+    if (!id) throw fail();
     const found = await this.staff.find({
-      where: { email: Raw((col) => `lower(${col}) = :login`, { login: normalizeLoginEmail(email) }), active: true },
+      where: { loginId: Raw((col) => `lower(${col}) = lower(:login)`, { login: id }), active: true },
       take: 2,
     });
     // 계정이 없는 것과 비밀번호가 틀린 것을 **같은 문구**로 답한다 —
-    // 다르게 답하면 어떤 이메일이 등록돼 있는지 밖에서 알아낼 수 있다.
-    const fail = () => new UnauthorizedException('이메일 또는 비밀번호가 맞지 않습니다');
+    // 다르게 답하면 어떤 아이디가 등록돼 있는지 밖에서 알아낼 수 있다.
     if (found.length !== 1) throw fail();
     const s = found[0];
 

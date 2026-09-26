@@ -5,7 +5,8 @@
  */
 
 /**
- * 계정 첫 설정 (W8 · 대표 지시 2026-09-26) — 「첫 로그인 시 아이디 및 비밀번호 강제 변경 · phone · email 인증 필수」.
+ * 계정 첫 설정 (W8 · W10 · 대표 지시 2026-09-26) — 「첫 로그인 시 주요 인증(휴대폰 · 이메일) 및 비밀번호 재설정」.
+ * 아이디는 매니저가 정한 그대로다(W10 · 형식 자유) — 이 화면은 아이디를 보여 주기만 한다.
  *
  * 입력 검사는 **모양만** 여기서 본다(글자 수 · 코드 여섯 자리 · 채널 낱말). 이메일 · 휴대폰 · 비밀번호 규칙은
  * 서비스가 `lib/account-policy` 한 곳으로 판정한다 — 비밀번호 규칙을 여기에도 적으면 문장과 판정이 두 벌이 된다
@@ -35,7 +36,9 @@ export class OnboardingChannelDto {
 
 export class OnboardingInfoDto {
   @ApiProperty({ description: '이 계정이 첫 설정을 해야 하는가 — false 면 화면은 일정으로 보낸다' }) required!: boolean;
-  @ApiProperty({ description: '지금 로그인 아이디(이메일)' }) loginId!: string;
+  @ApiProperty({ description: '로그인 아이디 — 매니저가 정한 그대로(첫 설정은 바꾸지 않는다 · W10)' }) loginId!: string;
+  @ApiProperty({ type: String, nullable: true, description: '지금 등록된 이메일(가린 모양) — 매니저가 비워 두고 만들었으면 null' })
+  emailMasked!: string | null;
   @ApiProperty({ type: String, nullable: true, description: '지금 등록된 휴대폰(가린 모양) — 없으면 null' })
   phoneMasked!: string | null;
   @ApiProperty({ description: '비밀번호 규칙 문장 — 화면은 이 문장을 그대로 적는다' }) passwordRule!: string;
@@ -47,7 +50,7 @@ export class OnboardingInfoDto {
 }
 
 export class OnboardingCodeRequestDto {
-  @ApiProperty({ enum: SEND_CHANNELS, description: 'email = 새 아이디(이메일)로 · sms = 휴대폰으로' })
+  @ApiProperty({ enum: SEND_CHANNELS, description: 'email = 확인할 이메일로 · sms = 확인할 휴대폰으로' })
   @IsIn(SEND_CHANNELS as unknown as string[], { message: '코드를 받을 곳은 이메일 또는 휴대폰입니다' })
   channel!: SendChannel;
 
@@ -71,8 +74,8 @@ export class OnboardingCodeResultDto {
 const CODE = /^\d{6}$/;
 
 export class OnboardingCompleteDto {
-  @ApiProperty({ example: 'kim@tnacademy.kr', maxLength: 160, description: '새 로그인 아이디(이메일) — 코드를 받은 주소' })
-  @IsString({ message: '새 아이디(이메일)를 적어 주세요' })
+  @ApiProperty({ example: 'kim@tnacademy.kr', maxLength: 160, description: '확인한 이메일 — 코드를 받은 주소. 연락 · 비밀번호 찾기에 쓴다(아이디가 아니다 · W10)' })
+  @IsString({ message: '이메일을 적어 주세요' })
   @MaxLength(160, { message: '이메일이 너무 깁니다' })
   email!: string;
 

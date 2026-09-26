@@ -4,14 +4,30 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsOptional, IsString, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import { ROLES, type PermFlags, type Role } from '../../common/perm';
 
+/**
+ * 로그인 (W10 · 대표 지시 2026-09-26 「아이디 형식은 자유」) — 아이디는 이메일이 아니다. 대소문자를 가리지 않는다.
+ *
+ * `email` 은 **옛 화면 호환 별칭**이다 — 마이그레이션은 back 배포 전에 돌고 front · back 은 따로 배포되므로, 새 서버가
+ * 먼저 떠도 옛 화면(`{ email, password }`)이 로그인할 수 있게 둔다. 옛 계정의 아이디는 이메일이 옮겨 와 있어 뜻이 같다.
+ * 새 코드는 `loginId` 만 보낸다. 다음 배포 뒤 지운다(TODO · W10).
+ */
 export class LoginDto {
-  @ApiProperty({ example: 'kim@tnacademy.kr', format: 'email' })
-  @IsEmail({}, { message: '이메일 형식이 아닙니다' })
-  email!: string;
+  @ApiProperty({ example: 'kim.teacher', maxLength: 120, description: '로그인 아이디 — 형식 자유 · 대소문자 무시' })
+  @ValidateIf((o: LoginDto) => o.email === undefined)
+  @IsString({ message: '아이디를 적어 주세요' })
+  @MinLength(1, { message: '아이디를 적어 주세요' })
+  @MaxLength(120, { message: '아이디가 너무 깁니다' })
+  loginId?: string;
+
+  @ApiPropertyOptional({ deprecated: true, maxLength: 120, description: '옛 화면 호환 — loginId 와 같은 뜻(W10 이전 화면이 보낸다). 새 코드는 쓰지 않는다' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  email?: string;
 
   @ApiProperty({ example: '********', minLength: 8 })
   @IsString()
@@ -45,7 +61,7 @@ export class MeDto implements PermFlags {
    * W8 · 대표 지시 2026-09-26 — 켜져 있으면 화면은 첫 설정(/onboarding) 밖으로 나가지 못하고 서버도 403 이다.
    * 서버는 **늘** 채운다. 계약에서만 선택 칸인 이유: 화면 시험의 Me 대역 수십 벌을 한꺼번에 고치지 않으려고(빠지면 false 로 읽는다).
    */
-  @ApiProperty({ required: false, description: '첫 설정(아이디=이메일 · 비밀번호 · 휴대폰 · 이메일 인증)을 끝내야 하는가 — 서버는 늘 채운다' })
+  @ApiProperty({ required: false, description: '첫 설정(휴대폰 · 이메일 인증 · 새 비밀번호)을 끝내야 하는가 — 서버는 늘 채운다' })
   mustChangeCredentials?: boolean;
 }
 

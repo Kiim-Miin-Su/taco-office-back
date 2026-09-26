@@ -5,10 +5,11 @@
  */
 
 /**
- * 계정 첫 설정 (W8 · 대표 지시 2026-09-26).
+ * 계정 첫 설정 (W8 · W10 · 대표 지시 2026-09-26).
  *
- * 「운영 시 초기 비밀번호는 모두 (초기 비밀번호 — 값은 src/lib/account-policy.ts 한 곳) · 첫 로그인 시 아이디 및 비밀번호 강제 변경 · phone · email 인증 필수
- *  (변경 안 하면 홈 페이지 접속 불가, 자동 리다이렉션)」.
+ * W8: 「첫 로그인 시 비밀번호 강제 변경 · phone · email 인증 필수 (변경 안 하면 홈 페이지 접속 불가, 자동 리다이렉션)」.
+ * W10: 「매니저가 아이디 비번 만들면 db 에 저장 → 초기 설정 시 주요 인증 및 비번 재설정」 — **아이디는 여기서 바꾸지 않는다**
+ * (매니저가 정한 그대로다 · 형식 자유). 이메일은 연락 · 인증용이고, 코드로 확인한 주소가 그 계정의 이메일이 된다.
  *
  * 세 가지를 지킨다.
  *   ① **코드와 받는 곳 원문을 남기지 않는다** — 원장(auth_code)에는 서버 비밀로 만든 HMAC 과 가린 받는 곳만 있다.
@@ -19,8 +20,8 @@
  *      그러면 다섯 번 제한이 없는 것과 같다. 그래서 틀림은 「거절 값」으로 돌려받아 **커밋한 뒤** 던진다.
  *      계정 행 잠금 덕에 병렬 추측도 한 줄로 서서 다섯 번을 넘지 못한다.
  *
- * 아이디 강제 변경의 뜻(결정 · W8): 새 아이디(이메일)는 **반드시 다시 적고 그 주소로 받은 코드로 확인**한다.
- * 지금 이메일과 같아도 되지만 그 주소가 실제로 코드를 받을 때만이다 — 자리표시 주소는 확인할 수 없으니 사실상 바뀐다.
+ * 이메일 확인의 뜻(W8 · W10): 이메일은 **반드시 다시 적고 그 주소로 받은 코드로 확인**한다.
+ * 매니저가 적어 둔 이메일과 같아도 되지만 그 주소가 실제로 코드를 받을 때만이다 — 비워 두고 만든 계정은 여기서 처음 적는다.
  */
 import {
   BadGatewayException, BadRequestException, ConflictException, HttpException, HttpStatus, Inject, Injectable, Logger,
@@ -33,7 +34,7 @@ import * as bcrypt from 'bcryptjs';
 import { Staff } from '../entities';
 import { AuthService } from './auth.service';
 import {
-  PASSWORD_ISSUE_MESSAGE, PASSWORD_RULE_TEXT, normalizeLoginEmail, normalizeMobile, passwordIssue,
+  PASSWORD_ISSUE_MESSAGE, PASSWORD_RULE_TEXT, normalizeEmail, normalizeMobile, passwordIssue,
 } from '../lib/account-policy';
 import { PHONE_COUNTRIES } from '../lib/phone';
 import {
@@ -70,17 +71,17 @@ export class OnboardingService {
   /** 첫 설정 판정에 필요한 칸만 — 비밀번호 해시는 「지금 비밀번호와 같은가」에만 쓰고 밖으로 내보내지 않는다 */
   private async current(staffId: number) {
     const [s] = (await this.ds.query(
-      `SELECT email, phone, password_hash, must_change_credentials AS must FROM staff WHERE id = $1 AND active`,
+      `SELECT login_id, email, phone, password_hash, must_change_credentials AS must FROM staff WHERE id = $1 AND active`,
       [staffId],
-    )) as Array<{ email: string; phone: string | null; password_hash: string | null; must: boolean }>;
+    )) as Array<{ login_id: string; email: string | null; phone: string | null; password_hash: string | null; must: boolean }>;
     if (!s) throw new UnauthorizedException('다시 로그인해 주세요');
     return s;
   }
 
-  /** 받는 곳을 저장 · 비교 모양으로 — 이메일은 아이디 규칙(소문자 · 공백 없음), 휴대폰은 한국 숫자만 · 해외 `+국가번호…`(lib/phone) */
+  /** 받는 곳을 저장 · 비교 모양으로 — 이메일은 소문자 · 공백 없음, 휴대폰은 한국 숫자만 · 해외 `+국가번호…`(lib/phone) */
   private target(channel: SendChannel, raw: string): string {
     if (channel === 'email') {
-      const email = normalizeLoginEmail(raw);
+      const email = normalizeEmail(raw);
       if (!isEmail(email) || email.length > EMAIL_MAX) {
         throw new BadRequestException({ code: 'INVALID_EMAIL', message: '이메일 형식이 아닙니다 — 예: kim@tnacademy.kr' });
       }
@@ -101,7 +102,9 @@ export class OnboardingService {
     const s = await this.current(staffId);
     return {
       required: s.must,
-      loginId: s.email,
+      // 아이디는 매니저가 정한 그대로 — 첫 설정은 보여 주기만 한다(W10)
+      loginId: s.login_id,
+      emailMasked: s.email ? maskEmail(s.email) : null,
       phoneMasked: s.phone ? maskPhone(s.phone) : null,
       passwordRule: PASSWORD_RULE_TEXT,
       codeTtlMinutes: CODE_TTL_MINUTES,
@@ -220,7 +223,7 @@ export class OnboardingService {
           [
             staffId,
             JSON.stringify({
-              email: maskEmail(cur.email), phone: cur.phone ? maskPhone(cur.phone) : null,
+              email: cur.email ? maskEmail(cur.email) : null, phone: cur.phone ? maskPhone(cur.phone) : null,
               emailVerified: cur.email_verified, phoneVerified: cur.phone_verified, mustChangeCredentials: true,
             }),
             JSON.stringify({
