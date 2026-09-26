@@ -6,7 +6,7 @@
 
 const KEYS = [
   'NODE_ENV', 'DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET',
-  'CORS_ORIGIN', 'COOKIE_DOMAIN', 'COOKIE_CROSS_SITE',
+  'CORS_ORIGIN', 'COOKIE_DOMAIN', 'COOKIE_CROSS_SITE', 'AUTH_CODE_SECRET',
 ] as const;
 const MIGRATION = 'DeployProbe1760000000000';
 
@@ -43,6 +43,7 @@ beforeEach(() => {
     NODE_ENV: 'production', DATABASE_URL: 'postgresql://mock@127.0.0.1:1/mock_only',
     JWT_SECRET: 'mock-access', JWT_REFRESH_SECRET: 'mock-refresh',
     CORS_ORIGIN: 'https://app.example.test', COOKIE_DOMAIN: '.example.test',
+    AUTH_CODE_SECRET: 'mock-code-secret',
   });
   process.argv = ['node', 'deploy-check.ts', '--run'];
   process.exitCode = undefined;
@@ -113,9 +114,27 @@ describe('배포 CLI — 설정 실패는 DB 연결 전에 끝난다', () => {
     await runCli();
     expectNoDatabaseWork();
   });
+
+  // N-105 (대표 결정 2026-09-26) — 운영의 인증 코드 해시 키는 JWT 비밀과 따로 둔다. 없으면 배포 전에 멈춘다
+  it.each(['', '   '])('운영에 AUTH_CODE_SECRET 이 없으면(%j) 연결·마이그레이션 0', async (value) => {
+    if (value) process.env.AUTH_CODE_SECRET = value;
+    else delete process.env.AUTH_CODE_SECRET;
+    await runCli();
+    expectNoDatabaseWork();
+  });
 });
 
 describe('배포 CLI — 정상 조회/적용의 경계', () => {
+  it('개발 모드는 AUTH_CODE_SECRET 이 없어도 조회한다 (운영 전용 키)', async () => {
+    process.argv = ['node', 'deploy-check.ts'];
+    process.env.NODE_ENV = 'development';
+    delete process.env.AUTH_CODE_SECRET;
+    await runCli();
+    expect(process.exitCode).toBeUndefined();
+    expect(fixture.db.initialize).toHaveBeenCalledTimes(1);
+    expect(fixture.db.runMigrations).not.toHaveBeenCalled();
+  });
+
   it('이력표 없는 조회는 표를 만들거나 마이그레이션을 실행하지 않는다', async () => {
     process.argv = ['node', 'deploy-check.ts'];
     await runCli();

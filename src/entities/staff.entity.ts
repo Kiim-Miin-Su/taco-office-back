@@ -30,6 +30,7 @@ export class Staff {
   @Column({ type: 'varchar', length: 120, unique: true })
   email: string;
 
+  /** 휴대폰 — 한국 번호는 숫자만(`01012345678`), 해외 번호는 `+국가번호…`(E.164 · N-103 · 2026-09-26). 모양 판정은 lib/phone 한 곳 */
   @Column({ type: 'varchar', length: 20, nullable: true })
   phone: string | null;
 
@@ -58,7 +59,8 @@ export class Staff {
 
   /**
    * 첫 설정(아이디=이메일 · 비밀번호 · 휴대폰 · 이메일 인증)을 끝내야 하는 계정 (W8 · 2026-09-26 · v4.50).
-   * 켜는 곳은 셋뿐 — 관리자의 계정 만들기 · 비밀번호 초기화 · 운영 전환 스크립트. 켜져 있으면 첫 설정 경로 밖의 API 는 403.
+   * 켜는 곳은 넷뿐 — 관리자의 계정 만들기 · 비밀번호 초기화 · 이메일/휴대폰 수정(N-104 · 2026-09-26) · 운영 전환 스크립트.
+   * 켜져 있으면 첫 설정 경로 밖의 API 는 403.
    */
   @Column({ type: 'boolean', default: false })
   mustChangeCredentials: boolean;
@@ -69,7 +71,7 @@ export class Staff {
 
   /**
    * 마지막으로 이 계정의 아이디·비밀번호가 (다시) 정해진 시각 (W8 · v4.50 · v4.51 뜻 넓힘) — 누가 했든 찍는다:
-   * 본인 첫 설정 완료 · 관리자 비밀번호 초기화 · 운영 전환 스크립트. 이보다 먼저 발급된 Access · Refresh 토큰은
+   * 본인 첫 설정 완료 · 본인 비밀번호 찾기(N-101) · 관리자 비밀번호 초기화 · 운영 전환 스크립트. 이보다 먼저 발급된 Access · Refresh 토큰은
    * 401 「다시 로그인해 주세요」다(AuthService) — 초기 비밀번호를 아는 만든 사람의 세션도 여기서 끊긴다. 옛 행 NULL = 끊지 않는다.
    */
   @Column({ type: 'timestamptz', nullable: true })

@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: onboarding.service.ts — CODE_TTL_MINUTES, CODE_RESEND_SECONDS, CODE_HOURLY_LIMIT, CODE_MAX_ATTEMPTS, OnboardingService (auth)
+ * 목적: onboarding.service.ts — OnboardingService (auth)
  * 책임/재사용: 공용 인증/권한 경계만 소유한다. 토큰·쿠키 원문을 노출하지 않고 만료/익명/권한 회수 경계를 회귀로 검증한다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -24,56 +24,37 @@
  */
 import {
   BadGatewayException, BadRequestException, ConflictException, HttpException, HttpStatus, Inject, Injectable, Logger,
-  ServiceUnavailableException, UnauthorizedException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, type EntityManager } from 'typeorm';
-import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import { Staff } from '../entities';
 import { AuthService } from './auth.service';
-import { writtenRows } from '../lib/sql';
 import {
   PASSWORD_ISSUE_MESSAGE, PASSWORD_RULE_TEXT, normalizeLoginEmail, normalizeMobile, passwordIssue,
 } from '../lib/account-policy';
+import { PHONE_COUNTRIES } from '../lib/phone';
 import {
-  CHANNEL_SPECS, SEND_CHANNELS, SENDER, isEmail, maskEmail, maskPhone,
-  type SendChannel, type SendRequest, type SendResult, type Sender,
+  CHANNEL_SPECS, SENDER, isEmail, maskEmail, maskPhone, type SendChannel, type SendResult, type Sender,
 } from '../modules/notify/sender';
+import {
+  CODE_RESEND_SECONDS, CODE_TTL_MINUTES, authCodeSecret, codeChannels, codeLimitIssue, codeMessage, devEcho, insertCode,
+  notConfigured, secretMissing, verifyCode,
+} from './auth-code';
 import type {
   OnboardingCodeRequestDto, OnboardingCodeResultDto, OnboardingCompleteDto, OnboardingInfoDto,
 } from './dto/onboarding.dto';
 
-/** 코드 유효 시간(분) · 같은 채널 다시 받기 간격(초) · 한 시간 발급 한도 · 코드 하나의 틀림 한도 */
-export const CODE_TTL_MINUTES = 10;
-export const CODE_RESEND_SECONDS = 60;
-export const CODE_HOURLY_LIMIT = 5;
-export const CODE_MAX_ATTEMPTS = 5;
 /** staff.email varchar(120) — 더 긴 주소는 저장 전에 400 으로 막는다(DB 오류 문장으로 새지 않게) */
 const EMAIL_MAX = 120;
 
-/** 거절 문장에서 어느 칸의 코드인지 부르는 이름 — 화면의 입력 칸 이름(새 아이디(이메일) · 휴대폰)과 같다 */
-const FIELD: Record<SendChannel, string> = { email: '이메일', sms: '휴대폰' };
-
-/**
- * 개발용 코드 되돌려 주기 — **운영이 아니고** 서버에 `AUTH_CODE_DEV_ECHO=on` 이 있을 때만.
- * 발송 설정이 없는 로컬에서 첫 설정을 끝까지 시험하려는 자리다. 운영 빌드(NODE_ENV=production)는 값과 무관하게 꺼진다.
- * 요청마다 읽는다 — 시험이 환경을 바꿔 두 조건을 따로 확인한다.
- */
-const devEcho = (): boolean => process.env.NODE_ENV !== 'production' && process.env.AUTH_CODE_DEV_ECHO === 'on';
-
-/** HMAC 키 — 따로 두면 그것을, 없으면 Access 서명 비밀(AuthService 와 같은 기본값)을 쓴다. 메시지에 용도를 붙여 두 해시가 섞이지 않게 한다 */
-const hmac = (message: string): string =>
-  createHmac('sha256', process.env.AUTH_CODE_SECRET || (process.env.JWT_SECRET ?? 'dev-only-change-me'))
-    .update(message).digest('hex');
+/** 휴대폰 모양 거절 — 해외 번호도 받는다(N-103). 번호 원문은 싣지 않는다 */
+export const INVALID_PHONE_MESSAGE = '휴대폰 번호 형식이 아닙니다 — 국가번호를 고르고 번호를 적어 주세요(한국은 010 으로 시작)';
 
 const notRequired = () => new ConflictException({ code: 'ONBOARDING_NOT_REQUIRED', message: '이미 첫 설정을 마친 계정입니다' });
 const emailTaken = () => new ConflictException({ code: 'EMAIL_TAKEN', message: '이미 다른 계정이 쓰는 이메일입니다 — 다른 주소를 적어 주세요' });
-const notConfigured = (channel: SendChannel) => new ServiceUnavailableException({
-  code: 'SENDER_NOT_CONFIGURED', message: `${CHANNEL_SPECS[channel].notReadyReason} — 관리자에게 알려 주세요`,
-});
-
-type Verified = { id: string } | { error: HttpException };
 
 @Injectable()
 export class OnboardingService {
@@ -96,7 +77,7 @@ export class OnboardingService {
     return s;
   }
 
-  /** 받는 곳을 저장 · 비교 모양으로 — 이메일은 아이디 규칙(소문자 · 공백 없음), 휴대폰은 숫자만 */
+  /** 받는 곳을 저장 · 비교 모양으로 — 이메일은 아이디 규칙(소문자 · 공백 없음), 휴대폰은 한국 숫자만 · 해외 `+국가번호…`(lib/phone) */
   private target(channel: SendChannel, raw: string): string {
     if (channel === 'email') {
       const email = normalizeLoginEmail(raw);
@@ -106,9 +87,7 @@ export class OnboardingService {
       return email;
     }
     const phone = normalizeMobile(raw);
-    if (!phone) {
-      throw new BadRequestException({ code: 'INVALID_PHONE', message: '휴대폰 번호 형식이 아닙니다 — 010 으로 시작하는 번호를 적어 주세요' });
-    }
+    if (!phone) throw new BadRequestException({ code: 'INVALID_PHONE', message: INVALID_PHONE_MESSAGE });
     return phone;
   }
 
@@ -120,7 +99,6 @@ export class OnboardingService {
 
   async info(staffId: number): Promise<OnboardingInfoDto> {
     const s = await this.current(staffId);
-    const echo = devEcho();
     return {
       required: s.must,
       loginId: s.email,
@@ -128,14 +106,10 @@ export class OnboardingService {
       passwordRule: PASSWORD_RULE_TEXT,
       codeTtlMinutes: CODE_TTL_MINUTES,
       resendAfterSeconds: CODE_RESEND_SECONDS,
-      // 낱말 · 못 보내는 까닭은 발송기 채널 표 한 곳에서 온다. 개발용 되돌려 주기가 켜져 있으면 단추를 연다
-      channels: SEND_CHANNELS.map((channel) => {
-        const ready = this.sender.ready(channel) || echo;
-        return {
-          channel, label: CHANNEL_SPECS[channel].label, ready,
-          notReadyReason: ready ? null : CHANNEL_SPECS[channel].notReadyReason,
-        };
-      }),
+      // 낱말 · 못 보내는 까닭 · 코드 비밀 값 없음(N-105)은 원장 한 곳(auth-code.codeChannels) — 비밀번호 찾기와 같은 표
+      channels: codeChannels(this.sender),
+      // 국가번호 고르기의 나라 목록 — 저장 · 발송 규칙과 같은 표(lib/phone · N-103)
+      phoneCountries: PHONE_COUNTRIES.map((c) => ({ ...c })),
     };
   }
 
@@ -146,6 +120,8 @@ export class OnboardingService {
     const to = this.target(channel, dto.target);
     if (channel === 'email' && (await this.emailTaken(this.ds, to, staffId))) throw emailTaken();
 
+    // 운영에 코드 비밀 값이 없으면 줄을 만들지 않는다(N-105 · 대표 결정 2026-09-26 「운영용 코드 비밀 값 분리」)
+    if (!authCodeSecret()) throw secretMissing();
     const ready = this.sender.ready(channel);
     const echo = !ready && devEcho();
     // 보낼 수 없으면 줄을 만들지 않는다 — 받지도 못한 코드가 원장에 「쓸 수 있는」 채로 남지 않게
@@ -159,33 +135,10 @@ export class OnboardingService {
       );
       if (!cur) throw new UnauthorizedException('다시 로그인해 주세요');
       if (!cur.must) throw notRequired();
-      const [last] = await m.query(
-        `SELECT GREATEST(0, ceil(extract(epoch FROM created_at + make_interval(secs => $3) - now())))::int AS wait
-           FROM auth_code WHERE staff_id = $1 AND channel = $2 ORDER BY created_at DESC LIMIT 1`,
-        [staffId, channel, CODE_RESEND_SECONDS],
-      );
-      if (last && last.wait > 0) {
-        throw new HttpException(
-          { code: 'CODE_TOO_SOON', message: `코드를 방금 보냈습니다 — ${last.wait}초 뒤에 다시 받을 수 있습니다` },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-      const [{ n }] = await m.query(
-        `SELECT count(*)::int AS n FROM auth_code WHERE staff_id = $1 AND channel = $2 AND created_at > now() - interval '1 hour'`,
-        [staffId, channel],
-      );
-      if (n >= CODE_HOURLY_LIMIT) {
-        throw new HttpException(
-          { code: 'CODE_LIMIT', message: `코드는 한 시간에 ${CODE_HOURLY_LIMIT}번까지 받을 수 있습니다 — 잠시 뒤 다시 시도해 주세요` },
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-      const [inserted] = await m.query(
-        `INSERT INTO auth_code (staff_id, channel, target_hash, target_masked, code_hash, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(mins => $6)) RETURNING id, expires_at`,
-        [staffId, channel, hmac(`target:${channel}:${to}`), masked, hmac(`code:${staffId}:${channel}:${code}`), CODE_TTL_MINUTES],
-      );
-      return inserted as { id: string; expires_at: Date };
+      // 발급 한도(60초 · 하루 10번 · 한 시간 5번)는 원장 한 곳이 센다 — 비밀번호 찾기와 같은 함수 · 같은 예산
+      const limit = await codeLimitIssue(m, staffId, channel);
+      if (limit) throw new HttpException(limit, HttpStatus.TOO_MANY_REQUESTS);
+      return insertCode(m, { staffId, channel, purpose: 'onboarding', to, masked, code });
     });
 
     const result: OnboardingCodeResultDto = {
@@ -207,56 +160,13 @@ export class OnboardingService {
     return result;
   }
 
-  /** 제목 · 본문에 내부 코드를 싣지 않는다. 문자는 SMS 한 통(90바이트) 안에 든다 — 시험이 바이트를 잰다 */
+  /** 제목 · 본문에 내부 코드를 싣지 않는다. 문자는 SMS 한 통(90바이트) 안에 든다 — 문장은 원장 한 곳(auth-code.codeMessage) */
   private async deliver(channel: SendChannel, to: string, code: string): Promise<SendResult> {
-    const req: SendRequest = channel === 'email'
-      ? {
-        channel, to,
-        subject: '[티엔아카데미] 이메일 확인 코드',
-        body: `티엔아카데미 백오피스 첫 설정 — 이메일 확인 코드는 ${code} 입니다.\n`
-          + `${CODE_TTL_MINUTES}분 안에 입력해 주세요. 직접 요청하지 않았다면 이 메일은 무시해 주세요.`,
-      }
-      : { channel, to, body: `[티엔아카데미] 휴대폰 확인 코드 ${code} · ${CODE_TTL_MINUTES}분 안에 입력해 주세요` };
     try {
-      return await this.sender.send(req);
+      return await this.sender.send(codeMessage(channel, 'onboarding', to, code));
     } catch {
       return { configured: true, ok: false, providerId: null, error: null };
     }
-  }
-
-  /**
-   * 코드 하나 확인 — 그 계정 · 채널 · **받는 곳**으로 받은 가장 새 코드만 본다.
-   * 거절은 던지지 않고 값으로 돌려준다(틀린 횟수를 커밋하려고 · 위 ③).
-   */
-  private async verify(m: EntityManager, staffId: number, channel: SendChannel, to: string, submitted: string): Promise<Verified> {
-    const conflict = (code: string, message: string) => ({ error: new ConflictException({ code, message }) });
-    const [row] = (await m.query(
-      `SELECT id, code_hash, attempts, (expires_at <= now()) AS expired
-         FROM auth_code
-        WHERE staff_id = $1 AND channel = $2 AND target_hash = $3 AND consumed_at IS NULL
-        ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`,
-      [staffId, channel, hmac(`target:${channel}:${to}`)],
-    )) as Array<{ id: string; code_hash: string; attempts: number; expired: boolean }>;
-    const field = FIELD[channel];
-    if (!row) {
-      return conflict('CODE_NOT_REQUESTED', `그 ${channel === 'email' ? '주소' : '번호'}로 받은 코드가 없습니다 — 코드를 다시 받아 주세요`);
-    }
-    if (row.expired) return conflict('CODE_EXPIRED', `${field} 코드가 만료됐습니다 — 코드를 다시 받아 주세요`);
-    if (row.attempts >= CODE_MAX_ATTEMPTS) {
-      return conflict('CODE_LOCKED', `${field} 코드를 ${CODE_MAX_ATTEMPTS}번 틀려 더 쓸 수 없습니다 — 코드를 다시 받아 주세요`);
-    }
-    const expected = Buffer.from(row.code_hash, 'hex');
-    const actual = Buffer.from(hmac(`code:${staffId}:${channel}:${submitted}`), 'hex');
-    if (expected.length === actual.length && timingSafeEqual(expected, actual)) return { id: row.id };
-
-    // UPDATE … RETURNING 은 드라이버가 [행, 수] 로 돌려준다 — 공용 풀이(lib/sql.writtenRows)로 읽는다
-    const [bumped] = writtenRows<{ attempts: number }>(await m.query(
-      'UPDATE auth_code SET attempts = attempts + 1 WHERE id = $1 RETURNING attempts', [row.id],
-    ));
-    const left = Math.max(0, CODE_MAX_ATTEMPTS - Number(bumped?.attempts ?? CODE_MAX_ATTEMPTS));
-    return conflict('CODE_MISMATCH', left > 0
-      ? `${field} 코드가 맞지 않습니다 — ${left}번 더 시도할 수 있습니다`
-      : `${field} 코드가 맞지 않습니다 — 더 시도할 수 없으니 코드를 다시 받아 주세요`);
   }
 
   async complete(staffId: number, dto: OnboardingCompleteDto) {
@@ -264,6 +174,8 @@ export class OnboardingService {
     if (!s.must) throw notRequired();
     const email = this.target('email', dto.email);
     const phone = this.target('sms', dto.phone);
+    // 코드 확인은 해시가 필요하다 — 운영에 비밀 값이 없으면 확인 전에 같은 503 으로 답한다(N-105)
+    if (!authCodeSecret()) throw secretMissing();
     const issue = passwordIssue(dto.password);
     if (issue) throw new BadRequestException({ code: 'PASSWORD_RULE', message: PASSWORD_ISSUE_MESSAGE[issue] });
     if (s.password_hash && (await bcrypt.compare(dto.password, s.password_hash))) {
@@ -285,9 +197,9 @@ export class OnboardingService {
         );
         if (!cur) return { error: new UnauthorizedException('다시 로그인해 주세요') };
         if (!cur.must) return { error: notRequired() };
-        const byEmail = await this.verify(m, staffId, 'email', email, dto.emailCode);
+        const byEmail = await verifyCode(m, { staffId, channel: 'email', purpose: 'onboarding', to: email, submitted: dto.emailCode });
         if ('error' in byEmail) return byEmail;
-        const bySms = await this.verify(m, staffId, 'sms', phone, dto.phoneCode);
+        const bySms = await verifyCode(m, { staffId, channel: 'sms', purpose: 'onboarding', to: phone, submitted: dto.phoneCode });
         if ('error' in bySms) return bySms;
 
         await m.query(

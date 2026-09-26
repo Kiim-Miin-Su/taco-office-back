@@ -27,6 +27,8 @@ import { buildOpenApi } from '../src/openapi';
 import { Staff } from '../src/entities';
 import { SENDER, SMS_MAX_BYTES, smsBytes } from '../src/modules/notify/sender';
 import { INITIAL_PASSWORD, PASSWORD_ISSUE_MESSAGE, PASSWORD_RULE_TEXT } from '../src/lib/account-policy';
+import { PHONE_COUNTRIES } from '../src/lib/phone';
+import { CODE_DAILY_LIMIT, SECRET_MISSING_REASON } from '../src/auth/auth-code';
 import { FakeSender } from './fake-sender';
 
 /** 가드가 무엇을 막는지 보려고 만든 끝점 — 인증만 요구하는 보통 API 와 공개 API */
@@ -165,6 +167,9 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
         { channel: 'email', label: '메일', ready: true, notReadyReason: null },
         { channel: 'sms', label: '문자', ready: true, notReadyReason: null },
       ]);
+      // 국가번호 목록은 서버 한 곳(lib/phone)의 표 그대로 — 첫 줄이 대한민국(N-103)
+      expect(info.body.phoneCountries).toEqual(PHONE_COUNTRIES);
+      expect(info.body.phoneCountries[0]).toEqual({ code: '82', label: '대한민국' });
       await request(server()).get('/probe-onboarding/open').expect(200);
       await request(server()).post('/auth/refresh').set('Cookie', cookies).expect(201);
       // 첫 설정 경로도 로그인은 필요하다
@@ -260,6 +265,38 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
       expect(fake.calls).toHaveLength(0);
     });
 
+    /** 지난 줄을 원장에 직접 넣는다 — `minsAgo` 분 전에 받은 코드(이미 만료) · 용도는 첫 설정 또는 비밀번호 찾기 */
+    const pastRows = async (channel: 'email' | 'sms', minsAgo: number[], purpose = 'onboarding') => {
+      for (const m of minsAgo) {
+        await ds.query(
+          `INSERT INTO auth_code (staff_id, channel, purpose, target_hash, target_masked, code_hash, expires_at, created_at)
+           VALUES ($1,$2,$3,$4,'x***',$4, now() - make_interval(mins => $5) + interval '10 minutes', now() - make_interval(mins => $5))`,
+          [IDS.must, channel, purpose, 'f'.repeat(64), m],
+        );
+      }
+    };
+
+    // N-105 (대표 결정 2026-09-26 「채널별 하루 10번 한도」) — 한 시간 한도에 걸리지 않게 한 시간보다 앞선 줄로 채운다
+    it(`하루(24시간) ${CODE_DAILY_LIMIT}번을 넘기면 429 CODE_DAILY_LIMIT — 한 시간을 기다려도 소용없으니 먼저 말한다`, async () => {
+      await pastRows('sms', Array.from({ length: CODE_DAILY_LIMIT }, (_, i) => 70 + i * 60));
+      const { access } = await login('w8-must@t.kr');
+      const res = await askCode(access, 'sms', '01022223333').expect(429);
+      expect(res.body.code).toBe('CODE_DAILY_LIMIT');
+      expect(res.body.message).toContain(`${CODE_DAILY_LIMIT}번`);
+      expect(fake.calls).toHaveLength(0);
+      // 채널이 다르면 따로 센다 · 24시간이 지난 줄은 세지 않는다
+      await askCode(access, 'email', 'w8-new@t.kr').expect(201);
+      await ds.query(`UPDATE auth_code SET created_at = created_at - interval '1 day' WHERE staff_id=$1 AND channel='sms'`, [IDS.must]);
+      await askCode(access, 'sms', '01022223333').expect(201);
+    });
+
+    it('하루 한도는 용도와 무관하게 센다 — 비밀번호 찾기 코드도 같은 예산이다(문자 요금은 용도를 가리지 않는다)', async () => {
+      await pastRows('sms', [70, 130, 190, 250, 310], 'onboarding');
+      await pastRows('sms', [370, 430, 490, 550, 610], 'password_reset');
+      const { access } = await login('w8-must@t.kr');
+      expect((await askCode(access, 'sms', '01022223333').expect(429)).body.code).toBe('CODE_DAILY_LIMIT');
+    });
+
     it('발송 설정이 없으면 503 SENDER_NOT_CONFIGURED 이고 쓸 수 있는 줄을 남기지 않는다', async () => {
       fake.readyMap = { email: false, sms: false };
       const { access } = await login('w8-must@t.kr');
@@ -272,10 +309,11 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
     });
 
     describe('개발용 코드 되돌려 주기 — 운영이 아니고 AUTH_CODE_DEV_ECHO=on 일 때만', () => {
-      const saved = { node: process.env.NODE_ENV, echo: process.env.AUTH_CODE_DEV_ECHO };
+      const saved = { node: process.env.NODE_ENV, echo: process.env.AUTH_CODE_DEV_ECHO, secret: process.env.AUTH_CODE_SECRET };
       afterEach(() => {
         process.env.NODE_ENV = saved.node;
         if (saved.echo === undefined) delete process.env.AUTH_CODE_DEV_ECHO; else process.env.AUTH_CODE_DEV_ECHO = saved.echo;
+        if (saved.secret === undefined) delete process.env.AUTH_CODE_SECRET; else process.env.AUTH_CODE_SECRET = saved.secret;
       });
 
       it('두 조건이 다 맞으면 보내지 않고 devCode 를 주며 그 코드가 실제로 맞는다', async () => {
@@ -302,11 +340,95 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
         fake.readyMap = { email: false, sms: false };
         const { access } = await login('w8-must@t.kr');
         process.env.NODE_ENV = node;
+        // 운영은 코드 비밀 값이 있어야 발급 판정까지 간다(N-105) — 여기서는 되돌려 주기 문만 본다
+        process.env.AUTH_CODE_SECRET = 'test-code-secret';
         if (echo === undefined) delete process.env.AUTH_CODE_DEV_ECHO; else process.env.AUTH_CODE_DEV_ECHO = echo;
         const res = await askCode(access, 'email', 'w8-dev@t.kr').expect(503);
+        expect(res.body.code).toBe('SENDER_NOT_CONFIGURED');
         expect(res.body.devCode).toBeUndefined();
         expect(JSON.stringify(res.body)).not.toMatch(/\d{6}/);
         expect(await codeRows('email')).toHaveLength(0);
+      });
+    });
+
+    describe('해외 번호 (N-103 · 대표 결정 2026-09-26 「해외 번호도 받기」)', () => {
+      it('국가번호와 번호를 적으면 +국가번호 모양으로 받고 · 국제 문자 인증 문장(90바이트 안)으로 보내며 · 그 모양으로 저장한다', async () => {
+        const { access } = await login('w8-must@t.kr');
+        const sms = await askCode(access, 'sms', '+1 (415) 555-0123').expect(201);
+        expect(sms.body.targetMasked).toBe('+1 ****0123');
+        expect(fake.calls[0]).toMatchObject({ channel: 'sms', to: '+14155550123' });
+        expect(fake.calls[0].body).toMatch(/^\[TN Academy\] verification: \d{6}$/);
+        expect(smsBytes(fake.calls[0].body)).toBeLessThanOrEqual(SMS_MAX_BYTES);
+        const [row] = await ds.query(`SELECT target_masked FROM auth_code WHERE staff_id=$1 AND channel='sms'`, [IDS.must]);
+        expect(row.target_masked).toBe('+1 ****0123');
+        await askCode(access, 'email', 'w8-abroad@t.kr').expect(201);
+        // 같은 번호를 다른 모양(공백 · 괄호 없이)으로 적어도 같은 번호다
+        await complete(access, {
+          email: 'w8-abroad@t.kr', password: NEW_PW, phone: '+14155550123', emailCode: lastCode('email'), phoneCode: lastCode('sms'),
+        }).expect(201);
+        const [s] = await ds.query('SELECT phone, phone_verified FROM staff WHERE id=$1', [IDS.must]);
+        expect(s).toEqual({ phone: '+14155550123', phone_verified: true });
+      });
+
+      it('+82 로 적은 한국 번호는 지금과 같은 숫자만 모양이다 — 010 으로 받은 코드와 같은 번호', async () => {
+        const { access } = await login('w8-must@t.kr');
+        await askCode(access, 'sms', '010-2222-3333').expect(201);
+        await askCode(access, 'email', 'w8-kr@t.kr').expect(201);
+        await complete(access, {
+          email: 'w8-kr@t.kr', password: NEW_PW, phone: '+82 10-2222-3333', emailCode: lastCode('email'), phoneCode: lastCode('sms'),
+        }).expect(201);
+        expect((await ds.query('SELECT phone FROM staff WHERE id=$1', [IDS.must]))[0].phone).toBe('01022223333');
+      });
+
+      it.each([['+84 912 345 678'], ['+1 123-456-7890'], ['+44 123']])(
+        '목록 밖 나라 · 모양이 아닌 번호(%s)는 400 INVALID_PHONE 이고 보내지 않는다', async (target) => {
+          const { access } = await login('w8-must@t.kr');
+          const res = await askCode(access, 'sms', target).expect(400);
+          expect(res.body.code).toBe('INVALID_PHONE');
+          expect(res.body.message).toContain('국가번호');
+          expect(res.body.message).not.toContain(target.replace(/\D/g, ''));
+          expect(fake.calls).toHaveLength(0);
+        },
+      );
+    });
+
+    describe('코드 비밀 값 (N-105 · 대표 결정 2026-09-26 「운영용 코드 비밀 값 분리」)', () => {
+      const saved = { node: process.env.NODE_ENV, secret: process.env.AUTH_CODE_SECRET };
+      afterEach(() => {
+        process.env.NODE_ENV = saved.node;
+        if (saved.secret === undefined) delete process.env.AUTH_CODE_SECRET; else process.env.AUTH_CODE_SECRET = saved.secret;
+      });
+
+      it('운영에 AUTH_CODE_SECRET 이 없으면 안내가 두 채널을 그 까닭으로 잠그고 · 코드 받기 · 마치기가 503 이며 줄을 남기지 않는다', async () => {
+        const { access } = await login('w8-must@t.kr');
+        process.env.NODE_ENV = 'production';
+        delete process.env.AUTH_CODE_SECRET;
+        const info = await request(server()).get('/auth/onboarding').set(bearer(access)).expect(200);
+        expect(info.body.channels).toEqual([
+          { channel: 'email', label: '메일', ready: false, notReadyReason: SECRET_MISSING_REASON },
+          { channel: 'sms', label: '문자', ready: false, notReadyReason: SECRET_MISSING_REASON },
+        ]);
+        const res = await askCode(access, 'email', 'w8-new@t.kr').expect(503);
+        expect(res.body.code).toBe('AUTH_CODE_SECRET_MISSING');
+        expect(res.body.message).toContain('AUTH_CODE_SECRET');
+        const done = await complete(access, {
+          email: 'w8-new@t.kr', password: NEW_PW, phone: '01012345678', emailCode: '123456', phoneCode: '123456',
+        }).expect(503);
+        expect(done.body.code).toBe('AUTH_CODE_SECRET_MISSING');
+        expect(fake.calls).toHaveLength(0);
+        expect(await codeRows('email')).toHaveLength(0);
+      });
+
+      it('AUTH_CODE_SECRET 을 두면 그 값으로 해시한다 — 값이 바뀌면 그 전 코드는 맞지 않는다', async () => {
+        const { access } = await login('w8-must@t.kr');
+        process.env.AUTH_CODE_SECRET = 'code-secret-A';
+        await askCode(access, 'email', 'w8-new@t.kr').expect(201);
+        await askCode(access, 'sms', '01012345678').expect(201);
+        const body = { email: 'w8-new@t.kr', password: NEW_PW, phone: '01012345678', emailCode: lastCode('email'), phoneCode: lastCode('sms') };
+        process.env.AUTH_CODE_SECRET = 'code-secret-B';
+        expect((await complete(access, body).expect(409)).body.code).toBe('CODE_NOT_REQUESTED');
+        process.env.AUTH_CODE_SECRET = 'code-secret-A';
+        await complete(access, body).expect(201);
       });
     });
 
@@ -495,5 +617,9 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
     expect(doc.paths['/auth/onboarding/codes']?.post?.responses['503']).toBeDefined();
     const me = doc.components?.schemas?.MeDto as { properties: Record<string, { type?: string }> };
     expect(me.properties.mustChangeCredentials?.type).toBe('boolean');
+    const info = doc.components?.schemas?.OnboardingInfoDto as { required?: string[] };
+    expect(info.required).toContain('phoneCountries');
+    const tooMany = doc.paths['/auth/onboarding/codes']?.post?.responses['429'] as { description?: string } | undefined;
+    expect(tooMany?.description).toContain('CODE_DAILY_LIMIT');
   });
 });

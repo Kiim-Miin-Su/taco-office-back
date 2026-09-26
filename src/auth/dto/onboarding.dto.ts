@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: onboarding.dto.ts — OnboardingChannelDto, OnboardingInfoDto, OnboardingCodeRequestDto, OnboardingCodeResultDto, OnboardingCompleteDto (dto)
+ * 목적: onboarding.dto.ts — PhoneCountryDto, OnboardingChannelDto, OnboardingInfoDto, OnboardingCodeRequestDto, OnboardingCodeResultDto, OnboardingCompleteDto (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -14,6 +14,15 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsString, Matches, MaxLength } from 'class-validator';
 import { SEND_CHANNELS, type SendChannel } from '../../modules/notify/sender';
+
+/**
+ * 휴대폰 국가번호 고르기의 한 줄 (N-103 · 대표 결정 2026-09-26 「해외 번호도 받기」). 목록은 서버 한 곳(lib/phone)이 준다 —
+ * 첫 설정 화면과 구성원 만들기 · 수정 창이 같은 목록을 쓴다. 화면은 `+code 번호` 모양의 글 하나로 보낸다.
+ */
+export class PhoneCountryDto {
+  @ApiProperty({ example: '82', description: '국가번호 — + 없이 숫자만' }) code!: string;
+  @ApiProperty({ example: '대한민국', description: '나라 이름' }) label!: string;
+}
 
 export class OnboardingChannelDto {
   @ApiProperty({ enum: SEND_CHANNELS }) channel!: SendChannel;
@@ -33,6 +42,8 @@ export class OnboardingInfoDto {
   @ApiProperty({ description: '코드 유효 시간(분)' }) codeTtlMinutes!: number;
   @ApiProperty({ description: '같은 채널로 다시 받기까지 기다릴 초' }) resendAfterSeconds!: number;
   @ApiProperty({ type: [OnboardingChannelDto] }) channels!: OnboardingChannelDto[];
+  @ApiProperty({ type: [PhoneCountryDto], description: '휴대폰 국가번호 목록 — 첫 줄이 대한민국(기본값)' })
+  phoneCountries!: PhoneCountryDto[];
 }
 
 export class OnboardingCodeRequestDto {
@@ -70,9 +81,12 @@ export class OnboardingCompleteDto {
   @MaxLength(200, { message: '비밀번호가 너무 깁니다' })
   password!: string;
 
-  @ApiProperty({ example: '010-1234-5678', maxLength: 20, description: '휴대폰 번호 — 코드를 받은 번호' })
+  @ApiProperty({
+    example: '010-1234-5678', maxLength: 32,
+    description: '휴대폰 번호 — 코드를 받은 번호. 해외 번호는 `+국가번호 번호`(N-103 · 나라는 phoneCountries)',
+  })
   @IsString({ message: '휴대폰 번호를 적어 주세요' })
-  @MaxLength(20, { message: '휴대폰 번호가 너무 깁니다' })
+  @MaxLength(32, { message: '휴대폰 번호가 너무 깁니다' })
   phone!: string;
 
   @ApiProperty({ example: '123456', pattern: '^\\d{6}$', description: '이메일로 받은 코드' })

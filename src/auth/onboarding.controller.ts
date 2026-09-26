@@ -49,15 +49,21 @@ export class OnboardingController {
   @Post('codes')
   @ApiOperation({
     summary: '인증 코드 받기 — 새 아이디(이메일) 또는 휴대폰으로 6자리',
-    description: '코드와 받는 곳 원문은 저장하지 않는다(HMAC · 가린 모양만). 10분 유효 · 같은 채널 60초 간격 · 한 시간 5번.',
+    description: '코드와 받는 곳 원문은 저장하지 않는다(HMAC · 가린 모양만). 10분 유효 · 같은 채널 60초 간격 · 한 시간 5번 · 하루 10번'
+      + '(계정 · 채널마다 · 비밀번호 찾기와 같은 예산 · N-105). 휴대폰은 해외 번호도 받는다(`+국가번호 번호` · N-103).',
   })
   @ApiCreatedResponse({ type: OnboardingCodeResultDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(입력 모양) · INVALID_EMAIL · INVALID_PHONE' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(입력 모양) · INVALID_EMAIL · INVALID_PHONE(목록 밖 나라 포함)' })
   @ApiUnauthorizedResponse(unauthorized)
   @ApiConflictResponse({ type: ApiErrorDto, description: `${notRequired} · EMAIL_TAKEN(다른 계정의 이메일 · 대소문자 무관)` })
-  @ApiTooManyRequestsResponse({ type: ApiErrorDto, description: 'CODE_TOO_SOON(60초 안) · CODE_LIMIT(한 시간 5번)' })
+  @ApiTooManyRequestsResponse({
+    type: ApiErrorDto, description: 'CODE_TOO_SOON(60초 안) · CODE_DAILY_LIMIT(하루 10번 · N-105) · CODE_LIMIT(한 시간 5번)',
+  })
   @ApiBadGatewayResponse({ type: ApiErrorDto, description: 'SEND_FAILED — 공급자가 거절 · 그 코드는 쓸 수 없게 닫는다' })
-  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'SENDER_NOT_CONFIGURED — 발송 설정 없음 · 코드 줄을 만들지 않는다' })
+  @ApiServiceUnavailableResponse({
+    type: ApiErrorDto,
+    description: 'SENDER_NOT_CONFIGURED(발송 설정 없음) · AUTH_CODE_SECRET_MISSING(운영에 코드 비밀 값 없음 · N-105) — 코드 줄을 만들지 않는다',
+  })
   codes(@CurrentUser() user: RequestUser, @Body() dto: OnboardingCodeRequestDto): Promise<OnboardingCodeResultDto> {
     return this.onboarding.sendCode(user.id, dto);
   }
@@ -74,6 +80,7 @@ export class OnboardingController {
     type: ApiErrorDto,
     description: `${notRequired} · SAME_AS_CURRENT · EMAIL_TAKEN · CODE_NOT_REQUESTED · CODE_EXPIRED · CODE_LOCKED · CODE_MISMATCH(틀린 횟수는 남는다)`,
   })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'AUTH_CODE_SECRET_MISSING — 운영에 코드 비밀 값이 없어 코드를 확인할 수 없다(N-105)' })
   async complete(
     @CurrentUser() user: RequestUser,
     @Body() dto: OnboardingCompleteDto,

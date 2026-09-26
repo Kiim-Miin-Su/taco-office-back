@@ -27,7 +27,11 @@ const RUN = process.argv.includes('--run');
 
 /** 있어야 하는 키 — 없으면 배포가 조용히 반쯤 뜬다 */
 const REQUIRED = ['DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET', 'CORS_ORIGIN'];
-const PROD_ONLY = ['COOKIE_DOMAIN'];
+/**
+ * 운영에서만 있어야 하는 키. `AUTH_CODE_SECRET` — 첫 설정 · 비밀번호 찾기 인증 코드의 해시 키(N-105 · 대표 결정 2026-09-26
+ * 「운영용 코드 비밀 값 분리」). 운영 서버는 이 값이 없으면 코드를 보내지 않는다(503) — 배포 전에 여기서 먼저 멈춘다.
+ */
+const PROD_ONLY = ['COOKIE_DOMAIN', 'AUTH_CODE_SECRET'];
 
 async function main(): Promise<void> {
   const prod = process.env.NODE_ENV === 'production';

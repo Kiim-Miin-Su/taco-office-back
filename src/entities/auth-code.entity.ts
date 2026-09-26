@@ -26,6 +26,13 @@ export class AuthCode {
   @Column({ type: 'varchar', length: 8 })
   channel: string;
 
+  /**
+   * onboarding | password_reset (auth_code_purpose_words CHECK · v4.52 · N-101) — 확인이 용도를 함께 본다.
+   * 첫 설정 코드로 비밀번호를 바꾸거나 그 반대가 되지 않게. 기본값 onboarding(이 칸 전의 줄은 전부 첫 설정 코드다).
+   */
+  @Column({ type: 'varchar', length: 16, default: 'onboarding' })
+  purpose: string;
+
   @Column({ type: 'varchar', length: 64 })
   targetHash: string;
 
