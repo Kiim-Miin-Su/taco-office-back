@@ -10,7 +10,7 @@ import { createHmac } from 'node:crypto';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import {
-  cutBytes, isEmail, LMS_MAX_BYTES, LMS_SUBJECT_MAX_BYTES, phoneDigits, scrubContact, SEND_TIMEOUT_MS, smsBytes, SMS_MAX_BYTES,
+  cutBytes, isEmail, LMS_MAX_BYTES, LMS_SUBJECT_MAX_BYTES, scrubContact, SEND_TIMEOUT_MS, smsBytes, smsDestination, SMS_MAX_BYTES,
   type SendChannel, type Sender, type SendRequest, type SendResult,
 } from './sender';
 
@@ -97,13 +97,20 @@ export class LiveSender implements Sender {
   /**
    * SENS SMS — 서명은 `ACCESS_KEY` 와 `SECRET_KEY` 로 HMAC-SHA256 한 뒤 base64 다.
    * 문서가 요구하는 서명 문자열은 「method \n url \n timestamp \n accessKey」이며, 사이는 공백이다.
+   *
+   * 해외 번호(N-103)는 SENS 국제 문자로 보낸다 — 요청 본문에 `countryCode`(기본 82)를 싣고 받는 번호는 국가번호를 뗀 숫자만.
+   * 국제 문자는 **SMS 한 통(90바이트)** 으로만 보낸다(NAVER Cloud SENS 국제 발송은 SMS 유형만 받는다 · 발송 정책 안내).
    */
   private async sendSms(req: SendRequest): Promise<SendResult> {
     const s = this.sens();
     if (!s) return { configured: false, ok: false, providerId: null, error: 'SENS 설정이 없습니다' };
-    const to = phoneDigits(req.to);
-    if (!to) return { configured: true, ok: false, providerId: null, error: '휴대폰 번호 모양이 아닙니다' };
+    const dest = smsDestination(req.to);
+    if (!dest) return { configured: true, ok: false, providerId: null, error: '휴대폰 번호 모양이 아닙니다' };
+    const { to, countryCode } = dest;
     const bytes = smsBytes(req.body);
+    if (countryCode && bytes > SMS_MAX_BYTES) {
+      return { configured: true, ok: false, providerId: null, error: `해외 번호로는 문자 한 통(${SMS_MAX_BYTES}바이트)까지만 보낼 수 있습니다` };
+    }
     if (bytes > LMS_MAX_BYTES) {
       return { configured: true, ok: false, providerId: null, error: `문자 본문이 너무 깁니다 — ${LMS_MAX_BYTES.toLocaleString('ko-KR')}바이트(한글 약 1,000자)까지 보낼 수 있습니다` };
     }
@@ -127,6 +134,8 @@ export class LiveSender implements Sender {
         body: JSON.stringify({
           // SMS 는 90바이트까지 — 넘으면 LMS. 제목은 LMS 에만 싣고 40바이트로 자른다 (smsBytes · 한글 2바이트)
           type: lms ? 'LMS' : 'SMS',
+          // 국가번호는 해외 번호에만 싣는다 — 한국 번호는 SENS 기본값(82) 그대로 지금까지와 같은 요청이다
+          ...(countryCode ? { countryCode } : {}),
           from: s.from,
           content: req.body,
           ...(lms && req.subject ? { subject: cutBytes(req.subject, LMS_SUBJECT_MAX_BYTES) } : {}),

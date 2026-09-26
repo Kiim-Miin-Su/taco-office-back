@@ -54,10 +54,7 @@ export function normalizeLoginEmail(raw: string): string {
 }
 
 /**
- * 휴대폰 번호 정규화 — 숫자만 남기고 한국 휴대폰(010 · 011 · 016~019, 10~11자리)만 받는다. 아니면 null.
- * SENS 는 숫자만 받는다 — 하이픈 있는 값과 없는 값이 따로 저장되면 같은 번호가 두 번호가 된다.
+ * 휴대폰 번호 정규화 — 한국 휴대폰은 숫자만(010 · 011 · 016~019), 해외 번호는 `+국가번호…` 모양(N-103 · 2026-09-26).
+ * 나라 목록 · 저장 모양 · 발송 모양은 `lib/phone` 한 곳이 소유한다 — 여기서는 계정 정책의 이름으로 다시 내보낼 뿐이다.
  */
-export function normalizeMobile(raw: string): string | null {
-  const digits = raw.replace(/\D/g, '');
-  return /^01[016789]\d{7,8}$/.test(digits) ? digits : null;
-}
+export { normalizeMobile } from './phone';

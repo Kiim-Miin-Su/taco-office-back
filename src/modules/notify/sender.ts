@@ -16,6 +16,8 @@
  *      부르는 쪽이 「보내지 못했다」를 원장에 남긴다. 조용히 성공으로 적는 것이 가장 나쁘다.
  */
 
+import { maskMobile, phoneParts } from '../../lib/phone';
+
 export const SENDER = Symbol('SENDER');
 
 /* ══ 채널 추가 자리 — 한 곳 (DQ3 대표 답변 2026-09-25) ═══════════════════════════════
@@ -77,6 +79,19 @@ export function phoneDigits(raw: string): string | null {
   return /^0\d{9,10}$/.test(digits) ? digits : null;
 }
 
+/**
+ * 문자를 보낼 곳 — 한국 번호는 숫자만(SENS 기본 국가 82), 해외 번호(`+…` · N-103)는 SENS 가 따로 받는 국가번호와 국내 번호로 가른다.
+ * 모양이 아니면 null 이다 — 보내지 않는다. 보호자 번호(한국만)는 앞의 `phoneDigits` 모양 그대로 지난다.
+ */
+export function smsDestination(raw: string): { countryCode: string | null; to: string } | null {
+  if (raw.trim().startsWith('+')) {
+    const parts = phoneParts(raw);
+    return parts ? { countryCode: parts.country, to: parts.national } : null;
+  }
+  const digits = phoneDigits(raw);
+  return digits ? { countryCode: null, to: digits } : null;
+}
+
 /** 메일 주소인가 — 보내기 전에 한 번 거른다 (공급자 에러로 알게 되면 늦다) */
 export function isEmail(raw: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(raw.trim());
@@ -123,8 +138,12 @@ export function cutBytes(text: string, max: number): string {
   return out;
 }
 
-/** 휴대폰 가림 — `010-****-1234`. 숫자 모양이 아니면 끝 두 자리만 남긴다 */
+/**
+ * 휴대폰 가림 — `010-****-1234`. 해외 번호(`+…` · N-103)는 나라를 남겨 `+1 ****0123`. 숫자 모양이 아니면 끝 두 자리만 남긴다.
+ */
 export function maskPhone(raw: string): string {
+  const abroad = maskMobile(raw);
+  if (abroad) return abroad;
   const digits = raw.replace(/\D/g, '');
   if (digits.length < 8) return `***${digits.slice(-2)}`;
   return `${digits.slice(0, 3)}-****-${digits.slice(-4)}`;
@@ -164,8 +183,12 @@ export const CHANNEL_SPECS: Record<SendChannel, ChannelSpec> = {
  */
 export function scrubContact(text: string, channel: SendChannel, to: string): string {
   const masked = CHANNEL_SPECS[channel].mask(to);
-  // 번호는 공급자가 숫자만으로 되돌려 주기도 한다 — 문자 채널에서만 숫자 모양도 찾는다(메일 주소의 숫자는 건드리지 않는다)
-  const needles = [to.trim(), channel === 'sms' ? to.replace(/\D/g, '') : '']
-    .filter((n) => n.length >= 4);
+  // 번호는 공급자가 숫자만으로 되돌려 주기도 한다 — 문자 채널에서만 숫자 모양도 찾는다(메일 주소의 숫자는 건드리지 않는다).
+  // 해외 번호는 국가번호를 뗀 국내 번호로 되돌려 올 수도 있다 — 그 모양도 찾는다(N-103)
+  const sms = channel === 'sms';
+  const needles = [to.trim(), sms ? to.replace(/\D/g, '') : '', sms ? (smsDestination(to)?.to ?? '') : '']
+    .filter((n) => n.length >= 4)
+    // 긴 것부터 바꾼다 — 짧은 것이 긴 것의 일부를 먼저 바꾸면 긴 것이 남는다
+    .sort((a, b) => b.length - a.length);
   return needles.reduce((out, n) => out.split(n).join(masked), text);
 }

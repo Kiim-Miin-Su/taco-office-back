@@ -130,6 +130,33 @@ describe('문자 길이는 바이트로 잰다 · 제한 시간을 건다 (보�
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  // N-103 (대표 결정 2026-09-26) — 해외 번호는 SENS 국제 문자로 · 한국 번호 요청은 지금과 한 글자도 다르지 않다
+  it('해외 번호는 countryCode 와 국가번호를 뗀 번호로 보내고 · 한국 번호 요청에는 countryCode 가 없다', async () => {
+    const live = cfg(FULL);
+    await live.send({ channel: 'sms', to: '+14155550123', body: '[TN Academy] verification: 123456' });
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body as string)).toMatchObject({
+      type: 'SMS', countryCode: '1', messages: [{ to: '4155550123' }],
+    });
+    fetchSpy.mockClear();
+    await live.send({ channel: 'sms', to: '01012345678', body: 'x' });
+    const domestic = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as Record<string, unknown>;
+    expect(domestic).not.toHaveProperty('countryCode');
+    expect(domestic).toMatchObject({ messages: [{ to: '01012345678' }] });
+  });
+
+  it('해외 번호로는 SMS 한 통(90바이트)을 넘기지 않는다 — 공급자를 부르지 않고 실패로 돌려준다', async () => {
+    const res = await cfg(FULL).send({ channel: 'sms', to: '+447911123456', body: 'a'.repeat(91) });
+    expect(res).toMatchObject({ configured: true, ok: false, providerId: null });
+    expect(res.error).toContain('90바이트');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('목록 밖 나라 번호는 보내지 않는다', async () => {
+    const res = await cfg(FULL).send({ channel: 'sms', to: '+84912345678', body: 'x' });
+    expect(res).toMatchObject({ configured: true, ok: false, error: '휴대폰 번호 모양이 아닙니다' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('SENS 요청에 제한 시간(AbortSignal)을 싣는다', async () => {
     await cfg(FULL).send({ channel: 'sms', to: '01012345678', body: 'x' });
     expect(fetchSpy.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
