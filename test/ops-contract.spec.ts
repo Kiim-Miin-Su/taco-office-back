@@ -233,7 +233,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
 
   it('실제 handler에 프론트와 동일한 두 권한이 모두 선언되어 있다 — 읽기와 실패/되살리기 쓰기 동일', () => {
     for (const handler of [
-      'all', 'createLead', 'moveLeadStage', 'addLeadTouch', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
+      'all', 'createLead', 'patchLead', 'moveLeadStage', 'addLeadTouch', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
       'planDetail', 'decidePlanDue', 'reviewPlan',
       'sendMeetingNotice', 'writeMinutes', 'assignMeetingTask',
       'createComplaint', 'patchComplaint', 'teacherChangePreview', 'teacherChange',
@@ -296,7 +296,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       // 「+ 회의 잡기」 · 「+ 기획 올리기」 (C96 · N-46 ②③). 검색 GET·query 계약은 여전히 0이다
       '/ops/meetings', '/ops/plans',
       // 「+ 신규 문의」 · 단계 이동 · 접촉 기록 (C90 · N-45 · N-44). 검색 GET·query 계약은 여전히 0이다
-      '/ops/leads', '/ops/leads/{id}/stage', '/ops/leads/{id}/touches',
+      '/ops/leads', '/ops/leads/{id}', '/ops/leads/{id}/stage', '/ops/leads/{id}/touches',
       '/ops/leads/{id}/fail', '/ops/leads/{id}/resume',
       // 등록 확정 — 미리보기·실제 (C91 · A-05). 검색 GET·query 계약은 여전히 0이다
       '/ops/leads/{id}/enroll/preview', '/ops/leads/{id}/enroll',

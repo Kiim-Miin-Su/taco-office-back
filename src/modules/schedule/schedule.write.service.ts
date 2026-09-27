@@ -23,7 +23,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, type QueryRunner } from 'typeorm';
 import {
   applyCreate, applyDelete, applyEdit, applyPaste, applyRoster, copyMany, formatRule, occ,
-  lessonTimeIssue, parseRuleInput, pasteIssue, rosterAt, rosterScopes, ruleHits, scheduleTimeIssue,
+  lessonTimeIssue, parseRule, parseRuleInput, pasteIssue, rosterAt, rosterScopes, ruleHits, scheduleTimeIssue,
   type Patch as OccurrencePatch, type Scope, type State,
 } from '../../lib/recurrence';
 import {
@@ -620,6 +620,20 @@ export class ScheduleWriteService {
     /** 바깥 트랜잭션 — 강사 교체 마법사(C93)가 여러 규칙을 한 트랜잭션에서 고친다. `create` 의 `outer` 와 같다 */
     outer?: QueryRunner,
   ): Promise<WriteResultDto> {
+    let normalizedRrule: string | undefined;
+    if (dto.rrule !== undefined) {
+      const parsed = parseRuleInput(dto.rrule);
+      if (!parsed) {
+        throw new BadRequestException({
+          code: 'BAD_RRULE',
+          message: `읽을 수 없는 반복 규칙입니다: ${dto.rrule} (ONCE | DAILY[/n] | WEEKLY:MO,WE[/n])`,
+        });
+      }
+      normalizedRrule = formatRule(parsed);
+    }
+    if (dto.toDate !== undefined && dto.toDate !== null && !isIsoDate(dto.toDate)) {
+      throw new BadRequestException({ code: 'BAD_RANGE', message: '반복 종료일은 실제 YYYY-MM-DD 날짜여야 합니다' });
+    }
     // 방식 전환 입력 방어 (N-56) — 서로 맞지 않는 조합은 잠금 전에 거절한다
     if (dto.zaccId !== undefined && dto.mode !== 'online') {
       throw new BadRequestException({
@@ -632,12 +646,51 @@ export class ScheduleWriteService {
     }
     return this.tx('schedule.patch', [serId], async (before, q) => {
       const ser = this.requireOccurrence(before, serId, dto.onDate);
+      const hasSeriesPatch = dto.kindKey !== undefined || dto.subKey !== undefined || dto.title !== undefined ||
+        dto.rrule !== undefined || dto.toDate !== undefined;
+      if (hasSeriesPatch && dto.scope === 'this' && parseRule(ser.rrule).freq !== 'ONCE') {
+        throw new BadRequestException({
+          code: 'SERIES_SCOPE_REQUIRED',
+          message: '종류·과목·제목·반복 규칙은 반복 시리즈 값입니다. 향후 또는 모두를 골라 주세요',
+        });
+      }
+      const structuralSeriesPatch = dto.kindKey !== undefined || dto.rrule !== undefined;
+      if (structuralSeriesPatch) {
+        const from = dto.scope === 'future' && dto.onDate > ser.fromDate ? dto.onDate : null;
+        const [reportRef] = (await q.query(
+          `SELECT id FROM rep WHERE ser_id=$1 AND ($2::date IS NULL OR on_date >= $2::date) LIMIT 1`,
+          [serId, from],
+        )) as Array<{ id: string }>;
+        if (reportRef) {
+          throw new ConflictException({
+            code: 'SERIES_HAS_REPORTS',
+            message: '이미 리포트가 연결된 수업의 종류·반복 규칙은 바꿀 수 없습니다. 제목·과목·기간은 그대로 수정할 수 있습니다',
+          });
+        }
+        if (dto.rrule !== undefined) {
+          const [exceptionRef] = (await q.query(
+            `SELECT id FROM exc WHERE ser_id=$1 AND ($2::date IS NULL OR on_date >= $2::date) LIMIT 1`,
+            [serId, from],
+          )) as Array<{ id: string }>;
+          if (exceptionRef) {
+            throw new ConflictException({
+              code: 'SERIES_HAS_EXCEPTIONS',
+              message: '휴강·이동·메모가 있는 수업의 반복 규칙은 바꿀 수 없습니다. 회차 예외를 먼저 정리해 주세요',
+            });
+          }
+        }
+      }
       const patch: OccurrencePatch = { __onDate: dto.onDate };
       if (dto.startMin !== undefined) patch.startMin = dto.startMin;
       if (dto.endMin !== undefined) patch.endMin = dto.endMin;
       if (dto.teacherId !== undefined) patch.teacherId = dto.teacherId;
       if (dto.roomId !== undefined) patch.roomId = dto.roomId;
       if (dto.date !== undefined) patch.date = dto.date;
+      if (dto.kindKey !== undefined) patch.kind = dto.kindKey;
+      if (dto.subKey !== undefined) patch.sub = dto.subKey;
+      if (dto.title !== undefined) patch.title = dto.title;
+      if (normalizedRrule !== undefined) patch.rrule = normalizedRrule;
+      if (dto.toDate !== undefined) patch.toDate = dto.toDate;
       if (dto.mode !== undefined) patch.mode = dto.mode;
       if (dto.zaccId !== undefined) patch.zaccId = dto.zaccId;
       if (dto.memo !== undefined) patch.memo = dto.memo;
@@ -666,9 +719,13 @@ export class ScheduleWriteService {
       const a = applyEdit(before, {
         serId,
         onDate: dto.onDate,
-        scope: dto.scope as Scope,
+        scope: (hasSeriesPatch && dto.scope === 'this' ? 'all' : dto.scope) as Scope,
         patch,
       });
+      const invalidRange = a.SER.find((row) => row.toDate !== null && row.toDate < row.fromDate);
+      if (invalidRange) {
+        throw new BadRequestException({ code: 'BAD_RANGE', message: '반복 종료일이 시작일보다 앞설 수 없습니다' });
+      }
       return { after: a, log: a.__log, effScope: a.__effScope };
     }, { enrich: this.withInside(inside), actorId, outer, overlaps: true });
   }

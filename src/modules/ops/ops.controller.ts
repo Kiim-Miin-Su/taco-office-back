@@ -10,7 +10,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
-  LeadCreateDto, LeadDto, LeadFailDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
+  LeadCreateDto, LeadDto, LeadFailDto, LeadPatchDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
   MeetingAttendDto, MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MinutesWriteDto,
@@ -92,6 +92,19 @@ export class OpsController {
   @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND' })
   createLead(@CurrentUser() user: RequestUser, @Body() dto: LeadCreateDto): Promise<LeadDto> {
     return this.svc.createLead(user.id, dto);
+  }
+
+  @Patch('leads/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '문의 핵심정보 수정 — 이름 · 학교 · 유입 경로 · 담당 · 학년',
+    description: '카드 머리의 사실만 바꾼다. 단계·접촉·진단·배치·등록 정보는 각 전용 경로를 사용하며, 바꾸기 전후는 LOG에 같은 트랜잭션으로 남긴다.',
+  })
+  @ApiOkResponse({ type: LeadDto })
+  @ApiConflictResponse({ description: 'code EMPTY_PATCH | LEAD_NAME_REQUIRED' })
+  @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND | STAFF_NOT_FOUND' })
+  patchLead(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadPatchDto): Promise<LeadDto> {
+    return this.svc.patchLead(user.id, id, dto);
   }
 
   @Patch('leads/:id/stage')

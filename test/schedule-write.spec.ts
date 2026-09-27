@@ -847,6 +847,69 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(rooms.map((x) => Number(x.room_id))).toEqual([2]);
   });
 
+  it('시리즈 종류·과목·제목·반복 규칙을 모두 수정해 SER와 투영에 저장한다', async () => {
+    const { id, from } = await makeSer({ kindKey: 'study', subKey: 'study-room' });
+    const toDate = plus(from, 21);
+    const r = await api('patch', `/schedule/${id}`).send({
+      scope: 'all', onDate: from, kindKey: 'meeting', subKey: null,
+      title: '격주 회의', rrule: ' weekly:fr/2 ', toDate,
+    }).expect(200);
+    expect(r.body.effScope).toBe('all');
+    expect(await q(
+      `SELECT kind_key,sub_key,title,rrule,from_date::text,to_date::text FROM ser WHERE id=$1`, [id],
+    )).toEqual([{
+      kind_key: 'meeting', sub_key: null, title: '격주 회의', rrule: 'WEEKLY:FR/2', from_date: from, to_date: toDate,
+    }]);
+    const projected = await q<{ dow: number }>(
+      `SELECT extract(dow FROM on_date)::int AS dow FROM ser_occ WHERE ser_id=$1 ORDER BY on_date`, [id],
+    );
+    expect(projected.length).toBeGreaterThan(0);
+    expect(projected.every((row) => row.dow === 5)).toBe(true);
+  });
+
+  it('반복 시리즈 속성의 이번만 수정은 거절하고 향후 수정은 새 SER로 분할한다', async () => {
+    const { id, from } = await makeSer({ kindKey: 'study', subKey: 'study-room' });
+    const cut = plus(from, 14);
+    const denied = await api('patch', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: cut, title: '이번만 제목' }).expect(400);
+    expect(denied.body.code).toBe('SERIES_SCOPE_REQUIRED');
+
+    const r = await api('patch', `/schedule/${id}`).send({
+      scope: 'future', onDate: cut, kindKey: 'meeting', subKey: null,
+      title: '향후 회의', rrule: 'DAILY/2', toDate: plus(cut, 8),
+    }).expect(200);
+    r.body.serIds.forEach((value: number) => { if (!made.includes(value)) made.push(value); });
+    const rows = await q<Record<string, unknown>>(
+      `SELECT id::int,kind_key,sub_key,title,rrule,from_date::text,to_date::text FROM ser WHERE id=ANY($1) ORDER BY id`,
+      [r.body.serIds],
+    );
+    expect(rows).toContainEqual(expect.objectContaining({
+      kind_key: 'study', title: '쓰기 테스트', rrule: 'WEEKLY:MO,WE', to_date: plus(cut, -1),
+    }));
+    expect(rows).toContainEqual(expect.objectContaining({
+      kind_key: 'meeting', sub_key: null, title: '향후 회의', rrule: 'DAILY/2', from_date: cut, to_date: plus(cut, 8),
+    }));
+  });
+
+  it('종류·반복 규칙 변경은 연결 리포트나 회차 예외를 고아로 만들 수 없게 거절한다', async () => {
+    const reportable = await makeSer();
+    const reports = await api('patch', `/schedule/${reportable.id}`).send({
+      scope: 'all', onDate: reportable.from, kindKey: 'meeting',
+    }).expect(409);
+    expect(reports.body.code).toBe('SERIES_HAS_REPORTS');
+
+    const exceptional = await makeSer({
+      kindKey: 'study', subKey: 'study-room', startMin: 780, endMin: 840, teacherId: T2, roomId: 2,
+    });
+    await api('patch', `/schedule/${exceptional.id}`).send({
+      scope: 'this', onDate: exceptional.from, memo: '보존할 메모',
+    }).expect(200);
+    const exceptions = await api('patch', `/schedule/${exceptional.id}`).send({
+      scope: 'all', onDate: exceptional.from, rrule: 'DAILY/2',
+    }).expect(409);
+    expect(exceptions.body.code).toBe('SERIES_HAS_EXCEPTIONS');
+  });
+
   it('붙여넣기 — 원본 참조만 받아 새 SER와 명단을 만들고 EXC는 복제하지 않는다', async () => {
     const { id, from } = await makeSer();
     await api('patch', `/schedule/${id}`)

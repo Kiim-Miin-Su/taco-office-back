@@ -3242,7 +3242,7 @@
             }
           },
           "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "SERIES_HAS_REPORTS | SERIES_HAS_EXCEPTIONS — 종류·반복 규칙 변경으로 연결된 리포트·회차 예외가 고아가 되는 것을 막는다",
             "content": {
               "application/json": {
                 "schema": {
@@ -8432,6 +8432,94 @@
           }
         },
         "summary": "「+ 신규 문의」 — 유입은 언제나 1차 상담 (C90 · 테스트 시나리오 A-01 · N-45)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/leads/{id}": {
+      "patch": {
+        "description": "카드 머리의 사실만 바꾼다. 단계·접촉·진단·배치·등록 정보는 각 전용 경로를 사용하며, 바꾸기 전후는 LOG에 같은 트랜잭션으로 남긴다.",
+        "operationId": "OpsController_patchLead",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LEAD_NOT_FOUND | STAFF_NOT_FOUND"
+          },
+          "409": {
+            "description": "code EMPTY_PATCH | LEAD_NAME_REQUIRED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "문의 핵심정보 수정 — 이름 · 학교 · 유입 경로 · 담당 · 학년",
         "tags": [
           "ops"
         ]
@@ -15006,6 +15094,92 @@
           "consulting"
         ]
       },
+      "patch": {
+        "description": "계약 1단계에서만 학생 · 요청자 · 담당 · 금액 · 약정 회차 · 기간을 바꾼다. 종류는 기본 항목과 결합되어 있고 공개 범위는 전용 PATCH가 있으므로 받지 않는다. 전후 값은 LOG에 남긴다.",
+        "operationId": "updateCore",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingPatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "컨설팅 건 · 담당 없음"
+          },
+          "409": {
+            "description": "code CONS_CORE_LOCKED | CONS_DATE_ORDER | EMPTY_PATCH"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "계약 핵심정보 수정 — 계약 작업 전",
+        "tags": [
+          "consulting"
+        ]
+      },
       "delete": {
         "description": "받은 돈 · 살아 있는 전환 청구서 · 회차 기록이 있으면 409 CONS_ARCHIVE_BLOCKED(PB-11 · 상세의 archiveBlockedReason 과 같은 문장). 지운 것은 감사 원장에 남는다.",
         "operationId": "archive",
@@ -19392,7 +19566,18 @@
       "get": {
         "description": "원천은 `log`(entity SER · 규칙 하나의 쓰기 한 번)다. 줄마다 누가 · 언제 · 무엇을(서버 문장) · 앞 → 뒤. 볼 수 있는 범위는 §20 목록과 같다 — 전체 권한(canCrudAll)이면 모두, 아니면 내가 한 것만. 줌 배정 · 비밀 값은 원장에 없다. 서랍 payload 에 싣지 않고 §20 칸을 열 때만 부른다(여덟 칸을 여는 모든 사람이 이 조회를 치르지 않게).",
         "operationId": "DrawerController_scheduleHistory",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "beforeId",
+            "required": false,
+            "in": "query",
+            "description": "이 log.id보다 오래된 줄 스무 개. 생략하면 최신 페이지",
+            "schema": {
+              "minimum": 1,
+              "type": "number"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "",
@@ -22469,6 +22654,22 @@
             "type": "string",
             "nullable": true
           },
+          "rrule": {
+            "type": "string",
+            "maxLength": 80,
+            "description": "이 회차가 속한 SER의 반복 규칙. 구버전 응답 호환을 위해 optional 표기"
+          },
+          "fromDate": {
+            "type": "string",
+            "format": "date",
+            "description": "이 회차가 속한 SER의 시작일. 구버전 응답 호환을 위해 optional 표기"
+          },
+          "toDate": {
+            "type": "string",
+            "format": "date",
+            "nullable": true,
+            "description": "이 회차가 속한 SER의 종료일"
+          },
           "teacherId": {
             "type": "number",
             "nullable": true
@@ -24081,6 +24282,37 @@
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "nullable": true,
             "description": "다른 날로 옮길 때만"
+          },
+          "kindKey": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 16,
+            "description": "SER 종류. 반복 수업은 future/all 범위에서만 변경"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "SER 과목. null이면 과목 없음"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80,
+            "description": "SER 표시 제목. null이면 제목 없음"
+          },
+          "rrule": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "SER 반복 규칙. ONCE | DAILY[/n] | WEEKLY:MO,WE[/n]"
+          },
+          "toDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "SER 반복 종료일. null이면 열린 반복"
           },
           "mode": {
             "type": "string",
@@ -31118,6 +31350,45 @@
           "source"
         ]
       },
+      "LeadPatchDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "학생 이름"
+          },
+          "school": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 60,
+            "description": "학교 — null 또는 빈 문자열이면 비운다"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "kakao",
+              "phone",
+              "blog",
+              "instagram",
+              "referral",
+              "walkin"
+            ],
+            "description": "유입 경로 — 낱말은 GET /ops.intakeHead.sources"
+          },
+          "ownerId": {
+            "type": "number",
+            "nullable": true,
+            "description": "담당 — null이면 미배정"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 10,
+            "description": "학년 — null 또는 빈 문자열이면 비운다"
+          }
+        }
+      },
       "LeadStageMoveDto": {
         "type": "object",
         "properties": {
@@ -37638,6 +37909,53 @@
           "canSeeAmounts"
         ]
       },
+      "ConsultingPatchDto": {
+        "type": "object",
+        "properties": {
+          "studentIds": {
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "minItems": 1,
+            "uniqueItems": true,
+            "type": "array"
+          },
+          "requester": {
+            "type": "string",
+            "enum": [
+              "mother",
+              "father"
+            ]
+          },
+          "ownerId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 2147483647
+          },
+          "sessions": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 32767
+          },
+          "startOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "endOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          }
+        }
+      },
       "ConsultingShareUpdateDto": {
         "type": "object",
         "properties": {
@@ -42752,6 +43070,11 @@
             "type": "string",
             "nullable": true,
             "description": "원문 둘째 줄의 뒤 — 모르면 null"
+          },
+          "go": {
+            "type": "string",
+            "nullable": true,
+            "description": "아직 존재하는 회차면 그 회차를 여는 주소. 지워져 열 수 없으면 null"
           }
         },
         "required": [
@@ -42760,7 +43083,8 @@
           "actorName",
           "summary",
           "from",
-          "to"
+          "to",
+          "go"
         ]
       },
       "ScheduleHistoryDto": {
@@ -42772,10 +43096,16 @@
             "items": {
               "$ref": "#/components/schemas/ScheduleHistoryRowDto"
             }
+          },
+          "nextBeforeId": {
+            "type": "number",
+            "nullable": true,
+            "description": "더 오래된 줄을 읽을 cursor. 끝이면 null"
           }
         },
         "required": [
-          "rows"
+          "rows",
+          "nextBeforeId"
         ]
       },
       "TodoCreateDto": {

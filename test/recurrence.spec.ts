@@ -138,6 +138,24 @@ const base = (): State => ({
     ok(R.scopesFor(s.SER[0], '2026-08-19').join() === 'this,future,all', '중간 회차는 3개');
   });
 
+  it('4-b. 시리즈 속성은 향후 분할과 모두 변경에 같은 리듀서를 쓴다', () => {
+    const future = R.applyEdit(base(), {
+      serId: 1, onDate: '2026-08-19', scope: 'future',
+      patch: { kind: 'class', sub: 'writing', title: '새 제목', rrule: 'WEEKLY:FR/2', toDate: '2026-10-31' },
+    });
+    const old = must(future.SER.find((row) => row.id === 1));
+    const tail = must(future.SER.find((row) => row.id > 2));
+    ok(old.kind === 'regular' && old.toDate === '2026-08-18', '기준일 전 원본은 분류와 규칙을 보존한다');
+    ok(tail.kind === 'class' && tail.sub === 'writing' && tail.title === '새 제목', '향후 SER만 분류와 제목이 바뀐다');
+    ok(tail.rrule === 'WEEKLY:FR/2' && tail.toDate === '2026-10-31', '향후 SER만 반복 규칙과 종료일이 바뀐다');
+
+    const once = R.applyEdit(base(), {
+      serId: 2, onDate: '2026-08-19', scope: 'all', patch: { rrule: 'DAILY', toDate: null },
+    });
+    const repeated = must(once.SER.find((row) => row.id === 2));
+    ok(repeated.rrule === 'DAILY' && repeated.toDate === null, '단발도 열린 매일 반복으로 바꿀 수 있다');
+  });
+
 
 /* ── 5. 「모두」가 EXC 를 초기화한다 (D-R18 · N-8) ──────────────────────── */
   it('5. 「모두」 — EXC 초기화', () => {

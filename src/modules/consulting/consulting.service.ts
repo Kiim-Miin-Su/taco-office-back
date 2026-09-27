@@ -22,7 +22,7 @@ import type { SendAttachment } from '../notify/sender';
 import type {
   ConsAccountingDto, ConsAccountRowDto, ConsItemDto, ConsItemsEditDto, ConsItemToggleDto,
   ConsPaymentCreateDto, ConsPaymentDto, ConsStudentCaseDto, ConsStudentDto, ConsStudentsDto, ConsToInvoiceDto,
-  ConsultingCreateDto, ConsultingDetailDto,
+  ConsultingCreateDto, ConsultingDetailDto, ConsultingPatchDto,
   ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto, ConsultingListDto,
   ConsultingFileCreateDto, ConsultingSessionDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
@@ -252,6 +252,8 @@ export class ConsultingService {
   ): Promise<{ row: R; share: ConsShare; viewer: ConsViewer }> {
     const [row] = (await m.query(
       `SELECT c.*,
+              to_char(c.start_on,'YYYY-MM-DD') AS start_on_text,
+              to_char(c.end_on,'YYYY-MM-DD') AS end_on_text,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id=c.id AND p.staff_id=$2) AS is_picked
          FROM cons c WHERE c.id=$1 AND c.deleted_at IS NULL FOR UPDATE OF c`, [consId, viewerId],
     )) as R[];
@@ -305,6 +307,68 @@ export class ConsultingService {
       return consId;
     });
     return this.detail(viewerId, canMoney, canHide, id);
+  }
+
+  /**
+   * 계약 핵심정보는 계약 작업이 시작되기 전(1단계)에만 바꾼다. 종류는 기본 항목 템플릿과 결합되어 있어 여기서 받지 않고,
+   * 공개 범위도 기존 전용 경로가 소유한다. 학생 연결과 본체, 감사 원장은 한 트랜잭션이다.
+   */
+  async updateCore(
+    viewerId: number, canMoney: boolean, canHide: boolean, consId: number, dto: ConsultingPatchDto,
+  ): Promise<ConsultingDetailDto> {
+    const fields = ['studentIds', 'requester', 'ownerId', 'amount', 'sessions', 'startOn', 'endOn'] as const;
+    if (!fields.some((key) => dto[key] !== undefined)) {
+      throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
+    }
+    await this.anyRepo.manager.transaction(async (m) => {
+      const locked = await this.lockFull(m, viewerId, canHide, consId);
+      if (String(locked.stage) !== 'contract' || Number(locked.contract_step) !== 1) {
+        throw new ConflictException({ code: 'CONS_CORE_LOCKED', message: '계약서 작업을 시작하기 전까지만 핵심정보를 바꿀 수 있습니다' });
+      }
+      const currentStudents = ((await m.query(
+        `SELECT student_id FROM cons_stu WHERE cons_id=$1 ORDER BY student_id`, [consId],
+      )) as Array<{ student_id: string }>).map((row) => Number(row.student_id));
+      const nextStudents = dto.studentIds ?? currentStudents;
+      if (dto.studentIds !== undefined) {
+        const [{ count }] = (await m.query(
+          `SELECT count(*)::int AS count FROM stu WHERE id=ANY($1::bigint[])`, [nextStudents],
+        )) as Array<{ count: number }>;
+        if (count !== nextStudents.length) {
+          throw new BadRequestException({ code: 'CONS_STUDENT_INVALID', message: '존재하지 않는 학생이 포함되었습니다' });
+        }
+      }
+      if (dto.ownerId !== undefined) await this.assertActiveAdminStaff(m, [dto.ownerId]);
+      const startOn = dto.startOn ?? String(locked.start_on_text);
+      const endOn = dto.endOn ?? String(locked.end_on_text);
+      if (startOn > endOn) {
+        throw new BadRequestException({ code: 'CONS_DATE_ORDER', message: '종료일은 시작일보다 빠를 수 없습니다' });
+      }
+      const picked = ((await m.query(
+        `SELECT staff_id FROM cons_pick WHERE cons_id=$1 ORDER BY staff_id`, [consId],
+      )) as Array<{ staff_id: string }>).map((row) => Number(row.staff_id));
+      const ownerId = dto.ownerId ?? Number(locked.owner_id);
+      this.assertNoSelfLockout(String(locked.share) as ConsShare, ownerId, picked, viewerId, canHide);
+      const before = {
+        studentIds: currentStudents, requester: locked.requester, ownerId: Number(locked.owner_id),
+        amount: Number(locked.amount), sessions: Number(locked.sessions),
+        startOn: String(locked.start_on_text), endOn: String(locked.end_on_text),
+      };
+      const after = {
+        studentIds: nextStudents, requester: dto.requester ?? before.requester, ownerId,
+        amount: dto.amount ?? before.amount, sessions: dto.sessions ?? before.sessions,
+        startOn, endOn,
+      };
+      await m.query(
+        `UPDATE cons SET requester=$2, owner_id=$3, amount=$4, sessions=$5, start_on=$6::date, end_on=$7::date WHERE id=$1`,
+        [consId, after.requester, after.ownerId, after.amount, after.sessions, after.startOn, after.endOn],
+      );
+      if (dto.studentIds !== undefined) {
+        await m.query(`DELETE FROM cons_stu WHERE cons_id=$1`, [consId]);
+        await m.query(`INSERT INTO cons_stu (cons_id,student_id) SELECT $1,unnest($2::bigint[])`, [consId, nextStudents]);
+      }
+      await audit(m, 'consulting.core', { actorId: viewerId, entityId: consId, before, after });
+    });
+    return this.detail(viewerId, canMoney, canHide, consId);
   }
 
   /**
@@ -444,7 +508,7 @@ export class ConsultingService {
           scheduleCreationSupported: true, scheduleCreationReason: null,
         },
       capabilities: {
-        canEdit: mutable,
+        canEdit: mutable && step === 1,
         canChangeShare: mutable,
         // 범위를 바꾸는 것과 **비공개를 고르는 것**은 다른 층이다 — §76 대표 전용 (S4)
         canSetPrivate: canHide,

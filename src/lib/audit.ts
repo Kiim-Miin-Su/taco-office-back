@@ -37,6 +37,7 @@ export const AUDIT_WRITES = [
   { key: 'carry.create', entity: 'CARRY', action: 'create', why: '이월 처리' },
   // 컨설팅 — 돈
   { key: 'consulting.to_invoice', entity: 'CONS', action: 'to_invoice', why: '청구서로 전환' },
+  { key: 'consulting.core', entity: 'CONS', action: 'edit', why: '계약 작업 전 학생 · 요청자 · 담당 · 금액 · 회차 · 기간 수정' },
   // 컨설팅 — W11(C1) 결정이 만든 쓰기: 예외 종료(결재) · 항목 빼기 · 항목 파일 빼기 · 지우기(삭제)
   { key: 'consulting.close_exception', entity: 'CONS', action: 'close_exception', why: '예외 종료 — 사유 · 승인자 · 남은 항목과 회차(N-18-a · DQ6)' },
   { key: 'consulting.items', entity: 'CONS', action: 'items', why: '항목 수정 — 더하기 · 이름 바꾸기 · 빼기(N-18-a · 원문 §31)' },

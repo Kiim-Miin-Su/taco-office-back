@@ -195,6 +195,7 @@ export async function persist(
       touched.add(s.id);
     }
     const changed =
+      old.kind !== s.kind ||
       old.teacherId !== s.teacherId || old.roomId !== s.roomId ||
       old.startMin !== s.startMin || old.endMin !== s.endMin ||
       old.rrule !== s.rrule || old.fromDate !== s.fromDate || old.toDate !== s.toDate ||
@@ -202,10 +203,10 @@ export async function persist(
     if (changed) {
       await q.query(
         `UPDATE ser SET teacher_id=$2, room_id=$3, start_min=$4, end_min=$5,
-                        rrule=$6, from_date=$7::date, to_date=$8::date, title=$9, mode=$10, sub_key=$11
+                        rrule=$6, from_date=$7::date, to_date=$8::date, title=$9, mode=$10, sub_key=$11, kind_key=$12
           WHERE id=$1`,
         [s.id, s.teacherId, s.roomId, s.startMin, s.endMin, s.rrule, s.fromDate, s.toDate,
-         s.title || null, s.mode, s.sub],
+         s.title || null, s.mode, s.sub, s.kind],
       );
       touched.add(s.id);
     }

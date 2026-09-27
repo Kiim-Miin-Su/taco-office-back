@@ -560,11 +560,19 @@ export class ScheduleHistoryRowDto {
   summary!: string;
   @ApiProperty({ ...S, description: '원문 둘째 줄 「앞 → 뒤」의 앞 — 첫 번째 바뀐 것 · 모르면 null' }) from!: string | null;
   @ApiProperty({ ...S, description: '원문 둘째 줄의 뒤 — 모르면 null' }) to!: string | null;
+  @ApiProperty({ ...S, description: '아직 존재하는 회차면 그 회차를 여는 주소. 지워져 열 수 없으면 null' }) go!: string | null;
+}
+
+export class ScheduleHistoryQueryDto {
+  @ApiPropertyOptional({ type: Number, minimum: 1, description: '이 log.id보다 오래된 줄 스무 개. 생략하면 최신 페이지' })
+  @IsOptional() @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  beforeId?: number;
 }
 
 export class ScheduleHistoryDto {
   @ApiProperty({ type: [ScheduleHistoryRowDto], description: '최근 것부터 — 볼 수 있는 범위는 §20 목록과 같다(전체 권한이면 모두 · 아니면 내가 한 것)' })
   rows!: ScheduleHistoryRowDto[];
+  @ApiProperty({ ...N, description: '더 오래된 줄을 읽을 cursor. 끝이면 null' }) nextBeforeId!: number | null;
 }
 
 /**

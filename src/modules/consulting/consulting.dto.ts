@@ -244,6 +244,23 @@ export class ConsultingCreateDto {
   pickedStaffIds?: number[];
 }
 
+/** 계약 작업을 시작하기 전 바꿀 수 있는 핵심정보. 종류와 공개 범위는 각각 템플릿/전용 계약이 있어 여기서 받지 않는다. */
+export class ConsultingPatchDto {
+  @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, minItems: 1, uniqueItems: true })
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true })
+  studentIds?: number[];
+
+  @ApiPropertyOptional({ enum: CONSULTING_REQUESTERS })
+  @IsOptional() @IsIn(CONSULTING_REQUESTERS as unknown as string[])
+  requester?: ConsultingRequester;
+
+  @ApiPropertyOptional(ID_SCHEMA) @IsOptional() @IsInt() @Min(1) ownerId?: number;
+  @ApiPropertyOptional({ minimum: 1, maximum: 2_147_483_647 }) @IsOptional() @IsInt() @Min(1) @Max(2_147_483_647) amount?: number;
+  @ApiPropertyOptional({ minimum: 1, maximum: CONSULTING_SESSION_MAX }) @IsOptional() @IsInt() @Min(1) @Max(CONSULTING_SESSION_MAX) sessions?: number;
+  @ApiPropertyOptional({ ...DATE_SCHEMA }) @IsOptional() @IsCalendarDate() startOn?: string;
+  @ApiPropertyOptional({ ...DATE_SCHEMA }) @IsOptional() @IsCalendarDate() endOn?: string;
+}
+
 export class ConsultingShareUpdateDto {
   @ApiProperty({ enum: CONS_SHARES }) @IsIn(CONS_SHARES as unknown as string[]) share!: ConsShare;
   @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, uniqueItems: true, description: "share='picked'일 때 1명 이상 필수" })

@@ -85,9 +85,12 @@ describe('§26 단계 필터 조회 계약', () => {
       '/consulting/{id}/close/preview', '/consulting/{id}/close',
       '/consulting/{id}/payments', '/consulting/{id}/invoice',
     ]);
-    for (const h of ['previewSessions', 'addSessions', 'writeSession', 'previewClose', 'close', 'editItems', 'addItemFile', 'removeItemFile'] as const) {
+    for (const h of ['updateCore', 'previewSessions', 'addSessions', 'writeSession', 'previewClose', 'close', 'editItems', 'addItemFile', 'removeItemFile'] as const) {
       expect(app.get(Reflector).get(PERM_KEY, ConsultingController.prototype[h])).toEqual(['canAdminPage', 'canCrudAll']);
     }
+    const core = api.paths['/consulting/{id}'].patch;
+    expect(core?.requestBody).toBeDefined();
+    expect(core?.description).toMatch(/계약 1단계/);
     const patch = api.paths['/consulting/{id}/items/{itemId}'].patch;
     expect(patch?.description).toMatch(/진행률 숫자는 저장하지 않는다/);
     const get = api.paths['/consulting'].get;

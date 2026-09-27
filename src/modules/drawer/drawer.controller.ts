@@ -29,7 +29,7 @@ import { ScheduleService } from '../schedule/schedule.service';
 import {
   ApprovalUndoDto, ApprovalUndoResultDto,
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
-  ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto, ScheduleHistoryDto,
+  ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto, ScheduleHistoryDto, ScheduleHistoryQueryDto,
   StaffActiveDto, StaffCreateDto, StaffParamsDto, StaffPasswordResetDto, StaffPatchDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
   TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
@@ -197,8 +197,8 @@ export class DrawerController {
       + '서랍 payload 에 싣지 않고 §20 칸을 열 때만 부른다(여덟 칸을 여는 모든 사람이 이 조회를 치르지 않게).',
   })
   @ApiOkResponse({ type: ScheduleHistoryDto })
-  scheduleHistory(@CurrentUser() user: RequestUser): Promise<ScheduleHistoryDto> {
-    return this.svc.scheduleHistory(user.id, this.gate(user).canSeeAll);
+  scheduleHistory(@CurrentUser() user: RequestUser, @Query() q: ScheduleHistoryQueryDto): Promise<ScheduleHistoryDto> {
+    return this.svc.scheduleHistory(user.id, this.gate(user).canSeeAll, q.beforeId);
   }
 
   @Post('todos')

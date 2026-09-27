@@ -12,7 +12,7 @@ import {
   ConsAccountingDto, ConsAccountRowDto, ConsCloseDto, ConsCloseResultDto, ConsItemDto, ConsItemsEditDto, ConsItemToggleDto,
   ConsPaymentCreateDto, ConsSessionCreateDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsStudentsDto, ConsToInvoiceDto, ConsultingCreateDto,
   ConsultingDetailDto, ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto,
-  ConsultingFileCreateDto, ConsultingListDto, ConsultingSessionDto, ConsultingShareUpdateDto,
+  ConsultingFileCreateDto, ConsultingListDto, ConsultingPatchDto, ConsultingSessionDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
 
 /** 예외 종료 승인 권한 — 판정은 perm.ts 한 줄(ceoGate 계열)이다. 역할 문자열을 여기서 비교하지 않는다 (D-R39 · N-18-a) */
@@ -182,6 +182,22 @@ export class ConsultingController {
     const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
     return this.svc.detail(user.id, canMoney, canHide, id, approveClose(user), await this.svc.consultingLineShown(canHide));
+  }
+
+  @Patch(':id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    operationId: 'updateCore',
+    summary: '계약 핵심정보 수정 — 계약 작업 전',
+    description: '계약 1단계에서만 학생 · 요청자 · 담당 · 금액 · 약정 회차 · 기간을 바꾼다. 종류는 기본 항목과 결합되어 있고 공개 범위는 전용 PATCH가 있으므로 받지 않는다. 전후 값은 LOG에 남긴다.',
+  })
+  @ApiOkResponse({ type: ConsultingDetailDto })
+  @ApiConflictResponse({ description: 'code CONS_CORE_LOCKED | CONS_DATE_ORDER | EMPTY_PATCH' })
+  @ApiNotFoundResponse({ description: '컨설팅 건 · 담당 없음' })
+  async updateCore(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsultingPatchDto): Promise<ConsultingDetailDto> {
+    const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.updateCore(user.id, canMoney, canHide, id, dto);
   }
 
   @Patch(':id/share')

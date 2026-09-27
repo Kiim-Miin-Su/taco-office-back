@@ -69,8 +69,18 @@ describe('스케줄 CRUD 입력 형식', () => {
     '%s의 DB varchar(%i) 초과는 저장 전에 400이다', async (key, length) => {
       await expect(parse(OccurrenceCreateDto, { ...create, [key]: 'a'.repeat(length + 1) }))
         .rejects.toMatchObject({ status: 400 });
+      await expect(parse(OccurrencePatchDto, { ...patch, [key]: 'a'.repeat(length + 1) }))
+        .rejects.toMatchObject({ status: 400 });
     },
   );
+  it('시리즈 수정 입력은 종류·과목·제목·반복 규칙·종료일을 DTO에서 보존한다', async () => {
+    await expect(parse(OccurrencePatchDto, {
+      ...patch, kindKey: 'meeting', subKey: null, title: null, rrule: 'WEEKLY:TU/2', toDate: null,
+    })).resolves.toMatchObject({
+      kindKey: 'meeting', subKey: null, title: null, rrule: 'WEEKLY:TU/2', toDate: null,
+    });
+    await expect(parse(OccurrencePatchDto, { ...patch, kindKey: null })).rejects.toMatchObject({ status: 400 });
+  });
   it.each([undefined, null, [], 'not-a-reference'].map(source => ({ source })))('이동 원본 $source는 필수 객체다', async ({ source }) => {
     await expect(parse(OccurrenceMoveItemDto, { ...item, source })).rejects.toMatchObject({ status: 400 });
   });

@@ -67,7 +67,7 @@ import {
 import type {
   IntakeAlertDto, IntakeFailReasonDto, IntakeHeadDto,
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
-  LeadCreateDto, LeadDto, LeadFailDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
+  LeadCreateDto, LeadDto, LeadFailDto, LeadPatchDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
   PlanStageMoveDto, PlanTaskCreateDto, PlanTaskDto,
@@ -1369,6 +1369,52 @@ export class OpsService {
         [viewerId, lid, JSON.stringify({ name, school: dto.school?.trim() || null, ownerId: owner?.id ?? null, source: dto.source, grade })],
       );
       return lid;
+    });
+    return this.leadOne(id);
+  }
+
+  /** 카드 머리 수정 — nullable 칸은 명시한 null/빈 문자열만 비우고, 생략한 칸은 그대로 둔다. */
+  async patchLead(viewerId: number, id: number, dto: LeadPatchDto): Promise<LeadDto> {
+    const fields = ['name', 'school', 'source', 'ownerId', 'grade'] as const;
+    if (!fields.some((key) => dto[key] !== undefined)) {
+      throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
+    }
+    const name = dto.name === undefined ? undefined : dto.name.trim();
+    if (name !== undefined && !name) {
+      throw new ConflictException({ code: 'LEAD_NAME_REQUIRED', message: '이름을 적어 주세요' });
+    }
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(
+        `SELECT id, name, school, source, owner_id, grade FROM lead WHERE id=$1 FOR UPDATE`, [id],
+      )) as R[];
+      if (!cur) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
+      let owner: { id: number; name: string } | null = null;
+      if (dto.ownerId != null) {
+        const [staff] = (await em.query(
+          `SELECT id, name FROM staff WHERE id=$1 AND active FOR KEY SHARE`, [dto.ownerId],
+        )) as Array<{ id: string; name: string }>;
+        if (!staff) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
+        owner = { id: Number(staff.id), name: staff.name };
+      }
+      const before = {
+        name: String(cur.name), school: (cur.school as string) ?? null, source: (cur.source as string) ?? null,
+        ownerId: cur.owner_id == null ? null : Number(cur.owner_id), grade: (cur.grade as string) ?? null,
+      };
+      const after = {
+        name: name ?? before.name,
+        school: dto.school === undefined ? before.school : dto.school?.trim() || null,
+        source: dto.source ?? before.source,
+        ownerId: dto.ownerId === undefined ? before.ownerId : owner?.id ?? null,
+        grade: dto.grade === undefined ? before.grade : dto.grade?.trim() || null,
+      };
+      await em.query(
+        `UPDATE lead SET name=$2, school=$3, source=$4, owner_id=$5, grade=$6 WHERE id=$1`,
+        [id, after.name, after.school, after.source, after.ownerId, after.grade],
+      );
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'edit',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify(before), JSON.stringify(after)],
+      );
     });
     return this.leadOne(id);
   }

@@ -201,6 +201,29 @@ export class LeadCreateDto {
   grade?: string | null;
 }
 
+/** 상담 카드 핵심정보 수정 — 단계/실패/진단/배치와 섞지 않고 카드 머리의 사실만 바꾼다. */
+export class LeadPatchDto {
+  @ApiPropertyOptional({ maxLength: 40, description: '학생 이름' })
+  @IsOptional() @IsString() @MinLength(1, { message: '이름을 적어 주세요' }) @MaxLength(40)
+  name?: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 60, description: '학교 — null 또는 빈 문자열이면 비운다' })
+  @IsOptional() @IsString() @MaxLength(60)
+  school?: string | null;
+
+  @ApiPropertyOptional({ enum: [...LEAD_SOURCES], description: '유입 경로 — 낱말은 GET /ops.intakeHead.sources' })
+  @IsOptional() @IsIn([...LEAD_SOURCES], { message: '유입 경로는 카카오채널 · 전화 · 블로그 · 인스타그램 · 소개 · 워크인 중 하나입니다' })
+  source?: string;
+
+  @ApiPropertyOptional({ ...N, description: '담당 — null이면 미배정' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId?: number | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — null 또는 빈 문자열이면 비운다' })
+  @IsOptional() @IsString() @MaxLength(10)
+  grade?: string | null;
+}
+
 /** 단계 이동 (C90 · N-45) — 받아 주는 값은 LeadDto.nextStages 뿐. 등록·실패는 각자의 길이다 */
 export class LeadStageMoveDto {
   @ApiProperty({ enum: [...INTAKE_FUNNEL_STAGES], description: '옮길 단계 — 깔때기 안 넷. 전이표 밖이면 409 LEAD_STAGE_INVALID · 끝난 건이면 409 LEAD_LOCKED' })

@@ -73,6 +73,12 @@ export class OccurrenceDto {
   @ApiProperty({ description: '추가 수업 종류의 회차인가 — 블록 「추가」 배지 (C94-d · C-38). 판정은 KIND.extra 다' }) extra!: boolean;
   @ApiPropertyOptional({ type: String, nullable: true }) subKey?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) title?: string | null;
+  @ApiPropertyOptional({ maxLength: 80, description: '이 회차가 속한 SER의 반복 규칙. 구버전 응답 호환을 위해 optional 표기' })
+  rrule?: string;
+  @ApiPropertyOptional({ format: 'date', description: '이 회차가 속한 SER의 시작일. 구버전 응답 호환을 위해 optional 표기' })
+  fromDate?: string;
+  @ApiPropertyOptional({ format: 'date', type: String, nullable: true, description: '이 회차가 속한 SER의 종료일' })
+  toDate!: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) teacherId?: number | null;
   @ApiPropertyOptional({ type: String, nullable: true }) teacherName?: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) roomId?: number | null;
@@ -343,6 +349,28 @@ export class OccurrencePatchDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '다른 날로 옮길 때만' })
   @IsOptional() @IsCalendarDate()
   date?: string | null;
+
+  @ApiPropertyOptional({ minLength: 1, maxLength: SCHEDULE_INPUT_LIMITS.kindKey, description: 'SER 종류. 반복 수업은 future/all 범위에서만 변경' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString() @MinLength(1) @MaxLength(SCHEDULE_INPUT_LIMITS.kindKey)
+  kindKey?: string;
+
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: SCHEDULE_INPUT_LIMITS.subKey, description: 'SER 과목. null이면 과목 없음' })
+  @IsOptional() @IsString() @MaxLength(SCHEDULE_INPUT_LIMITS.subKey)
+  subKey?: string | null;
+
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: SCHEDULE_INPUT_LIMITS.title, description: 'SER 표시 제목. null이면 제목 없음' })
+  @IsOptional() @IsString() @MaxLength(SCHEDULE_INPUT_LIMITS.title)
+  title?: string | null;
+
+  @ApiPropertyOptional({ minLength: 1, maxLength: SCHEDULE_INPUT_LIMITS.rrule, description: 'SER 반복 규칙. ONCE | DAILY[/n] | WEEKLY:MO,WE[/n]' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString() @MinLength(1) @MaxLength(SCHEDULE_INPUT_LIMITS.rrule)
+  rrule?: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, type: String, nullable: true, description: 'SER 반복 종료일. null이면 열린 반복' })
+  @IsOptional() @IsCalendarDate()
+  toDate?: string | null;
 
   @ApiPropertyOptional({
     enum: CLASS_MODES,

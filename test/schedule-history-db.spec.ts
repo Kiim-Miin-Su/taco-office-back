@@ -141,8 +141,32 @@ d('§20 이력 — 실제 일정 쓰기의 감사 줄을 읽는다 (drawer.sched
       ['이력 관리자', '히스토리 과목 생성 (단발)', null, null],
     ]);
     expect(all.rows[0].at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+    expect(all.rows[0].go).toBe(`/schedule?date=2026-12-24&serId=${serId}&onDate=2026-12-24`);
     expect(all.rows.length).toBeLessThanOrEqual(20);
     // 전체 권한이 아니면 **내가 한 것만** — 강사는 일정을 직접 쓰지 않으므로 비어 있다(§20 목록의 by_id = 나 와 같은 모양)
     expect((await drawer.scheduleHistory(T1, false)).rows).toEqual([]);
+  });
+
+  it('최근 스무 줄 뒤 cursor로 겹치지 않게 넘기고, 남아 있는 회차만 deep link를 준다', async () => {
+    const created = await write.create({
+      kindKey: 'hist_test', subKey: 'hist-sub', mode: 'offline', startMin: 720, endMin: 780, teacherId: T1,
+      rrule: 'WEEKLY:TH', fromDate: '2027-01-07', toDate: '2027-01-28',
+    } as never, BOSS);
+    made.ser.push(...created.serIds);
+    const serId = created.serIds[0];
+    for (let i = 1; i <= 21; i += 1) {
+      await write.patch(serId, { scope: 'this', onDate: '2027-01-07', memo: `메모 ${i}` } as never, undefined, BOSS);
+    }
+
+    const newest = await drawer.scheduleHistory(BOSS, true);
+    expect(newest.rows).toHaveLength(20);
+    expect(newest.nextBeforeId).toBe(newest.rows.at(-1)!.id);
+    expect(newest.rows.every((row) => row.go === `/schedule?date=2027-01-07&serId=${serId}&onDate=2027-01-07`)).toBe(true);
+
+    const older = await drawer.scheduleHistory(BOSS, true, newest.nextBeforeId!);
+    expect(older.rows.length).toBeGreaterThan(0);
+    expect(older.rows.every((row) => row.id < newest.nextBeforeId!)).toBe(true);
+    expect(new Set([...newest.rows, ...older.rows].map((row) => row.id)).size)
+      .toBe(newest.rows.length + older.rows.length);
   });
 });

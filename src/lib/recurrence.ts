@@ -180,6 +180,12 @@ export interface Patch {
   roomId?: number | null;
   /** 옮긴 날짜 */
   date?: IsoDate | null;
+  /** SER 자체의 분류·표시·반복 속성 — 반복 규칙에서는 future/all 범위만 허용한다 */
+  kind?: string;
+  sub?: string | null;
+  title?: string | null;
+  rrule?: string;
+  toDate?: IsoDate | null;
   /** 방식 전환 (N-56) — 온라인이면 강의실을 비우고, 현장이면 줌 계정을 푼다 */
   mode?: 'offline' | 'online';
   /** 온라인 전환과 함께 붙일 줌 계정 (N-56) — null 이면 배정 없음 */
@@ -679,6 +685,10 @@ function patchLines(patch: Patch, scope: Scope): string[] {
   if (scope === 'this' && patch.date !== undefined) {
     out.push(patch.date && patch.date !== patch.__onDate ? `날짜를 옮겼습니다 — ${patch.date}` : '원래 날짜로 되돌렸습니다');
   }
+  if (patch.kind !== undefined || patch.sub !== undefined) out.push('종류 · 과목을 바꿨습니다');
+  if (patch.title !== undefined) out.push(patch.title ? '제목을 바꿨습니다' : '제목을 비웠습니다');
+  if (patch.rrule !== undefined) out.push('반복 규칙을 바꿨습니다');
+  if (patch.toDate !== undefined) out.push(patch.toDate ? `반복 종료일을 바꿨습니다 — ${patch.toDate}` : '반복 종료일을 비웠습니다');
   return out;
 }
 
@@ -687,6 +697,16 @@ function applyPatchToSer(ser: Ser, patch: Patch, log: string[]): void {
   if (patch.endMin != null) ser.endMin = patch.endMin;
   if (patch.teacherId !== undefined) ser.teacherId = patch.teacherId;
   if (patch.roomId !== undefined) ser.roomId = patch.roomId ?? null;
+  if (patch.kind !== undefined) ser.kind = patch.kind;
+  if (patch.sub !== undefined) ser.sub = patch.sub;
+  if (patch.title !== undefined) ser.title = patch.title ?? '';
+  if (patch.rrule !== undefined) {
+    const wasOnce = parseRule(ser.rrule).freq === 'ONCE';
+    ser.rrule = patch.rrule;
+    if (parseRule(ser.rrule).freq === 'ONCE') ser.toDate = ser.fromDate;
+    else if (wasOnce && patch.toDate === undefined) ser.toDate = null;
+  }
+  if (patch.toDate !== undefined && parseRule(ser.rrule).freq !== 'ONCE') ser.toDate = patch.toDate;
   log.push(...patchLines({ ...patch, date: undefined }, 'all'));
   // 방식 전환 (N-56) — 온라인이면 강의실을 비우고 규칙 단위 줌 계정을 받는다, 현장이면 줌 계정을 푼다
   if (patch.mode !== undefined) {

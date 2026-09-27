@@ -1651,9 +1651,9 @@ export class DrawerService {
      원천은 스케줄 감사 줄(`log` entity SER · 규칙 하나의 쓰기 한 번)이다 — 원문 슬라이드 20 데이터 줄 「반영 시 EXC 생성, LOG 기록」.
      볼 수 있는 범위는 §20 목록과 같다: 전체 권한(canCrudAll)이면 모두, 아니면 **내가 한 것**만(목록의 「내가 올린 것」과 같은 모양).
      문장은 `lib/schedule-history` 한 곳이 만든다 — 이름(강사 · 강의실 · 학생)만 여기서 읽어 넘긴다. 줌 배정은 원장에 없다(비밀 값도). */
-  async scheduleHistory(viewerId: number, canSeeAll: boolean): Promise<ScheduleHistoryDto> {
+  async scheduleHistory(viewerId: number, canSeeAll: boolean, beforeId?: number): Promise<ScheduleHistoryDto> {
     const rows = await this.q(
-      `SELECT l.id, l.action, l.before, l.after, ${kstAt('l.at')} AS at, a.name AS actor_name,
+      `SELECT l.id, l.entity_id, l.action, l.before, l.after, ${kstAt('l.at')} AS at, a.name AS actor_name,
               s.title, sb.name AS sub_name, k.name AS kind_name
          FROM log l
          LEFT JOIN staff a ON a.id = l.actor_id
@@ -1661,9 +1661,11 @@ export class DrawerService {
          LEFT JOIN sub sb ON sb.key = s.sub_key
          LEFT JOIN kind k ON k.key = s.kind_key
         WHERE l.entity = $3 AND ($2::boolean OR l.actor_id = $1)
-        ORDER BY l.id DESC LIMIT 20`,
-      [viewerId, canSeeAll, auditEntityOf('schedule.patch')],
+          AND ($4::bigint IS NULL OR l.id < $4)
+        ORDER BY l.id DESC LIMIT 21`,
+      [viewerId, canSeeAll, auditEntityOf('schedule.patch'), beforeId ?? null],
     );
+    const page = rows.slice(0, 20);
     // 이름 재료 — 줄의 앞뒤에 적힌 번호만 모아 한 번씩 읽는다
     const teachers = new Set<number>();
     const rooms = new Set<number>();
@@ -1689,7 +1691,7 @@ export class DrawerService {
         }
       }
     };
-    for (const r of rows) { collect(r.before); collect(r.after); }
+    for (const r of page) { collect(r.before); collect(r.after); }
     const nameMap = async (sql: string, keys: Array<number | string>): Promise<Map<string, string>> =>
       keys.length === 0 ? new Map()
         : new Map((await this.q<{ k: string; name: string }>(sql, [keys])).map((x) => [String(x.k), String(x.name)]));
@@ -1716,11 +1718,41 @@ export class DrawerService {
       const kind = str(r.kind_name) ?? (typeof view.kind === 'string' ? kindNames.get(view.kind) ?? null : null);
       return sub ?? title ?? kind ?? '수업';
     };
+    const preferredDate = (r: R): string | null => {
+      for (const value of [r.after, r.before]) {
+        if (!value || typeof value !== 'object') continue;
+        const view = value as R;
+        if (view.exc && typeof view.exc === 'object') {
+          const [day] = Object.keys(view.exc as R).sort();
+          if (isIsoDate(day)) return day;
+        }
+        if (typeof view.fromDate === 'string' && isIsoDate(view.fromDate)) return view.fromDate;
+      }
+      return null;
+    };
+    // 줄에서 여는 주소는 실제 투영에 남아 있는 회차만 준다. 지운 규칙을 닮은 주소를 화면이 만들지 않는다.
+    const targets = page.map((r) => ({ logId: Number(r.id), serId: Number(r.entity_id), wanted: preferredDate(r) }));
+    const occurrenceRows = targets.length === 0 ? [] : await this.q<{ log_id: string; ser_id: string; on_date: string; drawn_on: string }>(
+      `WITH target(log_id, ser_id, wanted) AS (
+         SELECT * FROM unnest($1::bigint[], $2::bigint[], $3::date[])
+       )
+       SELECT DISTINCT ON (t.log_id) t.log_id, o.ser_id, o.on_date::text AS on_date,
+              (${kstDateOf('lower(o.span)')})::text AS drawn_on
+         FROM target t
+         JOIN ser_occ o ON o.ser_id = t.ser_id
+        ORDER BY t.log_id,
+                 CASE WHEN t.wanted IS NOT NULL AND o.on_date = t.wanted THEN 0 ELSE 1 END,
+                 o.canceled, abs(o.on_date - current_date), o.on_date`,
+      [targets.map((t) => t.logId), targets.map((t) => t.serId), targets.map((t) => t.wanted)],
+    );
+    const goByLog = new Map(occurrenceRows.map((o) => [Number(o.log_id),
+      `/schedule?date=${o.drawn_on}&serId=${Number(o.ser_id)}&onDate=${o.on_date}`]));
     return {
-      rows: rows.map((r) => {
+      rows: page.map((r) => {
         const line = scheduleHistoryLine({ action: String(r.action), before: r.before, after: r.after, name: nameOf(r) }, names);
-        return { id: Number(r.id), at: String(r.at), actorName: str(r.actor_name), ...line };
+        return { id: Number(r.id), at: String(r.at), actorName: str(r.actor_name), ...line, go: goByLog.get(Number(r.id)) ?? null };
       }),
+      nextBeforeId: rows.length > 20 ? Number(page.at(-1)!.id) : null,
     };
   }
 

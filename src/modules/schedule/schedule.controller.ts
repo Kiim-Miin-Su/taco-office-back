@@ -388,6 +388,7 @@ export class ScheduleController {
       + 'SER/EXC 저장과 회차 투영은 한 transaction이다. 버전 충돌 검출/멱등 키 계약은 제공하지 않는다.',
   })
   @ApiOkResponse({ type: WriteResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'SERIES_HAS_REPORTS | SERIES_HAS_EXCEPTIONS — 종류·반복 규칙 변경으로 연결된 리포트·회차 예외가 고아가 되는 것을 막는다' })
   patch(
     @CurrentUser() user: RequestUser | undefined,
     @Param() params: ScheduleParamsDto,
