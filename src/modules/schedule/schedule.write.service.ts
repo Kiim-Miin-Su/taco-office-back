@@ -28,11 +28,12 @@ import {
 } from '../../lib/recurrence';
 import {
   rosterPricing, GUIDE_DONE_DB, cancelPolicyIssue, CANCEL_POLICY_MESSAGE, CANCEL_TREAT_LABEL,
+  ATTENDANCE_CANCEL_REASON_LABEL,
   type AttendanceCancelReason, type CancelTreat,
 } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
-import { START_MIN, END_MIN, endMinOf, kstDateOf, serStuOn, startMinOf, stuPausedOn } from '../../lib/sql';
+import { START_MIN, END_MIN, endMinOf, kstAt, kstDateOf, serStuOn, startMinOf, stuPausedOn } from '../../lib/sql';
 import type { AuditKey } from '../../lib/audit';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { loadState, persist } from './schedule.state.repo';
@@ -41,10 +42,12 @@ import { assertScheduleReferences, assertZaccAssignable } from './schedule.refer
 import { auditScheduleWrite } from './schedule.audit';
 import { horizon, project } from './schedule.project';
 import type {
-  DayCancelDto, DayCancelResultDto,
+  DayCancelDto, DayCancelParentNoticeDto, DayCancelResultDto,
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto,
   RosterPatchDto, RosterResultDto, StudentOverlapDto, UnavWarnDto, WriteResultDto,
 } from './schedule.dto';
+
+const DAY_CANCEL_NOTICE_PREFIX = '[학원 전체 휴원]';
 
 /**
  * 휴강의 사유·처리 — DTO 의 두 칸을 정책으로 판정한다 (C92 · lib/rules 한 곳).
@@ -127,6 +130,66 @@ async function notifyCancel(
       [actorId ?? null, `${head.subject} 이월 1회 발생 — ${who} · 다음 달 청구에서 빠집니다 (${onDate})`, `/accounting?tab=tuition&month=${month}`, NOTI_TITLE.carryOver],
     );
   }
+}
+
+/**
+ * N-133 전일 휴원은 학생마다 보호자 안내 **준비행**을 같은 일정 transaction에 남긴다.
+ * 실제 외부 발송은 DQ3의 복수 보호자·채널 선택을 거친다. 공급자를 이 transaction 안에서
+ * 자동 호출하면 사용자의 수신자 선택을 건너뛰고, rollback 뒤 이미 나간 메시지를 회수할 수도 없다.
+ */
+async function prepareDayCancelParentNotices(
+  q: QueryRunner,
+  date: string,
+  createSerIds: number[],
+  readSerIds: number[],
+  kind: AttendanceCancelReason,
+  memo: string | null,
+): Promise<DayCancelParentNoticeDto[]> {
+  if (!readSerIds.length) return [];
+  const reason = ATTENDANCE_CANCEL_REASON_LABEL[kind];
+  const body = [
+    DAY_CANCEL_NOTICE_PREFIX,
+    `${date} 학원 전체 휴원 안내 (${reason})`,
+    '이날 수업은 모두 휴강하며 수업료는 차감하지 않고 이월합니다.',
+    memo ? `사유: ${memo}` : null,
+  ].filter((line): line is string => line !== null).join('\n');
+  const activeRoster = `SELECT ss.student_id, min(o.ser_id)::bigint AS ser_id
+      FROM ser_occ o
+      JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', '$2::date')}
+      LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
+     WHERE o.ser_id=ANY($1::bigint[]) AND o.on_date=$2::date
+       AND NOT ${stuPausedOn('ss.student_id', '$2::date')}
+       AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id)
+     GROUP BY ss.student_id`;
+  if (createSerIds.length) {
+    await q.query(
+      `WITH affected AS (${activeRoster})
+       INSERT INTO pnoti (ser_id,on_date,audience,student_id,channel,body)
+       SELECT a.ser_id,$2::date,'parent',a.student_id,'app',$3
+         FROM affected a
+        WHERE NOT EXISTS (
+          SELECT 1 FROM pnoti p
+           WHERE p.on_date=$2::date AND p.audience='parent' AND p.student_id=a.student_id AND p.body=$3
+        )`,
+      [createSerIds, date, body],
+    );
+  }
+  const rows = await q.query(
+    `WITH affected AS (${activeRoster})
+     SELECT DISTINCT ON (p.student_id) p.id,p.student_id,st.name AS student_name,p.body,${kstAt('p.sent_at')} AS sent_at
+       FROM affected a
+       JOIN pnoti p ON p.student_id=a.student_id AND p.on_date=$2::date AND p.audience='parent' AND p.body=$3
+       JOIN stu st ON st.id=p.student_id
+      ORDER BY p.student_id,p.id DESC`,
+    [readSerIds, date, body],
+  ) as Array<{ id: string; student_id: string; student_name: string; body: string; sent_at: string | null }>;
+  return rows.map((row) => ({
+    id: Number(row.id),
+    studentId: Number(row.student_id),
+    studentName: row.student_name,
+    body: row.body,
+    sentAt: row.sent_at,
+  }));
 }
 
 /**
@@ -687,15 +750,20 @@ export class ScheduleWriteService {
     if (cancel.treat === 'makeup') {
       throw new BadRequestException({ code: 'MAKEUP_NOT_BULK', message: '그날 전체 휴강은 보강 이관을 받지 않습니다 — 보강은 회차마다 잡습니다' });
     }
+    // N-133 전체 휴원은 학생 한 명의 결석이 아니다. 사유를 student_absent 로 조작해도 차감으로 접을 수 없다.
+    if (cancel.treat === 'deduct') {
+      throw new BadRequestException({ code: 'DAY_CANCEL_DEDUCT_FORBIDDEN', message: '그날 전체 휴강은 차감할 수 없습니다 — 모든 학생에게 이월합니다' });
+    }
     const q = this.ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
     try {
       /*
-       * 대상 조회도 아래 취소 쓰기와 같은 transaction/connection에서 한다. 별도 연결로 먼저 읽으면
-       * 조회와 BEGIN 사이에 회차가 이동·추가될 수 있어 「그날 전체」의 집합이 반쪽 snapshot이 된다.
-       * 부모 SER를 여기서 잠그면 대상 확정 뒤 같은 규칙의 이동·삭제도 txBody가 끝날 때까지 기다린다.
+       * 전일 휴원은 드문 전역 작업이다. 관련 원본/투영 표를 잠깐 table lock으로 닫아, 대상 조회와
+       * commit 사이에 새 SER가 생기거나 다른 날 회차가 이 날로 들어오는 phantom을 막는다.
+       * 이미 시작한 쓰기가 있으면 끝날 때까지 기다린 뒤 최신 집합을 읽고, 뒤 쓰기는 휴원이 끝난 뒤 진행한다.
        */
+      await q.query('LOCK TABLE ser,ser_stu,exc,exc_stu_out,stu_pause,ser_occ IN SHARE ROW EXCLUSIVE MODE');
       const serIds = ((await q.query(
         `SELECT s.id AS ser_id
            FROM ser s
@@ -729,7 +797,15 @@ export class ScheduleWriteService {
       }, {
         enrich: async (runner, fresh, base) => {
           for (const t of targets) await notifyCancel(runner, actorId, t.serId, t.onDate, fresh, cancel.treat);
-          return { ...base, count, skipped };
+          const parentNotices = await prepareDayCancelParentNotices(
+            runner,
+            dto.date,
+            [...new Set(targets.map((target) => target.serId))],
+            serIds,
+            dto.cancelKind,
+            cancel.memo,
+          );
+          return { ...base, count, skipped, parentNotices };
           // 그날 전체도 **한 토큰**이다 — `tx` 가 그날의 모든 SER 를 한 스냅숏에 담으므로
           // 되돌리기 한 번이 그날을 통째로 되살린다 (N-138 · 건너뛴 회차는 애초에 안 건드렸다)
         },
@@ -901,6 +977,35 @@ export class ScheduleWriteService {
           code: 'UNDO_HAS_REFS',
           message: '그 뒤 출결·리포트·안내가 붙어 이전 작업을 안전하게 되돌릴 수 없습니다',
         });
+      }
+      /*
+       * 전일 휴원 undo는 아직 보내지 않은 보호자 준비행도 함께 걷는다. 실제 발송 뒤에는 메시지를
+       * 회수할 수 없으므로 조용히 일정만 되살리지 않고 409로 막는다.
+       */
+      const beforeCanceled = new Set(payload.before.EXC.filter((row) => row.canceled).map((row) => `${row.serId}:${row.onDate}`));
+      const restoredCancelKeys = payload.after.EXC
+        .filter((row) => row.canceled && !beforeCanceled.has(`${row.serId}:${row.onDate}`))
+        .map((row) => `${row.serId}:${row.onDate}`);
+      if (restoredCancelKeys.length) {
+        const delivered = await q.query(
+          `SELECT id FROM pnoti
+            WHERE sent_at IS NOT NULL AND body LIKE $2
+              AND (ser_id::text || ':' || to_char(on_date,'YYYY-MM-DD'))=ANY($1::text[])
+            LIMIT 1`,
+          [restoredCancelKeys, `${DAY_CANCEL_NOTICE_PREFIX}%`],
+        ) as Array<{ id: string }>;
+        if (delivered.length) {
+          throw new ConflictException({
+            code: 'UNDO_HAS_DELIVERY',
+            message: '학부모 안내가 이미 발송되어 전일 휴원을 되돌릴 수 없습니다 — 새 일정과 정정 안내로 처리해 주세요',
+          });
+        }
+        await q.query(
+          `DELETE FROM pnoti
+            WHERE sent_at IS NULL AND body LIKE $2
+              AND (ser_id::text || ':' || to_char(on_date,'YYYY-MM-DD'))=ANY($1::text[])`,
+          [restoredCancelKeys, `${DAY_CANCEL_NOTICE_PREFIX}%`],
+        );
       }
       /*
        * 지워진 규칙은 **번호를 지키며** 되살린다 — `before` 에 있는데 지금 DB 에 없는 것이 그것이다.

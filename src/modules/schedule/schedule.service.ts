@@ -17,7 +17,7 @@ import { addD, isRecurring, parseRule, ruleHits, type IsoDate, type Ser } from '
 import type {
   HolidayDto, LessonPrepRowDto, LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, ScheduleSeriesCountsDto,
   ScheduleStudentBooksDto, ScheduleTeacherGuidesDto, ScheduleUnavRowDto, TrackedReportDto, TrackedStudentDto,
-  NoteCreateDto, TrackedNoteDto,
+  NoteCreateDto, TrackedNoteDto, DayCancelParentNoticeDto,
 } from './schedule.dto';
 import { START_MIN, END_MIN, effectiveModeOf, kstAt, kstDateOf, serStuEndedOn, serStuOn, spanOf, stuPausedOn } from '../../lib/sql';
 import { REPORT_CANCELED_SQL } from '../reports/report-sql';
@@ -82,6 +82,28 @@ export class ScheduleService {
 
   private q<T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.occ.query(sql, p) as Promise<T[]>;
+  }
+
+  /** N-133 — 전일 휴원 저장 뒤 reload해도 남은 보호자 선택 발송을 같은 날짜에서 이어 간다. */
+  async dayCancelNotices(date: string): Promise<DayCancelParentNoticeDto[]> {
+    const rows = await this.q<{
+      id: string; student_id: string; student_name: string; body: string; sent_at: string | null;
+    }>(
+      `SELECT DISTINCT ON (p.student_id) p.id,p.student_id,st.name AS student_name,p.body,
+              ${kstAt('p.sent_at')} AS sent_at
+         FROM pnoti p
+         JOIN stu st ON st.id=p.student_id
+        WHERE p.on_date=$1::date AND p.audience='parent' AND p.body LIKE '[학원 전체 휴원]%'
+        ORDER BY p.student_id,p.id DESC`,
+      [date],
+    );
+    return rows.map((row) => ({
+      id: Number(row.id),
+      studentId: Number(row.student_id),
+      studentName: row.student_name,
+      body: row.body,
+      sentAt: row.sent_at,
+    }));
   }
 
   /**

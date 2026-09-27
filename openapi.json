@@ -1469,6 +1469,100 @@
         ]
       }
     },
+    "/schedule/day-cancel/notices": {
+      "get": {
+        "operationId": "ScheduleController_dayCancelNotices",
+        "parameters": [
+          {
+            "name": "date",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "example": "2026-09-28",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DayCancelNoticeListDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "전일 휴원 학부모 안내 준비행 — 새로고침 뒤 선택 발송 재개 (N-133)",
+        "tags": [
+          "schedule"
+        ]
+      }
+    },
     "/schedule/series-counts": {
       "get": {
         "description": "일정 원본 = 오늘(KST) 이후에 놓일 날이 남은 SER(규칙상 날짜 또는 옮겨 놓인 회차). 끝난 규칙·지난 단발은 세지 않는다. 묶음 수·합계도 서버가 센다 — 화면은 그리기만 한다. 이름·색은 GET /meta.",
@@ -2668,7 +2762,7 @@
     },
     "/schedule/day-cancel": {
       "post": {
-        "description": "그날의 취소 아닌 회차 전부를 같은 사유·처리로 접는다. 한 트랜잭션이라 하나가 막히면 전부 되돌아간다. 학원 사정·공휴일·강사 결강은 차감할 수 없다 (CANCEL_DEDUCT_FORBIDDEN). 알림은 M-125 규칙 그대로 남긴다.",
+        "description": "그날의 취소 아닌 회차 전부를 같은 사유·처리로 접는다. 한 트랜잭션이라 하나가 막히면 전부 되돌아간다. 전일 휴원은 사유와 무관하게 차감·보강 이관을 받지 않는다. 학생별 학부모 안내 준비행을 함께 만들며 실제 발송은 보호자·채널 선택을 거친다.",
         "operationId": "ScheduleController_dayCancel",
         "parameters": [],
         "requestBody": {
@@ -2693,7 +2787,7 @@
             }
           },
           "400": {
-            "description": "code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED",
+            "description": "code CANCEL_DEDUCT_FORBIDDEN | DAY_CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED",
             "content": {
               "application/json": {
                 "schema": {
@@ -22675,6 +22769,60 @@
           "items"
         ]
       },
+      "DayCancelParentNoticeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string",
+            "description": "서버가 만든 전일 휴원 안내문 — 화면은 이 본문으로 공용 보호자 선택 발송 창을 연다"
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "실제 외부 발송이 한 건이라도 성공한 시각"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "studentName",
+          "body"
+        ]
+      },
+      "DayCancelNoticeListDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DayCancelParentNoticeDto"
+            }
+          }
+        },
+        "required": [
+          "date",
+          "items"
+        ]
+      },
       "ScheduleSeriesCountDto": {
         "type": "object",
         "properties": {
@@ -23697,7 +23845,7 @@
               "deduct",
               "makeup"
             ],
-            "description": "비우면 이월 (기본) — 회차 하나의 휴강과 같은 규칙"
+            "description": "비우면 이월 (기본). 전일 휴원은 차감·보강 이관을 받지 않는다"
           },
           "memo": {
             "type": "string",
@@ -23766,6 +23914,13 @@
           "skipped": {
             "type": "number",
             "description": "이미 휴강이라 건너뛴 회차 수"
+          },
+          "parentNotices": {
+            "description": "이번 휴원으로 만든 학생별 학부모 안내 준비행 — 실제 발송은 DQ3 보호자·채널 선택을 거친다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DayCancelParentNoticeDto"
+            }
           }
         },
         "required": [
@@ -23776,7 +23931,8 @@
           "unavailable",
           "studentOverlaps",
           "count",
-          "skipped"
+          "skipped",
+          "parentNotices"
         ]
       },
       "StudentPauseWriteDto": {

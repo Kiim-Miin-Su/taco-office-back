@@ -17,7 +17,7 @@ import {
   ScheduleSeriesCountsDto, ScheduleStudentBooksDto, ScheduleTeacherGuidesDto, TeacherParamsDto,
   LessonTrackingDto, LessonTrackingQueryDto, NoteCreateDto, TrackedNoteDto,
   ConflictPreviewDto, ConflictQueryDto,
-  DayCancelDto, DayCancelResultDto,
+  DayCancelDto, DayCancelResultDto, DayCancelNoticeListDto, DayCancelNoticeQueryDto,
   StudentParamsDto, StudentResumeParamsDto, StudentPauseWriteDto, StudentResumeWriteDto, StudentPauseResultDto,
 } from './schedule.dto';
 import { ScheduleService } from './schedule.service';
@@ -108,6 +108,14 @@ export class ScheduleController {
     }
     const items = await this.svc.unavailable({ from: query.from, to: query.to, teacherId: query.teacherId });
     return { from: query.from, to: query.to, items };
+  }
+
+  @Get('day-cancel/notices')
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '전일 휴원 학부모 안내 준비행 — 새로고침 뒤 선택 발송 재개 (N-133)' })
+  @ApiOkResponse({ type: DayCancelNoticeListDto })
+  async dayCancelNotices(@Query() query: DayCancelNoticeQueryDto): Promise<DayCancelNoticeListDto> {
+    return { date: query.date, items: await this.svc.dayCancelNotices(query.date) };
   }
 
   /**
@@ -307,11 +315,11 @@ export class ScheduleController {
   @ApiOperation({
     summary: '그날 전체 휴강 — 공휴일·학원 전체 휴원 (테스트 시나리오 C-33 · N-133)',
     description: '그날의 취소 아닌 회차 전부를 같은 사유·처리로 접는다. 한 트랜잭션이라 하나가 막히면 전부 되돌아간다. '
-      + '학원 사정·공휴일·강사 결강은 차감할 수 없다 (CANCEL_DEDUCT_FORBIDDEN). 알림은 M-125 규칙 그대로 남긴다.',
+      + '전일 휴원은 사유와 무관하게 차감·보강 이관을 받지 않는다. 학생별 학부모 안내 준비행을 함께 만들며 실제 발송은 보호자·채널 선택을 거친다.',
   })
   @ApiCreatedResponse({ type: DayCancelResultDto })
   @ApiNotFoundResponse({ description: 'code NO_OCCURRENCES — 그날 회차가 없다', type: ApiErrorDto })
-  @ApiBadRequestResponse({ description: 'code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED', type: ApiErrorDto })
+  @ApiBadRequestResponse({ description: 'code CANCEL_DEDUCT_FORBIDDEN | DAY_CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED', type: ApiErrorDto })
   dayCancel(@CurrentUser() user: RequestUser | undefined, @Body() dto: DayCancelDto): Promise<DayCancelResultDto> {
     return this.write.dayCancel(dto, user?.id);
   }

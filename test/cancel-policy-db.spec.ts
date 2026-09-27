@@ -44,6 +44,7 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
   const MANAGER = 933;
   const STU_A = 9931;
   const STU_B = 9932;
+  const madeNotices: number[] = [];
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> =>
     ds.query(sql, p) as Promise<T[]>;
@@ -81,6 +82,8 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
   afterAll(async () => {
     try {
       if (ds?.isInitialized) {
+        if (madeNotices.length) await q(`DELETE FROM guardian_send WHERE pnoti_id = ANY($1::bigint[])`, [madeNotices]);
+        if (madeNotices.length) await q(`DELETE FROM pnoti WHERE id = ANY($1::bigint[])`, [madeNotices]);
         await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
         await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER, MANAGER]]);
         await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
@@ -92,6 +95,11 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
 
   const made: number[] = [];
   afterEach(async () => {
+    if (madeNotices.length) {
+      await q(`DELETE FROM guardian_send WHERE pnoti_id = ANY($1::bigint[])`, [madeNotices]);
+      await q(`DELETE FROM pnoti WHERE id = ANY($1::bigint[])`, [madeNotices]);
+      madeNotices.length = 0;
+    }
     if (!made.length) return;
     await q(`DELETE FROM noti WHERE link LIKE '/schedule?date=%' AND from_id = $1`, [CEO]);
     await q(`DELETE FROM noti WHERE link LIKE '/accounting?tab=tuition%' AND from_id = $1`, [CEO]);
@@ -322,7 +330,33 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     const res = await api('post', '/schedule/day-cancel')
       .send({ date: a.from, cancelKind: 'holiday', cancelTreat: 'carry', memo: '추석' })
       .expect(201);
+    madeNotices.push(...(res.body.parentNotices as Array<{ id: number }>).map((notice) => notice.id));
     expect(res.body).toMatchObject({ count: open, skipped: already });
+    expect(res.body.parentNotices).toEqual(expect.arrayContaining([
+      expect.objectContaining({ studentId: STU_A, studentName: '휴강학생A', sentAt: null }),
+      expect.objectContaining({ studentId: STU_B, studentName: '휴강학생B', sentAt: null }),
+    ]));
+    expect((res.body.parentNotices as Array<{ body: string }>).every((notice) => (
+      notice.body.includes('[학원 전체 휴원]')
+      && notice.body.includes(a.from)
+      && notice.body.includes('공휴일')
+      && notice.body.includes('차감하지 않고 이월')
+    ))).toBe(true);
+
+    // 응답을 잃고 같은 요청을 다시 보내도 안내 준비행을 새로 만들지 않고 기존 행을 복구해 돌려준다.
+    const retried = await api('post', '/schedule/day-cancel')
+      .send({ date: a.from, cancelKind: 'holiday', cancelTreat: 'carry', memo: '추석' })
+      .expect(201);
+    expect(retried.body).toMatchObject({ count: 0, skipped: open + already });
+    expect((retried.body.parentNotices as Array<{ id: number }>).map((notice) => notice.id).sort())
+      .toEqual([...madeNotices].sort());
+    expect(await q<{ n: string }>(
+      `SELECT count(*)::int AS n FROM pnoti WHERE id = ANY($1::bigint[])`, [madeNotices],
+    )).toEqual([{ n: madeNotices.length }]);
+    const resumed = await api('get', '/schedule/day-cancel/notices').query({ date: a.from }).expect(200);
+    expect(resumed.body).toMatchObject({ date: a.from });
+    expect((resumed.body.items as Array<{ id: number }>).map((notice) => notice.id).sort())
+      .toEqual([...madeNotices].sort());
     // serIds 는 「화면이 다시 읽을 범위」라 건너뛴 규칙도 든다 — 접힌 둘은 반드시 든다
     expect(res.body.serIds).toEqual(expect.arrayContaining([b.id, c.id]));
 
@@ -341,6 +375,8 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     // 그날 전체 휴강은 **시드 수업도** 접는다(학원 전체) — afterEach 는 이 스위트의 규칙만 치운다.
     // 시드가 투영 기간 전체에 회차를 두므로(N-49) 되돌리지 않으면 개발 DB 에 그날의 시드 휴강이 남는다 — 한 토큰으로 통째로 되돌린다(N-138)
     await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
+    expect(await q(`SELECT id FROM pnoti WHERE id = ANY($1::bigint[])`, [madeNotices])).toEqual([]);
+    madeNotices.length = 0;
   });
 
   it('그날 전체 휴강의 대상 조회와 취소 쓰기는 같은 트랜잭션·같은 연결이다 (N-133)', async () => {
@@ -348,13 +384,19 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     const createRunner = ds.createQueryRunner.bind(ds);
     let targetRunner: QueryRunner | undefined;
     let writeRunner: QueryRunner | undefined;
+    let tableLocked = false;
     const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
       const runner = createRunner(...args);
       const query = runner.query.bind(runner);
       jest.spyOn(runner, 'query').mockImplementation(async (sql: string, parameters?: unknown[], structured?: boolean) => {
+        if (sql.startsWith('LOCK TABLE ser,')) {
+          expect(runner.isTransactionActive).toBe(true);
+          tableLocked = true;
+        }
         if (sql.includes('SELECT DISTINCT ser_id FROM ser_occ')) {
           targetRunner = runner;
           expect(runner.isTransactionActive).toBe(true);
+          expect(tableLocked).toBe(true);
         }
         if (sql.includes('INSERT INTO exc ') || sql.includes('UPDATE exc SET')) writeRunner ??= runner;
         return structured ? query(sql, parameters, true) : query(sql, parameters);
@@ -367,14 +409,66 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
         .expect(201);
       expect(targetRunner).toBeDefined();
       expect(writeRunner).toBe(targetRunner);
+      expect(tableLocked).toBe(true);
       await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
     } finally {
       spy.mockRestore();
     }
   });
 
+  it('전일 휴원 안내 준비 뒤 오류가 나면 일정·직원 알림·학부모 안내를 모두 rollback 한다 (N-133)', async () => {
+    const { id, from } = await makeSer(690);
+    const beforeNoti = Number((await q<{ n: string }>(
+      `SELECT count(*)::int AS n FROM noti WHERE link=$1`, [`/schedule?date=${from}`],
+    ))[0]!.n);
+    const createRunner = ds.createQueryRunner.bind(ds);
+    const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+      const runner = createRunner(...args);
+      const query = runner.query.bind(runner);
+      jest.spyOn(runner, 'query').mockImplementation(async (sql: string, parameters?: unknown[], structured?: boolean) => {
+        if (sql.includes('SELECT DISTINCT ON (p.student_id)')) throw new Error('forced day-cancel notice failure');
+        return structured ? query(sql, parameters, true) : query(sql, parameters);
+      });
+      return runner;
+    });
+    try {
+      await api('post', '/schedule/day-cancel')
+        .send({ date: from, cancelKind: 'academy', cancelTreat: 'carry', memo: 'rollback' })
+        .expect(500);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await excOf(id)).toEqual([]);
+    expect(Number((await q<{ n: string }>(
+      `SELECT count(*)::int AS n FROM noti WHERE link=$1`, [`/schedule?date=${from}`],
+    ))[0]!.n)).toBe(beforeNoti);
+    expect(await q(
+      `SELECT id FROM pnoti WHERE on_date=$1::date AND body LIKE '[학원 전체 휴원]%'`, [from],
+    )).toEqual([]);
+  });
+
+  it('전일 휴원 안내가 이미 전달됐으면 일정을 조용히 되살리지 않는다 (N-133)', async () => {
+    const { from } = await makeSer(705);
+    const res = await api('post', '/schedule/day-cancel')
+      .send({ date: from, cancelKind: 'academy', cancelTreat: 'carry', memo: '발송 뒤 되돌리기' })
+      .expect(201);
+    const noticeIds = (res.body.parentNotices as Array<{ id: number }>).map((notice) => notice.id);
+    madeNotices.push(...noticeIds);
+    expect(noticeIds.length).toBeGreaterThan(0);
+    await q(`UPDATE pnoti SET sent_at=now() WHERE id=$1`, [noticeIds[0]]);
+
+    const blocked = await api('post', '/schedule/undo').send({ token: res.body.undoToken });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.code).toBe('UNDO_HAS_DELIVERY');
+
+    // 테스트 격리: 미발송으로 되돌린 뒤 같은 토큰으로 정상 undo 한다.
+    await q(`UPDATE pnoti SET sent_at=NULL WHERE id=$1`, [noticeIds[0]]);
+    await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
+    madeNotices.length = 0;
+  });
+
   it('그날 전체 휴강에 회차가 없으면 404 이고, 차감으로는 접을 수 없다 (전체 결석은 학생 결석이 아니다)', async () => {
-    const { from } = await makeSer(600);
+    const { id, from } = await makeSer(600);
     // 투영 호라이즌(+180일) 밖 — 시드 수업이 어느 요일에 있든 회차가 없는 날이다
     const empty = plus(kst(), 200);
     const none = await api('post', '/schedule/day-cancel').send({ date: empty, cancelKind: 'holiday' });
@@ -383,12 +477,19 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     const deduct = await api('post', '/schedule/day-cancel').send({ date: from, cancelKind: 'academy', cancelTreat: 'deduct' });
     expect(deduct.status).toBe(400);
     expect(deduct.body.code).toBe('CANCEL_DEDUCT_FORBIDDEN');
+    // 단일 회차에서는 유효한 학생 결석+차감도 「학원 전체 휴원」에서는 절대 허용하지 않는다 (N-133 무차감).
+    const disguised = await api('post', '/schedule/day-cancel')
+      .send({ date: from, cancelKind: 'student_absent', cancelTreat: 'deduct' });
+    expect(disguised.status).toBe(400);
+    expect(disguised.body.code).toBe('DAY_CANCEL_DEDUCT_FORBIDDEN');
+    expect(await excOf(id)).toEqual([]);
   });
 
   it('강사는 그날 전체 휴강을 못 한다 — 403 (D-R39)', async () => {
     const { from } = await makeSer(600);
     await api('post', '/schedule/day-cancel', teacherToken)
       .send({ date: from, cancelKind: 'holiday', cancelTreat: 'carry' }).expect(403);
+    await api('get', '/schedule/day-cancel/notices', teacherToken).query({ date: from }).expect(403);
   });
 
   /* ── ⑨ 보강 이관 (C-34 · C92-b) ────────────────────────────────────── */

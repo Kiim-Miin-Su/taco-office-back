@@ -517,7 +517,7 @@ export class DayCancelDto {
   @IsIn(ATTENDANCE_CANCEL_REASONS as unknown as string[])
   cancelKind!: AttendanceCancelReason;
 
-  @ApiPropertyOptional({ enum: CANCEL_TREATS, description: '비우면 이월 (기본) — 회차 하나의 휴강과 같은 규칙' })
+  @ApiPropertyOptional({ enum: CANCEL_TREATS, description: '비우면 이월 (기본). 전일 휴원은 차감·보강 이관을 받지 않는다' })
   @IsOptional() @IsIn(CANCEL_TREATS as unknown as string[])
   cancelTreat?: CancelTreat;
 
@@ -619,10 +619,34 @@ export class WriteResultDto {
   studentOverlaps!: StudentOverlapDto[];
 }
 
-/** 그날 전체 휴강의 결과 — 몇 회차를 접었는지 서버가 센다 (D-R37) */
+/** 전일 휴원 뒤 보호자 선택 발송으로 넘기는 학생별 준비행 (N-133 · DQ3) */
+export class DayCancelParentNoticeDto {
+  @ApiProperty(ID_SCHEMA) id!: number;
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ description: '서버가 만든 전일 휴원 안내문 — 화면은 이 본문으로 공용 보호자 선택 발송 창을 연다' })
+  body!: string;
+  @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true, description: '실제 외부 발송이 한 건이라도 성공한 시각' })
+  sentAt!: string | null;
+}
+
+/** 전일 휴원 뒤 새로고침해도 보호자 발송을 이어 가는 날짜별 조회 (N-133) */
+export class DayCancelNoticeQueryDto {
+  @ApiProperty({ ...DATE_SCHEMA, example: '2026-09-28' })
+  @IsCalendarDate() date!: string;
+}
+
+export class DayCancelNoticeListDto {
+  @ApiProperty({ ...DATE_SCHEMA }) date!: string;
+  @ApiProperty({ type: [DayCancelParentNoticeDto] }) items!: DayCancelParentNoticeDto[];
+}
+
+/** 그날 전체 휴강의 결과 — 몇 회차를 접었는지와 보호자 발송 준비행을 서버가 센다 (D-R37 · N-133) */
 export class DayCancelResultDto extends WriteResultDto {
   @ApiProperty({ description: '이번에 휴강 처리한 회차 수' }) count!: number;
   @ApiProperty({ description: '이미 휴강이라 건너뛴 회차 수' }) skipped!: number;
+  @ApiProperty({ type: [DayCancelParentNoticeDto], description: '이번 휴원으로 만든 학생별 학부모 안내 준비행 — 실제 발송은 DQ3 보호자·채널 선택을 거친다' })
+  parentNotices!: DayCancelParentNoticeDto[];
 }
 
 export class ScheduleUndoDto {
