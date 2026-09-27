@@ -5,7 +5,7 @@
  */
 
 import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
-import { ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
@@ -13,7 +13,7 @@ import {
   LeadCreateDto, LeadDto, LeadFailDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
-  MeetingDetailDto, MeetingTaskCreateDto, MinutesWriteDto,
+  MeetingAttendDto, MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto, PlanTaskCreateDto,
   MarketingCreateDto, MarketingDto,
 } from './ops.dto';
@@ -41,6 +41,8 @@ export class OpsController {
       isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms),
       isRole(user.role) && canCeoComment(user.role),
       query,
+      // 지정 공개 기획을 볼 수 있는 셋 중 하나 — 결재권자(대표 판정 · N-72). 보고서·결재와 같은 판정이다
+      isRole(user.role) && canCeoApprovePlan(user.role),
     );
   }
 
@@ -121,11 +123,12 @@ export class OpsController {
   @Post('leads/:id/fail')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
-    summary: '상담 실패 전이 — 이전 단계를 명시값으로 보존 (v2 §24 · N-25 §4-17 · C35)',
-    description: 'fail_from 은 전이 순간의 실제 단계를 서버가 기록한다 — 추정이 아니라 사실이다. 도달 기록(append-only)에 failed 를 남긴다.',
+    summary: '상담 실패 전이 — 이전 단계를 명시값으로 보존 (v2 §24 · N-25 §4-17 · C35 · W11 N-87)',
+    description: 'fail_from 은 전이 순간의 실제 단계를 서버가 기록한다 — 추정이 아니라 사실이다. 그 단계가 곧 §24 중단 지점이다(중단 지점을 묻지 않는다 · 옛 stop_at 은 건드리지 않는다). '
+      + '상담 건을 잠그고 단계를 다시 본다 — 등록 확정과 겹치면 뒤에 온 쪽이 409 다(등록된 건이 실패로 덮이지 않는다). 도달 기록(append-only)에 failed 를 남긴다.',
   })
   @ApiCreatedResponse({ type: LeadDto })
-  @ApiConflictResponse({ description: 'code ALREADY_FAILED | ENROLLED_LOCKED' })
+  @ApiConflictResponse({ description: 'code ALREADY_FAILED | ENROLLED_LOCKED | LEAD_STAGE_CHANGED' })
   @ApiNotFoundResponse({ description: '상담 건 없음' })
   async failLead(
     @CurrentUser() user: RequestUser,
@@ -139,7 +142,8 @@ export class OpsController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '실패 건 되살리기 — 지정값 → fail_from 명시값 → 도달 기록 역순, 없으면 UNCLASSIFIED',
-    description: '레거시(stop_at 만 있는) 건은 추정하지 않는다 — 미분류로 거절하고 단계 지정을 요구한다 (N-25).',
+    description: '레거시(stop_at 만 있는) 건은 추정하지 않는다 — 미분류로 거절하고 단계 지정을 요구한다 (N-25). 옛 stop_at 은 읽기 전용 기록이라 지우지 않는다 (W11 N-87). '
+      + '상담 건을 잠그고 실패인지 다시 본다 — 「바로 수업 등록」과 겹치면 뒤에 온 쪽이 409 NOT_FAILED 다.',
   })
   @ApiCreatedResponse({ type: LeadDto })
   @ApiConflictResponse({ description: 'code NOT_FAILED | UNCLASSIFIED' })
@@ -277,11 +281,12 @@ export class OpsController {
   @Post('marketing/:id/replies')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
-    summary: '담당자 답변 — 코멘트를 쓴 대표에게만 알림 (원문 §60)',
-    description: '「담당자 답변은 대표에게만」. 어느 코멘트에 대한 답인지 parentId 로 들고 있어야 「고쳤습니다」 판정이 한 곳에 산다.',
+    summary: '담당자 답변 · 보류 — 코멘트를 쓴 대표에게만 알림 (원문 §60)',
+    description: '「담당자 답변은 대표에게만」. 어느 코멘트에 대한 답인지 parentId 로 들고 있어야 「고쳤습니다」 판정이 한 곳에 산다. '
+      + 'kind=hold 는 「보류」(W11 N-29 ③) — 카드는 「확인 필요」로 남고 코멘트마다 한 번이다.',
   })
   @ApiCreatedResponse({ type: [MfbThreadDto] })
-  @ApiConflictResponse({ description: 'code NOT_A_COMMENT | NOT_OWNER' })
+  @ApiConflictResponse({ description: 'code NOT_A_COMMENT | NOT_OWNER | MFB_ALREADY_HELD | MFB_ALREADY_FIXED' })
   @ApiNotFoundResponse({ description: '코멘트 없음' })
   async reply(
     @CurrentUser() user: RequestUser,
@@ -331,11 +336,14 @@ export class OpsController {
     description:
       'research 를 쓰는 길은 이것뿐이다 — 그전에는 읽기와 화면 칸만 있고 시드 말고는 아무도 못 채워 §65 「3 · 리서치」가 영원히 「—」였다. '
       + '보낸 칸만 고친다(null 은 지우고 없는 키는 그대로 둔다). 고칠 수 있는 단계는 draft·rework 뿐이고 막힌 문장은 읽기의 editBlockedReason 과 같다. '
-      + '기한은 승인 전에만 바꾼다 — 승인된 날짜를 담당이 옮기면 대표의 승인이 거짓이 된다.',
+      + '기한은 승인 전에만 바꾼다 — 승인된 날짜를 담당이 옮기면 대표의 승인이 거짓이 된다. '
+      + '공개 범위(share · pickIds · W11 N-72)는 본문이 아니라 단계와 무관하게 바꾸고, 담당 · 결재권자만 바꾼다(감사 줄 PLAN · share). '
+      + '새 기한을 내면 반려 표시(dueRejectedOn)가 빈다(N-95).',
   })
   @ApiOkResponse({ type: PlanDetailDto })
-  @ApiConflictResponse({ description: 'code PLAN_LOCKED | PLAN_DUE_APPROVED | PLAN_TITLE_REQUIRED' })
-  @ApiNotFoundResponse({ description: 'PLAN_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'code PLAN_LOCKED | PLAN_DUE_APPROVED | PLAN_TITLE_REQUIRED | PLAN_PICK_NOT_PICKED | PLAN_SHARE_REQUIRED' })
+  @ApiForbiddenResponse({ description: 'PLAN_SHARE_FORBIDDEN — 공개 범위는 담당 · 결재권자만' })
+  @ApiNotFoundResponse({ description: 'PLAN_NOT_FOUND (보이지 않는 기획 포함) · STAFF_NOT_FOUND' })
   async patchPlan(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
@@ -368,10 +376,12 @@ export class OpsController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '기한 승인 · 반려 — 대표 전용 (원문 §65)',
-    description: '반려는 기한을 지운다 — 승인 안 된 날짜가 §62 기한 표에 남으면 「대표를 지나오지 않은 마감」이 섞인다.',
+    description: '반려는 기한을 지운다 — 승인 안 된 날짜가 §62 기한 표에 남으면 「대표를 지나오지 않은 마감」이 섞인다. '
+      + '반려된 날짜 · 순간 · 사람은 행에 남는다(N-95 · §61 「기한 반려」 칩). '
+      + '**대표가 본 날짜(dueOn)를 함께 보낸다** — 서버가 행을 잠그고 지금 날짜가 다르면 409 PLAN_DUE_CHANGED(본 적 없는 날짜에 도장이 찍히지 않는다 · PB-12-2).',
   })
   @ApiCreatedResponse({ type: PlanDetailDto })
-  @ApiConflictResponse({ description: 'code CEO_ONLY | NO_DUE | DUE_ALREADY_APPROVED' })
+  @ApiConflictResponse({ description: 'code CEO_ONLY | NO_DUE | DUE_ALREADY_APPROVED | PLAN_DUE_CHANGED' })
   @ApiNotFoundResponse({ description: '기획 없음' })
   async decidePlanDue(
     @CurrentUser() user: RequestUser,
@@ -385,7 +395,8 @@ export class OpsController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '최종 승인 · 보완 요청 — 기한이 먼저 승인돼야 열린다 (원문 §61·§65)',
-    description: '화면이 단추를 숨기는 것과 별개로 서버가 막는다 (DUE_NOT_APPROVED).',
+    description: '화면이 단추를 숨기는 것과 별개로 서버가 막는다 (DUE_NOT_APPROVED). '
+      + '행을 잠근 채 판정하고 검토 요청 단계일 때만 쓴다 — 동시에 들어온 결재가 먼저 커밋된 결재를 덮지 않는다(PB-12-2).',
   })
   @ApiCreatedResponse({ type: PlanDetailDto })
   @ApiConflictResponse({ description: 'code DUE_NOT_APPROVED | NOT_REVIEWABLE | REASON_REQUIRED' })
@@ -419,18 +430,56 @@ export class OpsController {
 
   /* ══ §66 회의 상세 ═════════════════════════════════════════════════════ */
 
+  /** 운영 화면 권한 — `@Perm('canAdminPage', 'canCrudAll')` 과 같은 판정(역할을 직접 견주지 않는다 · D-R39) */
+  private static canManage(user: RequestUser): boolean {
+    return isRole(user.role) && hasPerm(user.role, 'canAdminPage', user.perms) && hasPerm(user.role, 'canCrudAll', user.perms);
+  }
+
+  // 이 경로에는 @Perm 이 없다 — 참석자 본인(강사 포함)이 안내 알림을 받고 여는 곳이다(N-32). 거르기는 서비스가 한다(별도 가드)
   @Get('meetings/:id')
-  @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '§66 회의 상세 — 참석 · 사전 자료 · 속기록 · 할 일',
-    description: '참석은 세 값이다 — 아직 답 안 함(null) · 참석 · 불참. null 을 false 로 접지 않는다.',
+    description: '참석은 세 값이다 — 아직 답 안 함(null) · 참석 · 불참. null 을 false 로 접지 않는다. '
+      + '운영 권한(canAdminPage · canCrudAll)이 없어도 **참석자 본인**은 연다(W11 · N-32 · 「안내 보내기」 알림 링크가 오는 곳) — '
+      + '둘 다 아니면 없는 것과 같다(404). 고치기 · 안내 · 내 응답 단추가 서는지는 canEdit · canSendNotice · canRespond 가 말한다.',
   })
   @ApiOkResponse({ type: MeetingDetailDto })
-  @ApiNotFoundResponse({ description: '회의 없음' })
-  async meetingDetail(@Param('id', ParseIntPipe) id: number): Promise<MeetingDetailDto> {
-    const out = await this.svc.meetingDetail(id);
+  @ApiNotFoundResponse({ description: '회의 없음 · 운영 권한도 없고 참석자도 아님' })
+  async meetingDetail(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<MeetingDetailDto> {
+    const out = await this.svc.meetingDetail(id, { id: user.id, canManage: OpsController.canManage(user) });
     if (!out) throw new NotFoundException({ code: 'MEETING_NOT_FOUND', message: '회의를 찾을 수 없습니다' });
     return out;
+  }
+
+  @Post('meetings/:id/notice')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§66 「안내 보내기」 — 참석자(직원)에게 알림 한 건씩 (W11 · N-32)',
+    description: '본문은 서버가 사실로만 조립한다 — 회의 이름 · 일시 · 강의실 또는 줌 계정 · 참가 링크. 줌 비밀번호는 넣지 않는다. '
+      + '보내는 사람 · 그만둔 사람에게는 보내지 않는다. 알림 링크는 이 회의 상세이고, 받은 사람이 거기서 참석 · 불참을 누른다.',
+  })
+  @ApiCreatedResponse({ type: MeetingNoticeResultDto })
+  @ApiNotFoundResponse({ description: '회의 없음' })
+  @ApiConflictResponse({ description: 'MEETING_NOTICE_BLOCKED — 취소된 회의 · 받을 참석자 없음(문장은 noticeBlockedReason 과 같다)' })
+  sendMeetingNotice(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<MeetingNoticeResultDto> {
+    return this.svc.sendMeetingNotice(user.id, id);
+  }
+
+  // @Perm 이 없다 — 참석자면 역할과 무관하다(강사 참석자 포함 · N-32). 「참석자 본인인가」는 서비스가 본다(별도 가드)
+  @Post('meetings/:id/attend')
+  @ApiOperation({
+    summary: '§66 참석 응답 — 본인이 자기 줄만 참석 · 불참 (W11 · N-32)',
+    description: '대리 입력은 없다 — 보낸 사람 자신의 참석 줄만 바뀐다. 날이 지나도 답하지 않은 줄은 「응답 대기」 그대로다.',
+  })
+  @ApiCreatedResponse({ type: MeetingDetailDto })
+  @ApiNotFoundResponse({ description: '회의 없음 · 운영 권한도 없고 참석자도 아님' })
+  @ApiForbiddenResponse({ description: 'MEETING_NOT_ATTENDEE — 운영 권한은 있지만 참석자로 적히지 않음' })
+  respondMeeting(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MeetingAttendDto,
+  ): Promise<MeetingDetailDto> {
+    return this.svc.respondMeeting({ id: user.id, canManage: OpsController.canManage(user) }, id, dto.confirmed);
   }
 
   @Post('meetings/:id/minutes')

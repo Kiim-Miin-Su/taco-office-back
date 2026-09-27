@@ -76,7 +76,8 @@ describe('§69~§71 펼칠 줄 — 순수 낱말 (lib/exec-areas)', () => {
     const items = execLessonItems(rows);
     expect(items).toHaveLength(EXEC_AREA_ITEM_LIMIT);
     expect(EXEC_AREA_ITEM_LIMIT).toBe(8);
-    expect(items[0]).toEqual({ key: 'lesson-102-2026-08-12', title: '08-12 16:00 과목 2', sub: '교재 · 리포트', go: '/board' });
+    // W11 · 7-3 ① — 그 날의 현황판을 곧장 연다(현황판이 `?date=` 를 읽는다)
+    expect(items[0]).toEqual({ key: 'lesson-102-2026-08-12', title: '08-12 16:00 과목 2', sub: '교재 · 리포트', go: '/board?date=2026-08-12' });
   });
 });
 
@@ -187,7 +188,7 @@ d('§69~§71 지난주 대비 · 펼칠 줄 · 퍼널 네 줄 (DB)', () => {
       [Number(stu.id), amount, paid, state, title, due],
     ) as Promise<Array<{ id: string }>>;
     await inv('unpaid', 300000, 0, '2031-03-01', '2월 수업료');
-    await inv('partial', 500000, 200000, '2031-02-20', '1월 수업료');
+    const [jan] = await inv('partial', 500000, 200000, '2031-02-20', '1월 수업료');
     await inv('sent', 400000, 0, '2031-04-30', '3월 수업료');   // 기한 전 — 줄이 아니다
     const out = await svc().range('2031-03-11', '2031-03-11', true);
     const money = area(out, 'money');
@@ -195,7 +196,8 @@ d('§69~§71 지난주 대비 · 펼칠 줄 · 퍼널 네 줄 (DB)', () => {
     expect(money.itemsLabel).toBe(`기한 지난 청구서 ${money.items.length}건`);
     expect(money.items.map((i) => i.title)).toEqual(['줄 학생 · 1월 수업료', '줄 학생 · 2월 수업료']);
     expect(money.items[0].sub).toBe('₩300,000 · 기한 02-20 · 19일 지남');
-    expect(money.items[0].go).toBe('/accounting?tab=inv');
+    // W11 · 7-3 ① — 그 청구서를 곧장 연다(회계 청구서 탭이 이미 읽는 invId)
+    expect(money.items[0].go).toBe(`/accounting?tab=inv&invId=${Number(jan.id)}`);
     // 금액을 못 보면 줄에서도 금액이 빠진다
     const masked = area(await svc().range('2031-03-11', '2031-03-11', false), 'money');
     expect(masked.items[0].sub).toBe('기한 02-20 · 19일 지남');
@@ -253,12 +255,12 @@ d('§69~§71 지난주 대비 · 펼칠 줄 · 퍼널 네 줄 (DB)', () => {
 
     const cs = area(out, 'consulting');
     expect(cs.items.length).toBe(cs.count);
-    expect(cs.items[0]).toMatchObject({ title: expect.stringContaining('양찬욱'), go: '/consulting' });
+    expect(cs.items[0]).toMatchObject({ title: expect.stringContaining('양찬욱'), go: `/consulting?id=${Number(cons.id)}` });
     expect(cs.itemsLabel).toBe('수납 전이라 잠긴 컨설팅 1건');
 
     const cpl = area(out, 'complaint');
     expect(cpl.items.length).toBe(cpl.count);
-    expect(cpl.items[0]).toMatchObject({ title: expect.stringContaining('양찬욱'), go: '/ops?tab=complaint' });
+    expect(cpl.items[0]).toMatchObject({ title: expect.stringContaining('양찬욱'), go: expect.stringMatching(/^\/ops\?tab=complaint&cpl=\d+$/) });
   });
 
   it('줄이 없으면 머리도 없다 — 빈 주의 마케팅은 itemsLabel null · items []', async () => {

@@ -4,15 +4,17 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Patch, Post, Query } from '@nestjs/common';
-import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
+import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto } from '../../common/http.dto';
-import { Perm, approvalFlowScope, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { Perm, approvalFlowScope, canCeoApprovePlan, canCeoSetExecOwner, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
+  ExecAreaOwnerDto, ExecAreaOwnerWriteDto, ExecAreaParamsDto,
   ExecDto, ExecMemoWriteDto, ExecQueryDto, ExecReportParamsDto,
   ExecReportWriteResultDto, ExecReviewDto, ExecSubmitDto,
 } from './exec.dto';
+import type { ExecAreaKey } from '../../lib/exec-areas';
 import { ExecService } from './exec.service';
 
 @ApiTags('exec')
@@ -40,8 +42,37 @@ export class ExecController {
         canApprove: isRole(user.role) && hasPerm(user.role, 'canApprove', user.perms),
         // 펼칠 줄의 컨설팅은 공개 범위 안에서만 싣는다 — 컨설팅 화면과 같은 판정(csCan)의 재료 (§76 · N-67)
         canHide: isRole(user.role) && hasPerm(user.role, 'canHide', user.perms),
+        // 지정 공개 기획이 보이는 셋 중 하나 — 결재권자(대표 판정 · N-72). 운영 화면 · 결재 흐름과 같은 판정이다
+        canApprovePlan: isRole(user.role) && canCeoApprovePlan(user.role),
+        // 영역 담당 바꾸기 — 대표 판정 (N-81)
+        canSetOwner: isRole(user.role) && canCeoSetExecOwner(user.role),
       },
     );
+  }
+
+  /**
+   * §69 영역 담당 지정 (W11 · N-81) — 영역마다 고정 담당 한 명(원문 슬라이드 72 표의 담당 열).
+   * 대표 판정 한 곳(`canCeoSetExecOwner`)이 연다 — 카드의 단추(`canSetOwner`)와 같은 질문이다.
+   */
+  @Put('areas/:key/owner')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '§69 영역 담당 지정 — 대표 판정 · null 이면 비운다',
+    description: '처음엔 비어 있고 이름을 지어 넣지 않는다 — 대표가 고른다. 그만둔 사람은 고를 수 없다(404). '
+      + '누가 언제 바꿨는지는 행(set_by · set_at)과 감사 줄(EXEC_AREA · owner)에 남는다.',
+  })
+  @ApiOkResponse({ type: ExecAreaOwnerDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'EXEC_OWNER_FORBIDDEN — 대표 판정이 아님' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND — 활성 구성원이 아님' })
+  setAreaOwner(
+    @CurrentUser() user: RequestUser,
+    @Param() params: ExecAreaParamsDto,
+    @Body() dto: ExecAreaOwnerWriteDto,
+  ): Promise<ExecAreaOwnerDto> {
+    if (!(isRole(user.role) && canCeoSetExecOwner(user.role))) {
+      throw new ForbiddenException({ code: 'EXEC_OWNER_FORBIDDEN', message: '영역 담당은 대표가 정합니다' });
+    }
+    return this.svc.setAreaOwner(params.key as ExecAreaKey, dto.staffId, user.id);
   }
 
   /**
@@ -95,6 +126,7 @@ export class ExecController {
   @ApiCreatedResponse({ type: ExecReportWriteResultDto })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: '대표가 아니면 결재하지 않는다' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'RPT_NOT_SENT — 올라오지 않은 보고' })
+  // 결과는 올린 사람에게 알림이 간다(결재자 자신이면 안 간다 · N-97) — RPT · LOG · NOTI 한 트랜잭션
   review(
     @CurrentUser() user: RequestUser,
     @Param() params: ExecReportParamsDto,
@@ -104,5 +136,27 @@ export class ExecController {
       throw new ForbiddenException({ code: 'NOT_APPROVER', message: '대표 보고는 대표가 결재합니다' });
     }
     return this.svc.review(params.id, dto, user.id);
+  }
+
+  /**
+   * §73 「회수」 (W11 · N-97) — **올린 사람만** 올린 보고를 작성 중으로 되돌린다(원문 슬라이드 73 「제출자는 회수(back)만 가능」).
+   * 메모는 두고 서명(올린 사람 · 시각)은 지운다 — 다시 올리기(C85-a)와 같은 규칙.
+   */
+  @Post('report/:id/withdraw')
+  @Perm('canCrudAll')
+  @ApiOperation({
+    summary: '§73 대표 보고 회수 — 올린 사람만 · 올라간 보고만',
+    description: 'sent → draft. 메모는 그대로 · sent_by/sent_at 은 지운다. 결재가 끝난 보고는 회수하지 않는다(409). '
+      + '같은 트랜잭션에 감사 줄(RPT · withdraw)을 남긴다.',
+  })
+  @ApiCreatedResponse({ type: ExecReportWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'RPT_NOT_SUBMITTER — 올린 사람이 아님' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'RPT_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'RPT_NOT_SENT — 올라간 보고가 아님(작성 중 · 결재 끝남)' })
+  withdraw(
+    @CurrentUser() user: RequestUser,
+    @Param() params: ExecReportParamsDto,
+  ): Promise<ExecReportWriteResultDto> {
+    return this.svc.withdraw(params.id, user.id);
   }
 }

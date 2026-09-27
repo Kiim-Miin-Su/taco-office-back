@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
@@ -13,12 +13,13 @@ import { ZoomService } from '../zoom/zoom.service';
 import { daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { kstAt } from '../../lib/sql';
 import { NOTI_TITLE } from '../../lib/noti';
-import { todoSourceLabel } from '../../lib/todo';
+import { todoGo, todoLessonGo, todoSourceLabel } from '../../lib/todo';
 import {
   MFB_KIND_LABEL, mfbStateLabel, mktChannelLabel, mktItemLabel, mktTitle,
   MKT_CHANNEL_LABEL, MKT_CHANNELS, MKT_ITEM_LABEL, MKT_ITEMS,
   type MfbKind,
 } from '../../lib/marketing-words';
+import { MFB_ANSWER_KINDS } from '../../lib/marketing-words';
 import {
   PLAN_DUE_STATE_LABEL, PLAN_OPEN_STAGES, PLAN_STAGES, PLAN_STAGE_LABEL, PLAN_STAGE_SUB,
   PLAN_WRITABLE_STAGES, planLockedMessage, planNextStages,
@@ -26,7 +27,7 @@ import {
 import { CPL_AREAS, CPL_AREA_LABEL, CPL_OPEN_STAGES, CPL_SEVERITIES, CPL_SEVERITY_LABEL, CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel, cplSeverityLabel } from '../../lib/complaint-words';
 import { CPL_REQUESTERS, CPL_REQUESTER_LABEL, cplRequesterLabel } from '../../lib/complaint-words';
 import {
-  INTAKE_FUNNEL_STAGES, INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, INTAKE_STOPS, INTAKE_STOP_LABEL, isIntakeFunnel,
+  INTAKE_FUNNEL_STAGES, INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, isIntakeFunnel,
   LEAD_SOURCES, LEAD_SOURCE_LABEL, LEAD_SOURCE_TOUCH_KIND, LEAD_SOURCE_UNSET, LEAD_SOURCE_UNSET_LABEL,
   LEAD_TOUCH_KINDS, LEAD_TOUCH_KIND_LABEL, intakeStageLabel, leadNextStages, leadSourceLabel, leadTouchKindLabel,
   LEAD_REASON_KINDS, LEAD_REASON_KIND_LABEL, LEAD_REASON_KIND_UNSET, LEAD_REASON_KIND_UNSET_LABEL,
@@ -35,15 +36,30 @@ import {
   type LeadAftercareCounts, type LeadSource,
 } from '../../lib/intake-words';
 import { leadCardActions, leadLessonLineLabel } from '../../lib/intake-words';
+// W11 · N-87 중단 지점(실패 당시 단계) · N-86 사후 관리(할 일)
+import {
+  INTAKE_FAIL_STOPS, INTAKE_FAIL_STOP_LABEL, INTAKE_FAIL_STOP_SUB, intakeFailStop, leadCareDue, legacyStopLabel, type LeadCareState,
+} from '../../lib/intake-words';
+import { leadCareJson } from './lead-care';
+import { writtenRows } from '../../lib/sql';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
 import { LEAD_DIAG_LATEST_JOIN, leadDiagFromRow } from './lead-diag.service';
 import { LEAD_APPTS_JSON, LEAD_PLAN_JSON, leadApptsFromRow, leadPlanFromRow } from './lead-plan.service';
 import { INV_OPEN } from '../../lib/rules';
 import { kstDateOf, serStuEndedOn, sqlWordList } from '../../lib/sql';
+import { startMinOf } from '../../lib/sql';
+import { effectiveModeOf, endMinOf } from '../../lib/sql';
 import {
   dueLabel, planDueKindLabel, planDueState, planStageLabel,
   type PlanDueState,
 } from '../../lib/plan-words';
+// W11 · N-72 공개 범위(planCan 한 곳) · N-95 기한 반려 보존 · PB-12-2 기대 상태 쓰기
+import {
+  PLAN_SHARES, PLAN_SHARE_LABEL, planCanSql, planDueChangedMessage, planShareLabel,
+} from '../../lib/plan-words';
+import { audit } from '../../lib/audit';
+import { meetingNotiLink } from '../../lib/meeting-link';
+import type { EntityManager } from 'typeorm';
 import {
   MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, MT_TYPES, MT_TYPE_SHORT, MT_TYPE_SUB,
   mtAttendState, mtTypeLabel, mtTypeOptions, mtTypeShort, type MtType,
@@ -55,7 +71,7 @@ import type {
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
   PlanStageMoveDto, PlanTaskCreateDto, PlanTaskDto,
-  MeetingDetailDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
+  MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
   MarketingCreateDto, MarketingDto,
   PlanCreateDto, PlanCreateResultDto,
@@ -80,6 +96,8 @@ const PLAN_REWORK_COUNT_SQL =
  */
 const PLAN_ROW_SELECT = `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
          p.due_approved_at, s.name AS owner_name,
+         -- W11 · N-72 공개 범위 · N-95 반려된 기한 (옛 기획은 둘 다 NULL)
+         p.share, to_char(p.due_rejected_on,'YYYY-MM-DD') AS due_rejected_on,
          ${PLAN_REWORK_COUNT_SQL} AS rework_count,
          (SELECT count(*) FILTER (WHERE t.done)::int FROM todo t WHERE t.plan_id = p.id) AS task_done,
          (SELECT count(*)::int FROM todo t WHERE t.plan_id = p.id) AS task_total
@@ -95,12 +113,35 @@ function meetingPlaceLabel(r: R): string | null {
   return (r.room_name as string) ?? null;
 }
 
-/** 회의에 이어진 회차·강의실·줌 계정 — §63 줄과 §66 머리가 **같은 조인**을 쓴다 */
+/**
+ * 회의에 이어진 회차·강의실·줌 계정 — §63 줄과 §66 머리 · 회의 안내가 **같은 조인**을 쓴다.
+ *
+ * 강의실 · 줌 계정은 **그 회차의 투영**(`ser_occ.room_id` · `ser_occ.zacc_id`)에서 읽는다 — 투영이 이미 예외
+ * (그 회차만 바꾼 강의실 · 방식 · 줌 계정)를 반영한다(A′2). 규칙의 값을 읽으면 그 회차만 온라인으로 바꾸며 붙인
+ * 줌 계정 · 그 회차만 현장으로 바꾸며 고른 강의실이 장소 낱말에 서지 않는다.
+ * 투영된 회차가 없을 때만(호라이즌 밖 · 투영 전 회차) 규칙의 강의실 · 규칙 대상 줌 배정으로 떨어진다.
+ * 회차 키는 (m.ser_id, m.on_date) — `ser_occ` 의 (ser_id, on_date) 는 유일하다(`ser_occ_ser_date_uniq`).
+ */
 const MEETING_PLACE_JOINS = `
   LEFT JOIN ser s ON s.id = m.ser_id
-  LEFT JOIN room r ON r.id = s.room_id
+  LEFT JOIN exc mx ON mx.ser_id = m.ser_id AND mx.on_date = m.on_date
+  LEFT JOIN ser_occ mo ON mo.ser_id = m.ser_id AND mo.on_date = m.on_date
+  LEFT JOIN room r ON r.id = CASE WHEN mo.ser_id IS NULL THEN s.room_id ELSE mo.room_id END
   LEFT JOIN zassign za ON za.ser_id = s.id
-  LEFT JOIN zacc z ON z.id = za.zacc_id`;
+  LEFT JOIN zacc z ON z.id = CASE WHEN mo.ser_id IS NULL THEN za.zacc_id ELSE mo.zacc_id END`;
+
+/**
+ * 회의 회차의 실제 방식 — 시간표에서 그 회차만 온라인/현장으로 바꾼 예외(exc.mode)가 이긴다 (N-56 · lib/sql 한 조각).
+ * 회차 키는 위 조인과 휴강 판정이 쓰는 (m.ser_id, m.on_date) 다.
+ */
+const MEETING_MODE = effectiveModeOf('mx', 's');
+
+/**
+ * 회의 회차의 시각 — 그 회차의 투영 구간(`mo.span`)에서 읽는다. 그 회차만 시간을 옮긴 회의도 옮긴 시각을 적는다(A′3).
+ * 투영된 회차가 없을 때만(호라이즌 밖 · 투영 전) 규칙의 시각이다 — 장소(`MEETING_PLACE_JOINS`)와 같은 갈래.
+ */
+const MEETING_START_MIN = `CASE WHEN mo.ser_id IS NULL THEN s.start_min ELSE ${startMinOf('mo')} END`;
+const MEETING_END_MIN = `CASE WHEN mo.ser_id IS NULL THEN s.end_min ELSE ${endMinOf('mo')} END`;
 
 /**
  * 「+ 대표 지시」가 막히는 이유 — 읽기(`addTaskBlockedReason`)와 쓰기(409)가 **같은 문장**을 쓴다 (S5 · D-R22 · w5 65-4).
@@ -178,7 +219,13 @@ export class OpsService {
    *   목록마다 시간으로 삼는 날짜가 다르다: 상담·컴플레인은 **들어온 날**(`created_at`),
    *   회의·마케팅 활동은 **그 날**(`on_date`), 할 일·기획은 **기한**(`due_on`). 날짜가 없는 줄은 가르지 않는다.
    */
-  async all(viewerId: number, canSeeAmounts: boolean, canComment: boolean, query: OpsQueryDto = {}): Promise<OpsDto> {
+  /**
+   * @param canApprovePlan 기획 결재권자인가(`canCeoApprovePlan` · 대표 판정) — 지정 공개 기획이 보이는 셋 중 하나다 (N-72).
+   *   **모르면 닫는다**(기본 false) — 인자를 안 준 호출자에게 지정 공개 기획이 새지 않는다.
+   */
+  async all(
+    viewerId: number, canSeeAmounts: boolean, canComment: boolean, query: OpsQueryDto = {}, canApprovePlan = false,
+  ): Promise<OpsDto> {
     const today = todayKst();
     const { from, to, area } = query;
     if (from && to && to < from) {
@@ -205,8 +252,20 @@ export class OpsService {
 
     const todoScope = scoped('t.due_on');
     const todos = (await this.q(
-      `SELECT t.id, t.title, t.done, t.src, to_char(t.due_on,'YYYY-MM-DD') AS due_on, t.to_id, s.name AS to_name, f.name AS from_name
+      `SELECT t.id, t.title, t.done, t.src, to_char(t.due_on,'YYYY-MM-DD') AS due_on, t.to_id, s.name AS to_name, f.name AS from_name,
+              -- W11 · N-71 §64 「연결 수업」 칩 — 회차 키 (ser_id, on_date)로 이어진 수업. 같은 SELECT 의 조인이라 왕복이 늘지 않는다
+              t.ser_id, to_char(t.on_date,'YYYY-MM-DD') AS lesson_on,
+              -- W11 A' 후속 2 — 「원본」 링크의 재료(출처 키) · 서랍과 같은 함수(lib/todo.todoGo)가 짓는다
+              t.mt_id, t.cpl_id, t.cons_id, t.plan_id, t.lead_id,
+              COALESCE(NULLIF(ls.title, ''), lsub.name, lkind.name, ls.kind_key) AS lesson_name,
+              COALESCE(lsub.color, lkind.color) AS lesson_color,
+              ${startMinOf('lo')} AS lesson_start,
+              to_char(${kstDateOf('lower(lo.span)')},'YYYY-MM-DD') AS lesson_drawn
          FROM todo t LEFT JOIN staff s ON s.id = t.to_id LEFT JOIN staff f ON f.id = t.from_id
+         LEFT JOIN ser ls ON ls.id = t.ser_id
+         LEFT JOIN sub lsub ON lsub.key = ls.sub_key
+         LEFT JOIN kind lkind ON lkind.key = ls.kind_key
+         LEFT JOIN ser_occ lo ON lo.ser_id = t.ser_id AND lo.on_date = t.on_date
         ${todoScope.where}
         ORDER BY t.done, t.due_on NULLS LAST, t.id`, todoScope.params,
     )).map((r) => {
@@ -217,27 +276,37 @@ export class OpsService {
         srcLabel: todoSourceLabel(String(r.src)),
         dueOn: due, done: Boolean(r.done), src: String(r.src),
         overdueDays: !r.done && due && due < today ? daysSince(due) : 0,
+        lesson: OpsService.todoLesson(r),
+        // 출처로 돌아가는 링크 — 서랍 §15 와 같은 함수 한 곳(한 건을 여는 질의를 이미 읽는 화면만 · 수업은 연결 수업 칩과 같은 주소)
+        go: todoGo({
+          mtId: r.mt_id, cplId: r.cpl_id, consId: r.cons_id, planId: r.plan_id, leadId: r.lead_id,
+          serId: r.ser_id, onDate: (r.lesson_on as string) ?? null, drawnOn: (r.lesson_drawn as string) ?? null,
+        }),
       };
     });
 
+    /* N-72 — 기획 목록은 `planCan` 을 지난 것만 싣는다. 판정은 lib/plan-words 한 곳이고 여기는 그 SQL 조각이다 */
     const planScope = scoped('p.due_on');
+    const planParams = [...planScope.params, viewerId, canApprovePlan];
+    const planVisible = planCanSql('p', `$${planParams.length - 1}`, `$${planParams.length}`);
     const plans = (await this.q(
       `${PLAN_ROW_SELECT}
-        ${planScope.where}
-        ORDER BY p.due_on NULLS LAST, p.id`, planScope.params,
+        ${planScope.where ? `${planScope.where} AND ${planVisible}` : `WHERE ${planVisible}`}
+        ORDER BY p.due_on NULLS LAST, p.id`, planParams,
     )).map((r) => OpsService.planRow(r, today));
     /* 기획 탭 동그라미 — 원본 §61·§64 컷의 「기획 2」·「단계 보드 ②」는 **대표 손이 가야 할 것**이다
        (검토 요청 1 + 보완 요청 1). 전체 건수를 달면 할 일이 없는 날에도 동그라미가 선다 (w5 · C-4) */
     const planPending = plans.filter((p) => p.stage === 'review' || p.stage === 'rework').length;
 
-    const { planDues, planOverdue } = await this.planDeadlines(today);
+    const { planDues, planOverdue } = await this.planDeadlines(today, viewerId, canApprovePlan);
 
     const mtScope = scoped('m.on_date');
     const meetings = await this.meetingRows(mtScope.where, mtScope.params, today);
     const mtCountScope = scoped('m.on_date');
     // 같은 문장이 §63 머리 「54회 · 속기록 32」·「내 응답 대기 17」도 센다 (w5 · 63-5 · 63-6)
-    const { counts: mtTypeCounts, minutes: mtMinutesCount, myWaiting: mtMyWaiting } =
-      await this.mtTypeCounts(mtCountScope.where, mtCountScope.params, viewerId);
+    // W11 · N-96 — 회의 탭 동그라미 「손봐야 할 것」(지난 회의 중 속기록이 빈 것)도 같은 문장이 센다 · 왕복 그대로
+    const { counts: mtTypeCounts, minutes: mtMinutesCount, myWaiting: mtMyWaiting, needsMinutes: mtNeedsMinutes } =
+      await this.mtTypeCounts(mtCountScope.where, mtCountScope.params, viewerId, today);
 
     // §59 도 기간을 탄다 — 활동한 날(`on_date`)로 가른다. 여기만 빠져 있어 칩이 「9월」이라 말하면서
     // 8월 활동을 그대로 보였다 (59-1). 날짜가 없는 옛 활동은 다른 목록처럼 가르지 않는다(rangeClause)
@@ -286,6 +355,9 @@ export class OpsService {
       // 단추가 서는지도 서버다 (D-R39) — 지금은 이 화면을 볼 수 있으면 만들 수 있다
       canCreateMeeting: true, canCreatePlan: true,
       cplOverdue, planPending, mtMyWaiting, mtMinutesCount,
+      // W11 · N-96 회의 탭 동그라미 · N-72 공개 범위 두 값의 낱말(「+ 기획 올리기」·§65 고르기 · D-R18)
+      mtNeedsMinutes,
+      planShares: PLAN_SHARES.map((key) => ({ key, label: PLAN_SHARE_LABEL[key] })),
       // §59 「+ 오늘 한 것」 폼의 낱말과 단추 (x5 · 59-3) — 어휘는 지금 코드의 이름표다(원문 어휘 맞춤은 N-29 ①)
       mktChannels: MKT_CHANNELS.map((key) => ({ key, label: MKT_CHANNEL_LABEL[key] })),
       mktItems: MKT_ITEMS.map((key) => ({ key, label: MKT_ITEM_LABEL[key] })),
@@ -300,7 +372,7 @@ export class OpsService {
    */
   private async marketingRows(where: string, params: unknown[], canSeeAmounts: boolean): Promise<MarketingDto[]> {
     return (await this.q(
-      `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.by_id, b.name AS by_name,
+      `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.memo, m.by_id, b.name AS by_name,
               to_char(m.on_date,'YYYY-MM-DD') AS on_date
          FROM mkt m LEFT JOIN staff b ON b.id = m.by_id
         ${where}
@@ -317,6 +389,8 @@ export class OpsService {
         // 낱말은 여기서 한 번만 만든다 — 화면이 코드를 한글로 옮기지 않는다 (D-R18 · C53)
         channelLabel: mktChannelLabel(channel), itemLabel: mktItemLabel(item),
         title, name: mktTitle(title, channel, item),
+        // 카드 제목 아래 한 줄(W11 · N-29 ② · 원문 「상담 예약 4건 전환」) — 적은 그대로 · 옛 행은 null
+        memo: (r.memo as string) ?? null,
         onDate: (r.on_date as string) ?? null,
         byId: leadId(r.by_id, true), byName: (r.by_name as string) ?? null,
         impressions: res.impressions ?? null, clicks: res.clicks ?? null,
@@ -345,7 +419,7 @@ export class OpsService {
    *
    * 날짜를 안 주면 **오늘**이다(단추 이름 그대로) · 담당을 안 주면 **나**다(§60 「담당자 답변」을 쓸 사람).
    * 그만둔 사람에게는 달지 않는다 — 이 파일의 다른 담당 자리와 같은 판정(S4). 감사 줄은 같은 트랜잭션이다 —
-   * 밖에서 남기면 쓰기는 되돌아가고 줄만 남는다(S7). 성과·메모는 받지 않는다(메모 칸은 N-29 결정 전).
+   * 밖에서 남기면 쓰기는 되돌아가고 줄만 남는다(S7). 성과는 받지 않는다. 메모 한 줄(`mkt.memo`)은 받는다(W11 · N-29 ②).
    */
   async createMarketing(viewerId: number, canSeeAmounts: boolean, dto: MarketingCreateDto): Promise<MarketingDto> {
     const title = dto.title.trim();
@@ -357,16 +431,17 @@ export class OpsService {
     const byId = dto.byId ?? viewerId;
     const onDate = dto.onDate ?? todayKst();
     const url = dto.url?.trim() ? dto.url.trim() : null;
+    const memo = dto.memo?.trim() ? dto.memo.trim() : null;
     const id = await this.lead.manager.transaction(async (em) => {
       const [by] = (await em.query(`SELECT id FROM staff WHERE id = $1 AND active`, [byId])) as R[];
       if (!by) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
       const [row] = (await em.query(
-        `INSERT INTO mkt (channel, item, url, on_date, title, by_id) VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING id`,
-        [dto.channel, dto.item, url, onDate, title, byId],
+        `INSERT INTO mkt (channel, item, url, on_date, title, by_id, memo) VALUES ($1, $2, $3, $4::date, $5, $6, $7) RETURNING id`,
+        [dto.channel, dto.item, url, onDate, title, byId, memo],
       )) as Array<{ id: string }>;
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1, 'MKT', $2, 'create', $3::jsonb)`,
-        [viewerId, row.id, JSON.stringify({ title, channel: dto.channel, item: dto.item, url, onDate, byId })],
+        [viewerId, row.id, JSON.stringify({ title, channel: dto.channel, item: dto.item, url, onDate, byId, memo })],
       );
       return leadId(row.id);
     });
@@ -382,9 +457,14 @@ export class OpsService {
    */
   private static planRow(r: R, today: string): PlanDto {
     const due = (r.due_on as string) ?? null;
+    const rejectedOn = (r.due_rejected_on as string) ?? null;
     const stage = String(r.stage);
     const open = PLAN_OPEN_STAGES.includes(stage);
-    const dueState = planDueState(due, r.due_approved_at);
+    const dueState = planDueState(due, r.due_approved_at, rejectedOn);
+    /* 원문 §61 「D-2 08-19 · 기한 반려」 — 반려된 뒤에도 그 날짜의 남은 날 낱말이 선다 (N-95).
+       붉게 칠하는 판정(overdueDays)은 **지금 기한**만 본다 — 반려된 날짜는 더 이상 마감이 아니다. */
+    const shownDue = due ?? rejectedOn;
+    const share = (r.share as string) ?? null;
     return {
       id: Number(r.id), title: String(r.title), stage,
       // 단계 이름을 만드는 자리는 서버 한 곳이다 — §61 보드 · §62 기한 표 · §65 보고서가 같이 쓴다 (D-R18)
@@ -396,8 +476,28 @@ export class OpsService {
       reworkCount: Number(r.rework_count ?? 0),
       taskDone: Number(r.task_done ?? 0),
       taskTotal: Number(r.task_total ?? 0),
-      dueLabel: open && due ? dueLabel(daysUntil(due, today)) : null,
+      dueLabel: open && shownDue ? dueLabel(daysUntil(shownDue, today)) : null,
       dueStateLabel: PLAN_DUE_STATE_LABEL[dueState as PlanDueState],
+      dueRejectedOn: rejectedOn,
+      share, shareLabel: planShareLabel(share),
+    };
+  }
+
+  /**
+   * §64 「연결 수업」 칩 한 칸 (N-71) — 「학습실 09:30」 · 누르면 그 회차가 열리는 시간표 주소.
+   * 이름은 수업 상세 머리와 같은 차례(제목 → 과목 → 종류)이고 시각은 **그려지는 회차**의 시작이다(옮긴 회차도 맞다).
+   * 회차가 투영에서 사라졌으면(규칙 삭제 · 기간 밖) 이름만 서고 이동이 없다 — 없는 회차로 보내지 않는다.
+   */
+  private static todoLesson(r: R): { label: string; color: string | null; go: string | null } | null {
+    if (r.ser_id == null || r.lesson_on == null) return null;
+    const name = (r.lesson_name as string) ?? '수업';
+    const start = r.lesson_start == null ? null : Number(r.lesson_start);
+    const drawn = (r.lesson_drawn as string) ?? null;
+    return {
+      label: start === null ? name : `${name} ${OpsService.hm(start)}`,
+      color: (r.lesson_color as string)?.trim() || null,
+      // 할 일의 「원본」과 같은 주소 한 곳(lib/todo · W11 A' 후속 2)
+      go: todoLessonGo(r.ser_id, String(r.lesson_on), drawn),
     };
   }
 
@@ -446,14 +546,19 @@ export class OpsService {
    * 같은 문장에서 머리의 「속기록 N」·「내 응답 대기 N」도 센다(w5 · 63-5 · 63-6) — 「썼다」는 줄의 `hasMinutes` 와
    * 같은 판정(빈 글은 안 쓴 것)이고, 응답 대기는 §66 의 세 값 중 `null` 이다.
    */
-  private async mtTypeCounts(where: string, params: unknown[], viewerId: number): Promise<{ counts: OpsCountDto[]; minutes: number; myWaiting: number }> {
-    const p = [...params, viewerId];
-    const rows = await this.q<{ mt_type: string; n: string; minutes: number; my_waiting: number }>(
+  private async mtTypeCounts(
+    where: string, params: unknown[], viewerId: number, today = todayKst(),
+  ): Promise<{ counts: OpsCountDto[]; minutes: number; myWaiting: number; needsMinutes: number }> {
+    const p = [...params, viewerId, today];
+    const rows = await this.q<{ mt_type: string; n: string; minutes: number; my_waiting: number; needs_minutes: number }>(
       `SELECT m.mt_type, count(*)::text AS n,
               count(*) FILTER (WHERE m.minutes IS NOT NULL AND m.minutes <> '')::int AS minutes,
               count(*) FILTER (WHERE EXISTS (
-                SELECT 1 FROM mtattd a WHERE a.mt_id = m.id AND a.staff_id = $${p.length} AND a.confirmed IS NULL
-              ))::int AS my_waiting
+                SELECT 1 FROM mtattd a WHERE a.mt_id = m.id AND a.staff_id = $${p.length - 1} AND a.confirmed IS NULL
+              ))::int AS my_waiting,
+              -- W11 · N-96 「손봐야 할 것」 — **이미 지난** 회의(날이 오늘보다 앞)인데 속기록이 빈 것.
+              -- 「썼다」는 hasMinutes 와 같은 판정(빈 글은 안 쓴 것)이고, 날짜 없는 옛 회의는 지났는지 모르므로 세지 않는다 (N-25)
+              count(*) FILTER (WHERE m.on_date < $${p.length}::date AND (m.minutes IS NULL OR m.minutes = ''))::int AS needs_minutes
          FROM mtrec m ${where} GROUP BY m.mt_type`, p,
     );
     const got = new Map(rows.map((r) => [String(r.mt_type), Number(r.n)]));
@@ -462,6 +567,7 @@ export class OpsService {
       counts: MT_TYPES.map((key) => ({ key, label: MT_TYPE_SHORT[key], count: got.get(key) ?? 0 })),
       minutes: rows.reduce((n, r) => n + Number(r.minutes ?? 0), 0),
       myWaiting: rows.reduce((n, r) => n + Number(r.my_waiting ?? 0), 0),
+      needsMinutes: rows.reduce((n, r) => n + Number(r.needs_minutes ?? 0), 0),
     };
   }
 
@@ -474,7 +580,7 @@ export class OpsService {
   private async meetingRows(where: string, params: unknown[], today = todayKst()): Promise<MeetingDto[]> {
     return (await this.q(
       `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date, m.minutes, m.ser_id,
-              s.start_min, s.end_min, s.mode, r.name AS room_name, z.label AS zoom_label,
+              ${MEETING_START_MIN} AS start_min, ${MEETING_END_MIN} AS end_min, ${MEETING_MODE} AS mode, r.name AS room_name, z.label AS zoom_label,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id)::int AS attendees,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed)::int AS confirmed,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed IS NULL)::int AS waiting,
@@ -624,13 +730,19 @@ export class OpsService {
     const title = dto.title.trim();
     if (!title) throw new ConflictException({ code: 'PLAN_TITLE_REQUIRED', message: '제목을 적어 주세요' });
     const owner = await this.activeStaff(dto.ownerId ?? viewerId);
+    /* N-72 — 새 기획은 원문 두 값 중 하나를 갖는다. 안 보내면 원문 첫 값(전체 공개)이다 — NULL 은 옛 기획만의 자리다 */
+    const share = dto.share ?? 'all';
+    const picks = await this.planPicks(share, dto.pickIds);
     const id = await this.lead.manager.transaction(async (em) => {
       const [row] = (await em.query(
-        `INSERT INTO plan (title, stage, goal, ask, due_on, owner_id)
-         VALUES ($1, $2, $3, $4, $5::date, $6) RETURNING id`,
-        [title, PLAN_STAGES[0], dto.goal?.trim() || null, dto.ask?.trim() || null, dto.dueOn ?? null, owner.id],
+        `INSERT INTO plan (title, stage, goal, ask, due_on, owner_id, share)
+         VALUES ($1, $2, $3, $4, $5::date, $6, $7) RETURNING id`,
+        [title, PLAN_STAGES[0], dto.goal?.trim() || null, dto.ask?.trim() || null, dto.dueOn ?? null, owner.id, share],
       )) as Array<{ id: string }>;
       const planId = Number(row.id);
+      if (picks.length) {
+        await em.query(`INSERT INTO plan_pick (plan_id, staff_id) SELECT $1, unnest($2::bigint[])`, [planId, picks]);
+      }
       if (owner.id !== viewerId) {
         await em.query(
           `INSERT INTO noti (to_id, from_id, body, link, category, title)
@@ -640,7 +752,8 @@ export class OpsService {
       }
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'PLAN',$2,'create',$3::jsonb)`,
-        [viewerId, planId, JSON.stringify({ title, stage: PLAN_STAGES[0], ownerId: owner.id, dueOn: dto.dueOn ?? null })],
+        // 공개 범위도 만든 순간의 사실이다 — 새 줄을 더하지 않고 있던 줄에 싣는다(중복 줄 금지 · N-73)
+        [viewerId, planId, JSON.stringify({ title, stage: PLAN_STAGES[0], ownerId: owner.id, dueOn: dto.dueOn ?? null, share, pickIds: picks })],
       );
       return planId;
     });
@@ -813,6 +926,76 @@ export class OpsService {
     return { id: leadId(st.id), name: st.name };
   }
 
+  /**
+   * 지정 공개의 **지정된 사람** (N-72) — 활동 중인 구성원만 · 겹침은 한 번.
+   * 지정 공개가 아닌데 사람을 보내면 막는다 — 화면이 보낸 값을 조용히 버리면 「지정했는데 안 보인다」가 된다.
+   */
+  private async planPicks(share: string, pickIds: readonly number[] | undefined): Promise<number[]> {
+    const ids = [...new Set(pickIds ?? [])];
+    if (share !== 'picked') {
+      if (ids.length) {
+        throw new ConflictException({ code: 'PLAN_PICK_NOT_PICKED', message: '볼 사람은 지정 공개일 때만 고릅니다' });
+      }
+      return [];
+    }
+    if (!ids.length) return [];
+    const found = (await this.q(`SELECT id FROM staff WHERE id = ANY($1::bigint[]) AND active`, [ids])) as Array<{ id: string }>;
+    if (found.length !== ids.length) {
+      throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '지정한 사람 중 활동 중이 아닌 구성원이 있습니다' });
+    }
+    return ids.sort((a, b) => a - b);
+  }
+
+  /**
+   * 기획 한 행을 **잠그고** 읽는다 — 결재·고치기·옮기기가 모두 여기서 시작한다 (PB-12-2).
+   *
+   * 전에는 결재가 잠그지 않고 읽은 뒤 무조건 썼다. 그 사이 담당이 기한을 옮기면 대표가 본 적 없는 날짜가 승인됐고,
+   * 두 결재자가 동시에 누르면 마지막 쓰기가 이겼다. 이제 판정은 **잠근 행**으로 한다.
+   * 보이지 않는 기획(`planCan` · N-72)은 없는 것과 같다 — 404 다.
+   */
+  private async lockPlan(em: EntityManager, id: number, viewerId: number, canApprove: boolean): Promise<{
+    id: number; title: string; stage: string; owner_id: string | null; share: string | null;
+    due_on: string | null; due_approved_at: Date | null; due_rejected_on: string | null; visible: boolean;
+  }> {
+    const [row] = (await em.query(
+      `SELECT p.id, p.title, p.stage, p.owner_id, p.share,
+              to_char(p.due_on,'YYYY-MM-DD') AS due_on, p.due_approved_at,
+              to_char(p.due_rejected_on,'YYYY-MM-DD') AS due_rejected_on,
+              ${planCanSql('p', '$2', '$3')} AS visible
+         FROM plan p WHERE p.id = $1 FOR UPDATE OF p`,
+      [id, viewerId, canApprove],
+    )) as Array<{ id: string; title: string; stage: string; owner_id: string | null; share: string | null;
+      due_on: string | null; due_approved_at: Date | null; due_rejected_on: string | null; visible: boolean }>;
+    if (!row || !row.visible) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
+    return { ...row, id: leadId(row.id) };
+  }
+
+  /**
+   * 결재 단추 셋이 **열리는가** — 읽기(`planDetail`)와 쓰기(`decidePlanDue`·`reviewPlan`)가 같은 함수를 부른다 (D-R39 · D-R22).
+   * 쓰기는 잠근 행으로 부르므로 경합 뒤에도 판정이 지금 상태를 본다 (PB-12-2).
+   */
+  private static planGates(
+    p: { stage: string; owner_id: unknown; due_on: string | null; due_approved_at: unknown; due_rejected_on?: string | null },
+    canApprove: boolean, viewerId: number,
+  ): { dueState: PlanDueState; canDecideDue: boolean; reworkBlockedReason: string | null; reviewBlockedReason: string | null } {
+    const dueState = planDueState(p.due_on, p.due_approved_at, p.due_rejected_on ?? null);
+    const open = PLAN_OPEN_STAGES.includes(p.stage);
+    /* 담당자 자신은 기한도 최종 승인도 못 한다 — 기한과 최종은 **서로 다른 자리**다(한쪽만 다시 막는 날 따로 물을 수 있어야 한다) */
+    const ownerBlocksDue = blocksSelfApproval('plan-due', p.owner_id, viewerId);
+    const ownerBlocksReview = blocksSelfApproval('plan', p.owner_id, viewerId);
+    const canDecideDue = canApprove && dueState === 'proposed' && !ownerBlocksDue;
+    /* S6 — 「검토 요청」이 결재의 전제다. 「보완 요청」은 최종 승인과 **같은 문을 지나되 기한 승인을 보지 않는다**
+       — 원문 규칙이 막는 것은 「최종 승인」뿐이다(슬라이드 61·65 · 컷 §65 의 살아 있는 「보완 요청」 · g6 65-7 · x5). */
+    const reworkBlockedReason =
+      !canApprove ? '기획 결재는 대표만 합니다'
+        : ownerBlocksReview ? '자기가 담당인 기획은 자기가 결재할 수 없습니다'
+          : !open ? '이미 끝난 기획입니다'
+            : p.stage !== 'review' ? '아직 검토 요청이 올라오지 않았습니다'
+              : null;
+    const reviewBlockedReason = reworkBlockedReason ?? (dueState !== 'approved' ? '기한부터 승인하세요' : null);
+    return { dueState, canDecideDue, reworkBlockedReason, reviewBlockedReason };
+  }
+
   /* ══ §23 상담 머리 — 퍼널 · 담당 · 경고 (C86-a) ═══════════════════ */
 
   /**
@@ -951,8 +1134,9 @@ export class OpsService {
       enrollRate: intakeEnrollRate(enrolled, failedCount),
       owners,
       alerts,
-      // 낱말과 순서만 — 세는 일은 §24 화면이 **검색으로 걸러진 행** 위에서 한다 (IntakeStopDto 주석)
-      stops: INTAKE_STOPS.map((key) => ({ key, label: INTAKE_STOP_LABEL[key] })),
+      // 낱말 · 순서 · 설명 한 줄만 — 세는 일은 §24 화면이 **검색으로 걸러진 행** 위에서 한다 (IntakeStopDto 주석)
+      // W11 · N-87: 넷은 실패 당시 단계(깔때기 차례) — 원문 §24 컷의 낱말 그대로
+      stops: INTAKE_FAIL_STOPS.map((key) => ({ key, label: INTAKE_FAIL_STOP_LABEL[key], sub: INTAKE_FAIL_STOP_SUB[key] })),
       sources,
       touchKinds: LEAD_TOUCH_KINDS.map((key) => ({ key, label: LEAD_TOUCH_KIND_LABEL[key] })),
       followUpSoon,
@@ -998,6 +1182,8 @@ export class OpsService {
                 'guideSent',  (SELECT count(*) FROM guide g WHERE g.student_id = l.student_id AND g.state IN ('sent','read')),
                 'guideDraft', (SELECT count(*) FROM guide g WHERE g.student_id = l.student_id AND g.state IN ('draft','ready'))
               ) END AS aftercare,
+              -- W11 · N-86 — 등록 카드의 해피콜 · 첫 월간 상담(담당의 할 일)과 띠. 같은 SELECT 의 JSON 한 칸이라 왕복 수 그대로
+              CASE WHEN l.stage = 'enrolled' THEN ${leadCareJson('l.id')} END AS care_json,
               -- 등록 카드의 「등록 수업」(23-11 · wave 6) — 그 학생의 지금 명단. 끝난 명단(수강 종료)·끝난 규칙은 빠진다. 시간표가 정본이고 읽기만 한다
               CASE WHEN l.stage = 'enrolled' AND l.student_id IS NOT NULL THEN (
                 SELECT COALESCE(json_agg(json_build_object(
@@ -1052,6 +1238,11 @@ export class OpsService {
       const appts = leadApptsFromRow(r);
       const second = appts.find((a) => a.kind === 'second') ?? null;
       const recheckOn = leadRecheckOn(stage, (r.recheck_on as string) ?? null, enteredOn);
+      // 사후 관리 할 일(N-86) — 등록 건만. 해피콜 · 첫 월간 상담 두 줄과 띠가 이 값을 읽는다
+      const care: LeadCareState | null = r.care_json == null ? null : {
+        happy: ((r.care_json as R).happy as LeadCareState['happy']) ?? null,
+        firstMonthly: ((r.care_json as R).firstMonthly as LeadCareState['firstMonthly']) ?? null,
+      };
       const dto: LeadDto = {
         id, name: String(r.name), school: (r.school as string) ?? null,
         ownerId: leadId(r.owner_id, true), studentId: leadId(r.student_id, true),
@@ -1061,6 +1252,10 @@ export class OpsService {
         failFrom,
         revivalStage: failed ? failFrom : null,
         revivalSource: failed && failFrom ? 'explicit' : null,
+        // §24 중단 지점(N-87) — 판정(명시값 → 도달 기록)이 다 끝난 뒤 아래에서 채운다
+        failStopKey: null, failStopLabel: null,
+        // 옛 중단 지점 — 읽기 전용 기록의 낱말(대응표로 옮기지 않는다 · N-25)
+        stopAtLabel: legacyStopLabel(r.stop_at as string | null),
         source: (r.source as string) ?? null, sourceLabel: leadSourceLabel(r.source as string | null),
         nextStages: leadNextStages(stage).map((key) => ({ key, label: INTAKE_STAGE_LABEL[key] })),
         touches,
@@ -1079,7 +1274,8 @@ export class OpsService {
           on: recontactOn,
           dueLabel: recontactOn ? leadDueLabel(recontactOn, today) : null,
         },
-        stageDue: leadStageDue(stage, enteredOn, today,
+        // 등록 건은 사후 관리 띠(N-86 · 원본 §23 「해피콜 D-3」 · 「정기 관리 중」) — 깔때기 안은 단계 기한(23-12)
+        stageDue: care ? leadCareDue(care, today) : leadStageDue(stage, enteredOn, today,
           // 보류는 재확인 날짜 · 2차 대기는 잡아 둔 2차 일정이 기한이다(원본 §23 「2차 상담 2026-08-26 14:30 · D-5」 · 23-15 · 23-16)
           stage === 'hold' && recheckOn ? { dueOn: recheckOn }
             : stage === 'wait2nd' && second ? { dueOn: second.onDate, task: `2차 상담 ${second.onDate} ${OpsService.hm(second.startMin)}` }
@@ -1087,7 +1283,7 @@ export class OpsService {
         plan: leadPlanFromRow(r, canSeeAmounts),
         appts,
         recheckOn,
-        aftercare: r.aftercare ? leadAftercareRows(r.aftercare as LeadAftercareCounts) : null,
+        aftercare: r.aftercare ? leadAftercareRows(r.aftercare as LeadAftercareCounts, care ?? undefined) : null,
         // 「등록 수업」 한 줄 (23-11) — 낱말은 배치안과 같은 함수. 단발은 줄이 없다(정기 수업이 아니다)
         lessons: r.lessons_json == null ? null
           : (Array.isArray(r.lessons_json) ? (r.lessons_json as R[]) : [])
@@ -1112,6 +1308,14 @@ export class OpsService {
         const dto = pending.get(Number(g.lead_id));
         if (dto) { dto.revivalStage = String(g.stage); dto.revivalSource = 'log'; }
       }
+    }
+    /* §24 중단 지점(W11 · N-87) — **실패 당시 단계**가 곧 분류다(원문 슬라이드 24 「fail.from 필드로 중단 단계 판정 · 없으면 at{} 기록을 역순으로」).
+       되살릴 단계와 같은 판정(명시값 → 도달 기록 역순)이라 그 결과를 그대로 읽는다 — 판정 없는 옛 행은 미분류(대응표 이관 없음) */
+    for (const dto of leads) {
+      if (dto.stage !== 'failed') continue;
+      const stop = intakeFailStop(dto.revivalStage);
+      dto.failStopKey = stop.key;
+      dto.failStopLabel = stop.label;
     }
     return leads;
   }
@@ -1215,22 +1419,27 @@ export class OpsService {
   /**
    * 실패 전이 — 이전 단계를 **그 순간의 사실**로 fail_from 에 명시 기록하고
    * 도달 기록(append-only)에 'failed' 를 남긴다. 등록 건은 실패로 보낼 수 없다.
+   *
+   * W11 · N-87 — 그 단계가 곧 §24 중단 지점이다(중단 지점을 묻지 않는다 · 옛 `stop_at` 은 읽기 전용이라 쓰지 않는다).
+   * PB-12-1 — 건을 **잠그고 읽어** 판정하고 **그 단계일 때만** 쓴다. 잠그지 않고 읽으면 그사이 커밋된 등록 확정
+   * (`EnrollService.enroll` 도 이 행을 잠근다)을 풀린 뒤의 UPDATE 가 실패로 덮는다(test/lead-fail-race-db.spec.ts).
    */
-  async failLead(byId: number, id: number, dto: { stopAt: string; reason?: string; reasonKind?: string }): Promise<LeadDto> {
+  async failLead(byId: number, id: number, dto: { reason?: string; reasonKind?: string }): Promise<LeadDto> {
     // 사유 분류는 DTO 가 막고 표의 CHECK 가 마지막으로 막는다 — 서비스도 한 번 더 본다(직접 호출 경로 · 24-05)
     if (dto.reasonKind !== undefined && !(LEAD_REASON_KINDS as readonly string[]).includes(dto.reasonKind)) {
       throw new ConflictException({ code: 'LEAD_REASON_KIND_INVALID', message: '사유 분류는 연락 두절 · 타 학원 등록 · 일정 안 맞음 · 비용 · 시기 안 맞음 중 하나입니다' });
     }
-    const [row] = await this.q(`SELECT id, stage FROM lead WHERE id = $1`, [id]);
-    if (!row) throw new NotFoundException('상담 건을 찾을 수 없습니다');
-    const stage = String(row.stage);
-    if (stage === 'failed') throw new ConflictException({ code: 'ALREADY_FAILED', message: '이미 실패로 분류된 건입니다' });
-    if (stage === 'enrolled') throw new ConflictException({ code: 'ENROLLED_LOCKED', message: '등록된 건은 실패로 보낼 수 없습니다' });
     await this.lead.manager.transaction(async (em) => {
-      await em.query(
-        `UPDATE lead SET stage = 'failed', fail_from = $2, stop_at = $3, reason = COALESCE($4, reason),
-                         reason_kind = COALESCE($5, reason_kind) WHERE id = $1`,
-        [id, stage, dto.stopAt, dto.reason?.trim() || null, dto.reasonKind ?? null]);
+      const [row] = (await em.query(`SELECT id, stage FROM lead WHERE id = $1 FOR UPDATE`, [id])) as Array<{ id: string; stage: string }>;
+      if (!row) throw new NotFoundException('상담 건을 찾을 수 없습니다');
+      const stage = String(row.stage);
+      if (stage === 'failed') throw new ConflictException({ code: 'ALREADY_FAILED', message: '이미 실패로 분류된 건입니다' });
+      if (stage === 'enrolled') throw new ConflictException({ code: 'ENROLLED_LOCKED', message: '등록된 건은 실패로 보낼 수 없습니다' });
+      const written = writtenRows(await em.query(
+        `UPDATE lead SET stage = 'failed', fail_from = $2, reason = COALESCE($3, reason),
+                         reason_kind = COALESCE($4, reason_kind) WHERE id = $1 AND stage = $2 RETURNING id`,
+        [id, stage, dto.reason?.trim() || null, dto.reasonKind ?? null]));
+      if (!written.length) throw new ConflictException({ code: 'LEAD_STAGE_CHANGED', message: '그사이 단계가 바뀌었습니다 — 다시 불러와 주세요' });
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'failed', $2)`, [id, byId]);
     });
     return this.leadOne(id);
@@ -1239,27 +1448,35 @@ export class OpsService {
   /**
    * 되살리기 — 대상 단계는 지정값 → fail_from 명시값 → 도달 기록 역순. 셋 다 없으면
    * 미분류 그대로 두고 UNCLASSIFIED 로 거절한다 (추정 이관 금지 — 레거시 stop_at 을 쓰지 않는다).
+   * 옛 `stop_at` 은 읽기 전용 기록이라 지우지 않는다(W11 · N-87).
+   * PB-12-1 — 실패와 같다: 건을 잠그고 실패인지 다시 보고 **실패일 때만** 쓴다. 「바로 수업 등록」이 먼저 커밋되면 NOT_FAILED 다.
    */
   async resumeLead(byId: number, id: number, dto: { to?: string }): Promise<LeadDto> {
-    const [row] = await this.q(`SELECT id, stage, fail_from FROM lead WHERE id = $1`, [id]);
-    if (!row) throw new NotFoundException('상담 건을 찾을 수 없습니다');
-    if (String(row.stage) !== 'failed') {
-      throw new ConflictException({ code: 'NOT_FAILED', message: '실패 상태의 건만 되살릴 수 있습니다' });
-    }
-    let target: string | null = dto.to ?? ((row.fail_from as string | null) ?? null);
-    if (!target) {
-      const [g] = await this.q(
-        `SELECT stage FROM lead_stage_log WHERE lead_id = $1 AND stage <> 'failed' ORDER BY id DESC LIMIT 1`, [id]);
-      target = g ? String(g.stage) : null;
-    }
-    if (!target) {
-      throw new ConflictException({
-        code: 'UNCLASSIFIED',
-        message: '이력이 없어 되살릴 단계를 판정할 수 없습니다 — 단계를 지정해 주세요 (레거시 건은 추정하지 않습니다)',
-      });
-    }
     await this.lead.manager.transaction(async (em) => {
-      await em.query(`UPDATE lead SET stage = $2, fail_from = NULL, stop_at = NULL, recheck_on = NULL WHERE id = $1`, [id, target]);
+      const [row] = (await em.query(
+        `SELECT id, stage, fail_from FROM lead WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; stage: string; fail_from: string | null }>;
+      if (!row) throw new NotFoundException('상담 건을 찾을 수 없습니다');
+      if (String(row.stage) !== 'failed') {
+        throw new ConflictException({ code: 'NOT_FAILED', message: '실패 상태의 건만 되살릴 수 있습니다' });
+      }
+      let target: string | null = dto.to ?? (row.fail_from ?? null);
+      if (!target) {
+        const [g] = (await em.query(
+          `SELECT stage FROM lead_stage_log WHERE lead_id = $1 AND stage <> 'failed' ORDER BY id DESC LIMIT 1`, [id],
+        )) as Array<{ stage: string }>;
+        target = g ? String(g.stage) : null;
+      }
+      if (!target) {
+        throw new ConflictException({
+          code: 'UNCLASSIFIED',
+          message: '이력이 없어 되살릴 단계를 판정할 수 없습니다 — 단계를 지정해 주세요 (레거시 건은 추정하지 않습니다)',
+        });
+      }
+      const written = writtenRows(await em.query(
+        `UPDATE lead SET stage = $2, fail_from = NULL, recheck_on = NULL WHERE id = $1 AND stage = 'failed' RETURNING id`, [id, target],
+      ));
+      if (!written.length) throw new ConflictException({ code: 'NOT_FAILED', message: '실패 상태의 건만 되살릴 수 있습니다' });
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, $2, $3)`, [id, target, byId]);
     });
     return this.leadOne(id);
@@ -1295,6 +1512,8 @@ export class OpsService {
     const byMkt = new Map<number, MfbThreadDto>();
     const lastComment = new Map<number, MfbPostDto>();
     const answered = new Map<number, Set<number>>();
+    /* W11 · N-29 ③ — 「보류」로 답한 코멘트. 보류는 카드를 풀지 않는다(고친 것은 `answered` 만 · 칩은 원문 둘 그대로) */
+    const heldOn = new Map<number, Set<number>>();
 
     for (const r of rows) {
       const mktId = leadId(r.mkt_id);
@@ -1317,6 +1536,7 @@ export class OpsService {
         };
         byMkt.set(mktId, t);
         answered.set(mktId, new Set());
+        heldOn.set(mktId, new Set());
       }
       const kind = String(r.kind) as MfbKind;
       const post: MfbPostDto = {
@@ -1327,17 +1547,18 @@ export class OpsService {
       };
       t.posts.push(post);
       if (kind === 'comment') lastComment.set(mktId, post);
-      else if (r.parent_id != null) answered.get(mktId)?.add(leadId(r.parent_id));
+      else if (r.parent_id != null) (kind === 'hold' ? heldOn : answered).get(mktId)?.add(leadId(r.parent_id));
     }
 
-    // 「고쳤습니다 / 확인 필요」는 **가장 나중 코멘트에 답이 달렸는가** 하나로 정한다.
-    // 시각 비교로 만들면 칩과 머리의 숫자가 갈린다 (D-R39).
+    // 「고쳤습니다 / 확인 필요」는 **가장 나중 코멘트에 「고친 것 알리기」 답이 달렸는가** 하나로 정한다.
+    // 시각 비교로 만들면 칩과 머리의 숫자가 갈린다 (D-R39). 보류는 답이지만 고친 것이 아니다(N-29 ③ — 「확인 필요」로 남는다).
     const threads = [...byMkt.values()];
     for (const t of threads) {
       const last = lastComment.get(t.mktId);
       const done = last ? (answered.get(t.mktId)?.has(last.id) ?? false) : true;
       t.state = done ? 'fixed' : 'needs_fix';
       t.stateLabel = mfbStateLabel(t.state);
+      t.held = !done && !!last && (heldOn.get(t.mktId)?.has(last.id) ?? false);
       if (last) t.at = last.at;
     }
     /* 차례는 **최근 코멘트가 위**다 — 원문 §60 컷은 「고쳤습니다」(21:15)가 「확인 필요」(21:10) 위에 선다 (g6 60-1 · x5).
@@ -1375,8 +1596,16 @@ export class OpsService {
   /**
    * 담당자 답변 — 원문 §60 「담당자 답변은 **대표에게만**」.
    * 코멘트를 쓴 대표 한 사람에게만 간다. 전원 공지는 대표 코멘트 쪽 규칙이다.
+   *
+   * W11 · N-29 ③ — 답은 두 갈래다: 「고친 것 알리기」(reply · 카드를 푼다) · 「보류」(hold · 카드는 「확인 필요」로 남는다).
+   * 보류는 코멘트마다 한 번이고, 이미 고친 것을 알린 코멘트에는 보류가 없다. 코멘트 한 줄을 잠그고 그 아래 답을 다시 본다
+   * — 두 창에서 동시에 눌러도 판정이 갈리지 않는다(`mfb_hold_once` 유일 색인이 마지막으로 막는다).
    */
   async reply(viewerId: number, mktId: number, dto: MfbReplyWriteDto): Promise<MfbThreadDto[]> {
+    const kind = dto.kind ?? 'reply';
+    if (!(MFB_ANSWER_KINDS as readonly string[]).includes(kind)) {
+      throw new ConflictException({ code: 'MFB_KIND_INVALID', message: '답은 고친 것 알리기 · 보류 중 하나입니다' });
+    }
     const [parent] = await this.q(
       `SELECT f.id, f.by_id, f.kind, f.mkt_id, m.by_id AS owner_id, m.channel, m.item, m.title
          FROM mfb f JOIN mkt m ON m.id = f.mkt_id WHERE f.id = $1`,
@@ -1393,15 +1622,29 @@ export class OpsService {
     const name = mktTitle((parent.title as string) ?? null, String(parent.channel), String(parent.item));
 
     await this.lead.manager.transaction(async (em) => {
+      await em.query(`SELECT id FROM mfb WHERE id = $1 FOR UPDATE`, [dto.parentId]);
+      if (kind === 'hold') {
+        const [seen] = (await em.query(
+          `SELECT count(*) FILTER (WHERE kind = 'reply')::int AS fixed, count(*) FILTER (WHERE kind = 'hold')::int AS held
+             FROM mfb WHERE parent_id = $1`,
+          [dto.parentId],
+        )) as Array<{ fixed: number; held: number }>;
+        if (Number(seen?.fixed ?? 0) > 0) {
+          throw new ConflictException({ code: 'MFB_ALREADY_FIXED', message: '이미 고친 것을 알린 코멘트입니다' });
+        }
+        if (Number(seen?.held ?? 0) > 0) {
+          throw new ConflictException({ code: 'MFB_ALREADY_HELD', message: '이미 보류한 코멘트입니다 — 고친 뒤 「고친 것 알리기」로 답해 주세요' });
+        }
+      }
       await em.query(
-        `INSERT INTO mfb (mkt_id, by_id, body, kind, parent_id) VALUES ($1, $2, $3, 'reply', $4)`,
-        [mktId, viewerId, dto.body.trim(), dto.parentId],
+        `INSERT INTO mfb (mkt_id, by_id, body, kind, parent_id) VALUES ($1, $2, $3, $4, $5)`,
+        [mktId, viewerId, dto.body.trim(), kind, dto.parentId],
       );
       const to = leadId(parent.by_id);
       if (to !== viewerId) {
         await em.query(
           `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?mkt', 'request', $4)`,
-          [to, viewerId, `피드백 답변 — ${name}`, NOTI_TITLE.mktReply],
+          [to, viewerId, `${kind === 'hold' ? '피드백 보류' : '피드백 답변'} — ${name}`, NOTI_TITLE.mktReply],
         );
       }
     });
@@ -1444,21 +1687,28 @@ export class OpsService {
    * 두 표(PLAN · TODO)에서 오지만 화면은 한 줄씩만 본다 — 「남은 날」 낱말도 「기한 지난 것 N건」도
    * 서버가 만든다. 화면이 날짜를 빼기 시작하면 머리의 숫자와 줄의 색이 갈린다 (D-R37).
    */
-  private async planDeadlines(today: string): Promise<{ planDues: PlanDueRowDto[]; planOverdue: number }> {
+  private async planDeadlines(
+    today: string, viewerId: number, canApprovePlan: boolean,
+  ): Promise<{ planDues: PlanDueRowDto[]; planOverdue: number }> {
+    /* N-72 — 기한 표도 보이는 기획의 줄만 싣는다. 과제 줄은 **그 기획이 보일 때만** 선다(과제 제목도 기획의 일부다)
+       N-95 — 반려된 기한도 표에 선다: 원문 §62 첫 줄 「08-19 · D-2 · 기획 마감」이 §61 「보완 요청」 카드의 반려된 날짜다
+       (W11 재대조). 붉게 칠하고 「기한 지난 것」으로 세는 판정은 §61 카드처럼 **지금 기한만** 본다 — 반려된 날짜는 더 이상 마감이 아니다. */
+    const visible = planCanSql('p', '$2', '$3');
     const rows = await this.q(
       `SELECT 'plan' AS kind, p.id AS ref_id, p.id AS plan_id, p.title AS title, p.title AS plan_title,
-              to_char(p.due_on,'YYYY-MM-DD') AS due_on, p.stage, o.name AS owner_name
+              to_char(COALESCE(p.due_on, p.due_rejected_on),'YYYY-MM-DD') AS due_on, p.stage, o.name AS owner_name,
+              (p.due_on IS NULL) AS rejected
          FROM plan p LEFT JOIN staff o ON o.id = p.owner_id
-        WHERE p.due_on IS NOT NULL AND p.stage = ANY($1::text[])
+        WHERE COALESCE(p.due_on, p.due_rejected_on) IS NOT NULL AND p.stage = ANY($1::text[]) AND ${visible}
        UNION ALL
        SELECT 'task', t.id, p.id, t.title, p.title,
-              to_char(t.due_on,'YYYY-MM-DD'), p.stage, o.name
+              to_char(t.due_on,'YYYY-MM-DD'), p.stage, o.name, false
          FROM todo t
          JOIN plan p ON p.id = t.plan_id
          LEFT JOIN staff o ON o.id = t.to_id
-        WHERE t.due_on IS NOT NULL AND NOT t.done
+        WHERE t.due_on IS NOT NULL AND NOT t.done AND ${visible}
         ORDER BY 6, 2`,
-      [[...PLAN_OPEN_STAGES]],
+      [[...PLAN_OPEN_STAGES], viewerId, canApprovePlan],
     );
 
     const planDues: PlanDueRowDto[] = rows.map((r) => {
@@ -1472,7 +1722,7 @@ export class OpsService {
         dueOn: due,
         // 「D-2 · 오늘 · 1일 지남」 — 낱말은 lib/plan-words 한 곳에서 나온다
         dueLabel: dueLabel(left),
-        overdueDays: Math.max(0, -left),
+        overdueDays: r.rejected === true ? 0 : Math.max(0, -left),
         title: String(r.title), planId: leadId(r.plan_id), planTitle: String(r.plan_title),
         ownerName: (r.owner_name as string) ?? null,
         stage, stageLabel: planStageLabel(stage),
@@ -1493,14 +1743,23 @@ export class OpsService {
       `SELECT p.id, p.title, p.stage, p.goal, p.research, p.ask, p.owner_id, p.rework_reason,
               to_char(p.due_on,'YYYY-MM-DD') AS due_on, p.due_approved_at,
               to_char(p.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS created_on,
-              o.name AS owner_name, a.name AS due_by_name
+              o.name AS owner_name, a.name AS due_by_name,
+              -- W11 · N-72 공개 범위와 지정된 사람 · N-95 반려된 기한(누가)
+              p.share,
+              COALESCE((SELECT array_agg(pp.staff_id ORDER BY pp.staff_id) FROM plan_pick pp WHERE pp.plan_id = p.id), '{}') AS pick_ids,
+              COALESCE((SELECT array_agg(st.name ORDER BY pp.staff_id) FROM plan_pick pp JOIN staff st ON st.id = pp.staff_id
+                         WHERE pp.plan_id = p.id), '{}') AS pick_names,
+              to_char(p.due_rejected_on,'YYYY-MM-DD') AS due_rejected_on, rj.name AS due_rejected_by_name,
+              ${planCanSql('p', '$2', '$3')} AS visible
          FROM plan p
          LEFT JOIN staff o ON o.id = p.owner_id
          LEFT JOIN staff a ON a.id = p.due_approved_by
+         LEFT JOIN staff rj ON rj.id = p.due_rejected_by
         WHERE p.id = $1`,
-      [id],
+      [id, viewerId, canApprove],
     );
-    if (!p) return null;
+    // 보이지 않는 기획은 없는 것과 같다 — 목록에서 빠진 기획을 주소로 열 수 있으면 「지정 공개」가 거짓이 된다 (N-72)
+    if (!p || p.visible !== true) return null;
 
     const tasks = (await this.q(
       `SELECT t.id, t.title, t.done, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name
@@ -1518,32 +1777,21 @@ export class OpsService {
     });
 
     const due = (p.due_on as string) ?? null;
-    const dueState = planDueState(due, p.due_approved_at);
+    const rejectedOn = (p.due_rejected_on as string) ?? null;
     const stage = String(p.stage);
     const open = PLAN_OPEN_STAGES.includes(stage);
 
     /* 원문 §61·§65: 「대표는 **기한을 먼저 승인해야** 최종 승인이 열립니다」.
-       판정은 여기 한 곳이고, 막힌 이유까지 서버가 문장으로 내려보낸다 — 화면이 역할과
-       기한 상태를 다시 조합하면 단추 모양과 서버의 답이 갈린다 (D-R39). */
-    /* 담당자 자신은 기한도 최종 승인도 못 한다 — 쓰기 경로(`decidePlanDue`·`reviewPlan`)와 같은 판정이다 */
-    /* 기한과 최종은 **서로 다른 자리**다 — 한쪽만 다시 막는 날 따로 물을 수 있어야 한다 */
-    const ownerBlocksDue = blocksSelfApproval('plan-due', p.owner_id, viewerId);
-    const ownerBlocksReview = blocksSelfApproval('plan', p.owner_id, viewerId);
-    const canDecideDue = canApprove && dueState === 'proposed' && !ownerBlocksDue;
-    /* S6 — 「검토 요청」이 결재의 전제다. 전에는 `open`(draft·review·rework)이면 다 열려서
-       **draft 를 review 를 건너뛰고 바로 승인**할 수 있었다: 올려도 그만 안 올려도 그만인 칸이었다. */
-    /* 「보완 요청」은 최종 승인과 **같은 문을 지나되 기한 승인을 보지 않는다** — 원문 규칙이 막는 것은
-       「최종 승인」뿐이다(슬라이드 61·65 · 컷 §65 의 살아 있는 「보완 요청」 · g6 65-7 · x5). */
-    const reworkBlockedReason =
-      !canApprove ? '기획 결재는 대표만 합니다'
-        : ownerBlocksReview ? '자기가 담당인 기획은 자기가 결재할 수 없습니다'
-          : !open ? '이미 끝난 기획입니다'
-            : stage !== 'review' ? '아직 검토 요청이 올라오지 않았습니다'
-              : null;
-    const reviewBlockedReason = reworkBlockedReason ?? (dueState !== 'approved' ? '기한부터 승인하세요' : null);
+       판정은 `planGates` 한 곳이고 쓰기(`decidePlanDue`·`reviewPlan`)가 **잠근 행으로** 같은 함수를 부른다 (PB-12-2).
+       막힌 이유까지 서버가 문장으로 내려보낸다 — 화면이 역할과 기한 상태를 다시 조합하면 단추와 서버가 갈린다 (D-R39). */
+    const { dueState, canDecideDue, reworkBlockedReason, reviewBlockedReason } = OpsService.planGates(
+      { stage, owner_id: p.owner_id, due_on: due, due_approved_at: p.due_approved_at, due_rejected_on: rejectedOn },
+      canApprove, viewerId,
+    );
 
     /* 고칠 수 있는지도 **쓰기와 같은 집합**을 본다 — 막힌 문장은 `PATCH` 가 409 로 내는 그 문장이다 */
     const canEdit = PLAN_WRITABLE_STAGES.includes(stage);
+    const share = (p.share as string) ?? null;
 
     return {
       id: leadId(p.id), title: String(p.title), stage, stageLabel: planStageLabel(stage),
@@ -1553,6 +1801,9 @@ export class OpsService {
       research: (p.research as string) ?? null, ask: (p.ask as string) ?? null,
       dueOn: due, dueState, dueStateLabel: PLAN_DUE_STATE_LABEL[dueState as PlanDueState],
       dueApprovedByName: (p.due_by_name as string) ?? null,
+      // N-95 — 반려된 기한과 반려한 사람 (옛 반려는 기록이 없어 null · N-25)
+      dueRejectedOn: rejectedOn,
+      dueRejectedByName: rejectedOn ? ((p.due_rejected_by_name as string) ?? null) : null,
       overdueDays: open && due && due < today ? daysSince(due) : 0,
       canDecideDue, canReview: reviewBlockedReason === null, reviewBlockedReason,
       canRework: reworkBlockedReason === null, reworkBlockedReason,
@@ -1562,7 +1813,20 @@ export class OpsService {
       // 「+ 대표 지시」 — 쓰기(`addPlanTask`)와 같은 함수가 판정한다 (w5 · 65-4 · S5)
       canAddTask: planTaskBlockedReason(stage, canApprove) === null,
       addTaskBlockedReason: planTaskBlockedReason(stage, canApprove),
+      // N-72 — 공개 범위 · 지정된 사람. 옛 기획(NULL)은 칩이 없다. 고르는 칸은 단계와 무관하게 선다(누가 보는가는 본문이 아니다)
+      share, shareLabel: planShareLabel(share),
+      pickIds: ((p.pick_ids ?? []) as unknown[]).map((v) => leadId(v)),
+      pickNames: ((p.pick_names ?? []) as unknown[]).map((v) => String(v)),
+      canEditShare: OpsService.canEditPlanShare(p.owner_id, viewerId, canApprove),
     };
+  }
+
+  /**
+   * 공개 범위를 바꿀 수 있는가 (N-72) — **담당 · 결재권자**. 지정된 사람은 볼 수만 있다 —
+   * 볼 수 있다고 누구에게 보일지까지 정하면 지정 공개가 한 사람의 선택으로 풀린다. 읽기(canEditShare)와 쓰기가 같은 함수다.
+   */
+  private static canEditPlanShare(ownerId: unknown, viewerId: number, canApprove: boolean): boolean {
+    return canApprove || (ownerId != null && Number(ownerId) === viewerId);
   }
 
   /**
@@ -1576,10 +1840,8 @@ export class OpsService {
   async addPlanTask(viewerId: number, canApprove: boolean, id: number, dto: PlanTaskCreateDto): Promise<PlanDetailDto> {
     const title = dto.title.trim();
     await this.lead.manager.transaction(async (em) => {
-      const [cur] = (await em.query(
-        `SELECT id, title, stage FROM plan WHERE id = $1 FOR UPDATE`, [id],
-      )) as Array<{ id: string; title: string; stage: string }>;
-      if (!cur) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
+      // 잠근 채 읽는다 — 보이지 않는 기획(N-72)은 없는 것과 같다
+      const cur = await this.lockPlan(em, id, viewerId, canApprove);
       const blocked = planTaskBlockedReason(cur.stage, canApprove);
       if (blocked) throw new ConflictException({ code: canApprove ? 'PLAN_DONE' : 'CEO_ONLY', message: blocked });
       if (!title) throw new ConflictException({ code: 'TASK_TITLE_REQUIRED', message: '할 일을 적어 주세요' });
@@ -1608,46 +1870,59 @@ export class OpsService {
   /**
    * 기한 승인 · 반려 — 원문 §65 의 띠 안 단추 둘.
    *
-   * 반려는 **기한을 지운다.** 담당자가 새 날짜를 다시 내야 하기 때문이다 — 승인 안 된 날짜를
-   * 그대로 두면 §62 기한 표에 「대표를 지나오지 않은 마감」이 섞인다.
+   * 반려는 **기한을 지운다.** 담당자가 새 날짜를 다시 내야 하기 때문이다. 지운 날짜는 반려 칸에 남아(N-95)
+   * §61 카드와 §62 표에 원문대로 서되, 지금 기한이 아니라서 지난 기한으로 세지 않는다(W11 재대조).
    */
   async decidePlanDue(viewerId: number, canApprove: boolean, id: number, dto: PlanDueDecisionDto): Promise<PlanDetailDto> {
     if (!canApprove) {
       throw new ConflictException({ code: 'CEO_ONLY', message: '기한 승인은 대표만 합니다' });
     }
-    const [row] = await this.q(
-      `SELECT id, due_on, due_approved_at, owner_id FROM plan WHERE id = $1`, [id],
-    );
-    if (!row) throw new NotFoundException('기획이 없습니다');
-    // 올린 사람은 자기 기한을 스스로 승인하지 못한다 — `createPlan` 이 담당 기본값을 호출자로 박으므로
-    // 이 검사가 없으면 「올리고 내가 승인」이 한 사람 안에서 닫힌다 (2026-09-20 검수)
-    if (blocksSelfApproval('plan-due', row.owner_id, viewerId)) {
-      throw new ConflictException({
-        code: SELF_APPROVAL_CODE,
-        message: '자기가 담당인 기획의 기한은 자기가 승인할 수 없습니다 — 내는 사람과 승인하는 사람은 다릅니다',
-      });
-    }
-    if (!row.due_on) {
-      throw new ConflictException({ code: 'NO_DUE', message: '제안된 기한이 없습니다' });
-    }
-    if (row.due_approved_at) {
-      throw new ConflictException({ code: 'DUE_ALREADY_APPROVED', message: '이미 승인된 기한입니다' });
-    }
-
-    const beforeDue = { dueOn: row.due_on, approvedAt: row.due_approved_at };
+    /*
+     * PB-12-2 — **잠근 행으로 판정하고, 기대 상태를 조건으로 쓴다.** 전에는 잠그지 않고 읽은 뒤 트랜잭션에서 무조건
+     * 승인했다: 그 사이 담당이 기한을 옮기면(patchPlan 은 잠근다) 대표가 본 적 없는 날짜가 승인되고 감사 줄에는
+     * 옛 날짜가 적혔다. 이제 담당의 쓰기가 끝날 때까지 기다린 뒤 **지금 날짜**를 보고, 대표가 본 날짜와 다르면 돌려보낸다.
+     */
     await this.lead.manager.transaction(async (em) => {
-      if (dto.approve) {
-        await em.query(`UPDATE plan SET due_approved_at = now(), due_approved_by = $2 WHERE id = $1`, [id, viewerId]);
-      } else {
-        await em.query(`UPDATE plan SET due_on = NULL, due_approved_at = NULL, due_approved_by = NULL WHERE id = $1`, [id]);
+      const row = await this.lockPlan(em, id, viewerId, canApprove);
+      // 올린 사람은 자기 기한을 스스로 승인하지 못한다 — `createPlan` 이 담당 기본값을 호출자로 박으므로
+      // 이 검사가 없으면 「올리고 내가 승인」이 한 사람 안에서 닫힌다 (2026-09-20 검수)
+      if (blocksSelfApproval('plan-due', row.owner_id, viewerId)) {
+        throw new ConflictException({
+          code: SELF_APPROVAL_CODE,
+          message: '자기가 담당인 기획의 기한은 자기가 승인할 수 없습니다 — 내는 사람과 승인하는 사람은 다릅니다',
+        });
       }
-      // 반려는 날짜를 지우는 파괴적 쓰기다 — 흔적이 없으면 무엇이 지워졌는지 아무도 모른다
+      if (!row.due_on) {
+        throw new ConflictException({ code: 'NO_DUE', message: '제안된 기한이 없습니다' });
+      }
+      if (row.due_on !== dto.dueOn) {
+        // 대표가 본 날짜가 아니면 승인도 반려도 하지 않는다 — 옮겨졌으면 다시 보고 정한다
+        throw new ConflictException({ code: 'PLAN_DUE_CHANGED', message: planDueChangedMessage(row.due_on) });
+      }
+      if (row.due_approved_at) {
+        throw new ConflictException({ code: 'DUE_ALREADY_APPROVED', message: '이미 승인된 기한입니다' });
+      }
+
+      const beforeDue = { dueOn: row.due_on, approvedAt: null };
+      /* 기대 상태 조건으로 쓴다 — 잠근 행이라 어긋날 수 없지만, 조건이 곧 이 쓰기의 뜻이다 (날짜 · 미승인) */
+      const where = `WHERE id = $1 AND due_on = $2::date AND due_approved_at IS NULL`;
+      if (dto.approve) {
+        await em.query(`UPDATE plan SET due_approved_at = now(), due_approved_by = $3 ${where}`, [id, dto.dueOn, viewerId]);
+      } else {
+        /* N-95 — 반려는 날짜를 지우고 **무엇을 언제 누가** 반려했는지 남긴다. 카드가 「D-2 08-19 · 기한 반려」를 세운다 */
+        await em.query(
+          `UPDATE plan SET due_on = NULL, due_approved_at = NULL, due_approved_by = NULL,
+                           due_rejected_on = $2::date, due_rejected_at = now(), due_rejected_by = $3 ${where}`,
+          [id, dto.dueOn, viewerId],
+        );
+      }
+      // 반려는 날짜를 지우는 파괴적 쓰기다 — 흔적이 없으면 무엇이 지워졌는지 아무도 모른다. 적는 날짜는 **결정한 그 날짜**다
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
          VALUES ($1, 'plan', $2, $3, $4::jsonb, $5::jsonb)`,
         [viewerId, id, dto.approve ? 'due_approve' : 'due_reject',
           JSON.stringify(beforeDue),
-          JSON.stringify(dto.approve ? { dueOn: row.due_on, approvedBy: viewerId } : { dueOn: null })],
+          JSON.stringify(dto.approve ? { dueOn: dto.dueOn, approvedBy: viewerId } : { dueOn: null, rejectedOn: dto.dueOn })],
       );
     });
     return (await this.planDetail(id, canApprove, viewerId))!;
@@ -1655,44 +1930,45 @@ export class OpsService {
 
   /** 최종 승인 · 보완 요청 — **기한이 먼저 승인돼야 열린다** (원문 §61·§65) */
   async reviewPlan(viewerId: number, canApprove: boolean, id: number, dto: PlanReviewDto): Promise<PlanDetailDto> {
-    const before = await this.planDetail(id, canApprove, viewerId);
-    if (!before) throw new NotFoundException('기획이 없습니다');
-    const [ownerRow] = await this.q(`SELECT owner_id FROM plan WHERE id = $1`, [id]);
-    // 기한과 같은 규칙 — 올린 사람은 최종 승인도 하지 못한다
-    if (blocksSelfApproval('plan', ownerRow?.owner_id, viewerId)) {
-      throw new ConflictException({
-        code: SELF_APPROVAL_CODE,
-        message: '자기가 담당인 기획은 자기가 결재할 수 없습니다 — 내는 사람과 결재하는 사람은 다릅니다',
-      });
-    }
-    /* 결정마다 제 문을 본다 — 최종 승인은 기한 승인을 기다리고, 보완 요청은 기다리지 않는다 (g6 65-7 · x5).
-       막힌 문장은 읽기(`reviewBlockedReason`·`reworkBlockedReason`)와 같은 말이다 (S5 · D-R22). */
-    if (dto.decision === 'rework' ? !before.canRework : !before.canReview) {
-      const onlyDue = dto.decision === 'approve' && before.canRework;
-      throw new ConflictException({
-        code: onlyDue ? 'DUE_NOT_APPROVED' : 'NOT_REVIEWABLE',
-        message: (dto.decision === 'rework' ? before.reworkBlockedReason : before.reviewBlockedReason) ?? '지금은 결재할 수 없습니다',
-      });
-    }
-    if (dto.decision === 'rework' && !dto.reason?.trim()) {
-      throw new ConflictException({ code: 'REASON_REQUIRED', message: '보완 요청에는 사유가 필요합니다' });
-    }
-
     const next = dto.decision === 'approve' ? 'approved' : 'rework';
     const reason = dto.reason?.trim() || null;
+    /*
+     * PB-12-2 — 판정도 쓰기도 **잠근 행 하나로** 한다. 전에는 판정을 트랜잭션 밖에서 하고 `UPDATE … WHERE id` 로
+     * 무조건 썼다 — 두 결재자가 동시에 누르면 마지막 쓰기가 이겼고(먼저 커밋된 보완 요청이 승인에 덮였다) 감사 줄은 둘 다 남았다.
+     */
     await this.lead.manager.transaction(async (em) => {
+      const row = await this.lockPlan(em, id, viewerId, canApprove);
+      // 기한과 같은 규칙 — 올린 사람은 최종 승인도 하지 못한다
+      if (blocksSelfApproval('plan', row.owner_id, viewerId)) {
+        throw new ConflictException({
+          code: SELF_APPROVAL_CODE,
+          message: '자기가 담당인 기획은 자기가 결재할 수 없습니다 — 내는 사람과 결재하는 사람은 다릅니다',
+        });
+      }
+      /* 결정마다 제 문을 본다 — 최종 승인은 기한 승인을 기다리고, 보완 요청은 기다리지 않는다 (g6 65-7 · x5).
+         막힌 문장은 읽기(`reviewBlockedReason`·`reworkBlockedReason`)와 같은 함수에서 나온다 (S5 · D-R22). */
+      const gate = OpsService.planGates(row, canApprove, viewerId);
+      const blocked = dto.decision === 'rework' ? gate.reworkBlockedReason : gate.reviewBlockedReason;
+      if (blocked) {
+        const onlyDue = dto.decision === 'approve' && gate.reworkBlockedReason === null;
+        throw new ConflictException({ code: onlyDue ? 'DUE_NOT_APPROVED' : 'NOT_REVIEWABLE', message: blocked });
+      }
+      if (dto.decision === 'rework' && !reason) {
+        throw new ConflictException({ code: 'REASON_REQUIRED', message: '보완 요청에는 사유가 필요합니다' });
+      }
       /* S6 — 사유를 **행에** 남긴다. 그동안 `log` 에만 들어가 담당자가 볼 방법이 없었다.
-         승인이면 지운다: 지난 반려 사유가 승인된 기획에 남아 있으면 지금 상태를 속인다. */
+         승인이면 지운다: 지난 반려 사유가 승인된 기획에 남아 있으면 지금 상태를 속인다.
+         기대 상태(검토 요청) 조건으로 쓴다 — 잠근 행이라 어긋날 수 없지만 조건이 곧 이 쓰기의 뜻이다. */
       await em.query(
-        `UPDATE plan SET stage = $2, rework_reason = $3 WHERE id = $1`,
+        `UPDATE plan SET stage = $2, rework_reason = $3 WHERE id = $1 AND stage = 'review'`,
         [id, next, next === 'rework' ? reason : null],
       );
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
          VALUES ($1, 'plan', $2, $3, $4::jsonb, $5::jsonb)`,
         [viewerId, id, dto.decision,
-          JSON.stringify({ stage: before.stage }),
-          JSON.stringify({ stage: next, reason: dto.reason?.trim() ?? null })],
+          JSON.stringify({ stage: row.stage }),
+          JSON.stringify({ stage: next, reason })],
       );
     });
     return (await this.planDetail(id, canApprove, viewerId))!;
@@ -1718,12 +1994,19 @@ export class OpsService {
     if (dto.title !== undefined && !title) {
       throw new ConflictException({ code: 'PLAN_TITLE_REQUIRED', message: '제목을 적어 주세요' });
     }
+    /* 본문(제목·목표·리서치·결정 요청·기한)과 공개 범위(누가 보는가)는 **다른 쓰기**다 — 본문만 단계 잠금을 받는다.
+       결재가 끝난 기획이라도 누구에게 보일지는 바꿀 수 있어야 한다(보는 사람은 결재한 글의 일부가 아니다 · N-72). */
+    const content = title !== undefined || dto.goal !== undefined || dto.research !== undefined
+      || dto.ask !== undefined || dto.dueOn !== undefined;
+    const shareSent = dto.share !== undefined || dto.pickIds !== undefined;
     await this.lead.manager.transaction(async (em) => {
-      const [cur] = (await em.query(
-        `SELECT id, stage, due_approved_at FROM plan WHERE id = $1 FOR UPDATE`, [id],
-      )) as Array<{ id: string; stage: string; due_approved_at: Date | null }>;
-      if (!cur) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
-      if (!PLAN_WRITABLE_STAGES.includes(cur.stage)) {
+      // 잠근 채 읽는다(PB-12-2) — 보이지 않는 기획(N-72)은 없는 것과 같다
+      const cur = await this.lockPlan(em, id, viewerId, canApprove);
+      // 누가 보는가는 담당 · 결재권자만 정한다 — 쓰기 전에 막는다 (읽기의 canEditShare 와 같은 함수 · N-72)
+      if (shareSent && !OpsService.canEditPlanShare(cur.owner_id, viewerId, canApprove)) {
+        throw new ForbiddenException({ code: 'PLAN_SHARE_FORBIDDEN', message: '공개 범위는 담당이나 결재권자가 정합니다' });
+      }
+      if (content && !PLAN_WRITABLE_STAGES.includes(cur.stage)) {
         // 읽기의 editBlockedReason 과 **같은 함수**에서 나온 같은 문장이다 (D-R22 · S5)
         throw new ConflictException({ code: 'PLAN_LOCKED', message: planLockedMessage(cur.stage) });
       }
@@ -1746,17 +2029,59 @@ export class OpsService {
       if (dto.goal !== undefined) put('goal', dto.goal?.trim() || null);
       if (dto.research !== undefined) put('research', dto.research?.trim() || null);
       if (dto.ask !== undefined) put('ask', dto.ask?.trim() || null);
-      if (dto.dueOn !== undefined) put('due_on', dto.dueOn ?? null, '::date');
-      if (!sets.length) return;
+      if (dto.dueOn !== undefined) {
+        put('due_on', dto.dueOn ?? null, '::date');
+        /* N-95 — 담당이 **새 기한을 내면** 반려 표시를 비운다(표의 plan_due_rejected_clears 가 같은 것을 지킨다).
+           기한을 비우기만 하면(null) 반려 표시는 그대로다 — 새 기한을 낸 것이 아니다. */
+        if (dto.dueOn) sets.push('due_rejected_on = NULL', 'due_rejected_at = NULL', 'due_rejected_by = NULL');
+      }
 
-      await em.query(`UPDATE plan SET ${sets.join(', ')} WHERE id = $1`, params);
-      await em.query(
-        `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'plan',$2,'edit',$3::jsonb)`,
-        // 무엇을 고쳤는지만 남긴다 — 본문 전체를 감사 줄에 복사하면 같은 글이 두 곳에 산다
-        [viewerId, id, JSON.stringify({ fields: sets.map((x) => x.split(' ')[0]) })],
-      );
+      if (sets.length) {
+        await em.query(`UPDATE plan SET ${sets.join(', ')} WHERE id = $1`, params);
+        await em.query(
+          `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'plan',$2,'edit',$3::jsonb)`,
+          // 무엇을 고쳤는지만 남긴다 — 본문 전체를 감사 줄에 복사하면 같은 글이 두 곳에 산다
+          [viewerId, id, JSON.stringify({ fields: [...new Set(sets.map((x) => x.split(' ')[0]).filter((c) => !c.startsWith('due_rejected')))] })],
+        );
+      }
+
+      if (shareSent) await this.writePlanShare(em, viewerId, cur, dto);
     });
     return (await this.planDetail(id, canApprove, viewerId))!;
+  }
+
+  /**
+   * 공개 범위 바꾸기 (N-72) — **권한 쓰기**라 감사 표(`plan.share`)에 한 줄을 남긴다 (N-73 · 쓰기와 같은 트랜잭션).
+   * 지정된 사람은 통째로 갈아 끼운다 — 한 명씩 더하고 빼는 길을 따로 두면 두 벌이 된다. 지정 공개가 아니면 지정이 없다.
+   * 옛 기획(NULL)을 NULL 로 되돌리는 길은 없다 — NULL 은 「모른다」이지 고를 수 있는 값이 아니다.
+   */
+  private async writePlanShare(
+    em: EntityManager, viewerId: number, cur: { id: number; share: string | null },
+    dto: { share?: string; pickIds?: number[] },
+  ): Promise<void> {
+    const share = dto.share ?? cur.share;
+    if (!share) {
+      throw new ConflictException({ code: 'PLAN_SHARE_REQUIRED', message: '공개 범위를 먼저 고르세요 — 전체 공개 또는 지정 공개' });
+    }
+    const beforeIds = ((await em.query(
+      `SELECT staff_id FROM plan_pick WHERE plan_id = $1 ORDER BY staff_id`, [cur.id],
+    )) as Array<{ staff_id: string }>).map((r) => Number(r.staff_id));
+    // 지정 공개로 두고 사람만 안 보냈으면 지금 지정을 그대로 둔다 — 안 보낸 칸을 지우지 않는다(보낸 칸만 고친다)
+    const nextIds = share === 'picked' && dto.pickIds === undefined
+      ? beforeIds
+      : await this.planPicks(share, dto.pickIds);
+    const same = share === cur.share && nextIds.length === beforeIds.length && nextIds.every((v, i) => v === beforeIds[i]);
+    if (same) return;
+    await em.query(`UPDATE plan SET share = $2 WHERE id = $1`, [cur.id, share]);
+    await em.query(`DELETE FROM plan_pick WHERE plan_id = $1`, [cur.id]);
+    if (nextIds.length) {
+      await em.query(`INSERT INTO plan_pick (plan_id, staff_id) SELECT $1, unnest($2::bigint[])`, [cur.id, nextIds]);
+    }
+    await audit(em, 'plan.share', {
+      actorId: viewerId, entityId: cur.id,
+      before: { share: cur.share, pickIds: beforeIds },
+      after: { share, pickIds: nextIds },
+    });
   }
 
   /**
@@ -1775,10 +2100,8 @@ export class OpsService {
    */
   async movePlanStage(viewerId: number, canApprove: boolean, id: number, dto: PlanStageMoveDto): Promise<PlanDetailDto> {
     await this.lead.manager.transaction(async (em) => {
-      const [cur] = (await em.query(
-        `SELECT id, stage FROM plan WHERE id = $1 FOR UPDATE`, [id],
-      )) as Array<{ id: string; stage: string }>;
-      if (!cur) throw new NotFoundException({ code: 'PLAN_NOT_FOUND', message: '기획을 찾을 수 없습니다' });
+      // 잠근 채 판정한다 — 보이지 않는 기획(N-72)은 없는 것과 같다
+      const cur = await this.lockPlan(em, id, viewerId, canApprove);
       const allowed = planNextStages(cur.stage);
       if (!allowed.length) {
         throw new ConflictException({
@@ -1820,13 +2143,19 @@ export class OpsService {
    *
    * 참석은 **세 값**이다 — 아직 답 안 함(`null`) · 참석 · 불참. `null` 을 `false` 로 접으면
    * 「불참하겠다고 답한 사람」과 「아직 안 본 사람」이 같은 칩을 단다.
+   *
+   * @param viewer 보는 사람 (N-32 · W11). 이 창은 이제 **참석자 본인**에게도 열린다 — 「안내 보내기」의 알림 링크가
+   *   오는 곳이고, 참석 응답을 거기서 한다(참석자면 역할 무관 · 강사 참석자 포함). 운영 권한(`canManage`)이 없고
+   *   참석자도 아니면 없는 것과 같다(null → 404). 단추가 서는지(속기록·할 일·안내 · 내 응답)도 여기서 정한다(D-R39).
+   *   인자가 없으면(서비스 직접 호출) 거르지 않고 단추를 모두 닫는다 — 모르는 쪽으로 열지 않는다.
    */
-  async meetingDetail(id: number): Promise<MeetingDetailDto | null> {
+  async meetingDetail(id: number, viewer?: { id: number; canManage: boolean }): Promise<MeetingDetailDto | null> {
     const today = todayKst();
     const [m] = await this.q(
       `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date,
               m.pre_files, m.minutes, ${kstAt('m.minutes_at')} AS minutes_at, b.name AS minutes_by_name,
-              m.ser_id, s.start_min, s.end_min, s.mode, r.name AS room_name, z.label AS zoom_label
+              m.ser_id, ${MEETING_START_MIN} AS start_min, ${MEETING_END_MIN} AS end_min, ${MEETING_MODE} AS mode, r.name AS room_name, z.label AS zoom_label,
+              (SELECT o.canceled FROM ser_occ o WHERE o.ser_id = m.ser_id AND o.on_date = m.on_date) AS canceled
          FROM mtrec m LEFT JOIN staff b ON b.id = m.minutes_by
          ${MEETING_PLACE_JOINS}
         WHERE m.id = $1`,
@@ -1834,21 +2163,25 @@ export class OpsService {
     );
     if (!m) return null;
 
-    const attendees = (await this.q(
-      `SELECT a.staff_id, a.confirmed, s.name, s.title
+    const people = await this.q(
+      `SELECT a.staff_id, a.confirmed, s.name, s.title, s.active
          FROM mtattd a JOIN staff s ON s.id = a.staff_id
         WHERE a.mt_id = $1 ORDER BY s.id`,
       [id],
-    )).map((r) => {
+    );
+    const attendees = people.map((r) => {
       const state = mtAttendState(r.confirmed as boolean | null);
       return {
         staffId: leadId(r.staff_id), name: String(r.name), title: (r.title as string) ?? null,
         state, stateLabel: MT_ATTEND_LABEL[state],
       };
     });
+    const mine = viewer ? attendees.find((a) => a.staffId === viewer.id) ?? null : null;
+    // 운영 권한도 없고 참석자도 아니면 없는 것과 같다 — 회의가 있다는 사실도 새지 않게 404 로 읽힌다
+    if (viewer && !viewer.canManage && !mine) return null;
 
     const tasks = (await this.q(
-      `SELECT t.id, t.title, t.done, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name
+      `SELECT t.id, t.title, t.done, to_char(t.due_on,'YYYY-MM-DD') AS due_on, s.name AS to_name, t.to_id, t.from_id
          FROM todo t LEFT JOIN staff s ON s.id = t.to_id
         WHERE t.mt_id = $1 ORDER BY t.due_on NULLS LAST, t.id`,
       [id],
@@ -1859,12 +2192,20 @@ export class OpsService {
         id: leadId(t.id), title: String(t.title), done,
         toName: (t.to_name as string) ?? null, dueOn: due,
         overdueDays: !done && due && due < today ? daysSince(due) : 0,
+        /* 완료 체크가 서는가 — 쓰기(`PATCH /drawer/todos/:id`)와 같은 판정: 전체 권한 · 받은 사람 · 준 사람 (W11 A' 후속).
+           참석자로만 여는 강사는 **자기에게 온 할 일만** 체크한다 — 남의 줄은 체크 칸이 잠긴다(눌러서 404 를 받지 않게) */
+        canToggle: viewer?.canManage === true
+          || (viewer !== undefined && (Number(t.to_id) === viewer.id || Number(t.from_id) === viewer.id)),
       };
     });
 
     const confirmed = attendees.filter((a) => a.state === 'in').length;
     const files = Array.isArray(m.pre_files) ? (m.pre_files as unknown[]).map((f) => String(f)) : [];
     const mt = String(m.mt_type);
+    const canManage = viewer?.canManage === true;
+    // 「안내 보내기」 — 받을 사람(활동 중인 참석자 · 보내는 나 제외)이 있어야 선다. 막힌 이유는 쓰기(409)와 같은 문장이다
+    const recipients = people.filter((r) => r.active === true && leadId(r.staff_id) !== viewer?.id).length;
+    const noticeBlockedReason = !canManage ? null : OpsService.noticeBlockedReason(m.canceled === true, recipients);
 
     return {
       id: leadId(m.id), mtType: mt, mtTypeLabel: mtTypeLabel(mt),
@@ -1883,22 +2224,116 @@ export class OpsService {
       minutesTemplates: [...MINUTES_TEMPLATES],
       minutesHint: MINUTES_HINT,
       tasks, taskDone: tasks.filter((t) => t.done).length,
+      /* W11 · N-32 — 보는 사람에 따라 서는 단추 (D-R39) */
+      canEdit: canManage,
+      canSendNotice: canManage && noticeBlockedReason === null,
+      noticeBlockedReason,
+      canRespond: mine !== null,
+      myAttend: mine ? { state: mine.state, stateLabel: mine.stateLabel } : null,
     };
+  }
+
+  /** 「안내 보내기」가 막히는 이유 — 읽기(단추)와 쓰기(409)가 같은 함수를 쓴다 (S5 · D-R22) */
+  private static noticeBlockedReason(canceled: boolean, recipients: number): string | null {
+    if (canceled) return '취소된 회의에는 안내를 보내지 않습니다';
+    if (recipients === 0) return '안내를 받을 참석자가 없습니다';
+    return null;
+  }
+
+  /**
+   * §66 「안내 보내기」 (N-32 · W11) — **참석자(직원)에게 NOTI 한 건씩**.
+   *
+   * 본문은 서버가 **사실로만** 조립한다 — 회의 이름 · 일시 · 강의실 또는 줌 계정 · 참가 링크. 지어낸 인사말이 없다.
+   * **줌 비밀번호는 넣지 않는다** — 암호화해 둔 값을 알림 본문(평문)으로 옮기면 암호화가 없던 일이 된다(C98 줌 안내와 같은 선례).
+   * 보내는 나에게는 보내지 않는다(C38 · C99 규약) · 그만둔 사람에게도 보내지 않는다(S4).
+   * 링크는 이 회의 상세다 — 받은 사람이 거기서 「참석 · 불참」을 누른다. 알림 줄들은 한 트랜잭션이다(D-R43).
+   */
+  async sendMeetingNotice(viewerId: number, id: number): Promise<MeetingNoticeResultDto> {
+    const sent = await this.lead.manager.transaction(async (em) => {
+      const [m] = (await em.query(
+        `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date,
+                m.ser_id, ${MEETING_START_MIN} AS start_min, ${MEETING_END_MIN} AS end_min, ${MEETING_MODE} AS mode, r.name AS room_name, z.label AS zoom_label, z.join_url,
+                (SELECT o.canceled FROM ser_occ o WHERE o.ser_id = m.ser_id AND o.on_date = m.on_date) AS canceled
+           FROM mtrec m
+           ${MEETING_PLACE_JOINS}
+          WHERE m.id = $1`,
+        [id],
+      )) as R[];
+      if (!m) throw new NotFoundException({ code: 'MEETING_NOT_FOUND', message: '회의를 찾을 수 없습니다' });
+      const to = (await em.query(
+        `SELECT a.staff_id, s.role::text AS role FROM mtattd a JOIN staff s ON s.id = a.staff_id
+          WHERE a.mt_id = $1 AND s.active AND a.staff_id <> $2 ORDER BY a.staff_id`,
+        [id, viewerId],
+      )) as Array<{ staff_id: string; role: string }>;
+      const blocked = OpsService.noticeBlockedReason(m.canceled === true, to.length);
+      if (blocked) throw new ConflictException({ code: 'MEETING_NOTICE_BLOCKED', message: blocked });
+
+      const name = (m.title as string) ?? mtTypeLabel(String(m.mt_type));
+      const when = [
+        (m.on_date as string) ?? null,
+        m.start_min == null || m.end_min == null ? null : `${OpsService.hm(Number(m.start_min))}–${OpsService.hm(Number(m.end_min))}`,
+      ].filter(Boolean).join(' ');
+      const place = m.ser_id == null ? null
+        : m.mode === 'online'
+          ? `온라인${m.zoom_label ? ` · 줌 ${String(m.zoom_label)}` : ''}${m.join_url ? ` · 참가 ${String(m.join_url)}` : ''}`
+          : (m.room_name as string) ?? null;
+      const body = [name, when || null, place].filter(Boolean).join(' · ');
+      // 링크는 받는 사람이 열 수 있는 자리로 — 운영 화면을 못 여는 강사 참석자는 강사 홈의 회의 창(W11 A' 후속 · lib/meeting-link)
+      await em.query(
+        `INSERT INTO noti (to_id, from_id, body, link, category, title)
+         SELECT t.to_id, $2, $3, t.link, 'schedule', $4 FROM unnest($1::bigint[], $5::text[]) AS t(to_id, link)`,
+        [to.map((r) => r.staff_id), viewerId, body, NOTI_TITLE.meetingNotice,
+          to.map((r) => meetingNotiLink(r.role, id, `/ops?tab=meeting&meeting=${id}`))],
+      );
+      return to.length;
+    });
+    return { sent, meeting: (await this.meetingDetail(id, { id: viewerId, canManage: true }))! };
+  }
+
+  /**
+   * 참석 응답 (N-32 · W11) — **본인이** 자기 줄만 「참석 · 불참」으로 적는다. 대리 입력은 없다.
+   *
+   * 참석자면 역할과 무관하다(강사 참석자 포함) — 그래서 경로에 역할 가드가 없고 여기서 「참석자인가」를 본다.
+   * 날이 지나도 응답하지 않은 줄은 「응답 대기」 그대로다 — 추정으로 불참을 적지 않는다(N-25).
+   */
+  async respondMeeting(viewer: { id: number; canManage: boolean }, id: number, confirmed: boolean): Promise<MeetingDetailDto> {
+    // 본인 줄 하나만 — 세는 CTE 로 「내 줄이 있었는가」를 같은 문장에서 안다
+    const [{ n }] = await this.q<{ n: number }>(
+      `WITH u AS (UPDATE mtattd SET confirmed = $3 WHERE mt_id = $1 AND staff_id = $2 RETURNING 1)
+       SELECT count(*)::int AS n FROM u`,
+      [id, viewer.id, confirmed],
+    );
+    if (n === 0) {
+      const [m] = await this.q(`SELECT id FROM mtrec WHERE id = $1`, [id]);
+      // 회의가 없거나, 운영 권한 없이 참석자도 아닌 사람 — 둘 다 없는 것과 같다
+      if (!m || !viewer.canManage) throw new NotFoundException({ code: 'MEETING_NOT_FOUND', message: '회의를 찾을 수 없습니다' });
+      throw new ForbiddenException({ code: 'MEETING_NOT_ATTENDEE', message: '참석자로 적힌 사람만 응답합니다 — 대신 적지 않습니다' });
+    }
+    return (await this.meetingDetail(id, viewer))!;
   }
 
   /**
    * 속기록 저장 — **누가 언제**를 서버가 남긴다.
    *
    * 화면이 보낸 시각을 믿지 않는다. 시계가 틀린 기계에서 저장하면 회의록의 순서가 뒤집힌다.
+   * **통째로 덮어쓰는 쓰기**라 감사 표(`meeting.minutes`)에 앞말과 새 글을 남긴다(N-73 · 쓰기와 같은 트랜잭션).
    */
   async writeMinutes(viewerId: number, id: number, dto: MinutesWriteDto): Promise<MeetingDetailDto> {
-    const [row] = await this.q(`SELECT id FROM mtrec WHERE id = $1`, [id]);
-    if (!row) throw new NotFoundException('회의가 없습니다');
-    await this.q(
-      `UPDATE mtrec SET minutes = $2, minutes_at = now(), minutes_by = $3 WHERE id = $1`,
-      [id, dto.minutes.trim(), viewerId],
-    );
-    return (await this.meetingDetail(id))!;
+    const minutes = dto.minutes.trim();
+    await this.lead.manager.transaction(async (em) => {
+      const [row] = (await em.query(
+        `SELECT id, minutes FROM mtrec WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<{ id: string; minutes: string | null }>;
+      if (!row) throw new NotFoundException('회의가 없습니다');
+      await em.query(
+        `UPDATE mtrec SET minutes = $2, minutes_at = now(), minutes_by = $3 WHERE id = $1`,
+        [id, minutes, viewerId],
+      );
+      await audit(em, 'meeting.minutes', {
+        actorId: viewerId, entityId: id, before: { minutes: row.minutes ?? null }, after: { minutes },
+      });
+    });
+    return (await this.meetingDetail(id, { id: viewerId, canManage: true }))!;
   }
 
   /**
@@ -1925,12 +2360,18 @@ export class OpsService {
         [dto.title.trim(), viewerId, dto.toId, dto.dueOn ?? null, id],
       );
       if (to.id !== viewerId) {
+        // 강사 담당자는 운영 할 일 화면을 못 연다 — 참석자면 그 회의 창(③ 할 일)으로, 아니면 링크 없이 (W11 A' 후속 · lib/meeting-link)
+        const [who] = (await em.query(
+          `SELECT s.role::text AS role, EXISTS (SELECT 1 FROM mtattd a WHERE a.mt_id = $2 AND a.staff_id = s.id) AS attendee
+             FROM staff s WHERE s.id = $1`,
+          [dto.toId, id],
+        )) as Array<{ role: string; attendee: boolean }>;
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?todo', 'request', $4)`,
-          [dto.toId, viewerId, `회의 할 일 — ${name}`, NOTI_TITLE.meetingTodo],
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, $4, 'request', $5)`,
+          [dto.toId, viewerId, `회의 할 일 — ${name}`, meetingNotiLink(who?.role ?? '', id, '/ops?todo', who?.attendee === true), NOTI_TITLE.meetingTodo],
         );
       }
     });
-    return (await this.meetingDetail(id))!;
+    return (await this.meetingDetail(id, { id: viewerId, canManage: true }))!;
   }
 }

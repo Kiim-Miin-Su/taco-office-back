@@ -178,17 +178,72 @@ d('§60 대표 피드백 (C53)', () => {
     )) as Array<{ id: string }>;
     await svc().comment(CEO, true, Number(m.id), { body: '이름 없는 활동' });
     const t = (await svc().all(CEO, false, true)).feedback.find((x) => x.mktId === Number(m.id))!;
-    expect(t.name).toBe('유튜브 · 영상');
+    // 옛 채널(유튜브)은 옛 이름 그대로 · 항목 `video` 는 원문 낱말 「릴스·영상」으로 읽힌다 (W11 · N-29 ①)
+    expect(t.name).toBe('유튜브 · 릴스·영상');
     // 담당자가 없으면 이 화면을 보는 관리자가 답할 수 있다
     expect(t.canReply).toBe(true);
   });
+  /* ── W11 · N-29 ③ 보류 — 담당 답변의 한 종류 ─────────────────────────── */
+
+  it('보류는 담당 답변의 한 종류 — 칩은 「확인 필요」 그대로 · 「고쳐야 할 것」에서 빠지지 않는다 · 「고친 것 알리기」가 푼다 (N-29 ③)', async () => {
+    await svc().comment(CEO, true, mktId, { body: '제목이 길어 검색에 안 걸립니다' });
+    const [c] = (await thread()).posts;
+    await q.query(`DELETE FROM noti`);
+
+    await svc().reply(OWNER, mktId, { parentId: c.id, body: '다음 주 개편 때 함께 고치겠습니다', kind: 'hold' });
+    const held = await thread();
+    expect(held).toMatchObject({ state: 'needs_fix', stateLabel: '확인 필요', held: true });
+    expect(held.posts.map((p) => [p.kind, p.kindLabel])).toEqual([['comment', '대표 코멘트'], ['hold', '보류']]);
+    expect((await svc().all(CEO, false, true)).feedbackNeedsFix).toBe(1);
+    // 담당 답변과 같은 규칙 — 코멘트를 쓴 대표에게만
+    const rows = await notis();
+    expect(rows.map((r) => [Number(r.to_id), r.body])).toEqual([[CEO, '피드백 보류 — 로드맵 글']]);
+
+    await svc().reply(OWNER, mktId, { parentId: c.id, body: '제목을 줄였습니다' });
+    expect(await thread()).toMatchObject({ state: 'fixed', stateLabel: '고쳤습니다', held: false });
+    expect((await svc().all(CEO, false, true)).feedbackNeedsFix).toBe(0);
+  });
+
+  it('보류는 코멘트마다 한 번 · 고친 것을 알린 뒤에는 보류가 없다 · 담당이 아니면 보류도 못 한다', async () => {
+    await svc().comment(CEO, true, mktId, { body: '코멘트' });
+    const [c] = (await thread()).posts;
+    await expect(svc().reply(OTHER, mktId, { parentId: c.id, body: '제가 미룹니다', kind: 'hold' }))
+      .rejects.toMatchObject({ response: { code: 'NOT_OWNER' } });
+    await svc().reply(OWNER, mktId, { parentId: c.id, body: '미룹니다', kind: 'hold' });
+    await expect(svc().reply(OWNER, mktId, { parentId: c.id, body: '또 미룹니다', kind: 'hold' }))
+      .rejects.toMatchObject({ response: { code: 'MFB_ALREADY_HELD' } });
+    // 표가 마지막으로 막는다 — 서버를 우회해도 보류는 한 번
+    await q.query(`SAVEPOINT hold_twice`);
+    await expect(q.query(
+      `INSERT INTO mfb (mkt_id, by_id, body, kind, parent_id) VALUES ($1, $2, '우회 보류', 'hold', $3)`, [mktId, OWNER, c.id],
+    )).rejects.toThrow(/mfb_hold_once/);
+    await q.query(`ROLLBACK TO SAVEPOINT hold_twice`);
+
+    await svc().reply(OWNER, mktId, { parentId: c.id, body: '고쳤습니다' });
+    await svc().comment(CEO, true, mktId, { body: '새 코멘트' });
+    const [, , , c2] = (await thread()).posts;
+    await svc().reply(OWNER, mktId, { parentId: c2.id, body: '고쳤습니다' });
+    await expect(svc().reply(OWNER, mktId, { parentId: c2.id, body: '이제 미룹니다', kind: 'hold' }))
+      .rejects.toMatchObject({ response: { code: 'MFB_ALREADY_FIXED' } });
+    // 모르는 갈래는 서비스도 막는다(DTO 가 먼저 막는다)
+    await expect(svc().reply(OWNER, mktId, { parentId: c2.id, body: 'x', kind: 'comment' }))
+      .rejects.toMatchObject({ response: { code: 'MFB_KIND_INVALID' } });
+  });
+
+  it('보류도 부모 코멘트를 든다 — 부모 없는 보류는 표가 거부한다', async () => {
+    await expect(q.query(
+      `INSERT INTO mfb (mkt_id, by_id, body, kind, parent_id) VALUES ($1, $2, '부모 없는 보류', 'hold', NULL)`,
+      [mktId, OWNER],
+    )).rejects.toThrow(/mfb_reply_needs_parent/);
+  });
+
   /* ── §59 트래킹 — 기간 토글이 말하는 기간의 활동만 (59-1 · P0) ─────────── */
 
   it('§59 기간을 고르면 **그 기간의 활동만** 온다 — 칩이 「9월」이라 말하면서 8월 활동을 보이지 않는다 (59-1)', async () => {
     const made = (await q.query(
       `INSERT INTO mkt (channel, item, title, on_date, by_id) VALUES
          ('naver','blog','8월 글','2026-08-29',${OWNER}),
-         ('instagram','reels','9월 릴스','2026-09-03',${OWNER})
+         ('instagram','video','9월 릴스','2026-09-03',${OWNER})
        RETURNING id`,
     )) as Array<{ id: string }>;
     const [aug, sep] = made.map((r) => Number(r.id));

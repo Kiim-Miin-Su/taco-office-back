@@ -10,7 +10,8 @@
  * 원문이 두 슬라이드에서 같은 말을 한다 — **「대표는 기한을 먼저 승인해야 최종 승인이
  * 열립니다」.** 컷의 바닥 단추도 「기한부터 승인하세요」다. 아래가 증명하는 것 —
  *   ① **기한 미승인이면 최종 승인이 막힌다.** 화면이 단추를 숨겨도 서버가 막는다.
- *   ② **기한 반려는 기한을 지운다.** 승인 안 된 날짜가 §62 표에 남지 않는다.
+ *   ② **기한 반려는 기한을 지운다.** 지운 날짜는 반려 칸에 남아(W11 · N-95) §62 표에도 원문 「08-19 · D-2 · 기획 마감」처럼 서되,
+ *      지금 기한이 아니라서 붉게 세지 않는다(「기한 지난 것 N건」에 넣지 않는다 · W11 재대조).
  *   ③ **「남은 날」과 「기한 지난 것 N건」을 서버가 만든다** (D-R37).
  *   ④ 상태를 저장하지 않는다 — `due_approved_at` 한 칸에서 파생한다 (D-R39).
  */
@@ -95,7 +96,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
   });
 
   it('기한을 승인하면 최종 승인이 열린다 — 원문 §61·§65 의 순서', async () => {
-    const after = await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    const after = await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(-4) });
     expect(after.dueState).toBe('approved');
     expect(after.dueApprovedByName).toBe('대표');
     expect(after.canReview).toBe(true);
@@ -106,13 +107,18 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
     expect(done.stageLabel).toBe('승인');
   });
 
-  it('기한 반려는 기한을 지운다 — 승인 안 된 날짜를 §62 표에 남기지 않는다', async () => {
-    const after = await svc().decidePlanDue(CEO, true, planId, { approve: false });
+  it('기한 반려는 기한을 지운다 — §62 표에는 반려된 날짜로 서되 지난 기한으로 세지 않는다', async () => {
+    const after = await svc().decidePlanDue(CEO, true, planId, { approve: false, dueOn: day(-4) });
     expect(after.dueOn).toBeNull();
-    expect(after.dueState).toBe('none');
+    // W11 · N-95 — 날짜는 지워지되 반려된 날짜가 남아 「기한 반려」 칩이 선다 (원문 §61 「D-2 08-19 · 기한 반려」)
+    expect({ state: after.dueState, label: after.dueStateLabel, rejectedOn: after.dueRejectedOn, by: after.dueRejectedByName })
+      .toEqual({ state: 'rejected', label: '기한 반려', rejectedOn: day(-4), by: '대표' });
     expect(after.canDecideDue).toBe(false);
-    const { planDues } = await svc().all(CEO, false, true);
-    expect(planDues.filter((r) => r.planId === planId && r.kind === 'plan')).toHaveLength(0);
+    const { planDues, planOverdue } = await svc().all(CEO, false, true);
+    // 원문 §62 첫 줄 「08-19 · D-2 · 기획 마감」 = §61 「보완 요청」 카드의 반려된 날짜 (W11 재대조)
+    expect(planDues.filter((r) => r.planId === planId && r.kind === 'plan').map((r) => ({ dueOn: r.dueOn, dueLabel: r.dueLabel, overdueDays: r.overdueDays })))
+      .toEqual([{ dueOn: day(-4), dueLabel: '4일 지남', overdueDays: 0 }]);
+    expect(planOverdue).toBe(planDues.filter((r) => r.overdueDays > 0).length);
   });
 
   /**
@@ -122,7 +128,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
    * 보는지**는 계속 봐야 한다 — 되돌릴 때 이 줄이 다시 제품의 경계가 된다.
    */
   it('결재 권한이 없으면 기한도 결재도 못 한다 — 서비스가 플래그를 실제로 본다 (원문 §61·§65 「대표만」)', async () => {
-    await expect(svc().decidePlanDue(MGR, false, planId, { approve: true }))
+    await expect(svc().decidePlanDue(MGR, false, planId, { approve: true, dueOn: day(-4) }))
       .rejects.toMatchObject({ response: { code: 'CEO_ONLY' } });
     const v = (await svc().planDetail(planId, false, MGR))!;
     expect(v.canDecideDue).toBe(false);
@@ -130,7 +136,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
   });
 
   it('보완 요청에는 사유가 필요하다 — 왜 되돌아왔는지가 남아야 한다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(-4) });
     await expect(svc().reviewPlan(CEO, true, planId, { decision: 'rework', reason: '  ' }))
       .rejects.toMatchObject({ response: { code: 'REASON_REQUIRED' } });
 
@@ -152,8 +158,8 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
   });
 
   it('이미 승인된 기한은 다시 승인하지 않는다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
-    await expect(svc().decidePlanDue(CEO, true, planId, { approve: true }))
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(-4) });
+    await expect(svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(-4) }))
       .rejects.toMatchObject({ response: { code: 'DUE_ALREADY_APPROVED' } });
   });
 
@@ -183,7 +189,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
   });
 
   it('끝난 기획은 기한 표에서 빠진다 — 남은 일만 센다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(-4) });
     await svc().reviewPlan(CEO, true, planId, { decision: 'approve' });
     const { planDues } = await svc().all(CEO, false, true);
     expect(planDues.filter((r) => r.planId === planId)).toHaveLength(0);
@@ -217,7 +223,7 @@ d('§62 기획 기한 · §65 기획 보고서 (C56)', () => {
     expect(v.reviewBlockedReason).toBe('기한부터 승인하세요');
 
     // 단추가 섰으니 실제로 눌러 본다 — 열린 자리가 정말 통과하는지까지 본다
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(-4) });
     const afterDue = (await svc().planDetail(planId, true, CEO))!;
     expect(afterDue.canReview).toBe(true);
     expect(afterDue.reviewBlockedReason).toBeNull();

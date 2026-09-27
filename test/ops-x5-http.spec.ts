@@ -56,7 +56,7 @@ d('「+ 오늘 한 것」 HTTP (x5 · 59-3)', () => {
       [CEO, TEACHER, hash],
     );
     const login = async (email: string) => (await request(app.getHttpServer())
-      .post('/auth/login').send({ email, password: PW }).expect(201)).body.accessToken as string;
+      .post('/auth/login').send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;
     token = await login('x5-http-ceo@t.kr');
     teacherToken = await login('x5-http-t@t.kr');
   });
@@ -76,29 +76,33 @@ d('「+ 오늘 한 것」 HTTP (x5 · 59-3)', () => {
   const count = async () => Number((await q<{ n: string }>(`SELECT count(*) AS n FROM mkt WHERE title LIKE 'X5 HTTP%'`))[0].n);
 
   it('강사는 403 — 줄이 생기지 않는다', async () => {
-    await post({ title: TITLE, channel: 'naver', item: 'blog' }, teacherToken).expect(403);
+    await post({ title: TITLE, channel: 'naver_blog', item: 'post' }, teacherToken).expect(403);
     expect(await count()).toBe(0);
   });
 
   it.each([
-    ['모르는 채널', { title: TITLE, channel: 'tiktok', item: 'blog' }],
-    ['모르는 항목', { title: TITLE, channel: 'naver', item: 'reels' }],
-    ['javascript: 주소', { title: TITLE, channel: 'naver', item: 'blog', url: 'javascript:alert(1)' }],
-    ['로그인 정보가 든 주소', { title: TITLE, channel: 'naver', item: 'blog', url: 'https://u:p@evil.test/x' }],
-    ['달력에 없는 날', { title: TITLE, channel: 'naver', item: 'blog', onDate: '2026-02-30' }],
-    ['담당 id 가 정수 아님', { title: TITLE, channel: 'naver', item: 'blog', byId: 'x' }],
-    ['제목 없음', { channel: 'naver', item: 'blog' }],
-    ['모르는 칸', { title: TITLE, channel: 'naver', item: 'blog', cost: 100 }],
+    ['모르는 채널', { title: TITLE, channel: 'tiktok', item: 'post' }],
+    ['모르는 항목', { title: TITLE, channel: 'naver_blog', item: 'reels' }],
+    // W11 · N-29 ① — 옛 코드는 읽히기만 한다(새로 적을 때 고를 수 없다)
+    ['옛 채널', { title: TITLE, channel: 'naver', item: 'post' }],
+    ['옛 항목', { title: TITLE, channel: 'naver_blog', item: 'blog' }],
+    ['메모 120자 넘음', { title: TITLE, channel: 'naver_blog', item: 'post', memo: '가'.repeat(121) }],
+    ['javascript: 주소', { title: TITLE, channel: 'naver_blog', item: 'post', url: 'javascript:alert(1)' }],
+    ['로그인 정보가 든 주소', { title: TITLE, channel: 'naver_blog', item: 'post', url: 'https://u:p@evil.test/x' }],
+    ['달력에 없는 날', { title: TITLE, channel: 'naver_blog', item: 'post', onDate: '2026-02-30' }],
+    ['담당 id 가 정수 아님', { title: TITLE, channel: 'naver_blog', item: 'post', byId: 'x' }],
+    ['제목 없음', { channel: 'naver_blog', item: 'post' }],
+    ['모르는 칸', { title: TITLE, channel: 'naver_blog', item: 'post', cost: 100 }],
   ])('DTO 가 막는다 — %s (400)', async (_name, body) => {
     await post(body).expect(400);
     expect(await count()).toBe(0);
   });
 
   it('대표는 201 — 응답은 목록과 같은 모양 · 날짜 기본 오늘 · 담당 기본 나', async () => {
-    const res = await post({ title: `${TITLE} 1`, channel: 'instagram', item: 'video', url: 'https://instagram.com/p/x5' }).expect(201);
+    const res = await post({ title: `${TITLE} 1`, channel: 'instagram', item: 'video', url: 'https://instagram.com/p/x5', memo: '조회 1.2천' }).expect(201);
     expect(res.body).toMatchObject({
-      title: `${TITLE} 1`, channelLabel: '인스타그램', itemLabel: '영상', byId: CEO, byName: 'X5대표',
-      url: 'https://instagram.com/p/x5',
+      title: `${TITLE} 1`, channelLabel: '인스타그램', itemLabel: '릴스·영상', byId: CEO, byName: 'X5대표',
+      url: 'https://instagram.com/p/x5', memo: '조회 1.2천',
     });
     expect(res.body.onDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     const list = await request(app.getHttpServer()).get('/ops').set('Authorization', `Bearer ${token}`).expect(200);

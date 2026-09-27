@@ -25,7 +25,7 @@ import {
   leadHoldExtended, leadPlanLineLabel, leadRecheckOn, type LeadApptKind,
 } from '../../lib/intake-words';
 import { todayKst } from '../../lib/kst';
-import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
+import { END_MIN, START_MIN, effectiveModeOf, kstDateOf } from '../../lib/sql';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import type { LeadApptDto, LeadApptWriteDto, LeadPlanLineDto, LeadPlanWriteDto } from './lead-plan.dto';
 
@@ -62,8 +62,10 @@ export const LEAD_APPTS_JSON = `(SELECT COALESCE(json_agg(json_build_object(
          FROM lead_appt a
          LEFT JOIN LATERAL (
            SELECT o.ser_id, ${kstDateOf('lower(o.span)')} AS on_date, ${START_MIN} AS start_min, ${END_MIN} AS end_min,
-                  s.mode::text AS mode, COALESCE(o.room_id, s.room_id) AS room_id
+                  -- 그 회차의 실제 방식 — 회차 예외가 그날만 바꿨으면 그 값(W11 A' · N-56 · 규칙의 칸만 읽으면 옛 방식이 보인다)
+                  ${effectiveModeOf('ex', 's')} AS mode, COALESCE(o.room_id, s.room_id) AS room_id
              FROM ser_occ o JOIN ser s ON s.id = o.ser_id
+             LEFT JOIN exc ex ON ex.ser_id = o.ser_id AND ex.on_date = o.on_date
             WHERE o.ser_id = a.ser_id
             ORDER BY lower(o.span), o.id LIMIT 1
          ) oc ON true

@@ -85,7 +85,7 @@ d('상담 배치안 초안 · 보류 연장 · 2차/진단 일정 (23-15 · 23-1
     );
     for (const [email, set] of [['w3p-ceo@t.kr', (t: string) => { ceoToken = t; }], ['w3p-mgr@t.kr', (t: string) => { mgrToken = t; }]] as const) {
       const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       set(res.body.accessToken as string);
     }
   });
@@ -161,7 +161,7 @@ d('상담 배치안 초안 · 보류 연장 · 2차/진단 일정 (23-15 · 23-1
     expect(logs.map((l) => [l.before.lines.length, l.after.lines.length])).toEqual([[0, 2], [2, 1], [1, 0]]);
 
     // 실패 건의 배치안은 「당시」 기록이다 — 고치지 않는다
-    await api('post', `/ops/leads/${lead.id}/fail`).send({ stopAt: 'after_first' }).expect(201);
+    await api('post', `/ops/leads/${lead.id}/fail`).send({}).expect(201);
     expect((await put([{ kindKey: 'class', perWeek: 1 }]).expect(409)).body.code).toBe('LEAD_PLAN_LOCKED');
   });
 
@@ -246,7 +246,7 @@ d('상담 배치안 초안 · 보류 연장 · 2차/진단 일정 (23-15 · 23-1
     expect(after.appts.map((a) => [a.kind, a.scheduled])).toEqual([['diag', false], ['second', true]]);
 
     // 끝난 건(등록 실패)은 일정을 적지 않는다
-    await api('post', `/ops/leads/${other.id}/fail`).send({ stopAt: 'after_first' }).expect(201);
+    await api('post', `/ops/leads/${other.id}/fail`).send({}).expect(201);
     expect((await put({ kind: 'diag', onDate: day, startMin: 600, endMin: 660, mode: 'online' }, other.id).expect(409)).body.code).toBe('LEAD_APPT_LOCKED');
   });
 
@@ -283,7 +283,24 @@ d('상담 배치안 초안 · 보류 연장 · 2차/진단 일정 (23-15 · 23-1
     // 끝난 건은 기록을 그대로 둔다
     const done = await newLead('사차지우기끝');
     await api('put', `/ops/leads/${done.id}/appts`).send({ kind: 'diag', onDate: plus(TODAY, 4), startMin: 900, endMin: 960, mode: 'online' }).expect(200);
-    await api('post', `/ops/leads/${done.id}/fail`).send({ stopAt: 'after_first' }).expect(201);
+    await api('post', `/ops/leads/${done.id}/fail`).send({}).expect(201);
     expect((await del('diag', done.id).expect(409)).body.code).toBe('LEAD_APPT_LOCKED');
+  });
+
+  it('⑥ 시간표에 만든 일정의 방식은 그 회차의 실제 방식이다 — 회차 예외가 그날만 방식을 바꾸면 카드도 따른다 (W11 A\' · N-56 · lib/sql.effectiveModeOf)', async () => {
+    const lead = await newLead('사차방식');
+    await api('put', `/ops/leads/${lead.id}/appts`)
+      .send({ kind: 'second', onDate: plus(TODAY, 9), startMin: 600, endMin: 660, mode: 'online' }).expect(200);
+    await api('post', `/ops/leads/${lead.id}/appts/schedule`).expect(201);
+    const before = (await leadOf(lead.id)) as Lead & { appts: Array<Record<string, unknown>> };
+    expect(before.appts.map((a) => [a.kind, a.mode, a.placeLabel, a.scheduled])).toEqual([['second', 'online', '온라인 줌', true]]);
+
+    // 시간표가 그 회차 하나를 현장으로 바꿨다(회차 예외) — 규칙(SER)은 그대로 온라인이다
+    const [occ] = await q<{ ser_id: string; on_date: string }>(
+      `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date FROM lead_appt a JOIN ser_occ o ON o.ser_id = a.ser_id WHERE a.lead_id = $1`, [lead.id]);
+    await q(`INSERT INTO exc (ser_id, on_date, mode) VALUES ($1, $2::date, 'offline')`, [occ.ser_id, occ.on_date]);
+    const after = (await leadOf(lead.id)) as Lead & { appts: Array<Record<string, unknown>> };
+    expect(after.appts.map((a) => [a.kind, a.mode, a.placeLabel])).toEqual([['second', 'offline', '장소 미정']]);
+    expect(await q(`SELECT mode::text AS mode FROM ser WHERE id = $1`, [occ.ser_id])).toEqual([{ mode: 'online' }]);
   });
 });

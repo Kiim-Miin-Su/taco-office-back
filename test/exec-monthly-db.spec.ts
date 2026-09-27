@@ -38,11 +38,13 @@ d('§71 월간 「어디서 놓쳤나」 (C86-b)', () => {
   let q: QueryRunner;
   let svc: ExecService;
 
-  const lead = async (name: string, createdAt: string, stage: string, stopAt: string | null) => {
-    await q.query(
-      `INSERT INTO lead (name, stage, stop_at, created_at) VALUES ($1, $2, $3, $4::timestamptz)`,
-      [name, stage, stopAt, `${createdAt}T00:00:00Z`],
-    );
+  /** failFrom — 실패 당시 단계(N-25 명시값 · W11 N-87 의 분류 기준) · stopAt — 옛 중단 지점(읽기 전용 · 분류에 안 쓴다) */
+  const lead = async (name: string, createdAt: string, stage: string, failFrom: string | null, stopAt: string | null = null): Promise<number> => {
+    const [r] = await q.query(
+      `INSERT INTO lead (name, stage, fail_from, stop_at, created_at) VALUES ($1, $2, $3, $4, $5::timestamptz) RETURNING id`,
+      [name, stage, failFrom, stopAt, `${createdAt}T00:00:00Z`],
+    ) as Array<{ id: string }>;
+    return Number(r.id);
   };
   const aug = () => svc.range('2026-08-01', '2026-08-31', true);
 
@@ -63,7 +65,7 @@ d('§71 월간 「어디서 놓쳤나」 (C86-b)', () => {
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
   it('기간이 달력 한 달 전체가 아니면 판이 서지 않는다 — 주도 하루도 달을 채울 수 없다', async () => {
-    await lead('가', '2026-08-03', 'failed', 'after_first');
+    await lead('가', '2026-08-03', 'failed', 'first');
     expect((await svc.range('2026-08-17', '2026-08-23', true)).monthly).toBeNull();
     expect((await svc.range('2026-08-21', '2026-08-21', true)).monthly).toBeNull();
     // 1일에서 시작해도 달 끝이 아니면 아니다
@@ -71,42 +73,49 @@ d('§71 월간 「어디서 놓쳤나」 (C86-b)', () => {
   });
 
   it('달 전체면 선다 — 2월처럼 끝날이 다른 달도 제 끝날을 안다', async () => {
-    await lead('나', '2026-02-10', 'failed', 'after_first');
+    await lead('나', '2026-02-10', 'failed', 'first');
     expect((await svc.range('2026-02-01', '2026-02-28', true)).monthly?.lost).toBe(1);
     expect((await svc.range('2026-02-01', '2026-02-27', true)).monthly).toBeNull();
   });
 
-  it('줄은 깔때기 순이고 **0 인 갈래는 서지 않는다**', async () => {
-    await lead('다', '2026-08-02', 'failed', 'after_second');
-    await lead('라', '2026-08-03', 'failed', 'before_book');
-    await lead('마', '2026-08-04', 'failed', 'before_book');
+  it('줄은 깔때기 순이고 **0 인 갈래는 서지 않는다** — 낱말은 §24 와 같은 원문 넷 (W11 · N-87)', async () => {
+    await lead('다', '2026-08-02', 'failed', 'second');
+    await lead('라', '2026-08-03', 'failed', 'first');
+    await lead('마', '2026-08-04', 'failed', 'first');
     const m = (await aug()).monthly!;
-    expect(m.lostRows.map((r) => r.key)).toEqual(['before_book', 'after_second']);
+    expect(m.lostRows.map((r) => r.key)).toEqual(['first', 'second']);
     expect(m.lostRows.map((r) => r.count)).toEqual([2, 1]);
-    // 낱말은 서버가 쥔다 — 화면이 제 표를 들면 §24 와 갈린다 (D-R18)
-    expect(m.lostRows.map((r) => r.label)).toEqual(['상담 예약 전 이탈', '2차 후 미등록']);
+    // 낱말은 서버가 쥔다 — §24 분류 칩과 한 함수(intakeFailStop)에서 온다 (D-R18 · §24 가 정본)
+    expect(m.lostRows.map((r) => r.label)).toEqual(['1차 상담 중단', '2차 상담 중단']);
   });
 
-  it('분류 안 된 실패도 제 줄로 선다 — 머리의 합과 줄들의 합이 같아야 한다 (N-19 · N-25)', async () => {
-    await lead('바', '2026-08-05', 'failed', 'after_first');
-    await lead('사', '2026-08-06', 'failed', null);
+  it('명시값이 없으면 도달 기록 역순(failed 제외)으로 판정한다 — 슬라이드 24 「없으면 at{} 기록을 역순으로」', async () => {
+    const id = await lead('타', '2026-08-08', 'failed', null);
+    await q.query(`INSERT INTO lead_stage_log (lead_id, stage) VALUES ($1,'second'), ($1,'hold'), ($1,'failed')`, [id]);
+    const m = (await aug()).monthly!;
+    expect(m.lostRows.map((r) => [r.key, r.label, r.count])).toEqual([['hold', '보류 후 무산', 1]]);
+  });
+
+  it('분류 안 된 실패도 제 줄로 선다 — 머리의 합과 줄들의 합이 같아야 한다 (N-19 · N-25) · 옛 stop_at 으로 짐작하지 않는다 (N-87)', async () => {
+    await lead('바', '2026-08-05', 'failed', 'wait2nd');
+    await lead('사', '2026-08-06', 'failed', null, 'after_first');   // 옛 실패 — 단계 기록이 없다
     const m = (await aug()).monthly!;
     expect(m.lostRows.map((r) => [r.key, r.label, r.count]))
-      .toEqual([['after_first', '1차 후 미진행', 1], ['none', '분류 안 됨', 1]]);
+      .toEqual([['wait2nd', '2차 안 옴', 1], ['none', '미분류', 1]]);
     expect(m.lostRows.reduce((a, r) => a + r.count, 0)).toBe(m.lost);
   });
 
   it('모집단은 **들어온 달**이다 — 실패하지 않은 건도 세고, 지난달에 들어온 건은 안 센다', async () => {
-    await lead('아', '2026-07-31', 'failed', 'after_first');   // 지난달 유입
-    await lead('자', '2026-08-01', 'first', null);              // 진행 중
-    await lead('차', '2026-08-31', 'failed', 'after_first');    // 달 마지막 날
+    await lead('아', '2026-07-31', 'failed', 'first');   // 지난달 유입
+    await lead('자', '2026-08-01', 'first', null);        // 진행 중
+    await lead('차', '2026-08-31', 'failed', 'first');    // 달 마지막 날
     const m = (await aug()).monthly!;
     expect(m.leads).toBe(2);
     expect(m.lost).toBe(1);
   });
 
-  it('되살린 건의 남은 stop_at 은 줄로 세지 않는다 — 지금 실패인 것만 놓친 것이다', async () => {
-    await lead('카', '2026-08-07', 'second', 'after_first');    // 되살아나 2차로 돌아간 건
+  it('되살린 건은 줄로 세지 않는다 — 지금 실패인 것만 놓친 것이다 (남은 옛 stop_at 도 세지 않는다)', async () => {
+    await lead('카', '2026-08-07', 'second', null, 'after_first');    // 되살아나 2차로 돌아간 건
     const m = (await aug()).monthly!;
     expect(m.leads).toBe(1);
     expect(m.lost).toBe(0);

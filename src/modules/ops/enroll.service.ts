@@ -32,6 +32,7 @@ import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import type { EnrollMissingBookDto, EnrollResultDto, EnrollSeriesDto, LeadEnrollDto } from './enroll.dto';
 import { latestLeadDiagBookId, latestLeadDiagForStudent } from './lead-diag.service';
+import { planLeadCare } from './lead-care';
 
 /** 미리보기의 되돌림 — 결과를 싣고 던져 트랜잭션을 통째로 되돌린다 (C94-c 의 `PreviewRollback` 과 같은 모양) */
 class PreviewRollback extends Error {
@@ -116,8 +117,10 @@ export class LeadEnrollService {
         }
       }
       const [made] = (await m.query(
-        `INSERT INTO stu (name, grade, school, target_exam, started_on, guidance, lang) VALUES ($1,$2,$3,$4,$5::date,$6,$7) RETURNING id`,
-        [name, grade, school, dto.student?.targetExam?.trim() || null, dto.startedOn, dto.student?.guidance?.trim() || null, dto.student?.lang?.trim() || null],
+        `INSERT INTO stu (name, grade, school, target_exam, started_on, guidance, lang, gender) VALUES ($1,$2,$3,$4,$5::date,$6,$7,$8) RETURNING id`,
+        // 성별은 선택 칸이다(N-83) — 안 보냈으면 NULL, 추정하지 않는다
+        [name, grade, school, dto.student?.targetExam?.trim() || null, dto.startedOn, dto.student?.guidance?.trim() || null, dto.student?.lang?.trim() || null,
+         dto.student?.gender ?? null],
       )) as Array<{ id: string }>;
       studentId = Number(made.id); studentName = name; studentCreated = true;
     }
@@ -242,9 +245,10 @@ export class LeadEnrollService {
     }
 
     /* ── LEAD 단계 → enrolled · 도달 기록 · LOG ── */
-    // 실패 건에서 바로 온 경우 중단 지점·실패 전 단계를 비운다(되살리기와 같다) — 이력은 도달 기록과 아래 LOG before 에 남는다 (24-07)
+    // 실패 건에서 바로 온 경우 실패 전 단계(fail_from — 지금 실패 중인 건의 판정 값)를 비운다(되살리기와 같다) — 이력은 도달 기록과 아래 LOG before 에 남는다 (24-07)
+    // 옛 중단 지점(stop_at)은 읽기 전용 기록이라 건드리지 않는다(W11 · N-87)
     await m.query(
-      `UPDATE lead SET stage = 'enrolled', student_id = $2, reason = COALESCE($3, reason), stop_at = NULL, fail_from = NULL WHERE id = $1`,
+      `UPDATE lead SET stage = 'enrolled', student_id = $2, reason = COALESCE($3, reason), fail_from = NULL WHERE id = $1`,
       [leadId, studentId, dto.memo?.trim() || null],
     );
     await m.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'enrolled', $2)`, [leadId, userId]);
@@ -261,11 +265,18 @@ export class LeadEnrollService {
     // 상담 진단은 방금 채운 lead.student_id 를 따라 그 학생의 것이 된다 — 같은 트랜잭션에서 그 연결로 다시 읽어 보여 준다(DQ1)
     const latestDiag = await latestLeadDiagForStudent(m, studentId);
 
+    /* ── W11 · N-86 사후 관리 — 해피콜(첫 실제 수업 + 7일) · 첫 월간 상담을 상담 담당의 할 일로. 같은 트랜잭션이다(미리보기는 함께 되돌린다) ── */
+    const care = await planLeadCare(m, { leadId, studentId, studentName, serIds, startedOn: dto.startedOn, byId: userId });
+
     return {
       leadId, preview, studentId, studentName, studentCreated, startedOn: dto.startedOn,
       enrollments, series, invoice, invoiceSkipped, bookIssues, booksMissing,
       guideDrafts: guideIds.length, notifiedTeachers, notifiedStaff, unavailable, stage: 'enrolled',
       diagBookApplied, latestDiag,
+      aftercare: {
+        firstLessonOn: care.firstLessonOn, happyCallOn: care.happyCallOn, monthlyOn: care.monthlyOn,
+        ownerId: care.ownerId, ownerName: care.ownerName,
+      },
     };
   }
 }

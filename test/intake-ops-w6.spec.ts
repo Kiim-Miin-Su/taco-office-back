@@ -120,7 +120,7 @@ d('상담 카드 · 컴플레인 카드 (wave 6 · 23-11 · 23-14 · 67-5 · 67-
       [L.wait, plus(TODAY, 5), CEO],
     );
     token = (await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'w6-intake-ceo@t.kr', password: PW }).expect(201)).body.accessToken as string;
+      .send({ loginId: 'w6-intake-ceo@t.kr', password: PW }).expect(201)).body.accessToken as string;
   });
 
   afterAll(async () => {

@@ -88,33 +88,49 @@ d('운영 잔여 물결 (x5)', () => {
   it('활동 한 줄은 목록과 같은 모양 — 낱말은 서버 · 날짜 기본 오늘 · 담당 기본 나 · 감사 줄 (59-3)', async () => {
     const row = await svc().createMarketing(MGR, true, {
       title: '  학습실 하루 · 30초 릴스  ', channel: 'instagram', item: 'video',
-      url: 'https://instagram.com/p/abc',
+      url: 'https://instagram.com/p/abc', memo: '  조회 1.2천  ',
     });
     expect(row).toMatchObject({
       title: '학습실 하루 · 30초 릴스', name: '학습실 하루 · 30초 릴스',
-      channel: 'instagram', channelLabel: '인스타그램', item: 'video', itemLabel: '영상',
+      channel: 'instagram', channelLabel: '인스타그램', item: 'video', itemLabel: '릴스·영상',
       byId: MGR, byName: '매니저x5', url: 'https://instagram.com/p/abc', onDate: todayKst(),
+      // W11 · N-29 ② — 카드 제목 아래 메모 한 줄(앞뒤 공백만 걷는다)
+      memo: '조회 1.2천',
     });
     // 목록(`GET /ops`)이 같은 줄을 같은 모양으로 준다 — 쓰기 응답이 다른 모양이면 화면이 두 벌을 들고 간다
     const all = await svc().all(CEO, true, true);
     expect(all.marketing.find((m) => m.id === row.id)).toEqual(row);
     const logs = (await q.query(`SELECT actor_id, action FROM log WHERE entity = 'MKT' AND entity_id = $1`, [row.id])) as Array<{ actor_id: string; action: string }>;
     expect(logs).toEqual([{ actor_id: String(MGR), action: 'create' }]);
+    const [after] = (await q.query(`SELECT after FROM log WHERE entity = 'MKT' AND entity_id = $1`, [row.id])) as Array<{ after: Record<string, unknown> }>;
+    expect(after.after).toMatchObject({ memo: '조회 1.2천' });
   });
 
-  it('담당과 날짜를 고르면 그대로 · 빈 URL 은 비움 (59-3)', async () => {
+  it('담당과 날짜를 고르면 그대로 · 빈 URL · 빈 메모는 비움 (59-3 · N-29 ②)', async () => {
     const row = await svc().createMarketing(CEO, true, {
-      title: '검색광고 · 대치 국제학교 키워드', channel: 'naver', item: 'ad', url: '   ', onDate: day(-2), byId: MGR,
+      title: '검색광고 · 대치 국제학교 키워드', channel: 'naver_ad', item: 'ad', url: '   ', onDate: day(-2), byId: MGR, memo: '   ',
     });
-    expect(row).toMatchObject({ byId: MGR, onDate: day(-2), url: null });
+    expect(row).toMatchObject({ byId: MGR, onDate: day(-2), url: null, channelLabel: '네이버 광고', itemLabel: '광고 집행', memo: null });
+  });
+
+  it('새로 적을 때는 원문 넷 · 넷만 고른다 — 옛 코드(`naver` · `flyer` …)는 읽히기만 한다 (W11 · N-29 ①)', async () => {
+    await expect(svc().createMarketing(CEO, true, { title: '옛 채널', channel: 'naver', item: 'post' }))
+      .rejects.toMatchObject({ response: { code: 'MKT_WORD_UNKNOWN' } });
+    await expect(svc().createMarketing(CEO, true, { title: '옛 항목', channel: 'naver_blog', item: 'blog' }))
+      .rejects.toMatchObject({ response: { code: 'MKT_WORD_UNKNOWN' } });
+    // 표가 마지막으로 막는다 — 원문 넷과 옛 코드 밖의 낱말은 CHECK 가 거절한다
+    await q.query(`SAVEPOINT words`);
+    await expect(q.query(`INSERT INTO mkt (channel, item) VALUES ('tiktok','post')`)).rejects.toThrow(/mkt_channel_words/);
+    await q.query(`ROLLBACK TO SAVEPOINT words`);
+    await expect(q.query(`INSERT INTO mkt (channel, item) VALUES ('kakao','reels')`)).rejects.toThrow(/mkt_item_words/);
   });
 
   it('빈 제목 · 그만둔 담당 · 없는 담당은 막힌다 — 한 줄도 안 남는다 (59-3)', async () => {
-    await expect(svc().createMarketing(CEO, true, { title: '   ', channel: 'naver', item: 'ad' }))
+    await expect(svc().createMarketing(CEO, true, { title: '   ', channel: 'naver_ad', item: 'ad' }))
       .rejects.toMatchObject({ response: { code: 'MKT_TITLE_REQUIRED' } });
-    await expect(svc().createMarketing(CEO, true, { title: '전단', channel: 'flyer', item: 'print', byId: GONE }))
+    await expect(svc().createMarketing(CEO, true, { title: '문의 응대', channel: 'kakao', item: 'reply', byId: GONE }))
       .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
-    await expect(svc().createMarketing(CEO, true, { title: '전단', channel: 'flyer', item: 'print', byId: 9_999_999 }))
+    await expect(svc().createMarketing(CEO, true, { title: '문의 응대', channel: 'kakao', item: 'reply', byId: 9_999_999 }))
       .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
     const [n] = (await q.query(`SELECT count(*)::int AS n FROM mkt`)) as Array<{ n: number }>;
     expect(n.n).toBe(0);
@@ -122,36 +138,46 @@ d('운영 잔여 물결 (x5)', () => {
 
   /* ── ② §59 필터 띠 · 범례 ─────────────────────────────────────────── */
 
-  it('「어디에 · 누가」 · 항목 범례 · 「N건 N일 진행」은 고른 기간 안에서 서버가 센다 (59-4 · 59-5)', async () => {
-    await mkt('kakao', 'channel', day(-3), MGR);
-    await mkt('naver', 'ad', day(-2), CEO);
+  it('「어디에 · 누가」 · 항목 범례 · 「N건 N일 진행」은 고른 기간 안에서 서버가 센다 (59-4 · 59-5) · 채널 × 항목은 따로 움직인다 (N-29 ①)', async () => {
+    // 원문 컷 한 주의 넷 — 같은 「네이버」가 광고와 블로그로 갈린다
+    await mkt('kakao', 'reply', day(-3), MGR);
+    await mkt('naver_ad', 'ad', day(-2), CEO);
     await mkt('instagram', 'video', day(-1), MGR);
-    await mkt('naver', 'blog', day(-1), MGR);
+    await mkt('naver_blog', 'post', day(-1), MGR);
+    await mkt('naver', 'ad', day(-2), MGR);        // 옛 코드의 옛 행 — 옛 이름 그대로(이관 없음)
     await mkt('youtube', 'video', day(-30), null); // 기간 밖
 
     const all = await svc().all(CEO, true, true, { from: day(-6), to: day(0) });
-    expect(all.marketing).toHaveLength(4);
+    expect(all.marketing).toHaveLength(5);
     // 건수가 있는 것만 선다 — 원문 §59 띠에 0 건 채널은 없다. 많은 순 · 같으면 이름 순
     expect(all.mktChannelCounts).toEqual([
-      { key: 'naver', label: '네이버', count: 2 },
+      { key: 'naver', label: '네이버', count: 1 },
+      { key: 'naver_ad', label: '네이버 광고', count: 1 },
+      { key: 'naver_blog', label: '네이버 블로그', count: 1 },
       { key: 'instagram', label: '인스타그램', count: 1 },
-      { key: 'kakao', label: '카카오', count: 1 },
+      { key: 'kakao', label: '카카오채널', count: 1 },
     ]);
     expect(all.mktByCounts).toEqual([
-      { key: String(MGR), label: '매니저x5', count: 3 },
+      { key: String(MGR), label: '매니저x5', count: 4 },
       { key: String(CEO), label: '대표x5', count: 1 },
     ]);
     expect(all.mktItemCounts).toEqual([
-      { key: 'ad', label: '광고', count: 1 },
-      { key: 'blog', label: '블로그 글', count: 1 },
-      { key: 'video', label: '영상', count: 1 },
-      { key: 'channel', label: '채널 응대', count: 1 },
+      { key: 'ad', label: '광고 집행', count: 2 },
+      { key: 'post', label: '글 발행', count: 1 },
+      { key: 'reply', label: '댓글·응대', count: 1 },
+      { key: 'video', label: '릴스·영상', count: 1 },
     ]);
     // 「3일 진행」 — 활동이 있었던 날 수
     expect(all.mktDays).toBe(3);
-    // 폼의 낱말 일곱 · 일곱과 단추 — 서버가 준다 (D-R18 · D-R39)
-    expect(all.mktChannels).toHaveLength(7);
-    expect(all.mktItems).toHaveLength(7);
+    // 폼의 낱말 — 원문 컷의 넷 · 넷(나머지 셋 · 셋은 짓지 않는다) · 차례도 컷 그대로 (D-R18 · N-29 ①)
+    expect(all.mktChannels).toEqual([
+      { key: 'kakao', label: '카카오채널' }, { key: 'naver_ad', label: '네이버 광고' },
+      { key: 'instagram', label: '인스타그램' }, { key: 'naver_blog', label: '네이버 블로그' },
+    ]);
+    expect(all.mktItems).toEqual([
+      { key: 'reply', label: '댓글·응대' }, { key: 'ad', label: '광고 집행' },
+      { key: 'video', label: '릴스·영상' }, { key: 'post', label: '글 발행' },
+    ]);
     expect(all.canCreateMarketing).toBe(true);
   });
 

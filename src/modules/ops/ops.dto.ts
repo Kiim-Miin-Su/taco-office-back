@@ -8,9 +8,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { CPL_AREAS, CPL_REQUESTERS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
-import { INTAKE_FUNNEL_STAGES, LEAD_CARD_ACTION_KEYS, LEAD_REASON_KINDS, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
-import { MFB_STATES, MKT_CHANNELS, MKT_ITEMS } from '../../lib/marketing-words';
-import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_STAGES } from '../../lib/plan-words';
+import { INTAKE_FUNNEL_STAGES, LEAD_AFTERCARE_KEYS, LEAD_CARD_ACTION_KEYS, LEAD_REASON_KINDS, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
+import { MFB_ANSWER_KINDS, MFB_KINDS, MFB_STATES, MKT_CHANNELS, MKT_ITEMS } from '../../lib/marketing-words';
+import { PLAN_DUE_KINDS, PLAN_DUE_STATES, PLAN_SHARES, PLAN_STAGES } from '../../lib/plan-words';
 import { MINUTES_TEMPLATES, MT_ATTEND_STATES, MT_TYPES } from '../../lib/meeting-words';
 import { DATE_SCHEMA, IsCalendarDate, IsSafeHttpUrl } from '../../common/validation';
 import { LeadDiagDto } from './lead-diag.dto';
@@ -30,7 +30,8 @@ export class LeadDto {
   @ApiPropertyOptional(N) ownerId?: number | null;
   @ApiPropertyOptional(N) studentId?: number | null;
   @ApiPropertyOptional({ ...S, ...FQ }) ownerName?: string | null;
-  @ApiPropertyOptional({ ...S, description: '실패한 경우 어디서 멈췄나 (§24)' }) stopAt?: string | null;
+  @ApiPropertyOptional({ ...S, description: '옛 중단 지점 코드(before_book · before_first · after_first · after_second) — **읽기 전용 기록**이다. W11 · N-87 뒤로 새 실패는 적지 않고 되살리기도 지우지 않는다. §24 분류는 failStopKey' })
+  stopAt?: string | null;
   @ApiPropertyOptional({ ...S, ...FQ }) reason?: string | null;
   @ApiProperty() createdAt!: string;
   @ApiProperty({ description: '접수한 지 며칠' }) ageDays!: number;
@@ -42,6 +43,13 @@ export class LeadDto {
   revivalStage?: string | null;
   @ApiPropertyOptional({ ...S, description: "판정 근거 — 'explicit'(명시값) | 'log'(도달 기록) | null(미분류)" })
   revivalSource?: string | null;
+  /* W11 · N-87 — §24 중단 지점은 **실패 당시 단계**로 판정한다(원문 슬라이드 24 「fail.from 필드로 중단 단계 판정」). 사람이 고르지 않는다 */
+  @ApiPropertyOptional({ ...S, description: "§24 중단 지점(failed 건만) — first · wait2nd · second · hold(실패 당시 단계) | 'none'(판정 없음 · 미분류). 실패 아닌 건은 null" })
+  failStopKey?: string | null;
+  @ApiPropertyOptional({ ...S, description: '「1차 상담 중단」 · 「2차 안 옴」 · 「2차 상담 중단」 · 「보류 후 무산」 · 「미분류」 — 서버가 만든다 (D-R18)' })
+  failStopLabel?: string | null;
+  @ApiPropertyOptional({ ...S, description: '옛 중단 지점(stopAt)의 낱말 — 적은 적이 없으면 null. 대응표로 옮기지 않은 옛 기록을 그대로 읽는다 (N-25)' })
+  stopAtLabel?: string | null;
 
   /* C90 · N-44 유입 경로 · 접촉 원장 / N-45 단계 이동 — 낱말·판정은 전부 서버 (D-R18 · D-R37) */
   @ApiPropertyOptional({ ...S, description: 'kakao | phone | blog | instagram | referral | walkin — 옛 건은 null (N-25 보정 0)' })
@@ -76,7 +84,7 @@ export class LeadDto {
   failedAt?: string | null;
   @ApiPropertyOptional({ type: () => LeadRecontactDto, nullable: true, description: '실패 건의 재연락 — 「재연락 완료/대기」 · 다음 연락일. 실패 시각을 모르는 옛 건·실패 아닌 건은 null' })
   recontact?: LeadRecontactDto | null;
-  @ApiPropertyOptional({ type: () => LeadStageDueDto, nullable: true, description: '단계 기한 띠 — 슬라이드 23 SLA(1차 2일 · 2차 대기 7일 · 2차 상담 1일 · 보류 2일). 보류는 재확인 날짜 · 2차 대기는 2차 일정이 있으면 그 날짜가 기한이다. 들어온 날을 모르면 null' })
+  @ApiPropertyOptional({ type: () => LeadStageDueDto, nullable: true, description: '단계 기한 띠 — 슬라이드 23 SLA(1차 2일 · 2차 대기 7일 · 2차 상담 1일 · 보류 2일). 보류는 재확인 날짜 · 2차 대기는 2차 일정이 있으면 그 날짜가 기한이다. 들어온 날을 모르면 null. 등록 건은 사후 관리 띠(W11 · N-86 — 「해피콜 D-3」 · 「월간 상담 …」 · 둘 다 끝나면 「정기 관리 중」 · 할 일이 없는 옛 건은 null)' })
   stageDue?: LeadStageDueDto | null;
   @ApiPropertyOptional({ type: () => [LeadPlanLineDto], description: '배치안 초안 줄(23-16) — §23 카드 「SAT Reading 주2 · Rebecca」 · §24 「당시 배치안」 · 등록 확정 창의 기본 줄. 적은 적이 없으면 []' })
   plan?: LeadPlanLineDto[];
@@ -84,10 +92,12 @@ export class LeadDto {
   appts?: LeadApptDto[];
   @ApiPropertyOptional({ ...S, format: 'date', description: '보류 재확인 날짜(23-16) — 적어 둔 날짜 또는 보류에 들어온 날 + 2일. 보류가 아니거나 들어온 날을 모르면 null' })
   recheckOn?: string | null;
-  /* 1:1 대조 wave 5 (23-18) — 등록 카드의 사후 관리 줄. 그 학생의 청구서 · 교재 · 안내 원장을 읽기만 한다 */
+  /* 1:1 대조 wave 5 (23-18) — 등록 카드의 사후 관리 줄. 그 학생의 청구서 · 교재 · 안내 원장을 읽기만 한다 ·
+     W11 · N-86 — 앞 두 줄(해피콜 · 월간)은 상담 담당의 할 일(todo.src='lead')을 읽는다 */
   @ApiPropertyOptional({
     type: () => [LeadAftercareRowDto], nullable: true,
-    description: '등록 카드의 줄(원본 §23 「청구서 없음 · 교재 없음 · 안내 없음」) — 차례 청구서 · 교재 · 안내. 등록 건이 아니거나 학생이 안 붙었으면 null. 해피콜·월간 상담 줄은 원장·규칙이 없어 싣지 않는다',
+    description: '등록 카드의 줄(원본 §23 「해피콜 완료 08-15 · 월간 완료 · 청구서 없음 · 교재 없음 · 안내 없음」) — 차례 해피콜 · 월간(첫 월간 상담) · 청구서 · 교재 · 안내. '
+      + '해피콜·월간은 사후 관리 할 일의 예약·완료(없으면 「없음」). 등록 건이 아니거나 학생이 안 붙었으면 null',
   })
   aftercare?: LeadAftercareRowDto[] | null;
   /* 1:1 대조 wave 6 (23-11 · 23-14) — 등록 카드의 「등록 수업」 한 줄 · 카드 단추 줄. 둘 다 서버가 만든다(D-R18 · D-R39) */
@@ -114,9 +124,9 @@ export class LeadCardActionDto {
 
 /** 등록 카드 사후 관리 한 줄 (23-18) — 낱말은 서버(`lib/intake-words.leadAftercareRows`) */
 export class LeadAftercareRowDto {
-  @ApiProperty({ enum: ['invoice', 'book', 'guide'] }) key!: string;
-  @ApiProperty({ description: '「청구서」 · 「교재」 · 「안내」' }) label!: string;
-  @ApiProperty({ description: '「없음」 · 「2건」 · 「1권」 · 「배정 대기」 · 「보냄」 · 「쓰는 중」' }) value!: string;
+  @ApiProperty({ enum: [...LEAD_AFTERCARE_KEYS] }) key!: string;
+  @ApiProperty({ description: '「해피콜」 · 「월간」 · 「청구서」 · 「교재」 · 「안내」' }) label!: string;
+  @ApiProperty({ description: '「완료 08-15」 · 「08-24 예정」 · 「날짜 미정」 · 「완료」 · 「없음」 · 「2건」 · 「1권」 · 「배정 대기」 · 「보냄」 · 「쓰는 중」' }) value!: string;
   @ApiProperty({ description: '됐는가 — 줄 바탕 색(됨 = 초록 · 아직 = 회색)을 가른다' }) done!: boolean;
 }
 
@@ -139,9 +149,10 @@ export class LeadRecontactDto {
 
 /** 단계 기한 띠 (원본 §23 카드 · 23-12) — 낱말·기한·톤은 서버가 만든다 (`leadStageDue`) */
 export class LeadStageDueDto {
-  @ApiProperty({ description: '그 단계에서 할 일 — 「2차 일정 + 진단고사 잡기」' }) task!: string;
-  @ApiProperty({ format: 'date', description: '기한 — 그 단계에 들어온 날 + SLA 일수' }) dueOn!: string;
-  @ApiProperty({ description: '「오늘」 · 「D-1」 · 「1일 지남」' }) dueLabel!: string;
+  @ApiProperty({ description: '그 단계에서 할 일 — 「2차 일정 + 진단고사 잡기」 · 등록 건은 「해피콜」 · 「월간 상담」 · 「정기 관리 중」' }) task!: string;
+  @ApiProperty({ type: String, nullable: true, format: 'date', description: '기한 — 그 단계에 들어온 날 + SLA 일수 · 등록 건은 사후 관리 할 일의 날. 날이 없는 띠(「정기 관리 중」 · 날짜 미정)는 null' })
+  dueOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '「오늘」 · 「D-1」 · 「1일 지남」 — 날이 없는 띠는 null' }) dueLabel!: string | null;
   @ApiProperty({ description: "띠·카드 바탕 색 — 'danger'(지남) | 'warning'(오늘) | 'neutral'" }) tone!: string;
 }
 
@@ -213,12 +224,12 @@ export class LeadTouchWriteDto {
 }
 
 const LEAD_ACTIVE_STAGES = ['first', 'wait2nd', 'second', 'hold'] as const;
-const LEAD_STOPS = ['before_book', 'before_first', 'after_first', 'after_second'] as const;
 
+/**
+ * 실패 지정 (§24) — **중단 지점을 묻지 않는다**(W11 · N-87). 서버가 실패 순간의 단계를 `fail_from` 에 적고 그 단계가 곧 중단 지점이다
+ * (원문 슬라이드 24 「fail.from 필드로 중단 단계 판정」). 옛 `stopAt` 칸은 받지 않는다 — 보내면 400(모르는 칸).
+ */
 export class LeadFailDto {
-  @ApiProperty({ enum: [...LEAD_STOPS], description: '중단 지점 분류 (§24 · 기존 4어휘)' })
-  @IsIn([...LEAD_STOPS], { message: '중단 지점은 기존 4분류 중 하나입니다' })
-  stopAt!: string;
   @ApiPropertyOptional({ description: '사유 — 500자 이내. 생략하면 기존 사유 유지' })
   @IsOptional() @IsString() @MaxLength(500)
   reason?: string;
@@ -353,6 +364,32 @@ export class TodoDto {
   @ApiProperty() done!: boolean;
   @ApiProperty({ enum: TODO_SRC_T_VALUES }) src!: string;
   @ApiProperty({ description: '기한이 지난 날 수. 0이면 안 지남' }) overdueDays!: number;
+  /**
+   * §64 「연결 수업」 칩 (N-71 · W11) — 회차 키 (ser_id, on_date)로 이어진 수업. 이어진 수업이 없으면 null.
+   * **필수 nullable** — 선택으로 두면 시험 표본이 이 칸을 빠뜨린 채 조용히 낡는다 (S5).
+   */
+  @ApiProperty({ type: () => TodoLessonDto, nullable: true, description: '연결 수업 — 「학습실 09:30」 · 누르면 그 회차' })
+  lesson!: TodoLessonDto | null;
+  /**
+   * 「원본」 — 출처로 돌아가는 이동 링크 (원문 §64 규칙 · W11 A' 후속 2). 서랍 §15 의 할 일 `go` 와 **같은 함수**(lib/todo `todoGo`)가 짓는다.
+   * 대상 화면이 한 건을 여는 질의를 이미 읽는 것만 — 없으면 null(손으로 만든 할 일 · 투영에 없는 회차). 필수 nullable (S5).
+   */
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '원본 주소 — 회의 `/ops?tab=meeting&meeting=` · 컴플레인 `?tab=complaint&cpl=` · 기획 `?tab=plan&plan=` · 컨설팅 `/consulting?id=` · 상담 `/intake?lead=` · 수업 = 연결 수업 칩과 같은 주소',
+  })
+  go!: string | null;
+}
+
+/** §64 「연결 수업」 칩 한 칸 (N-71) — 낱말·색·이동 주소 전부 서버가 짓는다 (D-R18) */
+export class TodoLessonDto {
+  @ApiProperty({ description: '「학습실 09:30」 — 수업 이름(제목 → 과목 → 종류) + 그려지는 회차의 시작 시각' }) label!: string;
+  @ApiProperty({ type: String, nullable: true, description: '과목색(없으면 종류색) — 칩의 점. 없으면 null' }) color!: string | null;
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '누르면 가는 시간표 주소 — 그 회차를 연다(`/schedule?date=&serId=&onDate=`). 회차가 투영에 없으면 null',
+  })
+  go!: string | null;
 }
 
 /** §61 기획 단계 보드 */
@@ -391,8 +428,19 @@ export class PlanDto {
     description: '기한 한 낱말 — 「4일 지남」·「오늘」·「D-2」(§62 dueLabel 과 같은 함수). 기한이 없거나 끝난(승인·완료) 기획이면 null — 끝난 기획의 날짜는 재촉이 아니다',
   })
   dueLabel!: string | null;
-  @ApiProperty({ description: '기한 상태 이름 — 「기한 없음」·「기한 제안」·「기한 승인됨」 (§65 dueStateLabel 과 같은 낱말)' })
+  @ApiProperty({ description: '기한 상태 이름 — 「기한 없음」·「기한 제안」·「기한 승인」·「기한 반려」 (§65 dueStateLabel 과 같은 낱말)' })
   dueStateLabel!: string;
+
+  /* W11 — 원문 §61 카드의 「D-2 08-19 · 기한 반려」(N-95)와 「전체 공개」·「지정 공개」 칩(N-72). 필수 nullable (S5) */
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '반려된 기한 YYYY-MM-DD — 반려가 지운 날짜. 담당이 새 기한을 내면 비고, 옛 반려는 기록이 없어 null (N-95 · N-25)',
+  })
+  dueRejectedOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, enum: [...PLAN_SHARES], description: '공개 범위 — all · picked. 옛 기획은 null(모두에게 보이고 칩 없음 · N-72)' })
+  share!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '공개 범위 칩 낱말 — 「전체 공개」·「지정 공개」. 옛 기획은 null' })
+  shareLabel!: string | null;
 }
 
 /** §62 기획 기한 한 줄 — 기획 마감과 과제 기한이 **한 표에** 섞인다 */
@@ -400,10 +448,10 @@ export class PlanDueRowDto {
   @ApiProperty({ description: '한 표 안에서 겹치지 않는 키 — `plan:3` · `task:11`' }) key!: string;
   @ApiProperty({ enum: PLAN_DUE_KINDS }) kind!: string;
   @ApiProperty({ description: '구분 이름 — 원문 「기획 마감 · 과제」' }) kindLabel!: string;
-  @ApiProperty({ example: '2026-08-25' }) dueOn!: string;
+  @ApiProperty({ example: '2026-08-25', description: '기한 — 기획 마감이 반려됐으면 반려된 날짜(원문 §62 · N-95)' }) dueOn!: string;
   /** 「D-2 · 오늘 · 1일 지남」 — 화면이 날짜를 빼지 않는다 (D-R37) */
   @ApiProperty({ description: '남은 날 한 낱말' }) dueLabel!: string;
-  @ApiProperty({ description: '지난 날 수 — 0 이면 안 지났다. 붉게 칠하는 판정이 이 값 하나다' })
+  @ApiProperty({ description: '지난 날 수 — 0 이면 안 지났다. 붉게 칠하는 판정이 이 값 하나다(반려된 날짜는 지금 기한이 아니라 0)' })
   overdueDays!: number;
   @ApiProperty({ description: '내용 — 기획 제목 또는 과제 제목' }) title!: string;
   @ApiProperty({ description: '어느 기획인가' }) planId!: number;
@@ -498,6 +546,28 @@ export class PlanDetailDto {
   /** `POST /ops/plans/:id/tasks` 가 409 로 내는 **그 문장**이다 (S5 · D-R22) */
   @ApiProperty({ type: String, nullable: true, description: '과제를 못 더하는 이유 — 더할 수 있으면 null' })
   addTaskBlockedReason!: string | null;
+
+  /* ── W11 · N-95 기한 반려 보존 · N-72 공개 범위 (필수 nullable · S5) ───────────── */
+  @ApiProperty({ type: String, nullable: true, description: '반려된 기한 YYYY-MM-DD — 새 기한을 내면 빈다. 옛 반려는 null (N-95)' })
+  dueRejectedOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '기한을 반려한 사람' })
+  dueRejectedByName!: string | null;
+  @ApiProperty({ type: String, nullable: true, enum: [...PLAN_SHARES], description: '공개 범위 — all · picked · 옛 기획 null' })
+  share!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '공개 범위 칩 낱말 — 옛 기획 null' })
+  shareLabel!: string | null;
+  @ApiProperty({ type: [Number], description: '지정 공개로 볼 수 있게 지정된 사람 — 지정 공개가 아니면 빈 배열' })
+  pickIds!: number[];
+  @ApiProperty({ type: [String], description: '지정된 사람 이름 — pickIds 와 같은 차례' })
+  pickNames!: string[];
+  @ApiProperty({ description: '공개 범위를 바꿀 수 있는가 — 담당이거나 결재권자. 쓰기(403 PLAN_SHARE_FORBIDDEN)와 같은 판정 (D-R39)' })
+  canEditShare!: boolean;
+}
+
+/** 공개 범위 두 값 (N-72) — 「전체 공개」·「지정 공개」. 창의 고르기 칸이 쓴다 (D-R18) */
+export class PlanShareWordDto {
+  @ApiProperty({ enum: [...PLAN_SHARES] }) key!: string;
+  @ApiProperty() label!: string;
 }
 
 /**
@@ -547,9 +617,22 @@ export class PlanPatchDto {
    * 기한 제안 — **승인된 뒤에는 못 옮긴다**(409 `PLAN_DUE_APPROVED`). 담당이 옮길 수 있으면
    * 대표의 승인이 거짓이 된다. 기한 반려로 지워진 뒤 새 날짜를 내는 길이 이것이다.
    */
-  @ApiPropertyOptional({ ...S, description: '기한 제안 — 승인 전에만. null 이면 지운다' })
+  @ApiPropertyOptional({ ...S, description: '기한 제안 — 승인 전에만. null 이면 지운다. 새 날짜를 내면 반려 표시가 빈다 (N-95)' })
   @IsOptional() @IsCalendarDate()
   dueOn?: string | null;
+
+  /**
+   * 공개 범위 (N-72) — 본문이 아니라 **누가 보는가**라 단계 잠금을 받지 않는다. 바꾸면 감사 한 줄(`plan.share`).
+   * 옛 기획(NULL)을 NULL 로 되돌리는 값은 없다 — NULL 은 「모른다」이지 고를 수 있는 값이 아니다.
+   */
+  @ApiPropertyOptional({ enum: [...PLAN_SHARES], description: '공개 범위 — all 전체 공개 · picked 지정 공개' })
+  @IsOptional() @IsIn([...PLAN_SHARES], { message: '공개 범위는 전체 공개 또는 지정 공개입니다' })
+  share?: string;
+
+  @ApiPropertyOptional({ type: [Number], description: '지정 공개로 볼 사람 — 지정 공개일 때만 · 보내면 통째로 갈아 끼운다(활동 중인 구성원만)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(50)
+  @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  pickIds?: number[];
 }
 
 /** 단계 이동 (S6) — 받아 주는 값은 `PlanDetailDto.nextStages` 뿐. 결재는 `:id/review` 가 옮긴다 */
@@ -559,10 +642,20 @@ export class PlanStageMoveDto {
   to!: string;
 }
 
-/** 기한 승인 · 반려 — 원문 §65 의 「기한 승인」 「기한 반려」 */
+/**
+ * 기한 승인 · 반려 — 원문 §65 의 「기한 승인」 「기한 반려」.
+ *
+ * **대표가 본 날짜를 함께 보낸다** (PB-12-2 · N-95). 전에는 승인이 행을 잠그지 않고 무조건 썼다 — 그 사이 담당이
+ * 기한을 옮기면 **대표가 본 적 없는 날짜가 승인**되고 감사 줄에는 옛 날짜가 적혔다. 이제 서버가 행을 잠그고
+ * 지금 날짜가 이 값과 다르면 409 `PLAN_DUE_CHANGED` 로 돌려보낸다 — 새 날짜를 보고 다시 정한다.
+ */
 export class PlanDueDecisionDto {
   @ApiProperty({ description: 'true 면 승인, false 면 반려' })
   @IsBoolean() approve!: boolean;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '결정하는 기한 — 화면이 본 날짜. 그 사이 바뀌었으면 409 PLAN_DUE_CHANGED' })
+  @IsCalendarDate()
+  dueOn!: string;
 }
 
 /** 최종 승인 · 보완 요청 — 원문 §65 바닥의 두 단추 */
@@ -629,14 +722,16 @@ export class MarketingDto {
   @ApiPropertyOptional(N) enrolled?: number | null;
   @ApiPropertyOptional({ ...N, description: '집행 비용 — 대표만 (D-R39)' }) cost?: number | null;
   @ApiPropertyOptional({ ...N, description: '등록당 비용' }) costPerEnroll?: number | null;
+  /* W11 · N-29 ② — 원문 §59 카드 제목 아래 한 줄(「상담 예약 4건 전환」 · 「일 예산 5만 · CTR 3.1%」). MMEMO = MKT 의 한 칸 */
+  @ApiPropertyOptional({ ...S, description: '메모 한 줄 — 적은 적이 없으면 null' }) memo?: string | null;
 }
 
 /**
  * §59 「+ 오늘 한 것」 — 활동 등록 · URL 첨부 (g6 59-3 · P1 · x5).
  *
- * 채널·항목은 **지금 표에 들어 있는 코드 일곱·일곱**이다 — 원문 어휘로 맞추는 일은 열린 결정(N-29 ①)이라
- * 여기서 새 어휘를 짓지 않는다(기존 어휘 입력은 그 결정과 무관하게 막히지 않는다 · g6 59-3 비고).
- * 성과(노출·문의·등록·비용)와 메모(MMEMO)는 받지 않는다 — 메모 칸은 N-29 결정 전이고 성과는 나중에 적는 값이다.
+ * 채널·항목은 **원문 컷의 넷 · 넷**이다(W11 · N-29 ① — 카카오채널 · 네이버 광고 · 인스타그램 · 네이버 블로그 × 댓글·응대 · 광고 집행 ·
+ * 릴스·영상 · 글 발행 · 둘은 따로 고른다). 나머지 셋 · 셋은 이름이 없어 받지 않는다. 옛 행의 코드도 받지 않는다(읽기만 한다).
+ * 메모 한 줄(MMEMO · N-29 ②)을 받는다. 성과(노출·문의·등록·비용)는 받지 않는다 — 나중에 적는 값이다.
  */
 export class MarketingCreateDto {
   @ApiProperty({ maxLength: 120, description: '활동 이름 — 카드 제목' })
@@ -663,6 +758,10 @@ export class MarketingCreateDto {
   @ApiPropertyOptional({ ...N, description: '담당 — 없으면 나. §60 답변을 쓸 수 있는 사람' })
   @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   byId?: number | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 120, description: '메모 한 줄 — 카드 제목 아래(원문 「상담 예약 4건 전환」). 비우면 없음 (N-29 ②)' })
+  @IsOptional() @IsString() @MaxLength(120)
+  memo?: string | null;
 }
 
 /* ══ §66 회의 상세 (C57) ═══════════════════════════════════════════════ */
@@ -685,6 +784,11 @@ export class MeetingTaskDto {
   @ApiPropertyOptional(S) toName?: string | null;
   @ApiPropertyOptional(S) dueOn?: string | null;
   @ApiProperty({ description: '지난 날 수 — 끝난 할 일은 0' }) overdueDays!: number;
+  @ApiProperty({
+    description: '보는 사람이 이 할 일의 완료를 체크할 수 있는가 — `PATCH /drawer/todos/:id` 와 같은 판정(운영 권한 · 받은 사람 · 준 사람). '
+      + '참석자로만 여는 강사는 자기에게 온 할 일만 (W11 A\' 후속 · P)',
+  })
+  canToggle!: boolean;
 }
 
 /** §66 회의 상세 — 참석 확인 → 사전 자료 → 속기록 → 할 일 배정 */
@@ -719,6 +823,37 @@ export class MeetingDetailDto {
 
   @ApiProperty({ type: [MeetingTaskDto], description: '③ 할 일' }) tasks!: MeetingTaskDto[];
   @ApiProperty({ description: '끝낸 할 일 수 — 화면이 다시 세지 않는다' }) taskDone!: number;
+
+  /*
+   * W11 · N-32 — 이 창은 참석자 본인에게도 열린다(「안내 보내기」 알림 링크가 오는 곳).
+   * 단추가 서는지는 서버가 정한다 — 화면이 역할을 견주지 않는다 (D-R39).
+   */
+  @ApiProperty({ description: '속기록 · 할 일 배정 · 사전 자료를 고칠 수 있는가(운영 권한)' }) canEdit!: boolean;
+  @ApiProperty({ description: '「안내 보내기」가 서는가 — 운영 권한 · 받을 참석자가 있고 취소되지 않은 회의' }) canSendNotice!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '「안내 보내기」가 막힌 이유 — 쓰기(409)와 같은 문장 · 운영 권한이 없으면 null' })
+  noticeBlockedReason!: string | null;
+  @ApiProperty({ description: '보는 사람이 참석자인가 — 본인 응답(참석 · 불참) 단추가 선다' }) canRespond!: boolean;
+  @ApiProperty({ type: () => MeetingMyAttendDto, nullable: true, description: '보는 사람의 참석 응답 — 참석자가 아니면 null' })
+  myAttend!: MeetingMyAttendDto | null;
+}
+
+/** 보는 사람 자신의 참석 응답 (N-32) */
+export class MeetingMyAttendDto {
+  @ApiProperty({ enum: MT_ATTEND_STATES, description: 'waiting | in | out — 날이 지나도 답하지 않았으면 waiting 그대로' })
+  state!: string;
+  @ApiProperty({ description: '칩에 쓰는 이름 (D-R18)' }) stateLabel!: string;
+}
+
+/** 참석 응답 — 본인 줄만 · 대리 입력 없음 (N-32) */
+export class MeetingAttendDto {
+  @ApiProperty({ description: 'true = 참석 · false = 불참' })
+  @IsBoolean() confirmed!: boolean;
+}
+
+/** 「안내 보내기」 결과 — 보낸 알림 수와 다시 그릴 회의 상세 (N-32) */
+export class MeetingNoticeResultDto {
+  @ApiProperty({ description: '보낸 알림 수 — 참석자(보낸 사람 · 그만둔 사람 제외)' }) sent!: number;
+  @ApiProperty({ type: () => MeetingDetailDto }) meeting!: MeetingDetailDto;
 }
 
 /** 속기록 저장 — 누가 언제 저장했는지 서버가 남긴다 */
@@ -745,7 +880,7 @@ export class MeetingTaskCreateDto {
 /** §60 대표 피드백 — 글 한 줄 (코멘트 · 답변 공용) */
 export class MfbPostDto {
   @ApiProperty() id!: number;
-  @ApiProperty({ enum: ['comment', 'reply'], description: '쓸 때의 종류 — 역할로 되짚지 않는다' }) kind!: string;
+  @ApiProperty({ enum: [...MFB_KINDS], description: '쓸 때의 종류 — 역할로 되짚지 않는다 · hold 는 담당의 보류(W11 · N-29 ③)' }) kind!: string;
   @ApiProperty({ description: '칩에 쓰는 이름 — 낱말은 서버가 만든다 (D-R18)' }) kindLabel!: string;
   @ApiProperty() body!: string;
   @ApiProperty() byId!: number;
@@ -771,6 +906,9 @@ export class MfbThreadDto {
   @ApiProperty({ description: '가장 나중 대표 코멘트의 시각 — 카드 오른쪽 위' }) at!: string;
   @ApiProperty({ type: [MfbPostDto], description: '코멘트와 그 답변이 시각 순으로 섞여 있다' }) posts!: MfbPostDto[];
   @ApiProperty({ description: '내가 답변을 쓸 수 있는가 — 담당자이거나 담당자가 없을 때' }) canReply!: boolean;
+  /* W11 · N-29 ③ — 보류는 담당 답변의 한 종류다. 칩은 「확인 필요」 그대로 · 「고쳐야 할 것」에서 빠지지 않는다 · 「고친 것 알리기」가 푼다 */
+  @ApiPropertyOptional({ type: Boolean, description: '가장 나중 코멘트에 담당이 「보류」로 답했는가(아직 고친 것은 알리지 않음) — 「보류」 단추는 한 번뿐이다' })
+  held?: boolean;
 }
 
 /** 대표 코멘트 쓰기 — 원문 §60 「+ 코멘트 남기기」 */
@@ -780,14 +918,17 @@ export class MfbCommentWriteDto {
   body!: string;
 }
 
-/** 담당자 답변 쓰기 — 원문 §60 「고친 것 알리기」 */
+/** 담당자 답변 쓰기 — 원문 §60 「고친 것 알리기」 · 「보류」(W11 · N-29 ③) */
 export class MfbReplyWriteDto {
   @ApiProperty({ description: '어느 코멘트에 대한 답인가' })
   @IsInt() @Min(1)
   parentId!: number;
-  @ApiProperty({ description: '답변 본문', maxLength: 1000 })
+  @ApiProperty({ description: '답변 본문 — 보류면 왜 미루는지 한 줄', maxLength: 1000 })
   @IsString() @MinLength(1, { message: '답변을 적어 주세요' }) @MaxLength(1000)
   body!: string;
+  @ApiPropertyOptional({ enum: [...MFB_ANSWER_KINDS], description: 'reply(고친 것 알리기 · 기본) | hold(보류 — 카드는 「확인 필요」로 남는다 · 코멘트마다 한 번)' })
+  @IsOptional() @IsIn([...MFB_ANSWER_KINDS], { message: '답은 고친 것 알리기 · 보류 중 하나입니다' })
+  kind?: string;
 }
 
 /** 답 고치기 — 원문 §60 「답 고치기」. 자기가 쓴 글만 고친다 */
@@ -871,8 +1012,9 @@ export class IntakeAlertDto {
  * 보고 있는 것을 세는 일까지 서버로 보내면 글자마다 왕복이 생긴다.
  */
 export class IntakeStopDto {
-  @ApiProperty({ description: 'before_book | before_first | after_first | after_second' }) key!: string;
-  @ApiProperty() label!: string;
+  @ApiProperty({ description: '실패 당시 단계 — first | wait2nd | second | hold (W11 · N-87 · 원문 슬라이드 24 「fail.from 으로 중단 단계 판정」)' }) key!: string;
+  @ApiProperty({ description: '「1차 상담 중단」 · 「2차 안 옴」 · 「2차 상담 중단」 · 「보류 후 무산」 (원문 §24 컷)' }) label!: string;
+  @ApiPropertyOptional({ type: String, description: '분류 카드 아래 한 줄 — 원문 §24 「첫 통화 뒤 더 진행되지 않았습니다」' }) sub?: string;
 }
 
 /** 유입 경로 칩 하나 — 원본 §23 의 「유입 경로」 줄 (N-44 · C90). 건수 0 이어도 선다(어휘) · 「경로 없음」은 있을 때만 */
@@ -895,7 +1037,7 @@ export class IntakeHeadDto {
   @ApiProperty({ description: '등록률 % — 등록 / (등록 + 등록 실패), 정수 반올림. 끝난 건이 없으면 0. 진행 중인 건은 분모에 넣지 않는다(원본 §23 「등록 3 · 실패 6 · 33%」 · 23-19)' }) enrollRate!: number;
   @ApiProperty({ type: [IntakeOwnerDto], description: '담당 칩 — 「전체」는 화면이 붙인다' }) owners!: IntakeOwnerDto[];
   @ApiProperty({ type: [IntakeAlertDto] }) alerts!: IntakeAlertDto[];
-  @ApiProperty({ type: [IntakeStopDto], description: '§24 중단 지점 넷 — 낱말과 순서 (D-R18 · D-R25)' })
+  @ApiProperty({ type: [IntakeStopDto], description: '§24 중단 지점 넷(실패 당시 단계) — 낱말 · 순서 · 설명 한 줄 (D-R18 · D-R25). 「미분류」는 그런 건의 failStopLabel 이 말한다' })
   stops!: IntakeStopDto[];
   @ApiProperty({ type: [IntakeSourceDto], description: '유입 경로 칩 줄 — 여섯 + 「경로 없음」(옛 건이 있을 때만) · 「전체」는 화면이 붙인다 (N-44 · C90)' })
   sources!: IntakeSourceDto[];
@@ -987,15 +1129,22 @@ export class OpsDto {
   cplOverdue?: number;
   @ApiPropertyOptional({ type: Number, description: '대표 손이 가야 할 기획 — 검토 요청 + 보완 요청 (§61 「단계 보드」 동그라미와 기획 탭 동그라미)' })
   planPending?: number;
-  @ApiPropertyOptional({ type: Number, description: '내가 아직 답하지 않은 회의 수 — 원본 §63 「내 응답 대기 N」. 참석 응답 쓰기는 결정 대기(N-32)라 지금은 보기만 한다' })
+  @ApiPropertyOptional({ type: Number, description: '내가 아직 답하지 않은 회의 수 — 원본 §63 「내 응답 대기 N」. 응답은 본인이 §66 회의 상세에서 한다 (N-32 · W11)' })
   mtMyWaiting?: number;
   @ApiPropertyOptional({ type: Number, description: '속기록을 쓴 회의 수 — 원본 §63 「54회 · 속기록 32」의 뒤 수 (같은 기간)' })
   mtMinutesCount?: number;
+  @ApiPropertyOptional({
+    type: Number,
+    description: '회의 탭 동그라미 「손봐야 할 것」 — 이미 지난(날이 오늘보다 앞) 회의 중 속기록이 빈 수. 날짜 없는 옛 회의는 세지 않는다 (N-96 · W11)',
+  })
+  mtNeedsMinutes?: number;
+  @ApiPropertyOptional({ type: () => [PlanShareWordDto], description: '기획 공개 범위 두 값의 낱말 — 「+ 기획 올리기」·§65 고르기 칸 (N-72 · D-R18)' })
+  planShares?: PlanShareWordDto[];
 
   /* x5 · g6 59-3 · 59-4 · 59-5 — §59 마케팅. 수와 낱말은 서버가 만든다 (D-R37 · D-R18). 선택 칸인 까닭은 위 넷과 같다. */
-  @ApiPropertyOptional({ type: [CplWordDto], description: '「+ 오늘 한 것」 폼의 채널 일곱 — 지금 코드의 이름표(원문 어휘 맞춤은 N-29 ①)' })
+  @ApiPropertyOptional({ type: [CplWordDto], description: '「+ 오늘 한 것」 폼의 채널 — 원문 컷의 넷(카카오채널 · 네이버 광고 · 인스타그램 · 네이버 블로그 · W11 N-29 ①)' })
   mktChannels?: CplWordDto[];
-  @ApiPropertyOptional({ type: [CplWordDto], description: '「+ 오늘 한 것」 폼의 항목 일곱' })
+  @ApiPropertyOptional({ type: [CplWordDto], description: '「+ 오늘 한 것」 폼의 항목 — 원문 컷의 넷(댓글·응대 · 광고 집행 · 릴스·영상 · 글 발행) · 채널과 따로 고른다' })
   mktItems?: CplWordDto[];
   @ApiPropertyOptional({ type: Boolean, description: '「+ 오늘 한 것」이 서는가 — 단추도 서버가 정한다 (D-R39)' })
   canCreateMarketing?: boolean;
@@ -1084,6 +1233,16 @@ export class PlanCreateDto {
   @ApiPropertyOptional({ ...S, description: '기한 제안 — 대표가 승인해야 최종 승인이 열린다 (C56)' })
   @IsOptional() @IsCalendarDate()
   dueOn?: string | null;
+
+  /** 공개 범위 (N-72) — 원문 두 값. 안 보내면 전체 공개다(NULL 은 옛 기획만의 자리) */
+  @ApiPropertyOptional({ enum: [...PLAN_SHARES], description: '공개 범위 — 없으면 all(전체 공개)' })
+  @IsOptional() @IsIn([...PLAN_SHARES], { message: '공개 범위는 전체 공개 또는 지정 공개입니다' })
+  share?: string;
+
+  @ApiPropertyOptional({ type: [Number], description: '지정 공개로 볼 사람 — 지정 공개일 때만(활동 중인 구성원)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(50)
+  @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  pickIds?: number[];
 }
 
 /**

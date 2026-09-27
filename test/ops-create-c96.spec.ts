@@ -109,11 +109,11 @@ d('C96 — 회의 잡기 · 기획 올리기 · 기간/갈래 (N-46 ②③ · J-
 
     const res = await request(app.getHttpServer())
       .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'c96-ceo@t.kr', password: PW }).expect(201);
+      .send({ loginId: 'c96-ceo@t.kr', password: PW }).expect(201);
     token = res.body.accessToken as string;
     const t = await request(app.getHttpServer())
       .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'c96-t@t.kr', password: PW }).expect(201);
+      .send({ loginId: 'c96-t@t.kr', password: PW }).expect(201);
     teacherToken = t.body.accessToken as string;
   });
 

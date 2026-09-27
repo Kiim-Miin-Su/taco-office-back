@@ -85,7 +85,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
 
   it('만든 기획은 첫 칸이고, 기한을 승인해도 「검토 요청」 전에는 결재가 안 열린다', async () => {
     expect((await row()).stage).toBe('draft');
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
 
     const before = await detail();
     expect(before.dueState).toBe('approved');
@@ -99,7 +99,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   });
 
   it('올리면 열린다 — draft → review → approved 가 실제로 지나간다 (열린 자리도 본다)', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
     expect((await detail()).nextStages).toEqual([{ key: 'review', label: '검토 요청' }]);
 
     const sent = await svc().movePlanStage(MGR, false, planId, { to: 'review' });
@@ -116,7 +116,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   });
 
   it('승인된 기획은 「완료」로 간다 — §61 다섯째 칸에 처음으로 쓰는 길이 생긴다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
     await svc().movePlanStage(MGR, false, planId, { to: 'review' });
     await svc().reviewPlan(CEO, true, planId, { decision: 'approve' });
 
@@ -173,7 +173,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   });
 
   it('결재가 끝난 기획도 못 고친다 — 승인 도장이 다른 글에 찍히면 안 된다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
     await svc().movePlanStage(MGR, false, planId, { to: 'review' });
     await svc().reviewPlan(CEO, true, planId, { decision: 'approve' });
     const v = await detail();
@@ -185,7 +185,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   /* ── ③④ 반려 사유와 「보완 N」 ──────────────────────────────────── */
 
   it('보완 요청 사유가 **행에** 남는다 — 그동안 담당자가 볼 방법이 없었다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
     await svc().movePlanStage(MGR, false, planId, { to: 'review' });
     const back = await svc().reviewPlan(CEO, true, planId, { decision: 'rework', reason: '리서치 근거가 없습니다' });
 
@@ -199,7 +199,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   });
 
   it('다시 올리면 지난 사유가 사라진다 — 남겨 두면 지금 상태를 속인다 (C85-a)', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
     await svc().movePlanStage(MGR, false, planId, { to: 'review' });
     await svc().reviewPlan(CEO, true, planId, { decision: 'rework', reason: '리서치 근거가 없습니다' });
     await svc().patchPlan(MGR, false, planId, { research: '8월 블로그 4편 · 유입 11건' });
@@ -210,7 +210,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   });
 
   it('「보완 N」은 세는 칸이 아니라 `log` 에서 나온다 — 시드가 손으로 박은 건은 0 이다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
     await svc().movePlanStage(MGR, false, planId, { to: 'review' });
     await svc().reviewPlan(CEO, true, planId, { decision: 'rework', reason: '근거 부족' });
 
@@ -234,7 +234,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   /* ── ⑤ 기한을 다시 내는 길 ──────────────────────────────────────── */
 
   it('승인된 기한은 담당이 못 옮긴다 — 옮길 수 있으면 대표의 승인이 거짓이 된다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: true });
+    await svc().decidePlanDue(CEO, true, planId, { approve: true, dueOn: day(5) });
     await expect(svc().patchPlan(MGR, false, planId, { dueOn: day(30) }))
       .rejects.toMatchObject({ response: { code: 'PLAN_DUE_APPROVED' } });
     const v = await detail();
@@ -244,8 +244,9 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   });
 
   it('기한이 반려되면 새 날짜를 낼 수 있다 — 그전에는 그 길이 아예 없었다', async () => {
-    await svc().decidePlanDue(CEO, true, planId, { approve: false });
-    expect((await detail()).dueState).toBe('none');
+    await svc().decidePlanDue(CEO, true, planId, { approve: false, dueOn: day(5) });
+    // W11 · N-95 — 반려된 날짜가 행에 남아 「기한 반려」다(전에는 날짜가 사라져 「기한 없음」이었다 — 원문 §61 카드가 반려를 보인다)
+    expect((await detail()).dueState).toBe('rejected');
 
     const again = await svc().patchPlan(MGR, false, planId, { dueOn: day(12) });
     expect({ due: again.dueOn, state: again.dueState }).toEqual({ due: day(12), state: 'proposed' });

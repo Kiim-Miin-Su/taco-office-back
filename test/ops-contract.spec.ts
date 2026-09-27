@@ -15,7 +15,7 @@ import type { Repository } from 'typeorm';
 import { Staff } from '../src/entities';
 import { AuthService } from '../src/auth/auth.service';
 import { JwtStrategy, type JwtPayload } from '../src/auth/jwt.strategy';
-import { PERM_KEY, PermGuard, ROLES, canCeoComment, permsOf, type RequestUser, type Role } from '../src/common/perm';
+import { PERM_KEY, PermGuard, ROLES, canCeoApprovePlan, canCeoComment, permsOf, type RequestUser, type Role } from '../src/common/perm';
 import { OpsController } from '../src/modules/ops/ops.controller';
 import { LeadDto, type OpsDto } from '../src/modules/ops/ops.dto';
 import { OpsService } from '../src/modules/ops/ops.service';
@@ -65,6 +65,9 @@ describe('§23·§24 LEAD 응답 projection', () => {
       // wave 6 (23-11) — 「등록 수업」 줄도 등록 건에만(같은 SELECT 의 JSON 칸 · 왕복 수 그대로) · (23-14) 실패 카드의 단추 줄은 서버 표 그대로
       lessons: null,
       cardActions: [{ key: 'detail', label: '내역 · 상태', to: null }, { key: 'resume', label: '되살리기', to: null }],
+      // W11 · N-87 — §24 중단 지점은 실패 당시 단계에서 읽는다: 명시값도 도달 기록도 없는 옛 실패는 「미분류」(대응표 이관 없음) ·
+      // 옛 중단 지점은 읽기 전용 낱말로 곁에 선다
+      failStopKey: 'none', failStopLabel: '미분류', stopAtLabel: '2차 후 미등록',
     }]);
     // 7 고정 목록 + 접촉 원장 1회(lead_id = ANY — 건마다 묻지 않는다 · C90) + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
     // + §60 대표 피드백 글타래 1회 (C53) + §62 기획 기한 1회 (C56)
@@ -203,6 +206,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     canCreateMeeting: false, canCreatePlan: false,
     // w5 — 탭 동그라미·§63 머리 칩의 수도 서버가 센다 (C-4 · 67-2 · 63-5 · 63-6)
     cplOverdue: 0, planPending: 0, mtMyWaiting: 0, mtMinutesCount: 0,
+    // W11 · N-96 회의 탭 동그라미(지난 회의 중 속기록 빈 수) · N-72 공개 범위 두 값의 낱말 — 서버가 센다/준다
+    mtNeedsMinutes: 0, planShares: [],
     // x5 — §59 「+ 오늘 한 것」 폼 낱말·단추와 필터 띠·범례의 수도 서버가 준다 (59-3 · 59-4 · 59-5)
     mktChannels: [], mktItems: [], canCreateMarketing: false,
     mktChannelCounts: [], mktByCounts: [], mktItemCounts: [], mktDays: 0,
@@ -230,17 +235,28 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     for (const handler of [
       'all', 'createLead', 'moveLeadStage', 'addLeadTouch', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
       'planDetail', 'decidePlanDue', 'reviewPlan',
-      'meetingDetail', 'writeMinutes', 'assignMeetingTask',
+      'sendMeetingNotice', 'writeMinutes', 'assignMeetingTask',
       'createComplaint', 'patchComplaint', 'teacherChangePreview', 'teacherChange',
     ] as const) {
       expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
     }
   });
 
-  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 35필드로 명시한다 (11 + N-25 실패 이력 3 + C90 유입·접촉·다음 단계 8 + DQ1 최신 진단 1 + wave 3 여섯 + 배치안·일정·재확인 셋 + wave 5 사후 관리 줄 + wave 6 등록 수업 · 카드 단추 줄)', () => {
+  it('회의 상세 · 참석 응답은 역할 가드가 없다 — 참석자 본인(강사 포함)이 여는 곳이고 거르기는 서비스가 한다 (W11 · N-32)', () => {
+    for (const handler of ['meetingDetail', 'respondMeeting'] as const) {
+      expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toBeUndefined();
+    }
+  });
+
+  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 38필드로 명시한다 (11 + N-25 실패 이력 3 + C90 유입·접촉·다음 단계 8 + DQ1 최신 진단 1 + wave 3 여섯 + 배치안·일정·재확인 셋 + wave 5 사후 관리 줄 + wave 6 등록 수업 · 카드 단추 줄 + W11 N-87 중단 지점 셋)', () => {
     const schema = openApi.components?.schemas?.LeadDto;
     if (!schema || '$ref' in schema) throw new Error('LeadDto schema 누락');
-    expect(Object.keys(schema.properties ?? {})).toHaveLength(35);
+    expect(Object.keys(schema.properties ?? {})).toHaveLength(38);
+    // W11 · N-87 — 중단 지점 키 · 낱말(실패 건만) · 옛 중단 지점 낱말(읽기 전용)은 더해진 칸이고 선택이다(기존 소비자를 깨지 않는다)
+    for (const field of ['failStopKey', 'failStopLabel', 'stopAtLabel']) {
+      expect(schema.required ?? []).not.toContain(field);
+      expect(schema.properties?.[field]).toMatchObject({ type: 'string', nullable: true });
+    }
     // wave 3 — 학년 · 사유 분류 · 실패일 · 재연락 · 단계 기한은 더해진 칸이고 옛 건은 null 이다(선택 · 기존 소비자를 깨지 않는다) · wave 5 사후 관리 줄 · wave 6 등록 수업 · 단추 줄도 같다
     for (const field of ['grade', 'reasonKind', 'reasonKindLabel', 'failedAt', 'recontact', 'stageDue', 'plan', 'appts', 'recheckOn', 'aftercare', 'lessons', 'cardActions']) {
       expect(schema.required ?? []).not.toContain(field);
@@ -297,7 +313,10 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       // §65 「+ 대표 지시」 (w5 · 65-4) — 과제(TODO) 한 줄을 쓰는 길이지 검색이 아니다
       '/ops/plans/{id}/tasks',
       // §66 회의 상세 — 상세·속기록·할 일 배정 (C57)
-      '/ops/meetings/{id}', '/ops/meetings/{id}/minutes', '/ops/meetings/{id}/todos',
+      '/ops/meetings/{id}',
+      // 「안내 보내기」 · 본인 참석 응답 (W11 · N-32) — 쓰기 경로다. 검색 GET·query 계약은 여전히 0이다
+      '/ops/meetings/{id}/notice', '/ops/meetings/{id}/attend',
+      '/ops/meetings/{id}/minutes', '/ops/meetings/{id}/todos',
     ]);
     expect(Object.keys(path)).toEqual(['get']);
     expect(path.get?.description).toMatch(/name.*school.*ownerName.*reason/);
@@ -355,7 +374,9 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     const ops = openApi.components?.schemas?.OpsDto;
     if (!marketing || '$ref' in marketing || !ops || '$ref' in ops) throw new Error('Ops 비용 schema 누락');
     // 기존 10 + C53 의 6 — channelLabel · itemLabel · title · name · byId · byName + x5 의 1 — onDate(§59 「+ 오늘 한 것」 응답·기간)
-    expect(Object.keys(marketing.properties ?? {})).toHaveLength(17);
+    // + W11 N-29 ② 의 1 — memo(카드 제목 아래 한 줄 · 선택 · 옛 행 null)
+    expect(Object.keys(marketing.properties ?? {})).toHaveLength(18);
+    expect(marketing.required ?? []).not.toContain('memo');
     // 낱말은 서버가 만든다 — 화면이 코드를 옮기지 않는다 (D-R18)
     for (const field of ['channelLabel', 'itemLabel', 'name']) {
       expect(marketing.properties?.[field]).toMatchObject({ type: 'string' });
@@ -389,7 +410,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     // 네 번째는 기간·갈래다 — 아무것도 안 보내면 빈 객체 (C96)
     // 셋째는 **코멘트 권한**이다. `role === 'ceo'` 를 박아 두면 그 판정이 움직일 때(대표 결정
     // 2026-09-21) 이 줄이 무엇을 지키던 것인지 알 수 없다 — 컨트롤러가 **그 selector 에 위임하는지**를 센다
-    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(1, flags.canMoney, canCeoComment(role), {});
+    // 다섯째는 **기획 결재권자**다 — 지정 공개 기획이 보이는 셋 중 하나(W11 · N-72). 같은 이유로 selector 에 위임하는지를 센다
+    if (flags.canAdminPage && flags.canCrudAll) expect(all).toHaveBeenCalledWith(1, flags.canMoney, canCeoComment(role), {}, canCeoApprovePlan(role));
   });
 
   const overrides = [true, false, null, undefined] as const;
@@ -426,14 +448,15 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       const res = await request(app.getHttpServer()).get('/ops')
         .timeout({ response: 2000, deadline: 4000 }).expect(200);
       expect(all).toHaveBeenCalledTimes(1);
-      expect(all).toHaveBeenCalledWith(1, canMoney, canCeoComment(role), {});
+      expect(all).toHaveBeenCalledWith(1, canMoney, canCeoComment(role), {}, canCeoApprovePlan(role));
       expect(res.body.canSeeAmounts).toBe(canMoney);
       expect(res.body.marketing).toEqual(samples.map((sample, index) => ({
         id: index + 1, channel: 'naver', item: 'ads', url: null,
         // 모르는 코드값은 코드값 그대로 보인다 — 비어 보이느니 낯설게 보이는 편이 낫다
         channelLabel: '네이버', itemLabel: 'ads', name: '네이버 · ads',
         // 한 날 — 대역 행에 on_date 칸이 없어 null (x5 · 목록과 「+ 오늘 한 것」 응답이 같은 변환)
-        title: null, onDate: null, byId: null, byName: null,
+        // 메모 한 줄(W11 · N-29 ②) — 대역 행에 memo 칸이 없어 null(적은 적이 없다)
+        title: null, memo: null, onDate: null, byId: null, byName: null,
         ...(sample.result === null ? { impressions: null, clicks: null, inquiries: null } : metrics),
         enrolled: sample.enrolled,
         cost: canMoney ? sample.cost : null,
@@ -552,11 +575,11 @@ describe('§23 상담 머리 (C86-a)', () => {
     ]);
   });
 
-  it('중단 지점은 깔때기 순 넷이고 낱말이 서버에 있다 — 건수는 싣지 않는다', async () => {
+  it('중단 지점은 깔때기 순 넷이고 낱말이 서버에 있다 — 건수는 싣지 않는다 (W11 · N-87 원문 넷 · 실패 당시 단계가 키)', async () => {
     const out = await head([]);
-    expect(out.stops.map((s) => s.key)).toEqual(['before_book', 'before_first', 'after_first', 'after_second']);
+    expect(out.stops.map((s) => s.key)).toEqual(['first', 'wait2nd', 'second', 'hold']);
     expect(out.stops.map((s) => s.label))
-      .toEqual(['상담 예약 전 이탈', '1차 상담 전 이탈', '1차 후 미진행', '2차 후 미등록']);
+      .toEqual(['1차 상담 중단', '2차 안 옴', '2차 상담 중단', '보류 후 무산']);
     // §24 표는 **검색으로 걸러진 행**을 세므로 건수는 화면의 몫이다
     expect(out.stops.every((s) => !('count' in s))).toBe(true);
   });

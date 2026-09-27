@@ -5,7 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { EXEC_AREA_KEYS } from '../../lib/exec-areas';
@@ -38,7 +38,10 @@ export class ExecReportDto {
       + '실제로 내려가는 sent 가 목록에 없었다',
   })
   state!: string;
-  @ApiProperty({ description: 'D-R14 — 한 줄이라도 적어야 제출된다. jsonb 의 note 를 꺼내 문자열로 내린다' }) memo!: string;
+  /*
+   * 옛 한 줄 칸 `memo` 는 W11 에서 뺐다(7-3 ②) — jsonb 를 글자로 내려 6영역 메모가 JSON 글자가 됐고 화면은 `memos` 만 읽는다.
+   * 「숫자만으로는 모를 것」은 아래 `memos` 여섯 칸이 전부다.
+   */
   @ApiPropertyOptional(S) sentAt?: string | null;
   @ApiPropertyOptional(S) reviewedAt?: string | null;
   @ApiPropertyOptional({ ...S, description: 'D-R13 — 반려(rej)하면 사유가 반드시 있다' }) rejectReason?: string | null;
@@ -73,6 +76,12 @@ export class ExecReportDto {
 
   @ApiProperty({ ...S, description: '못 고치는 이유 — 고칠 수 있으면 null. 쓰기가 내는 문장과 같은 말이다' })
   writeBlockedReason!: string | null;
+
+  @ApiProperty({
+    description: '「회수」가 서는가 — 올라간(sent) 보고이고 **보는 사람이 올린 사람**일 때 (W11 · N-97 · 원문 §73 「제출자는 회수만」). '
+      + '쓰기(POST /exec/report/:id/withdraw)와 같은 판정이다',
+  })
+  canWithdraw!: boolean;
 }
 
 /** 숫자 한 칸 — 저장하지 않고 매번 센다 (D-R4) */
@@ -156,6 +165,34 @@ export class ExecAreaDto {
     description: '펼칠 줄 — 배지와 같은 판정 조각으로 뽑은 것(마케팅은 이 기간 올린 것) · 여덟에서 끊는다(원본 수업 「8건」)',
   })
   items!: ExecAreaItemDto[];
+
+  /* W11 · N-81 — 영역마다 고정 담당 한 명(원문 슬라이드 72 표의 담당 열). 처음엔 비어 있고 이름을 지어 넣지 않는다 */
+  @ApiProperty({ ...N, description: '영역 담당 직원 id — 정하지 않았으면 null' }) ownerId!: number | null;
+  @ApiProperty({ ...S, description: '영역 담당 이름 — 정하지 않았으면 null(화면은 「담당 없음」)' }) ownerName!: string | null;
+  @ApiProperty({ description: '담당을 바꿀 수 있는가 — 대표 판정(canCeoSetExecOwner). 화면이 역할을 견주지 않는다 (D-R39)' })
+  canSetOwner!: boolean;
+}
+
+/** URL 의 영역 열쇠 — 대표 관심순 여섯 (N-81) */
+export class ExecAreaParamsDto {
+  @ApiProperty({ enum: EXEC_AREA_KEYS })
+  @IsIn([...EXEC_AREA_KEYS])
+  key!: string;
+}
+
+/** PUT /exec/areas/:key/owner — 영역 담당을 이 사람으로 둔다 · null 이면 비운다 (N-81) */
+export class ExecAreaOwnerWriteDto {
+  @ApiProperty({ ...ID_SCHEMA, nullable: true, description: '담당 직원 id — null 이면 비운다(빠뜨리면 400 · 실수로 비우지 않게)' })
+  @ValidateIf((_object, value) => value !== null)
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  staffId!: number | null;
+}
+
+/** 담당 지정 결과 — 카드가 다시 그릴 한 줄 */
+export class ExecAreaOwnerDto {
+  @ApiProperty({ enum: EXEC_AREA_KEYS }) key!: string;
+  @ApiProperty({ ...N }) ownerId!: number | null;
+  @ApiProperty({ ...S }) ownerName!: string | null;
 }
 
 /**
@@ -181,7 +218,7 @@ export class ExecInboxDto {
  * 줄들의 합이 갈린다 (N-19 · N-25 는 추정 이관을 금지하므로 미분류는 사라지지 않는다).
  */
 export class ExecLostRowDto {
-  @ApiProperty({ description: 'before_book | before_first | after_first | after_second | none' }) key!: string;
+  @ApiProperty({ description: '실패 당시 단계 — first | wait2nd | second | hold | none(미분류) · §24 와 같은 넷 · 같은 낱말 (W11 · N-87)' }) key!: string;
   @ApiProperty() label!: string;
   @ApiProperty() count!: number;
 }

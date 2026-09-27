@@ -75,7 +75,7 @@ d('1:1 대조 wave 5 — 상담 §23 · 컨설팅 §26·§27·§29·§31 서버 
     const [lib] = await q<{ id: string }>(`SELECT id FROM lib ORDER BY id LIMIT 1`);
     LIB = Number(lib.id);
     const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'w5-ceo@t.kr', password: PW }).expect(201);
+      .send({ loginId: 'w5-ceo@t.kr', password: PW }).expect(201);
     ceoToken = res.body.accessToken as string;
   });
 
@@ -114,7 +114,13 @@ d('1:1 대조 wave 5 — 상담 §23 · 컨설팅 §26·§27·§29·§31 서버 
       [LEAD, STU, OWNER, LEAD_OPEN],
     );
     const before = await opsLead(LEAD);
+    // W11 N-86 — 해피콜 · 첫 월간 두 줄이 앞에 선다(컷의 차례). 등록 확정을 거치지 않은 이 건은 할 일이 없어 「없음」이다(짓지 않는다)
+    const careNone = [
+      { key: 'happycall', label: '해피콜', value: '없음', done: false },
+      { key: 'monthly', label: '월간', value: '없음', done: false },
+    ];
     expect(before.lead.aftercare).toEqual([
+      ...careNone,
       { key: 'invoice', label: '청구서', value: '없음', done: false },
       { key: 'book', label: '교재', value: '없음', done: false },
       { key: 'guide', label: '안내', value: '없음', done: false },
@@ -128,6 +134,7 @@ d('1:1 대조 wave 5 — 상담 §23 · 컨설팅 §26·§27·§29·§31 서버 
     await q(`INSERT INTO guide (student_id, reason, state) VALUES ($1,'new','draft')`, [STU]);
     const after = await opsLead(LEAD);
     expect(after.lead.aftercare).toEqual([
+      ...careNone,
       { key: 'invoice', label: '청구서', value: '1건', done: true },
       { key: 'book', label: '교재', value: '1권', done: true },
       { key: 'guide', label: '안내', value: '쓰는 중', done: false },

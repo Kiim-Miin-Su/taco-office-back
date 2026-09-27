@@ -40,9 +40,13 @@ d('§24 상담 실패 이력 — 명시값·도달 기록·미분류 (N-25 채�
   });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
-  it('실패 전이는 이전 단계를 그 순간의 사실로 명시 보존하고 도달 기록을 남긴다', async () => {
-    const out = await svc().failLead(51, id, { stopAt: 'after_second', reason: '  시간대 불일치  ' });
-    expect(out).toMatchObject({ stage: 'failed', failFrom: 'second', stopAt: 'after_second', revivalStage: 'second', revivalSource: 'explicit' });
+  it('실패 전이는 이전 단계를 그 순간의 사실로 명시 보존하고 도달 기록을 남긴다 — 그 단계가 곧 §24 중단 지점이다 (N-87)', async () => {
+    const out = await svc().failLead(51, id, { reason: '  시간대 불일치  ' });
+    expect(out).toMatchObject({
+      stage: 'failed', failFrom: 'second', revivalStage: 'second', revivalSource: 'explicit',
+      // 중단 지점은 묻지 않는다 — 실패 당시 단계에서 읽는다 · 옛 칸(stop_at)은 쓰지 않는다
+      failStopKey: 'second', failStopLabel: '2차 상담 중단', stopAt: null, stopAtLabel: null,
+    });
     const logs = await q.query(`SELECT stage, by_id FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [id]);
     expect(logs).toEqual([expect.objectContaining({ stage: 'failed' })]);
     expect(Number(logs[0].by_id)).toBe(51);
@@ -50,26 +54,27 @@ d('§24 상담 실패 이력 — 명시값·도달 기록·미분류 (N-25 채�
 
   it('등록 건은 실패로 못 보내고, 이미 실패면 ALREADY_FAILED', async () => {
     await q.query(`UPDATE lead SET stage = 'enrolled' WHERE id = $1`, [id]);
-    await expect(svc().failLead(51, id, { stopAt: 'after_second' }))
+    await expect(svc().failLead(51, id, {}))
       .rejects.toMatchObject({ response: { code: 'ENROLLED_LOCKED' } });
     await q.query(`UPDATE lead SET stage = 'failed' WHERE id = $1`, [id]);
-    await expect(svc().failLead(51, id, { stopAt: 'after_second' }))
+    await expect(svc().failLead(51, id, {}))
       .rejects.toMatchObject({ response: { code: 'ALREADY_FAILED' } });
   });
 
-  it('되살리기 판정 — 명시값이 최우선이고, 되살리면 명시값·중단 지점은 소거되되 로그는 남는다', async () => {
-    await svc().failLead(51, id, { stopAt: 'after_second' });
+  it('되살리기 판정 — 명시값이 최우선이고, 되살리면 명시값은 소거되되 로그는 남는다 · 옛 중단 지점(stop_at)은 읽기 전용이라 그대로다 (N-87)', async () => {
+    await q.query(`UPDATE lead SET stop_at = 'after_second' WHERE id = $1`, [id]);
+    await svc().failLead(51, id, {});
     const back = await svc().resumeLead(51, id, {});
-    expect(back).toMatchObject({ stage: 'second', failFrom: null, stopAt: null, revivalStage: null });
+    expect(back).toMatchObject({ stage: 'second', failFrom: null, revivalStage: null, failStopKey: null, stopAt: 'after_second', stopAtLabel: '2차 후 미등록' });
     const logs = await q.query(`SELECT stage FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [id]);
     expect(logs.map((r: { stage: string }) => r.stage)).toEqual(['failed', 'second']);
   });
 
-  it('명시값이 없으면 도달 기록 역순(failed 제외)으로 판정한다', async () => {
+  it('명시값이 없으면 도달 기록 역순(failed 제외)으로 판정한다 — §24 분류도 같은 판정이다', async () => {
     await q.query(`INSERT INTO lead_stage_log (lead_id, stage) VALUES ($1,'first'), ($1,'wait2nd')`, [id]);
     await q.query(`UPDATE lead SET stage = 'failed', fail_from = NULL WHERE id = $1`, [id]);
     const view = (await svc().all(1, false, false)).leads.find((l) => l.id === id)!;
-    expect(view).toMatchObject({ revivalStage: 'wait2nd', revivalSource: 'log' });
+    expect(view).toMatchObject({ revivalStage: 'wait2nd', revivalSource: 'log', failStopKey: 'wait2nd', failStopLabel: '2차 안 옴' });
     const back = await svc().resumeLead(51, id, {});
     expect(back.stage).toBe('wait2nd');
   });
@@ -77,11 +82,24 @@ d('§24 상담 실패 이력 — 명시값·도달 기록·미분류 (N-25 채�
   it('레거시(이력 0)는 미분류 — 추정하지 않고 UNCLASSIFIED 로 거절, 단계 지정 시에만 되살린다', async () => {
     await q.query(`UPDATE lead SET stage = 'failed', fail_from = NULL, stop_at = 'after_first' WHERE id = $1`, [id]);
     const view = (await svc().all(1, false, false)).leads.find((l) => l.id === id)!;
-    // stop_at 이 있어도 fail_from 으로 추정 이관하지 않는다 (N-25)
-    expect(view).toMatchObject({ failFrom: null, revivalStage: null, revivalSource: null });
+    // stop_at 이 있어도 fail_from 으로 추정 이관하지 않는다 (N-25) — §24 는 「미분류」 · 옛 낱말은 읽기 전용으로 곁에 선다 (N-87)
+    expect(view).toMatchObject({
+      failFrom: null, revivalStage: null, revivalSource: null,
+      failStopKey: 'none', failStopLabel: '미분류', stopAt: 'after_first', stopAtLabel: '1차 후 미진행',
+    });
     await expect(svc().resumeLead(51, id, {})).rejects.toMatchObject({ response: { code: 'UNCLASSIFIED' } });
     const back = await svc().resumeLead(51, id, { to: 'hold' });
-    expect(back.stage).toBe('hold');
+    expect(back).toMatchObject({ stage: 'hold', stopAt: 'after_first' });
+  });
+
+  it('§24 분류 칩은 원문 넷 — 낱말 · 설명 한 줄 · 깔때기 차례 (N-87 · §24 가 정본)', async () => {
+    const head = (await svc().all(1, false, false)).intakeHead;
+    expect(head.stops.map((s) => [s.key, s.label])).toEqual([
+      ['first', '1차 상담 중단'], ['wait2nd', '2차 안 옴'], ['second', '2차 상담 중단'], ['hold', '보류 후 무산'],
+    ]);
+    expect(head.stops.map((s) => s.sub)).toEqual([
+      '첫 통화 뒤 더 진행되지 않았습니다', '일정은 잡았는데 오지 않았습니다', '진단까지 했는데 배치에서 멈췄습니다', '결정을 기다리다 끝났습니다',
+    ]);
   });
 
   it('실패 아닌 건 되살리기는 NOT_FAILED', async () => {

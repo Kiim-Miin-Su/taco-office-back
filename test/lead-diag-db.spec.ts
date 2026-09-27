@@ -78,7 +78,7 @@ d('상담 진단 점수 — 점수만 저장 · 레벨·교재는 담당자가 �
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     adminToken = await login('ld-a@t.kr');

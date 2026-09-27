@@ -96,7 +96,7 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'교체 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
     await q(`INSERT INTO sub (key,name,color) VALUES ($1,'교체 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
     const login = async (email: string) => {
-      const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ email, password: PW }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     ceoToken = await login('cp-ceo@t.kr');

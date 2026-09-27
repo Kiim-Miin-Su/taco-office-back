@@ -122,7 +122,7 @@ d('C90 상담 입구 — 신규 문의 · 단계 이동 · 접촉 원장 · §71
 
   it('등록·등록 실패 건은 단계를 옮길 수 없다(LEAD_LOCKED) — 등록은 enroll, 실패는 resume 이 각자의 길', async () => {
     const made = await svc().createLead(52, { name: '최서준', source: 'referral', note: '학부모 김OO 소개' });
-    await svc().failLead(53, made.id, { stopAt: 'before_first' });
+    await svc().failLead(53, made.id, {});
     await expect(svc().moveLeadStage(53, made.id, { to: 'second' })).rejects.toMatchObject({ response: { code: 'LEAD_LOCKED' } });
     const failed = await svc().all(53, false, false);
     const row = failed.leads.find((l) => l.id === made.id)!;

@@ -60,7 +60,7 @@ d('「+ 대표 지시」 HTTP (w5 · 65-4)', () => {
     );
     planId = Number(p.id);
     const login = async (email: string) => (await request(app.getHttpServer())
-      .post('/auth/login').send({ email, password: PW }).expect(201)).body.accessToken as string;
+      .post('/auth/login').send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;
     token = await login('w5-http-ceo@t.kr');
     teacherToken = await login('w5-http-t@t.kr');
   });

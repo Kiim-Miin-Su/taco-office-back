@@ -23,6 +23,7 @@ import { InvoiceDto } from '../accounting/accounting.dto';
 import { BookIssueDto } from '../books/books.dto';
 import { SCHEDULE_INPUT_LIMITS, UnavWarnDto } from '../schedule/schedule.dto';
 import { LeadDiagDto } from './lead-diag.dto';
+import { STU_GENDERS, type StuGender } from '../meta/meta.dto';
 
 const ID_MAX = Number.MAX_SAFE_INTEGER;
 
@@ -43,6 +44,13 @@ export class EnrollStudentDto {
   @ApiPropertyOptional({ maxLength: 40 }) @IsOptional() @IsString() @MaxLength(40) targetExam?: string;
   @ApiPropertyOptional({ maxLength: 20, description: '지도 강도 낱말 — STU.guidance' }) @IsOptional() @IsString() @MaxLength(20) guidance?: string;
   @ApiPropertyOptional({ maxLength: 20, description: '수업 언어 — STU.lang' }) @IsOptional() @IsString() @MaxLength(20) lang?: string;
+
+  @ApiPropertyOptional({
+    enum: STU_GENDERS,
+    description: '성별 — 선택 칸(N-83). 비워도 된다. 관리자 §10 아바타에만 쓰고 학부모·외부 출력에는 싣지 않는다. 새 학생을 만들 때만 적는다',
+  })
+  @IsOptional() @IsIn(STU_GENDERS as unknown as string[])
+  gender?: StuGender;
 }
 
 /** 배치안 한 줄 — 시간표 규칙 하나 + 등록(ENR) 한 줄 + (있으면) 교재 요청 */
@@ -150,6 +158,19 @@ export class EnrollMissingBookDto {
   @ApiProperty({ description: '과목 이름(없으면 종류 이름)' }) label!: string;
 }
 
+/** 등록 확정이 만든 사후 관리 할 일 둘의 날짜 · 담당 (W11 · N-86 · DQ2 권장안) */
+export class EnrollAftercareDto {
+  @ApiProperty({ type: String, nullable: true, format: 'date', description: '첫 실제 수업일 — 시작일 이후 · 휴강·그날 빠짐·휴원 아닌 첫 회차. 투영 범위 밖이면 null' })
+  firstLessonOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, format: 'date', description: '해피콜 날 — 첫 실제 수업 + 7일 (A-14). 첫 수업을 모르면 null(날짜 미정)' })
+  happyCallOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, format: 'date', description: '첫 월간 상담 날 — 다음 달 같은 날(없으면 말일) · 휴원 중이면 복귀 뒤. 모르면 null' })
+  monthlyOn!: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: '받는 사람 — 상담 담당(그만뒀거나 없으면 null · 담당 없음)' })
+  ownerId!: number | null;
+  @ApiProperty({ type: String, nullable: true }) ownerName!: string | null;
+}
+
 /** `POST /ops/leads/{id}/enroll(/preview)` 의 결과 — 일곱 가지가 무엇이 됐는지 줄마다 */
 export class EnrollResultDto {
   @ApiProperty() leadId!: number;
@@ -173,4 +194,7 @@ export class EnrollResultDto {
   @ApiProperty({ description: '교재를 적지 않은 줄에 상담 진단에서 담당자가 고른 교재를 기본으로 요청했는가' }) diagBookApplied!: boolean;
   @ApiPropertyOptional({ type: LeadDiagDto, nullable: true, description: '그 학생의 최신 상담 진단 — 등록으로 생긴 연결(lead.student_id)을 따라 읽은 값. 없으면 null' })
   latestDiag?: LeadDiagDto | null;
+  /* W11 · N-86 — 등록 뒤 사후 관리. 같은 트랜잭션에서 상담 담당의 할 일 둘(해피콜 · 첫 월간 상담)이 선다 (S13 「등록 완료에서 실제 후속 예약 날짜·담당 표시」) */
+  @ApiPropertyOptional({ type: () => EnrollAftercareDto, description: '해피콜 · 첫 월간 상담 — 날짜와 담당(할 일로 만들어졌다)' })
+  aftercare?: EnrollAftercareDto;
 }

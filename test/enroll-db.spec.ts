@@ -24,6 +24,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { NOTI_TITLE } from '../src/lib/noti';
+import { addMonths, leadMonthlyOn } from '../src/lib/intake-words';
 import { DEV_URL } from './db';
 
 /** 함께 내는 첫 달 청구서의 기한 — 기한 자체를 보지 않는 시험들이 쓰는 값 (S3) */
@@ -101,7 +102,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     adminToken = await login('en-a@t.kr');
@@ -183,6 +184,12 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(r.bookIssues).toEqual([expect.objectContaining({ libId: LIB, studentId: r.studentId, state: 'wait' })]);
     expect(r.booksMissing).toEqual([{ kindKey: KIND, subKey: null, label: '등록 시험' }]);
     expect(r.unavailable).toEqual([]);
+    // W11 · N-86 — 사후 관리: 해피콜(첫 실제 수업 + 7일) · 첫 월간(다음 달 같은 날)을 상담 담당의 할 일로 · 같은 트랜잭션
+    const firstLesson = [FIRST_MON, FIRST_WED, firstDow(START, 5)].sort()[0]!;
+    expect(r.aftercare).toEqual({
+      firstLessonOn: firstLesson, happyCallOn: plus(firstLesson, 7),
+      monthlyOn: leadMonthlyOn(firstLesson, addMonths(firstLesson.slice(0, 7), 1)), ownerId: ADMIN, ownerName: '등록관리자',
+    });
 
     // DB — 학생 · 등록 · 명단 · 단계 · 도달 기록 · LOG
     const [stu] = await q<{ name: string; grade: string; school: string; started_on: string }>(`SELECT name, grade, school, to_char(started_on,'YYYY-MM-DD') AS started_on FROM stu WHERE id = $1`, [r.studentId]);
@@ -216,11 +223,14 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
 
     // 두 번은 409 · 강사는 403 (실패 건은 이제 막지 않는다 — 아래 「바로 수업 등록」 24-07)
     expect((await api('post', `/ops/leads/${LEADS.hold}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(409)).body.code).toBe('ALREADY_ENROLLED');
+    // 등록 재시도에 사후 관리 할 일이 겹쳐 서지 않는다 (S13 완료 기준)
+    expect(await q(`SELECT care, to_id FROM todo WHERE lead_id = $1 ORDER BY id`, [LEADS.hold]))
+      .toEqual([{ care: 'happycall', to_id: String(ADMIN) }, { care: 'monthly', to_id: String(ADMIN) }]);
     await api('post', `/ops/leads/${LEADS.first}/enroll`, teacherToken).send({ startedOn: START, dueOn: DUE, lines: [line()] }).expect(403);
   });
 
   /* ── 24-07 원본 §24 「바로 수업 등록」 — 되살리기 없이 등록 확정 · 실패 이력은 남는다 ─────────── */
-  it('등록 실패 건도 되살리기 없이 바로 등록한다 — 중단 지점·실패 전 단계는 비우되 도달 기록(failed → enrolled)과 LOG before 에 이력이 남는다 (24-07)', async () => {
+  it('등록 실패 건도 되살리기 없이 바로 등록한다 — 실패 전 단계는 비우고(되살리기와 같다) 옛 중단 지점은 읽기 전용 기록으로 남긴다 · 도달 기록(failed → enrolled)과 LOG before 에 이력이 남는다 (24-07 · N-87)', async () => {
     await q(`UPDATE lead SET stop_at = 'after_second', fail_from = 'second', reason = '시간대 불일치' WHERE id = $1`, [LEADS.failed]);
     await q(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'failed', $2)`, [LEADS.failed, ADMIN]);
     const body = { startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:SA', startMin: 1080, endMin: 1140 })] };
@@ -233,7 +243,8 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(r).toMatchObject({ preview: false, studentName: '등록D', studentCreated: true, stage: 'enrolled' });
     const [lead] = await q<{ stage: string; stop_at: string | null; fail_from: string | null; reason: string | null }>(
       `SELECT stage, stop_at, fail_from, reason FROM lead WHERE id = $1`, [LEADS.failed]);
-    expect(lead).toEqual({ stage: 'enrolled', stop_at: null, fail_from: null, reason: '시간대 불일치' });
+    // 옛 중단 지점(stop_at)은 읽기 전용 기록이라 등록 확정도 지우지 않는다(N-87) · fail_from 은 「지금 실패 중인 건」의 판정 값이라 되살리기처럼 비운다
+    expect(lead).toEqual({ stage: 'enrolled', stop_at: 'after_second', fail_from: null, reason: '시간대 불일치' });
     const logs = await q<{ stage: string }>(`SELECT stage FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [LEADS.failed]);
     expect(logs.map((x) => x.stage)).toEqual(['failed', 'enrolled']);
     const [audit] = await q<{ before: Record<string, unknown> }>(`SELECT before FROM log WHERE entity = 'LEAD' AND entity_id = $1 AND action = 'enroll'`, [LEADS.failed]);

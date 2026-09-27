@@ -80,7 +80,7 @@ d('1:1 대조 wave 3 — 상담 §23·§24 · 컨설팅 §27·§30·§31 서버 
       [LEGACY_LEAD, LEGACY_FAILED],
     );
     const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'w3-ceo@t.kr', password: PW }).expect(201);
+      .send({ loginId: 'w3-ceo@t.kr', password: PW }).expect(201);
     ceoToken = res.body.accessToken as string;
   });
 
@@ -150,10 +150,13 @@ d('1:1 대조 wave 3 — 상담 §23·§24 · 컨설팅 §27·§30·§31 서버 
   it('실패 사유 분류는 다섯 낱말만 받고(DTO 400 · 표 CHECK) · 실패한 날과 재연락 대기/완료를 서버가 판정한다 · 머리 막대가 분류로 센다 (24-04 · 24-05 · 24-06)', async () => {
     const made = (await api('post', '/ops/leads').send({ name: '삼차실패', source: 'phone' }).expect(201)).body;
     leadIds.push(made.id);
-    expect((await api('post', `/ops/leads/${made.id}/fail`).send({ stopAt: 'after_first', reasonKind: 'money' }).expect(400)).body.code).toBe('BAD_REQUEST');
+    expect((await api('post', `/ops/leads/${made.id}/fail`).send({ reasonKind: 'money' }).expect(400)).body.code).toBe('BAD_REQUEST');
     expect((await q(`SELECT stage FROM lead WHERE id = $1`, [made.id]))[0]).toEqual({ stage: 'first' });
 
+    // W11 · N-87 — 중단 지점은 묻지 않는다(실패 당시 단계에서 판정). 옛 화면이 stopAt 을 보내도 DTO 에 칸이 없어 쓰이지 않는다
+    // (이 앱은 whitelist 로 걷고 · 제품 파이프는 forbidNonWhitelisted 라 400 이다)
     const failed = (await api('post', `/ops/leads/${made.id}/fail`).send({ stopAt: 'after_first', reason: '월 수업료가 예산을 넘음', reasonKind: 'cost' }).expect(201)).body;
+    expect(failed).toMatchObject({ stopAt: null, failFrom: 'first', failStopKey: 'first', failStopLabel: '1차 상담 중단' });
     expect(failed).toMatchObject({
       stage: 'failed', reasonKind: 'cost', reasonKindLabel: '비용', reason: '월 수업료가 예산을 넘음', failedAt: TODAY,
       // 실패 뒤 접촉이 없다 — 대기. 첫 접촉은 실패 전에 적은 것이다(유입 한 줄이 없어서 비어 있다)
