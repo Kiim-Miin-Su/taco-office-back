@@ -118,6 +118,9 @@ export const NOTI_TITLE = {
   consSessions: '컨설팅 회차 잡힘',
   consNextTask: '컨설팅 다음 할 일',
   consDone: '컨설팅 종료',
+  // 컨설팅 계약 → 진행 — 수납이 계약 금액을 채운 순간 담당에게 두 건(N-65 · 테스트 시나리오 I-90+)
+  consPaid: '수납 · 진행 가능',
+  consRecordRequest: '회차 기록 요청',
   // 운영
   teacherChange: '강사 교체',
   teacherHandover: '담당 이관',
@@ -132,6 +135,10 @@ export const NOTI_TITLE = {
   enrollConfirmed: '등록 확정',
   // 대표 보고
   execSubmitted: '대표 보고 올라옴',
+  // W11 운영 · 대표 보고 (O) — §66 「안내 보내기」(N-32) · §73 결재 결과를 올린 사람에게(N-97)
+  meetingNotice: '회의 안내',
+  execApproved: '대표 보고 승인',
+  execRejected: '대표 보고 반려',
 } as const satisfies Record<string, string>;
 
 export type NotiTitleKey = keyof typeof NOTI_TITLE;

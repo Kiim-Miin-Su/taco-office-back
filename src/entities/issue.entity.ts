@@ -10,8 +10,9 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
+@Check('issue_form_words', "form IS NULL OR form IN ('pdf','print')")
 @Entity({ name: 'issue' })
 export class Issue {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -46,4 +47,12 @@ export class Issue {
 
   @Column({ type: 'timestamptz', nullable: true })
   deliveredAt: Date | null;
+
+  /** 배부 사유 — 무슨 교재를 왜 줬는지 (N-62 ① 채택 · W11 · 원문 슬라이드 37). 옛 줄은 NULL */
+  @Column({ type: 'text', nullable: true })
+  reason: string | null;
+
+  /** 배부 형태 — pdf | print (§38 칩 「PDF」 · 「실물 책」 · 7-3 §38-2 · W11 A'). 옛 줄은 NULL = 칩 없음 */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  form: string | null;
 }

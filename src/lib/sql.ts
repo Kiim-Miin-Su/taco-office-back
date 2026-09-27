@@ -32,12 +32,25 @@ export const kstDateOf = (expr: string): string => `(${expr} AT TIME ZONE '${KST
  */
 export const kstMonthOf = (expr: string): string => `to_char(${expr} AT TIME ZONE '${KST}', 'YYYY-MM')`;
 
-/** `ser_occ` 를 `o` 로 별칭 붙였을 때의 시작·끝 분. 둘 다 수업 시작일의 KST 자정 기준이다. */
-export const START_MIN = minOf('lower(o.span)');
+/** `ser_occ` 별칭의 시작 분 — 수업 시작일의 KST 자정 기준 */
+export const startMinOf = (alias: string): string => minOf(`lower(${alias}.span)`);
 // API가 허용하는 24:00 종료는 다음 날짜의 00:00으로 저장된다. 시각만 뽑으면 1440이 0이 되어
 // 길이가 음수가 되고 리포트·출결이 일찍 열린다. 실제 span 날짜 차이를 더해 이동 예외도 보존한다.
-export const END_MIN = `(${minOf('upper(o.span)')} + 1440 * (`
-  + `${kstDateOf('upper(o.span)')} - ${kstDateOf('lower(o.span)')}))`;
+export const endMinOf = (alias: string): string => `(${minOf(`upper(${alias}.span)`)} + 1440 * (`
+  + `${kstDateOf(`upper(${alias}.span)`)} - ${kstDateOf(`lower(${alias}.span)`)}))`;
+
+/** `ser_occ` 를 `o` 로 별칭 붙였을 때의 시작·끝 분. 둘 다 수업 시작일의 KST 자정 기준이다. */
+export const START_MIN = startMinOf('o');
+export const END_MIN = endMinOf('o');
+
+/**
+ * 회차의 **실제 방식** — 회차 예외가 방식을 바꿨으면 그 값, 아니면 규칙의 값 (N-56 · W11).
+ * `exc.mode` 가 NULL 이면 규칙(`ser.mode`)을 따른다. 규칙의 칸은 enum 이라 글자로 맞춘다.
+ * 회차를 읽으면서 방식을 보는 자리는 이 조각을 쓴다 — `s.mode` 만 읽으면 그 회차만 온라인으로 바꾼 수업이
+ * 현장으로 보인다(안내 · 현황판 · 강사 홈 · 서랍이 넘겨받을 자리다).
+ * @param exc 그 회차의 EXC 별칭(`LEFT JOIN exc e ON e.ser_id = … AND e.on_date = …`) · @param ser SER 별칭
+ */
+export const effectiveModeOf = (exc: string, ser: string): string => `COALESCE(${exc}.mode, ${ser}.mode::text)`;
 
 /**
  * 화면에 내려보내는 시각 — **언제나 KST 오프셋이 붙은 ISO** 다.

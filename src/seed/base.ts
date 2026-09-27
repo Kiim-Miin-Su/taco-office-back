@@ -57,15 +57,15 @@ export const rel = (iso: string): string => (SEED_SHIFT === 0 ? iso : addDays(is
  *
  * `rep`·`repForm` 은 원문 표에 없는 우리 칸이다 — 리포트 대상 여부(D-R14)를 종류에 매단 것이다.
  *
- * ⚠️ `mock` · `gpa` 의 정원은 **원문이 1 인데 여기는 아직 옛 값**이다. 시드의
- * 「모의 SAT 정기」가 4인이고 GPA 회차가 2인이라, 정원을 1 로 내리면 그 행들이 정원을 넘는다.
- * 원문의 이름도 「모의수업」이라 **1:1 체험 수업**을 가리키는데 우리 시드는 단체 모의고사다 —
- * 개념이 갈렸다. 시드를 쪼개면 리포트·정산·GPA 소비 이력이 함께 움직여서 N-30 으로 올렸다.
+ * `mock` · `gpa` 의 정원은 **원문 그대로 1** 이다(N-30 ① 채택 · W11 · 데이터 마이그레이션 1764320000000 —
+ * 옛 기본값 20 · 4 일 때만 1 로). 정원은 막는 값이 아니라 **알리는 값**이라(명단 쓰기는 세기만 한다 · S5-a)
+ * 시드의 4인 「모의 SAT 정기」와 2인 GPA 회차는 쪼개지 않는다 — 명단 행은 그대로 두고 화면이 「초과」로 알린다
+ * (리포트 · 정산 · GPA 소비 이력을 움직이지 않는다).
  */
 export const KINDS = [
   { key: 'class',      name: '수업',     color: '#4A5461', cap: 4,  grp: 'lesson',  rep: true,  repForm: 'dev',    sort: 1 },
-  { key: 'mock',       name: '모의수업',  color: '#BC7855', cap: 20, grp: 'lesson',  rep: true,  repForm: 'assess', sort: 2 },
-  { key: 'gpa',        name: 'GPA',      color: '#816BB0', cap: 4,  grp: 'lesson',  rep: true,  repForm: 'dev',    sort: 3 },
+  { key: 'mock',       name: '모의수업',  color: '#BC7855', cap: 1,  grp: 'lesson',  rep: true,  repForm: 'assess', sort: 2 },
+  { key: 'gpa',        name: 'GPA',      color: '#816BB0', cap: 1,  grp: 'lesson',  rep: true,  repForm: 'dev',    sort: 3 },
   { key: 'study',      name: '자습',     color: '#59988B', cap: 12, grp: 'lesson',  rep: false, repForm: null,     sort: 4 },
   { key: 'consult',    name: '상담',     color: '#52969C', cap: 3,  grp: 'intake',  rep: false, repForm: null,     sort: 5 },
   { key: 'diagx',      name: '진단고사',  color: '#6F798A', cap: 8,  grp: 'intake',  rep: true,  repForm: 'assess', sort: 6 },

@@ -10,8 +10,11 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
+@Check('plan_share_words', "share IS NULL OR share IN ('all', 'picked')")
+@Check('plan_due_rejected_triple', '(due_rejected_at IS NULL) = (due_rejected_by IS NULL) AND (due_rejected_at IS NULL) = (due_rejected_on IS NULL)')
+@Check('plan_due_rejected_clears', 'due_rejected_at IS NULL OR due_on IS NULL')
 @Entity({ name: 'plan' })
 export class Plan {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -68,4 +71,25 @@ export class Plan {
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
+
+  /**
+   * 공개 범위 — `all` 전체 공개 · `picked` 지정 공개 (N-72 · 원문 §61 카드 칩 두 값).
+   * **NULL 은 옛 기획**이다 — 지금처럼 모두에게 보이고 칩이 서지 않는다(보정 0 · N-25).
+   * 누가 볼 수 있는가는 `lib/plan-words` 의 `planCan` 한 곳이 정한다.
+   */
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  share: string | null;
+
+  /**
+   * 기한 반려 보존 (N-95 · 원문 §61 「D-2 08-19 · 기한 반려」) — 반려가 지운 날짜 · 순간 · 사람.
+   * 셋은 함께 있거나 함께 없고(`plan_due_rejected_triple`), 새 기한을 내면 비운다(`plan_due_rejected_clears`).
+   */
+  @Column({ type: 'date', nullable: true })
+  dueRejectedOn: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  dueRejectedAt: Date | null;
+
+  @Column({ type: 'bigint', nullable: true })
+  dueRejectedBy: number | null;
 }

@@ -15,11 +15,14 @@ import { Check, Column, Entity, ForeignKey, Index, PrimaryGeneratedColumn, Uniqu
 
 @Index(['studentId', 'sentAt'])
 @Index('guardian_send_pnoti_idx', ['pnotiId'], { where: '"pnoti_id" IS NOT NULL' })
+@Index('guardian_send_wrep_idx', ['wrepId'], { where: '"wrep_id" IS NOT NULL' })
 @Unique('guardian_send_once', ['requestKey', 'guardianId', 'channel'])
 @ForeignKey('pnoti', ['pnotiId'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('stu', ['studentId'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('guardian', ['guardianId'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('staff', ['sentBy'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+@ForeignKey('wrep', ['wrepId'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+@Check('guardian_send_one_source', '"pnoti_id" IS NULL OR "wrep_id" IS NULL')
 @Check('guardian_send_channel', "channel IN ('email','sms')")
 @Check('guardian_send_status', "status IN ('sent','failed','not_configured')")
 @Entity({ name: 'guardian_send' })
@@ -34,6 +37,13 @@ export class GuardianSend {
   /** §43 회차 학부모 안내(PNOTI parent)에서 보냈으면 그 줄 — 안내문 등 다른 곳에서 보냈으면 null */
   @Column({ type: 'bigint', nullable: true })
   pnotiId: number | null;
+
+  /**
+   * 주간 묶음(N-54 · W11)에서 보냈으면 그 묶음(`wrep`) — 회차 안내와 동시에 가리키지 않는다(`guardian_send_one_source`).
+   * migration 1764400000000 · 옛 행은 NULL.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  wrepId: number | null;
 
   @Column({ type: 'bigint' })
   studentId: number;

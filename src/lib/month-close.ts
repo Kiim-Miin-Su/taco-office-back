@@ -10,7 +10,7 @@
  * 「마감 후에도 자유롭게 고쳐지면 실패」 — 어느 쓰기가 마감 달을 건드리는지를 여기 한 곳이 판정한다.
  *   · 날짜 하나(출결 · 회차 예외)        → `assertMonthOpen(q, date)`
  *   · 기간(휴원 · 복귀)                 → `assertRangeOpen(q, from, to)`
- *   · 달(청구서 발행 · 이월 처리)         → `assertMonthOpen(q, 'YYYY-MM')`
+ *   · 달(청구서 발행 · 이월 처리)         → `assertMonthOpenForWrite(q, 'YYYY-MM')` — 마감 · 해제와 같은 달 열쇠(공유)를 잡고 읽는다
  *   · 스케줄 쓰기(규칙 전체가 바뀐다)     → `closedOccSnapshot` 을 persist/project 앞뒤로 견줘 다르면 던진다
  * 마감 달은 `month_close` 의 열린 행(`reopened_at IS NULL`)이다 — 해제된 달은 이력만 남고 다시 열린다.
  */
@@ -66,6 +66,29 @@ export async function closedMonthBetween(q: Queryable, from: string, to: string 
 export async function assertMonthOpen(q: Queryable, dateOrMonth: string): Promise<void> {
   const hit = await closedMonthBetween(q, dateOrMonth, dateOrMonth);
   if (hit) throw monthClosedError(hit);
+}
+
+/**
+ * 달 하나의 **쓰기 축** (W11 A' 후속) — 월 마감 · 해제는 이 열쇠를 **배타**로(`lockMonthExclusive`), 그 달에 청구서를 내거나
+ * 이월하는 쓰기는 **공유**로(`assertMonthOpenForWrite`) 잡는다. 공유끼리는 서로 막지 않고, 마감 · 해제가 끼면 한쪽이 끝날 때까지 기다린다.
+ *
+ * 전에는 발행 · 이월이 「열려 있다」를 읽은 뒤 쓰는 사이에 마감이 먼저 커밋될 수 있었다 — 마감은 그 쓰기를 기다리지 않았고,
+ * **마감한 달에 새 청구서 · 새 이월이 섰다**(마감 뒤에 바뀌면 실패 · C-39 · L-123). 이제 잠근 **뒤에** 마감을 읽으므로
+ * 쓰기가 끝나기 전에는 마감이 커밋되지 않고, 해제가 도는 동안의 쓰기는 해제가 끝난 뒤에 판정한다.
+ * 트랜잭션이 끝날 때 풀린다(xact) — 트랜잭션 안에서만 부른다. 여러 달을 잡을 때는 **이른 달부터**(서로 엇갈려 기다리지 않게).
+ * 열쇠 문자열은 마감 · 해제가 전부터 쓰던 그대로다.
+ */
+const monthLockKey = (month: string): string => `month_close:${month}`;
+
+/** 마감 · 해제 — 그 달 열쇠를 배타로. 같은 달의 마감 · 해제 둘을 한 줄로 세우고, 도는 발행 · 이월이 끝나기를 기다린다 */
+export async function lockMonthExclusive(q: Queryable, month: string): Promise<void> {
+  await q.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [monthLockKey(month)]);
+}
+
+/** 그 달에 쓰는 쪽(발행 · 이월) — 열쇠를 공유로 잡은 **뒤** 마감을 읽는다. 날짜를 줘도 그 달로 본다 */
+export async function assertMonthOpenForWrite(q: Queryable, dateOrMonth: string): Promise<void> {
+  await q.query(`SELECT pg_advisory_xact_lock_shared(hashtext($1))`, [monthLockKey(monthOf(dateOrMonth))]);
+  await assertMonthOpen(q, dateOrMonth);
 }
 
 /** 기간이 마감 달과 겹치면 409 — 휴원·복귀처럼 여러 달을 덮는 쓰기 */

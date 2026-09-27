@@ -20,7 +20,7 @@
  * **낱말은 전부 여기 하나다** (D-R18). 화면이 「온라인」·「교재 아직 없습니다」를 짓지 않는다 —
  * 지으면 §43 작성 창과 §44 전문이 같은 사실을 다른 말로 적는다.
  */
-import { kstDateOf } from './sql';
+import { effectiveModeOf, kstDateOf } from './sql';
 
 export const GUIDE_FACT_KEYS = ['student', 'grade', 'teacher', 'subject', 'mode', 'startOn', 'books'] as const;
 export type GuideFactKey = (typeof GUIDE_FACT_KEYS)[number];
@@ -76,7 +76,10 @@ export const GUIDE_FACT_SQL = `
          st.name AS student_name, st.grade,
          t.name  AS teacher_name,
          sb.name AS subject_name,
-         r.mode::text AS mode,
+         -- 형태 = 안내가 걸린 수업 날(event_on) 회차의 실제 방식 — 그 회차만 바꾼 예외(exc.mode)가 이긴다
+         --   (N-56 「그 회차만」 · lib/sql 한 조각). 안내의 (ser_id, event_on) 이 곧 회차 키라 예외를 그 키로 붙인다 —
+         --   투영이 없어도(호라이즌 밖) 그 회차의 예외를 읽고, 회차가 없으면(예외도 없다) 규칙의 방식이다(A′2)
+         ${effectiveModeOf('x', 'r')} AS mode,
          COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'), to_char(g.event_on,'YYYY-MM-DD')) AS start_on,
          (SELECT string_agg(DISTINCT l.title, ', ' ORDER BY l.title)
             FROM issue i JOIN lib l ON l.id = i.lib_id
@@ -87,6 +90,7 @@ export const GUIDE_FACT_SQL = `
     LEFT JOIN ser   r  ON r.id  = g.ser_id
     LEFT JOIN sub   sb ON sb.key = r.sub_key
     LEFT JOIN ser_occ o ON o.ser_id = g.ser_id AND o.on_date = g.event_on
+    LEFT JOIN exc x ON x.ser_id = g.ser_id AND x.on_date = g.event_on
    WHERE g.id = ANY($1::bigint[])`;
 
 type FactRow = Record<string, unknown>;

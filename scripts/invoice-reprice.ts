@@ -14,12 +14,13 @@
  * **왜 필요한가.** C63 이전의 발행 질의는 인원 구간(`rate.heads`)도 학생 예외(`sturate`)도
  * 안 봤다. 2인 수업이 1인 단가로 청구되는 식이었고, 실측으로 한 학생 한 달에 약 93% 과다였다.
  *
- * **대표 결정: 「미납 건만 다시 낸다」.** 그래서 이 도구는 네 갈래로 나눈다 —
+ * **대표 결정: 「미납 건만 다시 낸다」.** 그래서 이 도구는 네 갈래로 나눈다(⑤ 는 W11 뒤에 더한 「손대지 않는」 갈래) —
  *
  *   ① 받은 돈 0 · 금액 다름         → 취소(void) 후 재발행
  *   ② 일부납 · 받은 돈 ≤ 새 금액    → 재발행하고 **입금 줄을 새 청구서로 옮긴다**
  *   ③ 받은 돈 > 새 금액 (과납이 됨)  → **손대지 않는다.** 이미 오간 돈이라 사람이 정한다
  *   ④ 금액 같음                     → 손댈 것 없음
+ *   ⑤ 진단고사 · 상담 줄 섞임(W11)  → **손대지 않는다.** 아래 「W11(N-75)」 절 — 사람이 나눠 낼지 정한다
  *
  * ③ 을 자동으로 처리하지 않는 이유는 하나다 — 교정 금액이 **내려가는** 방향이라,
  * 완납이던 건이 과납으로 바뀐다. 환불인지 다음 달 이월인지는 장부의 문제고 도구가 고를 일이 아니다.
@@ -35,13 +36,19 @@
  * (오르는 것도 있다). 원문 §54 의 「연동: 청구서 생성 시 이 계산 결과를 씁니다」가 그 기준이지만,
  * **차이가 단가 버그 때문인지 원래 손으로 적은 금액이어서인지는 이 도구가 구분하지 못한다.**
  * `--apply` 전에 목록을 반드시 눈으로 보고, 필요하면 `--month` 로 좁혀서 돌린다.
+ *
+ * **W11(N-75) 뒤로 수업료 줄은 진단고사 · 상담 회차를 세지 않는다** — 그 회차는 「진단고사 + 상담 비용」 청구서가 센다.
+ * 그래서 그 회차의 줄이 **섞여 있는** 옛 수업료 청구서는 지금 계산으로 다시 내면 그 몫이 조용히 사라진다. 이 도구는 그런 청구서를
+ * ⑤ 「줄 섞임 — 손대지 않음」으로 두고 `--apply` 에서도 건드리지 않는다(`mixedDiagIntakeLines` — 수강 종료가 같은 청구서에서 409 로
+ * 멈추는 것과 같은 판정이다). 수업료와 진단고사 + 상담 비용으로 나눠 낼지는 사람이 청구서를 보고 정한다.
+ * 분납 일정(N-79)이 있는 청구서도 다시 낸 장에 일정이 따라가지 않는다.
  */
 import 'reflect-metadata';
 import * as dotenv from 'dotenv';
 import ds from '../src/data-source';
 import { describeTarget } from '../src/lib/target';
 import {
-  invoiceLines, linesTotal, repriceVerdict,
+  invoiceLines, linesTotal, mixedDiagIntakeLines, repriceVerdict,
   type InvoiceLineRow, type RepriceVerdict,
 } from '../src/modules/accounting/invoice-lines';
 import { INV_TYPE_LABEL } from '../src/modules/accounting/accounting.dto';
@@ -60,8 +67,8 @@ interface Row {
   amount: number; paid_amount: number; state: string;
 }
 
-/** 단가표에 없는 과목은 도구가 따로 센다 — 0 원으로 꾸미지 않는다 */
-type Verdict = RepriceVerdict | 'no_rate';
+/** 단가표에 없는 과목은 도구가 따로 센다 — 0 원으로 꾸미지 않는다 · 진단고사 · 상담 줄이 섞인 옛 청구서도 따로 센다(손대지 않는다) */
+type Verdict = RepriceVerdict | 'no_rate' | 'mixed';
 
 interface Planned { row: Row; verdict: Verdict; newAmount: number; lines: InvoiceLineRow[] }
 
@@ -74,7 +81,8 @@ async function main(): Promise<void> {
   console.log(apply
     ? `${C.y}${C.b}실제로 다시 냅니다 (--apply)${C.x}`
     : `${C.d}무엇이 바뀌는지만 봅니다 — 쓰기 0. 실제로 내려면 --apply${C.x}`);
-  console.log(`${C.d}줄을 처음부터 다시 만듭니다 — 손으로 적힌 금액이던 청구서는 차이가 큽니다(오르는 것도 있습니다).${C.x}\n`);
+  console.log(`${C.d}줄을 처음부터 다시 만듭니다 — 손으로 적힌 금액이던 청구서는 차이가 큽니다(오르는 것도 있습니다).${C.x}`);
+  console.log(`${C.d}수업료 줄은 진단고사 · 상담 회차를 세지 않습니다(그 몫은 「진단고사 + 상담 비용」 청구서) — 그 줄이 섞인 옛 청구서는 「줄 섞임」으로 두고 손대지 않습니다.${C.x}\n`);
 
   const q = ds.createQueryRunner();
   await q.connect();
@@ -88,12 +96,18 @@ async function main(): Promise<void> {
     [monthArg ?? null],
   )) as Row[];
 
-  const seen: Record<Verdict, number> = { reissue: 0, reissue_move_pay: 0, overpaid: 0, same: 0, no_rate: 0 };
+  const seen: Record<Verdict, number> = { reissue: 0, reissue_move_pay: 0, overpaid: 0, same: 0, no_rate: 0, mixed: 0 };
   let deltaSum = 0;
   const plan: Planned[] = [];
 
   for (const row of rows) {
     const lines = await invoiceLines(q, Number(row.student_id), row.year_month);
+    // 진단고사 · 상담 줄이 섞인 옛 청구서 — 지금 계산으로 다시 내면 그 몫이 사라진다. 사람이 나눠 낼지 정한다 (W11 A' 후속)
+    if ((await mixedDiagIntakeLines(q, Number(row.id))).length > 0) {
+      seen.mixed += 1;
+      plan.push({ row, verdict: 'mixed', newAmount: linesTotal(lines.filter((l) => l.unit_price !== null)), lines });
+      continue;
+    }
     if (lines.length === 0 || lines.some((l) => l.unit_price === null)) {
       seen.no_rate += 1;
       plan.push({ row, verdict: 'no_rate', newAmount: 0, lines });
@@ -113,6 +127,7 @@ async function main(): Promise<void> {
     overpaid: `${C.r}과납 — 손대지 않음${C.x}`,
     same: `${C.d}그대로${C.x}`,
     no_rate: `${C.y}단가 없음 — 손대지 않음${C.x}`,
+    mixed: `${C.y}진단고사 · 상담 줄 섞임 — 손대지 않음${C.x}`,
   };
   for (const { row, verdict, newAmount } of plan) {
     if (verdict === 'same') continue;
@@ -126,7 +141,7 @@ async function main(): Promise<void> {
 
   console.log(`\n${'─'.repeat(58)}`);
   console.log(`  청구서 ${rows.length}장 중 — 다시 냄 ${seen.reissue + seen.reissue_move_pay} · `
-    + `과납 ${seen.overpaid} · 단가 없음 ${seen.no_rate} · 그대로 ${seen.same}`);
+    + `과납 ${seen.overpaid} · 단가 없음 ${seen.no_rate} · 줄 섞임 ${seen.mixed} · 그대로 ${seen.same}`);
   console.log(`  금액 차이 합계 ${deltaSum > 0 ? '+' : ''}${won(deltaSum)}`);
   console.log(`  ${C.d}차이가 단가 버그 때문인지 원래 손으로 적은 금액이어서인지는 이 도구가 구분하지 못합니다 — 목록을 눈으로 보세요.${C.x}`);
   if (seen.overpaid > 0) {
@@ -134,6 +149,10 @@ async function main(): Promise<void> {
   }
   if (seen.no_rate > 0) {
     console.log(`  ${C.y}단가 없음 ${seen.no_rate}건${C.x} — 그 달 수업이 없거나 단가표에 없는 과목이 있습니다. 0원으로 내지 않습니다.`);
+  }
+  if (seen.mixed > 0) {
+    console.log(`  ${C.y}줄 섞임 ${seen.mixed}건${C.x} — 진단고사 · 상담 회차가 수업료 줄에 함께 청구된 옛 청구서입니다. 다시 내면 그 몫이 사라져 손대지 않습니다 — `
+      + '수업료와 「진단고사 + 상담 비용」으로 나눌지 사람이 청구서를 보고 정합니다(수강 종료도 이 청구서에서는 멈춥니다).');
   }
 
   if (!apply) {

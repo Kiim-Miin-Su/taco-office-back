@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-52 W11 결정 채택 (2026-09-27 · v4.54): 새 표 일곱(Phase A 다섯 + Phase B M2 둘) — INV_INSTALLMENT(선택 분납 일정 · 회차 합 = INV.amount 를 지연 제약 트리거 둘이 커밋 때 다시 본다 · N-79) · BOOK_SUBJECT · BOOK_CATEGORY(교재 과목 넷 · 소분류 여덟 코드표 — 시간표 과목 SUB 와 다른 축 · N-47) · PLAN_PICK(지정 공개 기획의 볼 사람 · N-72) · EXEC_AREA_OWNER(대표 보고 영역마다 고정 담당 · N-81) · Phase B M2 — PAYOUT_BONUS_RULE(강사료 가산 규칙 · 새 줄로만 · 처음엔 빔 · N-93) · ACCT_PRIVACY(회계 비공개 스위치 둘 · N-94) → 84 → 91표. 칸 — PAYOUT_LINE.bonus · bonus_detail · correction + ser_id · on_date NOT NULL(N-36 ① · N-51 · N-93 · M2) · EXC.mode · EXC.memo(N-56 · N-57) · STU.gender(N-83) · LIB 두 층 분류 여섯(N-47) · ISSUE.reason(N-62) · ISSUE.form(7-3 §38-2) · PDFLOG.rep_id(7-3 ①) · GUARDIAN_SEND.wrep_id(N-54) · TODO.lead_id · TODO.care + todo_src_t lead · LEAD.first_lesson_on(N-86) · MKT.memo(N-29 ②) · CONS_FILE.item_id(N-63) · PLAN.share · PLAN.due_rejected_on/at/by(N-72 · N-95). 제약 — exc_mode_words · exc_memo_len · stu_gender_words · lib_* CHECK 넷 + FK 둘(두 칸 lib_book_category_fk) · issue_form_words · guardian_send_one_source · wrep_* 셋 · todo_lead_key · todo_care_words · mkt_channel_words · mkt_item_words · mfb_kind_chk · mfb_reply_needs_parent(hold) · cons_file_item_pair_check · cons_event_type_check +3 · plan_share_words · plan_due_rejected_triple · plan_due_rejected_clears · exec_area_owner_key_words(옛 행을 볼 CHECK 는 NOT VALID) · M2 — payout_line_* FK 셋 · payout_line_nonneg · payout_line_bonus_detail_array · payout_line_ser_on_uniq(유일 색인) · payout_bonus_rule_* CHECK 셋 + FK 둘 · acct_privacy_* CHECK 둘 + FK 하나 · note_student_fk · note_ser_fk · note_body_present(N-36 ②). 데이터만 — HOLIDAY 2027 · KIND mock · gpa 정원 1. 옛 행 보정 0 (N-25) · migration 1764000000000 ~ 1764900000000 열셋(Phase A 열둘 + M2 1764900000000) · D(N-92)는 front 만이라 스키마 0 (대표 위임 2026-09-26 「결정 대기도 권고안으로 채택」)
 // TBO-52 W10 로그인 아이디 (2026-09-26 · v4.53): STAFF 칸 하나 — login_id varchar(120) not null(형식 자유 · 띄어쓰기 없음 · staff_login_id_lower_key UNIQUE (lower(login_id)) · staff_login_id_shape CHECK NOT VALID · 기존 행은 email 을 그대로 옮긴다 = W8 결정 「이메일 = 아이디」가 이미 정한 값 · 추정 아님). STAFF.email 은 연락 · 인증용으로 뜻이 바뀌고 NULL 허용(매니저가 만들 때 선택 · 첫 설정에서 본인이 코드로 확인). 트리거 staff_login_id_default — INSERT 에 아이디가 없으면 이메일을 쓴다(배포 순서 호환). must_change_credentials 뜻 좁힘(첫 설정 = 휴대폰 · 이메일 확인 + 새 비밀번호 · 아이디는 바꾸지 않는다). migration 1763900000000-staff-login-id (대표 지시 2026-09-26 「아이디 형식은 자유 · 폰, 메일 인증만 받으면 됨 · 매니저가 아이디 비번 만들면 db 에 저장 → 초기 설정 시 주요 인증 및 비번 재설정」)
 // TBO-52 결정 N-101~N-105 (2026-09-26 · v4.52): AUTH_CODE 칸 하나 — purpose(onboarding | password_reset · auth_code_purpose_words CHECK · 기본 onboarding = 이 칸 전의 줄은 전부 첫 설정 코드 · 추정 아님). 비밀번호 찾기(N-101)가 첫 설정과 같은 원장 · 같은 한도(60초 · 한 시간 5번 · 하루 10번 N-105 · 계정 · 채널마다 · 용도 무관)를 쓰고 확인은 용도를 함께 본다. STAFF.phone 뜻 넓힘(해외 번호 +국가번호… · N-103) · must_change_credentials 켜는 곳 하나 더(관리자의 이메일/휴대폰 수정 · N-104) · credentials_changed_at 찍는 곳 하나 더(본인 비밀번호 찾기). migration 1763800000000-auth-code-purpose
 // TBO-52 W8 로그인 아이디 · 세션 끊기 (2026-09-26 · v4.51): STAFF 색인 하나 — staff_email_lower_key UNIQUE (lower(email)) (아이디=이메일 · 로그인은 대소문자 무관 · 대소문자만 다른 두 계정이 생기지 않게 · 이미 있으면 마이그레이션이 멈춘다 · 보정 0 N-25) · STAFF.credentials_changed_at 뜻 넓힘(본인 첫 설정 · 관리자 비밀번호 초기화 · 운영 전환 스크립트가 찍고, 그보다 먼저 발급된 토큰은 401). 칸 0 · migration 1763700000000-staff-email-lower-unique
@@ -65,7 +66,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.53 (2026-09-26) — v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」
+// version : 4.54 (2026-09-27) — v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -153,8 +154,9 @@ Enum cons_share_t  { all  money_only  picked  private }
 Enum cpl_area_t    { lesson  intake  book  schedule  teacher }
 Enum sug_cat_t     { lesson  pay  schedule  etc }
 Enum sug_state_t   { open  reviewing  done }
-Enum todo_src_t    { meeting  complaint  consulting  plan  manual  lesson }
+Enum todo_src_t    { meeting  complaint  consulting  plan  manual  lesson  lead }
 // lesson — 회차에 걸린 대표 지시 (§12 첫 줄). ser_id·on_date 와 함께 쓴다 (C82-b)
+// lead — 등록 뒤 사후 관리 (v4.54 · W11 · N-86). lead_id · care 와 함께 쓴다 (ALTER TYPE … ADD VALUE · migration 1764600000000)
 Enum pnoti_audience_t { parent  teacher }
 // §43 「매번」이 줄마다 학부모·강사를 따로 체크한다. 학부모 실제 발송은 수신처가 없어 아직 없다 (N-42)
 
@@ -172,6 +174,7 @@ Table KIND {
   rep_form    varchar(16) [note: '⚠️ 쓰지 않는다 — 양식은 5칸 하나뿐 (D-R40). 컬럼만 남겨 둔다']
   sort        smallint
   extra       boolean     [not null, default: false, note: 'v4.31 · 추가 수업인가 (C-38) — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 줄 「추가 수업 · 과목」. 종류 자체는 §18 이 만든다']
+  Note: 'v4.54 · W11 N-30 ① — mock · gpa 정원 1(원문 슬라이드 88 · 옛 기본값 20 · 4 일 때만 migration 1764320000000 이 바꿈 · §18 에서 따로 정한 정원은 덮지 않는다 · 칸 변경 0). 정원은 막는 값이 아니라 알리는 값이라 이미 있는 명단 행은 그대로(초과로만 보인다).'
 }
 
 Table SUB {
@@ -260,6 +263,7 @@ Table STU {
   started_on  date
   guidance    varchar(20) [note: '지도 강도']
   lang        varchar(20) [note: '수업 언어']
+  gender      varchar(6)  [note: 'v4.54 · W11 N-83 선택 칸 — female | male (stu_gender_words CHECK · NULL 허용). 옛 학생 NULL — 추정 보정 0 (N-25). 관리자 §10 아바타에만 쓰고 학부모 · 외부 출력(리포트 · 안내 · 보호자 발송 · PNG)에 싣지 않는다. 등록 확정이 새 학생을 만들 때만 받는다 · 낱말은 GET /meta genders · migration 1764110000000']
   created_at  timestamptz [not null, default: `now()`]
   Note: '시드 19명. 코디네이터와 공유. 포인트·청구는 강사에게 노출하지 않는다.'
 }
@@ -272,12 +276,13 @@ Table LEAD {
   owner_id    bigint      [ref: > STAFF.id]
   stage       varchar(16) [not null, note: '1차 · 2차대기 · 2차 · 보류 · 등록 · 실패']
   fail_from   varchar(16) [note: 'N-25 — 실패 당시 이전 단계 명시값(전이 시 라이브 기록). 레거시 NULL=미분류 — stop_at 추정 이관 금지']
-  stop_at     varchar(16) [note: '실패 시 중단 지점']
+  stop_at     varchar(16) [note: '옛 중단 지점(before_book · before_first · after_first · after_second) — v4.54 · W11 N-87 뒤로 읽기 전용 기록. 새로 쓰지 않고 되살리기 · 등록 확정도 지우지 않는다(A′ 후속) · §24 분류는 fail_from → 도달 기록(LEAD_STAGE_LOG) 역순 · 대응표 이관 없음(N-25)']
   reason      text
   source      varchar(16) [note: 'v4.34 · kakao | phone | blog | instagram | referral | walkin — 컷 §23 유입 경로 여섯 (lead_source_words CHECK · NULL 허용). 옛 행은 NULL — 추정 보정 0 (N-25 · N-44). 낱말은 lib/intake-words 한 곳']
   reason_kind varchar(16) [note: 'v4.45 · unreachable | other_academy | schedule | cost | timing — §24 실패 사유 분류 다섯 (lead_reason_kind_words CHECK · NULL 허용 · 24-05). reason(자유 글)은 설명 칸으로 남는다. 옛 실패 건 NULL — 사유 글에서 추정하지 않는다(N-25). 낱말은 lib/intake-words 한 곳']
   grade       varchar(10) [note: 'v4.45 · §23 카드의 학년 칩 (23-10). STU.grade 와 같은 폭의 자유 글 — 표기 규약을 서버가 바꾸지 않는다 · 옛 건 NULL · 등록 확정 창이 학생 학년의 기본값으로 채운다']
   recheck_on  date        [note: 'v4.47 · 보류 재확인 날짜 (23-16). NULL 이면 보류에 들어온 날(LEAD_STAGE_LOG) + 2일(슬라이드 23 「D+2에 수락 여부 확인」) — LeadDto.recheckOn 은 그 유효값이다. POST /ops/leads/{id}/hold/extend(「연장 +2일」)가 유효값 + 2일을 적고, 단계가 바뀌면(단계 이동·되살리기) 비운다']
+  first_lesson_on date    [note: 'v4.54 · W11 N-86 — 등록 확정 때 잡은 첫 실제 수업일(시작일 이후 · 휴강 · 그날 빠짐 · 휴원 아닌 첫 회차). 해피콜 +7일 · 월간 「같은 날」의 기준. 옛 건 NULL(보정 0 · N-25) · migration 1764600000000']
   created_at  timestamptz [not null, default: `now()`]
   Note: '''
   시드 18건. 어느 단계에서 멈췄는지로 분류한다 (§24).
@@ -292,6 +297,8 @@ Table LEAD {
   단계 기한 띠는 지금 단계에 들어온 날(LEAD_STAGE_LOG 마지막 줄 · 1차는 created_at) + 슬라이드 23 SLA(1차 2 · 2차 대기 7 · 2차 상담 1 · 보류 2)로 서버가 파생한다(23-12 · 칸 추가 0).
   등록 실패 건도 되살리기 없이 등록 확정한다(24-07) — 이력은 LEAD_STAGE_LOG(failed → enrolled)와 LOG before 에 남고 stop_at·fail_from 은 되살리기처럼 비운다. 당시 배치안은 v4.47 LEAD_PLAN 이다(23-16 · 24-07).
   위 student_id/owner_id ref는 목표 FK다. init migration에는 실제 FK가 없으며 이번에 운영 DB 무결성을 검증하거나 적용하지 않았다.
+  v4.54 · W11(N-86 · N-87): 등록 확정 트랜잭션이 사후 관리 할 일(TODO src=lead · 해피콜 · 첫 월간)을 상담 담당에게 만든다(ops/lead-care · first_lesson_on 기준).
+  등록 확정은 이제 stop_at 을 건드리지 않고 fail_from 만 되살리기처럼 비운다(A′ 후속 1) — 위 24-07 문장의 「stop_at·fail_from 은 … 비운다」는 이 줄로 바뀐다.
   '''
 }
 
@@ -524,6 +531,8 @@ Table EXC {
   room_set    boolean     [not null, default: false, note: 'false=SER 강의실 상속, true=room_id(null 포함) 사용']
   room_id     bigint      [ref: > ROOM.id, note: 'room_set=true일 때 강의실 교체 또는 null=미지정']
   reason      text        [note: '휴강 메모 — C92 부터 휴강 창의 「메모」가 여기 적힌다']
+  mode        varchar(8)  [note: 'v4.54 · W11 N-56 그 회차 하나의 방식 — offline | online (exc_mode_words CHECK) · NULL 이면 규칙(SER.mode)을 따른다 · 규칙과 같은 값은 적지 않는다. 온라인이면 room_set=true · room_id=NULL 이고 줌은 EXC 대상 ZASSIGN · 현장이면 그 회차 줌 배정을 푼다. 읽는 쪽은 lib/sql.effectiveModeOf 한 조각']
+  memo        text        [note: 'v4.54 · W11 N-57 회차 메모 한 줄(이번 회차만) — exc_memo_len CHECK(공백만 금지 · 200자) · 블록 「노트」 배지 · §08 회차 메모 줄. 휴강 메모(reason)와 섞지 않는다 · 메모만 남은 예외도 효과로 센다(정리 규칙이 지우지 않는다)']
   cancel_kind  varchar(16) [note: 'teacher_absent | student_absent | academy | holiday | other — 휴강 사유 (v4.26 · C92)']
   cancel_treat varchar(8)  [note: 'carry | deduct | makeup — 이월 · 차감 · 보강 이관 (v4.26 · C92). null = 옛 휴강 = 이월로 읽는다']
   makeup_ser_id bigint     [ref: > SER.id, note: '보강 이관이면 보강 회차(ONCE 규칙)의 SER — ON DELETE SET NULL · exc_makeup_link CHECK: 처리가 makeup 일 때만 (v4.27 · C92-b)']
@@ -543,6 +552,9 @@ Table EXC {
   exc_time_check: 명시 start/end 범위 및 양쪽 명시 시 길이10~480분. null 상속 결과는 API 최종 상태 검사, DB 직접 부모 변경 보장은 별도.
   강사를 바꾸면 EXC + GUIDE + PNOTI + ISSUE 가 동시에 움직인다.
   그날 명단은 occRaw() 가 EXC_STU_OUT 을 걸러 만든다 (D-R21).
+  v4.54 · W11(migration 1764100000000): exc_mode_words (mode IS NULL OR mode IN ('offline','online')) · exc_memo_len (memo IS NULL OR (char_length(btrim(memo)) > 0 AND char_length(memo) <= 200)) — 새 칸이라 옛 행 보정 0 (N-25).
+  메모만 보내는 PATCH 는 범위와 무관하게 그 회차 하나(this)다 — 규칙을 가르지 않고 휴강을 풀지 않는다.
+  W11 대조(DB 정본 · 기록만): (ser_id, on_date) 유니크가 DB 에 둘이다 — 제약 exc_ser_date_uniq 와 색인 exc_ser_id_on_date_uniq(같은 열). 이번 물결이 만든 것이 아니고 지우지 않았다.
   '''
 }
 
@@ -639,10 +651,12 @@ Table GUARDIAN_SEND {
   error       text         [note: '실패·미설정 까닭 — 받는 곳 원문은 가려서 적는다']
   sent_by     bigint       [not null, ref: > STAFF.id]
   sent_at     timestamptz  [not null, default: `now()`, note: '시도 시각 — 실패·미설정 줄도 갖는다']
+  wrep_id     bigint       [ref: > WREP.id, note: 'v4.54 · W11 N-54 — §47 주간 묶음에서 보냈으면 그 묶음(guardian_send_wrep_id_fkey). guardian_send_one_source CHECK(pnoti_id IS NULL OR wrep_id IS NULL) — 한 발송은 한 곳에서만 · 옛 행 NULL · migration 1764400000000']
   indexes {
     (request_key, guardian_id, channel) [unique, name: 'guardian_send_once']
     (student_id, sent_at) [name: 'guardian_send_student_idx']
     pnoti_id [name: 'guardian_send_pnoti_idx', note: 'WHERE pnoti_id IS NOT NULL']
+    wrep_id [name: 'guardian_send_wrep_idx', note: 'WHERE wrep_id IS NOT NULL']
   }
   Note: '''
   v4.43 · TBO-52 DQ3 — 보호자 발송 원장. 보호자×채널 **시도 한 번에 한 줄**, append-only.
@@ -695,11 +709,11 @@ Table CONS_ITEM {
   cons_id    bigint      [not null, ref: > CONS.id]
   seq        smallint    [not null]
   label      varchar(80) [not null]
-  required   boolean     [not null, default: false, note: '필수 지정은 종료 전이 게이트(47D-C)와 함께 확정 — 지금은 표기만']
+  required   boolean     [not null, default: false, note: '필수 지정은 종료 전이 게이트(47D-C)와 함께 확정 — 지금은 표기만. v4.54 · 필수는 종료 조건(N-18) — 기본 항목은 빼지 않는다(끝내지 못하면 예외 종료 · W11 N-18-a DQ6)']
   done       boolean     [not null, default: false]
   done_by    bigint      [ref: > STAFF.id]
   done_at    timestamptz
-  source     varchar(10) [not null, default: 'template', note: "template=§29 자동 생성분 · manual=학생별 추가 (N-18-a 확정 전 쓰기 없음)"]
+  source     varchar(10) [not null, default: 'template', note: "template=§29 자동 생성분 · manual=「항목 수정」으로 담당이 더한 항목(v4.54 · W11 · N-18-a DQ5 대안 · PATCH /consulting/{id}/items) — cons_item_source_check"]
   created_at timestamptz [not null, default: `now()`]
 
   indexes { (cons_id, seq) [unique] }
@@ -708,6 +722,8 @@ Table CONS_ITEM {
   원문에서 구분된다 — TODO 를 분모로 세지 않고, 진행률은 이 원장의 projection 이며
   별도 숫자로 저장하지 않는다 (47D-A). done 이면 done_by·done_at 필수(CHECK),
   체크/해제는 내용 열람(csCanFull) + 종료 전 건에서만 쓴다.
+  v4.54 · W11(N-18-a 부분 · 칸 변경 0): 「항목 수정」(더하기 · 이름 바꾸기 · 빼기)은 CONS_EVENT item_added · item_renamed · item_removed(ref_id = 항목 id)로 남는다.
+  항목마다 파일은 CONS_FILE.item_id(항목마다 6개 · 같은 컨설팅의 항목만 — trigger cons_file_limit_guard). 9유형 기본 항목표는 보류(N-18-a).
   '''
 }
 
@@ -811,10 +827,16 @@ Table RSEND {
 Table WREP {
   id          bigserial   [pk]
   student_id  bigint      [not null, ref: > STU.id]
-  week_of     date        [not null]
-  body        jsonb
+  week_of     date        [not null, note: 'v4.54 · 그 주 월요일(KST) — wrep_week_monday CHECK(isodow = 1 · NOT VALID)']
+  body        jsonb       [note: 'v4.54 · {summary, by, at} 세 칸만 — wrep_body_summary CHECK(summary 1~2000자 · by 숫자 · at 문자열 · 다른 칸 없음 · NOT VALID)']
   indexes { (student_id, week_of) [unique] }
-  Note: '주간 리포트. 코디네이터(TN Learning) 산출물과 대응.'
+  Note: '''
+  주간 리포트. 코디네이터(TN Learning) 산출물과 대응.
+  v4.54 · W11 N-54(migration 1764400000000): 주간 리포트 묶음의 **총평만** 저장한다. 그 주 리포트 본문은 저장하지 않고 읽을 때 모은다(GET /reports/weekly).
+  week_of = 그 주 월요일(KST) · body = {summary, by, at} 세 칸만 · wrep_student_id_fkey → STU.
+  세 제약(wrep_student_id_fkey · wrep_week_monday · wrep_body_summary) 모두 NOT VALID — 옛 행은 검사하지 않는다 · 옛 모양은 화면이 「예전 방식」으로 잠근다.
+  보내기는 GUARDIAN_SEND.wrep_id(DQ3 원장) — 첫 sent 뒤 총평은 잠긴다. 시드는 넣지 않는다(사람이 쓴 글만).
+  '''
 }
 
 // ─────────────────────────────────────────────────────────────── 안내 · 교재
@@ -879,6 +901,23 @@ Table GTPL {
   Note: '안내 문구 템플릿. 시드 5건.'
 }
 
+Table BOOK_SUBJECT {
+  key         varchar(20) [pk, note: 'english · math · science · social_studies — 원문 §39 컷의 과목 넷만(migration 이 넣는다 · 화면에서 만들지 않는다)']
+  name        varchar(40) [not null, note: '원문 낱말 그대로 (English · Math · Science · Social Studies)']
+  color       char(7)     [not null, note: '칩 점 · 묶음 머리 · 소분류 글자 색 — 컷 실측(book_subject_color_hex CHECK · #RRGGBB)']
+  sort        smallint    [not null]
+  Note: 'v4.54 · W11 N-47 교재 과목 코드표(migration 1764300000000). 시간표 과목(SUB)과 다른 축이다 — 교재가 캘린더 과목 옆에 서지 않게 따로 둔다.'
+}
+
+Table BOOK_CATEGORY {
+  key         varchar(30) [pk, note: 'reading · ela · grammar · speaking_interview · writing · general_math · pre_algebra · biology']
+  subject_key varchar(20) [not null, ref: > BOOK_SUBJECT.key, note: 'book_category_subject_key_fkey']
+  name        varchar(40) [not null, note: '원문 낱말 그대로 (Reading · Speaking & Interview …)']
+  sort        smallint    [not null, note: '묶음 머리 줄에 보이는 차례']
+  indexes { (subject_key, key) [unique, name: 'book_category_subject_uq'] }
+  Note: 'v4.54 · W11 N-47 교재 소분류 코드표(migration 1764300000000). 원문 §39 컷에 보이는 여덟만 — Social Studies 는 컷에서 머리 줄이 잘려 0줄(짓지 않는다). (subject_key, key) 유니크는 LIB 두 칸 FK(lib_book_category_fk)의 대상이다.'
+}
+
 Table LIB {
   id          bigserial   [pk]
   code        varchar(30) [not null, unique]
@@ -888,7 +927,17 @@ Table LIB {
   grade       varchar(10)
   pages       smallint
   se_te       varchar(4)  [note: 'SE 학생용 · TE 교사용']
-  Note: '교재. 시드 8건. 카드에 코드·쪽수·배부 횟수·판·SE/TE 표시.'
+  book_subject_key  varchar(20) [ref: > BOOK_SUBJECT.key, note: 'v4.54 · N-47 교재 과목(lib_book_subject_fk) — NULL 이면 「미분류」(옛 교재 전부 · 사람이 편집 창에서 정한다 · 보정 0)']
+  book_category_key varchar(30) [note: 'v4.54 · 소분류 — 고른 과목의 것만: (book_subject_key, book_category_key) → BOOK_CATEGORY(subject_key, key) 두 칸 FK(lib_book_category_fk) · 과목 없는 소분류 금지(lib_book_category_needs_subject)']
+  book_level        varchar(12) [note: 'v4.54 · foundation | practice | master — lib_book_level_words CHECK · 낱말은 lib/book(BOOK_LEVELS = lead-diag-words 와 같은 셋)']
+  grade_from        smallint    [note: 'v4.54 · 학년 범위 시작 — K = 0 · G1~G12 = 1~12 · grade_to 와 함께 비거나 함께 찬다(lib_grade_range)']
+  grade_to          smallint    [note: 'v4.54 · 학년 범위 끝 — grade_from 이상 · 12 이하']
+  exam_tag          varchar(12) [note: 'v4.54 · sat | map | isee_ssat — lib_exam_tag_words CHECK · 원문 카드 칩 SAT · MAP · ISEE / SSAT']
+  Note: '''
+  교재. 시드 8건. 카드에 코드·쪽수·배부 횟수·판·SE/TE 표시.
+  v4.54 · W11 N-47 두 층 분류 칸 여섯(migration 1764300000000) — 옛 칸 sub_key · level · grade 는 그대로(CHECK 없음). 새 칸이 비면 화면 낱말은 옛 원문(level · grade)으로 돌아간다(중립색).
+  두 칸 FK 는 인라인 ref 로 적을 수 없어 여기 적는다 — lib_book_category_fk FOREIGN KEY (book_subject_key, book_category_key) REFERENCES BOOK_CATEGORY(subject_key, key).
+  '''
 }
 
 Table FILE {
@@ -929,8 +978,10 @@ Table ISSUE {
   requested_by bigint     [ref: > STAFF.id]
   approved_by bigint      [ref: > STAFF.id]
   delivered_at timestamptz
+  reason      text        [note: 'v4.54 · W11 N-62 배부 사유 — 무슨 교재를 왜 줬는지(슬라이드 37) · 옛 줄 NULL · 진단 점수는 여기 적지 않는다(배부 창이 lead_diag 를 읽기만 · D-R22) · §40 「교재 배부」 줄 메모 · migration 1764310000000']
+  form        varchar(8)  [note: 'v4.54 · W11 A 후속 · 7-3 §38-2 배부 형태 — pdf | print(issue_form_words CHECK) · 배부 창에서 고른다(선택) · 옛 줄 NULL = 칩 없음(보정 0) · §38 교재 칸 아래 칩 「PDF」 · 「실물 책」 · 승인 대기 요청 줄에도 선다 · migration 1764330000000']
   indexes { (student_id, lib_id) [name: 'issue_active_book_unique', note: 'returned 제외 partial unique는 migration'] }
-  Note: '교재 배부·회수·진도 원장. 상태/시각 순서와 progress>=0은 migration CHECK.'
+  Note: '교재 배부·회수·진도 원장. 상태/시각 순서와 progress>=0은 migration CHECK. v4.54 · 배부 형태는 교재(LIB)가 아니라 배부 줄의 속성이다(리드 채택 · 권고 (가) — §39 서가 카드에는 형태 칩이 없고 승인 대기 요청에도 선다).'
 }
 
 Table HIST {
@@ -1038,7 +1089,7 @@ Table INV {
   detail      jsonb
   state       inv_state_t [not null, default: 'draft']
   issued_on   date
-  due_on      date
+  due_on      date        [note: '납부 기한 — v4.54 · 분납 일정(INV_INSTALLMENT)이 있으면 마지막 회차의 예정일 (N-79). 연체 판정은 이 칸이 아니라 지금 기한(lib/exec-areas invDueSql — 못 채운 가장 이른 회차의 예정일)을 본다']
   sent_at     timestamptz
   created_by  bigint      [ref: > STAFF.id]
 
@@ -1060,6 +1111,28 @@ Table INV {
   줄(INV_LINE)은 서버가 occ() 로 세어 초안을 만들고, 매니저 이상이 확정해 저장한다.
   상태 전이는 unpaid → partial → paid 와 → void 뿐이며 되돌리기가 없다.
   같은 명세서를 두 사람이 동시에 완납 처리하는 경합은 SELECT … FOR UPDATE 로 막는다.
+  v4.54 · W11(migration 1764200000000): 지연 제약 트리거 inv_installment_sum_on_inv(AFTER UPDATE OF amount · DEFERRABLE INITIALLY DEFERRED · 함수 inv_installment_sum_guard)가
+  분납 일정이 있는 청구서의 amount 가 바뀌면 커밋 때 회차 합 = amount 를 다시 본다. 월 마감 · 해제와 발행 · 이월 · 컨설팅 전환은 같은 달 열쇠(advisory lock)를 잡는다 — 칸 변경 0.
+  '''
+}
+
+Table INV_INSTALLMENT {
+  id      bigserial [pk]
+  inv_id  bigint    [not null, ref: > INV.id, note: '지우면 함께 지워진다(inv_installment_inv_fk · ON DELETE CASCADE) — 일정은 청구서의 일부다']
+  seq     smallint  [not null, note: '회차 — 1부터 · 예정일 순으로 매긴다(inv_installment_seq_positive CHECK seq >= 1)']
+  due_on  date      [not null, note: '그 회차의 예정일']
+  amount  int       [not null, note: '그 회차의 금액(inv_installment_amount_positive CHECK amount > 0) — 회차 합 = INV.amount']
+
+  indexes {
+    (inv_id, seq)    [unique, name: 'inv_installment_seq_uniq']
+    (inv_id, due_on) [unique, name: 'inv_installment_due_uniq']
+  }
+  Note: '''
+  v4.54 · W11 N-79 채택 — 선택 분납 일정(migration 1764200000000). 없으면 INV.due_on 하나로 기한을 본다(옛 청구서 보정 0 · N-25).
+  합 = INV.amount 는 발행 경로가 먼저 막고, 지연 제약 트리거 inv_installment_sum_check(이 표 · AFTER INSERT OR DELETE OR UPDATE) ·
+  inv_installment_sum_on_inv(INV.amount 갱신)가 커밋 때 다시 본다(둘 다 함수 inv_installment_sum_guard).
+  연체 = 누적 입금(INV.paid_amount)이 못 채운 가장 이른 회차의 예정일 — lib/exec-areas invDueSql 한 조각.
+  발행 뒤 고치는 길은 없다(청구서 INSERT 만 원칙) — 바꾸려면 취소하고 다시 낸다.
   '''
 }
 
@@ -1127,7 +1200,7 @@ Table PAYOUT {
   id          bigserial   [pk]
   staff_id    bigint      [not null, ref: > STAFF.id]
   year_month  varchar(7)  [not null]
-  hours       numeric(6,2)[not null, note: '취소·휴강 제외 (D-R11)']
+  hours       numeric(6,2)[not null, note: '취소·휴강 제외 (D-R11) · 확정 때는 쓴 수업 + 보정 줄 시간(N-51 · v4.54 M2)']
   gross       int         [not null]
   late_rep_cut int        [not null, default: 0, note: '리포트 지각 차감 — 1시간↑ 5,000 · 4시간↑ 10,000 (D-R32)']
   late_cls_cut int        [not null, default: 0, note: '수업 지각 차감(분 단위)']
@@ -1149,15 +1222,61 @@ Table PAYOUT {
 }
 
 Table PAYOUT_LINE {
-  id          bigserial   [pk]
-  payout_id   bigint      [not null, ref: > PAYOUT.id]
-  ser_id      bigint      [ref: > SER.id]
-  on_date     date
-  kind_key    varchar(16) [ref: > KIND.key]
-  hours       numeric(4,2)[not null]
-  unit_rate   int         [not null, note: '수업일 기준 시급 스냅샷 — 이력이 정정돼도 안 흔들린다']
-  amount      int         [not null]
-  cut         int         [not null, default: 0]
+  id           bigserial    [pk]
+  payout_id    bigint       [not null, ref: > PAYOUT.id, note: 'payout_line_payout_fk · ON DELETE RESTRICT — 굳힌 근거는 정산과 함께 조용히 사라지지 않는다']
+  ser_id       bigint       [not null, ref: > SER.id, note: 'payout_line_ser_fk · RESTRICT · v4.54 M2 에서 NOT NULL(회차 키)']
+  on_date      date         [not null, note: '회차 키(ser_id, on_date) · v4.54 M2 에서 NOT NULL']
+  kind_key     varchar(16)  [ref: > KIND.key, note: 'payout_line_kind_fk · RESTRICT']
+  hours        numeric(4,2) [not null]
+  unit_rate    int          [not null, note: '수업일 기준 시급 스냅샷 — 이력이 정정돼도 안 흔들린다']
+  amount       int          [not null, note: '시급×시간(분 단위 정수 절사) — 가산 · 차감은 따로 (N-36)']
+  cut          int          [not null, default: 0, note: '리포트 지각 차감(D-R32 · 최초 제출 시각)']
+  bonus        int          [not null, default: 0, note: 'v4.54 M2 · 가산 합(N-93) — bonus_detail 이 종류별 내역']
+  bonus_detail jsonb        [not null, default: `'[]'::jsonb`, note: 'v4.54 M2 · [{kind, amount}] — CHECK payout_line_bonus_detail_array']
+  correction   boolean      [not null, default: false, note: 'v4.54 M2 · 보정 줄 — 확정된 달의 회차를 다음 미확정 달에 얹어 지급 (N-51)']
+
+  indexes {
+    (ser_id, on_date) [unique, name: 'payout_line_ser_on_uniq', note: '한 회차는 한 번만 지급된다 — 23505 → 409 PAYOUT_LINE_DUPLICATE']
+    payout_id         [name: 'payout_line_payout_idx']
+  }
+  Note: '''
+  v4.54 · W11 M2 · N-36 ① 채택(migration 1764900000000) — 지급 확정 트랜잭션이 회차마다 한 줄. 확정된 달의 시트 · 상세 · 강사 히스토리는 이 줄을 읽는다(시급 · 가산 규칙이 나중에 바뀌어도 안 흔들린다 · D8).
+  CHECK payout_line_nonneg (hours · unit_rate · amount · cut · bonus >= 0) · payout_line_bonus_detail_array.
+  확정 뒤에 쓴 회차는 원래 달 다음의 첫 미확정 달 정산에 correction = true 줄로 든다(유일 색인이 두 번 지급을 막는다 · N-51).
+  옛 행이 규칙에 어긋나면(회차 키 빈칸 · 겹침 · 없는 정산/규칙/종류 · 음수) 마이그레이션이 고치지 않고 멈춘다(N-25).
+  '''
+}
+
+Table PAYOUT_BONUS_RULE {
+  id         bigserial   [pk]
+  kind       varchar(20) [not null, note: 'per_session 한 번에 · kinder_hourly 시급에 더함 · group_per_student 한 명당 — CHECK payout_bonus_rule_kind_words']
+  kind_key   varchar(16) [ref: > KIND.key, note: '「한 번에」만 필수 · 나머지는 NULL — CHECK payout_bonus_rule_kind_key_pair · payout_bonus_rule_kind_fk · RESTRICT']
+  amount     int         [not null, note: '원 · 0 = 그 날부터 멈춤 — CHECK payout_bonus_rule_amount_range(0..1,000,000)']
+  from_date  date        [not null, note: '적용 시작일 — 서버가 오늘 이후만 받는다(소급 없음 · 409 BONUS_RETROACTIVE)']
+  reason     text
+  set_by     bigint      [not null, ref: > STAFF.id, note: 'payout_bonus_rule_set_by_fk · RESTRICT']
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (kind, `COALESCE(kind_key, '')`, from_date) [unique, name: 'payout_bonus_rule_slot_day_uniq', note: '같은 칸 같은 날 한 줄 — 409 BONUS_SAME_DAY']
+  }
+  Note: '''
+  v4.54 · W11 M2 · N-93 채택(migration 1764900000000) — 강사료 가산 규칙. 시급 · 단가표처럼 새 줄로만 바꾼다(지난 줄 불변). 처음엔 비어 있다 — D1(§4-12) 금액을 데이터로 넣지 않는다.
+  셈은 lib/payout-sheet.lessonBonus 한 곳(시트 · 확정 · 강사 히스토리). Kinder 는 수업을 가를 표시가 없어 0. canWage 가 적는다 · 감사 payout.bonus_rule.
+  시드는 넣지 않고 운영 전환(golive-reset)은 비운다. 그룹 가산 학생 수 · 「건당 정액」 · 미확정 달 소급은 PLANNING N-125 ~ N-127(열림).
+  '''
+}
+
+Table ACCT_PRIVACY {
+  key     varchar(16) [pk, note: 'wage 시급 비공개 · consulting 컨설팅 비공개 — CHECK acct_privacy_key_words']
+  private boolean     [not null, default: false]
+  set_by  bigint      [ref: > STAFF.id, note: 'acct_privacy_set_by_fk · RESTRICT · 운영 전환이 계정을 지우면 비고 시각은 남을 수 있다']
+  set_at  timestamptz [note: 'CHECK acct_privacy_set_at_with_by (set_by 가 있으면 set_at 도)']
+  Note: '''
+  v4.54 · W11 M2 · N-94 채택(migration 1764900000000) — 회계 탭 줄의 두 스위치. 켜고 끄기 = 대표 판정(canCeoSetAcctPrivacy) · 감사 acct.privacy on/off.
+  켜면 그 줄 금액은 비공개 열람(canHide)과 본인에게만 보인다 · 합계는 그대로. migration 이 두 줄(꺼짐)을 넣고 시드 초기화(--reset)는 비운다 — 행이 없으면 꺼짐으로 읽는다.
+  운영 전환(golive-reset)은 이 표를 남긴다(대표가 정한 설정). 서랍 결재함의 시급 요청 금액 · 컨설팅 계약 금액 입력은 가리지 않는다 — PLANNING N-128(열림).
+  '''
 }
 
 Table EXPENSE {
@@ -1216,6 +1335,8 @@ Table CONS {
   TBO-47C migration 11: cons_stage_check (contract/running/done), cons_contract_step_check (1~5),
   cons_paid_stage_check (계약 외 step=5, NULL 차단), cons_sessions_check (>0).
   C79 migration 1759900000000: start_on/requester/deleted pair와 날짜 순서 CHECK, owner/deleted_by FK.
+  v4.54 · W11(N-18-a DQ6 · 칸 변경 0): 예외 종료의 사유 · 승인자 · 남은 항목/회차는 칸이 아니라 LOG(entity CONS · action close_exception) before/after — 상세 closeReason 이 되읽는다.
+  컨설팅 전환 청구서(INV.cs_id)는 받는 학생을 고르고(학생이 여럿이면) 그 달이 마감이면 409 MONTH_CLOSED(같은 달 열쇠 · M1 과 같은 축).
   '''
 }
 
@@ -1225,11 +1346,20 @@ Table CONS_PICK { cons_id bigint [ref: > CONS.id]  staff_id   bigint [ref: > STA
 Table CONS_FILE {
   file_id     bigint      [pk, ref: > FILE.id]
   cons_id     bigint      [not null, ref: > CONS.id]
-  role        varchar(12) [not null, note: 'draft | revision | signed']
+  role        varchar(12) [not null, note: 'draft | revision | signed | item (v4.54 · W11 · N-63) — cons_file_role_check']
+  item_id     bigint      [ref: > CONS_ITEM.id, note: 'v4.54 · W11 · N-63 — 항목 파일이면 그 항목(cons_file_item_fk · 같은 컨설팅의 항목만 — trigger 가 cons_file_item_cons 로 막는다) · 계약 파일은 NULL. cons_file_item_pair_check: (role = item) = (item_id IS NOT NULL)']
   created_by  bigint      [not null, ref: > STAFF.id]
   created_at  timestamptz [not null, default: `now()`]
-  indexes { (cons_id, created_at, file_id) }
-  Note: '§30 계약서·수정본·서명본 연결 원장. CONS 부모 잠금 trigger가 한 컨설팅의 전체 파일을 최대 10개로 제한한다.'
+  indexes {
+    (cons_id, created_at, file_id)
+    (item_id, created_at, file_id) [name: 'cons_file_item_idx', note: 'WHERE item_id IS NOT NULL']
+  }
+  Note: '''
+  §30 계약서·수정본·서명본 · §31 항목 파일 연결 원장. CONS 부모 잠금 trigger가 한 컨설팅의 전체 파일을 최대 10개로 제한한다.
+  v4.54 · W11 migration 1764500000000 — 한 트리거 cons_file_limit_guard_trigger(BEFORE INSERT · 함수 cons_file_limit_guard())가 CONS 부모를 잠근 뒤
+  계약 파일(item_id NULL)은 컨설팅마다 최대 10개(cons_file_limit), 항목 파일은 항목마다 최대 6개(cons_file_item_limit)로 따로 세고, 다른 컨설팅의 항목이면 cons_file_item_cons 로 막는다(셋 다 ERRCODE 23514).
+  옛 행은 전부 계약 파일(item_id NULL · 짝 CHECK 이미 만족 · 보정 0).
+  '''
 }
 
 Table CONS_FEEDBACK {
@@ -1247,7 +1377,7 @@ Table CONS_FEEDBACK {
 Table CONS_EVENT {
   id          bigserial   [pk]
   cons_id     bigint      [not null, ref: > CONS.id]
-  event_type  varchar(24) [not null, note: 'created | share_changed | file_added | file_removed | feedback_added | feedback_resolved | parent_delivered | payment_added | archived | session_added | session_written | closed (v4.33 · C95 — 뒤 셋) | item_done | item_undone (v4.40 · S7 — 켬·끔을 두 낱말로 나눈다: append-only 원장에서 마지막 줄이 곧 지금 상태여야 하고, ref_id 만으로는 어느 쪽인지 알 수 없다)']
+  event_type  varchar(24) [not null, note: 'created | share_changed | file_added | file_removed | feedback_added | feedback_resolved | parent_delivered | payment_added | archived | session_added | session_written | closed (v4.33 · C95 — 뒤 셋) | item_done | item_undone (v4.40 · S7 — 켬·끔을 두 낱말로 나눈다: append-only 원장에서 마지막 줄이 곧 지금 상태여야 하고, ref_id 만으로는 어느 쪽인지 알 수 없다) | item_added | item_renamed | item_removed (v4.54 · W11 · N-18-a 원문 §31 「항목 수정」 — 켬·끔과 같은 원장 · ref_id = 항목 id · cons_event_type_check). 항목 파일 올리기/빼기는 기존 file_added · file_removed(ref_id = 파일 id)']
   ref_id      bigint      [note: '파일·피드백·납부·회차·항목(v4.40) 원장 식별자. 종류별 다형 참조라 FK로 추정하지 않음']
   by_id       bigint      [not null, ref: > STAFF.id]
   created_at  timestamptz [not null, default: `now()`]
@@ -1333,22 +1463,43 @@ Table PLAN {
   ask           text        [note: '결정 요청']
   due_on        date
   owner_id      bigint      [ref: > STAFF.id]
+  due_approved_at timestamptz [note: '기한 승인 도장(C56 · migration 1759100000000) — plan_due_approval_pair((due_approved_at IS NULL) = (due_approved_by IS NULL)) · plan_due_approval_needs_due(승인 도장은 기한이 있을 때만) 둘 다 NOT VALID. v4.54 에 W11 대조로 보탬(이전 판에 칸이 빠져 있었다)']
+  due_approved_by bigint      [note: '기한을 승인한 사람(C56). DB 에 FK 없음 — W11 대조로 보탬']
   rework_reason text        [note: 'v4.38 · 보완 요청 사유 — **다시 올릴 때 지워진다**(C85-a 가 RPT 에서 정한 것과 같다: 지난 반려 사유가 남아 있으면 지금 상태를 속인다). log.after->>reason 에서 되짚지 않는다 — 사유는 지워지는 업무 상태이고 log 는 지워지지 않는 감사 줄이며, log.after 의 생김새는 계약이 아니다. 옛 행 NULL (N-25 · 보정 0)']
+  share         varchar(10) [note: 'v4.54 · W11 N-72 — all 전체 공개 · picked 지정 공개(담당 · 지정된 사람(PLAN_PICK) · 결재권자) · NULL 옛 기획(모두에게 보이고 칩 없음 · 보정 0) · plan_share_words CHECK']
+  due_rejected_on date      [note: 'v4.54 · W11 N-95 — 반려된 기한(반려가 지운 due_on 의 값) · §62 반려 줄 · 기한 반려 띠']
+  due_rejected_at timestamptz [note: 'v4.54 · 기한을 반려한 순간']
+  due_rejected_by bigint    [ref: > STAFF.id, note: 'v4.54 · 기한을 반려한 사람(plan_due_rejected_by_fk)']
   created_at    timestamptz [not null, default: `now()`]
   Note: '''시드 5건. 대표 결재 대기(stage='review') 수가 일일 보고의 판정 기준.
     v4.38 (S6): 단계를 옮기는 표는 lib/plan-words.PLAN_NEXT_STAGES 한 벌이다 —
     draft·rework → review(올린 쪽) · approved → done(올린 쪽) · **review → approved|rework 는 여기 없다**
     (대표의 결재이고 reviewPlan 이 자기 결재 금지·기한 승인 선행·사유 필수를 지나서 옮긴다 · C90 LEAD_NEXT_STAGES 와 같은 규약).
-    「보완 N」 칩은 이 표가 아니라 LOG(entity='plan' · action='rework') 를 센다 — 횟수는 append-only 역사라 어긋날 수 없고 세는 칸을 파지 않는다.'''
+    「보완 N」 칩은 이 표가 아니라 LOG(entity='plan' · action='rework') 를 센다 — 횟수는 append-only 역사라 어긋날 수 없고 세는 칸을 파지 않는다.
+    v4.54 · W11(migration 1764700000000 · N-72 · N-95): plan_due_rejected_triple(반려 셋은 함께 있거나 함께 없다) ·
+    plan_due_rejected_clears(due_rejected_at IS NULL OR due_on IS NULL — 새 기한을 내면 반려 셋을 비운다). 기한 결정은 화면이 본 날짜(dueOn)를 함께 보내야 한다(PB-12-2).
+    지정 공개면 PLAN_PICK 에 볼 사람을 적는다 — 판정은 planCan 한 곳이고 다섯 읽기(§61 · §62 · §65 · §69 · §75)가 지난다. 바꾸기는 담당 · 결재권자만(감사 줄 PLAN/share).'''
+}
+
+Table PLAN_PICK {
+  plan_id  bigint [not null, ref: > PLAN.id, note: 'plan_pick_plan_fk · ON DELETE CASCADE']
+  staff_id bigint [not null, ref: > STAFF.id, note: 'plan_pick_staff_fk']
+  indexes {
+    (plan_id, staff_id) [pk]
+  }
+  Note: 'v4.54 · W11 N-72 — 지정 공개(PLAN.share = picked) 기획을 볼 수 있게 지정된 사람 (CONS_PICK 과 같은 모양 · migration 1764700000000).'
 }
 
 Table MKT {
   id          bigserial   [pk]
-  channel     varchar(20) [not null, note: '채널 7종']
-  item        varchar(20) [not null, note: '항목 7종']
+  channel     varchar(20) [not null, note: 'v4.54 · W11 N-29 ① — kakao · naver_ad · instagram · naver_blog(원문 넷) + 옛 코드 naver · daangn · youtube · referral · flyer(읽기 전용 · 이관 없음) · mkt_channel_words CHECK NOT VALID. kakao 는 코드 그대로 표시만 「카카오채널」(A′ 판단 — 옛 행이 가리키던 것과 같다)']
+  item        varchar(20) [not null, note: 'v4.54 · W11 N-29 ① — reply · ad · video · post(원문 넷) + 옛 코드 blog · biz · channel · word · print · mkt_item_words CHECK NOT VALID. ad · video 는 코드 그대로 표시만 원문 낱말']
   url         text
   result      jsonb
   on_date     date
+  title       varchar(120) [note: '「오늘 한 것」 활동 이름(C53 · migration 1758900000000) — v4.54 에 W11 대조로 보탬(이전 판에 칸이 빠져 있었다)']
+  by_id       bigint      [note: '활동을 적은 사람(C53). DB 에 FK 없음 — W11 대조로 보탬']
+  memo        varchar(120) [note: 'v4.54 · W11 N-29 ② — 카드 제목 아래 메모 한 줄(MMEMO = MKT 의 한 칸 · D-R22) · 옛 행 NULL · migration 1764600000000']
   Note: '시드 4건.'
 }
 
@@ -1358,7 +1509,14 @@ Table MFB {
   by_id       bigint      [not null, ref: > STAFF.id]
   body        text        [not null]
   at          timestamptz [not null, default: `now()`]
-  Note: '대표 피드백 — 코멘트하면 관리자 전원에게 알림.'
+  kind        varchar(8)  [not null, default: 'comment', note: "comment(대표 코멘트) · reply(담당자 답변 · 고친 것 알리기) · hold(담당자 보류 · v4.54 · W11 N-29 ③) — mfb_kind_chk NOT VALID. 칸 자체는 C53(migration 1758900000000) — v4.54 에 W11 대조로 보탬"]
+  parent_id   bigint      [note: "reply · hold 는 부모 코멘트를 든다 — mfb_reply_needs_parent ((kind IN ('reply','hold')) = (parent_id IS NOT NULL) · NOT VALID). 칸은 C53 · DB 에 자기 참조 FK 없음(짝 CHECK 만) — W11 대조로 보탬"]
+  indexes {
+    (mkt_id, at) [name: 'mfb_mkt_id_at_idx']
+    parent_id [name: 'mfb_parent_id_idx']
+    parent_id [unique, name: 'mfb_hold_once', note: "WHERE kind = 'hold' — 보류는 코멘트마다 한 번 (v4.54 · W11)"]
+  }
+  Note: '대표 피드백 — 코멘트하면 관리자 전원에게 알림. v4.54 · W11 N-29 ③(migration 1764600000000): 담당자 보류 hold — 보류한 카드는 「보류」 단추가 없고 보류 글 블록이 선다.'
 }
 
 Table MTREC {
@@ -1395,27 +1553,40 @@ Table TODO {
   plan_id     bigint      [ref: > PLAN.id]
   ser_id      bigint      [ref: > SER.id, note: '회차 지시 — §12 첫 줄 「대표 지시 할 일」']
   on_date     date        [note: '규칙이 원래 찍은 날(EXC 키). SER_OCC.id 를 쓰지 않는다 — 그 표는 쓰기마다 다시 만들어지는 투영이다']
+  lead_id     bigint      [ref: > LEAD.id, note: 'v4.54 · W11 N-86 — 사후 관리 할 일이 걸린 상담 건(todo_lead_id_fk · ON DELETE CASCADE · 제품에 지우는 길 없음)']
+  care        varchar(12) [note: 'v4.54 · W11 N-86 — happycall(첫 실제 수업 + 7일) | monthly(첫 수업과 같은 날 매월 · 없으면 말일) · todo_care_words CHECK NOT VALID']
   created_at  timestamptz [not null, default: `now()`]
   indexes {
     (ser_id, on_date) [name: 'todo_lesson_idx']
+    lead_id [name: 'todo_lead_idx', note: 'WHERE lead_id IS NOT NULL']
+    lead_id [unique, name: 'todo_lead_happycall_once', note: "WHERE care = 'happycall' — 해피콜은 상담 건마다 하나"]
+    (lead_id, due_on) [unique, name: 'todo_lead_monthly_on', note: "WHERE care = 'monthly' — 같은 날 월간 하나 (등록 재시도 중복 0 · S13)"]
   }
   Note: '''
   시드 4건. 출처 필드로 원본을 되짚을 수 있다.
   `src='lesson'` 이면 `(ser_id, on_date)` 가 함께 있어야 한다 (`todo_lesson_key` · NOT VALID).
   회차 키가 둘인 이유는 회차의 정체가 그 짝이기 때문이다 (C82-b 원장).
+  v4.54 · W11 N-86(migration 1764600000000): todo_lead_key — ((src)::text = 'lead') = (lead_id IS NOT NULL) AND (lead_id IS NULL) = (care IS NULL) · NOT VALID.
+  등록 확정 트랜잭션이 해피콜 · 첫 월간을 상담 담당에게 만들고(ops/lead-care planLeadCare), 월간을 끝내면 같은 트랜잭션에서 다음 달 하나(continueLeadCare — 휴원 복귀 뒤 · 수강 종료 멈춤).
+  끝낸 사후 관리(src=lead)는 서랍 「끝난 것 지우기」가 지우지 않는다(lib/todo TODO_KEEP_ON_CLEAR · 완료 이력 보존 · A′ 후속) · 서랍 「원본」은 /intake?lead=<id>.
+  W11 O(칸 변경 0): 수업 상세 「+ 할 일」이 회차 키(ser_id, on_date)를 싣는다(POST /drawer/todos +serId · onDate).
   '''
 }
 
 Table REQ {
   id          bigserial   [pk]
   staff_id    bigint      [not null, ref: > STAFF.id, note: '강사가 올린다']
-  req_type    varchar(16) [not null]
+  req_type    varchar(16) [not null, note: 'CHECK 없음 — 강사 요청 넷 wage_change · tz_change · book_change · gpa_request(teacher.dto TEACHER_REQ_TYPES · 뒤 둘은 v4.54 · W11 N-99) · 옛 낱말 unav_add · doc(REQ_TYPE_LABEL). 낱말은 lib/approval 한 곳']
   payload     jsonb
-  state       varchar(12) [not null, default: 'open']
+  state       varchar(12) [not null, default: 'pending', note: 'pending → approved | rejected. v4.54 · W11 대조로 DB 기본값에 맞춤 — 이전 판은 open 이라 적었으나 migration 1756700000000-approval-state-words 가 기본값을 pending 으로 바꾼 뒤였다']
   resolved_by bigint      [ref: > STAFF.id]
   reject_reason text      [note: '반려 시 필수 (D-R13)']
+  student_id  bigint      [ref: > STU.id, note: '교재 변경 · GPA 회차 요청이 가리키는 학생(req_student_id_fkey · C77 migration 1759700000000 · 옛 행 NULL). v4.54 에 W11 대조로 보탬(이전 판에 칸이 빠져 있었다)']
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 6건. 승인 대기함에 모인다. 승인 결과는 LOG + NOTI.'
+  Note: '''
+  시드 6건. 승인 대기함에 모인다. 승인 결과는 LOG + NOTI.
+  v4.54 · W11(칸 변경 0 · N-99 · §14): 강사가 교재 변경 · GPA 회차 요청을 올린다. 결재 처리는 「되돌리기」로 취소된다 — 토큰은 결재 줄에 묶이고 LOG 에 REQ / undo · CHREQ / undo · ZACC / update 가 새로 남는다(감사 낱말은 이제부터 대문자 · 리드 결정).
+  '''
 }
 
 Table NOTI {
@@ -1466,7 +1637,17 @@ Table RPT {
              → 컨설팅(CONS) → 컴플레인(CPL) → 수업(SER+clChk). 스케줄 변동은 제외.
   월간은 손익(매출−강사료−지출)과 상담 퍼널(stopAt)이 더 붙는다.
   (rpt_type, on_date) unique 로 같은 달 보고서 중복 생성을 막는다 (D-R23).
+  v4.54 · W11(칸 변경 0): 영역 메모 칸 위의 담당은 EXEC_AREA_OWNER 에서 읽는다(N-81 · 슬라이드 72). 응답 ExecReportDto 는 memo(6영역 메모의 JSON 글자)를 빼고 memos 만 싣는다(7-3 ② · RPT.memo 칸은 그대로).
+  회수(N-97 · POST /exec/report/:id/withdraw)는 올린 사람만 · 올라간 보고만 sent → draft 로 되돌리고 서명을 비운다 — 감사 줄 RPT/withdraw.
   '''
+}
+
+Table EXEC_AREA_OWNER {
+  area_key varchar(12) [pk, note: 'money · mkt · ops · consulting · complaint · lesson — exec_area_owner_key_words CHECK (D-R25 여섯 영역)']
+  staff_id bigint      [ref: > STAFF.id, note: 'exec_area_owner_staff_fk · ON DELETE SET NULL · NULL = 비움']
+  set_by   bigint      [not null, ref: > STAFF.id, note: 'exec_area_owner_set_by_fk · 정한 사람']
+  set_at   timestamptz [not null, default: `now()`]
+  Note: 'v4.54 · W11 N-81(슬라이드 72 · migration 1764700000000) — 대표 보고 영역마다 고정 담당 한 명. 대표가 정한다(canCeoSetExecOwner · 감사 줄 EXEC_AREA/owner). 처음엔 비어 있다 — 시드가 넣지 않는다.'
 }
 
 Table PDFLOG {
@@ -1475,6 +1656,11 @@ Table PDFLOG {
   ref_id      bigint
   file_url    text
   at          timestamptz [not null, default: `now()`]
+  rep_id      bigint      [ref: > REP.id, note: 'v4.54 · W11 7-3 ① — 보존한 리포트 PNG 한 장이 어느 리포트의 것인지(pdflog_rep_id_fkey). 발송 · 재발송이 적는다 · 옛 행 NULL(N-25 — 읽는 쪽은 묶음 전체로 판정) · migration 1764400000000']
+  indexes {
+    (kind, ref_id, at) [name: 'pdflog_kind_ref_at_idx', note: 'at DESC — W11 대조로 보탬(이전 판에 없던 기존 색인)']
+    rep_id [name: 'pdflog_rep_idx', note: 'WHERE rep_id IS NOT NULL']
+  }
 }
 
 // ─────────────────────────────────────────────────────────────── 강사 전용 (v26)
@@ -1499,13 +1685,13 @@ Table SUGGESTION {
 
 Table NOTE {
   id          bigserial   [pk]
-  student_id  bigint      [not null, ref: > STU.id]
-  ser_id      bigint      [ref: > SER.id]
-  author_id   bigint      [not null, ref: > STAFF.id]
-  body        text        [not null]
+  student_id  bigint      [not null, ref: > STU.id, note: 'note_student_fk · RESTRICT (v4.54 M2)']
+  ser_id      bigint      [ref: > SER.id, note: 'note_ser_fk · RESTRICT (v4.54 M2)']
+  author_id   bigint      [not null, ref: > STAFF.id, note: 'FK 없음 — 계정 참조 목록(lib/staff-refs STAFF_SOFT_REFS)이 관리한다']
+  body        text        [not null, note: 'CHECK note_body_present — length(btrim(body)) > 0 AND length(body) <= 2000 (쓰기 경로는 500자 · v4.54 M2)']
   created_at  timestamptz [not null, default: `now()`]
   indexes { (student_id, created_at) }
-  Note: '특이사항(인수인계). 학부모에게 전달되지 않는다 — 관리자만 본다.'
+  Note: '인수인계 메모(N-36 ② · v4.54 M2 · migration 1764900000000) — 관리자 · 매니저가 §79 학생 트래킹에서 한 줄씩 더하고(고치기 · 지우기 없음) 그 학생을 맡은 강사가 수업 안내 학생 카드에서 읽는다. 학부모에게 나가지 않는다.'
 }
 
 Table DIAG {
@@ -1952,3 +2138,39 @@ Table SER_OCC {
 //   + 트리거 staff_login_id_default(BEFORE INSERT) — login_id 가 없으면 email 을 쓴다. 마이그레이션이 back 배포보다 먼저 도는 동안 옛 서버의 「+ 구성원」이 NOT NULL 로 죽지 않게(배포 순서 호환).
 //   ~ STAFF.must_change_credentials — 첫 설정의 뜻 좁힘: 휴대폰 · 이메일 인증 + 새 비밀번호(아이디는 바꾸지 않는다). 매니저가 적은 임시 비밀번호로 만들기 · 초기화할 때 켠다.
 //   표 0 · 컬럼 1 · 마이그레이션 1 (1763900000000-staff-login-id) · 옮김 외 보정 0. down 은 이메일이 빈 계정이 있으면 멈춘다(주소를 지어내지 않는다).
+// v4.53 → v4.54 (2026-09-27 · TBO-52 W11 결정 채택 Phase A + Phase B M2 — 대표 위임 「결정 대기도 권고안으로 채택」 · 결정표 60건 중 이 판에 스키마가 걸린 것) — 새 표 일곱 + 기존 표 칸 스물다섯 + 제약 · 색인 · 트리거.
+//   1764000000000-holiday-2027 — 데이터만: HOLIDAY 2027 24줄 + 2026 개정 두 줄(노동절 · 제헌절) · N-82 ① · 스키마 0.
+//   1764100000000-exc-mode-memo — + EXC.mode varchar(8) + exc_mode_words(offline|online) · + EXC.memo text + exc_memo_len(공백만 금지 · 200자) · N-56 · N-57.
+//   1764110000000-stu-gender — + STU.gender varchar(6) + stu_gender_words(female|male) · N-83 · 관리자 §10 아바타에만.
+//   1764200000000-inv-installment — + INV_INSTALLMENT(seq ≥ 1 · amount > 0 · (inv_id, seq) · (inv_id, due_on) 유니크 · inv_id ON DELETE CASCADE) +
+//     지연 제약 트리거 둘 inv_installment_sum_check · inv_installment_sum_on_inv(함수 inv_installment_sum_guard — 회차 합 = INV.amount 를 커밋 때) · N-79.
+//   1764300000000-book-taxonomy — + BOOK_SUBJECT(넷 · book_subject_color_hex) · BOOK_CATEGORY(여덟 · (subject_key, key) 유니크) · + LIB 칸 여섯
+//     (book_subject_key · book_category_key · book_level · grade_from · grade_to · exam_tag) + FK 둘(lib_book_subject_fk · 두 칸 lib_book_category_fk) + CHECK 넷 · N-47.
+//   1764310000000-issue-reason — + ISSUE.reason text · N-62.   1764330000000-issue-form — + ISSUE.form varchar(8) + issue_form_words(pdf|print) · 7-3 §38-2(리드 채택 — issue.form).
+//   1764320000000-kind-cap-source — 데이터만: KIND mock · gpa 정원 1(옛 기본값 20 · 4 일 때만) · N-30 ① · 스키마 0.
+//   1764400000000-weekly-bundle-pdflog-rep — + PDFLOG.rep_id(FK · 부분 색인) · + GUARDIAN_SEND.wrep_id(FK · guardian_send_one_source · 부분 색인) ·
+//     WREP 제약 셋 wrep_student_id_fkey · wrep_week_monday · wrep_body_summary(모두 NOT VALID) · N-54 · 7-3 ①.
+//   1764500000000-consulting-items-files — + CONS_FILE.item_id(FK cons_item) · cons_file_role_check 에 item · cons_file_item_pair_check · cons_file_item_idx ·
+//     cons_file_limit_guard() 새 판(계약 10 · 항목마다 6 · 같은 컨설팅의 항목만) · cons_event_type_check +3(item_added · item_renamed · item_removed) · N-63 · N-18-a 부분.
+//   1764600000000-intake-aftercare-mkt-words — todo_src_t + lead · + TODO.lead_id(ON DELETE CASCADE) · + TODO.care + todo_care_words · todo_lead_key(둘 다 NOT VALID) ·
+//     색인 셋(todo_lead_idx · todo_lead_happycall_once · todo_lead_monthly_on) · + LEAD.first_lesson_on · N-86 ·
+//     + MKT.memo · mkt_channel_words · mkt_item_words(원문 넷 + 옛 코드 · NOT VALID) · N-29 ①② · mfb_kind_chk · mfb_reply_needs_parent 에 hold(NOT VALID) · mfb_hold_once · N-29 ③.
+//   1764700000000-plan-share-exec-owner — + PLAN.share + plan_share_words · + PLAN_PICK(plan_id ON DELETE CASCADE) · N-72 ·
+//     + PLAN.due_rejected_on/at/by + plan_due_rejected_by_fk · plan_due_rejected_triple · plan_due_rejected_clears · N-95 · + EXEC_AREA_OWNER(key 여섯 CHECK · staff_id ON DELETE SET NULL) · N-81.
+//   1764900000000-payout-line-bonus-privacy-note(Phase B M2) — + PAYOUT_LINE.bonus · bonus_detail(jsonb 배열 · payout_line_bonus_detail_array) · correction ·
+//     PAYOUT_LINE.ser_id · on_date SET NOT NULL · FK 셋 payout_line_payout_fk · payout_line_ser_fk · payout_line_kind_fk(모두 RESTRICT) · payout_line_nonneg ·
+//     유일 색인 payout_line_ser_on_uniq(ser_id, on_date) · payout_line_payout_idx · N-36 ① · N-51 ·
+//     + PAYOUT_BONUS_RULE(payout_bonus_rule_kind_words · payout_bonus_rule_kind_key_pair · payout_bonus_rule_amount_range · FK 둘 · 식 유일 색인 payout_bonus_rule_slot_day_uniq) · N-93 ·
+//     + ACCT_PRIVACY(key 둘 acct_privacy_key_words · acct_privacy_set_at_with_by · acct_privacy_set_by_fk) · N-94 ·
+//     NOTE FK 둘 note_student_fk · note_ser_fk(RESTRICT) + note_body_present · N-36 ②. 옛 행이 규칙에 어긋나면 고치지 않고 멈춘다 ·
+//     down 은 근거 줄 · 가산 규칙 · 켜진 스위치가 있으면 멈춘다. PAYOUT.hours 뜻 넓힘 — 확정 때는 쓴 수업 + 보정 줄 시간(N-51 · 칸 변경 0).
+//   W11 대조로 보탬(이전 판에 빠져 있던 기존 칸 · 이번 물결 변경 아님): PLAN.due_approved_at/by(C56) · MKT.title · MKT.by_id · MFB.kind · MFB.parent_id(C53) · REQ.student_id(C77) ·
+//     PDFLOG 색인 pdflog_kind_ref_at_idx · REQ.state 기본값 open → pending(1756700000000 뒤의 실물).
+//   조각과 DB 가 다른 곳(DB = migration 이 정본 — ERD 는 DB 를 따랐다): 조각에 없던 제약 이름(inv_installment_* · book_category_subject_key_fkey · lib_* ·
+//     plan_pick_* · exec_area_owner_*_fk) · MFB.parent_id 는 자기 참조 FK 가 없다(조각은 ref 를 적었다) · 컨설팅 파일 한도는 트리거 하나(cons_file_limit_guard_trigger)가
+//     cons_file_limit · cons_file_item_cons · cons_file_item_limit 셋을 낸다 · O 조각의 소문자 표 이름은 이 파일의 대문자 규약(PLAN · PLAN_PICK · EXEC_AREA_OWNER · STAFF)으로 적었다.
+//     M2 조각(impl9-w11-9 7절)과 DB(taco_x9 · 트리의 모든 migration)는 칸 · 형 · 기본값 · 제약 · 색인이 같다 — 조각에 이름이 없던 제약 일곱
+//     (payout_line_payout_fk · payout_line_ser_fk · payout_line_kind_fk · payout_bonus_rule_amount_range · payout_bonus_rule_kind_fk · payout_bonus_rule_set_by_fk · acct_privacy_set_by_fk)만 DB 이름을 적었다.
+//   DB 에만 있고 고치지 않은 것: EXC 의 (ser_id, on_date) 유니크 둘(제약 exc_ser_date_uniq · 색인 exc_ser_id_on_date_uniq — 이번 물결과 무관).
+//   넣지 않은 것: D(N-92 · 금액 「₩」 앞붙임)는 front 만이라 스키마 0 — 이 판에 적을 것이 없다.
+//   표 +7(84 → 91) · 컬럼 +56(기존 표 25 + 새 표 31) + 기존 칸 보탬 7 · 마이그레이션 13 (1764000000000 ~ 1764900000000) · 기존 행 보정 0 (N-25 — 데이터 migration 둘은 조건부 UPDATE/INSERT 만 · M2 는 어긋난 옛 행이 있으면 멈춘다).

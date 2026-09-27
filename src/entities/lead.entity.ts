@@ -36,7 +36,8 @@ export class Lead {
   @Column({ type: 'varchar', length: 16 })
   stage: string;
 
-  /** 실패 시 중단 지점 */
+  /** 옛 중단 지점(before_book · before_first · after_first · after_second) — **읽기 전용 기록**.
+   *  W11 · N-87 로 §24 분류는 실패 당시 단계(`failFrom`)에서 읽고 이 칸은 새로 쓰지 않는다(대응표 이관 없음 · N-25). */
   @Column({ type: 'varchar', length: 16, nullable: true })
   stopAt: string | null;
 
@@ -63,6 +64,13 @@ export class Lead {
   /** v4.34 · 유입 경로 — kakao | phone | blog | instagram | referral | walkin (컷 §23 · N-44). 옛 행은 NULL — 추정 보정 0 (N-25) */
   @Column({ type: 'varchar', length: 16, nullable: true })
   source: string | null;
+
+  /**
+   * W11 · N-86 · 등록 확정 때 잡은 **첫 실제 수업일** — 해피콜(+7일)과 월간 상담(매월 같은 날 · 없으면 말일)의 기준.
+   * 회차는 투영이라 뒤에 바뀌면 날짜가 흔들린다 — 등록 순간의 사실로 굳혀 둔다. 옛 등록 건 · 등록 안 한 건은 NULL (보정 0 · N-25)
+   */
+  @Column({ type: 'date', nullable: true })
+  firstLessonOn: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;

@@ -108,7 +108,7 @@ d('회차 출결 계약 (D-R35)', () => {
     );
 
     const login = async (email: string) => (
-      await request(app.getHttpServer()).post('/auth/login').send({ email, password: PW }).expect(201)
+      await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PW }).expect(201)
     ).body.accessToken as string;
     teacherToken = await login(TEACHER_EMAIL);
     managerToken = await login(MANAGER_EMAIL);

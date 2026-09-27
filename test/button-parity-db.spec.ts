@@ -52,7 +52,7 @@ d('S5 단추와 서버가 같은 질문 — can* 과 실제 거절이 맞는가'
     ds = app.get(DataSource);
     const login = async (email: string) =>
       (await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201)).body.accessToken as string;
+        .send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;
     ceo = await login('ceo@tnacademy.kr');
     head = await login('head@tnacademy.kr');
   });
@@ -73,7 +73,8 @@ d('S5 단추와 서버가 같은 질문 — can* 과 실제 거절이 맞는가'
 
   it('① 마감한 달의 청구서는 canVoid 가 닫히고, 그 이유가 쓰기가 내는 문장과 같다', async () => {
     const before = (await api('get', '/accounting').expect(200)).body;
-    const target = (before.invoices as Json[]).find((i) => i.canVoid === true);
+    // 보낸 청구서를 고른다 — 초안은 다음 달 것일 수 있다(시드 F12 표본 · 월말 일괄 발행의 초안). 시작 안 한 달은 마감이 400 이다
+    const target = (before.invoices as Json[]).find((i) => i.canVoid === true && i.state !== 'draft');
     if (!target) throw new Error('취소할 수 있는 청구서가 시드에 없습니다 — 대상을 못 고른 채로 통과시키지 않습니다');
     const month = String(target.yearMonth);
 
@@ -104,7 +105,8 @@ d('S5 단추와 서버가 같은 질문 — can* 과 실제 거절이 맞는가'
 
   it('① 입금이 붙은 청구서도 단추가 닫힌다 — 0원 입금 줄까지 센다 (쓰기가 그렇게 센다)', async () => {
     const board = (await api('get', '/accounting').expect(200)).body;
-    const target = (board.invoices as Json[]).find((i) => i.canVoid === true);
+    // 입금을 받을 수 있는 청구서 — 초안은 입금이 409(INV_NOT_BILLABLE)라 고르지 않는다(시드 F12 표본의 다음 달 초안)
+    const target = (board.invoices as Json[]).find((i) => i.canVoid === true && i.state !== 'draft');
     if (!target) throw new Error('취소할 수 있는 청구서가 없습니다');
 
     const pay = await api('post', '/accounting/payments')

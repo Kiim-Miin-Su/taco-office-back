@@ -38,6 +38,7 @@ export * from './guide.entity';
 export * from './hist.entity';
 export * from './inv.entity';
 export * from './inv-line.entity';
+export * from './inv-installment.entity';
 export * from './issue.entity';
 export * from './kind.entity';
 export * from './lead-stage-log.entity';
@@ -57,8 +58,14 @@ export * from './noti.entity';
 export * from './pay.entity';
 export * from './payout.entity';
 export * from './payout-line.entity';
+// W11 M2 (2026-09-27) — 강사료 가산 규칙 · 회계 비공개 스위치 (N-93 · N-94)
+export * from './payout-bonus-rule.entity';
+export * from './acct-privacy.entity';
 export * from './pdflog.entity';
 export * from './plan.entity';
+// W11 (2026-09-26) — 기획 지정 공개 · 대표 보고 영역 담당 (N-72 · N-81)
+export * from './plan-pick.entity';
+export * from './exec-area-owner.entity';
 export * from './pnoti.entity';
 export * from './rate.entity';
 export * from './rep.entity';
@@ -87,6 +94,9 @@ export * from './guardian.entity';
 export * from './guardian-send.entity';
 export * from './holiday.entity';
 export * from './auth-code.entity';
+// W11 (2026-09-26) — §39 교재 두 층 분류 코드표 (N-47)
+export * from './book-subject.entity';
+export * from './book-category.entity';
 export * from './zacc.entity';
 export * from './zassign.entity';
 export * from './zlog.entity';
@@ -100,6 +110,8 @@ import {
   GuardianSend,
   Holiday,
   AuthCode,
+  BookSubject,
+  BookCategory,
   Autorep,
   Chreq,
   Cons,
@@ -128,6 +140,7 @@ import {
   Hist,
   Inv,
   InvLine,
+  InvInstallment,
   Issue,
   Kind,
   Lead,
@@ -147,8 +160,12 @@ import {
   Pay,
   Payout,
   PayoutLine,
+  PayoutBonusRule,
+  AcctPrivacy,
   Pdflog,
   Plan,
+  PlanPick,
+  ExecAreaOwner,
   Pnoti,
   Rate,
   Rep,
@@ -187,6 +204,9 @@ export const ENTITIES = [
   Holiday,
   // W8 (2026-09-26) — 첫 설정 이메일 · 휴대폰 인증 코드
   AuthCode,
+  // W11 (2026-09-26) — §39 교재 두 층 분류 코드표 (N-47)
+  BookSubject,
+  BookCategory,
   Att,
   Autorep,
   Chreq,
@@ -216,6 +236,7 @@ export const ENTITIES = [
   Hist,
   Inv,
   InvLine,
+  InvInstallment,
   Issue,
   Kind,
   Lead,
@@ -237,8 +258,14 @@ export const ENTITIES = [
   Pay,
   Payout,
   PayoutLine,
+  // W11 M2 (2026-09-27) — 강사료 가산 규칙 · 회계 비공개 스위치 (N-93 · N-94)
+  PayoutBonusRule,
+  AcctPrivacy,
   Pdflog,
   Plan,
+  // W11 (2026-09-26) — 기획 지정 공개 · 대표 보고 영역 담당 (N-72 · N-81)
+  PlanPick,
+  ExecAreaOwner,
   Pnoti,
   Rate,
   Rep,

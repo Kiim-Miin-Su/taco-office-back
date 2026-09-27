@@ -71,7 +71,7 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     token = await login('cancel-ceo@t.kr');
@@ -283,7 +283,7 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     const { id, from } = await makeSer(600);
     const managerToken = (await request(app.getHttpServer())
       .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'cancel-m@t.kr', password: PW }).expect(201)).body.accessToken as string;
+      .send({ loginId: 'cancel-m@t.kr', password: PW }).expect(201)).body.accessToken as string;
     await api('delete', `/schedule/${id}`, managerToken)
       .send({ scope: 'this', onDate: from, cancelKind: 'student_absent', cancelTreat: 'carry' })
       .expect(200);
@@ -337,6 +337,10 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
       [[a.id, b.id, c.id], a.from],
     );
     expect(occ.map((o) => o.canceled)).toEqual([true, true, true]);
+
+    // 그날 전체 휴강은 **시드 수업도** 접는다(학원 전체) — afterEach 는 이 스위트의 규칙만 치운다.
+    // 시드가 투영 기간 전체에 회차를 두므로(N-49) 되돌리지 않으면 개발 DB 에 그날의 시드 휴강이 남는다 — 한 토큰으로 통째로 되돌린다(N-138)
+    await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
   });
 
   it('그날 전체 휴강에 회차가 없으면 404 이고, 차감으로는 접을 수 없다 (전체 결석은 학생 결석이 아니다)', async () => {

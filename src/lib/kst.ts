@@ -71,3 +71,16 @@ export const overdueDays = (dueOn: string | null | undefined, today = todayKst()
   const d = (new Date(`${today}T00:00:00Z`).getTime() - new Date(`${dueOn}T00:00:00Z`).getTime()) / 86400000;
   return d > 0 ? Math.floor(d) : 0;
 };
+
+/**
+ * 그 날짜의 **KST 00:00** 순간(ms) — `2026-08-21` → 2026-08-20T15:00:00Z (N-89 · W11).
+ * 안내가 걸린 회차가 없을 때 「기한 날 00:00」을 기준 시각으로 쓴다. 날짜 모양이 아니면 NaN.
+ */
+export const kstMidnightMs = (iso: string): number =>
+  (isIsoDate(iso) ? new Date(`${iso}T00:00:00Z`).getTime() - KST_MS : Number.NaN);
+
+/**
+ * 그 순간까지 **남은 분** — 지났으면 음수 (N-89 · W11). `overdueDays` 가 날 단위라 「6시간 · 3시간」을 말하지 못해
+ * 시간 단위 셈을 여기 둔다. 내림이다 — 5시간 59분 남았으면 「5시간 남음」, 시작을 30초 넘겼으면 -1(이미 지났다).
+ */
+export const minutesUntil = (atMs: number, now: number = Date.now()): number => Math.floor((atMs - now) / 60000);

@@ -9,7 +9,9 @@
  * 금액은 대표만 본다 (D-R39 canSeeProfit). 시드는 값만 넣고 가림은 API 가 한다.
  */
 import { addD } from '../lib/recurrence';
-import { SEED_TODAY } from './base';
+import { addMonths } from '../lib/intake-words';
+import { invoiceTitle } from '../modules/accounting/accounting.dto';
+import { SEED_TODAY, SUBS } from './base';
 
 const YM = SEED_TODAY.slice(0, 7);                        // 2026-08
 const PREV = addD(SEED_TODAY, -31).slice(0, 7);           // 2026-07
@@ -17,34 +19,58 @@ const PREV2 = addD(SEED_TODAY, -62).slice(0, 7);          // 그 앞 달 — 확
 
 /** 청구서 — 학생별 한 장. 상태가 골고루 있어야 §52 보드가 채워진다 */
 export const INVOICES = [
-  { id: 1, studentId: 1,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 640000, state: 'sent',    issuedOn: addD(SEED_TODAY, -3), dueOn: addD(SEED_TODAY, 8),  paidAmount: 0 },
-  { id: 2, studentId: 2,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 720000, state: 'sent',    issuedOn: addD(SEED_TODAY, -3), dueOn: addD(SEED_TODAY, 8),  paidAmount: 0 },
-  { id: 3, studentId: 5,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 880000, state: 'sent',    issuedOn: addD(SEED_TODAY, -2), dueOn: addD(SEED_TODAY, 9),  paidAmount: 0 },
-  { id: 4, studentId: 6,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 420000, state: 'paid',    issuedOn: addD(SEED_TODAY, -4), dueOn: addD(SEED_TODAY, 7),  paidAmount: 420000, paidAt: addD(SEED_TODAY, -2) },
-  { id: 5, studentId: 7,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 380000, state: 'paid',    issuedOn: addD(SEED_TODAY, -4), dueOn: addD(SEED_TODAY, 7),  paidAmount: 380000, paidAt: addD(SEED_TODAY, -1) },
-  { id: 6, studentId: 3,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 480000, state: 'draft',   issuedOn: null, dueOn: null, paidAmount: 0 },
-  { id: 7, studentId: 4,  yearMonth: YM,   invType: 'tuition', title: '2026-09 수업료', amount: 360000, state: 'draft',   issuedOn: null, dueOn: null, paidAmount: 0 },
-  { id: 8, studentId: 8,  yearMonth: PREV, invType: 'tuition', title: '2026-08 수업료', amount: 640000, state: 'unpaid',  issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 0 },
+  { id: 1, studentId: 1,  yearMonth: YM,   invType: 'tuition', title: invoiceTitle(YM, 'tuition'), amount: 640000, state: 'sent',    issuedOn: addD(SEED_TODAY, -3), dueOn: addD(SEED_TODAY, 8),  paidAmount: 0 },
+  { id: 2, studentId: 2,  yearMonth: YM,   invType: 'tuition', title: invoiceTitle(YM, 'tuition'), amount: 720000, state: 'sent',    issuedOn: addD(SEED_TODAY, -3), dueOn: addD(SEED_TODAY, 8),  paidAmount: 0 },
+  { id: 3, studentId: 5,  yearMonth: YM,   invType: 'tuition', title: invoiceTitle(YM, 'tuition'), amount: 880000, state: 'sent',    issuedOn: addD(SEED_TODAY, -2), dueOn: addD(SEED_TODAY, 9),  paidAmount: 0 },
+  { id: 4, studentId: 6,  yearMonth: YM,   invType: 'tuition', title: invoiceTitle(YM, 'tuition'), amount: 420000, state: 'paid',    issuedOn: addD(SEED_TODAY, -4), dueOn: addD(SEED_TODAY, 7),  paidAmount: 420000, paidAt: addD(SEED_TODAY, -2) },
+  { id: 5, studentId: 7,  yearMonth: YM,   invType: 'tuition', title: invoiceTitle(YM, 'tuition'), amount: 380000, state: 'paid',    issuedOn: addD(SEED_TODAY, -4), dueOn: addD(SEED_TODAY, 7),  paidAmount: 380000, paidAt: addD(SEED_TODAY, -1) },
+  { id: 6, studentId: 3,  yearMonth: YM,   invType: 'tuition', title: invoiceTitle(YM, 'tuition'), amount: 480000, state: 'draft',   issuedOn: null, dueOn: null, paidAmount: 0 },
+  { id: 7, studentId: 4,  yearMonth: YM,   invType: 'tuition', title: invoiceTitle(YM, 'tuition'), amount: 360000, state: 'draft',   issuedOn: null, dueOn: null, paidAmount: 0 },
+  { id: 8, studentId: 8,  yearMonth: PREV, invType: 'tuition', title: invoiceTitle(PREV, 'tuition'), amount: 640000, state: 'unpaid',  issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 0 },
   // 분납 표본 (A-D2) — 줄이 **두 개**다. 한 줄짜리만 있으면 누계 분기가 한 번도 안 돌아 본 적이 없게 된다
-  { id: 9, studentId: 11, yearMonth: PREV, invType: 'tuition', title: '2026-08 수업료', amount: 520000, state: 'partial', issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 320000, paidAt: null },
-  { id: 10, studentId: 9, yearMonth: PREV, invType: 'tuition', title: '2026-08 수업료', amount: 560000, state: 'paid',    issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 560000, paidAt: addD(SEED_TODAY, -8) },
+  { id: 9, studentId: 11, yearMonth: PREV, invType: 'tuition', title: invoiceTitle(PREV, 'tuition'), amount: 520000, state: 'partial', issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 320000, paidAt: null },
+  { id: 10, studentId: 9, yearMonth: PREV, invType: 'tuition', title: invoiceTitle(PREV, 'tuition'), amount: 560000, state: 'paid',    issuedOn: addD(SEED_TODAY, -27), dueOn: addD(SEED_TODAY, -22), paidAmount: 560000, paidAt: addD(SEED_TODAY, -8) },
 ];
+
+/**
+ * 줄 이름 — **제품의 줄 계산이 짓는 낱말 그대로**(과목 이름 · `invoice-lines.ts` 의 `label`) (53-04 · C54 이전 이름을 걷었다).
+ * 과목 이름은 코드표(`SUBS`) 한 곳에서 읽는다 — 두 곳에 적으면 이름을 고치는 날 시드만 옛 이름으로 남는다.
+ * 금액 · 횟수 · 단가는 그대로다(표본의 합계가 §52 머리 · 시험 기대값이다).
+ */
+const lineLabel = (subKey: string): string => SUBS.find((s) => s.key === subKey)?.name ?? subKey;
 
 /** 청구서 줄 — 과목 · 횟수 · 단가 · 금액 (D-R37 입금 명세서) */
 export const INV_LINES = [
-  { invId: 1, subKey: 'ap-chem', label: '정규 1:1 · AP Chemistry', count: 8, unitPrice: 80000, seq: 1 },
-  { invId: 2, subKey: 'sat-math', label: '정규 1:1 · SAT Math',    count: 9, unitPrice: 80000, seq: 1 },
-  { invId: 3, subKey: 'writing', label: '정규 1:2 · Writing',      count: 6, unitPrice: 60000, seq: 1 },
-  { invId: 3, subKey: 'admissions', label: '컨설팅 회차',           count: 3, unitPrice: 180000, seq: 2 },
-  { invId: 4, subKey: 'writing', label: '정규 1:2 · Writing',      count: 7, unitPrice: 60000, seq: 1 },
-  { invId: 5, subKey: 'map-math', label: '정규 1:2 · MAP Math',    count: 5, unitPrice: 60000, seq: 1 },
-  { invId: 5, subKey: 'study-room', label: '자습 관리',             count: 4, unitPrice: 20000, seq: 2 },
-  { invId: 6, subKey: 'map-math', label: '정규 1:2 · MAP Math',    count: 8, unitPrice: 60000, seq: 1 },
-  { invId: 7, subKey: 'vocab',   label: '그룹 · Vocab',            count: 10, unitPrice: 35000, seq: 1 },
-  { invId: 8, subKey: 'ap-chem', label: '정규 1:1 · AP Chemistry', count: 8, unitPrice: 80000, seq: 1 },
-  { invId: 9, subKey: 'writing', label: '정규 1:2 · Writing',      count: 7, unitPrice: 60000, seq: 1 },
-  { invId: 10, subKey: 'vocab',  label: '그룹 · Vocab',            count: 16, unitPrice: 35000, seq: 1 },
+  { invId: 1, subKey: 'ap-chem', label: lineLabel('ap-chem'), count: 8, unitPrice: 80000, seq: 1 },
+  { invId: 2, subKey: 'sat-math', label: lineLabel('sat-math'),    count: 9, unitPrice: 80000, seq: 1 },
+  { invId: 3, subKey: 'writing', label: lineLabel('writing'),      count: 6, unitPrice: 60000, seq: 1 },
+  { invId: 3, subKey: 'admissions', label: lineLabel('admissions'),           count: 3, unitPrice: 180000, seq: 2 },
+  { invId: 4, subKey: 'writing', label: lineLabel('writing'),      count: 7, unitPrice: 60000, seq: 1 },
+  { invId: 5, subKey: 'map-math', label: lineLabel('map-math'),    count: 5, unitPrice: 60000, seq: 1 },
+  { invId: 5, subKey: 'study-room', label: lineLabel('study-room'),             count: 4, unitPrice: 20000, seq: 2 },
+  { invId: 6, subKey: 'map-math', label: lineLabel('map-math'),    count: 8, unitPrice: 60000, seq: 1 },
+  { invId: 7, subKey: 'vocab',   label: lineLabel('vocab'),            count: 10, unitPrice: 35000, seq: 1 },
+  { invId: 8, subKey: 'ap-chem', label: lineLabel('ap-chem'), count: 8, unitPrice: 80000, seq: 1 },
+  { invId: 9, subKey: 'writing', label: lineLabel('writing'),      count: 7, unitPrice: 60000, seq: 1 },
+  { invId: 10, subKey: 'vocab',  label: lineLabel('vocab'),            count: 16, unitPrice: 35000, seq: 1 },
 ];
+
+/**
+ * F12 「이월 막힘」 표본 (W11 · N-49 청크) — §54 이월이 **실제로 막히는 조건** 하나를 시드가 만든다.
+ * 전에는 막힌 줄이 없어 칩이 「0 = 0」으로만 확인됐다(QA F12).
+ *
+ *   · 윤도현(7)은 이번 달 수업료를 완납했다 — 위 청구서 5(학습실 줄이 든다)
+ *   · 이번 달 학습실(SER 10) 한 회차를 그날만 빠졌다 → 받아 놓고 못 해 준 수업 = 넘길 돈 (`seed/index` 가 날짜를 고른다)
+ *   · 다음 달 수업료 청구서가 **이미 나가 있다** — 월말 일괄 발행이 만드는 초안(발행일 오늘)
+ *   → 차감이 들어갈 청구서가 없어 서버가 이월을 막는다(`CARRY_NEXT_ISSUED` · 칩 「이월 막힘」).
+ *
+ * 다음 달 청구서의 줄 · 금액은 **적지 않는다** — 투영이 편 다음 달 회차를 제품의 줄 계산(`invoiceLines`)이 센 그대로 넣는다.
+ * 기한은 이번 달 청구서들과 같은 간격(발행 뒤 11일)이다.
+ */
+export const CARRY_BLOCKED = {
+  studentId: 7, paidInvId: 5, month: YM, serId: 10,
+  nextInvId: 11, nextMonth: addMonths(YM, 1), issuedOn: SEED_TODAY, dueOn: addD(SEED_TODAY, 11),
+} as const;
 
 /** 입금 — 들어온 돈(§55) */
 export const PAYMENTS = [

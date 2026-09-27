@@ -23,6 +23,9 @@ import { Column, Entity, Index, PrimaryGeneratedColumn, ForeignKey, Check } from
 // C92 수동 CHECK metadata: migration 1760500000000 과 함께 보존/검증한다 — lib/rules.cancelPolicyIssue 와 같은 규칙.
 @Check('exc_makeup_link', "makeup_ser_id IS NULL OR cancel_treat = 'makeup'")
 @Check('exc_cancel_policy', "(cancel_kind IS NULL OR cancel_kind IN ('teacher_absent','student_absent','academy','holiday','other')) AND (cancel_treat IS NULL OR cancel_treat IN ('carry','deduct','makeup')) AND (cancel_treat IS NULL OR (canceled AND cancel_kind IS NOT NULL)) AND (cancel_treat IS DISTINCT FROM 'deduct' OR cancel_kind = 'student_absent')")
+// W11 수동 CHECK metadata: migration 1764100000000 과 함께 보존/검증한다 (N-56 · N-57).
+@Check('exc_mode_words', "\"mode\" IS NULL OR \"mode\" IN ('offline','online')")
+@Check('exc_memo_len', "\"memo\" IS NULL OR (char_length(btrim(\"memo\")) > 0 AND char_length(\"memo\") <= 200)")
 @Entity({ name: 'exc' })
 export class Exc {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -87,6 +90,20 @@ export class Exc {
    */
   @Column({ type: 'bigint', nullable: true })
   makeupSerId: number | null;
+
+  /**
+   * 그 회차 하나의 방식 — offline · online (N-56 · W11). **NULL 이면 규칙(SER.mode)을 따른다.**
+   * 규칙과 같은 값이면 쓰기가 NULL 로 되돌린다 — 「예외」는 규칙과 다를 때만 남는다.
+   */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  mode: string | null;
+
+  /**
+   * 회차 메모 한 줄 — 「이번 회차만」(N-57 · W11). 휴강 메모(`reason`)와 섞지 않는다.
+   * 누가·언제는 스케줄 쓰기 LOG(N-73)가 남긴다. 공백만인 메모는 표가 막는다(`exc_memo_len`).
+   */
+  @Column({ type: 'text', nullable: true })
+  memo: string | null;
 
   @Column({ type: 'bigint', nullable: true })
   byId: number | null;

@@ -8,9 +8,11 @@
  * 일정과 그 파생물.
  *
  * SER(반복 규칙) 를 적고, 회차는 **규칙으로 펼친다** — 손으로 66줄을 적지 않는다.
+ * 표(`ser_occ`)에 넣는 것은 제품 투영(`schedule.project`)이다(N-49 · `seed/index`). 여기 `expand()` 는
+ * 예외 · 그날만 빠짐 · 리포트 상태가 설 **날짜를 고르는** 순수 함수이고, 날짜 판정은 제품 규칙(`ruleHits`) 하나다.
  * 리포트 상태도 `src/lib/rules.ts` 의 판정을 그대로 통과하는 값만 만든다 (D-R7 · D-R32).
  */
-import { addD } from '../lib/recurrence';
+import { addD, formatRule, ruleHits, type Ser } from '../lib/recurrence';
 import { SEED_TODAY } from './base';
 
 export interface SerSeed {
@@ -46,7 +48,9 @@ export const SERS: SerSeed[] = [
   { id: 9,  kindKey: 'class', subKey: 'map-read', teacherId: 7, roomId: 6, zaccId: null, mode: 'offline', startMin: hm(16), endMin: hm(17), days: [3, 5], students: [10, 15] },
   { id: 10, kindKey: 'study', subKey: 'study-room', teacherId: 4, roomId: 8, zaccId: null, mode: 'offline', startMin: hm(17), endMin: hm(19), days: [1, 2, 3, 4, 5], students: [7, 12, 15, 19] },
   { id: 11, kindKey: 'class', subKey: 'writing',  teacherId: 7, roomId: 2, zaccId: null, mode: 'offline', startMin: hm(13), endMin: hm(14), days: [6], students: [6, 11] },
-  { id: 12, kindKey: 'consulting', subKey: 'admissions', teacherId: 3, roomId: 3, zaccId: 2, mode: 'offline', startMin: hm(17), endMin: hm(18, 30), days: [3], students: [5] },
+  // 현장 수업이라 줌 계정이 없다(N-56 「현장 회차에는 줌이 없다」) — 전에는 계정 2 를 적어 현장 회차에 줌이 붙은,
+  // 제품이 만들 수 없는 행을 넣었다(투영은 현장 회차의 계정 자리를 비운다 · 줌 배정은 현장 수업을 거절한다 · N-49)
+  { id: 12, kindKey: 'consulting', subKey: 'admissions', teacherId: 3, roomId: 3, zaccId: null, mode: 'offline', startMin: hm(17), endMin: hm(18, 30), days: [3], students: [5] },
   { id: 13, kindKey: 'class', subKey: 'sat-math', teacherId: 7,  roomId: null, zaccId: 3, mode: 'online',  startMin: hm(21), endMin: hm(22), days: [2, 4], students: [18] },
   { id: 14, kindKey: 'class', subKey: 'map-math', teacherId: 7, roomId: 7, zaccId: null, mode: 'offline', startMin: hm(15), endMin: hm(16), days: [1, 4], students: [12] },
   { id: 15, kindKey: 'gpa',   subKey: 'gpa-care', teacherId: 3,  roomId: 3, zaccId: null, mode: 'offline', startMin: hm(19), endMin: hm(20), days: [5], students: [5, 8] },
@@ -70,9 +74,29 @@ export const SERS: SerSeed[] = [
   { id: 27, kindKey: 'meeting', subKey: 'mt-mk', teacherId: 4, roomId: 4, zaccId: null, mode: 'offline', startMin: hm(14), endMin: hm(15), days: [], students: [], title: '8월 채널별 성과 리뷰', onceOn: addD(SEED_TODAY, -2) },
 ];
 
-/** 시드가 덮는 기간 — 오늘 기준 앞 3주 · 뒤 1주 */
+/** 시드가 덮는 기간 — 오늘 기준 앞 3주 · 뒤 1주 (예외 · 리포트 상태 · 변경 요청이 이 안의 회차에 선다) */
 export const RANGE_FROM = addD(SEED_TODAY, -21);
 export const RANGE_TO = addD(SEED_TODAY, 7);
+
+/**
+ * 규칙의 시작일 (N-49 · W11) — 반복 규칙은 **가장 이른 지난 회차(3주 전 · RANGE_FROM)** 에서 시작한다. 단발은 그날 하루다.
+ *
+ * 전에는 반복 규칙을 오늘부터 시작하게 두고 지난 3주 회차를 `ser_occ` 에 손으로 넣었다. 규칙이 만들 수 없는 행이라
+ * 그 수업에 「이번만」 쓰기를 하면 재투영이 지난 회차를 지웠고, 지난 회차의 쓰기는 `OCCURRENCE_NOT_FOUND` 로 헛돌았다.
+ * 이제 지난 회차도 규칙이 만든다 — 리포트 · 출결 · 변경 요청 시드가 서는 날짜가 모두 이 시작일 뒤다.
+ */
+export const serFromDate = (s: SerSeed): string => s.onceOn ?? RANGE_FROM;
+
+/** 규칙 문자열 — `recurrence.ts` 가 읽는 형식으로만 쓴다(형식이 둘이면 회차가 통째로 사라진다) */
+export const serRrule = (s: SerSeed): string =>
+  formatRule(s.onceOn ? { freq: 'ONCE', days: [], interval: 1 } : { freq: 'WEEKLY', days: [...s.days], interval: 1 });
+
+/** 제품 리듀서가 먹는 모양 — 날짜 판정을 제품 함수(`ruleHits`)에 맡기려고 만든다 */
+const asSer = (s: SerSeed): Ser => ({
+  id: s.id, kind: s.kindKey, sub: s.subKey, mode: s.mode, title: s.title ?? '',
+  teacherId: s.teacherId, roomId: s.roomId, startMin: s.startMin, endMin: s.endMin,
+  rrule: serRrule(s), fromDate: serFromDate(s), toDate: null, zaccId: s.zaccId,
+});
 
 export interface OccSeed {
   serId: number;
@@ -116,13 +140,29 @@ export const STU_OUT: Array<{ serId: number; nth: number; studentId: number }> =
   { serId: 3,  nth: 3, studentId: 18 },
 ];
 
-/** 규칙을 날짜로 펼친다. 손으로 적은 회차 목록을 두지 않는다. */
+/**
+ * 그 달 안의 그 수업 회차 하나 — 오늘 전 마지막, 그 달에 지난 회차가 아직 없으면(월초) 그 달 첫 회차.
+ * 달에 매인 표본(F12 「이월 막힘」 · `money.CARRY_BLOCKED`)이 쓴다 — 「뒤에서 n번째」는 월초에 지난달로 넘어가 버린다.
+ * 휴강한 회차는 고르지 않는다. 붙을 회차가 없으면 던진다 — 조용히 빠지지 않게.
+ */
+export function occurrenceInMonth(occs: OccSeed[], serId: number, month: string): string {
+  const mine = occs.filter((o) => o.serId === serId && !o.canceled && o.onDate.slice(0, 7) === month);
+  const past = mine.filter((o) => o.onDate < SEED_TODAY);
+  const hit = past.length ? past[past.length - 1] : mine[0];
+  if (!hit) throw new Error(`시드: 수업 ${serId} 의 ${month} 회차가 없습니다`);
+  return hit.onDate;
+}
+
+/**
+ * 규칙을 날짜로 펼친다. 손으로 적은 회차 목록을 두지 않는다.
+ * 날짜 판정은 제품 규칙(`ruleHits` — 시작일 · 요일)이다 — 시드가 고르는 날짜가 투영이 펴는 회차와 어긋나지 않는다 (N-49).
+ */
 export function expand(): OccSeed[] {
   const out: OccSeed[] = [];
+  const rules = SERS.map((s) => [s, asSer(s)] as const);
   for (let d = RANGE_FROM; d <= RANGE_TO; d = addD(d, 1)) {
-    const dow = new Date(d + 'T00:00:00Z').getUTCDay();
-    for (const s of SERS) {
-      if (s.onceOn ? s.onceOn !== d : !s.days.includes(dow)) continue;
+    for (const [s, rule] of rules) {
+      if (!ruleHits(rule, d)) continue;
       out.push({
         serId: s.id, onDate: d, teacherId: s.teacherId, roomId: s.roomId, zaccId: s.zaccId,
         canceled: false, startMin: s.startMin, endMin: s.endMin,

@@ -118,6 +118,44 @@ export const canCeoConfirmPayout = (r: Role): boolean => ceoGate(r);
 export const canCeoFileExpenseForOther = (r: Role): boolean => ceoGate(r);
 
 /**
+ * §41 GPA 자료 묶음의 **「수령 확인」을 지정 코디네이터가 아니어도** 누를 수 있는가 — 대표 판정
+ * (N-88 채택 · W11 · 원문 §41 대표 화면 컷에 「수령 확인」 주 단추 · 슬라이드 41 「교수실장·대표·이사」).
+ * 누른 사람은 `gpapack.received_by` 에 그대로 남는다. P1 을 되돌리면 저절로 대표만으로 좁아진다.
+ */
+export const canCeoReceivePack = (r: Role): boolean => ceoGate(r);
+
+/**
+ * 컨설팅 **예외 종료 승인** — 필수 항목 · 약정 회차를 못 채운 진행 중 건을 사유와 함께 닫는다 (N-18-a 채택 · DQ6 권장안 · W11).
+ * 원래 대표 전용이고 지금은 `ceoGate` 다(P1 동안 매니저 포함 · 되돌리면 대표만). 같은 이유로 줄을 나눈다.
+ */
+export const canCeoApproveConsultingClose = (r: Role): boolean => ceoGate(r);
+
+/**
+ * §17 구성원 「수정」 창의 **사람별 권한 예외**(`STAFF.can_money · can_wage · can_approve · can_hide · can_gpa_pack` — 켬/끔/역할 따름)를
+ * 적을 수 있는가 — 대표 판정 (N-68 채택 · W11 · 「예외를 적는 작은 입력을 대표 판정으로 연다」). P1 동안 매니저 포함 · 되돌리면 대표만.
+ * 여는 것은 입력 자리뿐이고, 켜는 값은 **보는 사람이 가진 권한까지만**이다(서비스의 PERM_GRANT_FORBIDDEN).
+ */
+export const canCeoSetPermOverride = (r: Role): boolean => ceoGate(r);
+
+/**
+ * §69 대표 보고 **영역 담당 지정**(영역마다 고정 담당 한 명 · `exec_area_owner`) — 대표 판정 (N-81 채택 · W11 · 원문 슬라이드 72 표의 담당 열).
+ * P1 동안 매니저 포함 · 되돌리면 대표만. 같은 이유로 줄을 나눈다.
+ */
+export const canCeoSetExecOwner = (r: Role): boolean => ceoGate(r);
+
+/**
+ * §56 강사료 **보정 승인** — 확정된 달 뒤에 쓴 리포트의 회차를 다음 미확정 달 정산에 얹어 지급한다
+ * (N-51 채택 · W11 M2 · 원문 슬라이드 77 표 「보정 승인 — 금액 조정 결재 — 대표만」). 보정 줄이 든 달의 지급 확정이 이 판정을 더 지난다.
+ */
+export const canCeoApproveCorrection = (r: Role): boolean => ceoGate(r);
+
+/**
+ * 회계 탭 줄의 **시급 비공개 · 컨설팅 비공개** 스위치를 켜고 끄는가 — 대표 판정
+ * (N-94 채택 · W11 M2 · 원문 슬라이드 77 「강사 시급 공개 지정 · 내역 비공개 지정 — 대표만」). 켠 뒤 누가 보는가는 `canHide` 다.
+ */
+export const canCeoSetAcctPrivacy = (r: Role): boolean => ceoGate(r);
+
+/**
  * §75 중앙 결재 흐름의 서버 projection 범위.
  *
  * 역할 문자열 비교를 drawer controller에 복제하지 않고 이 결과만 소비한다.

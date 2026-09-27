@@ -8,11 +8,17 @@ import type { ConsultingFileRole } from '../modules/consulting/consulting.rules'
 
 @Entity({ name: 'cons_file' })
 @Index(['consId', 'createdAt'])
-@Check('cons_file_role_check', "role IN ('draft','revision','signed')")
+@Check('cons_file_role_check', "role IN ('draft','revision','signed','item')")
+@Check('cons_file_item_pair_check', "(role = 'item') = (item_id IS NOT NULL)")
 export class ConsFile {
   @PrimaryColumn({ type: 'bigint' }) fileId: number;
   @Column({ type: 'bigint' }) consId: number;
   @Column({ type: 'varchar', length: 12 }) role: ConsultingFileRole;
   @Column({ type: 'bigint' }) createdBy: number;
   @Column({ type: 'timestamptz', default: () => 'now()' }) createdAt: Date;
+  /**
+   * §31 항목 파일(N-63 · migration 1764500000000) — 있으면 그 항목(`cons_item`)의 파일이고 role 은 `item` 이다(짝 CHECK).
+   * 없으면 §30 계약 파일. 한도는 DB 트리거가 따로 센다 — 계약 파일 10개 · 항목마다 6개.
+   */
+  @Column({ type: 'bigint', nullable: true }) itemId: number | null;
 }

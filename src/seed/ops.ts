@@ -9,6 +9,7 @@
  * 탭 10(§59~§67) 과 탭 11(§69~§73), 탭 02 서랍(§14~§21)이 이 데이터를 쓴다.
  */
 import { addD } from '../lib/recurrence';
+import { addMonths, LEAD_HAPPYCALL_DAYS, leadCareTitle, leadMonthlyOn } from '../lib/intake-words';
 import { SEED_TODAY, WAGES } from './base';
 import { expand, resolveExceptions } from './schedule';
 
@@ -195,18 +196,26 @@ export const CONS_SESSIONS = [
   { consId: 2, seq: 3, onDate: D(-5), who: '김재훈 · 정하람', what: 'Body Paragraph 논거 재배치', why: '주제문과 근거 순서가 뒤집혀 있었음', how: 'MLA 형식 교정 병행' },
 ];
 
-/** 마케팅 — 채널 7종 (§59) */
+/**
+ * 마케팅 (§59) — 1~4 는 **원문 컷 한 주의 넷**이다(W11 · N-29 ①②): 채널 × 항목은 따로 움직이고(시드의 1:1 짝을 풀었다)
+ * 카드마다 제목 아래 메모 한 줄(`mkt.memo`)이 선다. 5 이후는 **옛 코드의 옛 행**이다 — 원문 넷에 대응이 없어
+ * 옛 이름 그대로 읽힌다(`naver` 「네이버」 · 이관 없음 · N-25). 그때는 칸이 없어 옛 행에는 메모가 없다.
+ */
 export const MKTS: Array<{
   id: number; channel: string; item: string; url: string | null;
-  result: Record<string, number>; onDate: string; title?: string; byId?: number;
+  result: Record<string, number>; onDate: string; title?: string; byId?: number; memo?: string;
 }> = [
-  { id: 1, channel: 'instagram', item: 'ad',      url: 'https://ig.com/tnacademy/p/9f2', result: { impressions: 42180, clicks: 1204, inquiries: 18, booked: 12, enrolled: 6, cost: 640000 }, onDate: D(-27), title: '학습실 하루 · 30초 릴스', byId: 2 },
-  { id: 2, channel: 'naver',     item: 'blog',    url: 'https://blog.naver.com/tnacad',  result: { impressions: 18640, clicks: 842, inquiries: 11, booked: 8, enrolled: 4, cost: 0 }, onDate: D(-27), title: '강남 국제학교 준비 로드맵 · 8월', byId: 2 },
-  { id: 3, channel: 'daangn',    item: 'biz',     url: 'https://daangn.com/kr/biz/tn',   result: { impressions: 9320, clicks: 410, inquiries: 7, booked: 5, enrolled: 2, cost: 180000 }, onDate: D(-27) },
-  { id: 4, channel: 'kakao',     item: 'channel', url: 'https://pf.kakao.com/_tnacad',   result: { impressions: 6140, clicks: 388, inquiries: 5, booked: 3, enrolled: 1, cost: 120000 }, onDate: D(-27) },
-  { id: 5, channel: 'youtube',   item: 'video',   url: 'https://youtube.com/@tnacademy', result: { impressions: 12400, clicks: 214, inquiries: 3, booked: 1, enrolled: 0, cost: 320000 }, onDate: D(-27) },
-  { id: 6, channel: 'referral',  item: 'word',    url: null, result: { inquiries: 4, booked: 4, enrolled: 3, cost: 0 }, onDate: D(-27) },
-  { id: 7, channel: 'flyer',     item: 'print',   url: null, result: { impressions: 3000, inquiries: 0, booked: 1, enrolled: 0, cost: 90000 }, onDate: D(-27) },
+  { id: 1, channel: 'instagram',  item: 'video', url: 'https://ig.com/tnacademy/p/9f2', result: { impressions: 42180, clicks: 1204, inquiries: 18, booked: 12, enrolled: 6, cost: 640000 }, onDate: D(-1), title: '학습실 하루 · 30초 릴스', byId: 2, memo: '조회 1.2천' },
+  { id: 2, channel: 'naver_blog', item: 'post',  url: 'https://blog.naver.com/tnacad',  result: { impressions: 18640, clicks: 842, inquiries: 11, booked: 8, enrolled: 4, cost: 0 }, onDate: D(-1), title: '강남 국제학교 준비 로드맵 · 8월', byId: 2, memo: 'MAP 준비 편 3부작 중 1편' },
+  { id: 3, channel: 'kakao',      item: 'reply', url: null, result: { inquiries: 12, booked: 4, enrolled: 1, cost: 0 }, onDate: D(-3), title: '카카오채널 문의 12건 응대', byId: 4, memo: '상담 예약 4건 전환' },
+  { id: 4, channel: 'naver_ad',   item: 'ad',    url: 'https://searchad.naver.com/tnacad', result: { impressions: 15200, clicks: 471, inquiries: 6, booked: 3, enrolled: 1, cost: 350000 }, onDate: D(-2), title: '검색광고 · 대치 국제학교 키워드', byId: 3, memo: '일 예산 5만 · CTR 3.1%' },
+  // 옛 행 — 제목 · 메모 없음(카드 이름은 채널 · 항목의 옛 이름으로 선다)
+  { id: 5, channel: 'naver',     item: 'blog',    url: 'https://blog.naver.com/tnacad',  result: { impressions: 9640, clicks: 402, inquiries: 5, booked: 3, enrolled: 2, cost: 0 }, onDate: D(-27) },
+  { id: 6, channel: 'daangn',    item: 'biz',     url: 'https://daangn.com/kr/biz/tn',   result: { impressions: 9320, clicks: 410, inquiries: 7, booked: 5, enrolled: 2, cost: 180000 }, onDate: D(-27) },
+  { id: 7, channel: 'kakao',     item: 'channel', url: 'https://pf.kakao.com/_tnacad',   result: { impressions: 6140, clicks: 388, inquiries: 5, booked: 3, enrolled: 1, cost: 120000 }, onDate: D(-27) },
+  { id: 8, channel: 'youtube',   item: 'video',   url: 'https://youtube.com/@tnacademy', result: { impressions: 12400, clicks: 214, inquiries: 3, booked: 1, enrolled: 0, cost: 320000 }, onDate: D(-27) },
+  { id: 9, channel: 'referral',  item: 'word',    url: null, result: { inquiries: 4, booked: 4, enrolled: 3, cost: 0 }, onDate: D(-27) },
+  { id: 10, channel: 'flyer',    item: 'print',   url: null, result: { impressions: 3000, inquiries: 0, booked: 1, enrolled: 0, cost: 90000 }, onDate: D(-27) },
 ];
 
 /**
@@ -313,7 +322,29 @@ export const REPORTS = [
   { rptType: 'month', onDate: '2026-08-01', memo: { money: '영업이익률 35.4% — 목표 32% 대비 +3.4%p.', mkt: '인스타 등록당 비용이 10만원을 넘어 9월 집행을 재검토합니다.' }, state: 'draft' },
 ];
 
-/** 할 일 — 회의·컴플레인·기획에서 자동으로 모인다 (§64) */
+/**
+ * 등록 뒤 사후 관리 (W11 · N-86) — 등록 확정이 만드는 할 일의 표본. 기준일은 첫 실제 수업(`lead.first_lesson_on`)이고
+ * 해피콜은 +7일, 월간 상담은 다음 달부터 같은 날(없으면 말일)이다 — 날짜는 제품과 같은 함수(`lib/intake-words`)로 짓는다.
+ *   · 최유나(상담 3) — 해피콜 · 첫 월간을 마쳐 「정기 관리 중」, 월간이 두 번 이어져 셋째 달이 열려 있다
+ *   · 권시우(상담 5) — 해피콜 D-3 · 첫 월간 예정 (원문 컷 홍채원 카드의 띠)
+ *   · 백서현(상담 6) — 해피콜 완료 · 첫 월간이 지났다(띠가 「지남」)
+ * 나머지 등록 건(1 · 2 · 4)은 N-86 이전 등록이라 할 일이 없다 — 카드가 「없음」으로 읽는다(한 적 없는 것을 짓지 않는다 · N-25).
+ */
+export const LEAD_CARE_FIRST: Record<number, string> = { 3: D(-75), 5: D(-4), 6: D(-40) };
+const careMonthlyOn = (leadId: number, n: number): string =>
+  leadMonthlyOn(LEAD_CARE_FIRST[leadId]!, addMonths(LEAD_CARE_FIRST[leadId]!.slice(0, 7), n));
+const LEAD_CARE_TODOS: Array<{ title: string; toId: number; fromId: number; dueOn: string; done: boolean; src: 'lead'; leadId: number; care: 'happycall' | 'monthly' }> = [
+  { title: leadCareTitle('happycall', '최유나'), toId: 3, fromId: 2, dueOn: addD(LEAD_CARE_FIRST[3]!, LEAD_HAPPYCALL_DAYS), done: true, src: 'lead', leadId: 3, care: 'happycall' },
+  { title: leadCareTitle('monthly', '최유나'), toId: 3, fromId: 2, dueOn: careMonthlyOn(3, 1), done: true, src: 'lead', leadId: 3, care: 'monthly' },
+  { title: leadCareTitle('monthly', '최유나'), toId: 3, fromId: 3, dueOn: careMonthlyOn(3, 2), done: true, src: 'lead', leadId: 3, care: 'monthly' },
+  { title: leadCareTitle('monthly', '최유나'), toId: 3, fromId: 3, dueOn: careMonthlyOn(3, 3), done: false, src: 'lead', leadId: 3, care: 'monthly' },
+  { title: leadCareTitle('happycall', '권시우'), toId: 3, fromId: 2, dueOn: addD(LEAD_CARE_FIRST[5]!, LEAD_HAPPYCALL_DAYS), done: false, src: 'lead', leadId: 5, care: 'happycall' },
+  { title: leadCareTitle('monthly', '권시우'), toId: 3, fromId: 2, dueOn: careMonthlyOn(5, 1), done: false, src: 'lead', leadId: 5, care: 'monthly' },
+  { title: leadCareTitle('happycall', '백서현'), toId: 4, fromId: 2, dueOn: addD(LEAD_CARE_FIRST[6]!, LEAD_HAPPYCALL_DAYS), done: true, src: 'lead', leadId: 6, care: 'happycall' },
+  { title: leadCareTitle('monthly', '백서현'), toId: 4, fromId: 2, dueOn: careMonthlyOn(6, 1), done: false, src: 'lead', leadId: 6, care: 'monthly' },
+];
+
+/** 할 일 — 회의·컴플레인·기획에서 자동으로 모인다 (§64) · 등록 확정이 만든 사후 관리(W11 · N-86)도 여기 선다 */
 export const TODOS = [
   { title: '컴플레인 2건 학부모 통화', toId: 2, fromId: 1, dueOn: D(0),  done: false, src: 'complaint' },
   { title: '프린터 토너 영수증 첨부',   toId: 4, fromId: 2, dueOn: D(0),  done: false, src: 'manual' },
@@ -323,4 +354,5 @@ export const TODOS = [
   { title: '교재 재고 회전율 자료 정리', toId: 4, fromId: 2, dueOn: D(2), done: false, src: 'plan', planId: 2 },
   { title: '8월 강사료 정산 입금 처리',  toId: 2, fromId: 1, dueOn: D(3), done: false, src: 'manual' },
   { title: '8월 채널별 성과 표 정리',    toId: 4, fromId: 2, dueOn: D(1), done: false, src: 'meeting', mtId: 4 },
+  ...LEAD_CARE_TODOS,
 ];

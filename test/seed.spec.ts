@@ -21,11 +21,15 @@ import {
   REPORT_WRITTEN_DB, REP_STATE_FROM_DB, reportStateFromDb,
 } from '../src/lib/rules';
 import { REPORTS, REQS } from '../src/seed/ops';
-import { STURATES } from '../src/seed/money';
+import { CARRY_BLOCKED, STURATES } from '../src/seed/money';
 import { STUDENTS } from '../src/seed/people';
+import { SERS } from '../src/seed/schedule';
 import { dataSourceOptions } from '../src/data-source';
-import { Lead } from '../src/entities';
+import { Inv, Lead } from '../src/entities';
+import { AccountingService } from '../src/modules/accounting/accounting.service';
 import { BooksService } from '../src/modules/books/books.service';
+import { horizon, project } from '../src/modules/schedule/schedule.project';
+import { loadState } from '../src/modules/schedule/schedule.state.repo';
 import { DEV_URL } from './db';
 
 /** 규칙이 아는 상태 이름 전부 — 옮긴 값이 여기 없으면 규칙이 못 읽는다. */
@@ -160,6 +164,125 @@ d('시드 — 화면이 보는 값이 맞는가', () => {
       WHERE state = 'none' AND on_date < (SELECT max(on_date) FROM ser_occ)`);
     expect(Number(r.n)).toBeGreaterThan(0);
   });
+
+  /**
+   * 7-3 ③(W11 R2) — §48 「보낸 내역」 · 파일 권한(F3) e2e 가 빈 표로 시작하지 않게 발송 표본을 둔다.
+   * 표본도 발송과 같은 문을 지난다: 그 학생 그날 리포트가 **전부 승인**, 파일마다 제 리포트(`rep_id`)가 그 묶음 안에 있다.
+   */
+  it('보낸 내역 표본 — 최초 발송 · 재발송 한 줄 · 파일마다 그 묶음의 리포트 칸(rep_id)', async () => {
+    const sends = await one(`SELECT count(*) FILTER (WHERE source_send_id IS NULL)::text AS first,
+      count(*) FILTER (WHERE source_send_id IS NOT NULL)::text AS resend FROM rsend`);
+    expect(Number(sends.first)).toBeGreaterThanOrEqual(1);
+    expect(Number(sends.resend)).toBeGreaterThanOrEqual(1);
+    const files = await one(`SELECT count(*)::text AS n,
+        count(*) FILTER (WHERE p.rep_id IS NULL)::text AS no_rep,
+        count(*) FILTER (WHERE NOT (rs.rep_ids @> jsonb_build_array(p.rep_id)))::text AS foreign_rep,
+        count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM file f WHERE '/files/' || f.id = p.file_url AND f.kind = 'report-png'))::text AS no_file
+      FROM pdflog p JOIN rsend rs ON rs.id = p.ref_id WHERE p.kind = 'report_png'`);
+    expect(Number(files.n)).toBeGreaterThan(0);
+    expect({ noRep: Number(files.no_rep), foreignRep: Number(files.foreign_rep), noFile: Number(files.no_file) })
+      .toEqual({ noRep: 0, foreignRep: 0, noFile: 0 });
+    const unapproved = await one(`SELECT count(*)::text AS n FROM rsend rs
+      CROSS JOIN LATERAL jsonb_array_elements_text(rs.rep_ids) AS x(rep_id)
+      JOIN rep r ON r.id = x.rep_id::bigint WHERE r.state <> 'ok'`);
+    expect(Number(unapproved.n)).toBe(0);
+  });
+});
+
+/**
+ * N-49 (W11 · 시드 보정) — 시드의 회차는 **제품 투영이 만든 것**이어야 한다.
+ *
+ * 전에는 반복 규칙의 시작일을 오늘로 두고 지난 3주 회차를 `ser_occ` 에 손으로 넣었다. 규칙이 만들 수 없는 행이라
+ * 그 수업에 「이번만」 쓰기를 하면 재투영이 지난 회차를 지웠다(지난 회차 쓰기가 `OCCURRENCE_NOT_FOUND` 로 헛돌았다).
+ * 온라인 수업의 줌 계정도 투영(`ser_occ.zacc_id`)에만 있고 정본(`zassign`)이 없어, 첫 쓰기의 재투영이 계정을 비웠다.
+ *
+ * 쓰기 경로와 **같은 두 함수**(`loadState` → `project(horizon())`)로 다시 펴도 표가 한 줄도 안 바뀌는지 본다.
+ * 되돌리는 트랜잭션이라 개발 DB 의 행은 그대로다(시퀀스 번호만 앞으로 간다).
+ */
+d('시드 — 회차는 제품 투영 그대로다 (N-49)', () => {
+  let ds: DataSource;
+  type Runner = { query: (sql: string, p?: unknown[]) => Promise<unknown> };
+  /** 시드의 규칙만 본다 — 같은 개발 DB 를 쓰는 다른 스위트의 시험 규칙 · 잔여 행은 시드가 만든 것이 아니다 */
+  const SEED_SER = SERS.map((s) => s.id);
+  /** 비교는 시드가 편 마지막 날까지 — 시드 뒤 자정을 넘기면 투영 기간 끝에 하루가 새로 붙는다(행이 바뀐 것이 아니다) */
+  const occRows = (x: Runner, upto: string) => x.query(
+    `SELECT ser_id, to_char(on_date,'YYYY-MM-DD') AS on_date, teacher_id, room_id, canceled, span::text AS span, zacc_id
+       FROM ser_occ WHERE ser_id = ANY($1) AND on_date <= $2::date ORDER BY ser_id, on_date`, [SEED_SER, upto],
+  );
+  const repRows = (x: Runner, upto: string) => x.query(
+    `SELECT r.ser_id, to_char(r.on_date,'YYYY-MM-DD') AS on_date, r.state::text AS state, r.teacher_id, r.kind_key, r.lang,
+            (SELECT string_agg(s.student_id::text, ',' ORDER BY s.student_id) FROM rep_stu s WHERE s.rep_id = r.id) AS students
+       FROM rep r WHERE r.ser_id = ANY($1) AND r.on_date <= $2::date ORDER BY r.ser_id, r.on_date`, [SEED_SER, upto],
+  );
+
+  beforeAll(async () => {
+    ds = new DataSource({ type: 'postgres', url: URL, synchronize: false, logging: false });
+    await ds.initialize();
+  });
+  afterAll(async () => { await ds?.destroy(); });
+
+  it('규칙의 시작일 앞에 놓인 회차가 없다 — 규칙이 만들 수 없는 행을 넣지 않는다', async () => {
+    const [bad] = (await ds.query(
+      `SELECT count(*)::int AS n FROM ser_occ o JOIN ser s ON s.id = o.ser_id WHERE s.id = ANY($1) AND o.on_date < s.from_date`, [SEED_SER],
+    )) as Array<{ n: number }>;
+    expect(bad.n).toBe(0);
+    // 지난 회차가 실제로 있어야 이 검사가 뜻이 있다 — 리포트 · 출결 · 이력 시드가 그 위에 선다
+    const [past] = (await ds.query(
+      `SELECT count(*)::int AS n FROM ser_occ WHERE ser_id = ANY($1) AND on_date < current_date`, [SEED_SER],
+    )) as Array<{ n: number }>;
+    expect(past.n).toBeGreaterThan(0);
+  });
+
+  it('쓰기 경로와 같은 투영으로 다시 펴도 회차 · 리포트 칸 · 리포트 명단이 한 줄도 안 바뀐다', async () => {
+    const qr = ds.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const [{ upto }] = (await qr.query(
+        `SELECT to_char(max(on_date),'YYYY-MM-DD') AS upto FROM ser_occ WHERE ser_id = ANY($1)`, [SEED_SER],
+      )) as Array<{ upto: string }>;
+      const beforeOcc = await occRows(qr, upto);
+      const beforeRep = await repRows(qr, upto);
+      expect((beforeOcc as unknown[]).length).toBeGreaterThan(0);
+      await project(qr, await loadState(qr, SEED_SER), SEED_SER, horizon());
+      expect(await occRows(qr, upto)).toEqual(beforeOcc);
+      expect(await repRows(qr, upto)).toEqual(beforeRep);
+    } finally {
+      await qr.rollbackTransaction();
+      await qr.release();
+    }
+  });
+
+  it('변경 요청 이력 · 줌 링크 안내 · 리포트가 가리키는 회차는 모두 투영에 있다 — 날짜 셈이 규칙 시작일과 함께 움직였다', async () => {
+    const [r] = (await ds.query(`SELECT
+        (SELECT count(*)::int FROM chreq c WHERE c.ser_id = ANY($1)
+            AND NOT EXISTS (SELECT 1 FROM ser_occ o WHERE o.ser_id = c.ser_id AND o.on_date = c.on_date)) AS chreq,
+        (SELECT count(*)::int FROM pnoti p WHERE p.ser_id = ANY($1)
+            AND NOT EXISTS (SELECT 1 FROM ser_occ o WHERE o.ser_id = p.ser_id AND o.on_date = p.on_date)) AS pnoti,
+        (SELECT count(*)::int FROM rep x WHERE x.ser_id = ANY($1)
+            AND NOT EXISTS (SELECT 1 FROM ser_occ o WHERE o.ser_id = x.ser_id AND o.on_date = x.on_date)) AS rep,
+        (SELECT count(*)::int FROM chreq c WHERE c.ser_id = ANY($1)) AS chreq_all`, [SEED_SER])) as Array<Record<string, number>>;
+    expect(r.chreq_all).toBeGreaterThan(0);
+    expect({ chreq: r.chreq, pnoti: r.pnoti, rep: r.rep }).toEqual({ chreq: 0, pnoti: 0, rep: 0 });
+  });
+
+  it('줌 계정이 붙은 회차는 정본(zassign)에서 온다 — 온라인 규칙마다 규칙 배정 한 줄 · 현장 회차에는 계정이 없다', async () => {
+    const [r] = (await ds.query(`SELECT
+        (SELECT count(*)::int FROM ser_occ o
+          WHERE o.ser_id = ANY($1) AND o.zacc_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM zassign z WHERE z.ser_id = o.ser_id AND z.zacc_id = o.zacc_id)
+            AND NOT EXISTS (SELECT 1 FROM zassign z JOIN exc e ON e.id = z.exc_id
+                             WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND z.zacc_id = o.zacc_id)) AS orphan,
+        (SELECT count(*)::int FROM ser_occ o JOIN ser s ON s.id = o.ser_id
+           LEFT JOIN exc e ON e.ser_id = o.ser_id AND e.on_date = o.on_date
+          WHERE s.id = ANY($1) AND o.zacc_id IS NOT NULL AND COALESCE(e.mode, s.mode::text) <> 'online') AS offline_zoom,
+        (SELECT count(*)::int FROM ser s WHERE s.id = ANY($1) AND s.mode = 'online') AS online,
+        (SELECT count(*)::int FROM ser s WHERE s.id = ANY($1) AND s.mode = 'online'
+            AND NOT EXISTS (SELECT 1 FROM zassign z WHERE z.ser_id = s.id)) AS online_unassigned`, [SEED_SER])) as Array<Record<string, number>>;
+    expect(r.online).toBeGreaterThan(0);
+    expect({ orphan: r.orphan, offlineZoom: r.offline_zoom, onlineUnassigned: r.online_unassigned })
+      .toEqual({ orphan: 0, offlineZoom: 0, onlineUnassigned: 0 });
+  });
 });
 
 /**
@@ -220,6 +343,41 @@ describe('시드 상수 — DB 없이 보는 것', () => {
     },
   );
 
+  /*
+   * F12 「이월 막힘」 표본(W11) — 결강 한 회차는 **완납 청구서의 달 안**이어야 이월 판정이 선다.
+   * 「뒤에서 n번째」로 고르면 월초 시드에서 지난달로 넘어가 표본이 조용히 사라진다 — 월초 · 월말 · 주말 기준일로 상수를 다시 읽는다.
+   */
+  it.each(['2026-09-27', '2026-10-01', '2026-10-03', '2026-10-31', '2026-11-01', '2027-02-28', '2027-03-01'])(
+    '기준일 %s 에도 F12 표본의 결강 회차가 완납 청구서의 달 안에 있다',
+    (today) => {
+      const before = process.env.SEED_TODAY;
+      process.env.SEED_TODAY = today;
+      try {
+        jest.isolateModules(() => {
+          /* eslint-disable @typescript-eslint/no-require-imports -- 기준일(환경 값)을 바꿔 모듈 상수를 다시 읽는다 */
+          const sch = require('../src/seed/schedule') as typeof import('../src/seed/schedule');
+          const money = require('../src/seed/money') as typeof import('../src/seed/money');
+          /* eslint-enable @typescript-eslint/no-require-imports */
+          const f12 = money.CARRY_BLOCKED;
+          const raw = sch.expand();
+          const day = sch.occurrenceInMonth(sch.applyExceptions(raw, sch.resolveExceptions(raw)), f12.serId, f12.month);
+          expect([day.slice(0, 7), f12.month]).toEqual([today.slice(0, 7), today.slice(0, 7)]);
+          // 그 수업의 명단에 든 학생이고, 그 달 수업료는 완납이다 — 넘길 돈이 서는 조건
+          expect(sch.SERS.find((s) => s.id === f12.serId)?.students).toContain(f12.studentId);
+          expect(money.INVOICES.find((i) => i.id === f12.paidInvId))
+            .toMatchObject({ studentId: f12.studentId, yearMonth: f12.month, invType: 'tuition', state: 'paid' });
+          // 받는 달은 바로 다음 달이다 (N-39)
+          expect(new Date(`${f12.nextMonth}-01T00:00:00Z`).getTime())
+            .toBe(Date.UTC(Number(f12.month.slice(0, 4)), Number(f12.month.slice(5, 7)), 1));
+          // 규칙의 시작일(가장 이른 지난 회차 이전 · N-49) 뒤의 회차다
+          expect(day >= sch.serFromDate(sch.SERS.find((s) => s.id === f12.serId)!)).toBe(true);
+        });
+      } finally {
+        if (before === undefined) delete process.env.SEED_TODAY; else process.env.SEED_TODAY = before;
+      }
+    },
+  );
+
   // C94-d 가 `sturate_reason_present` 를 새겼다 — NOT VALID 는 기존 행만 미루고 시드는 언제나 새 INSERT 다 (C86-g 와 같은 자리)
   it('학생별 단가 예외에는 사유가 있다 (sturate_reason_present)', () => {
     for (const r of STURATES) {
@@ -273,5 +431,39 @@ d('시드 — §38-8 트래킹 보드 강사 요청 칩', () => {
     const chips = tracking.students.reduce((sum, student) =>
       sum + (student.todos.find((todo) => todo.key === 'teacher_request')?.count ?? 0), 0);
     expect(chips).toBe(head);
+  });
+});
+
+/**
+ * F12 (W11) — §54 「이월 막힘」 칩이 시드에서 **실제로 선다**. 전에는 막힌 줄이 없어 칩은 「0 = 0」으로만 확인됐다(QA F12).
+ * 판정은 서버 한 곳(`tuition()` 의 `carryBlockedReason` · `carryTuition` 의 409)이고 여기서는 결과만 본다.
+ * 쓰기 쪽은 거절로 끝나 트랜잭션이 되돌아간다 — 개발 DB 에 이월 줄이 생기지 않는다.
+ */
+d('시드 — F12 「이월 막힘」 표본', () => {
+  let ds: DataSource;
+  beforeAll(async () => {
+    if (dataSourceOptions.type !== 'postgres') throw new Error('PostgreSQL required');
+    ds = new DataSource({ ...dataSourceOptions, url: URL, ssl: false, logging: false });
+    await ds.initialize();
+  });
+  afterAll(async () => { await ds?.destroy(); });
+
+  it('이번 달 수업료 탭에 서버가 막은 이월 줄이 선다 — 완납 · 넘길 돈 있음 · 받는 달 청구서가 이미 있음', async () => {
+    const svc = new AccountingService(ds.getRepository(Inv));
+    const tuition = await svc.tuition(CARRY_BLOCKED.month, true);
+    const row = tuition.items.find((item) => item.studentId === CARRY_BLOCKED.studentId);
+    expect(row).toMatchObject({ carryable: false, carriedAt: null });
+    expect(row?.carryAmount ?? 0).toBeGreaterThan(0);
+    // 까닭은 받는 달 청구서다 — 서버 문장에 그 달이 적힌다(화면은 이 문장을 그대로 둔다)
+    expect(row?.carryBlockedReason).toEqual(expect.stringContaining(`(${CARRY_BLOCKED.nextMonth})`));
+    expect(tuition.items.filter((item) => item.carryBlockedReason).length).toBeGreaterThan(0);
+  });
+
+  it('같은 줄의 이월 쓰기는 같은 까닭으로 409 — 단추와 쓰기가 같은 판정이다', async () => {
+    const svc = new AccountingService(ds.getRepository(Inv));
+    await expect(svc.carryTuition(2, { studentId: CARRY_BLOCKED.studentId, month: CARRY_BLOCKED.month }))
+      .rejects.toMatchObject({ status: 409, response: { code: 'CARRY_NEXT_ISSUED' } });
+    const [{ n }] = (await ds.query(`SELECT count(*)::int AS n FROM carry WHERE student_id = $1`, [CARRY_BLOCKED.studentId])) as Array<{ n: number }>;
+    expect(n).toBe(0);
   });
 });

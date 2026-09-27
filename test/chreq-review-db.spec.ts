@@ -100,7 +100,8 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     await q(`DELETE FROM ser_occ WHERE ser_id = ANY($1)`, [[SER, RIVAL]]);
     await q(`DELETE FROM exc WHERE ser_id = ANY($1)`, [[SER, RIVAL]]);
     await q(`DELETE FROM chreq WHERE ser_id = $1`, [SER]);
-    await q(`DELETE FROM log WHERE entity = 'chreq' AND actor_id = $1`, [BOSS]);
+    // 결재 줄은 표의 이름(CHREQ)이다 — 옛 소문자 줄도 함께 치운다(W11 A' 후속)
+    await q(`DELETE FROM log WHERE upper(entity) = 'CHREQ' AND actor_id = $1`, [BOSS]);
     await q(`DELETE FROM noti WHERE to_id = $1`, [T1]);
     await q(`DELETE FROM ser WHERE id = ANY($1)`, [[SER, RIVAL]]);
     if (ds?.isInitialized) await ds.destroy();
@@ -115,7 +116,8 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     expect(Number((await occ()).teacher_id)).toBe(T2);
     expect(await row(id)).toMatchObject({ state: 'approved', reason: '원문 사유입니다', reject_reason: null });
 
-    const [log] = await q(`SELECT action FROM log WHERE entity='chreq' AND entity_id=$1`, [id]);
+    // 감사 낱말은 표의 이름(CHREQ · 대문자)이고 action 은 예전 그대로 apply (W11 A' 후속 · 리드 결정)
+    const [log] = await q(`SELECT action FROM log WHERE entity='CHREQ' AND entity_id=$1`, [id]);
     expect(log.action).toBe('apply');
     const [noti] = await q(`SELECT body FROM noti WHERE to_id=$1 ORDER BY id DESC LIMIT 1`, [T1]);
     expect(String(noti.body)).toContain('반영');
@@ -157,7 +159,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     // 요청도 시간표도 **아무것도 바뀌지 않았다**
     expect(await row(id)).toMatchObject({ state: 'pending' });
     expect(Number((await occ()).teacher_id)).toBe(T1);
-    expect(await q(`SELECT 1 FROM log WHERE entity='chreq' AND entity_id=$1`, [id])).toHaveLength(0);
+    expect(await q(`SELECT 1 FROM log WHERE upper(entity)='CHREQ' AND entity_id=$1`, [id])).toHaveLength(0);
   });
 
   it('반려는 시간표를 건드리지 않고 **신청 사유를 덮어쓰지 않는다** (v4.18 · D-R13)', async () => {

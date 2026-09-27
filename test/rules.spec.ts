@@ -428,8 +428,6 @@ describe('KIND · SUB 는 명세서 v2 의 표 그대로다 (슬라이드 88 · 
     'mt-dv': '개발 회의', 'mt-pg': '일반 회의',
   };
 
-  /** 원문이 1 이라고 적지만 시드 행이 그 위에 있어 아직 못 내린 것 — N-30 */
-  const CAP_PENDING = new Set(['mock', 'gpa']);
 
   it('종류 8종의 이름 · 색 · 분류가 원문 표와 같다', () => {
     expect(KINDS.map((k) => k.key)).toEqual(SOURCE_KINDS.map((k) => k[0]));
@@ -439,11 +437,11 @@ describe('KIND · SUB 는 명세서 v2 의 표 그대로다 (슬라이드 88 · 
     }
   });
 
-  it('정원도 원문과 같다 — 아직 못 내린 둘만 예외로 적어 둔다 (N-30)', () => {
+  it('정원도 원문과 같다 — 모의수업 · GPA 도 1 이다 (N-30 ① 채택 · W11 · 예외 0)', () => {
     const drift = SOURCE_KINDS
       .filter(([key, , , cap]) => KINDS.find((x) => x.key === key)!.cap !== cap)
       .map(([key]) => key);
-    expect(drift.sort()).toEqual([...CAP_PENDING].sort());
+    expect(drift).toEqual([]);
   });
 
   it('원문 §18 서랍의 머리글이 맞는다 — 「수업 4 · 상담·진단 3 · 회의 1」', () => {

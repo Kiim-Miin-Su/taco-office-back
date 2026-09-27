@@ -74,6 +74,12 @@ export interface Ser {
   rrule: string;
   fromDate: IsoDate;
   toDate: IsoDate | null;
+  /**
+   * 규칙 단위 줌 계정 배정 — 정본은 `zassign`(ser_id 대상)이고 State 가 그것을 들고 다닌다 (N-56 · W11).
+   * 「향후」로 규칙을 가르면 새 규칙도 같은 계정을 물려받는다 — 전에는 갈라진 뒤 회차가 계정을 잃었다.
+   * 선택 칸인 이유: 시험·프로토타입이 만드는 State 에는 없다 — 없으면 배정 없음(null)과 같다.
+   */
+  zaccId?: number | null;
 }
 
 export interface SerStu {
@@ -122,6 +128,19 @@ export interface Exc {
   makeupSerId: number | null;
   /** 이 회차만 빠지는 학생 (D-R21) */
   stuOut: number[];
+  /**
+   * 그 회차 하나의 방식 (N-56 · W11) — null 이면 규칙(SER.mode)을 따른다. 규칙과 같은 값은 null 로 적는다.
+   * 온라인이면 강의실이 없고(비운다) 줌은 이 예외의 `zaccId` 가, 현장이면 줌이 없다.
+   */
+  mode?: string | null;
+  /** 회차 메모 한 줄 — 「이번 회차만」(N-57 · W11). 휴강 메모(`reason`)와 섞지 않는다 */
+  memo?: string | null;
+  /**
+   * 회차 단위 줌 계정 배정 — 정본은 `zassign`(exc_id 대상) (C48 · N-56).
+   * 이 칸이 있으면 줌만 다른 회차의 예외도 **효과가 있는 예외**다 — 전에는 다음 쓰기의 정리 규칙이 그 예외를 지워
+   * 회차의 줌 배정이 조용히 사라졌다(FK CASCADE).
+   */
+  zaccId?: number | null;
 }
 
 export interface State {
@@ -161,6 +180,12 @@ export interface Patch {
   roomId?: number | null;
   /** 옮긴 날짜 */
   date?: IsoDate | null;
+  /** 방식 전환 (N-56) — 온라인이면 강의실을 비우고, 현장이면 줌 계정을 푼다 */
+  mode?: 'offline' | 'online';
+  /** 온라인 전환과 함께 붙일 줌 계정 (N-56) — null 이면 배정 없음 */
+  zaccId?: number | null;
+  /** 회차 메모 (N-57) — 범위와 무관하게 **그 회차 하나**에 붙는다. null 이면 지운다 */
+  memo?: string | null;
   /** applyPatchToSer 가 이동량을 재려면 원래 날짜가 필요하다 */
   __onDate?: IsoDate;
 }
@@ -337,7 +362,8 @@ function mk(ser: Ser, date: IsoDate, onDate: IsoDate, e: Exc | null): Occurrence
     roomId: e?.roomSet ? e.roomId : ser.roomId,
     kind: ser.kind,
     sub: ser.sub,
-    mode: ser.mode,
+    // 회차의 실제 방식 — 예외가 방식을 바꿨으면 그 값이다 (N-56). 투영·복사가 이 값을 읽는다
+    mode: e?.mode ?? ser.mode,
     title: ser.title,
     isException: !!e,
     students: [], // occ() 가 곧바로 채운다 — 이 배열이 비어 나가는 경우는 없다
@@ -400,14 +426,30 @@ export function affectedDates(
 
 /* ── 「모두」가 초기화할 EXC (D-R18 · N-8) ───────────────────────────── */
 
-type ExcNullableField = 'startMin' | 'endMin' | 'teacherId' | 'roomId';
+type ExcNullableField = 'startMin' | 'endMin' | 'teacherId' | 'roomId' | 'mode' | 'zaccId';
 
+/** 메모(memo)는 여기 없다 — 「모두」가 회차마다 적은 메모를 지우지 않는다 (N-57 「이번 회차만」) */
 const PATCH_TO_EXC: Record<string, ExcNullableField> = {
   startMin: 'startMin',
   endMin: 'endMin',
   teacherId: 'teacherId',
   roomId: 'roomId',
+  mode: 'mode',
+  zaccId: 'zaccId',
 };
+
+/**
+ * 「향후 · 모두」가 초기화할 예외 칸 — 보낸 칸과 **방식 전환이 함께 바꾸는 칸**(N-56).
+ * 규칙이 온라인이 되면 회차마다 정해 둔 강의실도 의미가 없고, 현장이 되면 회차마다 붙인 줌 계정도 그렇다.
+ */
+function resetFields(patch: Patch | null | undefined): ExcNullableField[] {
+  const fields = new Set(
+    Object.keys(patch || {}).map((k) => PATCH_TO_EXC[k]).filter((f): f is ExcNullableField => Boolean(f)),
+  );
+  if (patch?.mode === 'online') fields.add('roomId');
+  if (patch?.mode === 'offline') fields.add('zaccId');
+  return [...fields];
+}
 
 function resetTargets(
   state: State,
@@ -415,9 +457,7 @@ function resetTargets(
   patch: Patch | null | undefined,
   fromDate: IsoDate | null,
 ): Exc[] {
-  const fields = Object.keys(patch || {})
-    .map((k) => PATCH_TO_EXC[k])
-    .filter(Boolean);
+  const fields = resetFields(patch);
   if (!fields.length) return [];
   return (state.EXC || []).filter(
     (e) =>
@@ -440,10 +480,40 @@ function clearExcOverride(e: Exc, field: ExcNullableField): void {
   if (field === 'roomId') e.roomSet = false;
 }
 
-/** EXC 행을 남길 실제 효과. reason은 효과를 설명할 뿐 단독으로 예외를 만들지 않는다. */
+/**
+ * EXC 행을 남길 실제 효과. reason은 효과를 설명할 뿐 단독으로 예외를 만들지 않는다.
+ * 방식 · 메모 · 회차 줌 배정도 효과다 (N-56 · N-57) — 빠지면 그것만 가진 예외가 다음 쓰기에서 지워진다.
+ */
 function hasExcEffect(e: Exc): boolean {
   return e.canceled || e.newDate != null || e.startMin != null || e.endMin != null ||
-    e.teacherSet || e.roomSet || (e.stuOut && e.stuOut.length > 0);
+    e.teacherSet || e.roomSet || (e.stuOut && e.stuOut.length > 0) ||
+    e.mode != null || e.memo != null || e.zaccId != null;
+}
+
+/** 로그 낱말의 시각 — 24:00 종료도 그대로 적는다 */
+const hhmmOf = (min: Minutes): string =>
+  `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+/** 보낸 칸이 메모 하나뿐인가 — 메모는 회차의 주석이라 휴강을 풀거나 규칙을 가르지 않는다 (N-57) */
+function memoOnly(patch: Patch): boolean {
+  const keys = Object.keys(patch).filter((k) => k !== '__onDate' && (patch as Record<string, unknown>)[k] !== undefined);
+  return keys.length === 1 && keys[0] === 'memo';
+}
+
+/**
+ * 방식 전환이 **함께 바꾼 것**을 사람이 읽는 문장으로 (N-56 · `WriteResultDto.log`).
+ * 이름(강의실 · 계정)은 적지 않는다 — 리듀서는 표를 읽지 않는다. 바뀐 사실만 적는다.
+ */
+function modeLines(
+  before: { mode: string; roomId: number | null; zaccId: number | null },
+  after: { mode: string; roomId: number | null; zaccId: number | null },
+): string[] {
+  if (before.mode === after.mode) return [];
+  const out = [after.mode === 'online' ? '온라인 수업으로 바꿨습니다' : '현장 수업으로 바꿨습니다'];
+  if (before.roomId != null && after.roomId == null) out.push('강의실을 비웠습니다');
+  if (before.zaccId != null && after.zaccId == null) out.push('줌 계정을 풀었습니다');
+  if (after.zaccId != null && after.zaccId !== before.zaccId) out.push('줌 계정을 배정했습니다');
+  return out;
 }
 
 /** 다이얼로그에 숫자로 보여줄 것 — "예외 3건이 초기화됩니다" */
@@ -471,35 +541,51 @@ export function applyEdit(
   const S = clone(state);
   const ser = S.SER.find((s) => s.id === serId);
   if (!ser) throw new Error('SER not found: ' + serId);
-  const eff: Scope = scope === 'future' && onDate <= ser.fromDate ? 'all' : scope;
+  const onlyMemo = memoOnly(patch);
+  // 메모 하나만 고치면 규칙을 가르지 않는다 — 메모는 범위와 무관하게 그 회차 하나의 것이다 (N-57)
+  const eff: Scope = onlyMemo ? 'this' : scope === 'future' && onDate <= ser.fromDate ? 'all' : scope;
   const log: string[] = [];
   const genId = mkGen(S, nextId);
 
   if (eff === 'this') {
+    const prior = S.EXC.find((x) => x.serId === serId && x.onDate === onDate);
+    const before = occurrenceFacts(ser, prior);
     const e = upsertExc(S, serId, onDate, genId);
+    if (onlyMemo) {
+      // 메모는 주석이다 — 휴강을 풀거나 휴강 사유를 지우지 않는다
+      setMemo(e, patch.memo, log);
+      S.EXC = S.EXC.filter(hasExcEffect);
+      return { ...S, __log: log, __effScope: eff };
+    }
     if (patch.startMin !== undefined) e.startMin = patch.startMin;
     if (patch.endMin !== undefined) e.endMin = patch.endMin;
     if (patch.teacherId !== undefined) {
       e.teacherId = patch.teacherId;
       e.teacherSet = true;
     }
+    if (patch.mode !== undefined) applyModeToExc(ser, e, patch);
     if (patch.roomId !== undefined) {
       e.roomId = patch.roomId;
       e.roomSet = true;
     }
+    if (patch.mode === undefined && patch.zaccId !== undefined) e.zaccId = patch.zaccId;
     if (patch.date !== undefined) e.newDate = patch.date && patch.date !== onDate ? patch.date : null;
     e.canceled = false;
     // 복원된 회차에 휴강 사유·처리가 남으면 청구 계산이 「이월」로 읽는다 — 함께 지운다 (C92)
     e.cancelKind = null;
     e.cancelTreat = null;
     e.makeupSerId = null;
-    log.push(`EXC upsert (${serId}, ${onDate})`);
+    log.push(`${onDate} 회차만 바꿨습니다`, ...patchLines(patch, 'this'));
+    log.push(...modeLines(before, occurrenceFacts(ser, e)));
+    if (patch.memo !== undefined) setMemo(e, patch.memo, log);
     S.EXC = S.EXC.filter(hasExcEffect);
-    return { ...S, __log: log, __effScope: eff };
+    return { ...S, __log: [...new Set(log)], __effScope: eff };
   }
 
   let target = ser;
+  const before = occurrenceFacts(ser, undefined);
   if (eff === 'future') {
+    // 줌 계정(zaccId)도 스프레드로 따라간다 — 갈라진 새 규칙이 계정을 잃지 않는다 (N-56)
     const copy: Ser = { ...ser, id: genId(), fromDate: onDate, toDate: ser.toDate };
     ser.toDate = addD(onDate, -1);
     S.SER.push(copy);
@@ -511,43 +597,113 @@ export function applyEdit(
     S.EXC.filter((e) => e.serId === ser.id && e.onDate >= onDate).forEach((e) => {
       e.serId = copy.id;
     });
-    log.push(`SER ${ser.id} 분할 → ${copy.id} (${onDate}~)`);
+    log.push(`${onDate} 부터 규칙을 나눴습니다`);
     target = copy;
   }
 
   applyPatchToSer(target, patch, log);
+  log.push(...modeLines(before, occurrenceFacts(target, undefined)));
+  const fields = resetFields(patch);
   resetTargets(S, target.id, patch, null).forEach((e) => {
-    Object.keys(patch).forEach((k) => {
-      const f = PATCH_TO_EXC[k];
-      if (f) clearExcOverride(e, f);
-    });
-    log.push(`EXC (${target.id}, ${e.onDate}) 초기화`);
+    fields.forEach((f) => clearExcOverride(e, f));
+    log.push(`${e.onDate} 회차에 따로 정한 값을 규칙에 맞췄습니다`);
   });
+  if (patch.memo !== undefined) {
+    // 규칙을 통째로 옮기면(날짜 이동) 그 회차의 키도 옮겨 간 날이다
+    const key = patch.date && patch.__onDate && patch.date !== patch.__onDate ? patch.date : onDate;
+    setMemo(upsertExc(S, target.id, key, genId), patch.memo, log);
+  }
   S.EXC = S.EXC.filter(hasExcEffect);
 
-  return { ...S, __log: log, __effScope: eff };
+  return { ...S, __log: [...new Set(log)], __effScope: eff };
+}
+
+/** 회차의 실제 방식 · 강의실 · 줌 계정 — 방식 전환 문장(modeLines)이 앞뒤를 견준다 */
+function occurrenceFacts(ser: Ser, e: Exc | undefined): { mode: string; roomId: number | null; zaccId: number | null } {
+  const mode = e?.mode ?? ser.mode;
+  return {
+    mode,
+    roomId: e?.roomSet ? e.roomId : ser.roomId,
+    // 현장 회차에는 줌이 없다 — 투영도 같은 판정이다 (schedule.project)
+    zaccId: mode === 'online' ? (e?.zaccId ?? ser.zaccId ?? null) : null,
+  };
+}
+
+/**
+ * 「이번만」 방식 전환 (N-56). 규칙과 같은 방식이면 예외를 비워 규칙을 따르게 한다.
+ *   온라인 — 강의실을 비우고, 보낸 줌 계정을 이 회차에 붙인다(안 보내면 이미 붙은 것을 둔다).
+ *   현장   — 이 회차의 줌 계정을 풀고, 규칙의 방식으로 돌아가면 강의실도 규칙을 따른다.
+ * 겹침은 투영의 EXCLUDE 가 마지막에 막는다 — 막히면 트랜잭션이 통째로 되돌아간다.
+ */
+function applyModeToExc(ser: Ser, e: Exc, patch: Patch): void {
+  const mode = patch.mode as string;
+  e.mode = mode === ser.mode ? null : mode;
+  if (mode === 'online') {
+    if (ser.roomId == null) {
+      e.roomSet = false;
+      e.roomId = null;
+    } else {
+      e.roomSet = true;
+      e.roomId = null;
+    }
+    e.zaccId = patch.zaccId !== undefined ? patch.zaccId : (e.zaccId ?? null);
+    return;
+  }
+  e.zaccId = null;
+  if (e.mode === null) {
+    e.roomSet = false;
+    e.roomId = null;
+  }
+}
+
+/** 메모는 앞뒤 공백을 걷고 빈 글은 지운 것으로 적는다 — 표의 `exc_memo_len` 과 같은 선 */
+function setMemo(e: Exc, memo: string | null | undefined, log: string[]): void {
+  const next = typeof memo === 'string' && memo.trim() ? memo.trim() : null;
+  const had = e.memo ?? null;
+  e.memo = next;
+  if (next === had) return;
+  log.push(next ? '회차 메모를 적었습니다' : '회차 메모를 지웠습니다');
+}
+
+/** 보낸 칸마다 한 줄 — 사람이 읽는 변경 기록(`WriteResultDto.log`). id 같은 내부 값은 적지 않는다 */
+function patchLines(patch: Patch, scope: Scope): string[] {
+  const out: string[] = [];
+  if (patch.startMin !== undefined) {
+    out.push(patch.startMin === null ? '시작 시각을 규칙대로 되돌렸습니다' : `시작 시각을 바꿨습니다 — ${hhmmOf(patch.startMin)}`);
+  }
+  if (patch.endMin !== undefined) {
+    out.push(patch.endMin === null ? '끝 시각을 규칙대로 되돌렸습니다' : `끝 시각을 바꿨습니다 — ${hhmmOf(patch.endMin)}`);
+  }
+  if (patch.teacherId !== undefined) out.push(patch.teacherId === null ? '강사를 비웠습니다' : '강사를 바꿨습니다');
+  if (patch.roomId !== undefined) out.push(patch.roomId === null ? '강의실을 비웠습니다' : '강의실을 바꿨습니다');
+  if (scope === 'this' && patch.date !== undefined) {
+    out.push(patch.date && patch.date !== patch.__onDate ? `날짜를 옮겼습니다 — ${patch.date}` : '원래 날짜로 되돌렸습니다');
+  }
+  return out;
 }
 
 function applyPatchToSer(ser: Ser, patch: Patch, log: string[]): void {
-  if (patch.startMin != null) {
-    ser.startMin = patch.startMin;
-    log.push(`start_min=${patch.startMin}`);
-  }
-  if (patch.endMin != null) {
-    ser.endMin = patch.endMin;
-    log.push(`end_min=${patch.endMin}`);
-  }
-  if (patch.teacherId !== undefined) {
-    ser.teacherId = patch.teacherId;
-    log.push(`teacher_id=${patch.teacherId}`);
-  }
-  if (patch.roomId !== undefined) {
-    ser.roomId = patch.roomId ?? null;
-    log.push(`room_id=${patch.roomId}`);
+  if (patch.startMin != null) ser.startMin = patch.startMin;
+  if (patch.endMin != null) ser.endMin = patch.endMin;
+  if (patch.teacherId !== undefined) ser.teacherId = patch.teacherId;
+  if (patch.roomId !== undefined) ser.roomId = patch.roomId ?? null;
+  log.push(...patchLines({ ...patch, date: undefined }, 'all'));
+  // 방식 전환 (N-56) — 온라인이면 강의실을 비우고 규칙 단위 줌 계정을 받는다, 현장이면 줌 계정을 푼다
+  if (patch.mode !== undefined) {
+    ser.mode = patch.mode;
+    if (patch.mode === 'online') {
+      ser.roomId = null;
+      ser.zaccId = patch.zaccId !== undefined ? patch.zaccId : (ser.zaccId ?? null);
+    } else {
+      ser.zaccId = null;
+    }
+  } else if (patch.zaccId !== undefined) {
+    ser.zaccId = patch.zaccId;
   }
   if (patch.date && patch.__onDate && patch.date !== patch.__onDate) {
-    shiftSer(ser, diffD(patch.date, patch.__onDate));
-    log.push(`날짜 ${diffD(patch.date, patch.__onDate)}일 이동`);
+    const days = diffD(patch.date, patch.__onDate);
+    shiftSer(ser, days);
+    log.push(days > 0 ? `${days}일 뒤로 옮겼습니다` : `${-days}일 앞으로 옮겼습니다`);
   }
 }
 
@@ -606,7 +762,8 @@ export function applyDelete(
     if (makeup) {
       const made: Ser = {
         id: genId(),
-        kind: ser.kind, sub: ser.sub, mode: ser.mode, title: ser.title,
+        // 방식도 그 회차의 것을 물려받는다 — 강사·강의실을 회차 값으로 물려받는 것과 같다 (N-56)
+        kind: ser.kind, sub: ser.sub, mode: prior?.mode ?? ser.mode, title: ser.title,
         teacherId: makeup.teacherId === undefined ? inheritedTeacher : makeup.teacherId,
         roomId: makeup.roomId === undefined ? inheritedRoom : makeup.roomId,
         startMin: makeup.startMin, endMin: makeup.endMin,
@@ -649,7 +806,8 @@ export function copyPayload(state: State, occurrence: Occurrence): CopyItem {
     roomId: occurrence.roomId,
     kind: ser.kind,
     sub: ser.sub,
-    mode: ser.mode,
+    // 보이는 그대로 복사한다 — 방식을 바꾼 회차를 복사하면 그 방식이다 (N-56 · 강사·강의실도 회차 값이다)
+    mode: occurrence.mode,
     title: ser.title,
     rrule: ser.rrule,
     fromDate: ser.fromDate,
@@ -1121,6 +1279,9 @@ function upsertExc(S: State, serId: number, onDate: IsoDate, genId: IdGen): Exc 
       cancelTreat: null,
       makeupSerId: null,
       stuOut: [],
+      mode: null,
+      memo: null,
+      zaccId: null,
     };
     S.EXC.push(e);
   }

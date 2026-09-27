@@ -66,7 +66,7 @@ d('휴원 · 복귀 (C92-c · C-36 · C-37)', () => {
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     token = await login('pause-ceo@t.kr');

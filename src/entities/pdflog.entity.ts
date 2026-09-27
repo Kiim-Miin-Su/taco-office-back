@@ -10,8 +10,10 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ForeignKey, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+@Index('pdflog_rep_idx', ['repId'], { where: '"rep_id" IS NOT NULL' })
+@ForeignKey('rep', ['repId'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'pdflog' })
 export class Pdflog {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -28,4 +30,11 @@ export class Pdflog {
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   at: Date;
+
+  /**
+   * 이 파일이 **어느 리포트의 것인지**(W11 · 7-3 ① F3 · migration 1764400000000). 한 RSEND 가 학생 하루치 여러 장을
+   * 묶으므로 `ref_id` 만으로는 장과 리포트를 짝지을 수 없었다. 옛 행은 NULL(N-25) — 읽는 쪽은 그때 묶음 전체로 판정한다.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  repId: number | null;
 }

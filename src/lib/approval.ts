@@ -18,6 +18,7 @@
  */
 
 import type { ApprovalFlowScope } from '../common/perm';
+import { planCan } from './plan-words';
 
 /**
  * **올린 사람은 결재하지 못한다.** 결재라는 제도가 성립하는 유일한 조건이다.
@@ -185,6 +186,8 @@ export const REQ_TYPE_LABEL: Record<string, string> = {
   wage_change: '시급 변경', tz_change: '시간대 변경', unav_add: '불가 시간 추가', doc: '서류',
   // 교재 변경 요청 — §14 분류 칩(AP_INBOX_CATEGORY_LABEL)과 같은 낱말. 없던 동안 제목이 「book_change 요청」으로 나갔다
   book_change: '교재 변경',
+  // 강사 GPA 회차 요청(N-99 · W11) — 입력 단추 이름 「GPA 회차 요청」 그대로. §14 칩은 「GPA 요청」(AP_INBOX_CATEGORY_LABEL)
+  gpa_request: 'GPA 회차',
   // CHREQ — 수업을 바꿔 달라는 요청. §19 컷의 「무엇을」 칩 낱말 그대로 (시간 옮기기 · 강사 바꾸기 · 강의실 바꾸기)
   time: '시간 변경', time_move: '시간 옮기기', teacher: '강사 바꾸기',
   // 컷 §19 의 갈래 이름 그대로다 — 「시간 옮기기 · 강사 바꾸기 · 강의실 바꾸기 · **휴강**」.
@@ -207,6 +210,10 @@ export function reqAsked(reqType: string, payload: unknown): { from: string | nu
 
   if (reqType === 'wage_change') return { from: won(p.from), to: won(p.to) };
   if (reqType === 'tz_change') return { from: text(p.from), to: text(p.tz) };
+  // 교재 변경은 **새 교재를 정하지 않는다**(N-99 · 배부 변경은 관리자가 §38 에서) — 지금 교재만 적는다. 옛 줄(이름만)은 null
+  if (reqType === 'book_change') return { from: text(p.bookTitle), to: null };
+  // GPA 회차 요청은 그 회차의 날짜 · 시각이 곧 「바라는 것」이다(원문 §14 카드 「2026-08-21 20:00–20:40」)
+  if (reqType === 'gpa_request') return { from: null, to: gpaRequestWhen(p) };
   // 모르는 갈래는 **지어내지 않는다** — 사유가 있으면 그것만 보여 준다
   return { from: null, to: text(p.reason) };
 }
@@ -216,6 +223,33 @@ export function reqAskedLine(reqType: string, payload: unknown): string | null {
   const { from, to } = reqAsked(reqType, payload);
   if (!to) return from;
   return from ? `${from} → ${to}` : to;
+}
+
+const hhmmOf = (min: unknown): string | null =>
+  typeof min === 'number' && Number.isInteger(min) && min >= 0 && min <= 1440
+    ? `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}` : null;
+
+/** GPA 회차 요청의 「언제」 — 「2026-08-21 20:00–20:40」. 적힌 것이 모자라면 적힌 만큼만(지어내지 않는다) */
+function gpaRequestWhen(p: Record<string, unknown>): string | null {
+  const day = typeof p.onDate === 'string' && p.onDate ? p.onDate : null;
+  const start = hhmmOf(p.startMin);
+  const end = hhmmOf(p.endMin);
+  const time = start && end ? `${start}–${end}` : start;
+  return [day, time].filter(Boolean).join(' ') || null;
+}
+
+/**
+ * §14 카드의 회색 제목 — 원문 컷 「박하경 · Quiz 대비」 · 「양찬욱 · MAP Math」(학생 · 서비스/과목 · N-99).
+ * 강사가 새 입력으로 올린 줄은 그때 이름을 스냅숏으로 들고 온다. 스냅숏이 없는 옛 줄은 예전처럼 「갈래 이름 요청」이다
+ * — 없는 과목 이름을 지어내지 않는다.
+ */
+export function reqTitle(reqType: string, payload: unknown): string {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const student = text(p.studentName);
+  const topic = reqType === 'gpa_request' ? text(p.svcName) : reqType === 'book_change' ? text(p.subjectName) : null;
+  if (student && topic) return `${student} · ${topic}`;
+  return `${labelOf(REQ_TYPE_LABEL, reqType)} 요청`;
 }
 
 /**
@@ -396,6 +430,29 @@ export interface ApprovalFlowProjection {
   backCount: number;
 }
 
+/** 기획 한 건의 공개 범위 재료 (W11 · N-72) — 옛 기획은 `share` 가 null(지금처럼 모두에게 보인다) */
+export interface PlanVisibility {
+  share: string | null;
+  ownerId: number | null;
+  pickIds: readonly number[];
+}
+
+/**
+ * 기획 줄이 보는 사람에게 보이는가 (W11 · N-72) — 판정은 `planCan` 한 곳이고, 결재권자는 기획 결재를 받는 범위
+ * (`approvalFlowScope === 'all'` ⇔ `canCeoApprovePlan`)와 같은 판정이다. 지정 공개(`picked`)면 담당 · 지정된 사람 · 결재권자에게만.
+ *
+ * **줄을 만드는 쪽(`DrawerService.approvalRows`)이 이 판정으로 거른 뒤에 `ApRow` 를 만든다** (W11 A' 후속 · 리드 결정).
+ * 예전에는 공개 범위 재료(`planShare` · `pickIds`)를 `ApRow` 에 실어 §75 투영이 걸렀는데, 그 줄이 §14 목록(`apFlow`)에도
+ * 그대로 실려 **지정된 사람 번호가 응답에 새었고** §14 는 거르지도 않았다. 이제 재료는 줄에 없고, 두 투영이 같은 줄들을 본다.
+ */
+export function approvalPlanVisible(plan: PlanVisibility, viewerId: number, scope: ApprovalFlowScope): boolean {
+  return planCan(plan.share, {
+    isOwner: plan.ownerId !== null && plan.ownerId === viewerId,
+    isPicked: plan.pickIds.includes(viewerId),
+    canApprove: scope === 'all',
+  });
+}
+
 /** §75 전용 읽기 projection. §14와 ApRow 원장을 공유하되 의미는 섞지 않는다. */
 export function approvalFlowProjection(
   rows: readonly ApRow[], viewerId: number, scope: ApprovalFlowScope,
@@ -404,6 +461,7 @@ export function approvalFlowProjection(
     return { canView: false, tiles: [], back: [], waiting: [], mine: [], total: 0, backCount: 0 };
   }
 
+  // 지정 공개 기획은 줄을 만드는 쪽이 이미 걸렀다(`approvalPlanVisible` · N-72) — 투영은 공개 범위를 모른다
   const exact = rows.filter((row): row is ApRow & { kind: ApprovalFlowKind } =>
     (APPROVAL_FLOW_KINDS as readonly ApKind[]).includes(row.kind));
   const item = (row: ApRow & { kind: ApprovalFlowKind }, state: ApprovalFlowItem['state']): ApprovalFlowItem => {
@@ -419,7 +477,7 @@ export function approvalFlowProjection(
       title: teacherReq ? APPROVAL_FLOW_KIND_LABEL.req : row.title,
       sub: teacherReq ? row.byName : row.sub,
       byId: row.byId,
-      // RPT에는 아직 제출자 FK가 없다. 화면이 추정하지 않도록 경계를 값으로 내린다.
+      // 올린 사람을 모르는 옛 줄(C85-a 의 `rpt.sent_by` 도장 이전 보고 · N-25)은 「알 수 없음」 — 화면이 추정하지 않도록 경계를 값으로 내린다.
       byName: row.byName ?? '알 수 없음',
       to, toName: APPROVAL_FLOW_RECIPIENT_NAME[to], toLabel: APPROVAL_FLOW_RECIPIENT_LABEL[to],
       at: row.at, state, why: row.why, go: row.go,
@@ -456,7 +514,7 @@ export function approvalFlowProjection(
  * 강사가 올린 GPA 회차 요청(「Sophia · 박하경 · Quiz 대비 · 20:00–20:40 → 줌 배정 후 확정」)이고,
  * 같은 두 줄이 §75 에서는 「강사 요청」으로 선다 — 원천이 REQ(강사 요청)다. 자료 요청은 §75 의
  * 「자료 요청 → 실장에게」 갈래라 여기서는 「기타」로 두고, §14 목록에는 넣지 않는다(`AP_INBOX_KINDS`).
- * GPA 회차를 요청하는 강사 쪽 입력은 제품에 아직 없다 — 그래서 「GPA 요청」 칩은 0 으로 선다(칩은 어휘다).
+ * 강사 쪽 입력은 N-99(W11)로 생겼다 — 강사 캘린더의 「GPA 회차 요청」이 REQ `gpa_request` 한 줄을 쓴다(칩은 0 이어도 선다 · 어휘다).
  */
 export function approvalInboxCategory(row: ApRow): ApInboxCategory {
   if (row.kind === 'missing') return 'missing';
@@ -466,6 +524,8 @@ export function approvalInboxCategory(row: ApRow): ApInboxCategory {
     if (row.reqType === 'tz_change') return 'tz_change';
     if (row.reqType === 'wage_change') return 'wage_change';
     if (row.reqType === 'book_change') return 'book_change';
+    // 강사 GPA 회차 요청(N-99 · W11) — 이제 입력이 있다. 원문 §14 「GPA 요청」 칩이 이 줄을 센다
+    if (row.reqType === 'gpa_request') return 'gpa_request';
   }
   return 'other';
 }

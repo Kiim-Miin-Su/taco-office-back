@@ -28,7 +28,8 @@ describe('운영 전환 — 순수 판정', () => {
     expect(c.untouched).toEqual(['migrations']);
     expect(c.partial).toEqual(['staff']);
     expect(c.empty).toEqual(['brand_new_table', 'log', 'stu']);
-    expect(GOLIVE_KEEP_TABLES).toEqual(['kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl']);
+    // 교재 분류 코드표 둘은 migration 이 넣는 설정이다 — 비우면 운영에서 교재를 분류할 수 없다 (W11 N-47)
+    expect(GOLIVE_KEEP_TABLES).toEqual(['kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl', 'book_subject', 'book_category', 'acct_privacy']);
   });
 
   it('지우는 순서는 가리키는 표가 먼저 · 자기 참조는 무시 · 서로 가리키면 순서를 지어내지 않고 던진다', () => {

@@ -53,16 +53,60 @@ export const isIntakeFunnel = (stage: string): boolean =>
   (INTAKE_FUNNEL_STAGES as readonly string[]).includes(stage);
 
 /**
- * 중단 지점 네 어휘 — **낱말과 순서가 사는 단 하나의 자리** (원본 §24 · N-25 채택 §4-17 · C35).
+ * §24 중단 지점 넷 — **실패 당시 단계로 판정한다** (W11 · N-87 채택 · 원문 슬라이드 24 「fail.from 필드로 중단 단계 판정」).
  *
- * 이 넷은 **저장된 값**이다(`LEAD.stop_at`). 컷 §24 는 「1차 상담 중단 · 2차 안 옴 ·
- * 2차 상담 중단 · 보류 후 무산」으로, 컷 §71 은 「1차 중단 · 2차 안 옴 · 배치 중단 ·
- * 보류 무산」으로 적어 **두 컷이 서로 다르게 쓰고 우리 넷과도 집합이 다르다**.
- * 이름만 갈아 끼우면 **이미 분류된 행이 다른 뜻으로 읽힌다** — 그래서 되돌리지 않고
- * [CUT-VS-PRODUCT](../../../docs/report/CUT-VS-PRODUCT-2026-09-13.md) 에 남겨 둔 것이다.
- * 여기서 하는 일은 **낱말을 옮기는 것**뿐이고 바꾸는 것이 아니다.
+ * 원문 넷(1차 상담 중단 · 2차 안 옴 · 2차 상담 중단 · 보류 후 무산)은 곧 **깔때기 네 단계**다 — 컷 §24 의 실패 카드가
+ * 「2026-08-18 · 보류 단계」처럼 실패 당시 단계를 적고, 분류 카드의 수가 그 단계로 센 수와 맞는다.
+ * 그래서 키는 단계 코드(first · wait2nd · second · hold)이고 **사람이 고르는 값이 아니다**(실패 지정 창은 묻지 않는다).
+ * 판정은 N-25 그대로 — `lead.fail_from`(전이 순간의 명시값) → 도달 기록 역순(「없으면 at{} 기록을 역순으로」) → 미분류.
+ * §24 의 낱말이 정본이고 §71 월간 「어디서 놓쳤나」도 같은 낱말이다(`intakeFailStop` 한 함수).
+ * 설명 한 줄은 컷의 분류 카드 아래 줄 그대로다.
+ */
+/** 네 분류의 키와 차례 — 깔때기 차례 그대로(`INTAKE_FUNNEL_STAGES` 와 같은 넷 · 분류 카드 · 「어디서 놓쳤나」 표가 이 차례를 쓴다 · D-R25) */
+export const INTAKE_FAIL_STOPS = ['first', 'wait2nd', 'second', 'hold'] as const;
+export type IntakeFailStop = (typeof INTAKE_FAIL_STOPS)[number];
+export const INTAKE_FAIL_STOP_LABEL: Record<IntakeFailStop, string> = {
+  first: '1차 상담 중단',
+  wait2nd: '2차 안 옴',
+  second: '2차 상담 중단',
+  hold: '보류 후 무산',
+};
+export const INTAKE_FAIL_STOP_SUB: Record<IntakeFailStop, string> = {
+  first: '첫 통화 뒤 더 진행되지 않았습니다',
+  wait2nd: '일정은 잡았는데 오지 않았습니다',
+  second: '진단까지 했는데 배치에서 멈췄습니다',
+  hold: '결정을 기다리다 끝났습니다',
+};
+
+/**
+ * 판정이 없는 실패 — 명시값도 도달 기록도 없는 옛 행. **추정 이관 없이 미분류로 둔다** (N-25 · N-87 「대응표 이관 없음」).
+ * 이 줄이 없으면 「등록 실패 N건」 머리와 분류들의 합이 갈린다 (N-19).
+ */
+export const INTAKE_FAIL_STOP_UNSET = 'none';
+export const INTAKE_FAIL_STOP_UNSET_LABEL = '미분류';
+
+/** 실패 당시 단계(판정 결과) → 분류 키 · 낱말. 깔때기 네 단계가 아니면(판정 없음 · 모르는 값) 미분류다 */
+export function intakeFailStop(failStage: string | null | undefined): { key: string; label: string } {
+  if (failStage && (INTAKE_FAIL_STOPS as readonly string[]).includes(failStage)) {
+    return { key: failStage, label: INTAKE_FAIL_STOP_LABEL[failStage as IntakeFailStop] };
+  }
+  return { key: INTAKE_FAIL_STOP_UNSET, label: INTAKE_FAIL_STOP_UNSET_LABEL };
+}
+
+/**
+ * 도달 기록에서 **실패 직전 단계**를 읽는 SQL 조각 — 슬라이드 24 「fail.from 이 없으면 at{} 기록을 역순으로」.
+ * `failed` 줄은 건너뛰고 가장 나중 줄 하나다. §71 월간이 이 조각을 쓰고, §23·§24 목록은 같은 규칙을 한 번에 묶어 묻는다
+ * (`OpsService.leadRows` 의 `DISTINCT ON` — 건마다 묻지 않으려는 모양일 뿐 규칙은 같다).
+ * @param leadId 상담 id 표현식 (예: `l.id`)
+ */
+export const leadLogLastStageSql = (leadId: string): string =>
+  `(SELECT g.stage FROM lead_stage_log g WHERE g.lead_id = ${leadId} AND g.stage <> 'failed' ORDER BY g.id DESC LIMIT 1)`;
+
+/**
+ * 옛 중단 지점 넷 — `LEAD.stop_at` 에 **이미 저장된 값**의 낱말 (C35 · 읽기 전용 기록).
  *
- * 순서는 깔때기 순이다 — 실패 지정 select 도 「어디서 놓쳤나」 표도 이 순서를 쓴다 (D-R25).
+ * W11 · N-87 로 §24 의 분류는 실패 당시 단계(위)로 바뀌었고 이 칸은 **더 쓰지 않는다**(새 실패도 · 되살리기도 건드리지 않는다).
+ * 옛 넷과 원문 넷은 집합이 달라 대응표로 옮기지 않는다 — 옛 값은 이 낱말로 **그대로** 읽힌다(N-25 · 이미 저장된 값의 낱말을 바꾸지 않는다).
  */
 export const INTAKE_STOPS = ['before_book', 'before_first', 'after_first', 'after_second'] as const;
 export type IntakeStop = (typeof INTAKE_STOPS)[number];
@@ -74,17 +118,9 @@ export const INTAKE_STOP_LABEL: Record<IntakeStop, string> = {
   after_second: '2차 후 미등록',
 };
 
-/**
- * 분류되지 않은 실패 — 레거시 건은 **추정 이관 없이 미분류로 둔다** (N-25).
- * 이 줄이 없으면 「등록 실패 N건」 머리와 줄들의 합이 갈린다 (N-19).
- */
-export const INTAKE_STOP_UNSET = 'none';
-export const INTAKE_STOP_UNSET_LABEL = '분류 안 됨';
-
-export const intakeStopLabel = (stop: string | null | undefined): string =>
-  stop == null || stop === INTAKE_STOP_UNSET
-    ? INTAKE_STOP_UNSET_LABEL
-    : (INTAKE_STOP_LABEL[stop as IntakeStop] ?? stop);
+/** 옛 중단 지점 낱말 — 값이 없으면 null(적은 적이 없다). 모르는 값은 그대로 보인다(비어 보이느니 낯설게) */
+export const legacyStopLabel = (stop: string | null | undefined): string | null =>
+  stop == null ? null : (INTAKE_STOP_LABEL[stop as IntakeStop] ?? stop);
 
 /* ══ 유입 경로 · 접촉 원장 · 단계 전이표 (C90 · N-44 · N-45) ═══════════════════════ */
 
@@ -364,14 +400,114 @@ export function intakeEnrollRate(enrolled: number, failed: number): number {
 }
 
 /**
- * 등록 카드의 사후 관리 줄 (23-18 · 원본 §23 「청구서 없음 · 교재 없음 · 안내 없음」) — 표시 낱말이 사는 단 하나의 자리.
- * 셋 다 그 학생의 원장에서 **읽기만** 한다: 청구서(INV) · 교재 배부(ISSUE) · 수업 안내(GUIDE).
+ * 등록 카드의 사후 관리 줄 (23-18 · 원본 §23 「해피콜 완료 08-15 · 월간 완료 · 청구서 없음 · 교재 없음 · 안내 없음」) — 표시 낱말이 사는 단 하나의 자리.
+ * 뒤 셋은 그 학생의 원장에서 **읽기만** 한다: 청구서(INV) · 교재 배부(ISSUE) · 수업 안내(GUIDE).
  * 청구서 「없음」은 머리 경고 「등록했는데 청구서 없음」과 **같은 판정**(그 학생의 청구서 행이 하나도 없음)이다 — 두 자리가 다른 수를 말하지 않는다(D-R37).
- * 해피콜(첫 수업 + 7일 · A-14)은 「했는가」를 적을 원장이 없고, 월간 상담은 규칙이 정해지지 않아(DQ2) 줄을 세우지 않는다 — 지어내지 않는다.
+ * 앞 둘(해피콜 · 월간)은 W11 · N-86 채택으로 **담당의 할 일**(`todo.src='lead'` · `care`)을 읽는다 — 등록 확정이 만들고 할 일 완료가 푼다.
+ * 「월간」 줄은 **첫 월간 상담**이다 — 컷의 박시온 카드가 「월간 완료」인데 띠는 「정기 관리 중」이다. 월간은 끝나면 다음 달 하나가
+ * 바로 이어지므로(N-86) 「가장 나중 월간」으로 읽으면 등록 중인 학생에게 「완료」가 설 수 없다 — 원문과 결정이 함께 서는 읽기는 이것 하나다.
  */
-export const LEAD_AFTERCARE_KEYS = ['invoice', 'book', 'guide'] as const;
+export const LEAD_AFTERCARE_KEYS = ['happycall', 'monthly', 'invoice', 'book', 'guide'] as const;
 export type LeadAftercareKey = (typeof LEAD_AFTERCARE_KEYS)[number];
-export const LEAD_AFTERCARE_LABEL: Record<LeadAftercareKey, string> = { invoice: '청구서', book: '교재', guide: '안내' };
+export const LEAD_AFTERCARE_LABEL: Record<LeadAftercareKey, string> = {
+  happycall: '해피콜', monthly: '월간', invoice: '청구서', book: '교재', guide: '안내',
+};
+
+/* ══ W11 · N-86 — 등록 뒤 사후 관리를 담당의 할 일로 (DQ2 권장안) ═══════════════════════════════ */
+
+/** 사후 관리 할 일의 갈래 — `todo.care`(`todo_care_words` CHECK). 해피콜은 한 번, 월간 상담은 매월 하나씩 잇는다 */
+export const LEAD_CARE_KINDS = ['happycall', 'monthly'] as const;
+export type LeadCareKind = (typeof LEAD_CARE_KINDS)[number];
+/** 할 일 제목·띠의 낱말 — 원본 §23 등록 칸 머리 「해피콜 → 월간 상담」 */
+export const LEAD_CARE_LABEL: Record<LeadCareKind, string> = { happycall: '해피콜', monthly: '월간 상담' };
+/** 첫 실제 수업 + 7일 — 테스트 시나리오 A-14 「등록 직후 첫 수업일 확인 · 해피콜 +7일」 */
+export const LEAD_HAPPYCALL_DAYS = 7;
+/** 해피콜 · 월간을 다 마친 등록 카드의 띠 — 원본 §23 박시온 카드 「정기 관리 중」(그 뒤 월간은 할 일에서 이어진다) */
+export const LEAD_CARE_STEADY_LABEL = '정기 관리 중';
+
+/** 사후 관리 할 일 제목 — 「해피콜 — 박시온」 · 「월간 상담 — 박시온」. 누구 일인지는 담당 칸이 말한다 */
+export const leadCareTitle = (kind: LeadCareKind, studentName: string): string => `${LEAD_CARE_LABEL[kind]} — ${studentName}`;
+
+/** `YYYY-MM` + n 달 */
+export function addMonths(month: string, n: number): string {
+  const y = Number(month.slice(0, 4));
+  const m = Number(month.slice(5, 7)) - 1 + n;
+  const d = new Date(Date.UTC(y, m, 1));
+  return d.toISOString().slice(0, 7);
+}
+
+/**
+ * 그 달의 월간 상담 날 — **기준일(첫 실제 수업)과 같은 날, 그 날이 없으면 그 달 말일** (DQ2 권장안 「다음 달부터 같은 날짜 · 없으면 말일」).
+ * 기준일의 날을 매번 새로 댄다 — 1/31 → 2/28 → 3/31 이다(앞 달의 말일에서 잇지 않는다).
+ */
+export function leadMonthlyOn(anchorOn: string, month: string): string {
+  const day = Number(anchorOn.slice(8, 10));
+  const last = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
+  return `${month}-${String(Math.min(day, last)).padStart(2, '0')}`;
+}
+
+/** 휴원 기간 한 줄 — `stu_pause`(to 가 null 이면 복귀 전 무기한) */
+export interface LeadCarePause { from: string; to: string | null }
+
+/**
+ * 다음 월간 상담 날 — `afterMonth` 의 다음 달부터 (N-86 · DQ2 권장안).
+ *   · 수강 종료(모든 수강 줄이 그 날 전에 끝남)면 **멈춘다** → null
+ *   · 휴원 중이면 **복귀 뒤로** 민다 — 복귀일(휴원 끝 다음 날) 이후의 첫 「같은 날」. 기간이 겹치지 않으므로 앞으로만 간다
+ *   · 복귀일을 모르는 휴원(무기한)이면 날을 정하지 않는다 → `{ on: null }` — 할 일은 남고 날짜는 복귀하면 사람이 적는다
+ * @param enrollEnd 수강 끝 — 끝나지 않은 수강 줄이 하나라도 있으면 null · 수강 줄이 아예 없으면 undefined(멈춘다)
+ */
+export function leadMonthlyNextOn(
+  anchorOn: string, afterMonth: string, pauses: readonly LeadCarePause[], enrollEnd: string | null | undefined,
+): { on: string | null } | null {
+  let month = addMonths(afterMonth, 1);
+  for (let guard = 0; guard < 60; guard += 1) {
+    const on = leadMonthlyOn(anchorOn, month);
+    if (enrollEnd === undefined || (enrollEnd !== null && on > enrollEnd)) return null;
+    const pause = pauses.find((p) => p.from <= on && (p.to === null || on <= p.to));
+    if (!pause) return { on };
+    if (pause.to === null) return { on: null };
+    // 복귀 뒤의 첫 「같은 날」 — 휴원 끝 달의 같은 날이 끝보다 뒤면 그 달, 아니면 다음 달
+    month = leadMonthlyOn(anchorOn, pause.to.slice(0, 7)) > pause.to ? pause.to.slice(0, 7) : addMonths(pause.to.slice(0, 7), 1);
+  }
+  return { on: null };
+}
+
+/** 사후 관리 할 일 한 줄의 읽기 모양 — 등록 카드가 읽는 두 줄(해피콜 · 첫 월간)과 띠(다음 할 일) */
+export interface LeadCareTodo { due: string | null; done: boolean }
+export interface LeadCareState {
+  /** 해피콜 할 일 — 없으면(옛 등록 건) null */
+  happy: LeadCareTodo | null;
+  /** 첫 월간 상담 할 일 — 없으면 null */
+  firstMonthly: LeadCareTodo | null;
+}
+
+const mmdd = (iso: string) => iso.slice(5, 10);
+
+/** 「해피콜 완료 08-15」 · 「08-24 예정」 · 「없음」 — 컷의 낱말 그대로. 날짜는 그 할 일의 날(완료 줄도 그 날을 적는다) */
+function careRow(key: 'happycall' | 'monthly', t: LeadCareTodo | null): { key: LeadAftercareKey; label: string; value: string; done: boolean } {
+  const label = LEAD_AFTERCARE_LABEL[key];
+  if (!t) return { key, label, value: '없음', done: false };
+  if (t.done) return { key, label, value: key === 'happycall' && t.due ? `완료 ${mmdd(t.due)}` : '완료', done: true };
+  return { key, label, value: t.due ? `${mmdd(t.due)} 예정` : '날짜 미정', done: false };
+}
+
+/**
+ * 등록 카드의 띠 (원본 §23 등록 칸 「해피콜 D-3」 · 「정기 관리 중」) — 아직 안 한 사후 관리 중 **먼저 오는 것**.
+ * 해피콜이 남았으면 해피콜, 아니면 첫 월간 상담, 둘 다 끝났으면 「정기 관리 중」(날 없음). 할 일이 없는 옛 등록 건은 띠가 없다(null).
+ */
+export function leadCareDue(
+  care: LeadCareState, today: string,
+): { task: string; dueOn: string | null; dueLabel: string | null; tone: 'danger' | 'warning' | 'neutral' } | null {
+  const band = (task: string, t: LeadCareTodo) => {
+    if (!t.due) return { task, dueOn: null, dueLabel: null, tone: 'neutral' as const };
+    const diff = daysUntil(t.due, today);
+    return { task, dueOn: t.due, dueLabel: leadDueLabel(t.due, today), tone: diff < 0 ? 'danger' as const : diff === 0 ? 'warning' as const : 'neutral' as const };
+  };
+  if (care.happy && !care.happy.done) return band(LEAD_CARE_LABEL.happycall, care.happy);
+  if (care.firstMonthly && !care.firstMonthly.done) return band(LEAD_CARE_LABEL.monthly, care.firstMonthly);
+  if (care.happy?.done && care.firstMonthly?.done) return { task: LEAD_CARE_STEADY_LABEL, dueOn: null, dueLabel: null, tone: 'neutral' };
+  return null;
+}
 
 export interface LeadAftercareCounts {
   /** 그 학생의 청구서 행 수(상태 무관 — 경고 「청구서 없음」과 같은 판정) */
@@ -386,11 +522,19 @@ export interface LeadAftercareCounts {
   guideDraft: number;
 }
 
-export function leadAftercareRows(c: LeadAftercareCounts): Array<{ key: LeadAftercareKey; label: string; value: string; done: boolean }> {
+/**
+ * @param care 사후 관리 할 일(N-86) — 해피콜 · 첫 월간 두 줄이 앞에 선다(컷의 차례). 할 일이 없는 옛 등록 건은 「없음」이다
+ *   — 한 적이 없는 것을 「완료」로 짓지 않는다(N-25).
+ */
+export function leadAftercareRows(
+  c: LeadAftercareCounts, care: LeadCareState = { happy: null, firstMonthly: null },
+): Array<{ key: LeadAftercareKey; label: string; value: string; done: boolean }> {
   const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const inv = n(c.inv); const bookOk = n(c.bookOk); const bookWait = n(c.bookWait);
   const guideSent = n(c.guideSent); const guideDraft = n(c.guideDraft);
   return [
+    careRow('happycall', care.happy),
+    careRow('monthly', care.firstMonthly),
     { key: 'invoice', label: LEAD_AFTERCARE_LABEL.invoice, value: inv > 0 ? `${inv}건` : '없음', done: inv > 0 },
     {
       key: 'book', label: LEAD_AFTERCARE_LABEL.book,

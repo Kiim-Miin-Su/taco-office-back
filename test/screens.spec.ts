@@ -107,7 +107,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
   beforeAll(async () => {
     for (const email of [CEO, TEACHER, MANAGER]) {
       const res = await request(app.getHttpServer())
-        .post('/auth/login').send({ email, password: PW }).expect(201);
+        .post('/auth/login').send({ loginId: email, password: PW }).expect(201);
       tokens.set(email, res.body.accessToken as string);
     }
   });

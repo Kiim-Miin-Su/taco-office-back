@@ -11,7 +11,8 @@
  * 첫 설정 강제로 되돌린다. 스크립트는 **대표가 직접** 돌리고 기본은 미리 보기(쓰기 0)다 — 우리는 실제 DB 에 돌리지 않는다.
  *
  * 표는 셋으로 나뉜다.
- *   · 남김(설정) — `GOLIVE_KEEP_TABLES`. 수업 종류 · 과목 · 강의실 · 시간대 · 줌 계정 · GPA 항목 · 휴일 · 안내 틀.
+ *   · 남김(설정) — `GOLIVE_KEEP_TABLES`. 수업 종류 · 과목 · 강의실 · 시간대 · 줌 계정 · GPA 항목 · 휴일 · 안내 틀 ·
+ *     교재 분류 코드표(과목 · 소분류 — migration 이 원문 §39 컷의 줄을 넣는다 · W11 N-47).
  *     시험 기간에 쌓인 것이 아니라 운영에서도 그대로 쓰는 **설정**이다. `migrations` 는 아예 건드리지 않는다.
  *   · 일부 — `staff`. 남길 대표 한 줄만 두고 지운다.
  *   · 비움 — 나머지 전부(학생 · 수업 · 청구 · 기록 …). 새 표가 생기면 **저절로 비움 쪽**이다 — 남기려면 여기 적는다.
@@ -30,8 +31,10 @@ import { maskEmail } from '../modules/notify/sender';
 /**
  * 운영에서도 그대로 쓰는 **설정** 표. 여기에 없는 표는 비운다.
  * 단가표(rate) · 교재 목록(lib/vers)은 설정에 가깝지만 값이 시험용일 수 있어 넣지 않았다 — 대표 결정 거리다(구현 기록).
+ * 회계 비공개 스위치(acct_privacy · N-94)는 대표가 정한 **설정**이라 남긴다 — 켠 사람이 지워지면 `set_by` 만 빈다(시각은 남는다).
+ * 가산 규칙(payout_bonus_rule · N-93)은 시급(wage)처럼 시험 기간 값일 수 있어 남기지 않는다.
  */
-export const GOLIVE_KEEP_TABLES: readonly string[] = ['kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl'];
+export const GOLIVE_KEEP_TABLES: readonly string[] = ['kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl', 'book_subject', 'book_category', 'acct_privacy'];
 /** 절대 건드리지 않는 표 — 스키마 이력 */
 export const GOLIVE_UNTOUCHED: readonly string[] = ['migrations'];
 /** 한 줄(남길 대표)만 남기는 표 */

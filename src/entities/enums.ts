@@ -39,7 +39,8 @@ export type SugCatT = (typeof SUG_CAT_T_VALUES)[number];
 export const SUG_STATE_T_VALUES = ['open', 'reviewing', 'done'] as const;
 export type SugStateT = (typeof SUG_STATE_T_VALUES)[number];
 
-export const TODO_SRC_T_VALUES = ['meeting', 'complaint', 'consulting', 'plan', 'manual', 'lesson'] as const;
+/** 'lead' — W11 · N-86 등록 뒤 사후 관리(해피콜 · 월간 상담) · `todo.lead_id` 가 함께 선다(`todo_lead_key`) */
+export const TODO_SRC_T_VALUES = ['meeting', 'complaint', 'consulting', 'plan', 'manual', 'lesson', 'lead'] as const;
 export type TodoSrcT = (typeof TODO_SRC_T_VALUES)[number];
 
 /** §43 「매번」이 줄마다 학부모·강사를 따로 체크한다 — 전달 대상 축 (C82-b) */

@@ -115,20 +115,82 @@ export function dueLabel(daysLeft: number): string {
  * 기한이 대표를 지나왔는가 — `due_approved_at` 한 칸에서 파생한다.
  * 상태를 따로 저장하지 않는다: 저장하면 승인 시각과 상태가 갈릴 수 있다 (D-R39).
  */
-export const PLAN_DUE_STATES = ['none', 'proposed', 'approved'] as const;
+export const PLAN_DUE_STATES = ['none', 'proposed', 'approved', 'rejected'] as const;
 export type PlanDueState = (typeof PLAN_DUE_STATES)[number];
 
 /*
  * 낱말은 원문 §61 카드 칩 셋 그대로다 — 「기한 제안」·「기한 반려」·「기한 승인」 (g6 61-3 · D-R44).
  * 한동안 approved 가 「기한 승인됨」이었다 — 같은 칩 줄에서 한 낱말만 꼴이 달랐다.
+ * 「기한 반려」는 N-95(W11)로 네 번째 상태가 됐다 — 반려가 지운 날짜를 `due_rejected_on` 이 지키므로 카드가 그 칩을 세운다.
  */
 export const PLAN_DUE_STATE_LABEL: Record<PlanDueState, string> = {
   none: '기한 없음',
   proposed: '기한 제안',
   approved: '기한 승인',
+  rejected: '기한 반려',
 };
 
-export function planDueState(dueOn: string | null, approvedAt: unknown): PlanDueState {
-  if (!dueOn) return 'none';
+/**
+ * 기한 상태 — 세 칸에서 파생한다(저장하지 않는다 · D-R39).
+ * 반려는 `due_on` 을 지우고 `due_rejected_on` 에 그 날짜를 남긴다(N-95) — 담당이 새 기한을 내면 반려 칸이 비므로
+ * 「기한이 있으면서 반려」인 행은 없다(표의 `plan_due_rejected_clears`).
+ */
+export function planDueState(dueOn: string | null, approvedAt: unknown, rejectedOn: string | null = null): PlanDueState {
+  if (!dueOn) return rejectedOn ? 'rejected' : 'none';
   return approvedAt ? 'approved' : 'proposed';
+}
+
+/**
+ * 기한을 바꾸려는 기대 상태가 어긋났을 때의 문장 (PB-12-2) — 쓰기(409 `PLAN_DUE_CHANGED`)가 쓴다.
+ * 대표가 본 날짜와 지금 날짜가 다르면 **그 날짜를 승인·반려하지 않는다** — 본 적 없는 날짜에 도장이 찍힌다.
+ */
+export const planDueChangedMessage = (now: string | null): string =>
+  (now ? `기한이 그 사이 ${now} 로 바뀌었습니다 — 새 기한을 보고 다시 정하세요` : '기한이 그 사이 지워졌습니다 — 다시 열어 확인하세요');
+
+/* ── §61 공개 범위 (N-72 · W11) ─────────────────────────────────────── */
+
+/**
+ * 원문 §61 카드의 두 칩 — 「전체 공개」·「지정 공개」 **두 값만** (N-72 ① · D-R44).
+ * 컨설팅의 `CONSULTING_SHARES` 넷(수납만 공개 · 전체 비공개)을 빌리지 않는다 — 기획 컷은 두 값만 보여 준다.
+ * 저장 칸 `plan.share` 가 NULL 이면 옛 기획이다 — 지금처럼 모두에게 보이고 칩이 서지 않는다(N-25).
+ */
+export const PLAN_SHARES = ['all', 'picked'] as const;
+export type PlanShare = (typeof PLAN_SHARES)[number];
+
+export const PLAN_SHARE_LABEL: Record<PlanShare, string> = {
+  all: '전체 공개',
+  picked: '지정 공개',
+};
+
+/** 칩 낱말 — NULL(옛 기획)은 칩이 없다. 모르는 값은 값 그대로(비어 보이느니 낯설게 보이는 편이 낫다) */
+export const planShareLabel = (share: string | null | undefined): string | null =>
+  (share ? PLAN_SHARE_LABEL[share as PlanShare] ?? share : null);
+
+/** 보는 사람 — 담당인가 · 지정됐는가 · 기획 결재권자(대표 판정 `canCeoApprovePlan`)인가 */
+export interface PlanViewer {
+  isOwner: boolean;
+  isPicked: boolean;
+  canApprove: boolean;
+}
+
+/**
+ * 이 기획이 **보이는가** — 판정은 여기 한 곳이다 (N-72 · 컨설팅 `csCan` 과 같은 모양).
+ *
+ * §61 보드 · §62 기한 · §65 보고서 · §69 운영 배지 · §75 결재 흐름 — 다섯 읽기가 이 판정(또는 아래 SQL 조각)을 지난다.
+ * 칩만 세우고 보이는 사람이 그대로면 「지정 공개」가 거짓이 된다.
+ * 지정 공개 = 담당 · 지정된 사람 · 결재권자. 전체 공개와 옛 기획(NULL)은 모두에게 보인다.
+ */
+export function planCan(share: string | null | undefined, v: PlanViewer): boolean {
+  if (share !== 'picked') return true;
+  return v.isOwner || v.isPicked || v.canApprove;
+}
+
+/**
+ * `planCan` 의 SQL 조각 — 목록 SELECT 의 `WHERE` 에 붙인다 (`selfApprovalSqlGuard` 와 같은 규약: 자리표시만 받는다).
+ * @param a 기획 표 별칭 · @param viewer 보는 사람 id 의 자리표시(`$2`) · @param approver 결재권자인가의 자리표시(`$3`)
+ * 두 판정이 갈리면 목록과 보고서가 다른 답을 한다 — `test/ops-plan-share-db.spec.ts` 가 둘을 같은 표본으로 견준다.
+ */
+export function planCanSql(a: string, viewer: string, approver: string): string {
+  return `(${a}.share IS DISTINCT FROM 'picked' OR ${approver}::boolean OR ${a}.owner_id = ${viewer}::bigint`
+    + ` OR EXISTS (SELECT 1 FROM plan_pick pp WHERE pp.plan_id = ${a}.id AND pp.staff_id = ${viewer}::bigint))`;
 }

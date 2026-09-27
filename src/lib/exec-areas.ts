@@ -21,6 +21,7 @@
 import { CPL_OPEN_STAGES } from './complaint-words';
 import { INV_OPEN } from './rules';
 import { sqlWordList } from './sql';
+import { planCanSql } from './plan-words';
 
 /* ── 판정 조각 — 배지(건수)와 카드 타일이 **같은 조각**을 쓴다 (69-8 · N-19) ─────────────
  *
@@ -33,12 +34,35 @@ const col = (a: string, c: string): string => (a ? `${a}.${c}` : c);
 /** 아직 다 안 들어온 청구서 — 「못 받은 돈」의 집합. 완납·취소·초안은 빠진다 */
 export const invOpenWhere = (a = ''): string => `${col(a, 'state')} IN (${sqlWordList(INV_OPEN)})`;
 
-/** 그중 기준일에 납부 기한이 지난 것 — 회계 배지 */
+/**
+ * 청구서의 **지금 기한** — 분납 일정(`inv_installment` · N-79 채택 W11)이 있으면 「누적 입금이 못 채운 가장 이른
+ * 회차의 예정일」, 없으면 `due_on` 그대로. 다 채웠으면 NULL(볼 기한이 없다). 옛 청구서는 일정이 없어 전과 같다.
+ * 연체 판정 · 회계 머리 「기한 지남」 · 청구서 줄 · §53 카드가 이 한 조각을 쓴다 — 두 곳이 따로 세면 배지와 카드가 갈린다.
+ * `a` 는 inv 별칭 — 비우면 표 이름 `inv` 로 부른다(바깥이 `FROM inv` 일 때).
+ */
+export const invDueSql = (a = ''): string => {
+  const t = a || 'inv';
+  return `(CASE WHEN EXISTS (SELECT 1 FROM inv_installment ix WHERE ix.inv_id = ${t}.id)
+      THEN (SELECT c.due_on FROM (SELECT ix.seq, ix.due_on, sum(ix.amount) OVER (ORDER BY ix.seq) AS cum
+                                    FROM inv_installment ix WHERE ix.inv_id = ${t}.id) c
+             WHERE c.cum > ${t}.paid_amount ORDER BY c.seq LIMIT 1)
+      ELSE ${t}.due_on END)`;
+};
+
+/** 그중 기준일에 **지금 기한**(`invDueSql`)이 지난 것 — 회계 배지. 기한이 없으면(NULL) 세지 않는다 */
 export const invOverdueWhere = (a = '', d = '$1'): string =>
-  `${invOpenWhere(a)} AND ${col(a, 'due_on')} IS NOT NULL AND ${col(a, 'due_on')} < ${d}::date`;
+  `${invOpenWhere(a)} AND ${invDueSql(a)} < ${d}::date`;
 
 /** 대표 검토(review)를 기다리는 기획 — 초안은 아직 아무도 기다리지 않는다 */
 export const planWaitingWhere = (a = ''): string => `${col(a, 'stage')} = 'review'`;
+
+/**
+ * 보는 사람에게 **보이는** 기획 (W11 · N-72) — 지정 공개는 담당 · 지정된 사람 · 결재권자에게만 보인다.
+ * 판정은 `lib/plan-words` 의 `planCanSql` 한 곳이다 — §61 보드 · §62 기한 · §65 보고서와 같은 식이라 배지 · 타일 · 펼칠 줄의
+ * 기획 수가 운영 화면과 갈리지 않는다. 옛 기획(NULL)은 지금처럼 모두에게 보인다. `a` 는 plan 별칭(반드시 있어야 한다),
+ * `viewer` · `approver` 는 보는 사람 id · 결재권자인가의 파라미터 자리다.
+ */
+export const planVisibleWhere = (a: string, viewer: string, approver: string): string => planCanSql(a, viewer, approver);
 
 /**
  * 「진행 중 기획」 — 대표를 기다리지도(review) 않고 끝나지도(done) 않은 것 (§69 운영 타일).
@@ -80,6 +104,11 @@ export interface ExecAreaDef {
    * 수업은 기간 안의 회차를 보는 판정이라 현황판을 재사용한다.
    */
   sql: string | null;
+  /**
+   * `sql` 이 **보는 사람**을 받는가 (W11 · N-72) — 그러면 `$2` = 보는 사람 id · `$3` = 기획 결재권자인가.
+   * 지정 공개 기획은 보이는 사람에게만 센다(`planVisibleWhere`). 모르면 서비스가 닫힌 값(0 · false)을 넣는다.
+   */
+  viewer?: boolean;
 }
 
 export const EXEC_AREAS: readonly ExecAreaDef[] = [
@@ -96,8 +125,10 @@ export const EXEC_AREAS: readonly ExecAreaDef[] = [
     key: 'ops', label: '운영', review: '결재 대기 + 기한 지난 할 일', go: '/ops',
     // 기획은 대표 검토(review) 단계가 「결재 대기」다. 초안은 아직 아무도 기다리지 않는다
     // (drawer 가 초안을 대기함에 올려 배지를 부풀렸던 일이 실제로 있었다 — lib/approval 주석).
+    // 지정 공개 기획은 보이는 사람에게만 센다 — 운영 화면에서 안 보이는 기획이 배지로 새지 않게 (N-72)
+    viewer: true,
     sql: `SELECT (
-            (SELECT count(*) FROM plan WHERE ${planWaitingWhere()})
+            (SELECT count(*) FROM plan p WHERE ${planWaitingWhere('p')} AND ${planVisibleWhere('p', '$2', '$3')})
             + (SELECT count(*) FROM todo WHERE ${todoOverdueWhere()})
           )::text n`,
   },
@@ -409,7 +440,8 @@ export function execLessonItems(rows: readonly ExecLessonRow[]): ExecAreaItem[] 
       key: `lesson-${r.serId}-${r.date}`,
       title: `${r.date.slice(5)} ${r.startAt} ${r.subName ?? r.kindName ?? '수업'}`,
       sub: r.marks.filter((m) => !m.na && !m.done).map((m) => EXEC_LESSON_MARK_LABEL[m.key] ?? m.key).join(' · ') || null,
-      go: '/board',
+      // 그 날의 현황판(일별)을 곧장 연다 — 현황판이 `?date=` 를 읽는다 (7-3 ① · 목록 전체로 보내지 않는다)
+      go: `/board?date=${r.date}`,
     }));
 }
 

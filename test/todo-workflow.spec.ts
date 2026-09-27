@@ -46,7 +46,7 @@ d('§64 할 일 완료·기한 HTTP/DB 정합성 (S2-b)', () => {
       ($3,'S2타인','s2todo-other@t.kr','teacher',$5,true),
       ($4,'S2동명이인','s2todo-owner@t.kr','manager',$5,true)`, [...actors, hash]);
     for (const [actor, email] of [[CEO, 'ceo'], [TEACHER, 'teacher'], [OTHER, 'other'], [OWNER, 'owner']] as const) {
-      const res = await request(app.getHttpServer()).post('/auth/login').send({ email: `s2todo-${email}@t.kr`, password: 'todo-workflow-1234' }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: `s2todo-${email}@t.kr`, password: 'todo-workflow-1234' }).expect(201);
       tokens.set(actor, res.body.accessToken as string);
     }
   });

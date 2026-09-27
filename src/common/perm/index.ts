@@ -5,5 +5,6 @@
  */
 
 export * from './perm';
+export * from './perm-matrix';
 export * from './perm.decorator';
 export * from './perm.guard';
