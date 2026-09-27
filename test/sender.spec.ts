@@ -10,7 +10,12 @@
  * 여기서 증명하는 것은 **「보낸 척하지 않는다」** 하나다. 키가 없으면 `configured:false` 로
  * 답하고 시도조차 하지 않는다 — 로컬에서 성공으로 적히면 원장이 그 순간 거짓이 된다.
  */
-import { ConfigService } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
+import * as dotenv from 'dotenv';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { LiveSender } from '../src/modules/notify/live.sender';
 import * as nodemailer from 'nodemailer';
 import {
@@ -173,5 +178,42 @@ describe('문자 길이는 바이트로 잰다 · 제한 시간을 건다 (보�
   it('가린 메일 주소는 원장 칸(80자)을 넘지 않는다', () => {
     expect(maskEmail(`ab@${'d'.repeat(120)}.com`).length).toBe(80);
     expect(maskEmail('mom@example.com')).toBe('mo***@example.com');
+  });
+});
+
+/**
+ * 시험 프로세스는 실제 발송 키를 받지 않는다 (2026-09-27 · `test/setup-env.ts`).
+ * 대표 Mac 의 `.env.local` 에 SMTP · SENS 키가 있어 발송기를 바꿔 끼우지 않은 시험이 「발송 가능」인 채 돌았다(release 게이트 back 테스트 실패).
+ * 같은 모양의 파일을 만들어 dotenv · ConfigModule 이 읽어도 발송기가 설정 없음으로 남는지 본다 — setupFiles 가 빠지면 여기서 먼저 깨진다.
+ */
+describe('시험 프로세스는 .env.local 의 실제 발송 키를 받지 않는다 (2026-09-27)', () => {
+  it('SMTP · SENS 키가 든 env 파일을 dotenv · ConfigModule 이 읽어도 키는 빈 값이고 발송기는 설정 없음이다', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'taco-sender-env-'));
+    const file = join(dir, '.env.local');
+    // 여기서 setup-env 를 import 하지 않는다 — import 만으로 키가 비워져 setupFiles 가 빠져도 이 시험이 초록이 된다
+    const leaked: Record<string, string> = {
+      SMTP_HOST: 'smtp.example.com', SMTP_USER: 'mailer@example.com', SMTP_PASS: 'p',
+      SENS_SERVICE_ID: 'svc', SENS_ACCESS_KEY: 'k', SENS_SECRET_KEY: 's', SENS_FROM: '01000000000',
+    };
+    writeFileSync(file, Object.entries(leaked).map(([k, v]) => `${k}=${v}`).join('\n'));
+    const transportsBefore = jest.mocked(nodemailer.createTransport).mock.calls.length;
+    try {
+      dotenv.config({ path: file, quiet: true }); // src/data-source.ts · test/db.ts 와 같은 읽기 — 이미 있는 이름은 덮지 않는다
+      for (const key of Object.keys(leaked)) expect(process.env[key]).toBe('');
+
+      const mod = await Test.createTestingModule({
+        imports: [ConfigModule.forRoot({ envFilePath: [file] })],
+        providers: [LiveSender],
+      }).compile();
+      const sender = mod.get(LiveSender);
+      expect(sender.ready('email')).toBe(false);
+      expect(sender.ready('sms')).toBe(false);
+      await expect(sender.send({ channel: 'email', to: 'a@b.co', body: 'x' }))
+        .resolves.toMatchObject({ configured: false, ok: false });
+      expect(jest.mocked(nodemailer.createTransport).mock.calls.length).toBe(transportsBefore);
+      await mod.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

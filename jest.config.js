@@ -14,4 +14,6 @@ module.exports = {
   collectCoverageFrom: ['src/**/*.ts'],
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/'],
   testEnvironment: 'node',
+  // 시험 파일마다 import 전에 실제 발송 키(SMTP · SENS)를 비운다 — `.env.local` 의 키가 시험에 들어오지 않게(2026-09-27)
+  setupFiles: ['<rootDir>/test/setup-env.ts'],
 };
