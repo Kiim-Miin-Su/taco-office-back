@@ -347,6 +347,16 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     expect(path.post?.responses?.['409']).toBeDefined();
   });
 
+  it('A-08 실패 DTO는 재연락일을 선택값으로 공개하고 접촉 원장의 날짜 계약을 그대로 쓴다', () => {
+    const fail = openApi.components?.schemas?.LeadFailDto;
+    const touch = openApi.components?.schemas?.LeadTouchWriteDto;
+    if (!fail || '$ref' in fail || !touch || '$ref' in touch) throw new Error('상담 실패/접촉 DTO schema 누락');
+    expect(Object.keys(fail.properties ?? {})).toEqual(['reason', 'reasonKind', 'nextOn']);
+    expect(fail.required ?? []).not.toContain('nextOn');
+    expect(fail.properties?.nextOn).toMatchObject({ type: 'string', format: 'date', nullable: true });
+    expect(touch.properties?.nextOn).toMatchObject({ type: 'string', format: 'date', nullable: true });
+  });
+
   it('「+ 신규 문의」는 POST /ops/leads 에 LeadCreateDto(단계 없음 · 유입 경로 필수), 단계 이동은 PATCH …/stage 에 LeadStageMoveDto 하나다 (C90 · N-45 · N-44)', () => {
     const create = openApi.paths['/ops/leads'];
     expect(Object.keys(create)).toEqual(['post']);

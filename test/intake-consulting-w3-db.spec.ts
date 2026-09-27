@@ -153,25 +153,39 @@ d('1:1 대조 wave 3 — 상담 §23·§24 · 컨설팅 §27·§30·§31 서버 
     expect((await api('post', `/ops/leads/${made.id}/fail`).send({ reasonKind: 'money' }).expect(400)).body.code).toBe('BAD_REQUEST');
     expect((await q(`SELECT stage FROM lead WHERE id = $1`, [made.id]))[0]).toEqual({ stage: 'first' });
 
+    // 접촉 기록과 같은 실제 달력 검증 — 없는 날짜는 쓰기 전에 400이다.
+    await api('post', `/ops/leads/${made.id}/fail`)
+      .send({ reason: '월 수업료가 예산을 넘음', reasonKind: 'cost', nextOn: '2026-02-30' }).expect(400);
+    expect((await q(`SELECT stage, fail_from, reason_kind FROM lead WHERE id = $1`, [made.id]))[0])
+      .toEqual({ stage: 'first', fail_from: null, reason_kind: null });
+    expect(await q(`SELECT stage FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [made.id]))
+      .toEqual([{ stage: 'first' }]);
+    expect(await q(`SELECT id FROM lead_touch WHERE lead_id = $1`, [made.id])).toEqual([]);
+
     // W11 · N-87 — 중단 지점은 묻지 않는다(실패 당시 단계에서 판정). 옛 화면이 stopAt 을 보내도 DTO 에 칸이 없어 쓰이지 않는다
     // (이 앱은 whitelist 로 걷고 · 제품 파이프는 forbidNonWhitelisted 라 400 이다)
-    const failed = (await api('post', `/ops/leads/${made.id}/fail`).send({ stopAt: 'after_first', reason: '월 수업료가 예산을 넘음', reasonKind: 'cost' }).expect(201)).body;
+    const recontactOn = plus(TODAY, 28);
+    const failed = (await api('post', `/ops/leads/${made.id}/fail`).send({
+      stopAt: 'after_first', reason: '월 수업료가 예산을 넘음', reasonKind: 'cost', nextOn: recontactOn,
+    }).expect(201)).body;
     expect(failed).toMatchObject({ stopAt: null, failFrom: 'first', failStopKey: 'first', failStopLabel: '1차 상담 중단' });
     expect(failed).toMatchObject({
       stage: 'failed', reasonKind: 'cost', reasonKindLabel: '비용', reason: '월 수업료가 예산을 넘음', failedAt: TODAY,
-      // 실패 뒤 접촉이 없다 — 대기. 첫 접촉은 실패 전에 적은 것이다(유입 한 줄이 없어서 비어 있다)
-      recontact: { done: false, label: '재연락 대기', tone: 'warning', on: null, dueLabel: null },
+      // 실패와 같은 transaction_timestamp 로 생긴 예약 메모는 실제 재연락 완료가 아니라 대기다.
+      recontact: { done: false, label: '재연락 대기', tone: 'warning', on: recontactOn, dueLabel: 'D-28' },
       stageDue: null,
     });
     const [{ reason_kind }] = await q<{ reason_kind: string }>(`SELECT reason_kind FROM lead WHERE id = $1`, [made.id]);
     expect(reason_kind).toBe('cost');
+    expect(await q(`SELECT kind, note, to_char(next_on,'YYYY-MM-DD') AS next_on, by_id FROM lead_touch WHERE lead_id = $1 ORDER BY id`, [made.id]))
+      .toEqual([{ kind: 'memo', note: '등록 실패 후 재연락 예정', next_on: recontactOn, by_id: String(CEO) }]);
     // 표가 마지막으로 막는다 — 다섯 밖의 낱말은 CHECK 가 거절한다
     await expect(q(`UPDATE lead SET reason_kind = 'money' WHERE id = $1`, [made.id])).rejects.toMatchObject({ driverError: { code: '23514' } });
 
     // 실패 뒤 접촉(다음 연락 28일 뒤) → 완료 · 날짜와 「D-28」. 같은 초에 겹치지 않게 실패 줄을 1분 당긴다
     await q(`UPDATE lead_stage_log SET at = at - interval '1 minute' WHERE lead_id = $1 AND stage = 'failed'`, [made.id]);
-    const touched = (await api('post', `/ops/leads/${made.id}/touches`).send({ kind: 'call', note: '중간고사 끝나고 다시', nextOn: plus(TODAY, 28) }).expect(201)).body;
-    expect(touched.recontact).toEqual({ done: true, label: '재연락 완료', tone: 'info', on: plus(TODAY, 28), dueLabel: 'D-28' });
+    const touched = (await api('post', `/ops/leads/${made.id}/touches`).send({ kind: 'call', note: '중간고사 끝나고 다시', nextOn: recontactOn }).expect(201)).body;
+    expect(touched.recontact).toEqual({ done: true, label: '재연락 완료', tone: 'info', on: recontactOn, dueLabel: 'D-28' });
 
     // 머리 막대 — 다섯은 0 이어도 서고, 분류 없는 옛 실패 건은 「분류 안 됨」 한 줄로 선다
     const { head } = await leadOf(made.id);

@@ -67,7 +67,7 @@ import {
 import type {
   IntakeAlertDto, IntakeFailReasonDto, IntakeHeadDto,
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
-  LeadCreateDto, LeadDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
+  LeadCreateDto, LeadDto, LeadFailDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
   PlanStageMoveDto, PlanTaskCreateDto, PlanTaskDto,
@@ -1398,19 +1398,36 @@ export class OpsService {
     return this.leadOne(id);
   }
 
-  /** 접촉 기록 (N-44) — append-only. 끝난 건에도 적을 수 있다(등록 뒤 해피콜 · 실패 뒤 재연락이 사후 관리다) */
-  async addLeadTouch(viewerId: number, id: number, dto: LeadTouchWriteDto): Promise<LeadDto> {
+  /** 접촉 원장의 공용 쓰기 — 독립 접촉과 실패+재연락이 같은 kind/note/nextOn 계약을 쓴다. */
+  private static assertLeadTouch(dto: LeadTouchWriteDto): string {
     const note = dto.note.trim();
     if (!note) throw new ConflictException({ code: 'LEAD_TOUCH_NOTE_REQUIRED', message: '한 줄을 적어 주세요' });
     if (!(LEAD_TOUCH_KINDS as readonly string[]).includes(dto.kind)) {
       throw new ConflictException({ code: 'LEAD_TOUCH_KIND_INVALID', message: '접촉 방법은 전화 · 카카오톡 · 문자 · 방문 · 상담 예약 · 예약 불참 · 메모 중 하나입니다' });
     }
-    const [row] = await this.q(`SELECT id FROM lead WHERE id = $1`, [id]);
-    if (!row) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
-    await this.q(
+    return note;
+  }
+
+  private async insertLeadTouch(
+    em: EntityManager,
+    viewerId: number,
+    id: number,
+    dto: LeadTouchWriteDto,
+  ): Promise<void> {
+    const note = OpsService.assertLeadTouch(dto);
+    await em.query(
       `INSERT INTO lead_touch (lead_id, kind, note, next_on, by_id) VALUES ($1, $2, $3, $4::date, $5)`,
       [id, dto.kind, note, dto.nextOn ?? null, viewerId],
     );
+  }
+
+  /** 접촉 기록 (N-44) — append-only. 끝난 건에도 적을 수 있다(등록 뒤 해피콜 · 실패 뒤 재연락이 사후 관리다) */
+  async addLeadTouch(viewerId: number, id: number, dto: LeadTouchWriteDto): Promise<LeadDto> {
+    // 기존 오류 순서도 계약이다 — 입력 오류를 먼저 말하고, 유효한 입력일 때만 상담 건 존재를 본다.
+    OpsService.assertLeadTouch(dto);
+    const [row] = await this.q(`SELECT id FROM lead WHERE id = $1`, [id]);
+    if (!row) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
+    await this.insertLeadTouch(this.lead.manager, viewerId, id, dto);
     return this.leadOne(id);
   }
 
@@ -1424,7 +1441,7 @@ export class OpsService {
    * PB-12-1 — 건을 **잠그고 읽어** 판정하고 **그 단계일 때만** 쓴다. 잠그지 않고 읽으면 그사이 커밋된 등록 확정
    * (`EnrollService.enroll` 도 이 행을 잠근다)을 풀린 뒤의 UPDATE 가 실패로 덮는다(test/lead-fail-race-db.spec.ts).
    */
-  async failLead(byId: number, id: number, dto: { reason?: string; reasonKind?: string }): Promise<LeadDto> {
+  async failLead(byId: number, id: number, dto: LeadFailDto): Promise<LeadDto> {
     // 사유 분류는 DTO 가 막고 표의 CHECK 가 마지막으로 막는다 — 서비스도 한 번 더 본다(직접 호출 경로 · 24-05)
     if (dto.reasonKind !== undefined && !(LEAD_REASON_KINDS as readonly string[]).includes(dto.reasonKind)) {
       throw new ConflictException({ code: 'LEAD_REASON_KIND_INVALID', message: '사유 분류는 연락 두절 · 타 학원 등록 · 일정 안 맞음 · 비용 · 시기 안 맞음 중 하나입니다' });
@@ -1441,6 +1458,11 @@ export class OpsService {
         [id, stage, dto.reason?.trim() || null, dto.reasonKind ?? null]));
       if (!written.length) throw new ConflictException({ code: 'LEAD_STAGE_CHANGED', message: '그사이 단계가 바뀌었습니다 — 다시 불러와 주세요' });
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'failed', $2)`, [id, byId]);
+      if (dto.nextOn != null) {
+        await this.insertLeadTouch(em, byId, id, {
+          kind: 'memo', note: '등록 실패 후 재연락 예정', nextOn: dto.nextOn,
+        });
+      }
     });
     return this.leadOne(id);
   }

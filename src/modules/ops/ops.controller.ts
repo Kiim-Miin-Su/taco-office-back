@@ -125,7 +125,8 @@ export class OpsController {
   @ApiOperation({
     summary: '상담 실패 전이 — 이전 단계를 명시값으로 보존 (v2 §24 · N-25 §4-17 · C35 · W11 N-87)',
     description: 'fail_from 은 전이 순간의 실제 단계를 서버가 기록한다 — 추정이 아니라 사실이다. 그 단계가 곧 §24 중단 지점이다(중단 지점을 묻지 않는다 · 옛 stop_at 은 건드리지 않는다). '
-      + '상담 건을 잠그고 단계를 다시 본다 — 등록 확정과 겹치면 뒤에 온 쪽이 409 다(등록된 건이 실패로 덮이지 않는다). 도달 기록(append-only)에 failed 를 남긴다.',
+      + '상담 건을 잠그고 단계를 다시 본다 — 등록 확정과 겹치면 뒤에 온 쪽이 409 다(등록된 건이 실패로 덮이지 않는다). 도달 기록(append-only)에 failed 를 남긴다. '
+      + 'nextOn 이 있으면 같은 트랜잭션에 메모 접촉 한 줄을 남겨 실패만 저장되는 부분 성공을 막는다(A-08).',
   })
   @ApiCreatedResponse({ type: LeadDto })
   @ApiConflictResponse({ description: 'code ALREADY_FAILED | ENROLLED_LOCKED | LEAD_STAGE_CHANGED' })

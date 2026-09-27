@@ -218,8 +218,8 @@ export class LeadTouchWriteDto {
   @IsString() @MinLength(1, { message: '한 줄을 적어 주세요' }) @MaxLength(500)
   note!: string;
 
-  @ApiPropertyOptional({ ...S, description: '다음은 언제 YYYY-MM-DD — 상담 예약이면 상담 날짜' })
-  @IsOptional() @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '날짜는 YYYY-MM-DD 입니다' })
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '다음은 언제 YYYY-MM-DD — 상담 예약이면 상담 날짜' })
+  @IsOptional() @IsCalendarDate()
   nextOn?: string | null;
 }
 
@@ -237,6 +237,10 @@ export class LeadFailDto {
   @IsOptional()
   @IsIn([...LEAD_REASON_KINDS], { message: '사유 분류는 연락 두절 · 타 학원 등록 · 일정 안 맞음 · 비용 · 시기 안 맞음 중 하나입니다' })
   reasonKind?: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '재연락 예정일 YYYY-MM-DD — 있으면 실패 전이와 같은 트랜잭션에 접촉 원장 한 줄을 남긴다 (A-08)' })
+  @IsOptional() @IsCalendarDate()
+  nextOn?: string | null;
 }
 
 export class LeadResumeDto {

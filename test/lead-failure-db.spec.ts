@@ -52,6 +52,40 @@ d('§24 상담 실패 이력 — 명시값·도달 기록·미분류 (N-25 채�
     expect(Number(logs[0].by_id)).toBe(51);
   });
 
+  it('A-08 실패와 재연락일은 같은 트랜잭션에서 실패 단계·도달 기록·접촉 원장을 함께 남긴다', async () => {
+    const nextOn = '2026-10-10';
+    const input = { reason: '월 수업료가 예산을 넘음', reasonKind: 'cost', nextOn };
+
+    const out = await svc().failLead(51, id, input);
+
+    expect(out).toMatchObject({
+      stage: 'failed', reasonKind: 'cost',
+      recontact: { done: false, label: '재연락 대기', on: nextOn },
+    });
+    const touches = await q.query(
+      `SELECT kind, note, to_char(next_on, 'YYYY-MM-DD') AS next_on, by_id
+         FROM lead_touch WHERE lead_id = $1 ORDER BY id`,
+      [id],
+    );
+    expect(touches).toEqual([{
+      kind: 'memo', note: '등록 실패 후 재연락 예정', next_on: nextOn, by_id: '51',
+    }]);
+    expect((await q.query(`SELECT stage FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [id])))
+      .toEqual([{ stage: 'failed' }]);
+  });
+
+  it('A-08 재연락 원장 쓰기가 실패하면 실패 단계와 도달 기록도 함께 되돌아간다', async () => {
+    // LeadFailDto와 같은 YYYY-MM-DD 모양이지만 PostgreSQL date로는 존재하지 않아 lead_touch INSERT에서 실패한다.
+    const input = { reason: '비용', reasonKind: 'cost', nextOn: '2026-02-30' };
+
+    await expect(svc().failLead(51, id, input)).rejects.toBeDefined();
+
+    expect(await q.query(`SELECT stage, fail_from, reason, reason_kind FROM lead WHERE id = $1`, [id]))
+      .toEqual([{ stage: 'second', fail_from: null, reason: null, reason_kind: null }]);
+    expect(await q.query(`SELECT stage FROM lead_stage_log WHERE lead_id = $1`, [id])).toEqual([]);
+    expect(await q.query(`SELECT id FROM lead_touch WHERE lead_id = $1`, [id])).toEqual([]);
+  });
+
   it('등록 건은 실패로 못 보내고, 이미 실패면 ALREADY_FAILED', async () => {
     await q.query(`UPDATE lead SET stage = 'enrolled' WHERE id = $1`, [id]);
     await expect(svc().failLead(51, id, {}))
