@@ -12,9 +12,12 @@ import {
   ATTENDANCE_CANCEL_REASON_LABEL, REPORT_UNWRITTEN_CANDIDATE_DB, payoutConfirmed, type AttendanceCancelReason,
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
-import { payoutSheet } from '../../lib/payout-sheet';
-import { kstAt, serStuOn } from '../../lib/sql';
-import { REQ_TYPE_LABEL, labelOf, reqAsked } from '../../lib/approval';
+import {
+  BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL, KINDER_MARKER_EXISTS, KINDER_NOT_APPLIED,
+  loadBonusRules, payoutSettleLabel, payoutSheet,
+} from '../../lib/payout-sheet';
+import { effectiveModeOf, kstAt, serStuOn } from '../../lib/sql';
+import { REQ_TYPE_LABEL, labelOf, reqAsked, reqAskedLine } from '../../lib/approval';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory } from '../../lib/noti';
 import { wageRateAt } from '../../lib/wage';
 import type {
@@ -23,9 +26,11 @@ import type {
   TeacherHistoryDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
-  TeacherNotiDto, TeacherShellDto,
+  TeacherNotiDto, TeacherShellDto, TeacherGpaServiceDto, TeacherGpaOccurrenceDto, TeacherGpaRequestOptionsDto,
 } from './teacher.dto';
 import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS } from '../../lib/teacher-policy';
+import { audit } from '../../lib/audit';
+import { bookLevelShown } from '../../lib/book';
 
 /** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
 const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
@@ -138,7 +143,8 @@ export class TeacherService {
       `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, o.canceled,
               (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
               (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
-              s.kind_key, s.sub_key, s.mode, s.title,
+              -- 회차의 실제 방식 — 그 회차만 바꾼 예외(exc.mode)가 이긴다 (N-56 · lib/sql 한 조각)
+              s.kind_key, s.sub_key, ${effectiveModeOf('ex', 's')} AS mode, s.title,
               rm.name AS room_name, rm.branch AS room_branch, z.label AS zacc_label,
               COALESCE(r.state::text,'none') AS rep_state,
               (SELECT e.cancel_kind FROM exc e WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date) AS cancel_kind,
@@ -150,6 +156,7 @@ export class TeacherService {
          LEFT JOIN room rm ON rm.id = COALESCE(o.room_id, s.room_id)
          LEFT JOIN zacc z  ON z.id = o.zacc_id
          LEFT JOIN rep r   ON r.ser_id = o.ser_id AND r.on_date = o.on_date
+         LEFT JOIN exc ex  ON ex.ser_id = o.ser_id AND ex.on_date = o.on_date
         WHERE ${TEACHER_OF} = $1
           AND o.on_date BETWEEN $2::date AND $2::date + 7
         ORDER BY o.on_date, start_min`,
@@ -204,7 +211,8 @@ export class TeacherService {
                   AND COALESCE(r.state::text,'none') = ANY($2)) AS unwritten_reports,
               (SELECT COUNT(*)::int FROM rep WHERE teacher_id = $1 AND state = 'wait') AS waiting_approvals,
               (SELECT COUNT(*)::int FROM chreq WHERE by_id = $1 AND state = 'pending') AS open_change_requests,
-              (SELECT COUNT(*)::int FROM req   WHERE staff_id = $1 AND state = 'pending') AS open_staff_requests`,
+              (SELECT COUNT(*)::int FROM req   WHERE staff_id = $1 AND state = 'pending') AS open_staff_requests,
+              (SELECT COUNT(*)::int FROM req   WHERE staff_id = $1 AND req_type = 'book_change' AND state = 'pending') AS open_book_changes`,
       [teacherId, candidates],
     );
 
@@ -239,6 +247,8 @@ export class TeacherService {
         waitingApprovals: Number(todo?.waiting_approvals ?? 0),
         openChangeRequests: Number(todo?.open_change_requests ?? 0),
         openStaffRequests: Number(todo?.open_staff_requests ?? 0),
+        // 강사 덱 §8 「오늘 할 일」 넷째 줄 「교재 변경 요청 중」 — 서버가 센다 (N-99)
+        openBookChanges: Number(todo?.open_book_changes ?? 0),
       },
       settings: await this.settings(teacherId, today, me),
     };
@@ -310,6 +320,8 @@ export class TeacherService {
     if (!me) throw new NotFoundException('구성원을 찾을 수 없습니다');
 
     let payload: Record<string, unknown>;
+    /** 교재 변경 · GPA 회차 요청은 학생을 **칸으로** 남긴다(§38 가 req.student_id 를 먼저 읽는다 · 이름 스냅숏은 옛 줄의 대체일 뿐) */
+    let studentId: number | null = null;
     if (dto.reqType === 'wage_change') {
       if (dto.rate === undefined) {
         throw new BadRequestException({ code: 'RATE_REQUIRED', message: '바라는 시급을 넣어 주세요' });
@@ -332,6 +344,14 @@ export class TeacherService {
         [teacherId, today],
       );
       payload = { from: w?.rate === undefined ? null : Number(w.rate), to: dto.rate };
+    } else if (dto.reqType === 'book_change') {
+      const book = await this.bookChangePayload(teacherId, dto);
+      studentId = book.studentId;
+      payload = book.payload;
+    } else if (dto.reqType === 'gpa_request') {
+      const gpa = await this.gpaRequestPayload(teacherId, dto);
+      studentId = gpa.studentId;
+      payload = gpa.payload;
     } else {
       if (!dto.timezone) {
         throw new BadRequestException({ code: 'TZ_REQUIRED', message: '바라는 시간대를 골라 주세요' });
@@ -352,24 +372,168 @@ export class TeacherService {
       }
       payload = { from: String(me.tz), tz: dto.timezone };
     }
-    if (dto.reason?.trim()) payload.reason = dto.reason.trim();
+    if (dto.reason?.trim() && dto.reqType !== 'book_change') payload.reason = dto.reason.trim();
 
     // 상태는 적지 않는다 — 표의 기본값('pending')이 낱말의 출처다 (migration 1756700000000)
     const inserted = await this.q(
-      `INSERT INTO req (staff_id, req_type, payload) VALUES ($1, $2, $3::jsonb)
+      `INSERT INTO req (staff_id, req_type, payload, student_id) VALUES ($1, $2, $3::jsonb, $4)
        RETURNING id, req_type, payload, state, reject_reason,
                  to_char(created_at AT TIME ZONE '${KST}','YYYY-MM-DD') AS created_on`,
-      [teacherId, dto.reqType, JSON.stringify(payload)],
+      [teacherId, dto.reqType, JSON.stringify(payload), studentId],
     );
     const r = inserted[0];
     const p = (r.payload ?? {}) as Record<string, unknown>;
     return {
       id: Number(r.id), reqType: String(r.req_type),
       label: labelOf(REQ_TYPE_LABEL, String(r.req_type)),
-      asked: reqAsked(dto.reqType, p).to,
+      // 시급 · 시간대는 「바라는 것」, 교재 변경은 지금 교재, GPA 회차는 그 회차의 날짜 · 시각 — 낱말은 lib/approval 한 곳
+      asked: dto.reqType === 'wage_change' || dto.reqType === 'tz_change' ? reqAsked(dto.reqType, p).to : reqAskedLine(dto.reqType, p),
       state: String(r.state), createdOn: String(r.created_on),
       rejectReason: null,
     };
+  }
+
+  /** 가르치는 학생인가 — 수업 안내 · 진단과 **같은 판정**(`TEACHER_OF`). 없는 학생과 남의 학생은 같은 404 */
+  private async assertMyStudent(teacherId: number, studentId: number): Promise<void> {
+    const [mine] = await this.q(
+      `SELECT 1 AS ok
+         FROM ser_occ o JOIN ser s ON s.id = o.ser_id JOIN ser_stu ss ON ss.ser_id = o.ser_id
+        WHERE ss.student_id = $2 AND ${TEACHER_OF} = $1
+        LIMIT 1`,
+      [teacherId, studentId],
+    );
+    if (!mine) throw new NotFoundException('내 담당 학생이 아닙니다');
+  }
+
+  /**
+   * 교재 변경 요청(N-99) — 수업 안내의 교재 행 「변경 요청」. **새 교재를 정하지 않는다**(배부 변경은 관리자가 §38 에서 · 자동 배부 없음).
+   * 학생 · 교재 · 사유(필수). 그 학생의 **사용 중인** 교재여야 하고 같은 교재에 열린 요청이 있으면 409 REQ_PENDING.
+   * `message` 칸에 사유를 둔다 — §38 강사 요청 칩과 §14 사유 줄이 이미 그 칸을 읽는다(옛 줄과 같은 칸 · 두 벌을 만들지 않는다).
+   */
+  private async bookChangePayload(
+    teacherId: number, dto: TeacherSettingReqCreateDto,
+  ): Promise<{ studentId: number; payload: Record<string, unknown> }> {
+    if (!dto.studentId || !dto.issueId) {
+      throw new BadRequestException({ code: 'BOOK_REQUIRED', message: '어느 학생의 어느 교재인지 골라 주세요' });
+    }
+    const reason = dto.reason?.trim() ?? '';
+    if (!reason) throw new BadRequestException({ code: 'REASON_REQUIRED', message: '바꿔 달라는 까닭을 적어 주세요' });
+    await this.assertMyStudent(teacherId, dto.studentId);
+    const [issue] = await this.q(
+      `SELECT i.id, i.student_id, i.lib_id, i.state, l.title, sb.name AS subject_name, st.name AS student_name
+         FROM issue i JOIN lib l ON l.id = i.lib_id
+         JOIN stu st ON st.id = i.student_id
+         LEFT JOIN sub sb ON sb.key = l.sub_key
+        WHERE i.id = $1`,
+      [dto.issueId],
+    );
+    // 다른 학생의 배부는 없는 것과 같은 말로 — 누구에게 무엇이 배부됐는지 흘리지 않는다
+    if (!issue || Number(issue.student_id) !== dto.studentId) throw new NotFoundException('그 학생의 교재를 찾을 수 없습니다');
+    // 「사용 중」(ok) 교재만 — 반환했거나 아직 배부 전(wait · auto)이면 바꿀 교재가 손에 없다(원문 교재 행의 칩 「사용 중」)
+    if (String(issue.state) !== 'ok') {
+      throw new ConflictException({ code: 'BOOK_NOT_IN_USE', message: '쓰고 있는 교재만 바꿔 달라고 할 수 있습니다 — 반환했거나 아직 배부 전입니다' });
+    }
+    const [open] = await this.q(
+      `SELECT id FROM req WHERE staff_id = $1 AND req_type = 'book_change' AND state = 'pending'
+          AND (payload->>'issueId') = $2::text LIMIT 1`,
+      [teacherId, String(dto.issueId)],
+    );
+    if (open) throw new ConflictException({ code: 'REQ_PENDING', message: '이 교재에 올린 변경 요청이 처리 중입니다' });
+    return {
+      studentId: dto.studentId,
+      payload: {
+        issueId: dto.issueId, libId: Number(issue.lib_id), bookTitle: String(issue.title),
+        subjectName: (issue.subject_name as string | null) ?? null, studentName: String(issue.student_name), message: reason,
+      },
+    };
+  }
+
+  /**
+   * GPA 회차 요청(N-99) — 강사 캘린더의 GPA 회차 → 학생 · 서비스 · 시각(그 회차). 승인하면 그 내용으로 GPA 기록 한 줄(§14).
+   * 회차는 **내 GPA 수업**이고 휴강이 아니어야 한다 · 학생은 그 회차 명단 · 서비스는 규정표 · 날짜를 품는 **열린** 사이클이 있어야 한다.
+   * 시각은 화면이 보낸 값이 아니라 회차가 그날 놓인 자리(`ser_occ.span`)에서 읽는다 — 옮긴 회차도 그대로 맞는다.
+   */
+  private async gpaRequestPayload(
+    teacherId: number, dto: TeacherSettingReqCreateDto,
+  ): Promise<{ studentId: number; payload: Record<string, unknown> }> {
+    if (!dto.serId || !dto.onDate || !dto.studentId || !dto.svcKey) {
+      throw new BadRequestException({ code: 'GPA_REQUEST_REQUIRED', message: '회차 · 학생 · 서비스를 골라 주세요' });
+    }
+    const [occ] = await this.q(
+      `SELECT o.ser_id, o.canceled, s.kind_key,
+              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
+              (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min
+         FROM ser_occ o JOIN ser s ON s.id = o.ser_id
+        WHERE o.ser_id = $2 AND o.on_date = $3::date AND ${TEACHER_OF} = $1`,
+      [teacherId, dto.serId, dto.onDate],
+    );
+    if (!occ) throw new NotFoundException('내 수업의 그 회차를 찾을 수 없습니다');
+    if (String(occ.kind_key) !== 'gpa') {
+      throw new ConflictException({ code: 'GPA_SER_NOT_GPA', message: 'GPA 수업의 회차만 요청할 수 있습니다' });
+    }
+    if (occ.canceled === true) throw new ConflictException({ code: 'OCC_CANCELED', message: '휴강한 회차입니다' });
+    const [onRoster] = await this.q(
+      `SELECT st.name FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
+        WHERE ss.ser_id = $1 AND ss.student_id = $2 AND ${serStuOn('ss', '$3::date')}`,
+      [dto.serId, dto.studentId, dto.onDate],
+    );
+    if (!onRoster) throw new NotFoundException('그 회차 명단에 없는 학생입니다');
+    const [svc] = await this.q(`SELECT key, name FROM gpasvc WHERE key = $1`, [dto.svcKey]);
+    if (!svc) throw new NotFoundException('서비스 규정을 찾을 수 없습니다');
+    const [cycle] = await this.q(
+      `SELECT id FROM gpa_cycle WHERE from_date <= $1::date AND to_date >= $1::date AND NOT closed LIMIT 1`, [dto.onDate],
+    );
+    if (!cycle) {
+      throw new ConflictException({ code: 'GPA_CYCLE_NONE', message: '그 날짜를 품는 열린 GPA 사이클이 없습니다 — 관리자에게 알려 주세요' });
+    }
+    const [open] = await this.q(
+      `SELECT id FROM req WHERE staff_id = $1 AND req_type = 'gpa_request' AND state = 'pending'
+          AND (payload->>'serId') = $2::text AND payload->>'onDate' = $3 AND student_id = $4 AND payload->>'svcKey' = $5 LIMIT 1`,
+      [teacherId, String(dto.serId), dto.onDate, dto.studentId, dto.svcKey],
+    );
+    if (open) throw new ConflictException({ code: 'REQ_PENDING', message: '같은 회차 · 학생 · 서비스로 올린 요청이 처리 중입니다' });
+    const startMin = Number(occ.start_min);
+    return {
+      studentId: dto.studentId,
+      payload: {
+        serId: dto.serId, onDate: dto.onDate, startMin, endMin: startMin + Number(occ.dur_min),
+        svcKey: String(svc.key), svcName: String(svc.name), studentName: String(onRoster.name),
+      },
+    };
+  }
+
+  /**
+   * 「GPA 회차 요청」 창 한 벌(N-99) — 서비스 규정표 그대로 + 고를 수 있는 내 GPA 회차.
+   * 회차는 `gpaRequestPayload` 가 받는 것과 **같은 판정**으로 고른다: 내 수업(`TEACHER_OF`) · 종류 gpa · 휴강 아님 ·
+   * 날짜를 품는 열린 사이클이 있음. 명단은 그날 명단(`serStuOn`)이다. 화면은 이 목록을 거르지 않고 그린다.
+   */
+  async gpaRequestOptions(teacherId: number): Promise<TeacherGpaRequestOptionsDto> {
+    const services = (await this.q(`SELECT key, name, point FROM gpasvc ORDER BY sort NULLS LAST, key`))
+      .map((r): TeacherGpaServiceDto => ({ key: String(r.key), name: String(r.name), point: Number(r.point) }));
+    const occurrences = (await this.q(
+      `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
+              (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
+              s.title, s.sub_key, s.kind_key,
+              COALESCE((SELECT json_agg(json_build_object('id', st.id, 'name', st.name) ORDER BY st.name)
+                          FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
+                         WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}), '[]'::json) AS students
+         FROM ser_occ o
+         JOIN ser s ON s.id = o.ser_id
+        WHERE ${TEACHER_OF} = $1 AND s.kind_key = 'gpa' AND NOT o.canceled
+          AND EXISTS (SELECT 1 FROM gpa_cycle c WHERE c.from_date <= o.on_date AND c.to_date >= o.on_date AND NOT c.closed)
+        ORDER BY o.on_date, start_min`,
+      [teacherId],
+    )).map((r): TeacherGpaOccurrenceDto => {
+      const startMin = Number(r.start_min);
+      return {
+        serId: Number(r.ser_id), onDate: String(r.on_date), startMin, endMin: startMin + Number(r.dur_min),
+        title: (r.title as string | null) ?? null, subKey: (r.sub_key as string | null) ?? null, kindKey: String(r.kind_key),
+        students: ((r.students as Array<{ id: number | string; name: string }> | null) ?? [])
+          .map((st) => ({ id: Number(st.id), name: String(st.name) })),
+      };
+    });
+    return { services, occurrences };
   }
 
   /**
@@ -377,8 +541,9 @@ export class TeacherService {
    *
    * 정산 규칙은 전부 lib/rules 정본을 소비한다: 인정 = 제출분(D-R7 — 승인 무관),
    * 차감 = 지각뿐(D-R32 — 최초 제출 기준), 원천징수 = 3%·10% 각각 절사(D-15).
-   * Kinder·그룹·진단 «가산»은 덱 어휘일 뿐 결정·저장처가 없어 **배선하지 않는다** —
-   * 단일 시급 × 그 수업일 시급(D8 이력) 정수 절사만 계산한다 (teacherC22 원장 경계).
+   * 가산(N-93 · W11 M2)은 대표의 정리 · 기준 탭 「가산 규칙」 줄을 **시트와 같은 함수**가 더한다 — Kinder 는 표시가 없어 0.
+   * 확정된 달은 지급 확정의 근거 줄(payout_line)을 그대로 읽는다(N-36 ①) · 확정 뒤에 쓴 회차는 「확정된 달 — 다음 달 보정」(N-51).
+   * 강사 본인의 정산은 시급 비공개(N-94)와 상관없이 늘 본인에게 보인다.
    */
   async history(teacherId: number, month?: string): Promise<TeacherHistoryDto> {
     const today = todayKst();
@@ -410,23 +575,54 @@ export class TeacherService {
       [teacherId, ym],
     );
 
+    // 확정 · 보정 안내 한 문장 — 서버가 만든다(D-R18 · N-51 「확정된 달 — 다음 달 보정」)
+    const confirmedMonth = po ? payoutConfirmed(po.confirmed_by as string | null) : false;
+    const noteParts: string[] = [];
+    if (confirmedMonth && agg.lateCount > 0) {
+      noteParts.push(`이 달은 확정됐습니다 — 확정 뒤에 쓴 리포트 ${agg.lateCount}건은 확정된 달을 바꾸지 않고 다음 달 정산에 보정으로 들어갑니다`);
+    }
+    if (agg.correctionCount > 0) {
+      noteParts.push(`앞선 확정 달의 회차 ${agg.correctionCount}건이 이 달 정산에 보정으로 들어${confirmedMonth ? '갔' : '옵'}니다`);
+    }
+    const extra = {
+      bonus: agg.bonus, correctionCount: agg.correctionCount, lateCount: agg.lateCount,
+      note: noteParts.length ? noteParts.join(' · ') : null,
+    };
     const settlement = po
       ? {
-          yearMonth: ym, confirmed: payoutConfirmed(po.confirmed_by as string | null), saved: true,
+          yearMonth: ym, confirmed: confirmedMonth, saved: true,
           writtenMinutes: Math.round(Number(po.hours) * 60),
           gross: Number(po.gross), lateCut: Number(po.late_rep_cut),
           incomeTax: Number(po.income_tax), localTax: Number(po.local_tax), net: Number(po.net),
           unwrittenCount: agg.unwrittenCount, unwrittenMinutes: agg.unwrittenMinutes, unwrittenAmount: agg.unwrittenAmount,
           remainingCount: agg.remainingCount, remainingMinutes: agg.remainingMinutes, remainingAmount: agg.remainingAmount,
+          ...extra,
         }
       : {
           yearMonth: ym, confirmed: false, saved: false,
-          writtenMinutes: agg.writtenMinutes,
+          writtenMinutes: agg.writtenMinutes + agg.correctionMinutes,
           gross: agg.gross, lateCut: agg.lateCut,
           incomeTax: sheet.incomeTax, localTax: sheet.localTax, net: sheet.net,
           unwrittenCount: agg.unwrittenCount, unwrittenMinutes: agg.unwrittenMinutes, unwrittenAmount: agg.unwrittenAmount,
           remainingCount: agg.remainingCount, remainingMinutes: agg.remainingMinutes, remainingAmount: agg.remainingAmount,
+          ...extra,
         };
+
+    // 오늘 걸린 가산 규칙 — 대표 정리 · 기준 탭의 칸 그대로(같은 표 · 같은 적용일 셈)
+    const rules = await loadBonusRules({ query: (sql, p) => this.q(sql, p) });
+    const kindNames = new Map((await this.q(`SELECT key, name FROM kind`)).map((k) => [String(k.key), String(k.name)]));
+    const bonusRules = BONUS_D1_DEFAULTS.map((d) => {
+      let cur: (typeof rules)[number] | null = null;
+      for (const r of rules) {
+        if (r.kind === d.kind && r.kindKey === d.kindKey && r.fromDate <= today && (cur === null || r.fromDate > cur.fromDate)) cur = r;
+      }
+      const applied = d.kind !== 'kinder_hourly' || KINDER_MARKER_EXISTS;
+      return {
+        label: d.kindKey ? (kindNames.get(d.kindKey) ?? d.kindKey) : BONUS_KIND_LABEL[d.kind],
+        hint: BONUS_KIND_HINT[d.kind], amount: cur ? cur.amount : null,
+        applied, note: applied ? null : KINDER_NOT_APPLIED,
+      };
+    });
 
     return {
       month: ym,
@@ -437,8 +633,17 @@ export class TeacherService {
       },
       wageRate: me?.wage_rate === null || me?.wage_rate === undefined ? null : Number(me.wage_rate),
       wageFrom: (me?.wage_from as string) ?? null,
-      lessons,
+      // 계약 모양 그대로 옮긴다 — 시트의 안쪽 칸(가산 내역 · 스냅숏 시급)을 그대로 흘리지 않는다
+      lessons: lessons.map((l) => ({
+        serId: l.serId, onDate: l.onDate, startMin: l.startMin, durMin: l.durMin,
+        kindKey: l.kindKey, subKey: l.subKey, mode: l.mode, title: l.title,
+        students: l.students, studentCount: l.studentCount, repState: l.repState, canceled: l.canceled,
+        submittedAt: l.submittedAt, pay: l.pay, lateCut: l.lateCut, penaltyIfNow: l.penaltyIfNow,
+        bonus: l.bonus, settle: l.settle, settleLabel: payoutSettleLabel(l),
+        correctionOf: l.correctionOf, paidIn: l.paidIn, frozen: l.frozen,
+      })),
       settlement,
+      bonusRules,
     };
   }
 
@@ -491,6 +696,7 @@ export class TeacherService {
           lessons: [],
           books: [],
           diag: null,
+          notes: [],
         };
         byStudent.set(id, s);
       }
@@ -505,20 +711,28 @@ export class TeacherService {
     const ids = [...byStudent.keys()];
     if (ids.length > 0) {
       const books = await this.q(
-        `SELECT i.id AS issue_id, i.student_id, l.code, l.title, l.sub_key, l.level, l.se_te,
+        `SELECT i.id AS issue_id, i.student_id, l.code, l.title, l.sub_key, l.level, l.book_level, l.se_te,
                 to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
-                to_char(i.returned_on,'YYYY-MM-DD') AS returned_on
+                to_char(i.returned_on,'YYYY-MM-DD') AS returned_on,
+                EXISTS (SELECT 1 FROM req q WHERE q.req_type = 'book_change' AND q.state = 'pending'
+                           AND q.staff_id = $2 AND (q.payload->>'issueId') = i.id::text) AS change_pending,
+                (i.state = 'ok') AS in_use
            FROM issue i JOIN lib l ON l.id = i.lib_id
           WHERE i.student_id = ANY($1)
           ORDER BY (i.returned_on IS NOT NULL), i.issued_on DESC`,
-        [ids],
+        [ids, teacherId],
       );
       for (const b of books) {
         byStudent.get(Number(b.student_id))?.books.push({
           issueId: Number(b.issue_id), code: String(b.code), title: String(b.title),
-          subKey: (b.sub_key as string) ?? null, level: (b.level as string) ?? null,
+          // 레벨은 서가와 같은 낱말 — 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 옛 원문(lib/book 한 함수 · W11 A')
+          subKey: (b.sub_key as string) ?? null, level: bookLevelShown(b.book_level as string | null, b.level as string | null),
           seTe: String(b.se_te ?? 'SE'), issuedOn: String(b.issued_on),
           returnedOn: (b.returned_on as string) ?? null,
+          // 내가 올린 교재 변경 요청이 이 교재에 열려 있는가 — 단추가 「변경 요청 중」으로 선다 (N-99 · P 영역 두 칸)
+          changePending: b.change_pending === true,
+          // 「변경 요청」이 눌리는가 — 쓰는 중(ok)이고 열린 요청이 없을 때만. 쓰기(`bookChangePayload`)와 같은 판정이다
+          changeRequestable: b.in_use === true && b.change_pending !== true,
         });
       }
 
@@ -545,6 +759,25 @@ export class TeacherService {
             byName: (d.by_name as string) ?? null,
           };
         }
+      }
+
+      /*
+       * 인수인계 메모(N-36 ②) — 관리자 · 매니저가 §79 학생 트래킹에서 적은 줄. **이 강사가 이번 주 맡은 학생 것만**이다
+       * (위 학생 목록이 `TEACHER_OF` 로 이미 좁혔다). 최근 것부터 스무 줄 — 학부모에게 나가는 글(안내 · 리포트)에는 쓰지 않는다.
+       */
+      const notes = await this.q(
+        `SELECT * FROM (
+           SELECT n.id, n.student_id, n.body, w.name AS author_name, ${kstAt('n.created_at')} AS created_at,
+                  row_number() OVER (PARTITION BY n.student_id ORDER BY n.created_at DESC, n.id DESC) AS rn
+             FROM note n LEFT JOIN staff w ON w.id = n.author_id
+            WHERE n.student_id = ANY($1)
+         ) x WHERE rn <= 20 ORDER BY student_id, rn`,
+        [ids],
+      );
+      for (const n of notes) {
+        byStudent.get(Number(n.student_id))?.notes.push({
+          id: Number(n.id), body: String(n.body), authorName: (n.author_name as string) ?? null, createdAt: String(n.created_at),
+        });
       }
     }
 
@@ -736,18 +969,30 @@ export class TeacherService {
 
   /** 삭제 — 본인 행이면서 아직 열린 날짜(오늘+7 이후)만. 마감분·legacy(날짜 미상)는 관리자 조정 대상. */
   async deleteUnavailable(teacherId: number, id: number): Promise<{ ok: true }> {
-    const [row] = await this.q<{ id: string | number; on_date: string | null }>(
-      `SELECT id, on_date::text AS on_date FROM unav WHERE id = $1 AND staff_id = $2`, [id, teacherId]);
-    if (!row) throw new NotFoundException('등록을 찾을 수 없습니다');
-    const openFromRaw = addDays(todayKst(), UNAV_DEADLINE_DAYS);
-    if (!row.on_date || row.on_date < openFromRaw) {
-      throw new ConflictException({
-        code: 'UNAV_LOCKED',
-        message: '마감된 날짜의 등록은 여기서 지울 수 없습니다 — 관리자에게 문의해 주세요',
+    // N-73 — 지운 줄은 감사 원장에 통째로 남긴다. 읽기 · 판정 · 지우기 · 기록이 한 트랜잭션이다(`audit()` 의 규칙)
+    return this.anyRepo.manager.transaction(async (m) => {
+      const [row] = (await m.query(
+        `SELECT id, staff_id, on_date::text AS on_date, start_min, end_min, reason
+           FROM unav WHERE id = $1 AND staff_id = $2 FOR UPDATE`, [id, teacherId],
+      )) as Array<{ id: string | number; staff_id: string | number; on_date: string | null; start_min: number; end_min: number; reason: string }>;
+      if (!row) throw new NotFoundException('등록을 찾을 수 없습니다');
+      const openFromRaw = addDays(todayKst(), UNAV_DEADLINE_DAYS);
+      if (!row.on_date || row.on_date < openFromRaw) {
+        throw new ConflictException({
+          code: 'UNAV_LOCKED',
+          message: '마감된 날짜의 등록은 여기서 지울 수 없습니다 — 관리자에게 문의해 주세요',
+        });
+      }
+      await m.query(`DELETE FROM unav WHERE id = $1 AND staff_id = $2`, [id, teacherId]);
+      await audit(m, 'unav.delete', {
+        actorId: teacherId, entityId: Number(row.id),
+        before: {
+          staffId: Number(row.staff_id), onDate: row.on_date, startMin: Number(row.start_min),
+          endMin: Number(row.end_min), reason: row.reason,
+        },
       });
-    }
-    await this.q(`DELETE FROM unav WHERE id = $1 AND staff_id = $2`, [id, teacherId]);
-    return { ok: true };
+      return { ok: true as const };
+    });
   }
 
   /**

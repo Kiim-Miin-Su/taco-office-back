@@ -100,7 +100,7 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'시급학생','10')`, [STU]);
     await q(`INSERT INTO tzg (id, name, tz) VALUES (1,'한국 (KST)','Asia/Seoul'), (2,'미국 동부','America/New_York') ON CONFLICT (id) DO NOTHING`);
     const login = async (email: string, pw = PW) => {
-      const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ email, password: pw }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ loginId: email, password: pw }).expect(201);
       return res.body.accessToken as string;
     };
     ceoToken = await login('sw-ceo@t.kr');

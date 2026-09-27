@@ -7,6 +7,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { REP_STATE_T_VALUES, SUG_CAT_T_VALUES, SUG_STATE_T_VALUES } from '../../entities/enums';
+import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
+
+/** 강사가 올리는 요청 갈래 — 내 설정 둘(덱 §8) + 교재 변경 · GPA 회차 요청(N-99 · W11) */
+export const TEACHER_REQ_TYPES = ['wage_change', 'tz_change', 'book_change', 'gpa_request'] as const;
+export type TeacherReqType = (typeof TEACHER_REQ_TYPES)[number];
 
 const S = { type: String, nullable: true } as const;
 
@@ -49,12 +54,13 @@ export class TeacherTodoDto {
   @ApiProperty({ description: '승인 대기(wait) 리포트' }) waitingApprovals!: number;
   @ApiProperty({ description: '진행 중(pending) 스케줄 변경 요청' }) openChangeRequests!: number;
   @ApiProperty({ description: '진행 중(pending) 내 요청 — 시급 변경·불가 시간 등(req)' }) openStaffRequests!: number;
+  @ApiProperty({ description: '진행 중(pending) 교재 변경 요청 — 홈 「교재 변경 요청 중」(강사 덱 §8 · N-99)' }) openBookChanges!: number;
 }
 
 /** 올려 둔 요청 한 건 — 「관리자 승인 후 적용」을 화면이 말할 수 있게 (강사 덱 §8) */
 export class TeacherSettingRequestDto {
   @ApiProperty() id!: number;
-  @ApiProperty({ enum: ['wage_change', 'tz_change'] }) reqType!: string;
+  @ApiProperty({ enum: TEACHER_REQ_TYPES }) reqType!: string;
   @ApiProperty({ description: '사람이 읽는 요청 이름 — 코드표는 서버가 소유한다 (D-R18)' }) label!: string;
   @ApiPropertyOptional({ ...S, description: '무엇으로 바꿔 달라고 했는지 한 줄' }) asked?: string | null;
   @ApiProperty({ enum: ['pending', 'approved', 'rejected'] }) state!: string;
@@ -86,9 +92,9 @@ export class TeacherSettingsDto {
 
 /** 강사가 올리는 내 설정 변경 요청 — 적용은 관리자 승인 뒤다 (덱 §8) */
 export class TeacherSettingReqCreateDto {
-  @ApiProperty({ enum: ['wage_change', 'tz_change'] })
-  @IsIn(['wage_change', 'tz_change'])
-  reqType!: 'wage_change' | 'tz_change';
+  @ApiProperty({ enum: TEACHER_REQ_TYPES, description: '시급 · 시간대(덱 §8) · 교재 변경(수업 안내의 교재 행) · GPA 회차 요청(캘린더의 GPA 회차) — N-99' })
+  @IsIn([...TEACHER_REQ_TYPES])
+  reqType!: TeacherReqType;
 
   @ApiPropertyOptional({ description: '시급 변경일 때 바라는 시급(원/시간). 정수' })
   @IsOptional() @IsInt() @Min(1) @Max(1_000_000)
@@ -98,9 +104,65 @@ export class TeacherSettingReqCreateDto {
   @IsOptional() @IsString() @MaxLength(40)
   timezone?: string;
 
-  @ApiPropertyOptional({ description: '사유 (선택)' })
+  @ApiPropertyOptional({ description: '사유 — 교재 변경은 필수(400 REASON_REQUIRED) · 나머지는 선택' })
   @IsOptional() @IsString() @MaxLength(500)
   reason?: string;
+
+  /* ── N-99 교재 변경 · GPA 회차 요청 — 학생은 **내 담당 학생만**(서버가 본다) ── */
+  @ApiPropertyOptional({ description: '교재 변경 · GPA 회차 요청의 학생 id' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  studentId?: number;
+
+  @ApiPropertyOptional({ description: '교재 변경 — 바꿔 달라는 배부(issue) id. 그 학생의 사용 중인 교재여야 한다' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  issueId?: number;
+
+  @ApiPropertyOptional({ description: 'GPA 회차 요청 — 내 GPA 수업 회차의 규칙 id(SER)' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  serId?: number;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: 'GPA 회차 요청 — 그 회차의 날짜 YYYY-MM-DD(시각은 회차에서 서버가 읽는다)' })
+  @IsOptional() @IsCalendarDate()
+  onDate?: string;
+
+  @ApiPropertyOptional({ maxLength: 8, description: 'GPA 회차 요청 — 서비스 키(GET /teacher/gpa-request-options). 포인트는 승인 때 규정에서 스냅숏' })
+  @IsOptional() @IsString() @MaxLength(8)
+  svcKey?: string;
+}
+
+/** GPA 서비스 규정 한 줄 — 강사 「GPA 회차 요청」 고르기(N-99). 표는 GPASVC 하나다 */
+export class TeacherGpaServiceDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() name!: string;
+  @ApiProperty({ description: '규정 포인트 — 승인 때 GPA 기록에 스냅숏된다' }) point!: number;
+}
+
+/** 요청할 수 있는 GPA 회차의 명단 한 사람 — 그날 명단(serStuOn) 그대로 */
+export class TeacherGpaOccurrenceStudentDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+}
+
+/** 요청할 수 있는 내 GPA 회차 한 줄 — 쓰기(`gpa_request`)가 받는 것과 같은 판정으로 고른다(N-99) */
+export class TeacherGpaOccurrenceDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty({ ...DATE_SCHEMA }) onDate!: string;
+  @ApiProperty({ description: '시작 분(KST) — 그날 놓인 자리' }) startMin!: number;
+  @ApiProperty({ description: '끝 분(KST)' }) endMin!: number;
+  @ApiProperty({ type: String, nullable: true, description: '규칙 제목 — 없으면 과목 · 종류 이름(화면은 코드표로 적는다)' }) title!: string | null;
+  @ApiProperty({ type: String, nullable: true }) subKey!: string | null;
+  @ApiProperty() kindKey!: string;
+  @ApiProperty({ type: [TeacherGpaOccurrenceStudentDto], description: '그날 명단' }) students!: TeacherGpaOccurrenceStudentDto[];
+}
+
+/** 강사 「GPA 회차 요청」 창 한 벌 — 서비스 규정 · 고를 수 있는 회차(N-99). 화면은 거르지 않고 그린다 */
+export class TeacherGpaRequestOptionsDto {
+  @ApiProperty({ type: [TeacherGpaServiceDto] }) services!: TeacherGpaServiceDto[];
+  @ApiProperty({
+    type: [TeacherGpaOccurrenceDto],
+    description: '내 GPA 수업 회차 중 휴강이 아니고 날짜를 품는 열린 사이클이 있는 것 — 요청 쓰기와 같은 판정',
+  })
+  occurrences!: TeacherGpaOccurrenceDto[];
 }
 
 /** GET /teacher/home — 강사 홈 한 번에 (덱 §7~9 · 강사 전용, 서버가 본인으로 고정) */
@@ -140,12 +202,22 @@ export class TeacherHistoryLessonDto {
   @ApiProperty() canceled!: boolean;
   @ApiPropertyOptional({ ...S, description: '최초 제출 시각 (KST) YYYY-MM-DD HH:mm — 재제출은 바꾸지 않는다 (D-R7)' })
   submittedAt?: string | null;
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '제출분 수업료 — 그 수업일 시급×시간, 정수 절사. 가산 정책 미확정으로 단일 시급 (경계 기록)' })
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '제출분 수업료 — 그 수업일 시급×시간, 정수 절사 (가산은 bonus 에 따로)' })
   pay?: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '제출분 확정 지각 차감 (D-R32 — 최초 제출 기준)' })
   lateCut?: number | null;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '종료 후 미제출분 — 지금 제출하면 붙는 차감 (D-R32)' })
   penaltyIfNow?: number | null;
+  /* ── W11 M2 (N-36 · N-51 · N-93) ── */
+  @ApiProperty({ type: Number, nullable: true, description: '가산 — 가산 규칙(N-93)이 그 날짜에 붙인 돈 · 쓴 수업 · 보정 줄만' })
+  bonus!: number | null;
+  @ApiProperty({ enum: ['written', 'correction', 'late', 'unwritten', 'canceled', 'na', 'upcoming'], description: '정산 갈래 — 대표 시트와 같은 함수' })
+  settle!: string;
+  @ApiProperty({ description: '갈래 이름 — 「리포트 씀」 · 「보정 · 8월 회차」 · 「확정된 달 — 다음 달 보정」 … (서버 낱말)' })
+  settleLabel!: string;
+  @ApiProperty({ ...S, description: '보정 줄의 원래 달 YYYY-MM' }) correctionOf!: string | null;
+  @ApiProperty({ ...S, description: '확정 뒤에 쓴 회차가 지급된 달 YYYY-MM — 아직이면 null' }) paidIn!: string | null;
+  @ApiProperty({ description: '값이 지급 확정 근거 줄에서 왔는가 — 확정된 달은 굳은 값이다' }) frozen!: boolean;
 }
 
 export class TeacherHistoryStatsDto {
@@ -183,6 +255,20 @@ export class TeacherSettlementDto {
   @ApiProperty({ description: '이 달 남은 예정 수업' }) remainingCount!: number;
   @ApiProperty() remainingMinutes!: number;
   @ApiProperty({ description: '남은 예정 예상 금액 (시급 기준)' }) remainingAmount!: number;
+  /* ── W11 M2 (N-51 · N-93) ── */
+  @ApiProperty({ description: '가산 합 — 총액(gross) 안에 들어 있다 (N-93)' }) bonus!: number;
+  @ApiProperty({ description: '이 달에 보정으로 들어온 앞선 확정 달 회차 수 (N-51)' }) correctionCount!: number;
+  @ApiProperty({ description: '이 달의 회차인데 확정 뒤에 써서 다음 달 보정으로 간 수 (N-51)' }) lateCount!: number;
+  @ApiProperty({ ...S, description: '확정 · 보정 안내 한 문장(서버) — 「확정된 달 — 다음 달 보정」 등 · 없으면 null' }) note!: string | null;
+}
+
+/** 강사 화면의 가산 규칙 한 칸 — 강사 덱 §30 오른쪽 규칙 상자 (N-93 · 오늘 걸린 줄) */
+export class TeacherBonusRuleDto {
+  @ApiProperty({ description: '칸 이름 — 「모의수업」 · 「진단고사」 · 「Kinder 수업」 · 「그룹 학생 한 명 늘 때」' }) label!: string;
+  @ApiProperty({ description: '도움말 — 「한 번에 얼마」 · 「시급에 더함」 · 「한 명당」' }) hint!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '오늘 걸린 금액 — 적은 줄이 없으면 null(가산 없음)' }) amount!: number | null;
+  @ApiProperty({ description: '셈에 실제로 드는가 — Kinder 는 표시가 없어 false' }) applied!: boolean;
+  @ApiProperty({ ...S, description: '셈에 안 드는 까닭' }) note!: string | null;
 }
 
 /* ══ 건의 사항 (강사 덱 §33~34 · D-11 분류 · D-12 상태 · 월 3회 서버 쿼터) ══ */
@@ -238,10 +324,22 @@ export class TeacherGuideBookDto {
   @ApiProperty() code!: string;
   @ApiProperty() title!: string;
   @ApiPropertyOptional(S) subKey?: string | null;
-  @ApiPropertyOptional(S) level?: string | null;
+  @ApiPropertyOptional({ ...S, description: '교재 레벨 — 코드표 레벨(N-47) 낱말이 있으면 그것, 아직이면 옛 원문(lib.level) · 서가와 같은 함수(W11 A 후속)' }) level?: string | null;
   @ApiProperty({ description: 'SE | TE' }) seTe!: string;
   @ApiProperty({ description: '배부일 YYYY-MM-DD' }) issuedOn!: string;
   @ApiPropertyOptional({ ...S, description: '반환일 — null 이면 사용 중' }) returnedOn?: string | null;
+  @ApiPropertyOptional({ description: '이 교재에 진행 중인 변경 요청이 있는가 — 「변경 요청」이 「변경 요청 중」으로 선다(N-99)' })
+  changePending?: boolean;
+  @ApiPropertyOptional({ description: '「변경 요청」이 눌리는가 — 쓰는 중(사용 중)이고 열린 요청이 없을 때만. 쓰기와 같은 판정(N-99)' })
+  changeRequestable?: boolean;
+}
+
+/** 인수인계 메모 한 줄 — 관리자 · 매니저가 §79 학생 트래킹에서 적은 것 (N-36 ② · 학부모에게 나가지 않는다) */
+export class TeacherGuideNoteDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() body!: string;
+  @ApiProperty({ ...S, description: '적은 사람' }) authorName!: string | null;
+  @ApiProperty({ description: '적은 시각 — KST ISO(…+09:00)' }) createdAt!: string;
 }
 
 export class TeacherGuideDiagDto {
@@ -299,6 +397,8 @@ export class TeacherGuideStudentDto {
   @ApiProperty({ type: [TeacherGuideBookDto], description: '교재 — 사용 중 먼저, 반환분은 이력' }) books!: TeacherGuideBookDto[];
   @ApiPropertyOptional({ type: TeacherGuideDiagDto, nullable: true, description: '최신 진단 — 없으면 null' })
   diag?: TeacherGuideDiagDto | null;
+  @ApiProperty({ type: [TeacherGuideNoteDto], description: '인수인계 메모 — 관리자 · 매니저가 적은 줄, 최근 것부터 (N-36 ② · 강사 원문 27 · 44 「이전 강사 인수인계」 · 학부모에게 나가지 않는다)' })
+  notes!: TeacherGuideNoteDto[];
 }
 
 export class TeacherGuidesQueryDto {
@@ -321,8 +421,9 @@ export class TeacherHistoryDto {
   @ApiProperty({ type: TeacherHistoryStatsDto }) stats!: TeacherHistoryStatsDto;
   @ApiPropertyOptional({ type: Number, nullable: true, description: '현재 적용 시급 — 본인만' }) wageRate?: number | null;
   @ApiPropertyOptional({ ...S, description: '그 시급 적용 시작일' }) wageFrom?: string | null;
-  @ApiProperty({ type: [TeacherHistoryLessonDto], description: '최근 날짜·이른 시각 순' }) lessons!: TeacherHistoryLessonDto[];
+  @ApiProperty({ type: [TeacherHistoryLessonDto], description: '최근 날짜·이른 시각 순 — 보정 줄(settle=correction)은 이 달 정산에 얹힌 앞선 달 회차' }) lessons!: TeacherHistoryLessonDto[];
   @ApiProperty({ type: TeacherSettlementDto }) settlement!: TeacherSettlementDto;
+  @ApiProperty({ type: [TeacherBonusRuleDto], description: '오늘 걸린 가산 규칙 — 대표 정리 · 기준 탭의 칸 그대로 (N-93)' }) bonusRules!: TeacherBonusRuleDto[];
 }
 
 /* ══ 불가 시간 (강사 원본 §15/16 · N-20 채택 2026-09-12 §4-17: 날짜별 7일 전 마감) ══ */

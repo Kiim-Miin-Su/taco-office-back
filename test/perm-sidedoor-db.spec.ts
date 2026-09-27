@@ -139,7 +139,7 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
 
     const login = async (email: string) =>
       (await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201)).body.accessToken as string;
+        .send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;
     ceo = await login('sd-ceo@t.kr');
     mgr = await login('sd-m@t.kr');
     noWage = await login('sd-nw@t.kr');

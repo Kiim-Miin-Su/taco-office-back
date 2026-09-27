@@ -15,7 +15,7 @@ import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
   TeacherDiagCreateDto, TeacherGuideDiagDto,
   TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
-  TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherShellDto,
+  TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherShellDto, TeacherGpaRequestOptionsDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto, TeacherUnavQueryDto,
 } from './teacher.dto';
@@ -182,15 +182,29 @@ export class TeacherController {
     return this.svc.deleteUnavailable(user.id, id);
   }
 
+  @Get('gpa-request-options')
+  @ApiOperation({
+    summary: '「GPA 회차 요청」 창 — 서비스 규정 · 고를 수 있는 내 GPA 회차 (N-99)',
+    description: '회차는 요청 쓰기와 같은 판정(내 GPA 수업 · 휴강 아님 · 열린 사이클 안)으로 서버가 고른다. 명단은 그날 명단.',
+  })
+  @ApiOkResponse({ type: TeacherGpaRequestOptionsDto })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  async gpaRequestOptions(@CurrentUser() user: RequestUser): Promise<TeacherGpaRequestOptionsDto> {
+    this.assertTeacher(user);
+    return this.svc.gpaRequestOptions(user.id);
+  }
+
   @Post('requests')
   @ApiOperation({
-    summary: '내 설정 변경 요청 — 시급·시간대 (강사 덱 §8 우측 레일)',
-    description: '올리기만 한다. **관리자 승인 후 적용**이며 시급은 한 달에 한 번이다 — 판정은 서버.',
+    summary: '강사 요청 — 시급·시간대(덱 §8) · 교재 변경(수업 안내 교재 행) · GPA 회차 요청(캘린더 GPA 회차) — N-99',
+    description: '올리기만 한다. **관리자 승인 후 적용**이며 시급은 한 달에 한 번이다 — 판정은 서버. 교재 변경은 새 교재를 정하지 않는다(승인 = 상태 + 알림 · '
+      + '배부 변경은 관리자가 §38 에서). GPA 회차 요청은 승인하면 그 내용으로 GPA 기록 한 줄이 선다. 학생은 내 담당 학생만.',
   })
   @ApiCreatedResponse({ type: TeacherSettingRequestDto })
   @ApiForbiddenResponse({ description: '강사 전용' })
-  @ApiBadRequestResponse({ description: 'code RATE_REQUIRED | TZ_REQUIRED | TZ_UNKNOWN' })
-  @ApiConflictResponse({ description: 'code WAGE_REQ_MONTHLY_QUOTA | REQ_PENDING | TZ_SAME' })
+  @ApiBadRequestResponse({ description: 'code RATE_REQUIRED | TZ_REQUIRED | TZ_UNKNOWN | BOOK_REQUIRED | REASON_REQUIRED | GPA_REQUEST_REQUIRED' })
+  @ApiNotFoundResponse({ description: '내 담당 학생이 아님 · 그 학생의 교재 없음 · 내 회차 없음 · 명단에 없는 학생 · 서비스 없음' })
+  @ApiConflictResponse({ description: 'code WAGE_REQ_MONTHLY_QUOTA | REQ_PENDING | TZ_SAME | BOOK_NOT_IN_USE | GPA_SER_NOT_GPA | OCC_CANCELED | GPA_CYCLE_NONE' })
   async createSettingRequest(
     @CurrentUser() user: RequestUser,
     @Body() dto: TeacherSettingReqCreateDto,

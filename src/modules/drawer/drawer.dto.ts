@@ -12,10 +12,10 @@ import {
   APPROVAL_FLOW_KINDS, APPROVAL_FLOW_RECIPIENT_LABELS,
   APPROVAL_FLOW_RECIPIENT_NAMES, APPROVAL_FLOW_RECIPIENTS,
 } from '../../lib/approval';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsOptional,
-  IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf,
+  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional,
+  IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
@@ -123,6 +123,31 @@ export class ReqReviewResultDto {
     description: '승인이 **실제로 바꾼 것** — 「45,000원/시간 · 2026-09-12부터」처럼. 적용 대상이 없으면 null',
   })
   applied!: string | null;
+  /*
+   * N-84 결재 되돌리기 — 원문 §14 머리 「모든 처리는 되돌리기로 취소됩니다」. 본인 · 10분 · 그 처리 하나.
+   * 필수 nullable 이다(선택으로 두면 시험 표본이 이 칸을 빠뜨린 채 조용히 낡는다). 되돌릴 길이 없는 처리는 null 이다 —
+   * 없는 되돌리기를 약속하지 않는다. 줌 계정 갈래도 이제 토큰이 있다(앞 배정으로 · W11 A' 후속). 토큰은 그 처리의 감사 줄에
+   * 묶여 **한 번만** 통한다 — 되돌린 뒤 다시 처리하면 옛 토큰은 409 다.
+   */
+  @ApiProperty({ ...S, description: '이 처리를 되돌리는 토큰 — 처리한 본인 · 10분. 되돌릴 길이 없는 처리면 null (N-84)' })
+  undoToken!: string | null;
+  @ApiProperty({ ...S, format: 'date-time', description: '토큰이 끝나는 시각(ISO) — 화면은 10분을 따로 들지 않고 이 값을 쓴다' })
+  undoExpiresAt!: string | null;
+}
+
+/** N-84 결재 되돌리기 — 토큰 하나. 무엇을 어떻게 되돌릴지는 서명된 토큰과 DB 가 말한다(화면이 고르지 않는다) */
+export class ApprovalUndoDto {
+  @ApiProperty({ description: '승인·반려·반영 응답의 undoToken 그대로', maxLength: 200_000 })
+  @IsString() @MinLength(1) @MaxLength(200_000)
+  token!: string;
+}
+
+export class ApprovalUndoResultDto {
+  @ApiProperty({ description: '되돌린 요청의 id' }) id!: number;
+  @ApiProperty({ enum: ['req', 'chreq'], description: '요청(REQ) · 변경 요청(CHREQ)' }) target!: 'req' | 'chreq';
+  @ApiProperty({ enum: ['pending'], description: '되돌린 뒤의 상태 — 다시 대기함에 선다' }) state!: 'pending';
+  @ApiProperty({ description: '무엇을 되돌렸는지 한 줄 — 「시급 줄 삭제」 · 「시간대 되돌림」 · 「GPA 기록 삭제」 · 「시간표 되돌림」 · 「줌 계정 되돌림」 · 「상태만」' })
+  reverted!: string;
 }
 
 export class ApFlowDto {
@@ -187,7 +212,13 @@ export class DrawerTodoDto {
   @ApiProperty({ enum: TODO_SRC_T_VALUES }) src!: string;
   @ApiProperty({ description: '출처 이름 — 서버 코드표가 정한다 (D-R18)' }) srcLabel!: string;
   @ApiProperty({ description: '기한이 지난 날 수. 0이면 안 지남' }) overdueDays!: number;
-  @ApiPropertyOptional({ ...S, description: '출처가 있으면 원본으로 갈 곳' }) go?: string | null;
+  @ApiPropertyOptional({ ...S, description: '출처가 있으면 원본으로 갈 곳 — 그 한 건을 여는 주소(회의 · 컴플레인 · 기획 · 컨설팅 · 상담 사후 관리 `/intake?lead=` · 수업). 운영 §64 와 같은 함수(lib/todo `todoGo`)' }) go?: string | null;
+  @ApiProperty({
+    description: '끝난 뒤 「끝난 것 지우기」가 이 줄을 지울 수 있는가 — 서버 판정. 상담 사후 관리(해피콜 · 월간 상담)는 완료 이력이라 false (W11 · N-86)',
+  })
+  clearable!: boolean;
+  @ApiProperty({ ...S, description: '지우지 않는 까닭 — 서버 문장. 지울 수 있으면 null' })
+  clearBlockedReason!: string | null;
 }
 
 /** §16 알림 */
@@ -249,7 +280,7 @@ export class MemberDto {
   @ApiPropertyOptional(S) tz?: string | null;
   @ApiProperty() active!: boolean;
   /* C97 · D-48 — 지금 시급. **canWage 가 아니면 null** (D-R39 · 응답에서 뺀다). 시급 줄이 없는 강사도 null — 화면은 「시급 없음」이라 적지 않고 「시급 수정」만 세운다 */
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '오늘 붙는 기본 시급(원/시간) — canWage 아니면 null · 시급 줄이 없으면 null' })
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '오늘 붙는 기본 시급(원/시간) — canWage 아니면 null · 시급 줄이 없으면 null · 시급 비공개(N-94)가 켜져 있고 비공개 열람(canHide)이 없으면 남의 줄은 null' })
   wageRate?: number | null;
   @ApiPropertyOptional({ ...S, description: '그 시급의 적용 시작일 YYYY-MM-DD' }) wageFrom?: string | null;
   /* 「시급 수정」 단추가 서는 줄 — 강사이고 활성이며 보는 이가 canWage 일 때만. 화면은 role 을 보지 않고 이 값만 본다 (D-R39) */
@@ -273,6 +304,24 @@ export class MemberDto {
   canToggleActive?: boolean;
   @ApiPropertyOptional({ description: '「삭제」 — canEdit 이고 자기 줄이 아닐 때만. 기록이 있으면 서버가 409 로 막는다(사용 중지로 막는다)' })
   canDelete?: boolean;
+
+  /* ── N-68 사람별 권한 예외 (W11) — 역할 넷은 그대로, 자리 차이는 사람마다 다섯 칸으로 ── */
+  @ApiPropertyOptional({ description: '수정 창의 권한 예외 다섯 토글이 서는가 — 대표 판정(P1 동안 매니저 포함) · 강사·매니저 줄 · 자기 줄 아님' })
+  canEditPerms?: boolean;
+  @ApiPropertyOptional({
+    type: () => [MemberPermDto], nullable: true,
+    description: '권한 예외 다섯 칸의 지금 값 — 구성원을 다루는 사람(canAdminPage + canCrudAll)에게만 싣는다. 그 밖에는 null',
+  })
+  perms?: MemberPermDto[] | null;
+}
+
+/** 권한 예외 한 칸 — 켬(true) · 끔(false) · 역할 따름(null) */
+export class MemberPermDto {
+  @ApiProperty({ enum: ['canMoney', 'canWage', 'canApprove', 'canHide', 'canGpaPack'] }) key!: string;
+  @ApiProperty({ description: '사람 낱말 — 「회계 권한」 등 · §76 표의 「누가」 칸과 같은 이름' }) label!: string;
+  @ApiProperty({ type: Boolean, nullable: true, description: '적힌 예외 — true 켬 · false 끔 · null 역할 따름' }) override!: boolean | null;
+  @ApiProperty({ description: '역할만으로 나오는 값 — 「역할 따름」이면 이 값이 된다' }) roleDefault!: boolean;
+  @ApiProperty({ description: '지금 실제로 쓰이는 값 — 예외가 있으면 예외, 없으면 역할' }) effective!: boolean;
 }
 
 /** 새 구성원이 될 수 있는 역할 — 대표·관리자 계정은 이 길로 만들지 않는다(권한 상승 경로를 두지 않는다 · C97) */
@@ -343,6 +392,23 @@ export class StaffParamsDto {
 }
 
 /**
+ * 「수정」 창의 권한 예외 다섯 칸 (N-68) — 보낸 칸만 바꾼다. `true` 켬 · `false` 끔 · `null` 역할 따름(예외 지움).
+ * 생략한 칸은 그대로다. 판정(누가 적을 수 있나 · 무엇까지 켤 수 있나)은 전부 서버다.
+ */
+export class StaffPermsPatchDto {
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '회계 권한 — true 켬 · false 끔 · null 역할 따름' })
+  @IsOptional() @IsBoolean() canMoney?: boolean | null;
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '시급 권한 — true 켬 · false 끔 · null 역할 따름' })
+  @IsOptional() @IsBoolean() canWage?: boolean | null;
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '결재 권한 — true 켬 · false 끔 · null 역할 따름' })
+  @IsOptional() @IsBoolean() canApprove?: boolean | null;
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '비공개 권한 — true 켬 · false 끔 · null 역할 따름' })
+  @IsOptional() @IsBoolean() canHide?: boolean | null;
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '자료 요청 권한 — true 켬 · false 끔 · null 역할 따름' })
+  @IsOptional() @IsBoolean() canGpaPack?: boolean | null;
+}
+
+/**
  * 「수정」 — 보낸 칸만 바꾼다(생략 = 그대로). 이름·아이디·역할·시간대·입사일은 null 을 받지 않는다 —
  * 지우는 값이 아니기 때문이다. 이메일·직함·휴대폰은 null 또는 빈 글이면 비운다.
  */
@@ -380,6 +446,14 @@ export class StaffPatchDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, description: '입사일 YYYY-MM-DD' })
   @ValidateIf((_o, v) => v !== undefined) @IsCalendarDate()
   hiredOn?: string;
+
+  @ApiPropertyOptional({
+    type: () => StaffPermsPatchDto,
+    description: '권한 예외 다섯 칸(N-68) — 대표 판정으로만(403 PERM_OVERRIDE_FORBIDDEN) · 자기 줄은 403 SELF_ROLE · '
+      + '대표·관리자 줄은 403 STAFF_PROTECTED · 보는 사람이 없는 권한은 켤 수 없다(403 PERM_GRANT_FORBIDDEN). 바뀐 값은 다음 요청부터 그 사람의 판정에 쓰인다',
+  })
+  @IsOptional() @IsObject() @ValidateNested() @Type(() => StaffPermsPatchDto)
+  perms?: StaffPermsPatchDto;
 }
 
 /**
@@ -474,6 +548,35 @@ export class WorkSummaryDto {
   @ApiProperty({ type: [WorkSummaryItemDto] }) items!: WorkSummaryItemDto[];
 }
 
+/**
+ * §20 「최근 변경 이력」 한 줄 (W11 A' 후속 · N-73 의 읽는 쪽) — 원문 컷의 세 줄(누가 — 언제 · 앞 → 뒤 · 무엇을)이다.
+ * 원천은 스케줄 감사 줄(`log` entity SER · 규칙 하나의 쓰기 한 번)이고 문장은 서버가 만든다(`lib/schedule-history`).
+ */
+export class ScheduleHistoryRowDto {
+  @ApiProperty({ description: '감사 줄 번호(log.id) — 화면의 줄 키' }) id!: number;
+  @ApiProperty({ description: '언제 — KST ISO 시각', format: 'date-time' }) at!: string;
+  @ApiProperty({ ...S, description: '누가 — 모르면 null(화면이 「—」)' }) actorName!: string | null;
+  @ApiProperty({ description: '무엇을 — 「SAT Reading 8/28 → 20:00 이동 (이 주만)」 같은 서버 문장. 비밀 값은 원장에 없다' })
+  summary!: string;
+  @ApiProperty({ ...S, description: '원문 둘째 줄 「앞 → 뒤」의 앞 — 첫 번째 바뀐 것 · 모르면 null' }) from!: string | null;
+  @ApiProperty({ ...S, description: '원문 둘째 줄의 뒤 — 모르면 null' }) to!: string | null;
+}
+
+export class ScheduleHistoryDto {
+  @ApiProperty({ type: [ScheduleHistoryRowDto], description: '최근 것부터 — 볼 수 있는 범위는 §20 목록과 같다(전체 권한이면 모두 · 아니면 내가 한 것)' })
+  rows!: ScheduleHistoryRowDto[];
+}
+
+/**
+ * N-52 「내 지출 신청」 머리 — 이 사람이 올린(신청자인) 지출의 수. **서버가 센다**(D-R37).
+ * 목록 자체는 칸을 열 때만 `GET /accounting/expenses/mine` 으로 받는다 — 서랍 payload 에 줄을 싣지 않는다.
+ */
+export class MyExpenseSummaryDto {
+  @ApiProperty({ description: '내가 신청자인 지출 전부' }) total!: number;
+  @ApiProperty({ description: '심사 대기(pending)' }) pending!: number;
+  @ApiProperty({ description: '반려(rejected) — 되돌아온 것은 여기서 본다(N-64)' }) rejected!: number;
+}
+
 /** 서랍 하나가 여덟 칸을 함께 내려준다 — 열 때마다 여덟 번 왕복하지 않는다 */
 export class DrawerDto {
   @ApiProperty({ type: ApFlowDto, description: '§14 승인 대기함' }) approvals!: ApFlowDto;
@@ -501,6 +604,29 @@ export class DrawerDto {
   loginIdRule!: string;
   @ApiProperty({ description: '§17 구성원 만들기 · 비밀번호 초기화의 임시 비밀번호 규칙 문장 — 화면은 그대로 적는다(W10 · D-R18)' })
   tempPasswordRule!: string;
+  @ApiProperty({ type: MyExpenseSummaryDto, description: '요청함의 「내 지출 신청」 머리 수 — 본인 것만 (N-52)' })
+  myExpenses!: MyExpenseSummaryDto;
+}
+
+/* ══ §76 권한 — 표도 문장도 서버가 만든다 (N-98 · W11) ═══════════════════════════════ */
+
+export class PermissionRowDto {
+  @ApiProperty({ description: '줄 식별자' }) key!: string;
+  @ApiProperty({ description: '기능' }) feature!: string;
+  @ApiProperty({ description: '무엇인가' }) what!: string;
+  @ApiProperty({ description: '누가 — 권한 깃발의 이름(§17 권한 예외 토글과 같은 낱말)' }) who!: string;
+  @ApiProperty({ description: '이 줄을 여는 권한 깃발' }) perm!: string;
+  @ApiProperty({ description: '지금 이 사람에게 열려 있는가 — 사람별 예외까지 반영된 결론' }) allowed!: boolean;
+}
+
+export class PermissionTableDto {
+  @ApiProperty({ description: '지금 역할의 이름' }) roleLabel!: string;
+  @ApiProperty() possible!: number;
+  @ApiProperty() locked!: number;
+  @ApiProperty({ description: '창 머리 부제 — 「지금 대표 화면입니다 · N가지 가능 / M가지 잠김」' }) sub!: string;
+  @ApiProperty({ type: [PermissionRowDto] }) rows!: PermissionRowDto[];
+  @ApiProperty({ type: [String], description: '역할 설명 줄 — 역할마다 「역할 이름 · N가지 가능 / M가지 잠김」(지금의 권한 모형에서 센다)' })
+  roleNotes!: string[];
 }
 
 /* ══ 쓰기 ═══════════════════════════════════════════════════════════════
@@ -538,6 +664,19 @@ export class TodoCreateDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, example: '2026-09-14', description: 'KST 기준 기한' })
   @IsOptional() @IsCalendarDate()
   dueOn?: string;
+
+  /*
+   * W11 · N-71 — 수업 상세 「+ 할 일」이 **회차 키 두 칸**을 싣는다(`ser_occ.id` 가 아니다 — 투영이라 쓰기마다 바뀐다).
+   * 둘 다 있거나 둘 다 없다(`todo_lesson_key`). 넣으면 출처는 수업(src=lesson)이고, 회차가 있는지 · 휴강이 아닌지 ·
+   * 수업에 걸 권한(canCrudAll)이 있는지 서버가 본다.
+   */
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '회차 키 ① 수업(SER) — onDate 와 함께만 · 넣으면 출처가 수업(src=lesson)이다 (N-71)' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  serId?: number;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, example: '2026-09-14', description: '회차 키 ② 규칙이 찍은 날(옮긴 회차도 이 날) — serId 와 함께만 (N-71)' })
+  @IsOptional() @IsCalendarDate()
+  onDate?: string;
 }
 
 export class TodoCreateResultDto {
@@ -566,7 +705,7 @@ export class TodoClearRequestDto {
 
 export class TodoClearDto {
   @ApiProperty() ok!: true;
-  @ApiProperty({ description: '이번에 삭제된 완료 할 일 수 — 보낸 id 중 아직 끝나 있고 볼 수 있는 것만' }) deleted!: number;
+  @ApiProperty({ description: '이번에 삭제된 완료 할 일 수 — 보낸 id 중 아직 끝나 있고 볼 수 있는 것만 · 상담 사후 관리(완료 이력)는 세지 않는다 (N-86)' }) deleted!: number;
 }
 
 /** 종류별 Swagger 모델이 공유하는 회차 대상. 실제 검증도 ChangeReqCreateDto가 같은 필드를 쓴다. */

@@ -23,12 +23,13 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
-import { approvalFlowScope, Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { approvalFlowScope, canCeoSetPermOverride, Perm, hasPerm, isRole, permsOf, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ScheduleService } from '../schedule/schedule.service';
 import {
+  ApprovalUndoDto, ApprovalUndoResultDto,
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
-  ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto,
+  ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto, ScheduleHistoryDto,
   StaffActiveDto, StaffCreateDto, StaffParamsDto, StaffPasswordResetDto, StaffPatchDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
   TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
@@ -57,7 +58,12 @@ export class DrawerController {
       // §17 사용자 표 CRUD 의 줄 단추 — 쓰기 경로의 @Perm('canAdminPage','canCrudAll') 과 같은 둘 (W8)
       canManageStaff: role !== null && hasPerm(role, 'canAdminPage', user.perms) && hasPerm(role, 'canCrudAll', user.perms),
       canWage: role !== null && hasPerm(role, 'canWage', user.perms),
+      // 시급 비공개(N-94 · W11 M2)를 지나는가 — 회계 정산 줄 · 시급 이력과 같은 비공개 열람 판정
+      canHide: role !== null && hasPerm(role, 'canHide', user.perms),
       approvalFlowScope: role === null ? 'none' as const : approvalFlowScope(role, user.perms),
+      // N-68 — 사람별 권한 예외를 적는 입력은 대표 판정으로만 연다 · 켤 수 있는 한도는 보는 사람의 결론 권한
+      canSetPerms: role !== null && canCeoSetPermOverride(role),
+      viewerPerms: role === null ? null : permsOf(role, user.perms),
     };
   }
 
@@ -65,9 +71,9 @@ export class DrawerController {
   @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 승인함/결재 흐름 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
   all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
-    const { canApprove, canSeeAll, canWage, canManageStaff, approvalFlowScope: flowScope } = this.gate(user);
+    const { canApprove, canSeeAll, canWage, canManageStaff, canSetPerms, canHide, approvalFlowScope: flowScope } = this.gate(user);
     // notiWindow=all 은 **보여 주는 범위**만 넓힌다 — 지운 적이 없으므로 예전 것이 그대로 나온다 (N-7 · D-16)
-    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage, canManageStaff);
+    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage, canManageStaff, canSetPerms, canHide);
   }
 
   /* ══ §17 구성원 (C97 · 테스트 시나리오 D-41) · 사용자 표 CRUD (W8 · 대표 지시 2026-09-26) ═══════════ */
@@ -83,10 +89,15 @@ export class DrawerController {
   @ApiCreatedResponse({ type: MemberDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드) | LOGIN_ID_RULE | PASSWORD_RULE | STAFF_PHONE_INVALID' })
   @ApiConflictResponse({ description: 'code STAFF_LOGIN_ID_TAKEN | STAFF_EMAIL_TAKEN | TZ_UNKNOWN | WAGE_SAME_DAY' })
-  @ApiForbiddenResponse({ description: 'code WAGE_SET_FORBIDDEN — 시급을 적었는데 canWage 가 없다 (S4)' })
+  @ApiForbiddenResponse({
+    description: 'code WAGE_SET_FORBIDDEN — 시급을 적었는데 canWage 가 없다 (S4) · PERM_GRANT_FORBIDDEN — 새 계정이 받을 권한 중 '
+      + '내게 없는 것이 있다(사람별 예외로 좁혀진 사람은 매니저 계정을 만들 수 없다 · W11 A\' 후속)',
+  })
   createStaff(@CurrentUser() user: RequestUser, @Body() dto: StaffCreateDto): Promise<MemberDto> {
     // 만들기는 canCrudAll, **시급은 canWage** — 다른 권한이므로 따로 넘긴다 (S4)
-    return this.svc.createStaff(user.id, this.gate(user).canWage, dto);
+    // 권한 한도(W11 A' 후속) — 새 계정이 받을 권한은 보는 사람의 결론 권한 안이어야 한다
+    const g = this.gate(user);
+    return this.svc.createStaff(user.id, g.canWage, dto, g.viewerPerms);
   }
 
   @Patch('staff/:id')
@@ -98,13 +109,14 @@ export class DrawerController {
   })
   @ApiOkResponse({ type: MemberDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드 · 역할 ceo/admin) | LOGIN_ID_RULE | STAFF_PHONE_INVALID' })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_ROLE' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_ROLE | PERM_OVERRIDE_FORBIDDEN | PERM_GRANT_FORBIDDEN' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'STAFF_LOGIN_ID_TAKEN | STAFF_EMAIL_TAKEN | TZ_UNKNOWN | EMPTY_PATCH' })
   updateStaff(
     @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Body() dto: StaffPatchDto,
   ): Promise<MemberDto> {
-    return this.svc.updateStaff(user.id, this.gate(user).canWage, p.id, dto);
+    const g = this.gate(user);
+    return this.svc.updateStaff(user.id, g.canWage, p.id, dto, { canSet: g.canSetPerms, viewer: g.viewerPerms });
   }
 
   @Post('staff/:id/password-reset')
@@ -177,6 +189,18 @@ export class DrawerController {
     return { ok: true };
   }
 
+  @Get('schedule-history')
+  @ApiOperation({
+    summary: '§20 「최근 변경 이력」 — 스케줄 쓰기 감사 줄의 최근 스무 줄 (W11 A\' 후속 · N-73)',
+    description: '원천은 `log`(entity SER · 규칙 하나의 쓰기 한 번)다. 줄마다 누가 · 언제 · 무엇을(서버 문장) · 앞 → 뒤. '
+      + '볼 수 있는 범위는 §20 목록과 같다 — 전체 권한(canCrudAll)이면 모두, 아니면 내가 한 것만. 줌 배정 · 비밀 값은 원장에 없다. '
+      + '서랍 payload 에 싣지 않고 §20 칸을 열 때만 부른다(여덟 칸을 여는 모든 사람이 이 조회를 치르지 않게).',
+  })
+  @ApiOkResponse({ type: ScheduleHistoryDto })
+  scheduleHistory(@CurrentUser() user: RequestUser): Promise<ScheduleHistoryDto> {
+    return this.svc.scheduleHistory(user.id, this.gate(user).canSeeAll);
+  }
+
   @Post('todos')
   @ApiOperation({ summary: '§15 수동 할 일 만들기 — 다른 사람 배정은 canCrudAll만' })
   @ApiCreatedResponse({ type: TodoCreateResultDto })
@@ -190,7 +214,7 @@ export class DrawerController {
   @Delete('todos/completed')
   @ApiOperation({
     summary: '§15 끝난 것 지우기 — **화면이 보여 준 그것만** (S4)',
-    description: '화면이 지금 「끝난 것」으로 세고 있는 id 들을 받는다. 서버는 그중 아직 끝나 있고 이 사람이 볼 수 있는 행만 지우고 그 줄을 통째로 log 에 남긴다. 단추의 숫자와 지워지는 수가 같다 (D-R39).',
+    description: '화면이 지금 「끝난 것」으로 세고 있는 id 들을 받는다. 서버는 그중 아직 끝나 있고 이 사람이 볼 수 있는 행만 지우고 그 줄을 통째로 log 에 남긴다. 단추의 숫자와 지워지는 수가 같다 (D-R39). 상담 사후 관리(해피콜 · 월간 상담)는 완료 이력이라 지우지 않는다 — 줄의 `clearable` 이 false 다 (N-86).',
   })
   @ApiOkResponse({ type: TodoClearDto })
   async clearDoneTodos(@CurrentUser() user: RequestUser, @Body() dto: TodoClearRequestDto): Promise<TodoClearDto> {
@@ -256,6 +280,26 @@ export class DrawerController {
     @Body() dto: ChreqReviewDto,
   ): Promise<ReqReviewResultDto> {
     return this.svc.reviewChangeRequest(id, user.id, dto);
+  }
+
+  @Post('approvals/undo')
+  @Perm('canApprove')
+  @ApiOperation({
+    summary: '§14 결재 되돌리기 — 승인·반려·반영 응답의 undoToken 하나 (N-84 · 본인 · 10분)',
+    description:
+      '원문 §14 머리 「반려에도 사유가 남고, 모든 처리는 되돌리기로 취소됩니다」. 요청은 다시 대기(pending)로 선다. '
+      + '시급 승인은 그 승인이 넣은 줄이 **여전히 마지막 줄이고 어떤 지급 확정에도 안 쓰였을 때만** 지운다(오늘 시작 줄 · 소급 없음 D8 유지 · 시급 권한 필요). '
+      + '시간대 승인은 앞 값으로, GPA 회차 요청 승인은 그 GPA 기록(승인 전 · 열린 사이클)을 지운다. '
+      + '변경 요청 반영은 일정 되돌리기 토큰을 그대로 써 시간표를 되돌리고 요청을 대기로 — 한 트랜잭션이다. 반려 되돌리기는 상태만. '
+      + '그 사이 바뀐 것이 있으면 409 UNDO_STALE. 이미 간 알림은 그대로 둔다(N-55 ②). LOG 한 줄.',
+  })
+  @ApiCreatedResponse({ type: ApprovalUndoResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_UNDO_TOKEN — 만료 · 변조 · 남의 토큰' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'WAGE_REVIEW_FORBIDDEN — 시급 줄을 지우려면 시급 권한' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: '요청을 찾을 수 없다' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'UNDO_STALE | UNDO_PAYOUT_CONFIRMED | UNDO_HAS_REFS | CYCLE_CLOSED | MONTH_CLOSED(변경 요청 반영을 되돌리면 마감한 달의 회차가 바뀔 때 · W11)' })
+  undoApproval(@CurrentUser() user: RequestUser, @Body() dto: ApprovalUndoDto): Promise<ApprovalUndoResultDto> {
+    return this.svc.undoApproval(user.id, dto.token, this.gate(user).canWage);
   }
 
   @Post('change-requests')
