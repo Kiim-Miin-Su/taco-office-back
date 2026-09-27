@@ -12,10 +12,14 @@ import { ConsultingController } from './consulting.controller';
 import { ConsultingSessionService } from './consulting-session.service';
 import { ConsultingService } from './consulting.service';
 
-/** 회차 잡기(C95)는 시간표의 **기존 쓰기**를 한 트랜잭션에서 부른다 — ScheduleModule 을 들여온다 */
+/**
+ * 회차 잡기(C95)는 시간표의 **기존 쓰기**를 한 트랜잭션에서 부른다 — ScheduleModule 을 들여온다.
+ * ConsultingService 를 내보낸다 — 보호자 발송(GuardiansModule)이 「계약서 전달하기」(N-77)의 공개 범위 · 첨부 판정을 이 서비스에 맡긴다.
+ */
 @Module({
   imports: [TypeOrmModule.forFeature([Lead]), ScheduleModule],
   controllers: [ConsultingController],
   providers: [ConsultingService, ConsultingSessionService],
+  exports: [ConsultingService],
 })
 export class ConsultingModule {}

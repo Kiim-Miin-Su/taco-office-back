@@ -7,13 +7,16 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post } from '@nestjs/common';
 import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNoContentResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { Perm, canCeoApproveConsultingClose, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
-  ConsAccountingDto, ConsAccountRowDto, ConsCloseDto, ConsCloseResultDto, ConsItemDto, ConsItemToggleDto,
-  ConsPaymentCreateDto, ConsSessionCreateDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsStudentsDto, ConsultingCreateDto,
+  ConsAccountingDto, ConsAccountRowDto, ConsCloseDto, ConsCloseResultDto, ConsItemDto, ConsItemsEditDto, ConsItemToggleDto,
+  ConsPaymentCreateDto, ConsSessionCreateDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsStudentsDto, ConsToInvoiceDto, ConsultingCreateDto,
   ConsultingDetailDto, ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto,
   ConsultingFileCreateDto, ConsultingListDto, ConsultingSessionDto, ConsultingShareUpdateDto,
 } from './consulting.dto';
+
+/** 예외 종료 승인 권한 — 판정은 perm.ts 한 줄(ceoGate 계열)이다. 역할 문자열을 여기서 비교하지 않는다 (D-R39 · N-18-a) */
+const approveClose = (user: RequestUser): boolean => isRole(user.role) && canCeoApproveConsultingClose(user.role);
 import { ConsultingSessionService } from './consulting-session.service';
 import { ConsultingService } from './consulting.service';
 
@@ -47,10 +50,12 @@ export class ConsultingController {
   async all(@CurrentUser() user: RequestUser): Promise<ConsultingListDto> {
     // 역할이 없으면 볼 것도 없다 — 칸 이름까지 내려보내지 않는다
     if (!isRole(user.role)) return { items: [], canSeeAmounts: false, canSetPrivate: false, stages: [] };
+    const canHide = hasPerm(user.role, 'canHide', user.perms); // §76 — 비공개 컨설팅 열람
     return this.svc.all(
       user.id,
       hasPerm(user.role, 'canMoney', user.perms),
-      hasPerm(user.role, 'canHide', user.perms), // §76 — 비공개 컨설팅 열람
+      canHide,
+      await this.svc.consultingLineShown(canHide), // N-94 컨설팅 비공개 — 줄 금액
     );
   }
 
@@ -75,6 +80,56 @@ export class ConsultingController {
     return this.svc.toggleItem(user.id, canHide, id, itemId, dto);
   }
 
+  /* ══ W11 · 원문 §31 「항목 수정」 · 항목 「파일」 (N-18-a · N-63) ═══════════════════════════════ */
+
+  @Patch(':id/items')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '항목 수정 — 더하기 · 이름 바꾸기 · 빼기 (원문 §31 · N-18-a DQ5 대안)',
+    description:
+      '바꾸는 것만 보낸다(목록 통째가 아니다). 더한 항목은 source=manual · 맨 뒤 순번. 끝낸 항목 · 기본 항목 빼기 · 파일이 붙은 항목 빼기는 409. '
+      + '건의 활동 원장(cons_event)과 감사 원장(log · 앞뒤 목록)에 같은 트랜잭션으로 남는다. 9유형 기본 항목표는 넣지 않는다(보류).',
+  })
+  @ApiOkResponse({ type: [ConsItemDto], description: '바뀐 뒤의 항목 전부(순번 차례)' })
+  @ApiForbiddenResponse({ description: '내용이 공개 범위 밖' })
+  @ApiNotFoundResponse({ description: '보이지 않는 건 · CONS_ITEM_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'code ITEM_LOCKED · CONS_ITEM_DONE · CONS_ITEM_TEMPLATE · CONS_ITEM_HAS_FILES · CONS_ITEM_LIMIT · EMPTY_PATCH (400 CONS_ITEM_DUPLICATE · CONS_ITEM_OP_DUPLICATE · CONS_ITEM_LABEL_REQUIRED)' })
+  async editItems(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsItemsEditDto): Promise<ConsItemDto[]> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.editItems(user.id, canHide, id, dto);
+  }
+
+  @Post(':id/items/:itemId/files')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '항목 파일 올리기 — 항목마다 최대 6개 (N-63 · 계약 파일 10개와 따로 센다)',
+    description: '계약 파일과 같은 업로드(base64 · 3MB)와 같은 권한 판정(공개 범위 csCanFull). 종료된 건은 409.',
+  })
+  @ApiCreatedResponse({ type: ConsultingFileDto })
+  @ApiNotFoundResponse({ description: '보이지 않는 건 · CONS_ITEM_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'code ITEM_LOCKED · CONS_ITEM_FILE_LIMIT' })
+  async addItemFile(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Param('itemId', ParseIntPipe) itemId: number, @Body() dto: ConsultingFileCreateDto,
+  ): Promise<ConsultingFileDto> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.addItemFile(user.id, canHide, id, itemId, dto);
+  }
+
+  @Delete(':id/items/:itemId/files/:fileId')
+  @Perm('canAdminPage', 'canCrudAll')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: '항목 파일 빼기 — 종료 전 건만 · 감사 원장에 남는다 (N-63 · N-73)' })
+  @ApiNoContentResponse()
+  @ApiNotFoundResponse({ description: 'CONS_ITEM_FILE_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'code ITEM_LOCKED' })
+  async removeItemFile(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number, @Param('fileId', ParseIntPipe) fileId: number,
+  ): Promise<void> {
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.removeItemFile(user.id, canHide, id, itemId, fileId);
+  }
+
   /* ══ §28 컨설팅 회계 ═══════════════════════════════════════════════════ */
 
   @Get('accounting')
@@ -88,10 +143,12 @@ export class ConsultingController {
   @ApiOkResponse({ type: ConsAccountingDto })
   async accounting(@CurrentUser() user: RequestUser): Promise<ConsAccountingDto> {
     if (!isRole(user.role)) return { items: [], totalAmount: null, totalPaid: null, totalDue: null, canSeeAmounts: false };
+    const canHide = hasPerm(user.role, 'canHide', user.perms);
     return this.svc.accounting(
       user.id,
       hasPerm(user.role, 'canMoney', user.perms),
-      hasPerm(user.role, 'canHide', user.perms),
+      canHide,
+      await this.svc.consultingLineShown(canHide), // N-94 — 줄 금액만 가리고 머리 합계는 그대로
     );
   }
 
@@ -108,10 +165,12 @@ export class ConsultingController {
   @ApiOkResponse({ type: ConsStudentsDto })
   async students(@CurrentUser() user: RequestUser): Promise<ConsStudentsDto> {
     if (!isRole(user.role)) return { items: [], canSeeAmounts: false };
+    const canHide = hasPerm(user.role, 'canHide', user.perms);
     return this.svc.students(
       user.id,
       hasPerm(user.role, 'canMoney', user.perms),
-      hasPerm(user.role, 'canHide', user.perms),
+      canHide,
+      await this.svc.consultingLineShown(canHide), // N-94 컨설팅 비공개 — 건 · 학생 줄 금액
     );
   }
 
@@ -122,7 +181,7 @@ export class ConsultingController {
   async detail(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<ConsultingDetailDto> {
     const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
-    return this.svc.detail(user.id, canMoney, canHide, id);
+    return this.svc.detail(user.id, canMoney, canHide, id, approveClose(user), await this.svc.consultingLineShown(canHide));
   }
 
   @Patch(':id/share')
@@ -194,8 +253,13 @@ export class ConsultingController {
   @Delete(':id')
   @Perm('canAdminPage', 'canCrudAll')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ operationId: 'archive', summary: '컨설팅 안전 보관 — 물리 삭제 없음' })
+  @ApiOperation({
+    operationId: 'archive',
+    summary: '컨설팅 안전 보관 — 물리 삭제 없음',
+    description: '받은 돈 · 살아 있는 전환 청구서 · 회차 기록이 있으면 409 CONS_ARCHIVE_BLOCKED(PB-11 · 상세의 archiveBlockedReason 과 같은 문장). 지운 것은 감사 원장에 남는다.',
+  })
   @ApiNoContentResponse()
+  @ApiConflictResponse({ description: 'code CONS_ARCHIVE_BLOCKED' })
   async archive(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<void> {
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
     return this.svc.archive(user.id, canHide, id);
@@ -248,26 +312,30 @@ export class ConsultingController {
 
   @Post(':id/close/preview')
   @Perm('canAdminPage', 'canCrudAll')
-  @ApiOperation({ summary: '종료 미리보기 — 안내문 본문과 회차 수를 돌려주고 되돌린다 (쓰기 0)' })
+  @ApiOperation({ summary: '종료 미리보기 — 안내문 본문과 회차 수를 돌려주고 되돌린다 (쓰기 0 · 예외 종료도 같은 모양)' })
   @ApiCreatedResponse({ type: ConsCloseResultDto })
-  @ApiConflictResponse({ description: 'code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED' })
+  @ApiForbiddenResponse({ description: 'code CONS_CLOSE_EXCEPTION_FORBIDDEN — 예외 종료 승인 권한 없음' })
+  @ApiConflictResponse({ description: 'code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED · CONS_CLOSE_EXCEPTION_NOT_NEEDED' })
   async previewClose(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsCloseDto): Promise<ConsCloseResultDto> {
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
-    return this.sessions.close(user.id, canHide, id, dto, true);
+    return this.sessions.close(user.id, canHide, id, dto, true, approveClose(user));
   }
 
   @Post(':id/close')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '컨설팅 종료 — I-95 · 원본 §26 「종료 · 마무리하고 안내」',
-    description: 'N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다. stage=done · 종료일 · 학생마다 학부모 안내 행(PNOTI parent · 문구 틀 선택 · 발송처는 N-42) · cons_event closed · 담당 알림. 예외 종료(사유·승인)는 N-18-a.',
+    description:
+      'N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다. stage=done · 종료일 · 학생마다 학부모 안내 행(PNOTI parent · 문구 틀 선택 · 발송처는 N-42) · cons_event closed · 담당 알림. '
+      + '예외 종료(exception.reason · N-18-a 채택) — 필수 항목 · 약정 회차만 남은 진행 중 건을 승인 권한자가 사유와 함께 닫는다(남은 것 · 사유 · 승인자는 감사 원장). 학부모 안내는 고른 문구 틀이나 적은 글만(400 CONS_CLOSE_NOTICE_REQUIRED).',
   })
   @ApiCreatedResponse({ type: ConsCloseResultDto })
   @ApiNotFoundResponse({ description: '보이지 않는 건 · GTPL_NOT_FOUND' })
-  @ApiConflictResponse({ description: 'code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED' })
+  @ApiForbiddenResponse({ description: 'code CONS_CLOSE_EXCEPTION_FORBIDDEN — 예외 종료 승인 권한 없음' })
+  @ApiConflictResponse({ description: 'code CONS_ALREADY_DONE · CONS_NOT_RUNNING · CONS_ITEMS_LEFT · CONS_SESSIONS_LEFT · CONS_SESSIONS_PLANNED · CONS_CLOSE_EXCEPTION_NOT_NEEDED' })
   async close(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ConsCloseDto): Promise<ConsCloseResultDto> {
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
-    return this.sessions.close(user.id, canHide, id, dto, false);
+    return this.sessions.close(user.id, canHide, id, dto, false, approveClose(user));
   }
 
   @Post(':id/payments')
@@ -296,20 +364,23 @@ export class ConsultingController {
     summary: '청구서로 전환 — §28 동작 ② · 연동 「INV 에 csid 로 연결」',
     description:
       '**남은 돈으로** 청구서를 낸다. 계약 전액으로 내면 이미 받은 돈이 §53 미수금에 한 번 더 얹힌다. '
-      + '전환 뒤에도 납부 기록은 cons_pay 에 그대로 남는다 — cs_id 는 연결이지 소유가 아니다.',
+      + '전환 뒤에도 납부 기록은 cons_pay 에 그대로 남는다 — cs_id 는 연결이지 소유가 아니다. '
+      + '받는 학생은 사람이 고른다(studentId · 학생이 여럿이면 필수 · 한 명이면 비워도 그 학생 · N-33 ②). 감사 원장에 남는다(N-73).',
   })
   @ApiCreatedResponse({ type: ConsAccountRowDto })
   @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
   @ApiNotFoundResponse({ description: '보이지 않는 건' })
   @ApiConflictResponse({
-    description: 'code CONS_INV_EXISTS · CONS_INV_NOT_PAID_STEP · CONS_INV_NOTHING_DUE · CONS_INV_STUDENT_AMBIGUOUS',
+    description: 'code CONS_INV_EXISTS · CONS_INV_NOT_PAID_STEP · CONS_INV_NOTHING_DUE · CONS_INV_STUDENT_AMBIGUOUS(학생이 여럿인데 고르지 않음 · 학생 없음) · '
+      + 'MONTH_CLOSED(전환 청구서의 달 — 오늘의 달 — 이 마감됨 · 발행 · 이월과 같은 문장) · 400 CONS_INV_STUDENT_INVALID',
   })
   async toInvoice(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ConsToInvoiceDto,
   ): Promise<ConsAccountRowDto> {
     const canMoney = isRole(user.role) ? hasPerm(user.role, 'canMoney', user.perms) : false;
     const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
-    return this.svc.toInvoice(user.id, canMoney, canHide, id);
+    return this.svc.toInvoice(user.id, canMoney, canHide, id, dto);
   }
 }

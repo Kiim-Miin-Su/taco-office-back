@@ -24,13 +24,15 @@ describe('§26 단계 필터 조회 계약', () => {
   const addPayment = jest.fn();
   const toInvoice = jest.fn();
   const students = jest.fn();
+  // 컨설팅 비공개 스위치(N-94 · W11 M2) — 줄 금액을 보이는가는 서비스 한 함수가 정하고 컨트롤러가 읽기에 넘긴다
+  const consultingLineShown = jest.fn();
   const empty = { items: [], canSeeAmounts: false };
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [ConsultingController],
       providers: [
-        { provide: ConsultingService, useValue: { all, accounting, addPayment, toInvoice, students } },
+        { provide: ConsultingService, useValue: { all, accounting, addPayment, toInvoice, students, consultingLineShown } },
         { provide: ConsultingSessionService, useValue: {} },
         { provide: APP_GUARD, useClass: PermGuard },
       ],
@@ -39,7 +41,7 @@ describe('§26 단계 필터 조회 계약', () => {
     app.use((req: Request, _res: Response, next: NextFunction) => { req.user = user; next(); });
     await app.listen(0, '127.0.0.1');
   });
-  beforeEach(() => { user = undefined; all.mockReset().mockResolvedValue(empty); });
+  beforeEach(() => { user = undefined; all.mockReset().mockResolvedValue(empty); consultingLineShown.mockReset().mockResolvedValue(true); });
   afterAll(async () => { await app?.close(); });
 
   it('페이지와 같은 최종 두 flag를 요구한다', () => {
@@ -55,7 +57,8 @@ describe('§26 단계 필터 조회 계약', () => {
     if (allowed) {
       expect(res.body).toEqual(empty);
       expect(all).toHaveBeenCalledTimes(1);
-      expect(all).toHaveBeenCalledWith(17, flags.canMoney, flags.canHide);
+      expect(all).toHaveBeenCalledWith(17, flags.canMoney, flags.canHide, true);
+      expect(consultingLineShown).toHaveBeenCalledWith(flags.canHide);
     } else expect(all).not.toHaveBeenCalled();
   });
   it('인증 사용자가 없으면 조회를 실행하지 않는다', async () => {
@@ -69,8 +72,10 @@ describe('§26 단계 필터 조회 계약', () => {
     // C79 는 §29 신규 상담과 §30 계약 워크플로를 서버 원장으로 옮겼다.
     // 「이력」 탭은 endpoint 를 늘리지 않는다 — 이미 받은 items 를 stage 로 거르는 화면 선택이다 (C5-a 선례).
     // C95 는 §31 회차 잡기(미리보기·확정·육하원칙)와 종료(미리보기·확정) 다섯을 더했다 (I-91 · I-95 · N-18 채택).
+    // W11 은 원문 §31 「항목 수정」 하나와 항목 「파일」 올리기 · 빼기 둘을 더했다 (N-18-a DQ5 대안 · N-63 채택).
     expect(Object.keys(api.paths)).toEqual([
       '/consulting', '/consulting/{id}/items/{itemId}',
+      '/consulting/{id}/items', '/consulting/{id}/items/{itemId}/files', '/consulting/{id}/items/{itemId}/files/{fileId}',
       '/consulting/accounting', '/consulting/students',
       '/consulting/{id}', '/consulting/{id}/share',
       '/consulting/{id}/contract-files', '/consulting/{id}/contract-files/{fileId}',
@@ -80,7 +85,7 @@ describe('§26 단계 필터 조회 계약', () => {
       '/consulting/{id}/close/preview', '/consulting/{id}/close',
       '/consulting/{id}/payments', '/consulting/{id}/invoice',
     ]);
-    for (const h of ['previewSessions', 'addSessions', 'writeSession', 'previewClose', 'close'] as const) {
+    for (const h of ['previewSessions', 'addSessions', 'writeSession', 'previewClose', 'close', 'editItems', 'addItemFile', 'removeItemFile'] as const) {
       expect(app.get(Reflector).get(PERM_KEY, ConsultingController.prototype[h])).toEqual(['canAdminPage', 'canCrudAll']);
     }
     const patch = api.paths['/consulting/{id}/items/{itemId}'].patch;

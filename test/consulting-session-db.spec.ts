@@ -108,7 +108,7 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
     );
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'회차학생1','11','테스트고'), ($2,'회차학생2','10','테스트고')`, [STU1, STU2]);
     const login = async (email: string) => {
-      const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ email, password: PW }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     ceoToken = await login('cs-ceo@t.kr');

@@ -5,14 +5,16 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString,
-  Matches, Max, MaxLength, Min, MinLength, ValidateBy,
+  Matches, Max, MaxLength, Min, MinLength, ValidateBy, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { UnavWarnDto } from '../schedule/schedule.dto';
 import { CONS_SHARES, type ConsShare } from '../../lib/rules';
 import {
+  CONS_ITEM_FILE_MAX, CONS_ITEM_MAX,
   CONSULTING_FILE_MAX, CONSULTING_FILE_ROLES, CONSULTING_REQUESTERS, CONSULTING_SESSION_MAX,
   CONSULTING_STAGES, CONSULTING_TYPES, CONTRACT_STEP_MAX, type ConsultingFileRole,
   type ConsultingRequester, type ConsultingStage, type ConsultingType,
@@ -68,13 +70,55 @@ export class ConsItemDto {
   @ApiProperty() id!: number;
   @ApiProperty({ description: '건별 항목 순번' }) seq!: number;
   @ApiProperty({ maxLength: 80 }) label!: string;
-  @ApiProperty({ description: '필수 지정은 종료 전이 게이트(47D-C)와 함께 확정 — 지금은 표기만' }) required!: boolean;
+  @ApiProperty({ description: '필수 — 끝내야 종료할 수 있다(N-18). 못 끝내면 예외 종료(N-18-a)' }) required!: boolean;
   @ApiProperty() done!: boolean;
   @ApiPropertyOptional({ ...S, description: '처리자 이름 — 미완료면 null' }) doneBy?: string | null;
   @ApiPropertyOptional({ ...S, format: 'date', description: '처리일 — 미완료면 null' }) doneOn?: string | null;
   @ApiPropertyOptional({ ...S, description: '처리 시각 KST(YYYY-MM-DDTHH:MI:SS+09:00) — 원본 §31 「2026-07-22 14:00 · 김범준」의 시각 (31-04). 미완료면 null' })
   doneAt?: string | null;
-  @ApiProperty({ description: 'template(§29 자동 생성분) | manual(N-18-a 확정 전 쓰기 없음)' }) source!: string;
+  @ApiProperty({ description: 'template(§29 기본 항목) | manual(원문 §31 「항목 수정」으로 담당이 더한 것 · N-18-a)' }) source!: string;
+  /* ── W11 · 원문 §31 항목 줄의 「파일」과 「항목 수정」 (N-63 · N-18-a) — 서는지는 서버가 정한다(consItemEditIssue) ── */
+  @ApiProperty({
+    type: () => [ConsultingFileDto], maxItems: CONS_ITEM_FILE_MAX,
+    description: '항목 파일 — 항목마다 최대 6개 · 계약 파일 10개와 따로 센다(N-63). role 은 item',
+  })
+  files!: ConsultingFileDto[];
+  @ApiProperty({ description: '「파일」로 더 올릴 수 있는가 — 종료 전 · 6개 미만' }) canAddFile!: boolean;
+  @ApiProperty({ description: '「항목 수정」에서 이름을 바꿀 수 있는가 — 종료 전 · 안 끝낸 항목' }) canRename!: boolean;
+  @ApiProperty({ description: '「항목 수정」에서 뺄 수 있는가 — 종료 전 · 안 끝낸 · 담당이 더한(manual) · 파일 없는 항목. 기본 항목은 빼지 않는다' })
+  canRemove!: boolean;
+}
+
+/** 「항목 수정」 — 더할 항목 한 줄 */
+export class ConsItemAddDto {
+  @ApiProperty({ minLength: 1, maxLength: 80, description: '항목 이름 — 앞뒤 공백은 서버가 걷는다' })
+  @IsString() @MinLength(1) @MaxLength(80) label!: string;
+  @ApiProperty({ description: '필수 — 켜면 끝내야 종료할 수 있다(N-18)' })
+  @IsBoolean() required!: boolean;
+}
+
+/** 「항목 수정」 — 이름 바꿀 항목 한 줄 */
+export class ConsItemRenameDto {
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) id!: number;
+  @ApiProperty({ minLength: 1, maxLength: 80 }) @IsString() @MinLength(1) @MaxLength(80) label!: string;
+}
+
+/**
+ * 원문 §31 「항목 수정」 — 더하기 · 이름 바꾸기 · 빼기를 **한 번에** 보낸다(N-18-a · DQ5 대안 「담당자가 계약마다 항목을 직접 구성」).
+ * 목록 통째로 보내지 않는다 — 누가 먼저 더한 항목을 다른 사람의 오래된 목록이 지우지 않게 **바꾸는 것만** 적는다.
+ */
+export class ConsItemsEditDto {
+  @ApiPropertyOptional({ type: [ConsItemAddDto], maxItems: CONS_ITEM_MAX })
+  @IsOptional() @IsArray() @ArrayMaxSize(CONS_ITEM_MAX) @ValidateNested({ each: true }) @Type(() => ConsItemAddDto)
+  add?: ConsItemAddDto[];
+
+  @ApiPropertyOptional({ type: [ConsItemRenameDto], maxItems: CONS_ITEM_MAX })
+  @IsOptional() @IsArray() @ArrayMaxSize(CONS_ITEM_MAX) @ValidateNested({ each: true }) @Type(() => ConsItemRenameDto)
+  rename?: ConsItemRenameDto[];
+
+  @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, maxItems: CONS_ITEM_MAX, uniqueItems: true, description: '뺄 항목 id' })
+  @IsOptional() @IsArray() @ArrayMaxSize(CONS_ITEM_MAX) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  remove?: number[];
 }
 
 export class ConsItemToggleDto {
@@ -258,13 +302,20 @@ export class ConsultingCapabilitiesDto {
   @ApiProperty({ description: '「납부 넣기」가 서는가 — 회계 표의 줄과 같은 판정(payGate) (S5)' }) canAddPayment!: boolean;
   @ApiProperty({ type: String, nullable: true, description: '납부를 못 넣는 이유 — 넣을 수 있거나 금액 권한이 없으면 null' }) payBlockedReason!: string | null;
   @ApiProperty() canCreateInvoice!: boolean;
-  @ApiProperty() canArchive!: boolean;
-  @ApiProperty({ description: '학부모 연락처/채널 정책 미제공으로 현재 false. deliver는 외부 발송이 아니라 완료 기록이다.' }) externalParentSendSupported!: boolean;
+  @ApiProperty({ description: '「지우기」(보관)가 서는가 — 받은 돈 · 살아 있는 전환 청구서 · 회차 기록이 있으면 false (PB-11)' }) canArchive!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '지우기가 막힌 이유 — 쓰기의 409 CONS_ARCHIVE_BLOCKED 와 같은 문장. 열려 있으면 null (PB-11)' })
+  archiveBlockedReason!: string | null;
+  @ApiProperty({ description: '「계약서 전달하기」가 있는가 — 보호자 메일에 계약서를 붙여 보낸다(N-77). deliver 는 시스템 밖 전달의 완료 기록이다' }) externalParentSendSupported!: boolean;
   @ApiProperty({ type: String, nullable: true }) externalParentSendReason!: string | null;
+  @ApiProperty({ description: '지금 계약서를 보낼 수 있는가 — 계약 2·4단계 · 계약서 있음 · 풀리지 않은 피드백 없음. 실제로 나간 메일이 있어야 「전달」 단계로 넘어간다 (N-77)' })
+  canSendContract!: boolean;
   /* ── C95 · §31 회차 · 종료 ── */
   @ApiProperty({ description: '회차를 더 잡을 수 있는가 — 진행(running) 중인 건만 (I-91)' }) canAddSession!: boolean;
   @ApiProperty({ description: '종료할 수 있는가 — N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다 (I-95)' }) canClose!: boolean;
   @ApiProperty({ type: String, nullable: true, description: '종료가 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null' }) closeBlockedReason!: string | null;
+  @ApiProperty({ description: '예외 종료를 할 수 있는가 — 필수 항목·약정 회차만 남아 종료가 막혔고 이 사람이 승인 권한이 있을 때 (N-18-a · DQ6)' })
+  canCloseException!: boolean;
+  @ApiProperty({ description: '「항목 수정」과 항목 파일 빼기가 서는가 — 종료 전 건 (N-18-a · N-63)' }) canEditItems!: boolean;
 }
 
 export class ConsultingDeliveryDto {
@@ -321,6 +372,8 @@ export class ConsultingDetailDto {
   @ApiProperty({ description: '아직 안 끝낸 필수 항목 수' }) requiredLeft!: number;
   @ApiProperty({ type: String, nullable: true, description: '종료 시각 — cons_event closed 행 (없으면 null)' }) closedAt!: string | null;
   @ApiProperty({ type: String, nullable: true, description: '종료한 사람' }) closedByName!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '예외 종료의 사유 — 예외로 닫은 건만(감사 원장의 그 줄). 아니면 null (N-18-a)' })
+  closeReason!: string | null;
 }
 
 /* ══ §28 컨설팅 회계 (C58) ═══════════════════════════════════════════════ */
@@ -334,17 +387,25 @@ export class ConsPaymentDto {
   @ApiPropertyOptional(S) byName?: string | null;
 }
 
+/** 컨설팅에 걸린 학생 한 명 — 「청구서로 전환」 창의 고르개가 읽는다 (N-33 ②) */
+export class ConsStudentRefDto {
+  @ApiProperty(ID_SCHEMA) id!: number;
+  @ApiProperty() name!: string;
+}
+
 /** §28 표 한 줄 — 계약 하나의 돈 */
 export class ConsAccountRowDto {
   @ApiProperty() id!: number;
   @ApiProperty({ description: '학생 — 여럿이면 쉼표로 잇는다' }) studentName!: string;
+  @ApiProperty({ type: [ConsStudentRefDto], description: '학생 id · 이름 — 여럿이면 「청구서로 전환」에서 받는 학생을 고른다(이름 차례)' })
+  students!: ConsStudentRefDto[];
   @ApiProperty({ description: '종류 코드' }) consType!: string;
   @ApiProperty({ description: '종류 이름 — 「에세이 지도」 (서버 낱말 · 29-02)' }) typeLabel!: string;
   @ApiProperty({ type: String, enum: CONSULTING_STAGES }) stage!: ConsultingStage;
   @ApiProperty({ description: '단계 이름 — 낱말은 서버가 만든다 (D-R18)' }) stageLabel!: string;
 
   @ApiPropertyOptional({ ...N, description: '계약 금액 — 못 보면 null' }) amount?: number | null;
-  @ApiPropertyOptional({ ...N, description: '받은 돈 — 납부 기록의 합' }) paid?: number | null;
+  @ApiPropertyOptional({ ...N, description: '받은 돈 — 납부 기록의 합 + 살아 있는 전환 청구서에 붙은 입금 (N-33 ② · 계약 → 진행 전이와 같은 조각)' }) paid?: number | null;
   /** 남은 돈 — **서버가 뺀다.** 화면이 계약 − 받음을 다시 하면 머리 칸의 합계와 갈린다 (D-R37) */
   @ApiPropertyOptional({ ...N, description: '남은 돈 — 서버가 뺀다' }) due?: number | null;
 
@@ -382,6 +443,16 @@ export class ConsPaymentCreateDto {
 
   @ApiPropertyOptional({ maxLength: 80 })
   @IsOptional() @IsString() @MaxLength(80) memo?: string;
+}
+
+/**
+ * 청구서로 전환 — 원문 §28 「청구서로 전환」 창의 입력 (N-33 ②).
+ * 청구서(`inv.student_id`)는 학생 한 명 앞으로 나간다 — 학생이 여럿인 컨설팅은 **사람이 고른다**(전에는 409 로 돌려보냈다).
+ * 한 명이면 비워도 그 학생이다.
+ */
+export class ConsToInvoiceDto {
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '청구서를 받을 학생 — 그 컨설팅의 학생이어야 한다. 학생이 여럿이면 필수' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId?: number;
 }
 
 /* ══ §27 컨설팅 학생별 (C59) ═════════════════════════════════════════════ */
@@ -513,11 +584,23 @@ export class ConsSessionsResultDto {
   @ApiProperty({ description: '담당에게 알림을 보냈는가 (돌린 사람 본인이면 false)' }) notified!: boolean;
 }
 
+/** 예외 종료 — 사유는 필수다(DQ6 권장안). 승인은 이 요청을 보낸 권한자다(서버가 권한을 본다) */
+export class ConsCloseExceptionDto {
+  @ApiProperty({ minLength: 1, maxLength: 500, description: '예외 종료 사유 — 감사 원장에 남긴다' })
+  @IsString() @MinLength(1) @MaxLength(500) @Matches(/\S/, { message: '사유를 적어 주세요' }) reason!: string;
+}
+
 export class ConsCloseDto {
-  @ApiPropertyOptional({ ...ID_SCHEMA, description: '안내 문구 틀(gtpl) — 고르면 그 본문이 안내문이 된다. 없으면 서버 기본 문장' })
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '안내 문구 틀(gtpl) — 고르면 그 본문이 안내문이 된다. 없으면 서버 기본 문장(예외 종료는 기본 문장이 없다)' })
   @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) templateId?: number;
-  @ApiPropertyOptional({ maxLength: 500, description: '안내문 뒤에 붙는 한 줄' })
+  @ApiPropertyOptional({ maxLength: 500, description: '안내문 뒤에 붙는 한 줄 — 예외 종료에서 문구 틀을 안 고르면 이 글이 안내문 전부다' })
   @IsOptional() @IsString() @MaxLength(500) memo?: string;
+  @ApiPropertyOptional({
+    type: () => ConsCloseExceptionDto,
+    description: '예외 종료(N-18-a) — 필수 항목·약정 회차가 남은 진행 중 건을 사유와 함께 닫는다. 승인 권한(대표 전용 판정)이 있어야 하고, 학부모 안내는 사람이 고른 문구 틀이나 적은 글만 쓴다',
+  })
+  @IsOptional() @ValidateNested() @Type(() => ConsCloseExceptionDto)
+  exception?: ConsCloseExceptionDto;
 }
 
 export class ConsCloseResultDto {
@@ -531,4 +614,5 @@ export class ConsCloseResultDto {
   @ApiProperty(N) sessions!: number | null;
   @ApiProperty(S) endOn!: string | null;
   @ApiProperty({ description: '담당에게 알림을 보냈는가' }) notified!: boolean;
+  @ApiProperty({ description: '예외 종료였는가 — 남은 항목·회차와 사유가 감사 원장에 남는다 (N-18-a)' }) exception!: boolean;
 }

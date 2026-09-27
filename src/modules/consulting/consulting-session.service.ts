@@ -14,18 +14,23 @@
  *   육하원칙 — 보낸 칸만 바꾼다(C93 PATCH 규약). 다 적으면 그 회차의 할 일을 끝낸 것으로 접는다.
  *   종료     — N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 `consultingCloseIssue` 가 판정 → `stage=done` · 앞으로 잡아 둔 회차가 남아 있으면
  *              막는다(접는 사유·처리를 여기서 지어내지 않는다 · 시간표에서 접고 온다) · 학생마다 학부모 안내(PNOTI parent · 문구 틀 `gtpl` 선택 ·
- *              발송처는 N-42) · `cons_event closed` · 담당 알림. 예외 종료(사유·승인)는 N-18-a 가 열려 있어 만들지 않는다.
+ *              발송처는 N-42) · `cons_event closed` · 담당 알림. 필수 항목 · 약정 회차가 남은 건의 예외 종료(사유 · 승인 · 남은 것 스냅숏)는
+ *              N-18-a 채택(W11) — 승인 권한자만 · 학부모 안내는 사람이 고른 틀이나 적은 글만.
  * 미리보기는 같은 트랜잭션을 끝까지 돌리고 되돌린다 (C91 · C93 과 같은 모양 · D-R37).
  */
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
+import { audit } from '../../lib/audit';
 import { todayKst } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
 import { END_MIN, START_MIN, kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import type { ConsCloseDto, ConsCloseResultDto, ConsSessionCreateDto, ConsSessionPlanRowDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsultingSessionDto } from './consulting.dto';
-import { CONSULTING_TYPE_LABEL, consSessDoneSql, consultingCloseIssue, consultingSessionAddIssue, consultingSessionDone, consultingSessionRecorded, type ConsultingType } from './consulting.rules';
+import {
+  CONSULTING_TYPE_LABEL, consSessDoneSql, consultingCloseIssue, consultingExceptionCloseIssue, consultingSessionAddIssue,
+  consultingSessionDone, consultingSessionRecorded, type ConsultingType,
+} from './consulting.rules';
 import { CONS_SESS_SELECT, ConsultingService, consSessDto } from './consulting.service';
 
 type R = Record<string, unknown>;
@@ -278,9 +283,19 @@ export class ConsultingSessionService {
     }
   }
 
-  /* ══ 종료 — I-95 · N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」 ═════════════════════════ */
+  /* ══ 종료 — I-95 · N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」 · 예외 종료(N-18-a · W11) ═════════════════ */
 
-  close(viewerId: number, canHide: boolean, consId: number, dto: ConsCloseDto, preview: boolean): Promise<ConsCloseResultDto> {
+  /**
+   * @param canApproveClose 예외 종료 승인 권한 — `perm.canCeoApproveConsultingClose`(대표 전용 판정 한 줄 · 지금은 ceoGate)
+   *
+   * **예외 종료**(`dto.exception`) — N-18-a 채택 DQ6 권장안 「관리 권한자가 사유를 남기고 승인한 뒤 예외 종료」.
+   *   - 필수 항목이 남았거나 약정 회차가 모자란 **진행 중** 건만(`consultingExceptionCloseIssue`). 앞으로 잡아 둔 회차는 지금처럼 막는다.
+   *   - 승인 = 이 요청을 보낸 권한자다(권한 없으면 403). 사유는 필수(DTO).
+   *   - 남은 항목 · 회차 스냅숏과 사유 · 승인자 · 시각을 **감사 원장**(LOG before/after · `consulting.close_exception`)에 남긴다.
+   *   - 학부모 안내는 **사람이 고른 문구 틀이나 적은 글만** — 예외 종료에는 서버 기본 문장이 없다(「마무리되었습니다」를 서버가 짓지 않는다).
+   *   - 환불 · 청구 조정은 기존 수강 종료 · 환불 절차로 따로 한다(여기서 돈을 건드리지 않는다).
+   */
+  close(viewerId: number, canHide: boolean, consId: number, dto: ConsCloseDto, preview: boolean, canApproveClose = false): Promise<ConsCloseResultDto> {
     return this.run(preview, async (q) => {
       const m = q.manager;
       const c = await this.consulting.lockFull(m, viewerId, canHide, consId);
@@ -296,25 +311,52 @@ export class ConsultingSessionService {
       const [{ planned }] = (await m.query(
         `SELECT count(*)::int AS planned FROM cons_sess x WHERE x.cons_id = $1 AND x.on_date > $2::date`, [consId, today],
       )) as Array<{ planned: number }>;
-      const issue = consultingCloseIssue({
+      const closeInput = {
         stage: String(c.stage), sessions, sessionsDone,
         requiredLeft: Number(counts?.required_left ?? 0), sessionsPlanned: Number(planned),
-      });
-      if (issue) throw new ConflictException(issue);
+      };
+      const exception = dto.exception ?? null;
+      if (exception) {
+        if (!canApproveClose) {
+          throw new ForbiddenException({ code: 'CONS_CLOSE_EXCEPTION_FORBIDDEN', message: '예외 종료는 대표가 승인합니다' });
+        }
+        const exIssue = consultingExceptionCloseIssue(closeInput);
+        if (exIssue) throw new ConflictException(exIssue);
+        if (dto.templateId == null && !dto.memo?.trim()) {
+          throw new BadRequestException({
+            code: 'CONS_CLOSE_NOTICE_REQUIRED',
+            message: '예외 종료는 학부모 안내 문구 틀을 고르거나 안내 글을 적어야 합니다',
+          });
+        }
+      } else {
+        const issue = consultingCloseIssue(closeInput);
+        if (issue) throw new ConflictException(issue);
+      }
       const students = await this.students(m, consId);
       const studentNames = students.map((s) => s.name);
       const typeLabel = CONSULTING_TYPE_LABEL[String(c.cons_type) as ConsultingType] ?? String(c.cons_type);
 
-      /* 안내문 — 문구 틀을 고르면 그 본문, 아니면 서버 기본 문장. 학생마다 PNOTI parent 한 줄 (발송처는 N-42) */
+      /* 안내문 — 문구 틀을 고르면 그 본문, 아니면 서버 기본 문장(예외 종료는 기본 문장 없음 — 사람이 적은 글만). 학생마다 PNOTI parent 한 줄 (발송처는 N-42) */
       let body: string;
       if (dto.templateId != null) {
         const [tpl] = (await m.query(`SELECT body FROM gtpl WHERE id = $1`, [dto.templateId])) as Array<{ body: string }>;
         if (!tpl) throw new NotFoundException({ code: 'GTPL_NOT_FOUND', message: '문구 틀을 찾을 수 없습니다' });
         body = tpl.body;
+        if (dto.memo?.trim()) body += ` · ${dto.memo.trim()}`;
+      } else if (exception) {
+        body = dto.memo!.trim();
       } else {
         body = `컨설팅 종료 안내 — ${typeLabel} 컨설팅(${sessionsDone}회)이 마무리되었습니다. 그동안 함께해 주셔서 감사합니다.`;
+        if (dto.memo?.trim()) body += ` · ${dto.memo.trim()}`;
       }
-      if (dto.memo?.trim()) body += ` · ${dto.memo.trim()}`;
+      /* 예외 종료 — 남은 항목 · 회차를 닫기 **전에** 떠 둔다(감사 원장 before) */
+      const leftItems = exception ? (await m.query(
+        `SELECT id, seq, label, required FROM cons_item WHERE cons_id = $1 AND NOT done ORDER BY seq`, [consId],
+      )) as Array<{ id: string; seq: number; label: string; required: boolean }> : [];
+      const sessionRows = exception ? (await m.query(
+        `SELECT seq, to_char(on_date,'YYYY-MM-DD') AS on_date, what IS NOT NULL AND why IS NOT NULL AND how IS NOT NULL AS recorded
+           FROM cons_sess WHERE cons_id = $1 ORDER BY seq`, [consId],
+      )) as Array<{ seq: number; on_date: string | null; recorded: boolean }> : [];
       const notices = (await m.query(
         `INSERT INTO pnoti (ser_id, on_date, audience, student_id, channel, body)
          SELECT NULL, $2::date, 'parent', unnest($1::bigint[]), 'app', $3 RETURNING id`,
@@ -330,6 +372,18 @@ export class ConsultingSessionService {
       ));
       if (!cons) throw new ConflictException({ code: 'CONS_NOT_RUNNING', message: '진행 중인 컨설팅만 종료할 수 있습니다' });
       await m.query(`INSERT INTO cons_event (cons_id, event_type, by_id) VALUES ($1, 'closed', $2)`, [consId, viewerId]);
+      if (exception) {
+        // 승인자 = actor_id · 시각 = log.at. 남은 항목 · 회차는 before 에, 사유 · 종료일은 after 에 (N-18-a · N-73 결재)
+        await audit(m, 'consulting.close_exception', {
+          actorId: viewerId, entityId: consId,
+          before: {
+            stage: 'running', sessions, sessionsDone, requiredLeft: closeInput.requiredLeft,
+            itemsLeft: leftItems.map((i) => ({ id: Number(i.id), seq: Number(i.seq), label: i.label, required: i.required })),
+            sessionsLog: sessionRows.map((s) => ({ seq: Number(s.seq), onDate: s.on_date, recorded: s.recorded === true })),
+          },
+          after: { stage: 'done', endOn: cons.end_on ?? null, reason: exception.reason.trim(), parentNotices: notices.length },
+        });
+      }
       let notified = false;
       if (c.owner_id != null && Number(c.owner_id) !== viewerId) {
         const rows = (await m.query(
@@ -340,7 +394,7 @@ export class ConsultingSessionService {
       }
       return {
         preview, consId, stage: 'done', studentNames, noticeBody: body, parentNotices: notices.length,
-        sessionsDone, sessions, sessionsPlanned: 0, endOn: cons.end_on ?? null, notified,
+        sessionsDone, sessions, sessionsPlanned: 0, endOn: cons.end_on ?? null, notified, exception: exception !== null,
       };
     });
   }

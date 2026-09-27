@@ -131,7 +131,8 @@ export const CONS_SHARE_MEANING: Record<string, string> = {
   private: '담당자와 대표만 봅니다',
 };
 export const consShareMeaning = (share: string): string | null => CONS_SHARE_MEANING[share] ?? null;
-export const CONSULTING_FILE_ROLES = ['draft', 'revision', 'signed'] as const;
+/** `item` — §31 항목 파일(N-63). 계약 파일(초안·수정본·서명본)과 같은 표에 있지만 따로 센다 */
+export const CONSULTING_FILE_ROLES = ['draft', 'revision', 'signed', 'item'] as const;
 export type ConsultingFileRole = (typeof CONSULTING_FILE_ROLES)[number];
 export const CONSULTING_FILE_MAX = 10;
 
@@ -215,7 +216,8 @@ export interface ConsultingCloseInput {
 
 /**
  * 종료할 수 있는가 — **N-18 채택문 그대로**: 「필수 항목과 약정 회차 완료 후 명시 종료」.
- * 예외 종료(사유·승인)는 N-18-a 가 아직 열려 있어 만들지 않는다 — 막힌 이유를 문장으로 돌려 화면이 그대로 말한다.
+ * 막힌 이유를 문장으로 돌려 화면이 그대로 말한다. 필수 항목·약정 회차가 남은 건의 **예외 종료**(사유 · 승인)는
+ * 아래 `consultingExceptionCloseIssue` 가 이 판정 위에서 가른다(N-18-a · W11).
  */
 export function consultingCloseIssue(input: ConsultingCloseInput): { code: string; message: string } | null {
   if (input.stage === 'done') return { code: 'CONS_ALREADY_DONE', message: '이미 종료된 컨설팅입니다' };
@@ -258,3 +260,106 @@ export function consultingSessionAddIssue(stage: string): { code: string; messag
  */
 export const consultingRemainingMessage = (remaining: number): string =>
   `남은 금액은 ${Math.max(0, remaining)}원입니다 — 그보다 많이 적을 수 없습니다`;
+
+/* ══ W11 결정 채택 — 받은 돈 한 조각(N-33 ②) · 예외 종료(N-18-a) · 항목 수정 · 항목 파일(N-63) · 지우기 조건(PB-11) ══ */
+
+/**
+ * 받은 돈 = `cons_pay` 누계 + **살아 있는 전환 청구서에 붙은 입금**(`pay`) — SQL 조각 **한 벌**이다 (N-33 ② · PB-03 · D-R22).
+ *
+ * 계약 → 진행 전이(`ConsultingService.promoteWhenPaid`)와 §28 회계 · §26 카드 · §27 학생별 · §30 상세의 「받은 돈」이
+ * 이 조각 하나를 읽는다. 전에는 전이만 두 원장을 합쳐 읽고 §28 은 `cons_pay` 만 세어, 전환 청구서로 다 낸 건이
+ * 진행으로 넘어갔는데도 §28 은 「남은 돈」을 그대로 보였다.
+ * 두 원장은 같은 돈을 담지 않는다 — 전환은 남은 돈으로만 내고, 전환 뒤에는 `cons_pay` 를 막는다(`CONS_PAY_INVOICED`).
+ * 그래서 더해도 두 번 세지 않는다. **읽기만 한다** — 한 원장의 돈을 다른 원장으로 옮겨 적지 않는다.
+ *
+ * @param cons 바깥 질의의 `cons` 별칭(예: `c`)
+ */
+export const consPaidSql = (cons: string): string =>
+  `(COALESCE((SELECT sum(cp.amount) FROM cons_pay cp WHERE cp.cons_id = ${cons}.id), 0)
+      + COALESCE((SELECT sum(ip.amount) FROM pay ip JOIN inv ii ON ii.id = ip.inv_id
+                   WHERE ii.cs_id = ${cons}.id AND ii.state <> 'void'), 0))`;
+
+/**
+ * 예외 종료를 할 수 있는가 — N-18-a 채택(DQ6 권장안 「관리 권한자가 사유를 남기고 승인한 뒤 예외 종료」).
+ *
+ * 여는 것은 **필수 항목이 남았거나(`CONS_ITEMS_LEFT`) 약정 회차가 모자란(`CONS_SESSIONS_LEFT`)** 진행 중인 건뿐이다.
+ * 그 밖의 막힘은 정상 종료와 같은 문장으로 그대로 막는다 — 계약 단계 · 이미 종료 · **앞으로 잡아 둔 회차**
+ * (시간표를 조용히 접지 않는다 — 시간표에서 접거나 날짜가 지나야 한다).
+ * 정상 종료가 되는 건에는 예외가 필요 없다 — 사유가 사실과 다른 기록이 되지 않게 막는다.
+ * 승인 권한(`perm.ts` `canCeoApproveConsultingClose`)은 부르는 쪽이 따로 본다 — 여기는 건의 상태만 본다.
+ */
+export function consultingExceptionCloseIssue(input: ConsultingCloseInput): { code: string; message: string } | null {
+  const issue = consultingCloseIssue(input);
+  if (issue === null) {
+    return { code: 'CONS_CLOSE_EXCEPTION_NOT_NEEDED', message: '필수 항목과 약정 회차를 다 마쳤습니다 — 예외 없이 종료하세요' };
+  }
+  if (issue.code !== 'CONS_ITEMS_LEFT' && issue.code !== 'CONS_SESSIONS_LEFT') return issue;
+  // 항목·회차 뒤에 가려진 「잡아 둔 회차」도 막는다 — 같은 판정을 항목·회차 조건 없이 한 번 더 본다
+  return consultingCloseIssue({ ...input, requiredLeft: 0, sessions: null });
+}
+
+/** 항목 파일 한도 — 원문 §31 항목 줄의 「파일」 · 항목마다 6개(N-63). 계약 파일 10개(`CONSULTING_FILE_MAX`)와 따로 센다 */
+export const CONS_ITEM_FILE_MAX = 6;
+/** 한 컨설팅의 항목 수 상한 — 「항목 수정」으로 더할 수 있는 끝(원문 기본 항목 6~12개의 두 배 남짓 · smallint 순번) */
+export const CONS_ITEM_MAX = 30;
+
+export interface ConsItemFacts {
+  /** 건의 단계 — 종료된 건의 항목은 바꾸지 않는다 */
+  stage: string;
+  done: boolean;
+  /** template(§29 기본 항목) | manual(「항목 수정」으로 더한 것) */
+  source: string;
+  /** 이 항목에 붙은 파일 수 */
+  files: number;
+}
+
+/**
+ * 항목 하나에 대한 쓰기가 막히는 까닭 — 「항목 수정」(이름 바꾸기 · 빼기)과 항목 「파일」 올리기가 **같은 함수**를 본다.
+ * 화면의 단추(`ConsItemDto.canRename · canRemove · canAddFile`)도 이 함수에서 나온다 — 단추와 쓰기가 다른 답을 하지 않게 (D-R39 · D-R22).
+ *
+ * - 끝낸 항목은 이름을 바꾸거나 빼지 않는다 — 「누가 언제 무엇을 끝냈다」는 기록의 뜻이 바뀐다(먼저 완료를 풀면 그 풂도 원장에 남는다).
+ * - **기본 항목(template)은 빼지 않는다** — 필수 기본 항목은 종료 조건(N-18)이다. 빼서 종료를 여는 길을 두면
+ *   예외 종료(사유 · 승인 · N-18-a)를 거치지 않고 같은 일이 된다. 못 끝내면 예외 종료로 닫는다.
+ * - 파일이 붙은 항목은 빼지 않는다 — 파일을 먼저 뺀다(FK 가 마지막에 막는다).
+ */
+export function consItemEditIssue(op: 'rename' | 'remove' | 'file', i: ConsItemFacts): { code: string; message: string } | null {
+  if (i.stage === 'done') return { code: 'ITEM_LOCKED', message: '종료된 컨설팅의 항목은 바꿀 수 없습니다' };
+  if (op === 'file') {
+    return i.files >= CONS_ITEM_FILE_MAX
+      ? { code: 'CONS_ITEM_FILE_LIMIT', message: `항목마다 파일은 최대 ${CONS_ITEM_FILE_MAX}개입니다` }
+      : null;
+  }
+  if (i.done) return { code: 'CONS_ITEM_DONE', message: '끝낸 항목은 이름을 바꾸거나 뺄 수 없습니다 — 먼저 완료를 풀어 주세요' };
+  if (op === 'remove' && i.source !== 'manual') {
+    return { code: 'CONS_ITEM_TEMPLATE', message: '기본 항목은 뺄 수 없습니다 — 끝내지 못하면 예외 종료로 닫습니다' };
+  }
+  if (op === 'remove' && i.files > 0) {
+    return { code: 'CONS_ITEM_HAS_FILES', message: '파일이 붙은 항목은 뺄 수 없습니다 — 파일을 먼저 빼 주세요' };
+  }
+  return null;
+}
+
+export interface ConsultingArchiveInput {
+  /** `cons_pay` 줄 수 */
+  payments: number;
+  /** 살아 있는(취소 아닌) 전환 청구서가 있는가 */
+  liveInvoice: boolean;
+  /** 회차 기록(`cons_sess`) 줄 수 — 잡아 둔 날짜 포함 */
+  sessions: number;
+}
+
+/**
+ * 「지우기」(보관 · soft delete)가 막히는 까닭 — PB-11 권고 「수납/청구서/회차가 있으면 409」.
+ *
+ * 지우면 `deleted_at` 으로 목록 · §28 합계에서 빠지는데, 받은 돈 · 전환 청구서 · 시간표 회차 · 할 일은 남는다 —
+ * 돈과 일정이 남은 건이 화면에서만 사라진다. 그래서 그 셋이 있으면 막는다. 막힌 이유는 단추(`canArchive` ·
+ * `archiveBlockedReason`)와 쓰기(409 `CONS_ARCHIVE_BLOCKED`)가 **같은 문장**을 쓴다.
+ */
+export function consultingArchiveIssue(input: ConsultingArchiveInput): { code: string; message: string } | null {
+  if (input.payments > 0) return { code: 'CONS_ARCHIVE_BLOCKED', message: '받은 돈이 있는 컨설팅은 지울 수 없습니다' };
+  if (input.liveInvoice) {
+    return { code: 'CONS_ARCHIVE_BLOCKED', message: '청구서로 전환한 컨설팅은 지울 수 없습니다 — 청구서를 먼저 취소해야 합니다' };
+  }
+  if (input.sessions > 0) return { code: 'CONS_ARCHIVE_BLOCKED', message: '회차 기록이 있는 컨설팅은 지울 수 없습니다' };
+  return null;
+}
