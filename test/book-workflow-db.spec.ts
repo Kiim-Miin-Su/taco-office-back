@@ -160,6 +160,18 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     expect(Number((await q.query(`SELECT count(*)::int AS n FROM hist WHERE entity='issue' AND ref_id=$1 AND action='book_issue'`, [issue.id]))[0].n)).toBe(1);
   });
 
+  it('승인·전달 대기 생성에는 배부일과 진도를 조용히 저장하지 않고 거절한다', async () => {
+    await expect(svc().createIssue(owner, {
+      studentId: studentA, libId: libA, state: 'wait', issuedOn: EFFECTIVE_ON,
+    })).rejects.toThrow('배부일과 진도는 배부 완료 상태에서만 기록할 수 있습니다');
+    await expect(svc().createIssue(owner, {
+      studentId: studentA, libId: libA, state: 'auto', progressPage: 0,
+    })).rejects.toThrow('배부일과 진도는 배부 완료 상태에서만 기록할 수 있습니다');
+    expect(Number((await q.query(
+      `SELECT count(*)::int AS n FROM issue WHERE student_id=$1 AND lib_id=$2`, [studentA, libA],
+    ))[0].n)).toBe(0);
+  });
+
   it('다학생·다교재 요청은 pending→delivered→received로 끝나고 코디네이터도 대표 판정도 아닌 사람은 수령할 수 없다', async () => {
     const v1 = await svc().addVersion(owner, libA, {
       edition: 'v1',

@@ -724,11 +724,14 @@ export class BooksService {
       if (!lib) throw new NotFoundException('교재를 찾을 수 없습니다');
       const stu = await m.query(`SELECT id FROM stu WHERE id=$1 FOR KEY SHARE`, [dto.studentId]);
       if (!stu.length) throw new NotFoundException('학생을 찾을 수 없습니다');
+      const state = (dto.state ?? 'ok') as IssueState;
+      if (state !== 'ok' && (dto.issuedOn !== undefined || dto.progressPage !== undefined)) {
+        throw new BadRequestException('배부일과 진도는 배부 완료 상태에서만 기록할 수 있습니다');
+      }
       if (dto.progressPage !== undefined) {
         const why = progressIssue(dto.progressPage, lib.pages == null ? null : Number(lib.pages));
         if (why) throw new BadRequestException(why);
       }
-      const state = (dto.state ?? 'ok') as IssueState;
       const issuedOn = state === 'ok' ? (dto.issuedOn ?? todayKst()) : null;
       /*
        * §38 배부 원장은 클라이언트가 판을 고르지 않는다. 배부가 생성되는 시점의 현재 판을
