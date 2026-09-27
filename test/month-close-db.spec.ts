@@ -92,7 +92,7 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     token = await login('close-ceo@t.kr');

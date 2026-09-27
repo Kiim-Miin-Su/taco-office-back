@@ -32,7 +32,7 @@
  *   · `dropped` — 휴강·결강만               → 「다음 달로 넘길 돈」
  * 세 토막의 합(`done + 남은 것`)은 `month` 와 정확히 같다 — 회귀가 그것을 증명한다.
  */
-import { kstMonthOf, serStuOn, stuPausedOn } from '../../lib/sql';
+import { kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
 
 export interface InvoiceLineRow {
   sub_key: string | null;
@@ -78,6 +78,57 @@ export const consultingCovered = (serExpr: string, studentExpr: string): string 
              SELECT 1 FROM cons_sess cx JOIN cons_stu cxs ON cxs.cons_id = cx.cons_id
               WHERE cx.ser_id = ${serExpr} AND cxs.student_id = ${studentExpr})`;
 
+/**
+ * 청구 종류마다 **어느 수업을 세는가** (N-75 채택 · W11 · 원문 §57 「그 밖의 수입」).
+ *
+ * 원문 §57 은 「진단고사 + 상담 비용(진단고사 · 입학 상담)」을 수업료와 **따로** 센다. 같은 회차를 수업료 줄에도 두면
+ * 두 청구서가 같은 수업을 한 번씩 청구한다 — 그래서 진단고사 · 상담 종류의 회차는 **제 종류로만** 청구하고
+ * 수업료 줄에서는 뺀다. 코드표 키는 시드(`seed/base.ts` KINDS) · 원문 이름 되돌림 migration(1759000000000) ·
+ * 상담 일정(`lib/intake-words` LEAD_APPT_SER_CODE)이 쓰는 그대로다 — 새로 짓지 않았다.
+ *
+ * 줄을 서버가 세는 종류는 이 둘뿐이다. 응시료는 원천이 없어 사람이 줄을 적고(발행 창), 컨설팅비는 컨설팅
+ * 「청구서로 전환」이 계약 금액으로 낸다 — 이 파일의 계산을 지나지 않는다.
+ */
+export const DIAG_INTAKE_KINDS: readonly string[] = ['diagx', 'consult'];
+
+/** 줄을 회차에서 세는 청구 종류 */
+export type LineInvType = 'tuition' | 'diag_intake';
+
+/** 그 종류가 세는 회차의 조건 — `kindExpr` 는 SER 의 종류 식(`se.kind_key` 등). 수업료는 진단고사 · 상담 **밖**이다 */
+export const lineKindScope = (invType: LineInvType, kindExpr: string): string =>
+  invType === 'diag_intake'
+    ? `${kindExpr} IN (${sqlWordList(DIAG_INTAKE_KINDS)})`
+    : `${kindExpr} NOT IN (${sqlWordList(DIAG_INTAKE_KINDS)})`;
+
+/** 섞인 줄 한 줄 — 저장된 그대로(이름 · 횟수 · 금액) */
+export interface MixedLine { label: string; count: number; amount: number }
+
+/**
+ * 옛 수업료 청구서에 **진단고사 · 상담 회차의 줄이 섞여 있는가** (N-75 뒤 · W11 A' 후속).
+ *
+ * N-75 전의 수업료 발행은 진단고사 · 상담 회차도 수업료 줄로 셌다. 지금의 줄 계산(`lineKindScope`)은 그 회차를 수업료에서
+ * 빼므로, 그런 청구서를 지금 계산으로 다시 읽으면 **그 몫이 조용히 사라진다** — 수강 종료 환불이 줄고, 재가격 도구는 금액을
+ * 내린다. 그래서 두 쓰기가 이 함수로 먼저 보고 **저장된 줄을 고쳐 읽지 않고 멈춘다**(사람이 확인 · 운영 데이터를 조용히 바꾸지 않는다).
+ *
+ * 수업료 청구서의 저장된 **양수 줄**(청구한 줄 — 이월 · 수강 종료의 음수 줄은 아니다) 가운데 진단고사 · 상담 회차의 줄을 돌려준다.
+ * 과목(`sub`)에는 종류 칸이 없어 **시간표 규칙 · 단가표의 (종류, 과목) 짝**으로 읽는다(한 과목이 두 종류에 걸치지 않는다 — C71 회귀).
+ * 과목 없는 회차의 줄은 이름이 종류 이름이라 그 이름으로 읽는다. 다른 종류의 청구서는 늘 빈 배열이다.
+ */
+export async function mixedDiagIntakeLines(m: Queryer, invId: number): Promise<MixedLine[]> {
+  const kinds = sqlWordList(DIAG_INTAKE_KINDS);
+  const rows = (await m.query(
+    `SELECT l.label, l.count, l.amount
+       FROM inv_line l JOIN inv i ON i.id = l.inv_id
+      WHERE l.inv_id = $1 AND i.inv_type = 'tuition' AND l.count > 0
+        AND (l.sub_key IN (SELECT se.sub_key FROM ser se WHERE se.kind_key IN (${kinds}) AND se.sub_key IS NOT NULL
+                           UNION SELECT r.sub_key FROM rate r WHERE r.kind_key IN (${kinds}) AND r.sub_key IS NOT NULL)
+             OR (l.sub_key IS NULL AND l.label IN (SELECT k.name FROM kind k WHERE k.key IN (${kinds}))))
+      ORDER BY l.seq, l.id`,
+    [invId],
+  )) as Array<{ label: string; count: number; amount: number }>;
+  return rows.map((r) => ({ label: r.label, count: Number(r.count), amount: Number(r.amount) }));
+}
+
 /** 한 달을 어디까지 셀 것인가 — 위 주석의 세 토막 */
 export type LineSlice =
   | { kind: 'month' }
@@ -88,7 +139,7 @@ export type LineSlice =
   /** 차감(소진)으로 처리된 휴강만 — §54 「차감 N」 표시용. `month` 안에 이미 들어 있다 */
   | { kind: 'deducted' };
 
-const sqlFor = (slice: LineSlice): string => `
+const sqlFor = (slice: LineSlice, invType: LineInvType): string => `
   WITH priced AS (
     SELECT se.sub_key,
            -- 추가 수업(KIND.extra)은 줄 이름부터 갈라 「별도로 잡힌다」 (C-38)
@@ -119,6 +170,8 @@ const sqlFor = (slice: LineSlice): string => `
        AND ${kstMonthOf('lower(o.span)')} = $2
        -- 컨설팅 계약이 덮는 회차는 수업료가 아니다 — 청구도 넘길 돈도 아니다 (PB-05)
        AND NOT ${consultingCovered('se.id', '$1')}
+       -- 청구 종류가 세는 회차만 — 진단고사 · 상담은 제 종류로, 나머지는 수업료로 (N-75)
+       AND ${lineKindScope(invType, 'se.kind_key')}
        ${slice.kind === 'done' ? 'AND o.on_date <= $3::date' : ''}
        ${slice.kind === 'after' ? 'AND o.on_date > $3::date' : ''}
        ${slice.kind === 'after' && slice.serIds ? 'AND se.id = ANY($4::bigint[])' : ''}
@@ -135,11 +188,43 @@ const sqlFor = (slice: LineSlice): string => `
  */
 export async function invoiceLines(
   m: Queryer, studentId: number, yearMonth: string, slice: LineSlice = { kind: 'month' },
+  invType: LineInvType = 'tuition',
 ): Promise<InvoiceLineRow[]> {
   const params: unknown[] = [studentId, yearMonth];
   if (slice.kind === 'done') params.push(slice.upto);
   if (slice.kind === 'after') { params.push(slice.after); if (slice.serIds) params.push(slice.serIds); }
-  return (await m.query(sqlFor(slice), params)) as InvoiceLineRow[];
+  return (await m.query(sqlFor(slice, invType), params)) as InvoiceLineRow[];
+}
+
+/** 청구 대상 한 줄 — 그 달 그 종류의 회차가 있는 학생 */
+export interface BillingCandidate {
+  studentId: number;
+  studentName: string;
+  grade: string | null;
+  invType: LineInvType;
+}
+
+/**
+ * 그 달의 **청구 대상** — 일괄 발행이 부르는 집합과 §53 「아직 안 씀」 칸이 같은 함수다 (N-28 ② · D-R22).
+ *
+ * 그 달에 회차가 하나라도 있는 (학생 · 종류) — 종류는 회차의 종류로 가른다(진단고사 · 상담 → 진단고사 + 상담 비용,
+ * 나머지 → 수업료). 컨설팅 계약이 덮는 회차만 있는 학생은 빠진다(PB-05). 한 학생이 두 종류 모두일 수 있다.
+ * 차례는 학생 이름 → 번호 → 수업료 먼저(일괄 발행이 이 차례로 잠금을 잡는다 — 두 일괄이 엇갈려 기다리지 않게).
+ */
+export async function billingCandidates(m: Queryer, yearMonth: string): Promise<BillingCandidate[]> {
+  const rows = (await m.query(
+    `SELECT DISTINCT st.id, st.name, st.grade,
+            CASE WHEN ${lineKindScope('diag_intake', 'se.kind_key')} THEN 'diag_intake' ELSE 'tuition' END AS inv_type
+       FROM ser_occ o
+       JOIN ser se     ON se.id = o.ser_id
+       JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+       JOIN stu st     ON st.id = ss.student_id
+      WHERE ${kstMonthOf('lower(o.span)')} = $1
+        AND NOT ${consultingCovered('o.ser_id', 'ss.student_id')}
+      ORDER BY st.name, st.id, inv_type DESC`,
+    [yearMonth],
+  )) as Array<{ id: string; name: string; grade: string | null; inv_type: LineInvType }>;
+  return rows.map((r) => ({ studentId: Number(r.id), studentName: r.name, grade: r.grade ?? null, invType: r.inv_type }));
 }
 
 /** 줄의 합 — 「총액」을 두 곳에서 더하지 않는다 */

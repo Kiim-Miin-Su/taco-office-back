@@ -25,7 +25,7 @@ import { DataSource, EntityManager } from 'typeorm';
 import { todayKst } from '../../lib/kst';
 import { assertMonthOpen } from '../../lib/month-close';
 import { writtenRows } from '../../lib/sql';
-import { invoiceLines, linesTotal, type InvoiceLineRow } from './invoice-lines';
+import { invoiceLines, linesTotal, mixedDiagIntakeLines, type InvoiceLineRow, type LineInvType } from './invoice-lines';
 import type { StudentWithdrawDto, WithdrawInvoiceDto, WithdrawResultDto, WithdrawSeriesDto } from './accounting.dto';
 
 /** 미리보기 — 트랜잭션을 끝까지 돌린 뒤 이 예외로 되돌린다. 실제와 같은 계산이라 「미리 본 값」과 「낸 값」이 갈리지 않는다 */
@@ -34,7 +34,12 @@ class PreviewRollback extends Error {
 }
 
 interface SeriesRow { ser_id: string; kind_key: string; sub_key: string | null; title: string | null; to_date: string | null }
-interface InvRow { id: string; year_month: string; title: string; state: string; amount: number; paid_amount: number; sent_at: Date | null }
+interface InvRow { id: string; year_month: string; inv_type: LineInvType; title: string; state: string; amount: number; paid_amount: number; sent_at: Date | null }
+
+/** 옛 수업료 청구서에 진단고사 · 상담 줄이 섞여 멈출 때의 문장 — 미리보기와 쓰기가 같은 말을 쓴다 (W11 A' 후속) */
+const withdrawMixedMessage = (yearMonth: string): string =>
+  `${yearMonth} 수업료 청구서에 진단고사 · 상담 회차가 함께 청구돼 있습니다(따로 청구하기 전의 청구서) — `
+  + '종료일 뒤 그 회차의 환불 몫은 사람이 확인해야 합니다. 청구서를 확인한 뒤 처리하거나, 진단고사 · 상담은 빼고 「이 수업만」 종료하세요';
 
 @Injectable()
 export class StudentWithdrawService {
@@ -113,18 +118,31 @@ export class StudentWithdrawService {
     )) as Array<{ ser_id: string; n: number }>;
     const remainingOf = new Map(remaining.map((r) => [Number(r.ser_id), Number(r.n)]));
 
-    // 종료일 뒤 회차가 들어 있을 수 있는 청구서 — 수업료 · 취소 아님 · 종료일의 달부터
+    /*
+     * 종료일 뒤 회차가 들어 있을 수 있는 청구서 — **회차로 센 종류**(수업료 · 진단고사 + 상담 · N-75) · 취소 아님 · 종료일의 달부터.
+     * 잔여 회차 값은 그 청구서의 종류가 세는 회차로만 센다 — 발행과 같은 함수 · 같은 종류(수업료 줄에는 진단고사 · 상담이 없다).
+     */
     const invoices = (await m.query(
-      `SELECT id, year_month, title, state::text AS state, amount, paid_amount, sent_at
+      `SELECT id, year_month, inv_type, title, state::text AS state, amount, paid_amount, sent_at
          FROM inv
-        WHERE student_id = $1 AND inv_type = 'tuition' AND state <> 'void' AND year_month >= $2
+        WHERE student_id = $1 AND inv_type IN ('tuition', 'diag_intake') AND state <> 'void' AND year_month >= $2
         ORDER BY year_month, id
         FOR UPDATE`,
       [dto.studentId, dto.endedOn.slice(0, 7)],
     )) as InvRow[];
     const afterLines = new Map<number, InvoiceLineRow[]>();
     for (const inv of invoices) {
-      afterLines.set(Number(inv.id), await invoiceLines(m, dto.studentId, inv.year_month, { kind: 'after', after: dto.endedOn, serIds }));
+      const after = { kind: 'after', after: dto.endedOn, serIds } as const;
+      afterLines.set(Number(inv.id), await invoiceLines(m, dto.studentId, inv.year_month, after, inv.inv_type));
+      /*
+       * 옛 수업료 청구서(N-75 전)에 진단고사 · 상담 회차의 줄이 섞여 있고 **그 회차가 종료일 뒤에 남아 있으면** 멈춘다 (W11 A' 후속).
+       * 지금 계산은 그 회차를 수업료에서 빼므로 그대로 두면 환불 몫이 조용히 줄어든다 — 저장된 줄을 고쳐 읽지 않고 사람이 확인한다.
+       * 그 회차가 종료일 전이거나 범위(「이 수업만」)에서 빠지면 환불 몫이 달라지지 않아 멈추지 않는다. 아무것도 쓰기 전이다.
+       */
+      if (inv.inv_type === 'tuition' && (await mixedDiagIntakeLines(m, Number(inv.id))).length > 0
+        && (await invoiceLines(m, dto.studentId, inv.year_month, after, 'diag_intake')).length > 0) {
+        throw new ConflictException({ code: 'WITHDRAW_MIXED_INVOICE', message: withdrawMixedMessage(inv.year_month) });
+      }
     }
 
     /* ── ② 명단에 종료일 — 행은 남는다 (N-50 ①) ── */
@@ -197,11 +215,17 @@ export class StudentWithdrawService {
           WHERE id = $1`,
         [invId, amountAfter, paidAfter, voided, userId],
       );
+      // 분납 일정(N-79)이 있으면 합 = 새 청구액이 되게 **끝 회차부터** 줄인다 — 빠진 것은 종료일 뒤(뒤쪽) 회차다 (표의 지연 제약이 커밋 때 합을 본다)
+      const installments = await this.shrinkInstallments(m, invId, amountBefore - amountAfter);
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'INV',$2,'withdraw',$3::jsonb,$4::jsonb)`,
         [userId, invId,
           JSON.stringify({ amount: amountBefore, paid, state: inv.state }),
-          JSON.stringify({ amount: amountAfter, paid: paidAfter, refund, removed, voided, endedOn: dto.endedOn, lines: lines.map((l) => `${l.label} −${l.n}×${l.unit_price}`) })],
+          JSON.stringify({
+            amount: amountAfter, paid: paidAfter, refund, removed, voided, endedOn: dto.endedOn,
+            lines: lines.map((l) => `${l.label} −${l.n}×${l.unit_price}`),
+            ...(installments ? { installments } : {}),
+          })],
       );
       refundTotal += refund;
       const [after] = (await m.query(`SELECT state::text AS state FROM inv WHERE id = $1`, [invId])) as Array<{ state: string }>;
@@ -244,5 +268,26 @@ export class StudentWithdrawService {
     };
     if (preview) throw new PreviewRollback(result);
     return result;
+  }
+
+  /**
+   * 청구액이 `cut` 만큼 줄 때 분납 일정을 **끝 회차부터** 줄인다(0 이 된 회차는 지운다) — 합 = 새 청구액.
+   * 일정이 없으면 null. 돌려주는 값은 LOG 에 남길 새 일정(회차 · 금액)이다.
+   */
+  private async shrinkInstallments(m: EntityManager, invId: number, cut: number): Promise<Array<{ seq: number; amount: number }> | null> {
+    const rows = (await m.query(
+      `SELECT id, seq, amount FROM inv_installment WHERE inv_id = $1 ORDER BY seq DESC FOR UPDATE`, [invId],
+    )) as Array<{ id: string; seq: number; amount: number }>;
+    if (!rows.length) return null;
+    let left = cut;
+    for (const r of rows) {
+      if (left <= 0) break;
+      const take = Math.min(Number(r.amount), left);
+      left -= take;
+      if (take === Number(r.amount)) await m.query(`DELETE FROM inv_installment WHERE id = $1`, [r.id]);
+      else await m.query(`UPDATE inv_installment SET amount = amount - $2 WHERE id = $1`, [r.id, take]);
+    }
+    const now = (await m.query(`SELECT seq, amount FROM inv_installment WHERE inv_id = $1 ORDER BY seq`, [invId])) as Array<{ seq: number; amount: number }>;
+    return now.map((r) => ({ seq: Number(r.seq), amount: Number(r.amount) }));
   }
 }

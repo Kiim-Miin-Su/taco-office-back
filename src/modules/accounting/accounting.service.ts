@@ -12,24 +12,37 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Inv } from '../../entities';
 import { isSelfReview, SELF_APPROVAL_CODE } from '../../lib/approval';
-import { areaCountSql } from '../../lib/exec-areas';
+import { areaCountSql, invDueSql, invOverdueWhere } from '../../lib/exec-areas';
+import { audit } from '../../lib/audit';
 import { todayKst } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
-import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, REPORT_WRITTEN_DB, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
+import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
 import { kstAt, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
-import { assertMonthOpen, monthClosedMessage } from '../../lib/month-close';
+import { assertMonthOpen, assertMonthOpenForWrite, lockMonthExclusive, monthClosedMessage } from '../../lib/month-close';
 import { insertWage } from '../../lib/wage';
-import { TEACHER_OF_OCC, payoutSheet } from '../../lib/payout-sheet';
+import {
+  BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL, KINDER_MARKER_EXISTS, KINDER_NOT_APPLIED, TEACHER_OF_OCC,
+  payoutSettleLabel, payoutSheet, type BonusKind, type PayoutSheet,
+} from '../../lib/payout-sheet';
+import {
+  ACCT_PRIVACY_KEYS, ACCT_PRIVACY_LABEL, ACCT_PRIVACY_SCOPE, acctPrivacyAuditId, lineAmountVisible, readAcctPrivacy,
+  type AcctPrivacyKey,
+} from '../../lib/acct-privacy';
 import { nowMinKst } from '../../lib/kst';
 import {
   EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABEL, EXPENSE_SETTLED,
-  INV_BOARD_COLUMNS, INV_STATE_LABEL, INV_TYPES_OTHER, INV_TYPE_LABEL, INV_TYPE_NOT_SUPPORTED, INV_TYPE_ROW, INV_TYPE_SUB,
-  PAY_CATEGORIES, PAY_CATEGORY_LABEL, invBoardColumn, invTypeIssueBlockedReason, payCategory, type IncomeSpan,
+  INV_BOARD_COLUMNS, INV_STAGE_COLUMNS, INV_STATE_LABEL, INV_TYPES_MANUAL, INV_TYPES_OTHER, INV_TYPE_LABEL,
+  INV_TYPE_NOT_SUPPORTED, INV_TYPE_ROW, INV_TYPE_SUB,
+  PAY_CATEGORIES, PAY_CATEGORY_LABEL, invBoardColumn, invTypeIssueBlockedReason, invoiceTitle, payCategory, type IncomeSpan,
 } from './accounting.dto';
-import { consultingCovered, invoiceLines, linesTotal, type LineSlice, type Queryer } from './invoice-lines';
+import {
+  billingCandidates, consultingCovered, invoiceLines, lineKindScope, linesTotal, mixedDiagIntakeLines,
+  type InvoiceLineRow, type LineInvType, type LineSlice, type Queryer,
+} from './invoice-lines';
 import type {
   AccountingDto, ExpenseDto, ExpenseReviewDto, ExpenseTotalDto, InvoiceDto, InvoiceIssueDto,
-  CarryRowDto, InvBoardDto, OtherIncomeDto,
+  InvoiceDraftDto, InvoiceDraftQueryDto, InvoiceInstallmentDto,
+  CarryRowDto, InvBoardCandidateDto, InvBoardCardDto, InvBoardDto, OtherIncomeDto,
   ManualPaymentCreateDto, PaymentCreateDto, PaymentDto, PayoutDto,
   TuitionCarryDto,
   TuitionDto, TuitionRowDto,
@@ -38,7 +51,8 @@ import type {
   PayoutSheetDto, PayoutSheetRowDto, PayoutConfirmDto, PayoutDetailDto, PayoutLessonDto,
   CashflowCategoryDto, CashflowDayDto, CashflowDto, CashflowOpenDto, CashflowQueryDto,
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
-  WageHistoryDto, WageRowDto, WageWriteDto,
+  WageHistoryDto, WageRowDto, WageWriteDto, MyExpenseListDto,
+  PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, PayoutBonusSlotDto, AcctPrivacyDto, AcctPrivacyWriteDto,
 } from './accounting.dto';
 import { fileUrlOf } from '../files/files.service';
 import { ConsultingService } from '../consulting/consulting.service';
@@ -110,10 +124,17 @@ const IS_GPA_INV_SQL = `EXISTS (
    WHERE l.inv_id = i.id AND r.kind_key = 'gpa'
 )`;
 
-/** §56 상세 수업 줄의 갈래 이름 — 낱말은 서버가 만든다 (D-R18 · w5 56-01) */
-const PAYOUT_SETTLE_LABEL: Record<string, string> = {
-  written: '리포트 씀', unwritten: '리포트 미작성', canceled: '휴강', na: '리포트 대상 아님', upcoming: '아직',
-};
+/**
+ * 회계를 보는 사람 — 줄 금액 가림(N-94)에 쓴다. `canHide` 는 비공개 열람 판정(§76 · 사람별 예외 반영),
+ * `id` 는 「강사 본인의 정산은 늘 본인에게 보인다」에 쓴다.
+ */
+export interface AcctViewer { id: number; canHide: boolean }
+
+/** 받는 쪽이 정해 주지 않았으면 가장 좁게 본다 — 가림이 풀리는 쪽으로 기본값을 두지 않는다 */
+const NO_HIDDEN_VIEW: AcctViewer = { id: 0, canHide: false };
+
+/** 컨설팅 줄인가 — 청구 종류 · 입금 분류가 같은 낱말(`consulting`)을 쓴다 (N-37 ③) */
+const isConsultingLine = (invTypeOrCategory: string | null | undefined): boolean => invTypeOrCategory === 'consulting';
 
 /** §55 기간의 낱말 — 「전체」·「2026년 8월」·「8월 21일」·「08-17 ~ 08-23」 (D-R18 · 화면이 짓지 않는다) */
 function flowRangeLabel(from: string | null, to: string | null): string {
@@ -138,6 +159,88 @@ const nextMonthOf = (month: string): string => {
 /** 받는 달 청구서가 이미 나가 이월을 막을 때의 문장 — 단추(`carryBlockedReason`)와 쓰기(409)가 같은 말을 쓴다 (PB-04) */
 const carryNextIssuedMessage = (toMonth: string): string =>
   `${toMonth.slice(0, 4)}년 ${Number(toMonth.slice(5, 7))}월(${toMonth}) 수업료 청구서가 이미 나가 이월분을 뺄 수 없습니다 — 그 청구서를 취소한 뒤 이월하세요`;
+
+/**
+ * 섞인 옛 수업료 청구서의 이월을 멈출 때의 문장 — 단추(`carryBlockedReason`)와 쓰기(409 `CARRY_MIXED_INVOICE`)가 같은 말을 쓴다.
+ * 수강 종료(`WITHDRAW_MIXED_INVOICE`)와 같은 판정이다 — 저장된 줄을 고쳐 읽지 않고 사람이 확인한다 (W11 M2 · 잔여 ③).
+ */
+const carryMixedMessage = (month: string): string =>
+  `${month} 수업료 청구서에 진단고사 · 상담 회차가 함께 청구돼 있습니다(따로 청구하기 전의 청구서) — `
+  + '그 회차의 못 해 준 몫은 이월 계산에 들지 않으니 청구서를 사람이 확인한 뒤 처리하세요';
+
+/**
+ * 이월을 멈추는가 — 완납 청구서가 **진단고사 · 상담 줄이 섞인 옛 수업료 청구서**이고, 그 달에 **못 해 준 진단고사 · 상담 회차**가 있으면.
+ * 지금 이월 계산(`invoiceLines` · 수업료)은 그 회차를 빼므로 그대로 넘기면 받은 돈 일부가 조용히 빠진다.
+ * 섞였어도 못 해 준 그 회차가 없으면 넘길 돈이 달라지지 않아 멈추지 않는다 (수강 종료와 같은 모양).
+ */
+async function carryMixedBlocked(m: Queryer, studentId: number, month: string, invId: number): Promise<boolean> {
+  if ((await mixedDiagIntakeLines(m, invId)).length === 0) return false;
+  return (await invoiceLines(m, studentId, month, { kind: 'dropped' }, 'diag_intake')).length > 0;
+}
+
+/**
+ * 같은 (학생 · 달 · 종류)의 청구서 쓰기를 **한 줄로 세운다** — 트랜잭션이 끝날 때 풀린다 (W11 · README 7-3 ②③ · PB-12-4).
+ *
+ * ③ 두 발행이 동시에 들어오면 둘 다 「아직 없다」를 읽고 두 장을 냈다(중복 검사가 SELECT 뿐이었다).
+ * ② 이월(`carryTuition`)이 받는 달 수업료 청구서가 「아직 없다」를 읽는 사이 그 달 발행이 「이월이 아직 없다」를 읽으면
+ *    이월분이 어느 청구서에도 안 빠진 채 둘 다 저장됐다. 이월은 받는 달의 수업료 자리로 같은 열쇠를 잡는다.
+ * 운영에 이미 있을 수 있는 중복을 조용히 고치지 않으려고 유일 색인 대신 잠금을 골랐다(추정 보정 금지 · N-25).
+ */
+async function lockInvoiceSlot(m: Queryer, studentId: number, yearMonth: string, invType: string): Promise<void> {
+  await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`inv:${studentId}:${yearMonth}:${invType}`]);
+}
+
+/**
+ * 분납 일정(N-79 채택 · W11) — 날짜 순으로 회차를 매기고 **합 = 청구액**을 본다. 없으면 null.
+ * 기한 칸을 함께 주면 마지막 회차의 예정일과 같아야 한다 — 두 날짜가 따로 서면 무엇이 기한인지 갈린다.
+ * 표의 지연 제약 트리거(`inv_installment_sum_check`)가 커밋 때 합을 한 번 더 본다.
+ */
+function installmentPlan(
+  rows: ReadonlyArray<{ dueOn: string; amount: number }> | undefined, total: number, dueOn: string | undefined,
+): Array<{ seq: number; dueOn: string; amount: number }> | null {
+  if (!rows || rows.length === 0) return null;
+  const sorted = [...rows].sort((a, b) => a.dueOn.localeCompare(b.dueOn));
+  if (new Set(sorted.map((r) => r.dueOn)).size !== sorted.length) {
+    throw new BadRequestException({ code: 'INV_INSTALLMENT_DATES', message: '같은 날에 두 회차를 둘 수 없습니다 — 예정일을 서로 다르게 적어 주세요' });
+  }
+  const sum = sorted.reduce((n, r) => n + r.amount, 0);
+  if (sum !== total) {
+    throw new ConflictException({
+      code: 'INV_INSTALLMENT_SUM',
+      message: `분납 합계(${won(sum)})가 청구액(${won(total)})과 다릅니다 — 회차 금액의 합을 청구액에 맞춰 주세요`,
+    });
+  }
+  const last = sorted[sorted.length - 1]!.dueOn;
+  if (dueOn && dueOn !== last) {
+    throw new BadRequestException({
+      code: 'INV_INSTALLMENT_DUE',
+      message: `분납 일정이 있으면 납부 기한은 마지막 회차의 예정일(${last})입니다 — 기한 칸을 비우거나 같은 날로 맞춰 주세요`,
+    });
+  }
+  return sorted.map((r, i) => ({ seq: i + 1, dueOn: r.dueOn, amount: r.amount }));
+}
+
+/**
+ * 아직 덜 받은 돈의 **조각** — §55 달력의 「예정」과 「미수 전체」가 같은 조각을 쓴다 (N-79 · W11).
+ * 분납 일정이 있으면 **못 채운 회차마다** 한 조각(그 회차의 예정일 · 못 받은 몫 = min(회차 금액, 누적 − 받은 돈)),
+ * 없으면 청구서 한 장이 한 조각(남은 돈 · 기한 `due_on`). 조각의 합 = 청구서의 남은 돈이다.
+ */
+const OPEN_PARTS_SQL = `
+  WITH open_inv AS (
+    SELECT i.id, i.student_id, i.inv_type, i.amount, i.paid_amount, i.due_on
+      FROM inv i
+     WHERE i.state IN (${sqlWordList(INV_OPEN)}) AND i.amount > i.paid_amount
+  )
+  SELECT oi.id AS inv_id, oi.student_id, oi.inv_type, oi.paid_amount, x.seq::int AS seq,
+         to_char(x.due_on,'YYYY-MM-DD') AS due_on, LEAST(x.amount, x.cum - oi.paid_amount)::bigint AS amount
+    FROM open_inv oi
+    JOIN LATERAL (SELECT ix.seq, ix.due_on, ix.amount, sum(ix.amount) OVER (ORDER BY ix.seq) AS cum
+                    FROM inv_installment ix WHERE ix.inv_id = oi.id) x ON x.cum > oi.paid_amount
+  UNION ALL
+  SELECT oi.id, oi.student_id, oi.inv_type, oi.paid_amount, NULL::int,
+         to_char(oi.due_on,'YYYY-MM-DD'), (oi.amount - oi.paid_amount)::bigint
+    FROM open_inv oi
+   WHERE NOT EXISTS (SELECT 1 FROM inv_installment ix WHERE ix.inv_id = oi.id)`;
 
 /**
  * 받는 달에 **살아 있는(취소 아닌) 수업료 청구서**가 이미 있는 학생 (PB-04).
@@ -177,7 +280,13 @@ const INV_SELECT = `
          COALESCE((SELECT json_agg(json_build_object(
             'subKey', l.sub_key, 'label', l.label, 'count', l.count,
             'unitPrice', l.unit_price, 'amount', l.amount) ORDER BY l.seq)
-           FROM inv_line l WHERE l.inv_id = i.id), '[]'::json) AS lines
+           FROM inv_line l WHERE l.inv_id = i.id), '[]'::json) AS lines,
+         -- 분납 일정(N-79) — 회차마다 누적 합을 같이 읽어 「채웠는가」를 서버가 판정한다
+         COALESCE((SELECT json_agg(json_build_object(
+            'seq', x.seq, 'dueOn', to_char(x.due_on,'YYYY-MM-DD'), 'amount', x.amount, 'cum', x.cum) ORDER BY x.seq)
+           FROM (SELECT ix.seq, ix.due_on, ix.amount, sum(ix.amount) OVER (ORDER BY ix.seq) AS cum
+                   FROM inv_installment ix WHERE ix.inv_id = i.id) x), '[]'::json) AS installments,
+         to_char(${invDueSql('i')}, 'YYYY-MM-DD') AS eff_due
     FROM inv i JOIN stu s ON s.id = i.student_id`;
 
 /**
@@ -196,8 +305,8 @@ const MONEY_SUMMARY_SQL = `
   SELECT
     COALESCE(SUM(amount) FILTER (WHERE state IN (${sqlWordList(INV_BILLABLE)})), 0)::bigint AS sent,
     COALESCE(SUM(paid_amount) FILTER (WHERE state IN (${sqlWordList(INV_BILLABLE)})), 0)::bigint AS collected,
-    COALESCE(SUM(amount - paid_amount) FILTER (
-      WHERE state IN (${sqlWordList(INV_OPEN)}) AND due_on IS NOT NULL AND due_on < $1::date), 0)::bigint AS overdue
+    -- 연체 판정은 §69 회계 배지와 **같은 조각**(지금 기한 — 분납이면 못 채운 가장 이른 회차 · N-79). 금액은 그 청구서의 남은 돈
+    COALESCE(SUM(amount - paid_amount) FILTER (WHERE ${invOverdueWhere('', '$1')}), 0)::bigint AS overdue
     FROM inv`;
 
 /**
@@ -276,6 +385,18 @@ export class AccountingService {
     const unpaid = r.state === 'unpaid' || r.state === 'partial' || r.state === 'sent';
     const state = String(r.state);
     const voidGate = AccountingService.voidGate(state, canVoidInvoice, r);
+    /*
+     * 분납 일정(N-79) — 「채웠는가」는 누적 합과 받은 돈으로 서버가 판정한다. 지금 기한(`eff_due`)은
+     * `lib/exec-areas.invDueSql` 한 조각에서 왔다 — §52 머리 「기한 지남」 · §69 배지와 같은 판정이다.
+     */
+    const paidSoFar = Number(r.paid_amount);
+    const owed = Number(r.amount) - paidSoFar > 0;
+    const plan = ((r.installments as Array<{ seq: number; dueOn: string; amount: number; cum: number }> | null) ?? []);
+    const installments: InvoiceInstallmentDto[] = plan.map((x) => ({
+      seq: Number(x.seq), dueOn: x.dueOn, amount: money(x.amount), covered: Number(x.cum) <= paidSoFar,
+    }));
+    const nextDue = owed ? ((r.eff_due as string | null) ?? null) : null;
+    const nextSeq = owed ? (plan.find((x) => Number(x.cum) > paidSoFar)?.seq ?? null) : null;
     return {
       // C94-a — 단추가 서는지는 여기서 정한다 (D-R39). 전달은 초안·미전달만, 취소는 아래 `voidGate` 가 정한다
       sentAt: r.sent_at ? new Date(r.sent_at as string).toISOString() : null,
@@ -295,23 +416,31 @@ export class AccountingService {
       remaining: canSeeAmounts ? Number(r.amount) - Number(r.paid_amount) : null,
       issuedOn: (r.issued_on as string | null) ?? null,
       dueOn: due, paidAt: (r.paid_at as string | null) ?? null,
-      overdueDays: unpaid && due && due < today ? daysBetween(due, today) : 0,
+      overdueDays: unpaid && nextDue && nextDue < today ? daysBetween(nextDue, today) : 0,
       lines: canSeeAmounts
         ? (r.lines as InvoiceDto['lines'])
         : (r.lines as InvoiceDto['lines']).map((l) => ({ ...l, unitPrice: 0, amount: 0 })),
+      installments,
+      nextDueOn: nextDue,
+      nextInstallmentSeq: nextSeq === null ? null : Number(nextSeq),
     };
   }
 
-  async all(canSeeAmounts: boolean, canVoidInvoice = false): Promise<AccountingDto> {
+  async all(canSeeAmounts: boolean, canVoidInvoice = false, viewer: AcctViewer = NO_HIDDEN_VIEW): Promise<AccountingDto> {
     // PAY의 NULL은 아직 확인하지 않은 값이다. 권한이 있어도 0원으로 채우지 않는다.
     const money = (v: unknown): number | null => (canSeeAmounts && v != null ? Number(v) : null);
     const today = todayKst();
+    // 회계 비공개 (N-94) — 켜진 스위치의 **줄 금액**만 가린다. 합계(머리 · 분류 칩)는 가리지 않은 값에서 낸다
+    const privacy = await readAcctPrivacy(this.inv.manager);
+    const consLineShown = lineAmountVisible(canSeeAmounts, privacy.consulting.private, viewer.canHide);
+    const wageLineShown = (staffId: number) => lineAmountVisible(canSeeAmounts, privacy.wage.private, viewer.canHide, viewer.id === staffId);
 
     const invRows = (await this.inv.query(
       `${INV_SELECT} ORDER BY i.year_month DESC, i.id`,
     )) as Array<Record<string, unknown>>;
 
-    const invoices: InvoiceDto[] = invRows.map((r) => this.invoiceRow(r, canSeeAmounts, today, canVoidInvoice));
+    const invoices: InvoiceDto[] = invRows.map((r) => this.invoiceRow(
+      r, canSeeAmounts && (consLineShown || !isConsultingLine(r.inv_type as string)), today, canVoidInvoice));
 
     /*
      * §55 의 **분류**는 저장된 칸이 아니라 **읽어서 만드는 값**이다 (대표 결정 N-37 ③ —
@@ -335,14 +464,16 @@ export class AccountingService {
          LEFT JOIN inv i ON i.id = p.inv_id
         ORDER BY p.paid_on DESC, p.id DESC`,
     )) as Array<Record<string, unknown>>;
+    const payAmount = new Map<number, number>();
     const payments: PaymentDto[] = payRows.map((r) => {
       // 판정은 `payCategory()` 한 함수뿐이다 — 화면도 칩도 같은 답을 쓴다 (D-R39)
       const category = payCategory((r.inv_type as string | null) ?? null, r.is_gpa === true);
+      if (r.amount != null) payAmount.set(Number(r.id), Number(r.amount));
       return {
         id: Number(r.id), paidOn: r.paid_on == null ? null : String(r.paid_on),
         studentId: r.student_id ? Number(r.student_id) : null,
         studentName: (r.student_name as string | null) ?? null,
-        amount: money(r.amount), method: (r.method as string | null) ?? null,
+        amount: isConsultingLine(category) && !consLineShown ? null : money(r.amount), method: (r.method as string | null) ?? null,
         reason: (r.reason as string | null) ?? null,
         invId: r.inv_id ? Number(r.inv_id) : null,
         category, categoryLabel: PAY_CATEGORY_LABEL[category] ?? category,
@@ -357,7 +488,8 @@ export class AccountingService {
       const mine = payments.filter((p) => p.category === c.key);
       return {
         key: c.key, label: c.label, count: mine.length,
-        amount: canSeeAmounts ? mine.reduce((n, p) => n + (p.amount ?? 0), 0) : null,
+        // 합계는 가려지지 않은 금액에서 — 줄이 가려져도 칩의 합은 그대로다 (N-94)
+        amount: canSeeAmounts ? mine.reduce((n, p) => n + (payAmount.get(p.id) ?? 0), 0) : null,
       };
     });
 
@@ -367,14 +499,18 @@ export class AccountingService {
          FROM payout po JOIN staff t ON t.id = po.staff_id
         ORDER BY po.year_month DESC, po.net DESC`,
     )) as Array<Record<string, unknown>>;
-    const payouts: PayoutDto[] = poRows.map((r) => ({
-      id: Number(r.id), staffId: Number(r.staff_id), staffName: String(r.staff_name),
-      yearMonth: String(r.year_month), hours: String(r.hours),
-      gross: money(r.gross), lateRepCut: money(r.late_rep_cut),
-      incomeTax: money(r.income_tax), localTax: money(r.local_tax), net: money(r.net),
-      // 낱말을 내려보내지 않는다 — 화면이 그것으로 다시 판정하면 판정이 두 곳이 된다 (N-27)
-      confirmed: payoutConfirmed(r.confirmed_by as string | null),
-    }));
+    const payouts: PayoutDto[] = poRows.map((r) => {
+      // 강사 정산 줄 — 시급 비공개면 비공개 열람 · 본인만 (N-94)
+      const pm = (v: unknown): number | null => (wageLineShown(Number(r.staff_id)) ? money(v) : null);
+      return {
+        id: Number(r.id), staffId: Number(r.staff_id), staffName: String(r.staff_name),
+        yearMonth: String(r.year_month), hours: String(r.hours),
+        gross: pm(r.gross), lateRepCut: pm(r.late_rep_cut),
+        incomeTax: pm(r.income_tax), localTax: pm(r.local_tax), net: pm(r.net),
+        // 낱말을 내려보내지 않는다 — 화면이 그것으로 다시 판정하면 판정이 두 곳이 된다 (N-27)
+        confirmed: payoutConfirmed(r.confirmed_by as string | null),
+      };
+    });
 
     const expRows = (await this.inv.query(
       `${EXPENSE_SELECT} ORDER BY e.state = 'pending' DESC, e.spend_on DESC, e.id DESC`,
@@ -471,8 +607,9 @@ export class AccountingService {
    */
   async issueInvoice(userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceDto> {
     return this.inv.manager.transaction(async (m: EntityManager) => {
-      // 마감 달에는 새 청구서를 내지 않는다 (C92-d · L-123) — 마감을 풀고 낸다
-      await assertMonthOpen(m, dto.yearMonth);
+      // 마감 달에는 새 청구서를 내지 않는다 (C92-d · L-123) — 마감을 풀고 낸다.
+      // 달 열쇠를 공유로 잡고 읽는다 — 이 발행이 끝나기 전에 마감이 커밋되지 않는다 (W11 A' 후속)
+      await assertMonthOpenForWrite(m, dto.yearMonth);
       return this.issueOne(m, userId, dto, canSeeAmounts, canVoidInvoice);
     });
   }
@@ -487,39 +624,37 @@ export class AccountingService {
    */
   async issueBatch(userId: number, dto: InvoiceBatchDto, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceBatchResultDto> {
     return this.inv.manager.transaction(async (m: EntityManager) => {
-      await assertMonthOpen(m, dto.yearMonth);
-      // §54 와 같은 집합 — 그 달에 회차가 하나라도 있는 학생
-      const students = (await m.query(
-        `SELECT DISTINCT st.id, st.name
-           FROM ser_occ o
-           JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
-           JOIN stu st     ON st.id = ss.student_id
-          WHERE ${kstMonthOf('lower(o.span)')} = $1
-            -- 컨설팅 계약이 덮는 회차만 있는 학생은 수업료 후보가 아니다 (PB-05)
-            AND NOT ${consultingCovered('o.ser_id', 'ss.student_id')}
-          ORDER BY st.name, st.id`,
-        [dto.yearMonth],
-      )) as Array<{ id: string; name: string }>;
+      await assertMonthOpenForWrite(m, dto.yearMonth);
+      /*
+       * 그 달의 **청구 대상** — (학생 · 종류). §53 「아직 안 씀」 칸과 같은 함수다(N-28 ②).
+       * 종류는 회차의 종류로 가른다 — 진단고사 · 상담 회차는 「진단고사 + 상담 비용」, 나머지는 수업료(N-75).
+       * 컨설팅 계약이 덮는 회차만 있는 학생은 빠진다(PB-05).
+       */
+      const targets = await billingCandidates(m, dto.yearMonth);
       const issued: InvoiceDto[] = [];
       const skipped: InvoiceBatchSkipDto[] = [];
-      for (const [i, st] of students.entries()) {
+      for (const [i, t] of targets.entries()) {
         const sp = `inv_batch_${i}`;
         await m.query(`SAVEPOINT ${sp}`);
         try {
-          issued.push(await this.issueOne(m, userId, { studentId: Number(st.id), yearMonth: dto.yearMonth, invType: 'tuition', dueOn: dto.dueOn }, canSeeAmounts, canVoidInvoice));
+          issued.push(await this.issueOne(m, userId, { studentId: t.studentId, yearMonth: dto.yearMonth, invType: t.invType, dueOn: dto.dueOn }, canSeeAmounts, canVoidInvoice));
           await m.query(`RELEASE SAVEPOINT ${sp}`);
         } catch (e) {
           await m.query(`ROLLBACK TO SAVEPOINT ${sp}`);
           if (e instanceof HttpException) {
             const body = e.getResponse() as { code?: string; message?: string };
-            skipped.push({ studentId: Number(st.id), studentName: st.name, code: body.code ?? 'ERROR', message: body.message ?? e.message });
+            skipped.push({
+              studentId: t.studentId, studentName: t.studentName,
+              invType: t.invType, invTypeLabel: INV_TYPE_LABEL[t.invType] ?? t.invType,
+              code: body.code ?? 'ERROR', message: body.message ?? e.message,
+            });
           } else {
             throw e;
           }
         }
       }
       return {
-        yearMonth: dto.yearMonth, candidates: students.length, issued, skipped,
+        yearMonth: dto.yearMonth, candidates: targets.length, issued, skipped,
         issuedAmount: canSeeAmounts ? issued.reduce((n, inv) => n + (inv.amount ?? 0), 0) : null,
       };
     });
@@ -583,125 +718,217 @@ export class AccountingService {
   /** 청구서 한 장 — 낱장 발행과 일괄 발행이 같은 줄·같은 거절을 쓴다 */
   /** 바깥 트랜잭션 안에서 한 장 — 등록 확정(C91)이 시간표와 같은 트랜잭션에서 첫 달 청구서를 낸다. 마감 달 판정은 같다 */
   async issueWithin(m: EntityManager, userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
-    await assertMonthOpen(m, dto.yearMonth);
+    await assertMonthOpenForWrite(m, dto.yearMonth);
     return this.issueOne(m, userId, dto, canSeeAmounts, false);
+  }
+
+  /**
+   * 낼 청구서를 **쓰지 않고** 센다 — 발행(`issueOne`) · 미리 세기(`GET /accounting/invoices/draft`) ·
+   * §53 「아직 안 씀」 카드가 **같은 함수**를 쓴다(D-R22 · N-28 ② 「금액 = 발행과 같은 함수」).
+   * 줄을 서버가 세는 종류(수업료 · 진단고사 + 상담)만 온다. 막힌 까닭은 발행 409 와 같은 코드 · 문장이다.
+   *
+   * 과목별 회차 수 — 취소된 회차와 「그날만 빠진」 학생은 빼고 센다. 달은 회차의 **시작 시각을 KST 로 본 달**이다(D-R12).
+   * 단가(C63) — 인원 구간 · 학생 예외(STURATE)는 `invoice-lines.ts` 한 곳이 고른다(명단 화면과 같은 값 · D-R22).
+   * 같은 과목이라도 단가가 다르면 **줄이 갈린다** — 「몇 번에 얼마」가 한 줄에서 읽혀야 한다.
+   */
+  private async invoiceDraft(
+    m: Queryer, studentId: number, studentName: string, yearMonth: string, invType: LineInvType,
+  ): Promise<{
+    lines: InvoiceLineRow[];
+    carries: Array<{ from_month: string; amount: number; sessions: number }>;
+    total: number;
+    blocked: { code: string; message: string } | null;
+  }> {
+    const lines = await invoiceLines(m, studentId, yearMonth, { kind: 'month' }, invType);
+    if (lines.length === 0) {
+      const what = invType === 'tuition' ? '수업이' : `${INV_TYPE_SUB[invType] ?? invType} 회차가`;
+      return {
+        lines, carries: [], total: 0,
+        blocked: { code: 'INV_NO_LESSONS', message: `${yearMonth} 에 ${studentName} 학생의 ${what} 없습니다 — 청구할 것이 없습니다` },
+      };
+    }
+    const noRate = lines.filter((l) => l.unit_price == null).map((l) => l.label);
+    if (noRate.length > 0) {
+      // 단가를 0 으로 넣지 않는다 — 0 원 청구서는 조용히 틀린 청구서다
+      return {
+        lines, carries: [], total: 0,
+        blocked: { code: 'INV_NO_RATE', message: `단가표에 없는 과목이 있습니다: ${noRate.join(' · ')} — 단가를 먼저 등록하세요` },
+      };
+    }
+    /*
+     * 이월분이 이 달 청구에서 빠진다 (C92-b · 테스트 시나리오 C-35 「다음 달 청구 회차 = 예정 − 이월」).
+     * 지난달에서 넘긴 `carry` 줄(to_month = 이 달)을 **음수 줄**로 얹는다 — 받아 놓고 못 해 준 회차의 값이라
+     * 이번 달 회차에서 그만큼 뺀다. 넘긴 돈은 그때 굳힌 금액(carry.amount)이지 지금 단가로 다시 세지 않는다.
+     * 수업료 청구서에만 붙는다 — 진단고사 · 응시료 · 컨설팅비는 이월이 없다.
+     */
+    const carries = invType === 'tuition' ? (await m.query(
+      `SELECT from_month, amount, sessions FROM carry WHERE student_id = $1 AND to_month = $2 ORDER BY from_month, id`,
+      [studentId, yearMonth],
+    )) as Array<{ from_month: string; amount: number; sessions: number }> : [];
+    const carriedIn = carries.reduce((n, c) => n + Number(c.amount), 0);
+    const total = linesTotal(lines) - carriedIn;
+    if (total < 0) {
+      // 넘어온 돈이 이 달 수업보다 많다 — 청구서를 음수로 내지 않는다. 남는 돈을 어느 달로 넘길지는 사람이 정한다
+      return {
+        lines, carries, total,
+        blocked: {
+          code: 'INV_CARRY_EXCEEDS',
+          message: `이월분(${won(carriedIn)})이 ${yearMonth} 수업료(${won(linesTotal(lines))})보다 많습니다 — 청구서를 내기 전에 이월을 정리하세요`,
+        },
+      };
+    }
+    return { lines, carries, total, blocked: null };
+  }
+
+  /**
+   * 미리 세기 — `GET /accounting/invoices/draft` (N-79 분납 일정을 적을 합계 · 쓰기 0).
+   * 발행과 **같은 함수**(`invoiceDraft`)라 여기서 본 금액이 낸 금액이다. 이미 낸 종류면 발행과 같은 문장으로 막혔다고 말한다.
+   */
+  async draftInvoice(query: InvoiceDraftQueryDto, canSeeAmounts: boolean): Promise<InvoiceDraftDto> {
+    const m = this.inv.manager;
+    const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1`, [query.studentId])) as Array<{ id: string; name: string }>;
+    if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
+    const invType = query.invType as LineInvType;
+    const draft = await this.invoiceDraft(m, query.studentId, stu.name, query.yearMonth, invType);
+    const dup = (await m.query(
+      `SELECT 1 FROM inv WHERE student_id = $1 AND year_month = $2 AND inv_type = $3 AND state <> 'void' LIMIT 1`,
+      [query.studentId, query.yearMonth, invType],
+    )) as unknown[];
+    const blocked = dup.length > 0
+      ? { code: 'INV_DUPLICATE', message: AccountingService.duplicateMessage(query.yearMonth, stu.name, invType) }
+      : draft.blocked;
+    const lines = [
+      ...draft.lines.filter((l) => l.unit_price !== null).map((l) => ({
+        subKey: l.sub_key, label: l.label, count: l.n, unitPrice: Number(l.unit_price), amount: l.n * Number(l.unit_price),
+      })),
+      ...draft.carries.map((c) => AccountingService.carryLine(c)),
+    ];
+    return {
+      studentId: query.studentId, studentName: stu.name, yearMonth: query.yearMonth,
+      invType, invTypeLabel: INV_TYPE_LABEL[invType] ?? invType, title: invoiceTitle(query.yearMonth, invType),
+      amount: canSeeAmounts && !blocked ? draft.total : null,
+      lines: canSeeAmounts ? lines : lines.map((l) => ({ ...l, unitPrice: 0, amount: 0 })),
+      canIssue: blocked === null,
+      blockedCode: blocked?.code ?? null,
+      issueBlockedReason: blocked?.message ?? null,
+    };
+  }
+
+  /** 같은 (학생 · 달 · 종류)가 이미 있을 때의 문장 — 발행 409 · 미리 세기가 같은 말을 쓴다 */
+  private static duplicateMessage(yearMonth: string, studentName: string, invType: string): string {
+    return `${yearMonth} ${studentName} 학생의 ${INV_TYPE_LABEL[invType] ?? invType}는 이미 있습니다 — 취소하고 새로 만드세요`;
+  }
+
+  /** 이월 음수 줄 — count 는 −회차, amount 는 −넘긴 돈. 단가는 표시용 평균(여러 과목이 섞여 정확한 단가가 없다) */
+  private static carryLine(c: { from_month: string; amount: number; sessions: number }): InvoiceDto['lines'][number] {
+    const sessions = Number(c.sessions);
+    const amount = Number(c.amount);
+    return {
+      subKey: null, label: `이월 (${c.from_month} 에서 ${sessions}회)`,
+      count: -sessions, unitPrice: sessions > 0 ? Math.round(amount / sessions) : 0, amount: -amount,
+    };
   }
 
   private async issueOne(m: EntityManager, userId: number, dto: InvoiceIssueDto, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceDto> {
     const today = todayKst();
-    // 수업료 외 종류는 금액 규칙이 정해질 때까지 내지 않는다 (PB-01) — 낱장·일괄·등록 확정이 모두 이 함수를 지난다
+    // 발행 창에서 낼 수 없는 종류(컨설팅비 — 「청구서로 전환」 한 길)는 막는다 — 낱장 · 일괄 · 등록 확정이 모두 이 함수를 지난다
     const typeBlocked = invTypeIssueBlockedReason(dto.invType);
     if (typeBlocked) throw new ConflictException({ code: INV_TYPE_NOT_SUPPORTED, message: typeBlocked });
-    {
-      const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1`, [dto.studentId])) as Array<{
-        id: string; name: string;
-      }>;
-      if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
-
-      const dup = (await m.query(
-        `SELECT id FROM inv
-          WHERE student_id = $1 AND year_month = $2 AND inv_type = $3 AND state <> 'void'
-          LIMIT 1`,
-        [dto.studentId, dto.yearMonth, dto.invType],
-      )) as Array<{ id: string }>;
-      if (dup.length > 0) {
-        throw new ConflictException({
-          code: 'INV_DUPLICATE',
-          message: `${dto.yearMonth} ${stu.name} 학생의 ${INV_TYPE_LABEL[dto.invType] ?? dto.invType}는 이미 있습니다 — 취소하고 새로 만드세요`,
-        });
-      }
-
-      /*
-       * 과목별 회차 수 — 취소된 회차와 「그날만 빠진」 학생은 빼고 센다.
-       * 달은 회차의 **시작 시각을 KST 로 본 달**이다 (D-R12 · 시간대는 한 곳에서 정한다).
-       *
-       * ── 단가 (C63 교정) ────────────────────────────────────────────────
-       * 원문 §54 — 「데이터 RATE(단가), STURATE(학생별 예외)」 ·
-       * 「규칙 **그룹 수업은 인원이 늘면 1인 단가가 내려가고 총액은 올라갑니다**」 ·
-       * 「연동 **청구서 생성 시 이 계산 결과를 씁니다**」.
-       *
-       * 그런데 여기가 **인원 구간도 학생 예외도 안 보고** 있었다. `rate` 는 같은 과목에
-       * heads 1·2·3·4 네 줄을 갖는데 `ORDER BY sub_key, from_date DESC LIMIT 1` 은
-       * 그 넷을 **가르지 못한다** — from_date 가 같으면 어느 줄이 나올지 DB 가 정한다.
-       * 실제로 2인 AP Chem 이 1인 단가(₩80,000)로 청구되고 있었고, **같은 수업의 명단
-       * 화면은 ₩45,000 을 보여 주고 있었다** (`lib/rules.rosterPricing` 은 구간을 본다).
-       * 같은 수업에 값이 두 개인 상태였다 (D-R22).
-       *
-       * 그래서 회차마다 단가를 먼저 정하고 그 단가로 묶는다 —
-       *   ① 인원 = 그 수업의 현재 명단 수. ② 그 인원 **이하의 가장 큰 구간**을 고른다.
-       *   ③ 학생 예외(STURATE)가 있으면 그것이 이긴다.
-       * 같은 과목이라도 단가가 다르면 **줄이 갈린다** — 「몇 번에 얼마」가 한 줄에서 읽혀야 한다.
-       */
-      const lines = await invoiceLines(m, dto.studentId, dto.yearMonth);
-
-      if (lines.length === 0) {
-        throw new ConflictException({
-          code: 'INV_NO_LESSONS',
-          message: `${dto.yearMonth} 에 ${stu.name} 학생의 수업이 없습니다 — 청구할 것이 없습니다`,
-        });
-      }
-      const noRate = lines.filter((l) => l.unit_price == null).map((l) => l.label);
-      if (noRate.length > 0) {
-        // 단가를 0 으로 넣지 않는다 — 0 원 청구서는 조용히 틀린 청구서다
-        throw new ConflictException({
-          code: 'INV_NO_RATE',
-          message: `단가표에 없는 과목이 있습니다: ${noRate.join(' · ')} — 단가를 먼저 등록하세요`,
-        });
-      }
-
-      /*
-       * 이월분이 이 달 청구에서 빠진다 (C92-b · 테스트 시나리오 C-35 「다음 달 청구 회차 = 예정 − 이월」).
-       * 지난달에서 넘긴 `carry` 줄(to_month = 이 달)을 **음수 줄**로 얹는다 — 받아 놓고 못 해 준 회차의 값이라
-       * 이번 달 회차에서 그만큼 뺀다. 넘긴 돈은 그때 굳힌 금액(carry.amount)이지 지금 단가로 다시 세지 않는다.
-       * 수업료 청구서에만 붙는다 — 컨설팅비·응시료는 이월이 없다.
-       */
-      const carries = dto.invType === 'tuition' ? (await m.query(
-        `SELECT from_month, amount, sessions FROM carry WHERE student_id = $1 AND to_month = $2 ORDER BY from_month, id`,
-        [dto.studentId, dto.yearMonth],
-      )) as Array<{ from_month: string; amount: number; sessions: number }> : [];
-      const carriedIn = carries.reduce((n, c) => n + Number(c.amount), 0);
-      const total = linesTotal(lines) - carriedIn;
-      if (total < 0) {
-        // 넘어온 돈이 이 달 수업보다 많다 — 청구서를 음수로 내지 않는다. 남는 돈을 어느 달로 넘길지는 사람이 정한다
-        throw new ConflictException({
-          code: 'INV_CARRY_EXCEEDS',
-          message: `이월분(${won(carriedIn)})이 ${dto.yearMonth} 수업료(${won(linesTotal(lines))})보다 많습니다 — 청구서를 내기 전에 이월을 정리하세요`,
-        });
-      }
-      const [ym, mm] = dto.yearMonth.split('-');
-      const title = dto.title?.trim()
-        || `${ym}년 ${Number(mm)}월 ${INV_TYPE_LABEL[dto.invType] ?? dto.invType}`;
-
-      const [made] = (await m.query(
-        `INSERT INTO inv (student_id, year_month, inv_type, title, amount, state,
-                          issued_on, due_on, created_by)
-         VALUES ($1, $2, $3, $4, $5, 'draft', $6::date, $7::date, $8)
-         RETURNING id`,
-        [dto.studentId, dto.yearMonth, dto.invType, title, total, today, dto.dueOn, userId],
-      )) as Array<{ id: string }>;
-      const invId = Number(made.id);
-
-      for (const [i, l] of lines.entries()) {
-        await m.query(
-          `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [invId, l.sub_key, l.label, l.n, l.unit_price, l.n * Number(l.unit_price), i],
-        );
-      }
-      for (const [i, c] of carries.entries()) {
-        // 음수 줄 — count 는 −회차, amount 는 −넘긴 돈. 단가는 표시용 평균(여러 과목이 섞여 정확한 단가가 없다)
-        const sessions = Number(c.sessions);
-        const amount = Number(c.amount);
-        await m.query(
-          `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq)
-           VALUES ($1, NULL, $2, $3, $4, $5, $6)`,
-          [invId, `이월 (${c.from_month} 에서 ${sessions}회)`, -sessions, sessions > 0 ? Math.round(amount / sessions) : 0, -amount, lines.length + i],
-        );
-      }
-
-      const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [invId])) as Array<Record<string, unknown>>;
-      return this.invoiceRow(row, canSeeAmounts, today, canVoidInvoice);
+    // 줄의 원천 — 응시료는 사람이 적고(원천이 없다), 나머지는 서버가 회차로 센다(D-R37 · N-75)
+    const manual = INV_TYPES_MANUAL.includes(dto.invType);
+    if (manual && !dto.lines?.length) {
+      throw new BadRequestException({
+        code: 'INV_LINES_REQUIRED',
+        message: `${INV_TYPE_LABEL[dto.invType] ?? dto.invType}는 줄(내용 · 금액)을 적어야 냅니다 — 금액의 원천이 제품 안에 없습니다`,
+      });
     }
+    if (!manual && dto.lines?.length) {
+      throw new BadRequestException({ code: 'INV_LINES_NOT_ALLOWED', message: '이 종류의 줄은 서버가 회차로 셉니다 — 줄을 보내지 않습니다' });
+    }
+    if (!dto.installments?.length && !dto.dueOn) {
+      throw new BadRequestException({ code: 'INV_DUE_REQUIRED', message: '납부 기한을 골라 주세요' });
+    }
+    // 같은 (학생 · 달 · 종류)를 한 줄로 세운다 — 중복 검사 · 이월 읽기 **앞**에서 (7-3 ②③ · PB-12-4)
+    await lockInvoiceSlot(m, dto.studentId, dto.yearMonth, dto.invType);
+
+    const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1`, [dto.studentId])) as Array<{
+      id: string; name: string;
+    }>;
+    if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
+
+    // 한 학생의 한 달에 **같은 종류를 두 번** 내지 않는다 — 두 장이면 「보낸 청구서」가 두 번 더해진다
+    const dup = (await m.query(
+      `SELECT id FROM inv
+        WHERE student_id = $1 AND year_month = $2 AND inv_type = $3 AND state <> 'void'
+        LIMIT 1`,
+      [dto.studentId, dto.yearMonth, dto.invType],
+    )) as Array<{ id: string }>;
+    if (dup.length > 0) {
+      throw new ConflictException({ code: 'INV_DUPLICATE', message: AccountingService.duplicateMessage(dto.yearMonth, stu.name, dto.invType) });
+    }
+
+    let lines: InvoiceLineRow[];
+    let carries: Array<{ from_month: string; amount: number; sessions: number }> = [];
+    let total: number;
+    if (manual) {
+      lines = dto.lines!.map((l) => ({ sub_key: null, label: l.label.trim(), n: 1, unit_price: l.amount }));
+      if (lines.some((l) => l.label === '')) {
+        throw new BadRequestException({ code: 'INV_LINE_LABEL_REQUIRED', message: '줄의 내용을 적어 주세요' });
+      }
+      total = linesTotal(lines);
+    } else {
+      const draft = await this.invoiceDraft(m, dto.studentId, stu.name, dto.yearMonth, dto.invType as LineInvType);
+      if (draft.blocked) throw new ConflictException(draft.blocked);
+      ({ lines, carries, total } = draft);
+    }
+
+    // 분납 일정(N-79) — 합 = 청구액 · 기한은 마지막 회차의 예정일
+    const plan = installmentPlan(dto.installments, total, dto.dueOn);
+    const dueOn = plan ? plan[plan.length - 1]!.dueOn : dto.dueOn!;
+    const title = dto.title?.trim() || invoiceTitle(dto.yearMonth, dto.invType);
+
+    const [made] = (await m.query(
+      `INSERT INTO inv (student_id, year_month, inv_type, title, amount, state,
+                        issued_on, due_on, created_by)
+       VALUES ($1, $2, $3, $4, $5, 'draft', $6::date, $7::date, $8)
+       RETURNING id`,
+      [dto.studentId, dto.yearMonth, dto.invType, title, total, today, dueOn, userId],
+    )) as Array<{ id: string }>;
+    const invId = Number(made.id);
+
+    for (const [i, l] of lines.entries()) {
+      await m.query(
+        `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [invId, l.sub_key, l.label, l.n, l.unit_price, l.n * Number(l.unit_price), i],
+      );
+    }
+    for (const [i, c] of carries.entries()) {
+      const line = AccountingService.carryLine(c);
+      await m.query(
+        `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq)
+         VALUES ($1, NULL, $2, $3, $4, $5, $6)`,
+        [invId, line.label, line.count, line.unitPrice, line.amount, lines.length + i],
+      );
+    }
+    for (const x of plan ?? []) {
+      await m.query(
+        `INSERT INTO inv_installment (inv_id, seq, due_on, amount) VALUES ($1, $2, $3::date, $4)`,
+        [invId, x.seq, x.dueOn, x.amount],
+      );
+    }
+
+    // 감사 한 줄 — 낱장 · 일괄 · 등록 확정이 모두 여기를 지난다(N-73 · 같은 트랜잭션)
+    await audit(m, 'invoice.issue', {
+      actorId: userId, entityId: invId,
+      after: {
+        studentId: dto.studentId, yearMonth: dto.yearMonth, invType: dto.invType, amount: total, dueOn,
+        lines: lines.length + carries.length, installments: plan?.length ?? 0,
+      },
+    });
+
+    const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [invId])) as Array<Record<string, unknown>>;
+    return this.invoiceRow(row, canSeeAmounts, today, canVoidInvoice);
   }
 
   async addPayment(userId: number, dto: PaymentCreateDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
@@ -747,7 +974,7 @@ export class AccountingService {
         [dto.invId, next],
       );
       // 컨설팅 전환 청구서(cs_id)면 그 컨설팅이 다 받았는지 같은 트랜잭션에서 본다 — 다 받았으면 진행으로 (PB-03)
-      if (inv.cs_id != null) await ConsultingService.promoteWhenPaid(m, Number(inv.cs_id));
+      if (inv.cs_id != null) await ConsultingService.promoteWhenPaid(m, Number(inv.cs_id), userId);
       const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [dto.invId])) as Array<Record<string, unknown>>;
       return this.invoiceRow(row, canSeeAmounts, today);
     });
@@ -871,10 +1098,10 @@ export class AccountingService {
   async reviewExpense(userId: number, id: number, dto: ExpenseReviewDto, canSeeAmounts: boolean): Promise<ExpenseDto> {
     return this.inv.manager.transaction(async (m: EntityManager) => {
       const [row] = (await m.query(
-        `SELECT id, requested_amount, requester_id, filed_by, state, (receipt_url IS NOT NULL) AS has_receipt
+        `SELECT id, requested_amount, amount, reason, requester_id, filed_by, state, (receipt_url IS NOT NULL) AS has_receipt
            FROM expense WHERE id = $1 FOR UPDATE`, [id],
       )) as Array<{
-        id: string; requested_amount: number | null; requester_id: string | null;
+        id: string; requested_amount: number | null; amount: number | null; reason: string | null; requester_id: string | null;
         filed_by: string | null; state: string; has_receipt: boolean;
       }>;
       if (!row) throw new NotFoundException('지출 건을 찾을 수 없습니다');
@@ -930,6 +1157,17 @@ export class AccountingService {
           [id, amount, reason, userId],
         );
       }
+      // 감사 한 줄 — 승인 · 반려 · 확정 금액 (N-73 표의 `expense.review` · 같은 트랜잭션)
+      await audit(m, 'expense.review', {
+        actorId: userId, entityId: id, action: dto.decision === 'reject' ? 'reject' : 'approve',
+        before: {
+          state: row.state, requestedAmount: row.requested_amount == null ? null : Number(row.requested_amount),
+          amount: row.amount == null ? null : Number(row.amount), reason: row.reason,
+        },
+        after: dto.decision === 'reject'
+          ? { state: 'rejected', reason }
+          : { state: 'approved', amount: dto.amount ?? null, reason: reason ?? row.reason },
+      });
       /**
        * **반려는 올린 사람에게 간다** (원문 H-84 「올린 사람에게 알림」).
        *
@@ -982,12 +1220,15 @@ export class AccountingService {
     const students = (await this.inv.query(
       `SELECT DISTINCT st.id, st.name, st.grade
          FROM ser_occ o
+         JOIN ser se     ON se.id = o.ser_id
          -- 수강 종료 뒤의 회차는 그 학생의 것이 아니다 (C94-c) — 그 달에 유효한 회차가 하나라도 있는 학생만
          JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
          JOIN stu st     ON st.id = ss.student_id
         WHERE ${kstMonthOf('lower(o.span)')} = $1
           -- 컨설팅 계약이 덮는 회차는 수업료가 아니다 — 청구 줄과 같은 집합 (PB-05 · D-R22)
           AND NOT ${consultingCovered('o.ser_id', 'ss.student_id')}
+          -- 진단고사 · 상담 회차는 제 종류(진단고사 + 상담 비용)로 청구한다 — 수업료 줄과 같은 집합 (N-75)
+          AND ${lineKindScope('tuition', 'se.kind_key')}
         ORDER BY st.name, st.id`,
       [month],
     )) as Array<{ id: string; name: string; grade: string | null }>;
@@ -1013,10 +1254,12 @@ export class AccountingService {
                   WHERE e.ser_id = o.ser_id AND e.on_date = o.on_date AND xo.student_id = ss.student_id
                ) OR ${stuPausedOn('ss.student_id', 'o.on_date')}) AS stu_out
          FROM ser_occ o
+         JOIN ser se     ON se.id = o.ser_id
          JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
         WHERE ${kstMonthOf('lower(o.span)')} = $1
           AND ss.student_id = ANY($2::bigint[])
-          AND NOT ${consultingCovered('o.ser_id', 'ss.student_id')}`,
+          AND NOT ${consultingCovered('o.ser_id', 'ss.student_id')}
+          AND ${lineKindScope('tuition', 'se.kind_key')}`,
       [month, students.map((s) => Number(s.id))],
     )) as Array<{ student_id: string; on_date: string; canceled: boolean; extra: boolean | null; treat: string | null; stu_out: boolean }> : [];
 
@@ -1058,6 +1301,8 @@ export class AccountingService {
     // 받는 달 수업료 청구서가 이미 나간 학생 — 넘겨도 차감이 들어갈 청구서가 없다 (PB-04 · 쓰기와 같은 함수)
     const toMonth = nextMonthOf(month);
     const nextIssued = await liveTuitionInvoiceStudents(this.inv, toMonth);
+    // 받는 달이 마감이면 이월분을 받을 수 없다 — 쓰기(`carryTuition`)가 두 달을 다 본다 (W11 · 7-3 ①)
+    const toClose = await this.currentClose(this.inv.manager, toMonth);
 
     const carriedIn = new Map<number, { amount: number; sessions: number }>();
     for (const r of (await this.inv.query(
@@ -1100,6 +1345,10 @@ export class AccountingService {
       )) as Array<{ hit: number }>;
 
       const got = carriedIn.get(id) ?? { amount: 0, sessions: 0 };
+      // 섞인 옛 청구서 — 단추가 설 자리에서만 묻는다(쓰기와 같은 함수 · 잔여 ③)
+      const paidId = paidInv.get(id);
+      const mixed = paidId !== undefined && carry > 0 && !carriedOut.has(id)
+        ? await carryMixedBlocked(this.inv, id, month, paidId) : false;
       doneCount += c.done; totalCount += c.total; canceledCount += c.canceled; deductedCount += c.deducted; extraCount += c.extra;
       doneAmount += done; carryAmount += carry;
       carriedInCount += got.sessions; carriedInAmount += got.amount;
@@ -1131,7 +1380,9 @@ export class AccountingService {
           const standing = paidInv.has(id) && carry > 0 && !carriedOut.has(id);
           const reason = !standing ? null
             : close !== null ? monthClosedMessage(month)
-              : nextIssued.has(id) ? carryNextIssuedMessage(toMonth) : null;
+              : toClose !== null ? monthClosedMessage(toMonth)
+                : mixed ? carryMixedMessage(month)
+                  : nextIssued.has(id) ? carryNextIssuedMessage(toMonth) : null;
           return { carryable: standing && reason === null, carryBlockedReason: reason };
         })(),
         carriedAt: carriedOut.get(id) ?? null,
@@ -1167,16 +1418,36 @@ export class AccountingService {
     };
   }
 
-  /* ── §57 강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43) ──────────────
+  /* ── §57 강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43) + W11 M2 (N-36 · N-51 · N-93 · N-94) ──────────────
      세는 것은 `lib/payout-sheet` 한 곳 — 강사 히스토리(§57 강사 화면)가 같은 함수를 쓴다.
      「리포트를 썼는가」만 본다(D-R7) · 미작성은 빠지고 얼마가 빠지는지 센다(D-43) · 휴강은 시수에 안 든다(H-82).
-     확정은 **그 순간의 계산을 굳힌다** — 저장된 초안이 있어도 계산이 이긴다(초안과 다르면 줄에 함께 보인다).
-     `payout_line` 은 쓰지 않는다 — N-36(빈 표 넷) 결정 전이다.                                  */
+     가산(N-93)도 같은 함수가 더한다. 확정은 **그 순간의 계산을 굳히고** 회차마다 근거 줄(`payout_line`)을 남긴다(N-36 ①).
+     확정된 달은 그 뒤로 저장값만 읽는다 — 확정 뒤에 쓴 리포트는 다음 미확정 달의 보정 줄로 간다(N-51).
+     시급 비공개(N-94)가 켜지면 줄 금액은 비공개 열람(canHide) · 본인에게만 보이고 합계는 그대로다.            */
 
+  /** 지급 확정이 막힌 까닭 — 단추 옆 문장과 쓰기의 거절이 같은 판정을 쓴다 (D-R39) */
+  private static payoutConfirmBlock(
+    sheet: PayoutSheet, monthEnded: boolean, canApproveCorrection: boolean,
+  ): { code: string; status: 400 | 403 | 409; message: string } | null {
+    const { agg } = sheet;
+    if (!monthEnded) return { code: 'PAYOUT_MONTH_OPEN', status: 400, message: '아직 끝나지 않은 달은 확정할 수 없습니다 — 리포트가 더 들어옵니다' };
+    if (agg.noRateCount > 0) return { code: 'PAYOUT_NO_RATE', status: 409, message: `시급이 없는 수업이 ${agg.noRateCount}건 있습니다 — 시급을 먼저 등록하세요` };
+    if (agg.writtenCount + agg.correctionCount === 0) return { code: 'PAYOUT_NOTHING', status: 409, message: '리포트를 쓴 수업이 없습니다 — 확정할 것이 없습니다' };
+    if (agg.correctionCount > 0 && !canApproveCorrection) {
+      return { code: 'PAYOUT_CORRECTION_FORBIDDEN', status: 403, message: `보정 줄 ${agg.correctionCount}건이 든 달입니다 — 보정 승인은 대표만 합니다` };
+    }
+    return null;
+  }
+
+  /**
+   * 한 강사의 줄 — **금액은 `canSeeAmounts` 로만 가린 값**이다(합계용). 시급 비공개 가림은 `hidePayoutRow` 가 따로 한다 —
+   * 합계는 가려지지 않은 줄에서 더해야 「합계는 그대로」가 된다 (N-94).
+   */
   private async payoutSheetRow(
     m: { query: EntityManager['query'] }, staff: { id: number; name: string }, month: string,
     today: string, nowMin: number, canSeeAmounts: boolean, canConfirmPayout: boolean, monthEnded: boolean,
-  ): Promise<PayoutSheetRowDto> {
+    canApproveCorrection: boolean,
+  ): Promise<{ row: PayoutSheetRowDto; sheet: PayoutSheet }> {
     const sheet = await payoutSheet(m, staff.id, month, today, nowMin);
     const [po] = (await m.query(
       `SELECT po.net, po.confirmed_by, po.confirmed_at, cb.name AS confirmed_name
@@ -1185,9 +1456,10 @@ export class AccountingService {
       [staff.id, month],
     )) as Array<{ net: number; confirmed_by: string | null; confirmed_at: Date | null; confirmed_name: string | null }>;
     const money = (v: number): number | null => (canSeeAmounts ? v : null);
-    const confirmed = po ? payoutConfirmed(po.confirmed_by) : false;
+    const confirmed = sheet.confirmed !== null;
     const { agg } = sheet;
-    return {
+    const block = canConfirmPayout && !confirmed ? AccountingService.payoutConfirmBlock(sheet, monthEnded, canApproveCorrection) : null;
+    const row: PayoutSheetRowDto = {
       staffId: staff.id, staffName: staff.name, yearMonth: month,
       writtenCount: agg.writtenCount, writtenMinutes: agg.writtenMinutes,
       unwrittenCount: agg.unwrittenCount, unwrittenMinutes: agg.unwrittenMinutes,
@@ -1198,8 +1470,26 @@ export class AccountingService {
       confirmed,
       confirmedAt: po?.confirmed_at ? new Date(po.confirmed_at).toISOString() : null,
       confirmedBy: po?.confirmed_name ?? null,
-      canConfirm: canConfirmPayout && monthEnded && !confirmed && agg.noRateCount === 0 && agg.writtenCount > 0,
+      canConfirm: canConfirmPayout && !confirmed && block === null,
+      correctionCount: agg.correctionCount, correctionMinutes: agg.correctionMinutes, lateCount: agg.lateCount,
+      bonus: money(agg.bonus), amountsHidden: false,
+      // 단추가 서지 않는 사람(권한 없음) · 이미 확정된 줄에는 문장을 싣지 않는다 — 달이 안 끝난 것은 머리가 이미 말한다
+      confirmBlockedReason: block && block.code !== 'PAYOUT_MONTH_OPEN' ? block.message : null,
     };
+    return { row, sheet };
+  }
+
+  /** 시급 비공개로 줄 금액을 가린다 — 수 · 상태 · 날짜는 그대로 (N-94) */
+  private static hidePayoutRow(row: PayoutSheetRowDto): PayoutSheetRowDto {
+    return {
+      ...row, gross: null, lateCut: null, incomeTax: null, localTax: null, net: null, unwrittenAmount: null,
+      savedNet: null, bonus: null, amountsHidden: true,
+    };
+  }
+
+  /** 이 사람에게 이 강사의 줄 금액을 가리는가 — 스위치 · 비공개 열람 · 본인 (lib/acct-privacy 한 판정) */
+  private static wageLineHidden(wagePrivate: boolean, canSeeAmounts: boolean, viewer: AcctViewer, staffId: number): boolean {
+    return canSeeAmounts && !lineAmountVisible(canSeeAmounts, wagePrivate, viewer.canHide, viewer.id === staffId);
   }
 
   /** 그 달의 강사 — 활동 중인 강사 전부 + 그 달 회차를 맡은 사람(강사가 아니어도) */
@@ -1218,17 +1508,26 @@ export class AccountingService {
     return rows.map((r) => ({ id: Number(r.id), name: r.name }));
   }
 
-  async payoutSheetOf(month: string, canSeeAmounts: boolean, canConfirmPayout: boolean): Promise<PayoutSheetDto> {
+  async payoutSheetOf(
+    month: string, canSeeAmounts: boolean, canConfirmPayout: boolean,
+    viewer: AcctViewer = NO_HIDDEN_VIEW, canApproveCorrection = canConfirmPayout,
+  ): Promise<PayoutSheetDto> {
     const today = todayKst();
     const nowMin = nowMinKst();
     const monthEnded = today.slice(0, 7) > month;
     const staff = await this.payoutStaff(this.inv.manager, month);
-    const rows: PayoutSheetRowDto[] = [];
-    for (const st of staff) rows.push(await this.payoutSheetRow(this.inv.manager, st, month, today, nowMin, canSeeAmounts, canConfirmPayout, monthEnded));
-    const sum = (pick: (r: PayoutSheetRowDto) => number | null | undefined) => rows.reduce((n, r) => n + (pick(r) ?? 0), 0);
+    const privacy = await readAcctPrivacy(this.inv.manager);
+    const raw: PayoutSheetRowDto[] = [];
+    for (const st of staff) {
+      raw.push((await this.payoutSheetRow(this.inv.manager, st, month, today, nowMin, canSeeAmounts, canConfirmPayout, monthEnded, canApproveCorrection)).row);
+    }
+    // 합계는 가려지지 않은 줄에서 더한다 — 줄 금액이 가려져도 합계는 그대로다 (N-94)
+    const sum = (pick: (r: PayoutSheetRowDto) => number | null | undefined) => raw.reduce((n, r) => n + (pick(r) ?? 0), 0);
+    const rows = raw.map((r) => (AccountingService.wageLineHidden(privacy.wage.private, canSeeAmounts, viewer, r.staffId)
+      ? AccountingService.hidePayoutRow(r) : r));
     return {
       month, today, monthEnded, rows,
-      unwrittenCount: rows.reduce((n, r) => n + r.unwrittenCount, 0),
+      unwrittenCount: raw.reduce((n, r) => n + r.unwrittenCount, 0),
       netTotal: canSeeAmounts ? sum((r) => r.net) : null,
       canSeeAmounts,
       // §56 합계 카드 (w5 · 56-02) — 전부 줄의 합이다. 화면이 행을 더하지 않는다 (D-R37)
@@ -1237,6 +1536,9 @@ export class AccountingService {
       grossTotal: canSeeAmounts ? sum((r) => r.gross) : null,
       lateCutTotal: canSeeAmounts ? sum((r) => r.lateCut) : null,
       taxTotal: canSeeAmounts ? sum((r) => (r.incomeTax ?? 0) + (r.localTax ?? 0)) : null,
+      bonusTotal: canSeeAmounts ? sum((r) => r.bonus) : null,
+      correctionCount: raw.reduce((n, r) => n + r.correctionCount, 0),
+      amountsHidden: rows.some((r) => r.amountsHidden),
     };
   }
 
@@ -1244,17 +1546,25 @@ export class AccountingService {
    * §56 오른쪽 상세 — 「시급 · 수업 날짜 · 리포트 미작성 · 정산 내역」 (w5 · g5 56-01).
    *
    * **시트와 같은 함수**(`payoutSheetRow` → `lib/payout-sheet`)가 센다 — 상세의 줄이 시트의 줄과 다르면
-   * 한 화면에서 같은 강사의 돈이 두 수가 된다. 수업 줄의 갈래도 그 함수가 정한 `repState`·`canceled` 를 옮길 뿐이다.
+   * 한 화면에서 같은 강사의 돈이 두 수가 된다. 수업 줄의 갈래 · 이름도 그 함수가 정한다(`settle` · `payoutSettleLabel`).
    * 그 달에 수업도 시급도 없는 사람(목록 밖)은 404 — 없는 정산을 0 원으로 지어내지 않는다.
+   * 보정 줄(N-51)도 이 달의 수업 줄로 함께 선다 — 수업 줄의 (시급×시간 + 가산) 합이 줄의 총액이다.
    */
-  async payoutDetail(staffId: number, month: string, canSeeAmounts: boolean, canConfirmPayout: boolean): Promise<PayoutDetailDto> {
+  async payoutDetail(
+    staffId: number, month: string, canSeeAmounts: boolean, canConfirmPayout: boolean,
+    viewer: AcctViewer = NO_HIDDEN_VIEW, canApproveCorrection = canConfirmPayout,
+  ): Promise<PayoutDetailDto> {
     const today = todayKst();
     const nowMin = nowMinKst();
     const staff = (await this.payoutStaff(this.inv.manager, month)).find((s) => s.id === staffId);
     if (!staff) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 달 정산에 없는 강사입니다' });
     const monthEnded = today.slice(0, 7) > month;
-    const row = await this.payoutSheetRow(this.inv.manager, staff, month, today, nowMin, canSeeAmounts, canConfirmPayout, monthEnded);
-    const sheet = await payoutSheet(this.inv.manager, staffId, month, today, nowMin);
+    const privacy = await readAcctPrivacy(this.inv.manager);
+    const hidden = AccountingService.wageLineHidden(privacy.wage.private, canSeeAmounts, viewer, staffId);
+    const { row: rawRow, sheet } = await this.payoutSheetRow(
+      this.inv.manager, staff, month, today, nowMin, canSeeAmounts, canConfirmPayout, monthEnded, canApproveCorrection);
+    const row = hidden ? AccountingService.hidePayoutRow(rawRow) : rawRow;
+    const lineMoney = (v: number | null): number | null => (canSeeAmounts && !hidden ? v : null);
 
     // 수업 이름 — 제목 → 과목 → 종류 (강사 히스토리 화면과 같은 순서) · 코드값을 화면으로 내보내지 않는다 (D-R18)
     const names = (await this.inv.query(
@@ -1262,23 +1572,17 @@ export class AccountingService {
     )) as Array<{ t: string; key: string; name: string }>;
     const subName = new Map(names.filter((n) => n.t === 'sub').map((n) => [n.key, n.name]));
     const kindName = new Map(names.filter((n) => n.t === 'kind').map((n) => [n.key, n.name]));
-    const written = new Set<string>(REPORT_WRITTEN_DB as readonly string[]);
 
-    const lessons: PayoutLessonDto[] = sheet.lessons.map((l) => {
-      /* 갈래는 시트 함수가 이미 정했다 — 끝났는데 안 쓴 회차에만 `penaltyIfNow` 가 선다(끝났는지를 여기서 다시 재지 않는다) */
-      const settle = l.canceled ? 'canceled'
-        : l.repState === 'na' ? 'na'
-          : written.has(l.repState) ? 'written'
-            : l.penaltyIfNow !== null ? 'unwritten' : 'upcoming';
-      return {
-        serId: l.serId, onDate: l.onDate, startMin: l.startMin, durMin: l.durMin,
-        name: l.title ?? (l.subKey ? subName.get(l.subKey) : undefined) ?? kindName.get(l.kindKey) ?? '수업',
-        students: l.students, studentCount: l.studentCount, canceled: l.canceled,
-        settle, settleLabel: PAYOUT_SETTLE_LABEL[settle],
-        pay: canSeeAmounts ? l.pay : null,
-        lateCut: canSeeAmounts ? l.lateCut : null,
-      };
-    });
+    const lessons: PayoutLessonDto[] = sheet.lessons.map((l) => ({
+      serId: l.serId, onDate: l.onDate, startMin: l.startMin, durMin: l.durMin,
+      name: l.title ?? (l.subKey ? subName.get(l.subKey) : undefined) ?? kindName.get(l.kindKey) ?? '수업',
+      students: l.students, studentCount: l.studentCount, canceled: l.canceled,
+      // 갈래는 시트 함수가 이미 정했다 — 여기서 다시 재지 않는다
+      settle: l.settle, settleLabel: payoutSettleLabel(l),
+      pay: lineMoney(l.pay), lateCut: lineMoney(l.lateCut), bonus: lineMoney(l.bonus),
+      unitRate: lineMoney(l.settle === 'written' || l.settle === 'correction' ? l.unitRate : null),
+      correctionOf: l.correctionOf, paidIn: l.paidIn, frozen: l.frozen,
+    }));
 
     // 이 달에 걸린 시급 — 달 시작 때의 것 + 달 안에서 바뀐 것 (D8 · 회차 날짜의 시급을 쓴다)
     const first = `${month}-01`;
@@ -1293,7 +1597,7 @@ export class AccountingService {
 
     return {
       staffId, staffName: staff.name, month, row,
-      rates: rateRows.map((r) => ({ fromDate: r.from_date, rate: canSeeAmounts ? Number(r.rate) : null })),
+      rates: rateRows.map((r) => ({ fromDate: r.from_date, rate: lineMoney(Number(r.rate)) })),
       lessons,
     };
   }
@@ -1303,7 +1607,7 @@ export class AccountingService {
      원본 컷의 「청구 = 입금 + 예정」·달력 칸 합 = 청구·기한 칸의 숫자 배지가 그렇게 읽힌다(DTO 설명).
      분류는 §55 칩과 **같은 함수**(`payCategory`)가 정한다 — 두 곳이 따로 판정하지 않는다 (N-37 ③).      */
 
-  async cashflow(canSeeAmounts: boolean, query: CashflowQueryDto, today = todayKst()): Promise<CashflowDto> {
+  async cashflow(canSeeAmounts: boolean, query: CashflowQueryDto, today = todayKst(), viewer: AcctViewer = NO_HIDDEN_VIEW): Promise<CashflowDto> {
     const from = query.from ?? null;
     const to = query.to ?? null;
     if (from && to && to < from) {
@@ -1319,11 +1623,13 @@ export class AccountingService {
           AND ($1::date IS NULL OR p.paid_on >= $1::date) AND ($2::date IS NULL OR p.paid_on <= $2::date)`,
       [from, to],
     )) as Array<{ on: string; amount: string; inv_type: string | null; is_gpa: boolean }>;
+    // 예정 — 덜 받은 돈의 조각(분납이면 못 채운 회차마다 · N-79). 「미수 전체」와 같은 조각이다
     const dueRows = (await this.inv.query(
-      `SELECT to_char(i.due_on,'YYYY-MM-DD') AS on, (i.amount - i.paid_amount)::bigint AS amount, i.inv_type, ${IS_GPA_INV_SQL} AS is_gpa
-         FROM inv i
-        WHERE i.state IN (${sqlWordList(INV_OPEN)}) AND i.due_on IS NOT NULL AND i.amount > i.paid_amount
-          AND ($1::date IS NULL OR i.due_on >= $1::date) AND ($2::date IS NULL OR i.due_on <= $2::date)`,
+      `SELECT p.due_on AS on, p.amount, p.inv_type, ${IS_GPA_INV_SQL} AS is_gpa
+         FROM (${OPEN_PARTS_SQL}) p
+         JOIN inv i ON i.id = p.inv_id
+        WHERE p.due_on IS NOT NULL
+          AND ($1::date IS NULL OR p.due_on::date >= $1::date) AND ($2::date IS NULL OR p.due_on::date <= $2::date)`,
       [from, to],
     )) as Array<{ on: string; amount: string; inv_type: string | null; is_gpa: boolean }>;
     const items: Item[] = [
@@ -1358,20 +1664,25 @@ export class AccountingService {
     const paid = scoped.filter((i) => i.kind === 'paid').reduce((n, i) => n + i.amount, 0);
     const expected = scoped.filter((i) => i.kind === 'expected').reduce((n, i) => n + i.amount, 0);
 
-    // 미수 전체 — **기간과 무관**하다(원본 머리 「미수 전체 · 기간과 무관」) · 기한 이른 순(지난 것이 위)
+    /*
+     * 미수 전체 — **기간과 무관**하다(원본 머리 「미수 전체 · 기간과 무관」) · 기한 이른 순(지난 것이 위).
+     * 분납 일정이 있는 청구서는 **못 채운 회차마다 한 줄**이다 — 원문 §55 「고은성 2회차 ₩413,300 D-10 · 3회차 D-40」(N-79).
+     */
     const openRows = (await this.inv.query(
-      `SELECT i.id, s.name AS student_name, i.amount, i.paid_amount, to_char(i.due_on,'YYYY-MM-DD') AS due_on
-         FROM inv i JOIN stu s ON s.id = i.student_id
-        WHERE i.state IN (${sqlWordList(INV_OPEN)}) AND i.amount > i.paid_amount
-        ORDER BY i.due_on NULLS LAST, i.id`,
-    )) as Array<{ id: string; student_name: string; amount: string; paid_amount: string; due_on: string | null }>;
+      `SELECT p.inv_id, p.seq, p.paid_amount, p.amount, p.due_on, p.inv_type, s.name AS student_name
+         FROM (${OPEN_PARTS_SQL}) p JOIN stu s ON s.id = p.student_id
+        ORDER BY p.due_on NULLS LAST, p.inv_id, p.seq NULLS FIRST`,
+    )) as Array<{ inv_id: string; seq: number | null; paid_amount: string; amount: string; due_on: string | null; inv_type: string | null; student_name: string }>;
+    // 컨설팅 비공개 (N-94) — 미수 한 줄(청구서)의 금액만 가린다. 기간 · 달력 · 분류 합계는 그대로다
+    const privacy = await readAcctPrivacy(this.inv.manager);
+    const consShown = lineAmountVisible(canSeeAmounts, privacy.consulting.private, viewer.canHide);
     const open: CashflowOpenDto[] = openRows.map((r) => {
       const due = r.due_on;
       const left = due ? daysBetween(today, due) : null;
       return {
-        invId: Number(r.id), studentName: r.student_name,
-        partLabel: Number(r.paid_amount) > 0 ? '잔액' : '전액',
-        amount: gate(Number(r.amount) - Number(r.paid_amount)),
+        invId: Number(r.inv_id), seq: r.seq === null ? null : Number(r.seq), studentName: r.student_name,
+        partLabel: r.seq !== null ? `${Number(r.seq)}회차` : Number(r.paid_amount) > 0 ? '잔액' : '전액',
+        amount: consShown || !isConsultingLine(r.inv_type) ? gate(Number(r.amount)) : null,
         dueOn: due,
         whenLabel: left === null ? '기한 없음' : left < 0 ? `${-left}일 연체` : left === 0 ? '오늘' : `D-${left}`,
         tone: left === null ? null : left < 0 ? 'danger' : left <= 7 ? 'warning' : null,
@@ -1390,9 +1701,17 @@ export class AccountingService {
   /**
    * 「지급 확정」 — 대표 전용 (O-148). 그 순간의 시트를 payout 행으로 굳히고 누가·언제를 남긴다.
    * 달이 끝나기 전에는 안 된다(끝나기 전 리포트가 더 들어온다) · 시급 없는 수업이 있으면 안 된다(0원으로 굳히면 조용히 틀린 정산) ·
-   * 이미 확정이면 409. LOG `PAYOUT confirm`. `payout_line` 은 쓰지 않는다(N-36).
+   * 이미 확정이면 409. LOG `PAYOUT confirm`.
+   *
+   * W11 M2 — 같은 트랜잭션에서 **회차마다 근거 줄**(`payout_line`)을 남긴다(N-36 ①: 시급 스냅숏 · 시수 · 금액 · 가산 · 차감).
+   * 보정 줄(N-51 — 앞선 확정 달의 회차를 확정 뒤에 쓴 것)이 들어 있으면 **보정 승인**(대표 판정)을 함께 지나고
+   * 감사 한 줄(`payout.correction`)을 더 남긴다. 한 회차는 근거 줄에 한 번만 든다(표의 유일 · 409 `PAYOUT_LINE_DUPLICATE`).
+   * 잠금은 강사 단위다 — 보정 대상은 그 강사의 여러 달에 걸치므로 같은 강사의 확정은 한 줄로 선다.
    */
-  async confirmPayout(userId: number, canConfirmPayout: boolean, month: string, dto: PayoutConfirmDto, canSeeAmounts: boolean): Promise<PayoutSheetRowDto> {
+  async confirmPayout(
+    userId: number, canConfirmPayout: boolean, month: string, dto: PayoutConfirmDto, canSeeAmounts: boolean,
+    canApproveCorrection = canConfirmPayout, viewer: AcctViewer = NO_HIDDEN_VIEW,
+  ): Promise<PayoutSheetRowDto> {
     if (!canConfirmPayout) throw new ForbiddenException({ code: 'FORBIDDEN', message: '지급 확정은 대표만 할 수 있습니다' });
     const today = todayKst();
     const nowMin = nowMinKst();
@@ -1400,10 +1719,9 @@ export class AccountingService {
       throw new BadRequestException({ code: 'PAYOUT_MONTH_OPEN', message: '아직 끝나지 않은 달은 확정할 수 없습니다 — 리포트가 더 들어옵니다' });
     }
     return this.inv.manager.transaction(async (m: EntityManager) => {
-      await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`payout:${dto.staffId}:${month}`]);
+      await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`payout:${dto.staffId}`]);
       const [st] = (await m.query(`SELECT id, name FROM staff WHERE id = $1`, [dto.staffId])) as Array<{ id: string; name: string }>;
       if (!st) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '강사를 찾을 수 없습니다' });
-      const sheet = await payoutSheet(m, dto.staffId, month, today, nowMin);
       const [before] = (await m.query(
         `SELECT id, hours, gross, late_rep_cut, income_tax, local_tax, net, confirmed_by FROM payout WHERE staff_id = $1 AND year_month = $2 FOR UPDATE`,
         [dto.staffId, month],
@@ -1411,13 +1729,17 @@ export class AccountingService {
       if (before && payoutConfirmed(before.confirmed_by as string | null)) {
         throw new ConflictException({ code: 'PAYOUT_ALREADY_CONFIRMED', message: '이미 확정한 정산입니다' });
       }
-      if (sheet.agg.noRateCount > 0) {
-        throw new ConflictException({ code: 'PAYOUT_NO_RATE', message: `시급이 없는 수업이 ${sheet.agg.noRateCount}건 있습니다 — 시급을 먼저 등록하세요` });
+      const sheet = await payoutSheet(m, dto.staffId, month, today, nowMin);
+      const block = AccountingService.payoutConfirmBlock(sheet, true, canApproveCorrection);
+      if (block) {
+        const body = { code: block.code, message: block.message };
+        if (block.status === 403) throw new ForbiddenException(body);
+        if (block.status === 400) throw new BadRequestException(body);
+        throw new ConflictException(body);
       }
-      if (sheet.agg.writtenCount === 0) {
-        throw new ConflictException({ code: 'PAYOUT_NOTHING', message: '리포트를 쓴 수업이 없습니다 — 확정할 것이 없습니다' });
-      }
-      const hours = (sheet.agg.writtenMinutes / 60).toFixed(2);
+      const { agg } = sheet;
+      const paid = sheet.lessons.filter((l) => (l.settle === 'written' || l.settle === 'correction') && l.pay !== null);
+      const hours = ((agg.writtenMinutes + agg.correctionMinutes) / 60).toFixed(2);
       await m.query(
         `INSERT INTO payout (staff_id, year_month, hours, gross, late_rep_cut, income_tax, local_tax, net, state, confirmed_by, confirmed_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', $9, now())
@@ -1425,17 +1747,191 @@ export class AccountingService {
            SET hours = EXCLUDED.hours, gross = EXCLUDED.gross, late_rep_cut = EXCLUDED.late_rep_cut,
                income_tax = EXCLUDED.income_tax, local_tax = EXCLUDED.local_tax, net = EXCLUDED.net,
                state = 'confirmed', confirmed_by = EXCLUDED.confirmed_by, confirmed_at = now()`,
-        [dto.staffId, month, hours, sheet.agg.gross, sheet.agg.lateCut, sheet.incomeTax, sheet.localTax, sheet.net, userId],
+        [dto.staffId, month, hours, agg.gross, agg.lateCut, sheet.incomeTax, sheet.localTax, sheet.net, userId],
       );
       const [row] = (await m.query(`SELECT id FROM payout WHERE staff_id = $1 AND year_month = $2`, [dto.staffId, month])) as Array<{ id: string }>;
+      const payoutId = Number(row.id);
+
+      // 근거 줄 — 시트가 방금 센 값 그대로다(다시 세지 않는다)
+      const lines = paid.map((l) => ({
+        ser_id: l.serId, on_date: l.onDate, kind_key: l.kindKey, hours: (l.durMin / 60).toFixed(2),
+        unit_rate: l.unitRate ?? 0, amount: l.pay ?? 0, cut: l.lateCut ?? 0, bonus: l.bonus ?? 0,
+        bonus_detail: l.bonusParts, correction: l.settle === 'correction',
+      }));
+      try {
+        await m.query(
+          `INSERT INTO payout_line (payout_id, ser_id, on_date, kind_key, hours, unit_rate, amount, cut, bonus, bonus_detail, correction)
+           SELECT $1, x.ser_id, x.on_date, x.kind_key, x.hours, x.unit_rate, x.amount, x.cut, x.bonus, x.bonus_detail, x.correction
+             FROM jsonb_to_recordset($2::jsonb) AS x(
+               ser_id bigint, on_date date, kind_key varchar, hours numeric, unit_rate int, amount int, cut int,
+               bonus int, bonus_detail jsonb, correction boolean)`,
+          [payoutId, JSON.stringify(lines)],
+        );
+      } catch (e) {
+        if ((e as { code?: string; constraint?: string }).code === '23505') {
+          throw new ConflictException({ code: 'PAYOUT_LINE_DUPLICATE', message: '이미 다른 정산에 들어간 회차가 있습니다 — 한 회차는 한 번만 지급합니다' });
+        }
+        throw e;
+      }
+
+      const corrections = paid.filter((l) => l.settle === 'correction');
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'PAYOUT',$2,'confirm',$3::jsonb,$4::jsonb)`,
-        [userId, Number(row.id),
+        [userId, payoutId,
           before ? JSON.stringify({ hours: String(before.hours), gross: Number(before.gross), net: Number(before.net) }) : null,
-          JSON.stringify({ month, hours, gross: sheet.agg.gross, lateCut: sheet.agg.lateCut, net: sheet.net, written: sheet.agg.writtenCount, unwritten: sheet.agg.unwrittenCount, canceled: sheet.agg.canceledCount, na: sheet.agg.naCount })],
+          JSON.stringify({
+            month, hours, gross: agg.gross, lateCut: agg.lateCut, bonus: agg.bonus, net: sheet.net,
+            written: agg.writtenCount, unwritten: agg.unwrittenCount, canceled: agg.canceledCount, na: agg.naCount,
+            lines: lines.length, corrections: corrections.length,
+          })],
       );
-      return this.payoutSheetRow(m, { id: Number(st.id), name: st.name }, month, today, nowMin, canSeeAmounts, canConfirmPayout, true);
+      if (corrections.length > 0) {
+        // 보정 승인 — 금액 조정 결재(원문 슬라이드 77 · 대표만) · 어느 달의 어느 회차를 얼마로 얹었는지
+        await audit(m, 'payout.correction', {
+          actorId: userId, entityId: payoutId, action: 'approve',
+          after: {
+            staffId: dto.staffId, month,
+            items: corrections.map((c) => ({
+              serId: c.serId, onDate: c.onDate, fromMonth: c.correctionOf, pay: c.pay, bonus: c.bonus, lateCut: c.lateCut,
+            })),
+          },
+        });
+      }
+      const { row: out } = await this.payoutSheetRow(
+        m, { id: Number(st.id), name: st.name }, month, today, nowMin, canSeeAmounts, canConfirmPayout, true, canApproveCorrection);
+      const privacy = await readAcctPrivacy(m);
+      return AccountingService.wageLineHidden(privacy.wage.private, canSeeAmounts, viewer, dto.staffId)
+        ? AccountingService.hidePayoutRow(out) : out;
     });
+  }
+
+  /* ── 가산 규칙 (N-93 · D1 §4-12 · 원문 §56 「추가로 드리는 돈」) ─────────────────────────
+     정리 · 기준 탭의 「가산 규칙」. 시급(WAGE)처럼 **새 줄로만 바꾼다** — 적용일은 오늘 이후(소급 없음 · D8 과 같은 뜻),
+     같은 칸 같은 날 두 줄은 409, 지난 줄은 고치지도 지우지도 않는다. 셈은 `lib/payout-sheet.lessonBonus` 한 곳이다.
+     확정된 달은 이미 굳어 있어 새 줄이 닿지 않는다(가산은 미확정 달의 적용일부터).                                  */
+
+  private static readonly BONUS_SELECT = `
+    SELECT b.id, b.kind, b.kind_key, k.name AS kind_name, b.amount, to_char(b.from_date,'YYYY-MM-DD') AS from_date, b.reason,
+           s.name AS set_by_name, ${kstAt('b.created_at')} AS created_at,
+           (b.from_date <= $1::date AND NOT EXISTS (
+              SELECT 1 FROM payout_bonus_rule b2
+               WHERE b2.kind = b.kind AND b2.kind_key IS NOT DISTINCT FROM b.kind_key
+                 AND b2.from_date <= $1::date AND b2.from_date > b.from_date)) AS current
+      FROM payout_bonus_rule b
+      LEFT JOIN kind k ON k.key = b.kind_key
+      LEFT JOIN staff s ON s.id = b.set_by`;
+
+  private static bonusRow(r: Record<string, unknown>): PayoutBonusRuleDto {
+    const kind = String(r.kind) as BonusKind;
+    return {
+      id: Number(r.id), kind, kindLabel: BONUS_KIND_LABEL[kind] ?? kind,
+      kindKey: (r.kind_key as string | null) ?? null, kindName: (r.kind_name as string | null) ?? null,
+      amount: Number(r.amount), fromDate: String(r.from_date), reason: (r.reason as string | null) ?? null,
+      setByName: (r.set_by_name as string | null) ?? null, createdAt: String(r.created_at), current: r.current === true,
+    };
+  }
+
+  async bonusBook(today = todayKst()): Promise<PayoutBonusBookDto> {
+    const rows = (await this.inv.query(
+      `${AccountingService.BONUS_SELECT} ORDER BY b.from_date DESC, b.id DESC`, [today],
+    )) as Array<Record<string, unknown>>;
+    const rules = rows.map((r) => AccountingService.bonusRow(r));
+    const kinds = new Map(((await this.inv.query(`SELECT key, name FROM kind`)) as Array<{ key: string; name: string }>).map((k) => [k.key, k.name]));
+    const slots: PayoutBonusSlotDto[] = BONUS_D1_DEFAULTS.map((d) => {
+      const mine = rules.filter((r) => r.kind === d.kind && r.kindKey === d.kindKey);
+      const cur = mine.find((r) => r.current) ?? null;
+      const next = [...mine].filter((r) => r.fromDate > today).sort((a, b) => a.fromDate.localeCompare(b.fromDate))[0] ?? null;
+      const applied = d.kind !== 'kinder_hourly' || KINDER_MARKER_EXISTS;
+      return {
+        kind: d.kind, kindKey: d.kindKey,
+        label: d.kindKey ? (kinds.get(d.kindKey) ?? d.kindKey) : BONUS_KIND_LABEL[d.kind],
+        hint: BONUS_KIND_HINT[d.kind], d1Amount: d.amount,
+        currentAmount: cur ? cur.amount : null, currentFrom: cur ? cur.fromDate : null,
+        nextAmount: next ? next.amount : null, nextFrom: next ? next.fromDate : null,
+        applied, note: applied ? null : KINDER_NOT_APPLIED,
+      };
+    });
+    return {
+      slots, rules, today, canWrite: true,
+      rule: '가산은 리포트를 쓴 수업에만 붙습니다 — 「한 번에」는 회차마다 그 금액, 그룹은 그날 수업한 학생이 둘 이상이면 (금액 × 학생 수)를 시급처럼 시간에 곱합니다. 적용일은 오늘부터이고 확정한 달은 바뀌지 않습니다.',
+    };
+  }
+
+  async writeBonusRule(userId: number, dto: PayoutBonusRuleWriteDto): Promise<PayoutBonusRuleDto> {
+    const today = todayKst();
+    const kind = dto.kind as BonusKind;
+    const kindKey = kind === 'per_session' ? (dto.kindKey ?? null) : null;
+    if (kind === 'per_session' && !kindKey) {
+      throw new BadRequestException({ code: 'BONUS_KIND_KEY', message: '「한 번에」 가산은 수업 종류를 골라야 합니다' });
+    }
+    if (kind !== 'per_session' && dto.kindKey) {
+      throw new BadRequestException({ code: 'BONUS_KIND_KEY', message: '이 가산은 수업 종류를 받지 않습니다' });
+    }
+    const fromDate = dto.fromDate ?? today;
+    if (fromDate < today) {
+      throw new ConflictException({ code: 'BONUS_RETROACTIVE', message: `적용일은 오늘(${today})부터입니다 — 지난 수업의 강사료는 바꾸지 않습니다` });
+    }
+    return this.inv.manager.transaction(async (m: EntityManager) => {
+      // 같은 칸 · 같은 날 두 줄을 한 줄로 세운다 — 유일 색인이 마지막으로 막는다
+      await m.query(`SELECT pg_advisory_xact_lock(hashtext('payout_bonus_rule'))`);
+      if (kindKey) {
+        const [k] = (await m.query(`SELECT key FROM kind WHERE key = $1`, [kindKey])) as Array<{ key: string }>;
+        if (!k) throw new NotFoundException({ code: 'KIND_NOT_FOUND', message: '그 수업 종류가 없습니다' });
+      }
+      const [same] = (await m.query(
+        `SELECT id FROM payout_bonus_rule WHERE kind = $1 AND kind_key IS NOT DISTINCT FROM $2 AND from_date = $3::date`,
+        [kind, kindKey, fromDate],
+      )) as Array<{ id: string }>;
+      if (same) {
+        throw new ConflictException({ code: 'BONUS_SAME_DAY', message: '같은 날짜에 이미 적은 줄이 있습니다 — 다른 날짜로 새 줄을 적으세요' });
+      }
+      const reason = dto.reason?.trim() || null;
+      const [made] = (await m.query(
+        `INSERT INTO payout_bonus_rule (kind, kind_key, amount, from_date, reason, set_by) VALUES ($1, $2, $3, $4::date, $5, $6) RETURNING id`,
+        [kind, kindKey, dto.amount, fromDate, reason, userId],
+      )) as Array<{ id: string }>;
+      await audit(m, 'payout.bonus_rule', {
+        actorId: userId, entityId: Number(made.id),
+        after: { kind, kindKey, amount: dto.amount, fromDate, reason },
+      });
+      const [row] = (await m.query(`${AccountingService.BONUS_SELECT} WHERE b.id = $2`, [today, Number(made.id)])) as Array<Record<string, unknown>>;
+      return AccountingService.bonusRow(row);
+    });
+  }
+
+  /* ── 회계 비공개 스위치 (N-94 · 원문 §53 · §55 탭 줄 오른쪽) ─────────────────────────── */
+
+  async acctPrivacy(canSet: boolean, canSeeHidden: boolean): Promise<AcctPrivacyDto> {
+    const state = await readAcctPrivacy(this.inv.manager);
+    return {
+      switches: ACCT_PRIVACY_KEYS.map((key) => ({
+        key, label: ACCT_PRIVACY_LABEL[key], private: state[key].private, scope: ACCT_PRIVACY_SCOPE[key],
+        setByName: state[key].setByName, setAt: state[key].setAt,
+      })),
+      canSet, canSeeHidden,
+    };
+  }
+
+  async setAcctPrivacy(userId: number, canSet: boolean, canSeeHidden: boolean, dto: AcctPrivacyWriteDto): Promise<AcctPrivacyDto> {
+    if (!canSet) {
+      throw new ForbiddenException({ code: 'ACCT_PRIVACY_FORBIDDEN', message: '비공개 지정은 대표만 합니다' });
+    }
+    const key = dto.key as AcctPrivacyKey;
+    await this.inv.manager.transaction(async (m: EntityManager) => {
+      const [before] = (await m.query(`SELECT private FROM acct_privacy WHERE key = $1 FOR UPDATE`, [key])) as Array<{ private: boolean }>;
+      const was = before?.private === true;
+      // 행이 없으면(시드 초기화) 꺼짐이었다 — 켜고 끄는 쓰기가 행을 되살린다
+      await m.query(
+        `INSERT INTO acct_privacy (key, private, set_by, set_at) VALUES ($1, $2, $3, now())
+         ON CONFLICT (key) DO UPDATE SET private = EXCLUDED.private, set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at`,
+        [key, dto.private, userId],
+      );
+      await audit(m, 'acct.privacy', {
+        actorId: userId, entityId: acctPrivacyAuditId(key), action: dto.private ? 'on' : 'off',
+        before: { key, private: was }, after: { key, private: dto.private },
+      });
+    });
+    return this.acctPrivacy(canSet, canSeeHidden);
   }
 
   /* ── 월 마감 (C92-d · 테스트 시나리오 C-39 · L-123 · N-140) ─────────────
@@ -1473,8 +1969,9 @@ export class AccountingService {
       throw new BadRequestException({ code: 'MONTH_NOT_STARTED', message: '아직 시작하지 않은 달은 마감할 수 없습니다' });
     }
     return this.inv.manager.transaction(async (m) => {
-      // 같은 달의 마감 두 번을 직렬화한다 — 부분 유니크가 최종 방어선이다
-      await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`month_close:${dto.month}`]);
+      // 같은 달의 마감 두 번을 직렬화한다 — 부분 유니크가 최종 방어선이다.
+      // 같은 달 열쇠를 발행 · 이월이 공유로 잡는다 — 도는 발행 · 이월이 끝난 뒤에 마감한다 (W11 A' 후속)
+      await lockMonthExclusive(m, dto.month);
       if (await this.currentClose(m, dto.month)) {
         throw new ConflictException({ code: 'MONTH_ALREADY_CLOSED', message: '이미 마감된 달입니다' });
       }
@@ -1496,7 +1993,8 @@ export class AccountingService {
     const reason = dto.reason.trim();
     if (!reason) throw new BadRequestException({ code: 'REASON_REQUIRED', message: '해제 사유를 적어 주세요' });
     return this.inv.manager.transaction(async (m) => {
-      await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`month_close:${dto.month}`]);
+      // 마감과 같은 축 — 해제가 도는 동안의 발행 · 이월은 해제가 끝난 뒤에 판정한다 (W11 A' 후속)
+      await lockMonthExclusive(m, dto.month);
       const open = await this.currentClose(m, dto.month);
       if (!open) throw new ConflictException({ code: 'MONTH_NOT_CLOSED', message: '마감되지 않은 달입니다' });
       await m.query(
@@ -1540,7 +2038,9 @@ export class AccountingService {
    * 컷이 한 번도 보여 주지 않는다.** 읽기마다 숫자의 뜻이 달라지므로 만들지 않았다 (N-40).
    * 지금 이 줄은 §52 머리 여섯 칸과 같은 **전 기간**이다 (C43 이 같은 이유로 월 라벨을 달지 않았다).
    */
-  async otherIncome(canSeeAmounts: boolean, span: IncomeSpan = 'month'): Promise<OtherIncomeDto> {
+  async otherIncome(canSeeAmounts: boolean, span: IncomeSpan = 'month', viewer: AcctViewer = NO_HIDDEN_VIEW): Promise<OtherIncomeDto> {
+    const privacy = await readAcctPrivacy(this.inv.manager);
+    const consShown = lineAmountVisible(canSeeAmounts, privacy.consulting.private, viewer.canHide);
     /*
      * 줄 차례는 원문 컷 그대로 — 진단고사 + 상담 비용 → 컨설팅비 → MAP + CAT (g5 57-01 · x5).
      * `INV_TYPES` 자체의 차례는 다른 곳(§53 발행 창 · /meta)이 쓰므로 건드리지 않고 이 화면의 차례만 둔다.
@@ -1570,6 +2070,8 @@ export class AccountingService {
       canSeeAmounts, span,
       rows: types.map((key) => {
         const mine = rows.filter((r) => r.inv_type === key);
+        // 컨설팅 비공개 (N-94) — 줄의 합계는 그대로 두고 펼친 묶음 · 청구서 금액만 가린다
+        const lm = (v: number): number | null => (consShown || !isConsultingLine(key) ? money(v) : null);
         // 「보낸 청구서」와 같은 어휘다 — 초안은 아직 보낸 것이 아니다 (§52 머리 · INV_BILLABLE)
         const billed = mine.filter((r) => (INV_BILLABLE as readonly string[]).includes(r.state));
         return {
@@ -1588,8 +2090,8 @@ export class AccountingService {
             key: g.key,
             label: g.label,
             count: g.rows.length,
-            amount: money(g.rows.reduce((n, r) => n + Number(r.amount), 0)),
-            paid: money(g.rows.reduce((n, r) => n + Number(r.paid_amount), 0)),
+            amount: lm(g.rows.reduce((n, r) => n + Number(r.amount), 0)),
+            paid: lm(g.rows.reduce((n, r) => n + Number(r.paid_amount), 0)),
             items: g.rows.map((r) => ({
               invId: Number(r.id),
               studentName: r.student_name ?? '학생 없음',
@@ -1598,7 +2100,7 @@ export class AccountingService {
               stateLabel: INV_STATE_LABEL[r.state] ?? r.state,
               unbilled: r.state === 'draft',
               issuedOn: r.issued_on, dueOn: r.due_on,
-              amount: money(Number(r.amount)), paid: money(Number(r.paid_amount)),
+              amount: lm(Number(r.amount)), paid: lm(Number(r.paid_amount)),
             })),
           })),
         };
@@ -1615,16 +2117,19 @@ export class AccountingService {
    * **칸은 비어도 선다** — 칸은 어휘이지 데이터가 아니다 (§57 줄 셋과 같은 규약 · C66).
    * 건수·합계도 서버가 센다 — 화면이 배열을 세면 안 보이는 카드까지 세거나 빠뜨린다 (D-R37).
    */
-  async invoiceBoard(canSeeAmounts: boolean): Promise<InvBoardDto> {
+  async invoiceBoard(canSeeAmounts: boolean, viewer: AcctViewer = NO_HIDDEN_VIEW): Promise<InvBoardDto> {
     const today = todayKst();
     const rows = (await this.inv.query(
       `SELECT i.id, i.student_id, s.name AS student_name, s.grade,
               i.inv_type, i.title, i.amount, i.paid_amount, i.state::text AS state,
-              to_char(i.due_on,'YYYY-MM-DD') AS due_on
+              -- 지금 기한 — 분납이면 못 채운 가장 이른 회차의 예정일 (N-79 · §52 머리 「기한 지남」과 같은 조각).
+              -- 다 채운 분납(완납)은 받을 회차가 없어 NULL 이다 — 카드에는 기한(= 마지막 회차 예정일)을 적는다(「기한 없음」이 아니다)
+              to_char(COALESCE(${invDueSql('i')}, i.due_on),'YYYY-MM-DD') AS due_on
          FROM inv i
          LEFT JOIN stu s ON s.id = i.student_id
         WHERE i.state <> 'void'
-        ORDER BY i.due_on NULLS LAST, i.id`,
+        -- 맨 이름 due_on 은 출력 칸(지금 기한)을 가리킨다 — 카드의 「D-N」과 같은 날로 줄 세운다
+        ORDER BY due_on NULLS LAST, i.id`,
     )) as Array<{
       id: string; student_id: string; student_name: string | null; grade: string | null;
       inv_type: string; title: string | null; amount: number; paid_amount: number;
@@ -1632,42 +2137,95 @@ export class AccountingService {
     }>;
 
     const money = (v: number): number | null => (canSeeAmounts ? v : null);
+    // 컨설팅 비공개 (N-94) — 카드 금액만 가린다. 칸의 합계(`money(mine…)`)는 가리지 않은 값에서 낸다
+    const privacy = await readAcctPrivacy(this.inv.manager);
+    const consShown = lineAmountVisible(canSeeAmounts, privacy.consulting.private, viewer.canHide);
+    const card = (r: (typeof rows)[number]): InvBoardCardDto => {
+      const due = r.due_on;
+      const shown = consShown || !isConsultingLine(r.inv_type);
+      const cm = (v: number): number | null => (shown ? money(v) : null);
+      /*
+       * 연체는 **아직 받을 돈이 있는 건**에만 붙는다 — `INV_OPEN` 이 그 집합이고
+       * §52 머리의 「기한 지남」도 같은 집합을 쓴다. 초안은 아직 청구한 것이 아니라 연체가 아니고,
+       * 완납은 받을 돈이 없어 연체가 아니다. 같은 낱말을 두 곳이 다르게 세지 않는다.
+       */
+      const owed = (INV_OPEN as readonly string[]).includes(r.state);
+      const overdueDays = owed && due && due < today ? daysBetween(due, today) : 0;
+      return {
+        invId: Number(r.id), studentId: Number(r.student_id),
+        studentName: r.student_name ?? '학생 없음', grade: r.grade ?? null,
+        invType: r.inv_type, invTypeLabel: INV_TYPE_LABEL[r.inv_type] ?? r.inv_type,
+        title: r.title ?? INV_TYPE_ROW[r.inv_type] ?? r.inv_type,
+        stateLabel: INV_STATE_LABEL[r.state] ?? r.state,
+        amount: cm(Number(r.amount)), paid: cm(Number(r.paid_amount)),
+        /*
+         * 컷의 「50% 냄」. 일부 납부에만 붙고, **금액을 못 보면 비율도 안 준다** —
+         * 비율과 받은 돈이 같이 있으면 청구액이 복원된다 (D-R39).
+         */
+        paidPercent: canSeeAmounts && shown && r.state === 'partial' && Number(r.amount) > 0
+          ? Math.round((Number(r.paid_amount) / Number(r.amount)) * 100)
+          : null,
+        dueOn: due,
+        overdueDays,
+        whenLabel: invWhenLabel(due, today, overdueDays),
+      };
+    };
+    const inColumn = (key: string) => rows.filter((r) => invBoardColumn(r.state) === key);
+
+    /*
+     * §53 ① 「아직 안 씀」 — 이번 달(KST)의 **청구 대상** 중 아직 그 종류의 청구서가 없는 것 (N-28 ②).
+     * 대상은 일괄 발행과 같은 함수(`billingCandidates`), 금액은 발행과 같은 함수(`invoiceDraft`)다. 저장하지 않는다.
+     * 막힌 대상(단가 없음 · 이월 초과 …)도 숨기지 않는다 — 「청구서 작성 →」이 잠기고 까닭이 선다.
+     */
+    const candidateMonth = today.slice(0, 7);
+    const live = new Set(
+      ((await this.inv.query(
+        `SELECT student_id, inv_type FROM inv WHERE year_month = $1 AND state <> 'void'`, [candidateMonth],
+      )) as Array<{ student_id: string; inv_type: string }>).map((r) => `${Number(r.student_id)}:${r.inv_type}`),
+    );
+    const candidates: InvBoardCandidateDto[] = [];
+    let candidateAmount = 0;
+    for (const t of await billingCandidates(this.inv, candidateMonth)) {
+      if (live.has(`${t.studentId}:${t.invType}`)) continue;
+      const draft = await this.invoiceDraft(this.inv, t.studentId, t.studentName, candidateMonth, t.invType);
+      if (!draft.blocked) candidateAmount += draft.total;
+      candidates.push({
+        studentId: t.studentId, studentName: t.studentName, grade: t.grade,
+        yearMonth: candidateMonth, invType: t.invType, invTypeLabel: INV_TYPE_LABEL[t.invType] ?? t.invType,
+        title: invoiceTitle(candidateMonth, t.invType),
+        amount: canSeeAmounts && !draft.blocked ? draft.total : null,
+        canIssue: draft.blocked === null,
+        issueBlockedReason: draft.blocked?.message ?? null,
+      });
+    }
+
     return {
       canSeeAmounts,
+      candidateMonth,
       columns: INV_BOARD_COLUMNS.map((col) => {
-        const mine = rows.filter((r) => invBoardColumn(r.state) === col.key);
+        const mine = inColumn(col.key);
         return {
           key: col.key, label: col.label, sub: col.sub,
           count: mine.length,
           amount: money(mine.reduce((n, r) => n + Number(r.amount), 0)),
-          cards: mine.map((r) => {
-            const due = r.due_on;
-            /*
-             * 연체는 **아직 받을 돈이 있는 건**에만 붙는다 — `INV_OPEN` 이 그 집합이고
-             * §52 머리의 「기한 지남」도 같은 집합을 쓴다. 초안은 아직 청구한 것이 아니라 연체가 아니고,
-             * 완납은 받을 돈이 없어 연체가 아니다. 같은 낱말을 두 곳이 다르게 세지 않는다.
-             */
-            const owed = (INV_OPEN as readonly string[]).includes(r.state);
-            const overdueDays = owed && due && due < today ? daysBetween(due, today) : 0;
-            return {
-              invId: Number(r.id), studentId: Number(r.student_id),
-              studentName: r.student_name ?? '학생 없음', grade: r.grade ?? null,
-              invType: r.inv_type, invTypeLabel: INV_TYPE_LABEL[r.inv_type] ?? r.inv_type,
-              title: r.title ?? INV_TYPE_ROW[r.inv_type] ?? r.inv_type,
-              stateLabel: INV_STATE_LABEL[r.state] ?? r.state,
-              amount: money(Number(r.amount)), paid: money(Number(r.paid_amount)),
-              /*
-               * 컷의 「50% 냄」. 일부 납부에만 붙고, **금액을 못 보면 비율도 안 준다** —
-               * 비율과 받은 돈이 같이 있으면 청구액이 복원된다 (D-R39).
-               */
-              paidPercent: canSeeAmounts && r.state === 'partial' && Number(r.amount) > 0
-                ? Math.round((Number(r.paid_amount) / Number(r.amount)) * 100)
-                : null,
-              dueOn: due,
-              overdueDays,
-              whenLabel: invWhenLabel(due, today, overdueDays),
-            };
-          }),
+          cards: mine.map(card),
+        };
+      }),
+      // §53 다섯 칸 — ②~⑤ 는 위 네 칸과 같은 판정(칸 열쇠가 같다) · 이름만 §53 컷의 낱말 (N-28 ②)
+      stages: INV_STAGE_COLUMNS.map((st) => {
+        if (st.key === 'todo') {
+          return {
+            key: st.key, label: st.label, sub: st.sub, next: st.next, nextLabel: st.nextLabel,
+            count: candidates.length, amount: money(candidateAmount), cards: [], candidates,
+          };
+        }
+        const mine = inColumn(st.key);
+        return {
+          key: st.key, label: st.label, sub: st.sub, next: st.next, nextLabel: st.nextLabel,
+          count: mine.length,
+          amount: money(mine.reduce((n, r) => n + Number(r.amount), 0)),
+          cards: mine.map(card),
+          candidates: [],
         };
       }),
     };
@@ -1682,6 +2240,8 @@ export class AccountingService {
    *   · `CARRY_NOTHING`    못 해 준 수업이 없다
    *   · `CARRY_DUPLICATE`  이미 넘겼다 — 두 번 누르면 같은 돈이 두 번 넘어간다
    *   · `CARRY_NEXT_ISSUED` 받는 달 수업료 청구서가 이미 나갔다 — 차감이 들어갈 청구서가 없다 (PB-04)
+   *   · `CARRY_MIXED_INVOICE` 진단고사 · 상담 줄이 섞인 옛 수업료 청구서이고 그 회차의 못 해 준 몫이 있다 — 지금 계산은 그 몫을 빼므로
+   *     조용히 줄여 넘기지 않고 사람이 확인한다(수강 종료 `WITHDRAW_MIXED_INVOICE` 와 같은 판정 · W11 M2)
    *
    * **판정은 `tuition()` 이 쓰는 것과 같은 값**이다 — 화면에 단추가 서는 조건과 서버가 받아 주는
    * 조건이 갈리면 「눌리는데 거절당하는 단추」가 된다 (D-R39).
@@ -1690,8 +2250,14 @@ export class AccountingService {
    */
   async carryTuition(userId: number, dto: TuitionCarryDto): Promise<CarryRowDto> {
     return this.inv.manager.transaction(async (m) => {
-      // 마감 달의 이월 확정분은 바뀌지 않는다 (L-123) — 넘기는 달도, 받는 달도 열려 있어야 한다
-      await assertMonthOpen(m, dto.month);
+      // 마감 달의 이월 확정분은 바뀌지 않는다 (L-123) — 넘기는 달도, **받는 달도** 열려 있어야 한다.
+      // 받는 달은 한동안 안 봤다 — 마감한 달의 청구 원천(carry.to_month)이 뒤늦게 늘었다 (W11 · README 7-3 ①)
+      const toMonth = nextMonthOf(dto.month);
+      // 두 달 모두 열쇠를 공유로 잡고 읽는다 — 이른 달부터(엇갈려 기다리지 않게). 이 이월이 끝나기 전에는 두 달 어느 쪽도 마감되지 않는다 (W11 A' 후속)
+      await assertMonthOpenForWrite(m, dto.month);
+      await assertMonthOpenForWrite(m, toMonth);
+      // 받는 달 수업료 발행과 한 줄로 선다 — 둘이 서로 「아직 없다」를 읽고 이월분이 어느 청구서에도 안 빠지던 자리 (7-3 ②)
+      await lockInvoiceSlot(m, dto.studentId, toMonth, 'tuition');
       const [inv] = (await m.query(
         `SELECT id FROM inv
           WHERE student_id = $1 AND year_month = $2 AND inv_type = 'tuition' AND state = 'paid'
@@ -1727,8 +2293,12 @@ export class AccountingService {
         });
       }
 
+      // 섞인 옛 청구서면 멈춘다 — §54 단추와 같은 판정 · 같은 차례(마감 → 섞임 → 받는 달 발행) (W11 M2 · 잔여 ③)
+      if (await carryMixedBlocked(m, dto.studentId, dto.month, Number(inv.id))) {
+        throw new ConflictException({ code: 'CARRY_MIXED_INVOICE', message: carryMixedMessage(dto.month) });
+      }
+
       // 받는 달 수업료 청구서가 이미 나갔으면 차감이 들어갈 자리가 없다 — §54 단추와 같은 판정 (PB-04)
-      const toMonth = nextMonthOf(dto.month);
       if ((await liveTuitionInvoiceStudents(m, toMonth, dto.studentId)).has(dto.studentId)) {
         throw new ConflictException({ code: 'CARRY_NEXT_ISSUED', message: carryNextIssuedMessage(toMonth) });
       }
@@ -1739,6 +2309,11 @@ export class AccountingService {
          RETURNING id, to_month, ${kstAt('at')} AS at`,
         [dto.studentId, dto.month, toMonth, amount, sessions, Number(inv.id), userId],
       )) as Array<{ id: string; to_month: string; at: string }>;
+      // 감사 한 줄 — 돈을 다음 달로 옮기는 쓰기다 (N-73 · 같은 트랜잭션)
+      await audit(m, 'carry.create', {
+        actorId: userId, entityId: Number(made.id),
+        after: { studentId: dto.studentId, fromMonth: dto.month, toMonth, amount, sessions, invId: Number(inv.id) },
+      });
 
       return {
         id: Number(made.id), studentId: dto.studentId,
@@ -1900,12 +2475,25 @@ export class AccountingService {
       if (!who) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 직원을 찾을 수 없습니다' });
       let receiptUrl: string | null = null;
       if (dto.receiptFileId) {
-        const [file] = (await m.query(`SELECT id, kind FROM file WHERE id = $1`, [dto.receiptFileId])) as Array<{ id: string; kind: string }>;
+        const [file] = (await m.query(`SELECT id, kind, uploaded_by FROM file WHERE id = $1`, [dto.receiptFileId])) as Array<{ id: string; kind: string; uploaded_by: string | null }>;
         if (!file) throw new NotFoundException({ code: 'FILE_NOT_FOUND', message: '영수증 파일을 찾을 수 없습니다' });
         if (file.kind !== 'expense-receipt') {
           throw new BadRequestException({ code: 'EXPENSE_RECEIPT_KIND', message: '영수증은 expense-receipt 로 올린 파일이어야 합니다' });
         }
+        /*
+         * PB-26 — 영수증은 **올린 사람의 것**이어야 한다. 지출을 올리는 사람(filed_by)이나 신청자(requester)가 올린 파일만 붙는다 —
+         * 남이 올린 영수증 번호를 자기 지출에 붙이던 자리. 누가 올렸는지 모르는 옛 파일도 붙이지 않는다(추정 금지).
+         */
+        const uploader = file.uploaded_by == null ? null : Number(file.uploaded_by);
+        if (uploader === null || (uploader !== userId && uploader !== requesterId)) {
+          throw new ForbiddenException({
+            code: 'EXPENSE_RECEIPT_NOT_OWNER',
+            message: '다른 사람이 올린 영수증은 붙일 수 없습니다 — 영수증을 직접 올린 뒤 등록하세요',
+          });
+        }
         receiptUrl = fileUrlOf(Number(file.id));
+        // PB-12-5 — 같은 영수증을 동시에 붙이는 두 요청을 한 줄로 세운다(읽고 쓰는 사이에 남이 끼지 못하게) · 트랜잭션이 끝나면 풀린다
+        await m.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`expense-receipt:${receiptUrl}`]);
         const [used] = (await m.query(`SELECT id FROM expense WHERE receipt_url = $1`, [receiptUrl])) as Array<{ id: string }>;
         if (used) throw new ConflictException({ code: 'EXPENSE_RECEIPT_USED', message: `그 영수증은 이미 지출 #${used.id} 에 붙어 있습니다` });
       }
@@ -1931,6 +2519,20 @@ export class AccountingService {
     });
   }
 
+  /**
+   * 「내 지출 신청」 (N-52 채택 · W11) — **신청자가 나인 줄만** 읽는다. 남의 줄은 조건에서 빠지므로 금액을 가릴 줄이 없다:
+   * 모두 본인 신청분이라 신청 금액 · 확정 금액이 보인다(자기가 적은 돈과 자기에게 돌아온 결과다). 심사 규칙은 그대로다.
+   */
+  async myExpenses(userId: number): Promise<MyExpenseListDto> {
+    const rows = (await this.inv.query(
+      `${EXPENSE_SELECT} WHERE e.requester_id = $1 ORDER BY e.spend_on DESC, e.id DESC`, [userId],
+    )) as Array<Record<string, unknown>>;
+    return {
+      items: rows.map((r) => this.expenseRow(r, true)),
+      categories: EXPENSE_CATEGORIES.map((key) => ({ key, label: EXPENSE_CATEGORY_LABEL[key] ?? key })),
+    };
+  }
+
   /* ══ 강사 시급 (C97 · D-48) — 규칙은 lib/wage 한 곳 · 승인 경로(C41)와 같은 함수 ═══════════ */
 
   private static readonly WAGE_SELECT = `
@@ -1940,20 +2542,23 @@ export class AccountingService {
               SELECT 1 FROM wage w2 WHERE w2.staff_id = w.staff_id AND w2.from_date <= $1::date AND w2.from_date > w.from_date)) AS current
       FROM wage w JOIN staff s ON s.id = w.staff_id LEFT JOIN staff a ON a.id = w.approved_by`;
 
-  private wageRow(r: Record<string, unknown>): WageRowDto {
+  private wageRow(r: Record<string, unknown>, shown = true): WageRowDto {
     return {
-      id: Number(r.id), staffId: Number(r.staff_id), staffName: String(r.staff_name), rate: Number(r.rate),
+      id: Number(r.id), staffId: Number(r.staff_id), staffName: String(r.staff_name), rate: shown ? Number(r.rate) : null,
       fromDate: String(r.from_date), reason: (r.reason as string) ?? null, approvedByName: (r.approved_by_name as string) ?? null,
       current: r.current === true, createdAt: String(r.created_at),
     };
   }
 
   /** 시급 이력 — 적용일 내림차순. 「지금」 줄은 오늘 이하의 마지막 줄(회차의 시급과 같은 정의) */
-  async wageHistory(staffId: number): Promise<WageHistoryDto> {
+  async wageHistory(staffId: number, viewer: AcctViewer = NO_HIDDEN_VIEW): Promise<WageHistoryDto> {
     const [st] = (await this.inv.query(`SELECT id, name FROM staff WHERE id = $1`, [staffId])) as Array<{ id: string; name: string }>;
     if (!st) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
     const rows = (await this.inv.query(`${AccountingService.WAGE_SELECT} WHERE w.staff_id = $2 ORDER BY w.from_date DESC, w.id DESC`, [todayKst(), staffId])) as Array<Record<string, unknown>>;
-    return { staffId: Number(st.id), staffName: st.name, rows: rows.map((r) => this.wageRow(r)) };
+    // 시급 비공개 (N-94) — 켜져 있으면 비공개 열람 · 본인만 시급을 본다(이력의 날짜 · 사유는 그대로)
+    const privacy = await readAcctPrivacy(this.inv.manager);
+    const shown = lineAmountVisible(true, privacy.wage.private, viewer.canHide, viewer.id === staffId);
+    return { staffId: Number(st.id), staffName: st.name, rows: rows.map((r) => this.wageRow(r, shown)) };
   }
 
   /**

@@ -94,7 +94,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     token = await login('ib-ceo@t.kr');
@@ -223,8 +223,9 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     const twice = await api('post', `/accounting/invoices/${inv.id}/deliver`).expect(409);
     expect(twice.body.code).toBe('INV_NOT_DELIVERABLE');
     await api('post', `/accounting/invoices/99999999/deliver`).expect(404);
-    const logs = await q<{ action: string }>(`SELECT action FROM log WHERE entity = 'INV' AND entity_id = $1 AND actor_id = $2`, [inv.id, CEO]);
-    expect(logs.map((l) => l.action)).toEqual(['deliver']);
+    // 발행 감사(N-73 · W11) 한 줄 뒤에 전달 한 줄
+    const logs = await q<{ action: string }>(`SELECT action FROM log WHERE entity = 'INV' AND entity_id = $1 AND actor_id = $2 ORDER BY id`, [inv.id, CEO]);
+    expect(logs.map((l) => l.action)).toEqual(['issue', 'deliver']);
     // 전달된 청구서가 §52 머리 「보낸 청구서」에 든다
     const acc = await (await api('get', '/accounting').expect(200)).body;
     expect(acc.invoices.find((i: { id: number }) => i.id === inv.id).state).toBe('sent');
@@ -272,8 +273,8 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     const re = await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: THIS, invType: 'tuition', dueOn: DUE }).expect(201);
     expect(re.body.state).toBe('draft');
     const logs = await q<{ action: string; after: { reason?: string } }>(`SELECT action, after FROM log WHERE entity = 'INV' AND entity_id = $1 AND actor_id = $2 ORDER BY id`, [inv.id, CEO]);
-    expect(logs.map((l) => l.action)).toEqual(['deliver', 'void']);
-    expect(logs[1]!.after.reason).toBe('단가를 잘못 넣어 다시 낸다');
+    expect(logs.map((l) => l.action)).toEqual(['issue', 'deliver', 'void']);
+    expect(logs[2]!.after.reason).toBe('단가를 잘못 넣어 다시 낸다');
 
     // ⭐ 열린 자리는 실제로 통과한다 — 단추가 섰으니 눌러 본다 (누가 취소했는지도 남는다)
     const byManager = await api('post', `/accounting/invoices/${re.body.id}/void`, managerToken)

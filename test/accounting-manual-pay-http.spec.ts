@@ -66,7 +66,7 @@ d('§55 「+ 결제 등록」 — 청구서 없이 들어온 돈 (A-D1 ② · HT
     );
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'수기입금학생','10')`, [STU]);
     const login = async (email: string) => (await request(app.getHttpServer())
-      .post('/auth/login').send({ email, password: PW }).expect(201)).body.accessToken as string;
+      .post('/auth/login').send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;
     ceoToken = await login('manual-pay-ceo@t.kr');
     teacherToken = await login('manual-pay-t@t.kr');
   });

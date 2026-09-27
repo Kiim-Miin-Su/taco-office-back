@@ -4,16 +4,20 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
-import { Perm, canCeoCloseMonth, canCeoConfirmPayout, canCeoFileExpenseForOther, canCeoVoidInvoice, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import {
+  Perm, canCeoApproveCorrection, canCeoCloseMonth, canCeoConfirmPayout, canCeoFileExpenseForOther, canCeoSetAcctPrivacy, canCeoVoidInvoice,
+  hasPerm, isRole, type RequestUser,
+} from '../../common/perm';
 import {
   AccountingDto, CarryRowDto, ExpenseDto, ExpenseReviewDto, InvBoardDto, InvoiceDto, InvoiceIssueDto,
+  InvoiceDraftDto, InvoiceDraftQueryDto,
   ManualPaymentCreateDto, OtherIncomeDto, OtherIncomeQueryDto, PaymentCreateDto, PaymentDto, TuitionCarryDto, TuitionDto, TuitionQueryDto,
   MonthCloseDto, MonthCloseWriteDto, MonthReopenWriteDto,
   InvoiceBatchDto, InvoiceBatchResultDto, InvoiceVoidDto,
@@ -22,11 +26,26 @@ import {
   type IncomeSpan,
   StudentWithdrawDto, WithdrawResultDto,
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
-  WageHistoryDto, WageHistoryQueryDto, WageRowDto, WageWriteDto,
+  WageHistoryDto, WageHistoryQueryDto, WageRowDto, WageWriteDto, MyExpenseListDto,
+  PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, AcctPrivacyDto, AcctPrivacyWriteDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
-import { AccountingService } from './accounting.service';
+import { AccountingService, type AcctViewer } from './accounting.service';
 import { StudentWithdrawService } from './withdraw.service';
+
+/** 회계 비공개(N-94)의 보는 사람 — 비공개 열람(canHide · 사람별 예외 반영)과 본인 번호 */
+const viewerOf = (user: RequestUser): AcctViewer => ({
+  id: user.id, canHide: isRole(user.role) && hasPerm(user.role, 'canHide', user.perms),
+});
+
+/**
+ * 회계 비공개 스위치를 켜고 끌 수 있는가 — 대표 판정 **그리고** 비공개 열람(`canHide` · 사람별 예외 포함).
+ * 비공개 열람을 끈 사람이 스위치를 끄면 자기에게 가려진 금액이 드러난다 — 권한 한도(W11 · 내게 없는 권한은 남에게도 나에게도 못 연다)와 같은 뜻이다.
+ * 실브라우저 QA(W11-M-13)가 좁혀진 매니저의 우회를 잡았다.
+ */
+function canSetAcctPrivacy(user: RequestUser): boolean {
+  return isRole(user.role) && canCeoSetAcctPrivacy(user.role) && viewerOf(user).canHide;
+}
 
 @ApiTags('accounting')
 @Controller('accounting')
@@ -47,7 +66,7 @@ export class AccountingController {
   @ApiOkResponse({ type: AccountingDto })
   async all(@CurrentUser() user: RequestUser): Promise<AccountingDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.all(canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
+    return this.svc.all(canSee, isRole(user.role) && canCeoVoidInvoice(user.role), viewerOf(user));
   }
 
 
@@ -72,13 +91,18 @@ export class AccountingController {
   @ApiOperation({
     summary: '강사료 시트 — 강사별 한 달 (§57 · 테스트 시나리오 H-82 · D-43)',
     description: '세는 것은 lib/payout-sheet 한 곳(강사 히스토리와 같다). 리포트를 쓴 수업만 시수·금액에 들고, 미작성은 빠지며 얼마가 빠지는지 센다. '
-      + '휴강은 시수에 잡히지 않는다. 저장된 초안이 계산과 다르면 줄에 함께 보인다.',
+      + '휴강은 시수에 잡히지 않는다. 저장된 초안이 계산과 다르면 줄에 함께 보인다. '
+      + '가산(N-93)은 같은 함수가 더하고, 확정된 달은 저장값(근거 줄)을 그대로 읽는다(N-36). 앞선 확정 달의 회차를 확정 뒤에 쓰면 '
+      + '다음 미확정 달에 보정 줄로 얹힌다(N-51). 시급 비공개(N-94)가 켜지면 줄 금액은 비공개 열람 · 본인만 보고 합계는 그대로다.',
   })
   @ApiOkResponse({ type: PayoutSheetDto })
   async payoutSheet(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<PayoutSheetDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     const month = query.month ?? todayKst().slice(0, 7);
-    return this.svc.payoutSheetOf(month, canSee, isRole(user.role) && canCeoConfirmPayout(user.role));
+    return this.svc.payoutSheetOf(
+      month, canSee, isRole(user.role) && canCeoConfirmPayout(user.role), viewerOf(user),
+      isRole(user.role) && canCeoApproveCorrection(user.role),
+    );
   }
 
   @Get('payouts/:staffId')
@@ -94,7 +118,10 @@ export class AccountingController {
     @CurrentUser() user: RequestUser, @Param() params: PayoutDetailParamsDto, @Query() query: TuitionQueryDto,
   ): Promise<PayoutDetailDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.payoutDetail(params.staffId, query.month ?? todayKst().slice(0, 7), canSee, isRole(user.role) && canCeoConfirmPayout(user.role));
+    return this.svc.payoutDetail(
+      params.staffId, query.month ?? todayKst().slice(0, 7), canSee, isRole(user.role) && canCeoConfirmPayout(user.role),
+      viewerOf(user), isRole(user.role) && canCeoApproveCorrection(user.role),
+    );
   }
 
   @Get('cashflow')
@@ -109,23 +136,81 @@ export class AccountingController {
   @ApiConflictResponse({ type: ApiErrorDto, description: 'BAD_RANGE' })
   async cashflow(@CurrentUser() user: RequestUser, @Query() query: CashflowQueryDto): Promise<CashflowDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.cashflow(canSee, query);
+    return this.svc.cashflow(canSee, query, todayKst(), viewerOf(user));
   }
 
   @Post('payouts/:month/confirm')
   @Perm('canMoney')
   @ApiOperation({
-    summary: '지급 확정 — 대표 전용 (O-148). 그 순간의 시트를 payout 행으로 굳힌다',
-    description: '달이 끝나기 전에는 400 PAYOUT_MONTH_OPEN · 시급 없는 수업이 있으면 409 PAYOUT_NO_RATE · 쓴 수업 0 이면 409 PAYOUT_NOTHING · '
-      + '이미 확정이면 409 PAYOUT_ALREADY_CONFIRMED. payout_line 은 쓰지 않는다(N-36 결정 전).',
+    summary: '지급 확정 — 대표 전용 (O-148). 그 순간의 시트를 payout 행과 회차 근거 줄(payout_line)로 굳힌다 (N-36)',
+    description: '달이 끝나기 전에는 400 PAYOUT_MONTH_OPEN · 시급 없는 수업이 있으면 409 PAYOUT_NO_RATE · 쓴 수업(보정 줄 포함) 0 이면 409 PAYOUT_NOTHING · '
+      + '이미 확정이면 409 PAYOUT_ALREADY_CONFIRMED. 회차마다 근거 줄(시급 스냅숏 · 시수 · 금액 · 가산 · 차감)을 남긴다 — 한 회차는 한 번만(409 PAYOUT_LINE_DUPLICATE). '
+      + '보정 줄(N-51)이 든 달은 보정 승인 판정을 함께 지난다(403 PAYOUT_CORRECTION_FORBIDDEN) · 감사 payout.correction.',
   })
   @ApiCreatedResponse({ type: PayoutSheetRowDto })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: '대표 아님' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: '대표 아님 · PAYOUT_CORRECTION_FORBIDDEN' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'PAYOUT_MONTH_OPEN' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'PAYOUT_ALREADY_CONFIRMED | PAYOUT_NO_RATE | PAYOUT_NOTHING' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'PAYOUT_ALREADY_CONFIRMED | PAYOUT_NO_RATE | PAYOUT_NOTHING | PAYOUT_LINE_DUPLICATE' })
   confirmPayout(@CurrentUser() user: RequestUser, @Param() params: PayoutMonthParamsDto, @Body() dto: PayoutConfirmDto): Promise<PayoutSheetRowDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.confirmPayout(user.id, isRole(user.role) && canCeoConfirmPayout(user.role), params.month, dto, canSee);
+    return this.svc.confirmPayout(
+      user.id, isRole(user.role) && canCeoConfirmPayout(user.role), params.month, dto, canSee,
+      isRole(user.role) && canCeoApproveCorrection(user.role), viewerOf(user),
+    );
+  }
+
+  /* ══ 가산 규칙 (N-93 · D1 §4-12 · 원문 §56 「추가로 드리는 돈」) — 정리 · 기준 탭 · canWage ═══════════ */
+
+  @Get('bonus-rules')
+  @Perm('canAdminPage', 'canWage')
+  @ApiOperation({
+    summary: '가산 규칙 — 칸 셋(한 번에 · Kinder 시급에 더함 · 그룹 한 명당)과 적은 줄 전부 (N-93)',
+    description: '셈은 lib/payout-sheet 의 한 함수가 시트 · 확정 · 강사 히스토리에 같이 한다. D1 금액은 칸을 미리 채울 값이지 데이터가 아니다. '
+      + 'Kinder 는 수업을 가를 표시가 모델에 없어 0 원으로 센다(applied=false · note).',
+  })
+  @ApiOkResponse({ type: PayoutBonusBookDto })
+  bonusBook(): Promise<PayoutBonusBookDto> {
+    return this.svc.bonusBook(todayKst());
+  }
+
+  @Post('bonus-rules')
+  @Perm('canAdminPage', 'canWage')
+  @ApiOperation({
+    summary: '가산 규칙 새 줄 — 시급처럼 새 줄로만 바꾼다 (N-93)',
+    description: '적용일은 오늘 이후(409 BONUS_RETROACTIVE — 확정한 달 · 지난 수업은 바뀌지 않는다) · 같은 칸 같은 날 409 BONUS_SAME_DAY · '
+      + '「한 번에」는 수업 종류가 필요하다(400 BONUS_KIND_KEY · 없는 종류 404 KIND_NOT_FOUND). 금액 0 은 「그 날부터 멈춤」. 감사 payout.bonus_rule.',
+  })
+  @ApiCreatedResponse({ type: PayoutBonusRuleDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BONUS_KIND_KEY · 입력 검증' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'KIND_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'BONUS_RETROACTIVE | BONUS_SAME_DAY' })
+  writeBonusRule(@CurrentUser() user: RequestUser, @Body() dto: PayoutBonusRuleWriteDto): Promise<PayoutBonusRuleDto> {
+    return this.svc.writeBonusRule(user.id, dto);
+  }
+
+  /* ══ 회계 비공개 스위치 (N-94 · 원문 §53 · §55 탭 줄 오른쪽 「시급 비공개 · 컨설팅 비공개」) ═══════════ */
+
+  @Get('privacy')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '회계 비공개 스위치 두 개 — 시급 비공개 · 컨설팅 비공개 (N-94)',
+    description: '켜면 그 줄 금액은 비공개 열람(canHide)만 본다 — 합계는 그대로다. 켜고 끄는 사람은 대표 판정(canSet).',
+  })
+  @ApiOkResponse({ type: AcctPrivacyDto })
+  acctPrivacy(@CurrentUser() user: RequestUser): Promise<AcctPrivacyDto> {
+    return this.svc.acctPrivacy(canSetAcctPrivacy(user), viewerOf(user).canHide);
+  }
+
+  @Patch('privacy')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '회계 비공개 스위치 켬 · 끔 — 대표 판정 (N-94 · 원문 슬라이드 77 「강사 시급 공개 지정 · 내역 비공개 지정 — 대표만」)',
+    description: '대표 판정이 아니거나 비공개 열람(canHide — 사람별 예외 포함)이 없으면 403 ACCT_PRIVACY_FORBIDDEN. 누가 · 언제를 남기고 감사 acct.privacy.',
+  })
+  @ApiOkResponse({ type: AcctPrivacyDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'ACCT_PRIVACY_FORBIDDEN' })
+  setAcctPrivacy(@CurrentUser() user: RequestUser, @Body() dto: AcctPrivacyWriteDto): Promise<AcctPrivacyDto> {
+    return this.svc.setAcctPrivacy(user.id, canSetAcctPrivacy(user), viewerOf(user).canHide, dto);
   }
 
   @Post('withdrawals/preview')
@@ -133,10 +218,11 @@ export class AccountingController {
   @ApiOperation({
     summary: '수강 종료·환불 미리보기 — 쓰기 0 (C94-c · H-80 · N-136)',
     description: '같은 트랜잭션을 끝까지 돌리고 되돌린다 — 잔여 회차·청구서 변화·환불액이 실제 처리와 한 원도 다르지 않다. '
-      + '종료할 수강이 없으면 409 WITHDRAW_NOTHING · 마감 달 409 MONTH_CLOSED · 단가 없는 과목 409 WITHDRAW_NO_RATE.',
+      + '종료할 수강이 없으면 409 WITHDRAW_NOTHING · 마감 달 409 MONTH_CLOSED · 단가 없는 과목 409 WITHDRAW_NO_RATE · '
+      + '진단고사 · 상담 줄이 섞인 옛 수업료 청구서에 그 회차가 종료일 뒤로 남으면 409 WITHDRAW_MIXED_INVOICE(사람이 확인 · W11 A\' 후속).',
   })
   @ApiCreatedResponse({ type: WithdrawResultDto })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | MONTH_CLOSED' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_MIXED_INVOICE | MONTH_CLOSED' })
   withdrawPreview(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.withdrawSvc.preview(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
@@ -151,7 +237,7 @@ export class AccountingController {
   })
   @ApiCreatedResponse({ type: WithdrawResultDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'WITHDRAW_BAD_SERIES · 입력 검증' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_NEEDS_CEO_VOID | MONTH_CLOSED' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_NEEDS_CEO_VOID | WITHDRAW_MIXED_INVOICE | MONTH_CLOSED' })
   withdraw(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.withdrawSvc.withdraw(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
@@ -162,7 +248,8 @@ export class AccountingController {
   @ApiOperation({
     summary: '월 마감 — 대표 전용 (테스트 시나리오 C-39)',
     description: '마감된 달은 회차·휴강·출결·청구서 발행·이월·휴원 쓰기가 409 MONTH_CLOSED 로 막힌다 (L-123). '
-      + '판정은 lib/month-close 한 곳. 해제 전까지는 아무도 못 고친다 — 화면이 단추를 숨기는 것과 별개로 서버가 막는다.',
+      + '판정은 lib/month-close 한 곳. 해제 전까지는 아무도 못 고친다 — 화면이 단추를 숨기는 것과 별개로 서버가 막는다. '
+      + '마감 · 해제는 그 달 열쇠를 배타로, 발행 · 이월은 공유로 잡는다 — 도는 발행 · 이월이 끝난 뒤에 마감한다(W11 A\' 후속).',
   })
   @ApiCreatedResponse({ type: MonthCloseDto })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_ALREADY_CLOSED' })
@@ -186,18 +273,21 @@ export class AccountingController {
   @Get('board')
   @Perm('canMoney')
   @ApiOperation({
-    summary: '회계 트래킹 보드 — 칸 넷 (§52)',
+    summary: '회계 트래킹 보드 — §52 칸 넷 + §53 칸 다섯',
     description:
       '**칸은 `inv.state` 하나로 갈린다** (대표 결정 2026-09-13 · N-28 「단일 진실원과 자동 전이에 유리하게」). '
       + '두 축(`state` + 「PAY 행이 있는가」)으로 가르면 판정이 두 벌이 되어 같은 청구서가 어느 칸에 있는지 '
       + '두 곳이 다르게 답한다. 전이는 이미 자동이다 — 입금이 들어오면 `addPayment` 가 상태를 옮긴다. '
       + '「50% 냄」·「연체」는 칸을 정하는 값이 아니라 **카드에 적히는 값**이다. '
-      + '칸은 비어도 선다(어휘이지 데이터가 아니다) · 건수와 합계도 서버가 센다 (D-R37).',
+      + '칸은 비어도 선다(어휘이지 데이터가 아니다) · 건수와 합계도 서버가 센다 (D-R37). '
+      + '`stages` 는 §53 다섯 칸 판이다(N-28 ② 채택) — ②~⑤ 는 네 칸과 같은 판정이고 ① 「아직 안 씀」은 이번 달의 '
+      + '**아직 청구서가 없는 청구 대상**을 일괄 발행과 같은 함수로 세어 예상 금액(발행과 같은 함수)과 함께 내린다(저장하지 않는다). '
+      + '다음 칸 단추(`next`)는 이미 있는 쓰기만 가리킨다 — 발행 · 전달 · 입금.',
   })
   @ApiOkResponse({ type: InvBoardDto })
   async invoiceBoard(@CurrentUser() user: RequestUser): Promise<InvBoardDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.invoiceBoard(canSee);
+    return this.svc.invoiceBoard(canSee, viewerOf(user));
   }
 
   @Get('other-income')
@@ -220,7 +310,7 @@ export class AccountingController {
     @Query() query: OtherIncomeQueryDto,
   ): Promise<OtherIncomeDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
-    return this.svc.otherIncome(canSee, (query.span as IncomeSpan | undefined) ?? 'month');
+    return this.svc.otherIncome(canSee, (query.span as IncomeSpan | undefined) ?? 'month', viewerOf(user));
   }
 
   @Post('tuition/carry')
@@ -231,11 +321,15 @@ export class AccountingController {
       '대표 결정 2026-09-13 (N-39): 「이월 처리는 **수업이 결제 됐으나 정해진 시수가 채워지지 않은 경우**」. '
       + '그래서 **돈을 안 받았으면 넘길 것이 없다** — 그냥 안 청구된 것이고 §54 가 이미 빼고 있다. '
       + '넘긴 사실은 `carry` 한 줄로 남고 다음 달 §54 가 그 줄을 읽는다 — 저장하지 않고 화면에서만 옮기면 '
-      + '다음 달에 같은 결강이 또 넘어오거나 아예 안 넘어온다. **한 달은 한 번만** 넘긴다.',
+      + '다음 달에 같은 결강이 또 넘어오거나 아예 안 넘어온다. **한 달은 한 번만** 넘긴다. '
+      + '넘기는 달도 **받는 달도** 열려 있어야 한다(마감이면 409 MONTH_CLOSED) · 받는 달 수업료 발행과 한 줄로 선다(동시에 들어와도 '
+      + '이월분이 어느 청구서에서도 안 빠지는 일이 없다).',
   })
   @ApiCreatedResponse({ type: CarryRowDto })
   @ApiConflictResponse({
-    description: 'code CARRY_NOT_PAID(완납 아님) | CARRY_NOTHING(못 해 준 수업 없음) | CARRY_DUPLICATE(이미 넘김)',
+    description: 'code CARRY_NOT_PAID(완납 아님) | CARRY_NOTHING(못 해 준 수업 없음) | CARRY_DUPLICATE(이미 넘김) | '
+      + 'CARRY_NEXT_ISSUED(받는 달 수업료 청구서가 이미 나감) | MONTH_CLOSED(넘기는 달 또는 받는 달이 마감) | '
+      + 'CARRY_MIXED_INVOICE(진단고사 · 상담 줄이 섞인 옛 수업료 청구서에 그 회차의 못 해 준 몫이 있음 — 사람이 확인 · 수강 종료와 같은 판정)',
   })
   async carryTuition(
     @CurrentUser() user: RequestUser,
@@ -244,18 +338,42 @@ export class AccountingController {
     return this.svc.carryTuition(user.id, dto);
   }
 
+  @Get('invoices/draft')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '낼 청구서 미리 세기 — 쓰지 않는다 (§53 발행 창의 분납 일정 합계 · N-79)',
+    description:
+      '발행과 **같은 함수**로 줄 · 이월 차감 · 합계를 센다(수업료 · 진단고사 + 상담). 이미 낸 종류 · 단가 없음 · 이월 초과면 '
+      + '발행 409 와 같은 코드 · 문장으로 막혔다고 말한다. 응시료는 사람이 줄을 적으므로 여기서 세지 않는다.',
+  })
+  @ApiOkResponse({ type: InvoiceDraftDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: '학생 없음' })
+  async draftInvoice(@CurrentUser() user: RequestUser, @Query() query: InvoiceDraftQueryDto): Promise<InvoiceDraftDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.draftInvoice(query, canSee);
+  }
+
   @Post('invoices')
   @Perm('canMoney')
   @ApiOperation({
     summary: '청구서 한 장 발행 — 줄은 서버가 만든다 (§53 「+ 새 청구서 발행」)',
     description:
-      '줄(INV_LINE)을 받지 않는다. 원문 명세가 「횟수는 서버가 occ() 로 센다 — 프론트가 세면 예외(EXC)를 '
-      + '빠뜨린다」고 적었다(D-R37). 누구의 어느 달인지만 주면 과목별 회차·단가·소계·합계를 서버가 만든다. '
-      + '되돌리기는 없다 — 잘못 냈으면 취소하고 새로 만든다(원문 규칙 줄).',
+      '수업료 · 진단고사 + 상담 비용은 줄(INV_LINE)을 받지 않는다. 원문 명세가 「횟수는 서버가 occ() 로 센다 — 프론트가 세면 예외(EXC)를 '
+      + '빠뜨린다」고 적었다(D-R37). 누구의 어느 달인지만 주면 과목별 회차·단가·소계·합계를 서버가 만든다 — 진단고사 · 상담 회차는 '
+      + '제 종류로만 센다(수업료 줄에서 뺀다 · N-75). MAP + CAT 응시료는 원천이 없어 사람이 줄(내용 · 금액)을 적는다. '
+      + '컨설팅비는 컨설팅 「청구서로 전환」 한 길이라 409 INV_TYPE_NOT_SUPPORTED. 분납 일정(installments)을 주면 합이 청구액이어야 하고 '
+      + '기한은 마지막 회차의 예정일이다(N-79). 되돌리기는 없다 — 잘못 냈으면 취소하고 새로 만든다(원문 규칙 줄).',
   })
   @ApiCreatedResponse({ type: InvoiceDto, description: '줄까지 채워진 청구서' })
+  @ApiBadRequestResponse({
+    type: ApiErrorDto,
+    description: 'INV_LINES_REQUIRED(응시료에 줄 없음) | INV_LINES_NOT_ALLOWED(서버가 세는 종류에 줄) | INV_LINE_LABEL_REQUIRED | '
+      + 'INV_INSTALLMENT_DATES(같은 날 두 회차) | INV_INSTALLMENT_DUE(기한 ≠ 마지막 회차) | INV_DUE_REQUIRED',
+  })
   @ApiConflictResponse({
-    description: 'code INV_DUPLICATE(같은 학생·달·종류가 이미 있음) | INV_NO_LESSONS(그 달 수업 없음) | INV_NO_RATE(단가표에 없는 과목)',
+    type: ApiErrorDto,
+    description: 'code INV_DUPLICATE(같은 학생·달·종류가 이미 있음) | INV_NO_LESSONS(그 달 그 종류의 회차 없음) | INV_NO_RATE(단가표에 없는 과목) | '
+      + 'INV_CARRY_EXCEEDS | INV_TYPE_NOT_SUPPORTED(컨설팅비) | INV_INSTALLMENT_SUM(분납 합 ≠ 청구액) | MONTH_CLOSED',
   })
   @ApiNotFoundResponse({ description: '학생 없음' })
   async issueInvoice(@CurrentUser() user: RequestUser, @Body() dto: InvoiceIssueDto): Promise<InvoiceDto> {
@@ -266,8 +384,9 @@ export class AccountingController {
   @Post('invoices/batch')
   @Perm('canMoney')
   @ApiOperation({
-    summary: '청구서 일괄 발행 — 그 달 수업이 있는 학생 전부 (§54 「청구서 발행」 · 테스트 시나리오 H-75 · O-147)',
-    description: '낱장 발행과 같은 계산이다 — 이월 음수 줄·단가 구간·그날만 빠짐·휴원이 그대로 든다. 막힌 학생(이미 있음 · 단가 없음 · '
+    summary: '청구서 일괄 발행 — 그 달 회차가 있는 청구 대상 전부 (§54 「청구서 발행」 · §53 「자동 생성 켜기」 · 테스트 시나리오 H-75 · O-147)',
+    description: '낱장 발행과 같은 계산이다 — 이월 음수 줄·단가 구간·그날만 빠짐·휴원이 그대로 든다. 대상은 (학생 · 종류) — '
+      + '수업료와 진단고사 + 상담 비용을 회차의 종류로 가른다(N-75 · §53 「아직 안 씀」과 같은 함수). 막힌 대상(이미 있음 · 단가 없음 · '
       + '이월 초과)은 건너뛰고 이유를 돌려준다. 마감 달은 통째로 409 MONTH_CLOSED.',
   })
   @ApiCreatedResponse({ type: InvoiceBatchResultDto })
@@ -401,8 +520,8 @@ export class AccountingController {
   })
   @ApiOkResponse({ type: WageHistoryDto })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
-  wageHistory(@Query() q: WageHistoryQueryDto): Promise<WageHistoryDto> {
-    return this.svc.wageHistory(q.staffId);
+  wageHistory(@CurrentUser() user: RequestUser, @Query() q: WageHistoryQueryDto): Promise<WageHistoryDto> {
+    return this.svc.wageHistory(q.staffId, viewerOf(user));
   }
 
   @Post('wages')
@@ -449,10 +568,25 @@ export class AccountingController {
   @ApiCreatedResponse({ type: ExpenseDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'EXPENSE_RECEIPT_KIND · 입력 검증' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND | FILE_NOT_FOUND' })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'EXPENSE_PROXY_FORBIDDEN — 남의 이름으로 올리는 것은 대표만' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'EXPENSE_PROXY_FORBIDDEN — 남의 이름으로 올리는 것은 대표만 · EXPENSE_RECEIPT_NOT_OWNER — 올린 사람 · 신청자가 올린 영수증만 붙는다(PB-26)' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'EXPENSE_RECEIPT_USED' })
   createExpense(@CurrentUser() user: RequestUser, @Body() dto: ExpenseCreateDto): Promise<ExpenseDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.createExpense(user.id, dto, canSee, isRole(user.role) && canCeoFileExpenseForOther(user.role));
+  }
+
+  /**
+   * 서랍 요청함의 「내 지출 신청」 (N-52 채택 · W11) — 올리는 권한(`canAdminPage`)과 같은 문. 신청자가 **나인 줄만** 준다 —
+   * 회계 탭(`canMoney`)을 못 여는 사람도 자기가 올린 지출의 상태 · 금액 · 반려 사유를 본다(N-64: 되돌아온 지출을 보는 자리).
+   */
+  @Get('expenses/mine')
+  @Perm('canAdminPage')
+  @ApiOperation({
+    summary: '내 지출 신청 — 본인이 신청자인 지출만 · 분류 코드표 (N-52)',
+    description: '남의 줄은 조건에서 빠진다(requester_id = 나). 금액은 본인 신청분이라 보인다. 심사(대표 · 자기 심사 금지)는 그대로다.',
+  })
+  @ApiOkResponse({ type: MyExpenseListDto })
+  myExpenses(@CurrentUser() user: RequestUser): Promise<MyExpenseListDto> {
+    return this.svc.myExpenses(user.id);
   }
 }

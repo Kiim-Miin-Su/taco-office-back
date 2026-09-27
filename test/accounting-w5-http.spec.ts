@@ -86,7 +86,7 @@ d('§56 강사 상세 · 합계 카드 · §55 들어온 돈 HTTP (w5)', () => {
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'W5정산학생','10')`, [STU]);
     const login = async (email: string) => (await request(app.getHttpServer())
-      .post('/auth/login').send({ email, password: PW }).expect(201)).body.accessToken as string;
+      .post('/auth/login').send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;
     token = await login('w5-acct-ceo@t.kr');
     teacherToken = await login('w5-acct-t@t.kr');
 

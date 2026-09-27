@@ -307,15 +307,19 @@ d('§54 수업료 계산 (C65)', () => {
   /*
    * PB-01 — 청구 종류(invType)를 받고도 줄 계산은 **그 달 수업 전부**였다. 응시료·진단고사·컨설팅비로 내면
    * 수업료와 똑같은 줄·금액의 청구서가 또 생기고(종류가 달라 중복 검사도 통과) 같은 수업이 두 번 청구됐다.
-   * 수업료 외 종류의 금액 규칙이 정해질 때까지(결정 대기) 서버가 409 로 막는다.
+   * W11(N-75 채택)부터 종류마다 원천이 갈린다 — 그래도 **같은 수업이 두 번 청구되는 자리는 다시 열리지 않는다**:
+   * 진단고사 + 상담은 그 종류의 회차만 세고(수업료 회차가 없으면 낼 것이 없다), 응시료는 사람이 줄을 적어야 하며,
+   * 컨설팅비는 발행 창에서 막힌다(「청구서로 전환」 한 길).
    */
-  it('수업료 외 종류는 **금액 규칙이 정해질 때까지 내지 않는다** — 같은 수업이 두 번 청구되던 자리 (PB-01)', async () => {
+  it('수업료 외 종류가 **수업료 회차를 다시 청구하지 않는다** — 같은 수업이 두 번 청구되던 자리 (PB-01 → N-75)', async () => {
     await occ(PAST[0]);
     await carryIn('2026-04', 20_000, 1);
-    for (const invType of ['exam_fee', 'diag_intake', 'consulting']) {
-      await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType, dueOn: DUE }, true))
-        .rejects.toMatchObject({ status: 409, response: { code: 'INV_TYPE_NOT_SUPPORTED' } });
-    }
+    await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'diag_intake', dueOn: DUE }, true))
+      .rejects.toMatchObject({ status: 409, response: { code: 'INV_NO_LESSONS' } });
+    await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'exam_fee', dueOn: DUE }, true))
+      .rejects.toMatchObject({ status: 400, response: { code: 'INV_LINES_REQUIRED' } });
+    await expect(svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'consulting', dueOn: DUE }, true))
+      .rejects.toMatchObject({ status: 409, response: { code: 'INV_TYPE_NOT_SUPPORTED' } });
     expect(await q.query(`SELECT id FROM inv WHERE student_id = $1`, [stuId])).toEqual([]);
     // 수업료는 그대로다 — 이월도 그대로 빠진다
     const inv = await svc().issueInvoice(91, { studentId: stuId, yearMonth: MONTH, invType: 'tuition', dueOn: DUE }, true);

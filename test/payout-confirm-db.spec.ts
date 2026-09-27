@@ -75,6 +75,8 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
     ds = app.get(DataSource);
 
     const ids = [CEO, TEACHER, MANAGER, TEACHER2];
+    // 지급 확정이 남긴 근거 줄(payout_line)이 정산 행을 가리킨다(RESTRICT · W11 M2) — 줄부터 지운다
+    await q(`DELETE FROM payout_line WHERE payout_id IN (SELECT id FROM payout WHERE staff_id = ANY($1))`, [ids]);
     await q(`DELETE FROM payout WHERE staff_id = ANY($1)`, [ids]);
     await q(`DELETE FROM wage WHERE staff_id = ANY($1)`, [ids]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [ids]);
@@ -94,7 +96,7 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     token = await login('po-ceo@t.kr');
@@ -107,6 +109,7 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
     try {
       if (ds?.isInitialized) {
         const ids = [CEO, TEACHER, MANAGER, TEACHER2];
+        await q(`DELETE FROM payout_line WHERE payout_id IN (SELECT id FROM payout WHERE staff_id = ANY($1))`, [ids]);
         await q(`DELETE FROM payout WHERE staff_id = ANY($1)`, [ids]);
         await q(`DELETE FROM wage WHERE staff_id = ANY($1)`, [ids]);
         await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [ids]);
@@ -120,6 +123,7 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
 
   const made: number[] = [];
   afterEach(async () => {
+    await q(`DELETE FROM payout_line WHERE payout_id IN (SELECT id FROM payout WHERE staff_id = ANY($1))`, [[TEACHER, TEACHER2, MANAGER]]);
     await q(`DELETE FROM payout WHERE staff_id = ANY($1)`, [[TEACHER, TEACHER2, MANAGER]]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, TEACHER, TEACHER2]]);
     if (!made.length) return;
