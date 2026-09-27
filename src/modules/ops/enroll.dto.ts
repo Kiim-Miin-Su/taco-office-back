@@ -86,7 +86,7 @@ export class EnrollLineDto {
 }
 
 export class LeadEnrollDto {
-  @ApiPropertyOptional({ type: Number, nullable: true, description: '이미 있는 학생에게 붙일 때 — 형제·재등록. 비우면 새 학생을 만든다' })
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '기존 학생 재등록 전용 — 해당 학생 id. 비우면 새 학생을 만든다. 형제 등록에는 사용하지 않는다' })
   @IsOptional() @IsInt() @Min(1) @Max(ID_MAX)
   studentId?: number | null;
 
@@ -177,7 +177,7 @@ export class EnrollResultDto {
   @ApiProperty({ description: '미리보기였는가 — true 면 아무것도 쓰지 않았다' }) preview!: boolean;
   @ApiProperty() studentId!: number;
   @ApiProperty() studentName!: string;
-  @ApiProperty({ description: '새로 만든 학생인가 (false 면 있는 학생에게 붙였다)' }) studentCreated!: boolean;
+  @ApiProperty({ description: '새로 만든 학생인가 (false 면 기존 학생 재등록)' }) studentCreated!: boolean;
   @ApiProperty() startedOn!: string;
   @ApiProperty({ type: [EnrollEnrollmentDto] }) enrollments!: EnrollEnrollmentDto[];
   @ApiProperty({ type: [EnrollSeriesDto] }) series!: EnrollSeriesDto[];

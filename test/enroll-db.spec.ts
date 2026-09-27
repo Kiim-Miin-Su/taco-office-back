@@ -12,7 +12,7 @@
  *   ① 한 번에 일곱 — STU · ENR(줄마다) · SER+SER_STU(줄마다) · 첫 달 청구서(§53 그대로) · 교재 요청(wait)/배정 필요 알림 · 첫 수업 안내 초안 · 강사·관리자 알림
  *      + LEAD enrolled · 도달 기록 · LOG. 첫 수업일은 시작일 이후 첫 요일이다.
  *   ② 겹치면 시간표가 409 로 막고 **학생도 등록도 남지 않는다** · 미리보기는 같은 값을 주고 아무것도 쓰지 않으며 불가 시간을 알린다.
- *   ③ 동명이인 — 학년·학교가 같으면 409 · 다르면 allowSameName 으로 새 학생 · studentId 로 있는 학생에게 붙인다 · 단가 없으면 청구서만 건너뛴다.
+ *   ③ 동명이인 — 학년·학교가 같으면 409 · 다르면 allowSameName 으로 새 학생 · studentId 로 기존 학생을 재등록한다 · 단가 없으면 청구서만 건너뛴다.
  *
  * ⚠ 이 파일은 **표를 비우지 않는다.** 스위트 전용 번호대로 만들고 스스로 치운다.
  */
@@ -282,8 +282,8 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(real.body.preview).toBe(false);
   });
 
-  /* ── ③ N-137 · 있는 학생에게 붙이기 · 단가 없음 ─────────────────────── */
-  it('동명이인 — 학년·학교가 같으면 409 · 다르면 allowSameName 으로 새 학생 · studentId 로 있는 학생에게 붙인다 · 단가가 없으면 청구서만 건너뛴다 (N-137)', async () => {
+  /* ── ③ N-137 · 기존 학생 재등록 · 단가 없음 ───────────────────────── */
+  it('동명이인 — 학년·학교가 같으면 409 · 다르면 allowSameName 으로 새 학생 · studentId 로 기존 학생을 재등록한다 · 단가가 없으면 청구서만 건너뛴다 (N-137)', async () => {
     // 등록A · 10 · 테스트고 가 이미 있다 — 같은 학년·학교면 막는다
     const twin = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ dueOn: DUE, student: { grade: '10' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
     expect(twin.body.code).toBe('STUDENT_DUPLICATE');
@@ -293,9 +293,9 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(ask.body.code).toBe('STUDENT_SAME_NAME');
     expect(ask.body.message).toContain(`#${STU_EXISTING} 10 · 테스트고`);
     expect(await q(`SELECT 1 FROM lead WHERE id = $1 AND stage = 'second'`, [LEADS.same])).toHaveLength(1);
-    // 있는 학생에게 붙인다(재등록·형제) — 새 학생 없이 등록·시간표·청구서만
-    const attached = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ studentId: STU_EXISTING, startedOn: START, issueInvoice: false, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(201);
-    expect(attached.body).toMatchObject({ studentId: STU_EXISTING, studentName: '등록A', studentCreated: false, invoice: null, invoiceSkipped: null });
+    // 기존 학생 재등록 — 새 학생 없이 등록·시간표·청구서만. 형제 등록에는 이 경로를 쓰지 않는다.
+    const reenrolled = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ studentId: STU_EXISTING, startedOn: START, issueInvoice: false, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(201);
+    expect(reenrolled.body).toMatchObject({ studentId: STU_EXISTING, studentName: '등록A', studentCreated: false, invoice: null, invoiceSkipped: null });
     expect(await q(`SELECT 1 FROM enr WHERE student_id = $1`, [STU_EXISTING])).toHaveLength(1);
     expect(await q(`SELECT student_id::int AS sid FROM lead WHERE id = $1 AND stage = 'enrolled'`, [LEADS.same])).toEqual([{ sid: STU_EXISTING }]);
 
