@@ -69,13 +69,21 @@ export async function loadState(
     `SELECT e.id, e.ser_id, e.on_date::text AS on_date, e.canceled,
             e.new_date::text AS new_date, e.start_min, e.end_min,
             e.teacher_set, e.teacher_id, e.room_set, e.room_id, e.reason,
-            e.cancel_kind, e.cancel_treat, e.makeup_ser_id,
+            e.cancel_kind, e.cancel_treat, e.makeup_ser_id, e.mode, e.memo,
+            (SELECT z.zacc_id FROM zassign z WHERE z.exc_id = e.id) AS zacc_id,
             COALESCE(
               (SELECT array_agg(o.student_id ORDER BY o.student_id)
                  FROM exc_stu_out o WHERE o.exc_id = e.id), '{}') AS stu_out
        FROM exc e WHERE e.ser_id = ANY($1) ORDER BY e.ser_id, e.on_date`,
     [serIds],
   )) as Row[];
+
+  /* 줌 배정의 정본은 `zassign` 이다 (C48). 규칙 대상 한 줄 · 회차 예외 대상 한 줄(부분 유니크 둘).
+     State 가 그것을 들고 있어야 규칙을 가르거나(향후) 방식을 바꿀 때(N-56) 배정이 조용히 사라지지 않는다. */
+  const serZacc = new Map(
+    ((await q.query(`SELECT ser_id, zacc_id FROM zassign WHERE ser_id = ANY($1)`, [serIds])) as Row[])
+      .map((r) => [Number(r.ser_id), Number(r.zacc_id)]),
+  );
 
   return {
     SER: sers.map<Ser>((r) => ({
@@ -91,6 +99,7 @@ export async function loadState(
       rrule: String(r.rrule),
       fromDate: String(r.from_date),
       toDate: str(r.to_date),
+      zaccId: serZacc.get(Number(r.id)) ?? null,
     })),
     SER_STU: stus.map<SerStu>((r) => ({
       serId: Number(r.ser_id), studentId: Number(r.student_id),
@@ -113,6 +122,9 @@ export async function loadState(
       cancelTreat: str(r.cancel_treat),
       makeupSerId: num(r.makeup_ser_id),
       stuOut: ((r.stu_out as number[]) ?? []).map(Number),
+      mode: str(r.mode),
+      memo: str(r.memo),
+      zaccId: num(r.zacc_id),
     })),
   };
 }
@@ -174,7 +186,13 @@ export async function persist(
       const realId = await insertSer(q, s, opts.restoreSerIds?.has(s.id) ? s.id : undefined);
       idMap.set(s.id, realId);
       touched.add(realId);
+      // 「향후」로 갈라진 규칙 · 되살린 규칙이 줌 계정을 이어받는다 (N-56)
+      await syncSerZassign(q, realId, null, s.zaccId ?? null);
       continue;
+    }
+    if ((old.zaccId ?? null) !== (s.zaccId ?? null)) {
+      await syncSerZassign(q, s.id, old.zaccId ?? null, s.zaccId ?? null);
+      touched.add(s.id);
     }
     const changed =
       old.teacherId !== s.teacherId || old.roomId !== s.roomId ||
@@ -222,21 +240,27 @@ export async function persist(
     const old = beforeExc.get(`${e.serId}|${e.onDate}`);
     const row = (await q.query(
       `INSERT INTO exc (ser_id, on_date, canceled, new_date, start_min, end_min,
-                       teacher_set, teacher_id, room_set, room_id, reason, cancel_kind, cancel_treat, makeup_ser_id)
-       VALUES ($1,$2::date,$3,$4::date,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+                       teacher_set, teacher_id, room_set, room_id, reason, cancel_kind, cancel_treat, makeup_ser_id,
+                       mode, memo)
+       VALUES ($1,$2::date,$3,$4::date,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (ser_id, on_date) DO UPDATE SET
          canceled=EXCLUDED.canceled, new_date=EXCLUDED.new_date,
          start_min=EXCLUDED.start_min, end_min=EXCLUDED.end_min,
          teacher_set=EXCLUDED.teacher_set, teacher_id=EXCLUDED.teacher_id,
          room_set=EXCLUDED.room_set, room_id=EXCLUDED.room_id, reason=EXCLUDED.reason,
-         cancel_kind=EXCLUDED.cancel_kind, cancel_treat=EXCLUDED.cancel_treat, makeup_ser_id=EXCLUDED.makeup_ser_id
+         cancel_kind=EXCLUDED.cancel_kind, cancel_treat=EXCLUDED.cancel_treat, makeup_ser_id=EXCLUDED.makeup_ser_id,
+         mode=EXCLUDED.mode, memo=EXCLUDED.memo
        RETURNING id`,
       // 보강 SER 는 이 리듀스에서 막 생긴 임시 id 일 수 있다 — 위에서 붙인 진짜 id 로 바꿔 적는다
       [sid, e.onDate, e.canceled, e.newDate, e.startMin, e.endMin,
        e.teacherSet, e.teacherId, e.roomSet, e.roomId, e.reason, e.cancelKind, e.cancelTreat,
-       e.makeupSerId === null ? null : real(e.makeupSerId)],
+       e.makeupSerId === null ? null : real(e.makeupSerId), e.mode ?? null, e.memo ?? null],
     )) as Array<{ id: string }>;
     const excId = Number(row[0].id);
+    // 회차 줌 배정 — 예외가 다른 규칙으로 옮겨 가면(향후 분할) 새 줄이 생기고 옛 줄은 CASCADE 로 사라진다.
+    // 그래서 **행 id 가 바뀐 경우도** 다시 적는다. 같은 행 · 같은 계정이면 건드리지 않는다.
+    const zOld = old && old.id === excId ? (old.zaccId ?? null) : null;
+    if (zOld !== (e.zaccId ?? null)) await syncExcZassign(q, excId, e.zaccId ?? null);
 
     const oldOut = new Set(old?.stuOut ?? []);
     const newOut = new Set(e.stuOut ?? []);
@@ -272,6 +296,22 @@ export async function persist(
   }
 
   return [...touched];
+}
+
+/**
+ * 규칙 대상 줌 배정 한 줄을 State 값에 맞춘다 — 규칙 배정은 고정(fixed)이다 (`ZoomService.assignIn` 과 같은 모양).
+ * 겹침은 투영의 EXCLUDE 가 막는다. 배정 이력(zlog)은 계정 화면의 몫이라 여기서 남기지 않는다.
+ */
+async function syncSerZassign(q: QueryRunner, serId: number, before: number | null, after: number | null): Promise<void> {
+  if (before === after) return;
+  await q.query(`DELETE FROM zassign WHERE ser_id = $1`, [serId]);
+  if (after !== null) await q.query(`INSERT INTO zassign (ser_id, zacc_id, fixed) VALUES ($1,$2,true)`, [serId, after]);
+}
+
+/** 회차 예외 대상 줌 배정 한 줄 — 회차 배정은 변동(fixed=false)이다 (`ZoomService.assignIn` 과 같은 모양) */
+async function syncExcZassign(q: QueryRunner, excId: number, after: number | null): Promise<void> {
+  await q.query(`DELETE FROM zassign WHERE exc_id = $1`, [excId]);
+  if (after !== null) await q.query(`INSERT INTO zassign (exc_id, zacc_id, fixed) VALUES ($1,$2,false)`, [excId, after]);
 }
 
 /** 리듀서가 만든 임시 id 를 DB id 로 바꾼 뒤의 SER 목록 — 응답에 쓴다. */

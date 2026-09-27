@@ -78,11 +78,11 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1, $2, '10')`, [ROSTER_STUDENT, ROSTER_STUDENT_NAME]);
     const res = await request(app.getHttpServer())
       .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'sched-ceo@t.kr', password: PW }).expect(201);
+      .send({ loginId: 'sched-ceo@t.kr', password: PW }).expect(201);
     token = res.body.accessToken as string;
     const t2res = await request(app.getHttpServer())
       .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'sched-t2@t.kr', password: PW }).expect(201);
+      .send({ loginId: 'sched-t2@t.kr', password: PW }).expect(201);
     teacherToken = t2res.body.accessToken as string;
   });
 

@@ -14,8 +14,8 @@ import {
   OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto, RosterPatchDto, RosterResultDto,
   WriteResultDto, OccurrenceQueryDto, ScheduleParamsDto, AttendanceParamsDto, ScheduleUndoDto,
   HolidayListDto, ScheduleRangeQueryDto, ScheduleUnavListDto, ScheduleUnavQueryDto,
-  ScheduleSeriesCountsDto, ScheduleStudentBooksDto,
-  LessonTrackingDto, LessonTrackingQueryDto,
+  ScheduleSeriesCountsDto, ScheduleStudentBooksDto, ScheduleTeacherGuidesDto, TeacherParamsDto,
+  LessonTrackingDto, LessonTrackingQueryDto, NoteCreateDto, TrackedNoteDto,
   ConflictPreviewDto, ConflictQueryDto,
   DayCancelDto, DayCancelResultDto,
   StudentParamsDto, StudentResumeParamsDto, StudentPauseWriteDto, StudentResumeWriteDto, StudentPauseResultDto,
@@ -140,6 +140,21 @@ export class ScheduleController {
     return out;
   }
 
+  /** §11 선생님별 개인 도구줄 「안내 N」 (N-100 ⓐ) — 관리자 시간표만 쓴다 */
+  @Get('teachers/:teacherId/guides')
+  @Perm('canAdminPage')
+  @ApiOperation({
+    summary: '§11 개인 도구줄 — 그 강사에게 보냈는데 아직 확인 안 된 안내 수',
+    description: '안내의 S4 상태 「보냄(sent)」 그대로 센다(강사가 확인하면 read 로 빠진다). 읽기 전용이다.',
+  })
+  @ApiOkResponse({ type: ScheduleTeacherGuidesDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND: 구성원이 없습니다' })
+  async teacherGuides(@Param() params: TeacherParamsDto): Promise<ScheduleTeacherGuidesDto> {
+    const out = await this.svc.teacherGuides(params.teacherId);
+    if (!out) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '구성원이 없습니다' });
+    return out;
+  }
+
   /* ══ 쓰기 — 자원 + scope 한 형태로만 받는다 (D-R16 · D-R21) ═══════════
      동작마다 엔드포인트를 만들면 같은 3범위 판정이 여러 곳에 흩어진다.       */
 
@@ -172,6 +187,21 @@ export class ScheduleController {
     return out;
   }
 
+  /** §79 학생 카드의 인수인계 메모 한 줄 — 관리자 · 매니저 (N-36 ②) */
+  @Post('tracking/notes')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '인수인계 메모 한 줄 더하기 — §79 학생 트래킹 (N-36 ②)',
+    description: '더하기만 있다(고치기 · 지우기 없음 · 누가 · 언제가 남는다). 그 학생을 맡은 강사가 수업 안내 학생 카드에서 읽는다 — '
+      + '학부모에게 나가는 글에는 쓰이지 않는다. 빈 글 400 NOTE_EMPTY · 없는 학생 404 STUDENT_NOT_FOUND · '
+      + '수업 맥락(serId)의 명단에 없는 학생 404 NOTE_TARGET_NOT_FOUND.',
+  })
+  @ApiCreatedResponse({ type: TrackedNoteDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND | NOTE_TARGET_NOT_FOUND' })
+  addNote(@CurrentUser() user: RequestUser, @Body() dto: NoteCreateDto): Promise<TrackedNoteDto> {
+    return this.svc.addNote(user.id, dto);
+  }
+
   /**
    * 겹침 미리보기 — **누구와 겹치는지**를 돌려준다 (§19 · D-R43).
    *
@@ -187,14 +217,15 @@ export class ScheduleController {
   @ApiOperation({
     summary: '겹침 미리보기 — 무엇과·누구와 겹치는가',
     description: '막는 것은 ser_occ 의 EXCLUDE 이고 이 응답은 설명이다. 비어 있어도 저장을 건너뛰지 않는다. '
-      + '강사·강의실·줌 중 준 자원만 본다 — 하나도 주지 않으면 빈 배열이다.',
+      + '강사·강의실·줌 중 준 자원만 본다 — 하나도 주지 않으면 빈 배열이다. '
+      + 'freeLine 은 그 시각 비어 있는 강의실·줌 계정 이름 한 줄(각 최대 셋 · N-70)이다 — 누를 수 없고 미리 잡지 않는다.',
   })
   @ApiOkResponse({ type: ConflictPreviewDto })
   async conflicts(@Query() query: ConflictQueryDto): Promise<ConflictPreviewDto> {
     if (query.startMin >= query.endMin) {
       throw new BadRequestException({ code: 'BAD_RANGE', message: '끝 시각이 시작 시각보다 앞입니다' });
     }
-    const conflicts = await this.svc.conflicts({
+    const probe = {
       // service 의 파라미터 이름은 `onDate` 지만 쓰이는 곳은 span 을 만드는 날짜다 (lib/sql.spanOf)
       onDate: query.date,
       startMin: query.startMin,
@@ -203,8 +234,9 @@ export class ScheduleController {
       roomId: query.roomId ?? null,
       zaccId: query.zaccId ?? null,
       exceptSerId: query.exceptSerId ?? null,
-    });
-    return { conflicts };
+    };
+    const [conflicts, freeLine] = await Promise.all([this.svc.conflicts(probe), this.svc.freeLine(probe)]);
+    return { conflicts, freeLine };
   }
 
   @Get('horizon')
@@ -328,7 +360,7 @@ export class ScheduleController {
     description: '서명된10분 토큰의 직후 스냅숏과 현재 DB가 같을 때만 직전 스냅숏을 복원한다. 토큰의 actor와 현재 사용자가 달라도 거절한다.',
   })
   @ApiCreatedResponse({ type: WriteResultDto })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'UNDO_STALE: 토큰 발급 뒤 같은 일정이 다시 변경됨' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'UNDO_STALE: 토큰 발급 뒤 같은 일정이 다시 변경됨 · MONTH_CLOSED: 되돌리면 마감한 달의 회차가 바뀐다(대표가 마감을 해제한 뒤 같은 토큰으로 다시 · W11)' })
   undo(@CurrentUser() user: RequestUser, @Body() dto: ScheduleUndoDto): Promise<WriteResultDto> {
     return this.write.undo(user.id, dto.token);
   }

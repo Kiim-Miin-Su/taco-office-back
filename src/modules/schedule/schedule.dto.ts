@@ -63,7 +63,13 @@ export class OccurrenceDto {
   @ApiPropertyOptional({ type: Number, nullable: true }) roomId?: number | null;
   @ApiPropertyOptional({ type: String, nullable: true }) roomName?: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) zaccId?: number | null;
-  @ApiProperty({ enum: ['offline', 'online'] }) mode!: string;
+  @ApiProperty({ enum: ['offline', 'online'], description: '회차의 실제 방식 — 회차 예외가 바꿨으면 그 값, 아니면 규칙의 값 (N-56)' })
+  mode!: string;
+  @ApiPropertyOptional({
+    type: String, nullable: true, maxLength: 200,
+    description: '회차 메모 한 줄 (N-57 · 이번 회차만) — 블록 「노트」 배지와 수업 상세의 회차 메모 줄. 휴강 메모와 다르다',
+  })
+  memo?: string | null;
   @ApiProperty() canceled!: boolean;
   /* 휴강의 사유와 처리 — 낱말은 서버가 만든다 (D-R18 · C92). 옛 휴강 행은 넷 다 null 이며 기본 정책(이월)이다 */
   @ApiPropertyOptional({ enum: ATTENDANCE_CANCEL_REASONS, nullable: true, description: '휴강 사유 코드 — 취소된 회차만' })
@@ -137,8 +143,11 @@ import {
 import { PASTE_MAX } from '../../lib/recurrence';
 
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
-/** SER varchar 길이와 대응한다. 변경 시 migration/DBML을 같은 청크에서 검증한다. */
-export const SCHEDULE_INPUT_LIMITS = { kindKey: 16, subKey: 20, rrule: 80, title: 80 } as const;
+/** SER varchar 길이와 대응한다. 변경 시 migration/DBML을 같은 청크에서 검증한다. memo 는 EXC.memo CHECK(`exc_memo_len`)와 같다 */
+export const SCHEDULE_INPUT_LIMITS = { kindKey: 16, subKey: 20, rrule: 80, title: 80, memo: 200 } as const;
+
+/** 수업 방식 두 낱말 — 규칙(SER.mode)과 회차 예외(EXC.mode)가 같은 목록을 쓴다 */
+export const CLASS_MODES = ['offline', 'online'] as const;
 
 /** 조회 필터는 영속 필드가 아니다. 모든 캘린더가 같은 계약과 생성 타입을 소비한다. */
 export class OccurrenceQueryDto {
@@ -312,6 +321,30 @@ export class OccurrencePatchDto {
   @IsOptional() @IsCalendarDate()
   date?: string | null;
 
+  @ApiPropertyOptional({
+    enum: CLASS_MODES,
+    description: '방식 전환 (N-56). 온라인이면 강의실을 비우고(roomId 를 같이 보내면 400 MODE_ROOM_ONLINE) zaccId 를 이 회차(또는 규칙)에 붙인다. '
+      + '현장이면 줌 계정을 풀고 roomId 를 보내면 그 강의실로 둔다. 규칙과 같은 방식으로 돌아가면 예외를 비운다. '
+      + '범위(scope) 규칙은 다른 칸과 같다. 겹치면 EXCLUDE 409 로 통째로 되돌아가고, 함께 바뀐 것은 log 문장으로 온다',
+  })
+  @ValidateIf((_object, value) => value !== undefined) @IsIn(CLASS_MODES as unknown as string[])
+  mode?: 'offline' | 'online';
+
+  @ApiPropertyOptional({
+    ...ID_SCHEMA, nullable: true,
+    description: '온라인 전환과 함께 붙일 줌 계정 — mode=online 일 때만 받는다(아니면 400 MODE_ZOOM_NEEDS_ONLINE). null 이면 배정 없음. '
+      + '없는 계정 404 ZACC_NOT_FOUND · 꺼 둔 계정 409 ZACC_INACTIVE',
+  })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  zaccId?: number | null;
+
+  @ApiPropertyOptional({
+    type: String, nullable: true, maxLength: SCHEDULE_INPUT_LIMITS.memo,
+    description: '회차 메모 한 줄 (N-57) — 범위와 무관하게 **그 회차 하나**에 붙는다. null·빈 글은 지운다. '
+      + '메모만 보내면 규칙을 가르지 않고 휴강도 풀지 않는다',
+  })
+  @IsOptional() @IsString() @MaxLength(SCHEDULE_INPUT_LIMITS.memo)
+  memo?: string | null;
 }
 
 export class OccurrenceCreateDto {
@@ -496,11 +529,32 @@ export class UnavWarnDto {
   @ApiProperty({ description: '강사가 적은 사유 — 화면이 그대로 보여 준다' }) reason!: string;
 }
 
+/**
+ * 저장은 됐지만 **같은 학생이 같은 시각에 다른 수업에도 있다** (N-58 · W11).
+ *
+ * 막지 않는다 — 학생은 겹침 제약(EXCLUDE)의 축이 아니고(강사 · 강의실 · 줌 계정 셋), 자습과 정규 수업이 겹치는 일이
+ * 실제 운영이다. 불가 시간 알림(UnavWarnDto · C84-c)과 같은 자리 · 같은 모양으로 알린다.
+ * 그날의 명단으로 본다 — 그날만 빠진 학생 · 휴원 중 · 수강 종료 뒤는 세지 않는다.
+ */
+export class StudentOverlapDto {
+  @ApiProperty(ID_SCHEMA) serId!: number;
+  @ApiProperty({ ...DATE_SCHEMA, description: '이 수업이 실제로 놓인 달력 날짜' }) date!: string;
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty(ID_SCHEMA) otherSerId!: number;
+  @ApiProperty({ description: '겹친 상대 수업의 이름 — 과목 이름 · 제목 · 종류 이름 차례' }) otherTitle!: string;
+  @ApiProperty({ description: '상대 수업 시작 (KST 분)' }) otherStartMin!: number;
+  @ApiProperty({ description: '상대 수업 끝 (KST 분 · 24:00 = 1440)' }) otherEndMin!: number;
+}
+
 export class WriteResultDto {
   @ApiProperty({ description: '실제로 적용된 범위 — 「향후」가 「모두」로 강등되면 여기서 드러난다 (D-R17)' })
   effScope!: string;
 
-  @ApiProperty({ type: [String], description: '사람이 읽는 변경 기록. 화면이 그대로 보여 준다' })
+  @ApiProperty({
+    type: [String],
+    description: '사람이 읽는 변경 기록. 수정(PATCH)·이동은 문장이다 — 방식 전환이 함께 바꾼 것(「강의실을 비웠습니다」 · 「줌 계정을 풀었습니다」)도 여기 온다 (N-56)',
+  })
   log!: string[];
 
   @ApiProperty({ description: '다시 펼친 회차 수' }) projected!: number;
@@ -528,6 +582,13 @@ export class WriteResultDto {
     description: '강사 불가 시간과 겹친 회차 — **막지 않고 알린다.** 오늘 이후·취소 아닌 것만, 최대 10줄',
   })
   unavailable!: UnavWarnDto[];
+
+  @ApiProperty({
+    type: [StudentOverlapDto],
+    description: '같은 학생이 같은 시각 다른 수업에도 있는 회차 — **막지 않고 알린다** (N-58). 만들기 · 수정 · 이동 · 붙여넣기 · 명단 넣기만 싣고 '
+      + '나머지 쓰기는 빈 배열이다. 오늘 이후 · 취소 아닌 것만, 최대 10줄',
+  })
+  studentOverlaps!: StudentOverlapDto[];
 }
 
 /** 그날 전체 휴강의 결과 — 몇 회차를 접었는지 서버가 센다 (D-R37) */
@@ -597,6 +658,32 @@ export class TrackedReportDto {
   @ApiPropertyOptional({ type: String, nullable: true, description: '숙제 줄' }) homework?: string | null;
 }
 
+/** §79 학생 카드의 인수인계 메모 한 줄 (N-36 ② · 누가 · 언제 · 고치기 · 지우기 없음 · 학부모에게 나가지 않는다) */
+export class TrackedNoteDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() body!: string;
+  @ApiProperty({ type: String, nullable: true, description: '적은 사람' }) authorName!: string | null;
+  @ApiProperty({ description: '적은 시각 — KST ISO(…+09:00)' }) createdAt!: string;
+}
+
+/**
+ * `POST /schedule/tracking/notes` — §79 학생 트래킹에서 인수인계 메모 한 줄 (N-36 ② · 관리자 · 매니저).
+ * **더하기만 있다** — 고치기 · 지우기 경로가 없다(누가 언제 무엇을 넘겼는지가 남아야 한다). 그 학생을 맡은 강사가
+ * 수업 안내 학생 카드에서 읽는다. 학부모에게 나가는 글(안내 · 리포트)에는 쓰이지 않는다.
+ */
+export class NoteCreateDto {
+  @ApiProperty({ ...ID_SCHEMA, description: '어느 학생' }) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  studentId!: number;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true, description: '어느 수업에서 적었는가(§79 를 연 회차의 규칙) — 그 학생이 그 명단에 있어야 한다' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  serId?: number | null;
+
+  @ApiProperty({ description: '한 줄 — 앞뒤 빈칸은 지운다 · 빈 글은 400', minLength: 1, maxLength: 500 })
+  @IsString() @MinLength(1) @MaxLength(500)
+  body!: string;
+}
+
 /** §79 오른쪽의 학생 카드 한 장 */
 export class TrackedStudentDto {
   @ApiProperty() id!: number;
@@ -634,6 +721,11 @@ export class TrackedStudentDto {
 
   @ApiProperty({ type: [TrackedReportDto], description: '최신 리포트 3건 — 쓴 것만' })
   reports!: TrackedReportDto[];
+
+  @ApiProperty({ type: [TrackedNoteDto], description: '인수인계 메모 — 최근 것부터 스무 줄 (N-36 ②)' })
+  notes!: TrackedNoteDto[];
+  @ApiProperty({ description: '인수인계 메모 전체 줄 수 — 스무 줄 밖이 있는지 (서버가 센다)' })
+  noteCount!: number;
 }
 
 /** `GET /schedule/tracking` — §79 수강 학생 단계의 오른쪽 칸 */
@@ -743,6 +835,28 @@ export class ConflictQueryDto {
 export class ConflictPreviewDto {
   @ApiProperty({ type: [ConflictRowDto], description: '비어 있어도 **저장을 건너뛰지 않는다** — 그 사이에 남이 그 자리를 잡을 수 있다' })
   conflicts!: ConflictRowDto[];
+
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '그 시각 비어 있는 강의실 · 줌 계정 이름 한 줄(각 최대 셋 · N-70). 물은 자원 종류(roomId · zaccId)만 적고, '
+      + '없으면 null. 누를 수 없고 미리 잡지 않는다 — 다시 저장해야 하며 그 사이 남이 잡을 수 있다',
+  })
+  freeLine!: string | null;
+}
+
+/** §11 선생님별 개인 도구줄 「안내 N」 (N-100 · W11) */
+export class TeacherParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) teacherId!: number;
+}
+
+export class ScheduleTeacherGuidesDto {
+  @ApiProperty(ID_SCHEMA) teacherId!: number;
+  @ApiProperty({
+    type: 'integer', minimum: 0,
+    description: '그 강사에게 보냈는데 강사가 아직 확인하지 않은 안내 수 — 안내의 S4 상태 「보냄(sent)」 그대로(확인하면 read)',
+  })
+  unconfirmed!: number;
 }
 
 /* ══ 휴원 · 복귀 (C92-c · 테스트 시나리오 C-36 · C-37) ═══════════════════ */

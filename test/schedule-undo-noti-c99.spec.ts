@@ -84,7 +84,7 @@ d('C99 — 명단 알림 3건과 삭제 되돌리기 (M-124 · N-138)', () => {
 
     const res = await request(app.getHttpServer())
       .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-      .send({ email: 'c99-ceo@t.kr', password: PW }).expect(201);
+      .send({ loginId: 'c99-ceo@t.kr', password: PW }).expect(201);
     token = res.body.accessToken as string;
   });
 

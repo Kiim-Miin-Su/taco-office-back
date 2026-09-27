@@ -163,6 +163,10 @@ export async function project(
   }
   const zaccOf = (serId: number, onDate: string): number | null =>
     zByOcc.get(`${serId}|${onDate}`) ?? zBySer.get(serId) ?? null;
+  /* 현장 회차에는 줌이 없다 (N-56) — 규칙이 온라인이어도 그 회차만 현장으로 바꿨으면 계정 자리를 잡지 않는다.
+     「실제 방식」은 `occ()` 가 이미 계산한 값(예외의 방식 ?? 규칙의 방식)을 그대로 쓴다. */
+  const zaccWhen = (mode: string, serId: number, onDate: string): number | null =>
+    mode === 'online' ? zaccOf(serId, onDate) : null;
 
   /* `occ()` 는 **표시용**이라 휴강을 그리지 않는다 (「휴강 — 그리지 않는다」).
      투영은 그것만으로 부족하다 — 현황판이 「취소·휴강 n건」을 세려면 그 회차도 표에 있어야 하고,
@@ -183,7 +187,7 @@ export async function project(
         o.roomId,
         o.canceled,
         `[${at(o.date, o.startMin)},${at(o.date, o.endMin)})`,
-        zaccOf(o.serId, o.onDate),
+        zaccWhen(o.mode, o.serId, o.onDate),
       ]);
     }
 
@@ -199,7 +203,7 @@ export async function project(
         e.roomSet ? e.roomId : ser.roomId,
         true,
         `[${at(d, e.startMin ?? ser.startMin)},${at(d, e.endMin ?? ser.endMin)})`,
-        zaccOf(ser.id, d),
+        zaccWhen(e.mode ?? ser.mode, ser.id, d),
       ]);
     }
   }

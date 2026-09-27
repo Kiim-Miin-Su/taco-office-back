@@ -50,11 +50,30 @@ export class StaffBriefDto {
   @ApiPropertyOptional({ type: String, nullable: true, description: '표시용 직함 — 권한과 무관하다 (D-R39)' }) title?: string | null;
 }
 
+/**
+ * 학생 성별 두 낱말 — N-83 채택(W11 · 선택 칸). 표의 CHECK(`stu_gender_words`)·등록 확정 입력·코드표가 이 한 벌을 쓴다.
+ * 낱말은 원문 §10 목록의 아바타 글자 그대로다(여 · 남). 비어 있으면 화면은 「—」로 둔다 — 추정하지 않는다.
+ */
+export const STU_GENDERS = ['female', 'male'] as const;
+export type StuGender = (typeof STU_GENDERS)[number];
+export const STU_GENDER_LABEL: Record<StuGender, string> = { female: '여', male: '남' };
+
 export class StudentBriefDto {
   @ApiProperty() id!: number;
   @ApiProperty() name!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) school?: string | null;
+  @ApiPropertyOptional({
+    enum: STU_GENDERS, nullable: true,
+    description: '성별(선택 · N-83) — 관리자 §10 아바타에만 쓴다. 학생 명단(students)은 관리 화면에만 실리므로 강사에게 가지 않는다. 비어 있으면 null',
+  })
+  gender?: StuGender | null;
+}
+
+/** 성별 코드표 한 줄 — 등록 확정 창의 선택지와 §10 아바타 글자 (N-83) */
+export class GenderDto {
+  @ApiProperty({ enum: STU_GENDERS }) key!: StuGender;
+  @ApiProperty({ description: '아바타 · 선택지 글자 — 「여」 · 「남」' }) label!: string;
 }
 
 /**
@@ -73,6 +92,8 @@ export class InvTypeDto {
   issuable!: boolean;
   @ApiProperty({ type: String, nullable: true, description: '못 내는 이유 — 발행 409 의 문장과 같다. 낼 수 있으면 null (PB-01)' })
   issueBlockedReason!: string | null;
+  @ApiProperty({ description: '발행할 때 사람이 줄(내용 · 금액)을 적는 종류인가 — 응시료(N-75). 아니면 줄은 서버가 회차로 센다' })
+  manualLines!: boolean;
 }
 
 /**
@@ -129,4 +150,5 @@ export class MetaDto {
   @ApiProperty({ type: [CancelTreatDto], description: '휴강 처리 셋 — 이월 · 차감 · 보강 이관 (C92)' }) cancelTreats!: CancelTreatDto[];
   @ApiProperty({ type: [LateReportTierDto], description: '리포트 지각 제출 차감 셋 — 작은 것부터 (D-R32 · 2026-09-25)' }) lateReportTiers!: LateReportTierDto[];
   @ApiProperty({ type: [TeacherPolicyDto], description: '강사 화면 최상단 정책 띠 — 불가 시간·수업 안내·히스토리·건의 (2026-09-25)' }) teacherPolicies!: TeacherPolicyDto[];
+  @ApiProperty({ type: [GenderDto], description: '학생 성별 선택지 둘 (N-83 · 선택 칸) — 낱말은 서버가 준다' }) genders!: GenderDto[];
 }

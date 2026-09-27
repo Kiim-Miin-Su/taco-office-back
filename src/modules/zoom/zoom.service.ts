@@ -12,7 +12,10 @@ import { Zacc } from '../../entities';
 import { nowHourKst, todayKst } from '../../lib/kst';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { sealSecret, secretKeyFrom, SECRET_BOX_HEADER_BYTES } from '../../lib/secret-box';
+import { audit } from '../../lib/audit';
+import { maskEmail } from '../notify/sender';
 import { loadState } from '../schedule/schedule.state.repo';
+import { assertZaccAssignable } from '../schedule/schedule.references';
 import { project } from '../schedule/schedule.project';
 import type {
   ZoomAccountCreateDto, ZoomAcctDto, ZoomAccountPatchDto, ZoomAssignDto, ZoomAssignResultDto, ZoomBoardDto,
@@ -133,7 +136,10 @@ export class ZoomService {
 
   async patch(userId: number, id: number, dto: ZoomAccountPatchDto): Promise<ZoomAcctDto> {
     return this.zaccs.manager.transaction(async (m: EntityManager) => {
-      const [cur] = (await m.query(`SELECT id FROM zacc WHERE id = $1 FOR UPDATE`, [id])) as { id: string }[];
+      // 앞 값도 함께 잠그고 읽는다 — 감사 줄(N-73)의 before 다. 비밀 칸(login_secret · meeting_pw_enc)은 SELECT 에 넣지 않는다
+      const [cur] = (await m.query(
+        `SELECT id, label, login_email, join_url, meeting_id, active FROM zacc WHERE id = $1 FOR UPDATE`, [id],
+      )) as Array<Record<string, unknown>>;
       if (!cur) throw new NotFoundException({ code: 'ZACC_NOT_FOUND', message: '줌 계정을 찾을 수 없습니다' });
       const set: string[] = [];
       const vals: unknown[] = [id];
@@ -159,6 +165,24 @@ export class ZoomService {
                 (SELECT count(*)::int FROM ser_occ o WHERE o.zacc_id = zacc.id AND NOT o.canceled) AS used
            FROM zacc WHERE id = $1`, [id],
       )) as Array<Record<string, unknown>>;
+      /*
+       * N-73 감사 한 줄(같은 트랜잭션). **비밀 값은 싣지 않는다** — 비밀번호 · 로그인 비밀은 「바꿨다」는 사실만,
+       * 참가 링크는 링크 안에 회의 암호가 들 수 있어 「바뀌었나」만, 로그인 이메일은 가린 모양으로만 적는다.
+       */
+      const shown = (r: Record<string, unknown>) => ({
+        label: r.label == null ? null : String(r.label), active: r.active === true,
+        loginEmail: r.login_email ? maskEmail(String(r.login_email)) : null,
+      });
+      await audit(m, 'zoom.account', {
+        actorId: userId, entityId: id,
+        before: shown(cur),
+        after: {
+          ...shown(out),
+          joinUrlChanged: String(out.join_url ?? '') !== String(cur.join_url ?? ''),
+          meetingIdChanged: String(out.meeting_id ?? '') !== String(cur.meeting_id ?? ''),
+          loginSecretRotated: rotateLogin, meetingPwRotated: rotateMeeting,
+        },
+      });
       return this.row(out);
     });
   }
@@ -187,7 +211,9 @@ export class ZoomService {
       const before = await loadState(q, [dto.serId], { forWrite: true });
       const ser = before.SER[0];
       if (!ser) throw new NotFoundException({ code: 'SER_NOT_FOUND', message: '수업 규칙을 찾을 수 없습니다' });
-      if (ser.mode !== 'online') {
+      // 회차 하나를 볼 때는 그 회차의 **실제 방식**이다 — 예외가 온라인으로 바꾼 회차에도 붙일 수 있다 (N-56)
+      const mode = (dto.onDate !== undefined ? before.EXC.find((row) => row.onDate === dto.onDate)?.mode : null) ?? ser.mode;
+      if (mode !== 'online') {
         throw new ConflictException({ code: 'ZOOM_ASSIGN_NOT_ONLINE', message: '현장 수업에는 줌 계정을 배정하지 않습니다' });
       }
       if (dto.onDate !== undefined) {
@@ -197,12 +223,8 @@ export class ZoomService {
         if (!occ) throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '해당 회차를 찾을 수 없습니다. 최신 목록에서 다시 선택해 주세요' });
         if (occ.canceled) throw new ConflictException({ code: 'ZOOM_ASSIGN_CANCELED', message: '휴강한 회차에는 줌 계정을 배정하지 않습니다' });
       }
-      if (zaccId !== null) {
-        // 여러 배정은 함께 읽되 계정 비활성화는 이 transaction이 끝날 때까지 기다린다.
-        const [z] = (await m.query(`SELECT id, active FROM zacc WHERE id = $1 FOR SHARE`, [zaccId])) as { id: string; active: boolean }[];
-        if (!z) throw new NotFoundException({ code: 'ZACC_NOT_FOUND', message: '줌 계정을 찾을 수 없습니다' });
-        if (!z.active) throw new ConflictException({ code: 'ZACC_INACTIVE', message: '꺼 둔 계정은 새로 배정할 수 없습니다' });
-      }
+      // 여러 배정은 함께 읽되 계정 비활성화는 이 transaction이 끝날 때까지 기다린다 — 회차 방식 전환과 같은 판정 (N-56)
+      if (zaccId !== null) await assertZaccAssignable(m, zaccId);
 
       const closed = await closedMonths(q);
       const closedBefore = await closedOccSnapshot(q, [dto.serId], closed);

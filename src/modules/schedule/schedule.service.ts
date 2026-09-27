@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
@@ -16,9 +16,11 @@ import {
 import { addD, isRecurring, parseRule, ruleHits, type IsoDate, type Ser } from '../../lib/recurrence';
 import type {
   HolidayDto, LessonPrepRowDto, LessonTrackingDto, OccurrenceDto, OccurrenceQueryDto, ScheduleSeriesCountsDto,
-  ScheduleStudentBooksDto, ScheduleUnavRowDto, TrackedReportDto, TrackedStudentDto,
+  ScheduleStudentBooksDto, ScheduleTeacherGuidesDto, ScheduleUnavRowDto, TrackedReportDto, TrackedStudentDto,
+  NoteCreateDto, TrackedNoteDto,
 } from './schedule.dto';
-import { START_MIN, END_MIN, kstDateOf, serStuEndedOn, serStuOn, spanOf, stuPausedOn } from '../../lib/sql';
+import { START_MIN, END_MIN, effectiveModeOf, kstAt, kstDateOf, serStuEndedOn, serStuOn, spanOf, stuPausedOn } from '../../lib/sql';
+import { REPORT_CANCELED_SQL } from '../reports/report-sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
 import { progressPercent } from '../../lib/book';
 import { KIND_GROUPS, kindGroupLabel } from '../../lib/catalog-words';
@@ -58,10 +60,10 @@ interface Row {
   rrule: string; ser_from: string; ser_to: string | null;
   teacher_id: string | null; teacher_name: string | null;
   room_id: string | null; room_name: string | null;
-  zacc_id: string | null; mode: string; canceled: boolean;
+  zacc_id: string | null; mode: string; memo: string | null; canceled: boolean;
   cancel_kind: AttendanceCancelReason | null; cancel_treat: CancelTreat | null;
   makeup_ser_id: string | null; makeup_date: string | null; makeup_start_min: number | null; makeup_of_date: string | null;
-  has_exception: boolean; reportable: boolean; extra: boolean; rep_state: string | null;
+  has_exception: boolean; reportable: boolean; extra: boolean; rep_state: string | null; report_canceled: boolean;
   attendance_id: string | null; attendance_result: AttendanceResult | null;
   attendance_reason: AttendanceCancelReason | null; attendance_confirmed_by: string | null;
   attendance_confirmed_by_name: string | null; attendance_confirmed_at: Date | string | null;
@@ -227,7 +229,9 @@ export class ScheduleService {
               to_char(o.on_date, 'YYYY-MM-DD') AS on_date,
               ${START_MIN} AS start_min,
               ${END_MIN} AS end_min,
-              s.kind_key, s.sub_key, s.title, s.mode, k.rep AS reportable, k.extra AS extra,
+              -- 회차의 실제 방식 — 예외가 바꿨으면 그 값 (N-56 · lib/sql.effectiveModeOf 한 조각)
+              s.kind_key, s.sub_key, s.title, ${effectiveModeOf('e', 's')} AS mode, e.memo,
+              k.rep AS reportable, k.extra AS extra,
               s.rrule, to_char(s.from_date, 'YYYY-MM-DD') AS ser_from,
               to_char(s.to_date, 'YYYY-MM-DD') AS ser_to,
               o.teacher_id, t.name AS teacher_name,
@@ -240,6 +244,8 @@ export class ScheduleService {
               (SELECT to_char(mo.on_date, 'YYYY-MM-DD') FROM exc mo WHERE mo.makeup_ser_id = o.ser_id ORDER BY mo.on_date LIMIT 1) AS makeup_of_date,
               (e.id IS NOT NULL) AS has_exception,
               r.state AS rep_state,
+              -- 리포트를 쓰지 않는 회차(휴강 · 출결 취소) — 리포트 목록 · 발송과 **같은 조각**이다(A′ · 한 판정)
+              ${REPORT_CANCELED_SQL} AS report_canceled,
               a.id AS attendance_id, a.result AS attendance_result, a.reason AS attendance_reason,
               a.confirmed_by AS attendance_confirmed_by,
               ac.name AS attendance_confirmed_by_name,
@@ -284,9 +290,11 @@ export class ScheduleService {
       const ended = isPast(when, today, nowMin);
       // na/plan/none 은 회차 시각에서 파생한다. 오래된 잘못된 시드와 리포트 행이 없는
       // 신규 수업도 같은 규칙을 타므로 화면마다 상태가 갈라지지 않는다.
+      // 휴강 · 출결 취소한 회차는 리포트 대상이 아니다(na) — 리포트 목록(toRow)과 같은 식이라, 이미 올린 리포트가 있어도
+      // 두 목록이 같은 낱말을 쓴다. 전에는 출결 취소만 빼서 휴강 회차가 「리포트 미제출」·「리포트」 보기 빨강에 섰다.
       const repState = effectiveRepStateFromEnded(
         r.rep_state,
-        r.reportable && r.attendance_result !== 'canceled',
+        r.reportable && !r.report_canceled,
         ended,
       );
       return {
@@ -307,6 +315,8 @@ export class ScheduleService {
         roomName: r.room_name,
         zaccId: r.zacc_id ? Number(r.zacc_id) : null,
         mode: r.mode,
+        // 회차 메모 한 줄 (N-57) — 블록 「노트」 배지와 수업 상세의 회차 메모 줄이 읽는다
+        memo: r.memo ?? null,
         canceled: r.canceled,
         // 휴강의 사유·처리와 그 낱말 — 취소된 회차만, 옛 휴강은 null (기본 정책 이월 · C92)
         cancelKind: r.canceled ? (r.cancel_kind ?? null) : null,
@@ -401,6 +411,65 @@ export class ScheduleService {
     return out;
   }
 
+  /**
+   * 409 뒤 설명 한 줄 — **그 시각 비어 있는 강의실 · 줌 계정 이름**(각 최대 셋 · N-70 채택 ②).
+   *
+   * 누를 수 없고 미리 잡지 않는다 — 제안한 순간과 누른 순간 사이의 경쟁을 만들지 않는다(막는 것은 그대로 DB · C84-b).
+   * 「비어 있다」는 §21 「지금 가능」과 같은 판정이다: **쓰는 계정·강의실(active)** 중 그 구간에 취소 아닌 회차(`ser_occ`)가
+   * 하나도 없는 것. 시각은 EXCLUDE 와 같은 `span &&` 로 본다. 물은 자원 종류만 적는다 — 강의실을 묻지 않았으면
+   * 강의실 줄이 없다. 옮기는 수업 자신(exceptSerId)은 자리를 비워 줄 것이므로 세지 않는다. 시간을 옮기자는 제안은 하지 않는다.
+   */
+  async freeLine(q: {
+    onDate: string; startMin: number; endMin: number;
+    roomId?: number | null; zaccId?: number | null; exceptSerId?: number | null;
+  }): Promise<string | null> {
+    const parts: string[] = [];
+    const busy = (col: string) => `NOT EXISTS (
+      SELECT 1 FROM ser_occ o
+       WHERE ${col} AND NOT o.canceled
+         AND o.span && ${spanOf('$2', '$3', '$4')}
+         AND ($5::bigint IS NULL OR o.ser_id <> $5))`;
+    const args = (id: number) => [id, q.onDate, q.startMin, q.endMin, q.exceptSerId ?? null];
+    if (q.roomId) {
+      const rooms = await this.q<{ name: string }>(
+        `SELECT rm.name FROM room rm
+          WHERE rm.active AND rm.id <> $1 AND ${busy('o.room_id = rm.id')}
+          ORDER BY rm.id LIMIT 3`,
+        args(q.roomId),
+      );
+      parts.push(rooms.length
+        ? `그 시각 비어 있는 강의실 — ${rooms.map((r) => r.name).join(' · ')}`
+        : '그 시각 비어 있는 다른 강의실이 없습니다');
+    }
+    if (q.zaccId) {
+      const accounts = await this.q<{ label: string }>(
+        `SELECT z.label FROM zacc z
+          WHERE z.active AND z.id <> $1 AND ${busy('o.zacc_id = z.id')}
+          ORDER BY z.id LIMIT 3`,
+        args(q.zaccId),
+      );
+      parts.push(accounts.length
+        ? `그 시각 비어 있는 줌 계정 — ${accounts.map((a) => a.label).join(' · ')}`
+        : '그 시각 비어 있는 다른 줌 계정이 없습니다');
+    }
+    return parts.length ? parts.join(' / ') : null;
+  }
+
+  /**
+   * §11 선생님별 개인 도구줄 「안내 N」 (N-100 채택 ⓐ) — 그 강사에게 **보냈는데 강사가 아직 확인하지 않은** 안내 수.
+   * 안내의 S4 상태 그대로다: 보냄(`sent`) → 강사가 확인하면 읽음(`read`). 안내 화면 머리의 「강사 미확인」과
+   * 같은 판정(`guides.service` stats.teacherUnconfirmed · 확인 단추 `canAck`)이다. 읽기 전용 — 안내 표를 쓰지 않는다.
+   */
+  async teacherGuides(teacherId: number): Promise<ScheduleTeacherGuidesDto | null> {
+    const [row] = await this.q<{ n: number }>(
+      `SELECT (SELECT count(*)::int FROM guide g WHERE g.teacher_id = st.id AND g.state = 'sent') AS n
+         FROM staff st WHERE st.id = $1`,
+      [teacherId],
+    );
+    if (!row) return null;
+    return { teacherId, unconfirmed: Number(row.n) };
+  }
+
   /* ══ §79 수강 학생 — 학생 트래킹 (C55) ═════════════════════════════════ */
 
   /**
@@ -490,7 +559,7 @@ export class ScheduleService {
     const students: TrackedStudentDto[] = roster.map((r) => ({
       ...r, bookCount: 0, progressAverage: null, progressKnownBooks: 0,
       guided: false, attendDone: 0, attendTotal: 0,
-      unpaid: canSeeAmounts ? 0 : null, reports: [],
+      unpaid: canSeeAmounts ? 0 : null, reports: [], notes: [], noteCount: 0,
     }));
 
     if (ids.length > 0) {
@@ -573,6 +642,24 @@ export class ScheduleService {
         if (!s) continue;
         s.reports.push(ScheduleService.toTrackedReport(r));
       }
+
+      // 인수인계 메모 (N-36 ② · W11 M2) — 학생 단위 · 최근 스무 줄 + 전체 줄 수
+      const notes = (await this.q(
+        `SELECT * FROM (
+           SELECT n.id, n.student_id, n.body, w.name AS author_name, ${kstAt('n.created_at')} AS created_at,
+                  row_number() OVER (PARTITION BY n.student_id ORDER BY n.created_at DESC, n.id DESC) AS rn,
+                  count(*) OVER (PARTITION BY n.student_id) AS total
+             FROM note n LEFT JOIN staff w ON w.id = n.author_id
+            WHERE n.student_id = ANY($1::bigint[])
+         ) x WHERE rn <= 20 ORDER BY student_id, rn`,
+        [ids],
+      )) as Array<Record<string, unknown>>;
+      for (const n of notes) {
+        const s = byId.get(Number(n.student_id));
+        if (!s) continue;
+        s.notes.push({ id: Number(n.id), body: String(n.body), authorName: (n.author_name as string) ?? null, createdAt: String(n.created_at) });
+        s.noteCount = Number(n.total);
+      }
     }
 
     const prep = await this.prepRows(serId, onDate, {
@@ -596,6 +683,37 @@ export class ScheduleService {
       canSeeAmounts,
       students,
     };
+  }
+
+  /**
+   * 인수인계 메모 한 줄 더하기 (N-36 ② · W11 M2) — §79 학생 트래킹의 「메모 남기기」.
+   *
+   * **더하기만 있다** — 고치기 · 지우기는 경로가 없다(누가 언제 무엇을 넘겼는지가 그대로 남아야 한다 · 표는 note).
+   * 수업 맥락(`serId`)을 주면 그 학생이 그 명단에 있어야 한다 — 남의 수업 카드에서 엉뚱한 학생에게 적지 않게.
+   * 읽는 쪽은 §79 카드(관리자 · 매니저)와 그 학생을 맡은 강사의 수업 안내 학생 카드뿐이다. 학부모에게는 나가지 않는다.
+   */
+  async addNote(authorId: number, dto: NoteCreateDto): Promise<TrackedNoteDto> {
+    const body = dto.body.trim();
+    if (!body) throw new BadRequestException({ code: 'NOTE_EMPTY', message: '메모가 비었습니다 — 한 줄이라도 적어 주세요' });
+    return this.occ.manager.transaction(async (m) => {
+      const [stu] = (await m.query(`SELECT id FROM stu WHERE id = $1 FOR KEY SHARE`, [dto.studentId])) as Array<{ id: string }>;
+      if (!stu) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '그 학생을 찾을 수 없습니다' });
+      const serId = dto.serId ?? null;
+      if (serId !== null) {
+        const [on] = (await m.query(
+          `SELECT 1 AS hit FROM ser_stu ss JOIN ser s ON s.id = ss.ser_id WHERE ss.ser_id = $1 AND ss.student_id = $2 FOR KEY SHARE OF s`,
+          [serId, dto.studentId],
+        )) as Array<{ hit: number }>;
+        if (!on) throw new NotFoundException({ code: 'NOTE_TARGET_NOT_FOUND', message: '그 수업의 명단에 없는 학생입니다' });
+      }
+      const [made] = (await m.query(
+        `INSERT INTO note (student_id, ser_id, author_id, body) VALUES ($1, $2, $3, $4)
+         RETURNING id, body, ${kstAt('created_at')} AS created_at`,
+        [dto.studentId, serId, authorId, body],
+      )) as Array<{ id: string; body: string; created_at: string }>;
+      const [who] = (await m.query(`SELECT name FROM staff WHERE id = $1`, [authorId])) as Array<{ name: string }>;
+      return { id: Number(made.id), body: made.body, authorName: who?.name ?? null, createdAt: made.created_at };
+    });
   }
 
   /** 원문의 날짜 문장 — 「26년 8월 21일 금요일」 */
@@ -622,15 +740,16 @@ export class ScheduleService {
     ctx: { cap: number; count: number; active: string[]; roster: number[] },
   ): Promise<LessonPrepRowDto[]> {
     const [f] = (await this.q(
-      `SELECT s.mode::text AS mode,
+      `SELECT ${effectiveModeOf('e', 's')} AS mode,
               to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS drawn_date,
               to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','HH24:MI') AS from_hm,
               to_char(upper(o.span) AT TIME ZONE 'Asia/Seoul','HH24:MI') AS to_hm,
               t.name  AS teacher_name,
               rm.name AS room_name,
               za.label AS zacc_label,
+              -- 회차 예외 대상 배정(변동)이 규칙 배정(고정)보다 먼저다 — 투영(zaccOf)과 같은 차례 (N-56)
               (SELECT z.fixed FROM zassign z
-                WHERE z.ser_id = s.id ORDER BY z.exc_id NULLS LAST, z.id DESC LIMIT 1) AS zacc_fixed,
+                WHERE z.exc_id = e.id OR z.ser_id = s.id ORDER BY z.exc_id NULLS LAST, z.id DESC LIMIT 1) AS zacc_fixed,
               (SELECT g.state::text FROM guide g
                 WHERE g.ser_id = s.id ORDER BY g.created_at DESC LIMIT 1) AS guide_state,
               (SELECT r.state::text FROM rep r WHERE r.ser_id = s.id AND r.on_date = $2::date) AS rep_state,
@@ -651,6 +770,7 @@ export class ScheduleService {
                   AND p.audience = 'teacher' AND p.sent_at IS NOT NULL) AS teacher_sent
          FROM ser s
          JOIN ser_occ o ON o.ser_id = s.id AND o.on_date = $2::date
+         LEFT JOIN exc e ON e.ser_id = s.id AND e.on_date = $2::date
          LEFT JOIN staff t ON t.id = o.teacher_id
          LEFT JOIN room rm ON rm.id = o.room_id
          LEFT JOIN zacc za ON za.id = o.zacc_id

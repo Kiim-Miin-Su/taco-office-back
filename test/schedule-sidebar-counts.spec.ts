@@ -76,9 +76,9 @@ d('§07 사이드바 일정 원본 수 · §10 「교재 없음」 (서버가 �
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1, '교재칩학생', 'K')`, [STU]);
     token = (await request(app.getHttpServer()).post('/auth/login')
-      .send({ email: 'sidebar-ceo@t.kr', password: PW }).expect(201)).body.accessToken as string;
+      .send({ loginId: 'sidebar-ceo@t.kr', password: PW }).expect(201)).body.accessToken as string;
     teacherToken = (await request(app.getHttpServer()).post('/auth/login')
-      .send({ email: 'sidebar-t@t.kr', password: PW }).expect(201)).body.accessToken as string;
+      .send({ loginId: 'sidebar-t@t.kr', password: PW }).expect(201)).body.accessToken as string;
   });
 
   afterAll(async () => {

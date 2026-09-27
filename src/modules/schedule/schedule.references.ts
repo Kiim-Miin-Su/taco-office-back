@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import type { QueryRunner } from 'typeorm';
 import type { State } from '../../lib/recurrence';
 
@@ -35,4 +35,16 @@ export async function assertScheduleReferences(q: QueryRunner, state: State): Pr
       throw new BadRequestException({ code: 'REFERENCE_NOT_FOUND', message: `연결하려는 ${group.label} 대상이 없습니다` });
     }
   }
+}
+
+/**
+ * 줌 계정을 **새로** 붙일 수 있는가 — 없으면 404, 꺼 둔 계정이면 409 (C48 · N-56).
+ * 줌 계정 화면의 배정(`ZoomService.assignIn`)과 회차 방식 전환(`ScheduleWriteService.patch`)이 같은 판정을 쓴다.
+ * FOR SHARE — 여러 배정은 함께 읽되 계정 비활성화는 이 트랜잭션이 끝날 때까지 기다린다.
+ * 이미 붙어 있는 과거 배정은 여기서 보지 않는다(비활성 자원의 과거 참조는 보존한다).
+ */
+export async function assertZaccAssignable(q: { query(sql: string, params?: unknown[]): Promise<unknown> }, zaccId: number): Promise<void> {
+  const [z] = (await q.query(`SELECT id, active FROM zacc WHERE id = $1 FOR SHARE`, [zaccId])) as { id: string; active: boolean }[];
+  if (!z) throw new NotFoundException({ code: 'ZACC_NOT_FOUND', message: '줌 계정을 찾을 수 없습니다' });
+  if (!z.active) throw new ConflictException({ code: 'ZACC_INACTIVE', message: '꺼 둔 계정은 새로 배정할 수 없습니다' });
 }

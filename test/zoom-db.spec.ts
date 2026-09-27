@@ -317,7 +317,7 @@ d('S3-a 줌 계정 HTTP 입력·권한·영속화', () => {
       ($1,'S3A 관리자','s3a-admin@t.invalid','admin',$3,true),
       ($2,'S3A 강사','s3a-teacher@t.invalid','teacher',$3,true)`, [ADMIN, TEACHER, hash]);
     for (const [actor, email] of [[ADMIN, 's3a-admin@t.invalid'], [TEACHER, 's3a-teacher@t.invalid']] as const) {
-      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PASSWORD }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PASSWORD }).expect(201);
       tokens.set(actor, res.body.accessToken as string);
     }
   });
@@ -589,7 +589,7 @@ d('S3-b 회차 줌 배정 HTTP·월마감·외부 transaction', () => {
       ($1,'S3B 관리자','s3b-admin@t.invalid','admin',$3,true),
       ($2,'S3B 강사','s3b-teacher@t.invalid','teacher',$3,true)`, [ADMIN, TEACHER, await bcrypt.hash(PASSWORD, 4)]);
     for (const [id, email] of [[ADMIN, 's3b-admin@t.invalid'], [TEACHER, 's3b-teacher@t.invalid']] as const) {
-      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PASSWORD }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PASSWORD }).expect(201);
       tokens.set(id, res.body.accessToken as string);
     }
   });
@@ -724,7 +724,8 @@ d('S3-b 회차 줌 배정 HTTP·월마감·외부 transaction', () => {
     const results = await Promise.all([approve(id), approve(id)]);
     expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
     expect(await sql("SELECT state FROM chreq WHERE id=$1", [id])).toEqual([{ state: 'approved' }]);
-    expect(await sql("SELECT action FROM log WHERE entity='chreq' AND entity_id=$1", [id])).toEqual([{ action: 'apply' }]);
+    // 결재 줄은 표의 이름(CHREQ)이다 — W11 A' 후속(리드 결정). action 은 예전 그대로
+    expect(await sql("SELECT action FROM log WHERE entity='CHREQ' AND entity_id=$1", [id])).toEqual([{ action: 'apply' }]);
     expect(await sql('SELECT id FROM noti WHERE from_id=$1', [ADMIN])).toHaveLength(1);
     expect(await sql("SELECT id FROM zlog WHERE zacc_id=$1 AND action='assign'", [accounts[0]])).toHaveLength(1);
   });

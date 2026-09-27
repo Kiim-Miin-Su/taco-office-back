@@ -32,16 +32,18 @@ import {
 } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
-import { START_MIN, END_MIN, kstDateOf } from '../../lib/sql';
+import { START_MIN, END_MIN, endMinOf, kstDateOf, serStuOn, startMinOf, stuPausedOn } from '../../lib/sql';
+import type { AuditKey } from '../../lib/audit';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { loadState, persist } from './schedule.state.repo';
 import { issueScheduleUndoStep, readScheduleUndo, sameScheduleState } from './schedule.undo';
-import { assertScheduleReferences } from './schedule.references';
+import { assertScheduleReferences, assertZaccAssignable } from './schedule.references';
+import { auditScheduleWrite } from './schedule.audit';
 import { horizon, project } from './schedule.project';
 import type {
   DayCancelDto, DayCancelResultDto,
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto,
-  RosterPatchDto, RosterResultDto, UnavWarnDto, WriteResultDto,
+  RosterPatchDto, RosterResultDto, StudentOverlapDto, UnavWarnDto, WriteResultDto,
 } from './schedule.dto';
 
 /**
@@ -228,6 +230,74 @@ async function unavailableOverlaps(q: QueryRunner, serIds: number[]): Promise<Un
   }));
 }
 
+/**
+ * 같은 학생이 같은 시각에 **다른 수업에도** 있는 회차 — **막지 않고 알린다** (N-58 · W11).
+ *
+ * 불가 시간 알림과 같은 자리 · 같은 모양이다: 쓰기가 끝난 트랜잭션 안에서 한 번 훑고, 오늘부터 보고,
+ * 취소된 회차는 세지 않고, 열 줄에서 끊는다. 겹침의 정의는 EXCLUDE 와 같은 `span &&` 다.
+ * 명단은 **그날의 명단**이다 — 그날만 빠진 학생(exc_stu_out) · 휴원 중(stu_pause) · 수강 종료 뒤(serStuOn)는 세지 않는다.
+ * 이번 쓰기가 만든 두 수업끼리 겹치면 한 번만 적는다. `studentId` 를 주면 그 학생만 본다(명단 넣기).
+ */
+async function studentOverlaps(q: QueryRunner, serIds: number[], studentId?: number): Promise<StudentOverlapDto[]> {
+  if (serIds.length === 0) return [];
+  const rows = (await q.query(
+    `WITH mine AS (
+       SELECT o.ser_id, o.span, ss.student_id
+         FROM ser_occ o
+         JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+         LEFT JOIN exc e ON e.ser_id = o.ser_id AND e.on_date = o.on_date
+        WHERE o.ser_id = ANY($1) AND NOT o.canceled
+          AND ${kstDateOf('lower(o.span)')} >= (now() AT TIME ZONE 'Asia/Seoul')::date
+          AND ($2::bigint IS NULL OR ss.student_id = $2)
+          AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id = e.id AND xo.student_id = ss.student_id)
+          AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+     )
+     SELECT m.ser_id, to_char(${kstDateOf('lower(m.span)')}, 'YYYY-MM-DD') AS date,
+            m.student_id, st.name AS student_name,
+            o2.ser_id AS other_ser_id, COALESCE(sb.name, NULLIF(s2.title, ''), k2.name) AS other_title,
+            ${startMinOf('o2')} AS other_start_min, ${endMinOf('o2')} AS other_end_min
+       FROM mine m
+       JOIN ser_occ o2 ON o2.span && m.span AND o2.ser_id <> m.ser_id AND NOT o2.canceled
+       JOIN ser_stu ss2 ON ss2.ser_id = o2.ser_id AND ss2.student_id = m.student_id AND ${serStuOn('ss2', 'o2.on_date')}
+       LEFT JOIN exc e2 ON e2.ser_id = o2.ser_id AND e2.on_date = o2.on_date
+       JOIN stu st ON st.id = m.student_id
+       JOIN ser s2 ON s2.id = o2.ser_id
+       JOIN kind k2 ON k2.key = s2.kind_key
+       LEFT JOIN sub sb ON sb.key = s2.sub_key
+      WHERE NOT EXISTS (SELECT 1 FROM exc_stu_out xo2 WHERE xo2.exc_id = e2.id AND xo2.student_id = m.student_id)
+        AND NOT (o2.ser_id = ANY($1) AND o2.ser_id < m.ser_id)
+      ORDER BY lower(m.span), st.name, lower(o2.span), o2.ser_id
+      LIMIT 10`,
+    [serIds, studentId ?? null],
+  )) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    serId: Number(r.ser_id),
+    date: String(r.date),
+    studentId: Number(r.student_id),
+    studentName: String(r.student_name),
+    otherSerId: Number(r.other_ser_id),
+    otherTitle: String(r.other_title),
+    otherStartMin: Number(r.other_start_min),
+    otherEndMin: Number(r.other_end_min),
+  }));
+}
+
+/** 네 단계를 감싸는 자리의 선택지 — 쓰기마다 다른 것만 적는다 */
+interface TxOptions<T extends WriteResultDto> {
+  /** 같은 트랜잭션에서 결과를 채우는 일 (알림 · 명단 가격 · 변경 요청 종결) */
+  enrich?: (q: QueryRunner, fresh: State, base: WriteResultDto) => Promise<T>;
+  actorId?: number;
+  /** false 면 되돌리기 토큰을 주지 않는다 */
+  undoable?: boolean;
+  /**
+   * 바깥 트랜잭션 안에서 부를 때 (C91 등록 확정 — STU·ENR·SER·INV·ISSUE·GUIDE·NOTI 가 한 트랜잭션).
+   * 주어지면 여기서 열지도 닫지도 않는다 — 실패는 그대로 던져 바깥이 통째로 되돌린다.
+   */
+  outer?: QueryRunner;
+  /** 학생 겹침 알림(N-58)을 실을 쓰기인가 — 만들기 · 수정 · 이동 · 붙여넣기 · 명단 넣기. 숫자면 그 학생만 본다 */
+  overlaps?: boolean | { studentId: number };
+}
+
 @Injectable()
 export class ScheduleWriteService {
   constructor(@InjectDataSource() private readonly ds: DataSource) {}
@@ -245,27 +315,24 @@ export class ScheduleWriteService {
     return ser;
   }
 
-  /** 네 단계를 한 트랜잭션으로 감싸는 자리. 모든 쓰기가 이것을 통과한다. */
+  /**
+   * 네 단계를 한 트랜잭션으로 감싸는 자리. 모든 쓰기가 이것을 통과한다.
+   * @param auditKey 감사 원장에 남길 쓰기 이름 (N-73 · lib/audit 의 표) — 규칙마다 한 줄, 같은 트랜잭션
+   */
   private async tx<T extends WriteResultDto = WriteResultDto>(
+    auditKey: AuditKey,
     serIds: number[],
     reduce: (before: State, q: QueryRunner) =>
       { after: State; log: string[]; effScope: string } |
       Promise<{ after: State; log: string[]; effScope: string }>,
-    enrich?: (q: QueryRunner, fresh: State, base: WriteResultDto) => Promise<T>,
-    actorId?: number,
-    undoable = true,
-    /**
-     * 바깥 트랜잭션 안에서 부를 때 (C91 등록 확정 — STU·ENR·SER·INV·ISSUE·GUIDE·NOTI 가 한 트랜잭션).
-     * 주어지면 여기서 열지도 닫지도 않는다 — 실패는 그대로 던져 바깥이 통째로 되돌린다.
-     */
-    outer?: QueryRunner,
+    opts: TxOptions<T> = {},
   ): Promise<T> {
-    if (outer) return this.txBody(outer, serIds, reduce, enrich, actorId, undoable);
+    if (opts.outer) return this.txBody(opts.outer, auditKey, serIds, reduce, opts);
     const q = this.ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
     try {
-      const result = await this.txBody(q, serIds, reduce, enrich, actorId, undoable);
+      const result = await this.txBody(q, auditKey, serIds, reduce, opts);
       await q.commitTransaction();
       return result;
     } catch (e) {
@@ -278,14 +345,14 @@ export class ScheduleWriteService {
 
   private async txBody<T extends WriteResultDto = WriteResultDto>(
     q: QueryRunner,
+    auditKey: AuditKey,
     serIds: number[],
     reduce: (before: State, q: QueryRunner) =>
       { after: State; log: string[]; effScope: string } |
       Promise<{ after: State; log: string[]; effScope: string }>,
-    enrich?: (q: QueryRunner, fresh: State, base: WriteResultDto) => Promise<T>,
-    actorId?: number,
-    undoable = true,
+    opts: TxOptions<T>,
   ): Promise<T> {
+    const { enrich, actorId, undoable = true, overlaps } = opts;
     {
       // D-R43: 같은 SER의 모든 쓰기를 최초 snapshot 전에 직렬화한다. 자식만 바꾸는
       // 명단/회차 예외도 이 잠금을 공유하며 persist/project/commit까지 유지한다.
@@ -318,15 +385,21 @@ export class ScheduleWriteService {
           fallbackMonth: monthOf(after.SER[0]?.fromDate ?? closed[0]!),
         });
       }
-      const afterSnapshot = actorId && undoable ? await loadState(q, snapshotIds) : null;
+      // 되돌리기 스냅숏과 감사 줄은 **같은 뒤 상태**를 본다 — 한 번 읽는다
+      const afterSnapshot = actorId ? await loadState(q, snapshotIds) : null;
       // 토큰과 만료를 한 번에 — 「되돌리기 ▾」 목록이 지난 단계를 서버 값으로 뺀다 (g1 S5)
-      const step = actorId && afterSnapshot ? issueScheduleUndoStep(actorId, before, afterSnapshot) : null;
+      const step = actorId && undoable && afterSnapshot ? issueScheduleUndoStep(actorId, before, afterSnapshot) : null;
+      // N-73 — 규칙마다 한 줄 · 같은 트랜잭션 (겹침 409 로 되돌아가면 줄도 사라진다)
+      if (afterSnapshot) await auditScheduleWrite(q, auditKey, actorId, before, afterSnapshot);
 
       const base = {
         effScope, log, projected, serIds: touched,
         undoToken: step?.token ?? null,
         undoExpiresAt: step?.expiresAt ?? null,
         unavailable: await unavailableOverlaps(q, touched),
+        studentOverlaps: overlaps
+          ? await studentOverlaps(q, touched, typeof overlaps === 'object' ? overlaps.studentId : undefined)
+          : [],
       };
       const result = enrich ? await enrich(q, fresh, base) : base as T;
       return result;
@@ -352,7 +425,7 @@ export class ScheduleWriteService {
     const timeIssue = lessonTimeIssue(dto.startMin, dto.endMin);
     if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
 
-    return this.tx([], () => {
+    return this.tx('schedule.create', [], () => {
       const empty: State = { SER: [], SER_STU: [], EXC: [] };
       const a = applyCreate(empty, {
         draft: {
@@ -364,7 +437,7 @@ export class ScheduleWriteService {
         },
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, undefined, actorId, true, outer);
+    }, { actorId, outer, overlaps: true });
   }
 
   /**
@@ -373,7 +446,7 @@ export class ScheduleWriteService {
    */
   async paste(dto: OccurrencePasteDto, actorId?: number): Promise<WriteResultDto> {
     const sourceIds = [...new Set(dto.sources.map((s) => s.serId))];
-    return this.tx(sourceIds, (before) => {
+    return this.tx('schedule.paste', sourceIds, (before) => {
       const seen = new Set<string>();
       const sources = dto.sources.map((ref) => {
         const key = `${ref.serId}|${ref.onDate}`;
@@ -418,13 +491,13 @@ export class ScheduleWriteService {
         scope: dto.scope as Scope,
       });
       return { after: pasted, log: [...log, ...pasted.__log], effScope: pasted.__effScope };
-    }, undefined, actorId);
+    }, { actorId, overlaps: true });
   }
 
   /** C-7 — 여러 PATCH를 클라이언트에서 반복하지 않고 한 load/reduce/persist/project로 묶는다. */
   async moveMany(dto: OccurrenceMoveDto, actorId?: number): Promise<WriteResultDto> {
     const sourceIds = [...new Set(dto.items.map((x) => x.source.serId))];
-    return this.tx(sourceIds, (before) => {
+    return this.tx('schedule.move', sourceIds, (before) => {
       const refs = new Set<string>();
       const recurringIds = new Set<number>();
       let current = before;
@@ -470,7 +543,7 @@ export class ScheduleWriteService {
         log.push(...moved.__log);
       }
       return { after: current, log, effScope: dto.scope };
-    }, undefined, actorId);
+    }, { actorId, overlaps: true });
   }
 
   /**
@@ -484,7 +557,17 @@ export class ScheduleWriteService {
     /** 바깥 트랜잭션 — 강사 교체 마법사(C93)가 여러 규칙을 한 트랜잭션에서 고친다. `create` 의 `outer` 와 같다 */
     outer?: QueryRunner,
   ): Promise<WriteResultDto> {
-    return this.tx([serId], (before) => {
+    // 방식 전환 입력 방어 (N-56) — 서로 맞지 않는 조합은 잠금 전에 거절한다
+    if (dto.zaccId !== undefined && dto.mode !== 'online') {
+      throw new BadRequestException({
+        code: 'MODE_ZOOM_NEEDS_ONLINE',
+        message: '줌 계정은 온라인으로 바꿀 때 함께 보냅니다 — 이미 온라인인 수업의 계정은 줌 계정 화면에서 바꿉니다',
+      });
+    }
+    if (dto.mode === 'online' && dto.roomId !== undefined && dto.roomId !== null) {
+      throw new BadRequestException({ code: 'MODE_ROOM_ONLINE', message: '온라인 수업에는 강의실을 두지 않습니다' });
+    }
+    return this.tx('schedule.patch', [serId], async (before, q) => {
       const ser = this.requireOccurrence(before, serId, dto.onDate);
       const patch: OccurrencePatch = { __onDate: dto.onDate };
       if (dto.startMin !== undefined) patch.startMin = dto.startMin;
@@ -492,6 +575,11 @@ export class ScheduleWriteService {
       if (dto.teacherId !== undefined) patch.teacherId = dto.teacherId;
       if (dto.roomId !== undefined) patch.roomId = dto.roomId;
       if (dto.date !== undefined) patch.date = dto.date;
+      if (dto.mode !== undefined) patch.mode = dto.mode;
+      if (dto.zaccId !== undefined) patch.zaccId = dto.zaccId;
+      if (dto.memo !== undefined) patch.memo = dto.memo;
+      // 새로 붙이는 계정만 본다 — 없는 계정 404 · 꺼 둔 계정 409 (줌 계정 화면의 배정과 같은 판정)
+      if (dto.zaccId !== undefined && dto.zaccId !== null) await assertZaccAssignable(q, dto.zaccId);
 
       if (Object.keys(patch).length === 1) {
         throw new BadRequestException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
@@ -519,7 +607,7 @@ export class ScheduleWriteService {
         patch,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, this.withInside(inside), actorId, true, outer);
+    }, { enrich: this.withInside(inside), actorId, outer, overlaps: true });
   }
 
   /** `inside` 를 `tx` 의 커밋 직전 자리(enrich)에 끼운다. 결과는 바꾸지 않는다. */
@@ -565,7 +653,7 @@ export class ScheduleWriteService {
         return base;
       }
       : this.withInside(inside);
-    return this.tx([serId], async (before, q) => {
+    return this.tx('schedule.delete', [serId], async (before, q) => {
       this.requireOccurrence(before, serId, dto.onDate);
       // ATT를 포함한 이력 원장은 SER_OCC와 달리 재투영해 지울 수 없다. 전 회차 삭제 요청이어도
       // 사실 참조가 하나라도 있으면 SER를 보존하고 기간만 마감해야 감사 근거가 함께 남는다.
@@ -584,7 +672,7 @@ export class ScheduleWriteService {
       // N-138 「실수로 지운 일정 되돌리기」 — 토큰을 준다. C87 이 「삭제는 경계」로 닫아 둔 것은
       // 이 다섯째 인자 하나였다(스냅숏도 발급기도 이미 있었다). 되살릴 때 번호를 지키는 길은
       // `undo()` 가 `restoreSerIds` 로 연다.
-    }, after, actorId, true);
+    }, { enrich: after, actorId });
   }
 
   /**
@@ -613,7 +701,7 @@ export class ScheduleWriteService {
     let count = 0;
     let skipped = 0;
     const targets: Array<{ serId: number; onDate: string }> = [];
-    return this.tx<DayCancelResultDto>(serIds, (before) => {
+    return this.tx<DayCancelResultDto>('schedule.day_cancel', serIds, (before) => {
       let current = before;
       const log: string[] = [];
       // occ() 는 표시용이라 휴강을 그리지 않는다 — 이미 접힌 회차는 투영(project)과 같은 판정으로 센다:
@@ -629,17 +717,20 @@ export class ScheduleWriteService {
         count += 1;
       }
       return { after: current, log, effScope: 'this' };
-    }, async (q, fresh, base) => {
-      for (const t of targets) await notifyCancel(q, actorId, t.serId, t.onDate, fresh, cancel.treat);
-      return { ...base, count, skipped };
-      // 그날 전체도 **한 토큰**이다 — `tx` 가 그날의 모든 SER 를 한 스냅숏에 담으므로
-      // 되돌리기 한 번이 그날을 통째로 되살린다 (N-138 · 건너뛴 회차는 애초에 안 건드렸다)
-    }, actorId, true);
+    }, {
+      enrich: async (q, fresh, base) => {
+        for (const t of targets) await notifyCancel(q, actorId, t.serId, t.onDate, fresh, cancel.treat);
+        return { ...base, count, skipped };
+        // 그날 전체도 **한 토큰**이다 — `tx` 가 그날의 모든 SER 를 한 스냅숏에 담으므로
+        // 되돌리기 한 번이 그날을 통째로 되살린다 (N-138 · 건너뛴 회차는 애초에 안 건드렸다)
+      },
+      actorId,
+    });
   }
 
   /** §12 · §79 — 학생 넣고 빼기. 「그날만 빼기」가 D-R21 이다. */
   async roster(serId: number, dto: RosterPatchDto, actorId?: number): Promise<RosterResultDto> {
-    return this.tx<RosterResultDto>([serId], async (before, q) => {
+    return this.tx<RosterResultDto>('schedule.roster', [serId], async (before, q) => {
       this.requireOccurrence(before, serId, dto.onDate);
       const student = await q.query('SELECT id FROM stu WHERE id=$1', [dto.studentId]) as Array<{ id: string }>;
       if (!student.length) {
@@ -656,7 +747,7 @@ export class ScheduleWriteService {
         serId, onDate: dto.onDate, studentId: dto.studentId, op: dto.op,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, async (q, fresh, base) => {
+    }, { actorId, overlaps: dto.op === 'add' ? { studentId: dto.studentId } : false, enrich: async (q, fresh, base) => {
       const ids = rosterAt(fresh, serId, dto.onDate);
       const meta = await q.query(
         `SELECT k.cap, s.kind_key, s.sub_key
@@ -731,14 +822,14 @@ export class ScheduleWriteService {
         tierHeads: pricing ? pricing.tierHeads : null,
         overrideCount: pricing ? pricing.overrideCount : 0,
       };
-    }, actorId);
+    } });
   }
 
   /**
    * Ctrl/⌘+Z — 토큰이 가리키는 행만 잠그고, 발급 직후 상태와 현재 상태가 같을 때만 복원한다.
    * 화면 캐시를 되감는 기능이 아니다. DB 복원과 재투영이 한 트랜잭션으로 끝나야 한다.
    */
-  async undo(actorId: number, token: string): Promise<WriteResultDto> {
+  async undo(actorId: number, token: string, inside?: (q: QueryRunner) => Promise<void>): Promise<WriteResultDto> {
     const payload = readScheduleUndo(token, actorId);
     if (!payload) {
       throw new BadRequestException({ code: 'BAD_UNDO_TOKEN', message: '되돌리기 시간이 지났거나 토큰이 올바르지 않습니다' });
@@ -780,9 +871,27 @@ export class ScheduleWriteService {
        */
       const present = new Set(current.SER.map((row) => row.id));
       const restoreSerIds = new Set([...keepIds].filter((id) => !present.has(id)));
+      /*
+       * 월 마감 (C92-d · L-123 · A′3) — 되돌리기도 스케줄 쓰기다. `txBody` 와 **같은 판정**: 마감 달에 놓인 회차·예외의
+       * 모양을 persist/project 앞뒤로 찍어 달라졌으면 409 MONTH_CLOSED 로 통째로 되돌린다. 전에는 쓴 뒤 그 달이 마감되면
+       * 10분 안의 되돌리기(일정 · 결재 반영)가 마감 달 회차를 바꿨다.
+       */
+      const closed = await closedMonths(q);
+      const closedBefore = await closedOccSnapshot(q, ids, closed);
       const touched = await persist(q, current, payload.before, { restoreSerIds });
       const fresh = await loadState(q, touched);
       const projected = await project(q, fresh, touched, horizon());
+      if (closed.length) {
+        assertClosedOccUnchanged({
+          before: closedBefore,
+          after: await closedOccSnapshot(q, [...new Set([...ids, ...touched])], closed),
+          closed,
+          fallbackMonth: monthOf(payload.before.SER[0]?.fromDate ?? closed[0]!),
+        });
+      }
+      // N-73 — 누가 언제 되살렸는지. 규칙마다 한 줄, 되돌리기와 같은 트랜잭션
+      await auditScheduleWrite(q, 'schedule.undo', actorId, current, await loadState(q, ids));
+      if (inside) await inside(q); // N-84 결재 되돌리기 — 변경 요청을 pending 으로 · 같은 트랜잭션 (P 영역 · 두 줄)
       const result: WriteResultDto = {
         effScope: 'undo',
         log: ['직전 일정 쓰기를 되돌렸습니다'],
@@ -791,6 +900,7 @@ export class ScheduleWriteService {
         undoToken: null,
         undoExpiresAt: null,
         unavailable: await unavailableOverlaps(q, touched),
+        studentOverlaps: [],
       };
       await q.commitTransaction();
       return result;

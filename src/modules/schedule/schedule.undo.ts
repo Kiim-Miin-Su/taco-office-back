@@ -8,7 +8,7 @@ import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import type { State } from '../../lib/recurrence';
 
 const VERSION = 1;
-const TTL_SECONDS = 10 * 60;
+export const TTL_SECONDS = 10 * 60;
 const MAX_UNCOMPRESSED = 1024 * 1024;
 
 interface UndoPayload {
@@ -20,7 +20,7 @@ interface UndoPayload {
 }
 
 const secret = () => process.env.JWT_SECRET ?? 'dev-only-change-me';
-const sign = (body: string) => createHmac('sha256', secret()).update(body).digest('base64url');
+export const sign = (body: string) => createHmac('sha256', secret()).update(body).digest('base64url');
 
 /** 같은 행 집합은 조회 순서가 달라도 같은 문자열이어야 stale 판정이 흔들리지 않는다. */
 export function canonicalScheduleState(state: State): State {

@@ -14,14 +14,14 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Kind, Room, Staff, Stu, Sub, Zacc } from '../../entities';
-import { INV_TYPES, INV_TYPE_LABEL, INV_TYPE_SUB, invTypeIssueBlockedReason } from '../accounting/accounting.dto';
+import { INV_TYPES, INV_TYPES_MANUAL, INV_TYPE_LABEL, INV_TYPE_SUB, invTypeIssueBlockedReason } from '../accounting/accounting.dto';
 import { permsOf } from '../../common/perm';
 import {
   ATTENDANCE_CANCEL_REASONS, ATTENDANCE_CANCEL_REASON_LABEL, DEDUCTIBLE_CANCEL_REASONS,
   CANCEL_TREATS, CANCEL_TREAT_LABEL, CANCEL_TREAT_SUB, PENALTY_RULE,
 } from '../../lib/rules';
 import { teacherPolicies } from '../../lib/teacher-policy';
-import type { MetaDto } from './meta.dto';
+import { STU_GENDERS, STU_GENDER_LABEL, type MetaDto, type StuGender } from './meta.dto';
 
 @Injectable()
 export class MetaService {
@@ -64,13 +64,18 @@ export class MetaService {
           canAdminPage: perms.canAdminPage, canGpaPack: perms.canGpaPack,
         };
       }),
-      students: students.map((s) => ({ id: Number(s.id), name: s.name, grade: s.grade, school: s.school })),
+      // 성별(N-83)은 관리 화면의 §10 아바타 하나에만 쓴다 — 명단 자체가 관리 화면에만 실린다(canSeeRoster)
+      students: students.map((s) => ({
+        id: Number(s.id), name: s.name, grade: s.grade, school: s.school, gender: (s.gender as StuGender | null) ?? null,
+      })),
       // 종류가 늘어도 화면은 그대로다 — 낱말이 한 곳에서만 온다 (D-R18)
       invTypes: INV_TYPES.map((key) => ({
         key, label: INV_TYPE_LABEL[key], sub: INV_TYPE_SUB[key], other: key !== 'tuition',
         // 낼 수 있는가도 발행과 같은 판정이다 (PB-01) — 화면이 종류를 골라 놓고 409 를 받지 않게
         issuable: invTypeIssueBlockedReason(key) === null,
         issueBlockedReason: invTypeIssueBlockedReason(key),
+        // 줄의 원천 — 응시료는 사람이 적는다(N-75). 화면이 종류 코드를 비교해 입력 칸을 가르지 않게 서버가 말한다 (D-R39)
+        manualLines: INV_TYPES_MANUAL.includes(key),
       })),
       // 휴강 창의 낱말과 정책 — 화면은 select 를 채우고 판정은 서버가 한다 (C92 · D-R39)
       cancelReasons: ATTENDANCE_CANCEL_REASONS.map((key) => ({
@@ -81,6 +86,8 @@ export class MetaService {
       lateReportTiers: PENALTY_RULE.map(({ fromMinutes, amount, range, when, cut, tone }) => ({ fromMinutes, amount, range, when, cut, tone })),
       // 강사 화면 최상단 정책 띠 — 숫자는 판정 상수에서 (lib/teacher-policy · 2026-09-25)
       teacherPolicies: teacherPolicies(),
+      // 학생 성별 선택지 (N-83) — 등록 확정 창과 §10 아바타가 같은 낱말을 쓴다
+      genders: STU_GENDERS.map((key) => ({ key, label: STU_GENDER_LABEL[key] })),
     };
   }
 }
