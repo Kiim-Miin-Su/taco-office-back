@@ -80,9 +80,25 @@ d('§44·§45 안내 수직 계약 (C78)', () => {
       [serId, studentId],
     ))[0].n)).toBe(1);
 
+    // N-90 — 초안을 만든 것은 이력의 사건이 아니다(작성 · 발송 · 확인만). 안 한 것만 하나 줄었다
     const after = await svc().history({ span: 'month', anchor: '2026-09-14' });
-    expect(after.counts).toMatchObject({ created: 1, missing: 1 });
-    expect(after.days[0].items[0].id).toBe(made.id);
+    expect(after.counts).toMatchObject({ created: 0, sent: 0, missing: 1 });
+    expect(after.days).toEqual([]);
+
+    // 쓰면 「안내 작성」 사건 한 줄 — 그 사건 시각의 KST 날짜로 묶인다(UTC 09-02 23:30 = KST 09-03 08:30)
+    await svc().writeBody(manager, made.id, { body: '첫 수업 안내입니다' });
+    await q.query(`UPDATE hist SET at = '2026-09-02T23:30:00Z' WHERE entity = 'guide' AND ref_id = $1`, [made.id]);
+    const written = await svc().history({ span: 'month', anchor: '2026-09-14' });
+    expect(written.counts).toMatchObject({ created: 1, sent: 0, missing: 1 });
+    expect(written.days).toHaveLength(1);
+    expect(written.days[0]).toMatchObject({
+      date: '2026-09-03', tally: [{ action: 'guide_write', stateAfter: 'ready', label: '안내 작성', count: 1 }],
+    });
+    expect(written.days[0].events[0]).toMatchObject({
+      action: 'guide_write', label: '안내 작성', stateAfter: 'ready', time: '08:30', byId: manager, guide: { id: made.id },
+    });
+    // 같은 안내의 사건이 다른 날이면 다른 묶음이다 — 안내의 수업 날(09-01)로 겹쳐 묶지 않는다
+    expect(written.days.map((day) => day.date)).not.toContain('2026-09-01');
   });
 
   it('일·주·월 이력 범위는 KST 기준일에서 같은 누락 계산식을 공유한다', async () => {
@@ -108,7 +124,8 @@ d('§44·§45 안내 수직 계약 (C78)', () => {
     expect(await svc().createDraft(manager, dto, viewer)).toMatchObject(expected);
     expect((await svc().all(undefined, viewer)).guides.find(g => g.id === made.id)).toMatchObject(expected);
     expect((await svc().students(viewer)).items.find(s => s.studentId === studentId)?.latestGuide).toMatchObject(expected);
-    expect((await svc().history({ span: 'day', anchor: '2026-09-01' }, viewer)).days[0].items[0]).toMatchObject(expected);
+    await q.query(`UPDATE hist SET at = '2026-09-01T03:00:00Z' WHERE entity = 'guide' AND ref_id = $1`, [made.id]);
+    expect((await svc().history({ span: 'day', anchor: '2026-09-01' }, viewer)).days[0].events[0].guide).toMatchObject(expected);
     expect((await svc().all()).guides.find(g => g.id === made.id)).toMatchObject({ canSend: false, canAck: false, sendBlockedReason: expect.any(String) });
   });
 

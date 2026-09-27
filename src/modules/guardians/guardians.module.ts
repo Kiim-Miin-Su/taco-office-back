@@ -5,11 +5,16 @@
  */
 
 import { Module } from '@nestjs/common';
+import { ConsultingModule } from '../consulting/consulting.module';
 import { GuardiansController } from './guardians.controller';
 import { GuardiansService } from './guardians.service';
 
-/** 보호자와 선택 발송 (DQ3) — 발송 경계 SENDER 는 전역 NotifyModule 이 준다 */
+/**
+ * 보호자와 선택 발송 (DQ3) — 발송 경계 SENDER 는 전역 NotifyModule 이 준다.
+ * 「계약서 전달하기」(N-77)는 컨설팅의 공개 범위 · 첨부 판정을 ConsultingService 에 맡긴다 — ConsultingModule 을 들여온다.
+ */
 @Module({
+  imports: [ConsultingModule],
   controllers: [GuardiansController],
   providers: [GuardiansService],
 })

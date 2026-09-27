@@ -61,28 +61,49 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
   });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
-  it('틀을 만들고 고친다 — 이름이 겹치면 막는다', async () => {
-    const made = await svc().createTemplate({ name: '첫 수업 안내', body: '안녕하세요, {학생}님' });
-    expect(made).toMatchObject({ name: '첫 수업 안내' });
-    await expect(svc().createTemplate({ name: '첫 수업 안내', body: '다른 몸' }))
-      .rejects.toMatchObject({ response: { code: 'GTPL_DUPLICATE' } });
+  /** N-73(W11) — 문구 틀 쓰기의 감사 줄. 이 스위트가 만든 틀 id 로만 센다(다른 스위트의 줄을 세지 않는다) */
+  const auditRows = async (id: number) => (await q.query(
+    `SELECT action, actor_id, before, after FROM log WHERE entity = 'GTPL' AND entity_id = $1 ORDER BY id`, [id],
+  )) as Array<{ action: string; actor_id: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null }>;
 
-    const fixed = await svc().patchTemplate(made.id, { name: '첫 수업 안내(개정)', body: '새 몸' });
+  it('틀을 만들고 고친다 — 이름이 겹치면 막는다 · 감사 줄은 쓰기마다 하나, 막힌 쓰기는 0', async () => {
+    const made = await svc().createTemplate({ name: '첫 수업 안내', body: '안녕하세요, {학생}님' }, 71);
+    expect(made).toMatchObject({ name: '첫 수업 안내' });
+    expect(await auditRows(made.id)).toEqual([
+      expect.objectContaining({ action: 'create', before: null, after: { name: '첫 수업 안내', body: '안녕하세요, {학생}님' } }),
+    ]);
+    expect(Number((await auditRows(made.id))[0].actor_id)).toBe(71);
+    await expect(svc().createTemplate({ name: '첫 수업 안내', body: '다른 몸' }, 71))
+      .rejects.toMatchObject({ response: { code: 'GTPL_DUPLICATE' } });
+    const dupRows = Number((await q.query(
+      `SELECT count(*)::int AS n FROM log WHERE entity = 'GTPL' AND after->>'body' = '다른 몸'`,
+    ))[0].n);
+    expect(dupRows).toBe(0);
+
+    const fixed = await svc().patchTemplate(made.id, { name: '첫 수업 안내(개정)', body: '새 몸' }, 71);
     expect(fixed).toMatchObject({ id: made.id, name: '첫 수업 안내(개정)', body: '새 몸' });
+    const rows = await auditRows(made.id);
+    expect(rows.map((row) => row.action)).toEqual(['create', 'patch']);
+    expect(rows[1]).toMatchObject({
+      before: { name: '첫 수업 안내', body: '안녕하세요, {학생}님' }, after: { name: '첫 수업 안내(개정)', body: '새 몸' },
+    });
   });
 
   it('고칠 때도 남의 이름과 겹치면 막고, 자기 이름은 그대로 둘 수 있다', async () => {
-    const a = await svc().createTemplate({ name: '가', body: 'A' });
-    const b = await svc().createTemplate({ name: '나', body: 'B' });
-    await expect(svc().patchTemplate(b.id, { name: '가', body: 'B2' }))
+    const a = await svc().createTemplate({ name: '가', body: 'A' }, 71);
+    const b = await svc().createTemplate({ name: '나', body: 'B' }, 71);
+    await expect(svc().patchTemplate(b.id, { name: '가', body: 'B2' }, 71))
       .rejects.toMatchObject({ response: { code: 'GTPL_DUPLICATE' } });
+    // 막힌 고치기는 감사 줄이 없다 — 만들기 한 줄만 남는다
+    expect((await auditRows(b.id)).map((row) => row.action)).toEqual(['create']);
     // 자기 이름을 그대로 두고 본문만 고치는 것은 겹침이 아니다
-    const same = await svc().patchTemplate(a.id, { name: '가', body: 'A2' });
+    const same = await svc().patchTemplate(a.id, { name: '가', body: 'A2' }, 71);
     expect(same.body).toBe('A2');
   });
 
   it('없는 틀을 고치면 404 다', async () => {
-    await expect(svc().patchTemplate(99999999, { name: 'x', body: 'y' })).rejects.toThrow();
+    await expect(svc().patchTemplate(99999999, { name: 'x', body: 'y' }, 71)).rejects.toThrow();
+    expect(await auditRows(99999999)).toEqual([]);
   });
 
   it('안내를 쓰면 보낼 준비가 된다 — 상태 낱말을 화면이 보내지 않았는데도', async () => {
@@ -121,9 +142,9 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
   });
 
   it('틀을 고쳐도 이미 쓴 안내는 안 바뀐다 — 안내는 본문을 복사해 갖는다', async () => {
-    const tpl = await svc().createTemplate({ name: '틀', body: '원래 문구' });
+    const tpl = await svc().createTemplate({ name: '틀', body: '원래 문구' }, 71);
     await svc().writeBody(71, guideId, { body: tpl.body });   // 화면이 복사해 넣는다
-    await svc().patchTemplate(tpl.id, { name: '틀', body: '바뀐 문구' });
+    await svc().patchTemplate(tpl.id, { name: '틀', body: '바뀐 문구' }, 71);
 
     const after = (await q.query(`SELECT body FROM guide WHERE id = $1`, [guideId])) as Array<{ body: string }>;
     expect(after[0].body).toBe('원래 문구');

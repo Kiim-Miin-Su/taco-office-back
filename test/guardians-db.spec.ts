@@ -83,7 +83,7 @@ d('보호자 · 선택 발송 (DQ3 · N-42)', () => {
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
-        .send({ email, password: PW }).expect(201);
+        .send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     token = await login('guardian-ceo@t.kr');

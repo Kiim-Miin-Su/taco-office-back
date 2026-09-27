@@ -18,15 +18,20 @@ import {
   type RepStateDb, type ReportBody, type ReportDeliveryIssue, type ReportPngIssue,
   type ReportReminderIssue, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
-import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
+import { END_MIN, START_MIN, kstAt, kstDateOf } from '../../lib/sql';
 import { roleLabel } from '../../lib/role-words';
 import { NOTI_TITLE } from '../../lib/noti';
+import { audit } from '../../lib/audit';
 import type {
   ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportQueryDto,
   ReportReminderCreateDto, ReportReminderResultDto, ReportReviewDto, ReportRowDto,
   ReportSendGroupDto, ReportSendHistoryDto, ReportSendHistoryListDto, ReportSendSpan, ReportUpsertDto, UnwrittenDto,
+  WeeklyBundleDto, WeeklyBundleListDto, WeeklySummaryWriteDto,
 } from './reports.dto';
 import { REPORT_FILE_STORE, type ReportFileStore } from './report-file.store';
+import { REPORT_CANCELED_SQL, REPORT_DATE_SQL } from './report-sql';
+import { loadWeeklyBundles, weekOfMonday, weeklyGate, type WeeklyBundle } from './weekly-bundle';
+import { addDays } from '../../lib/kst';
 import { lockScheduleSeries } from '../schedule/schedule.state.repo';
 
 interface Row {
@@ -127,10 +132,6 @@ interface RequestSendRow {
   source_send_id: string | null;
 }
 
-/** 목록·발송 묶음·표시가 같은 실제 수업일을 쓴다. 회차 없는 보존 REP만 원래 키로 대체한다. */
-const REPORT_DATE_SQL = `COALESCE(${kstDateOf('lower(o.span)')}, r.on_date)`;
-/** 일정 취소·출결 취소는 같은 판정이다. 신규 발송에서 제외하되 보존 상세/이력을 삭제하지 않는다. */
-const REPORT_CANCELED_SQL = `(COALESCE(o.canceled, false) OR COALESCE(a.result = 'canceled', false))`;
 
 const WRITE_ERRORS: Record<ReportWriteIssue, { message: string; status: 'bad' | 'forbidden' | 'conflict' }> = {
   REPORT_NOT_ALLOWED: { message: '리포트 대상 수업이 아닙니다', status: 'bad' },
@@ -662,6 +663,84 @@ export class ReportsService {
     }
   }
 
+  /* ══ N-54 주간 묶음 (W11 · R2) ═══════════════════════════════════════════
+   * 판정 · 모으기는 weekly-bundle.ts 한 곳이다 — 보호자 발송(guardians.service)도 같은 함수를 부른다(D-R22 · D-R39).
+   */
+
+  private static weekLabel(weekOf: string): string {
+    return ReportsService.sendGroupLabel('week', weekOf, addDays(weekOf, 6));
+  }
+
+  private static toWeekly(bundle: WeeklyBundle, canWrite: boolean, label: string): WeeklyBundleDto {
+    const gate = weeklyGate(bundle, canWrite);
+    return {
+      studentId: bundle.studentId, studentName: bundle.studentName, grade: bundle.grade,
+      wrepId: bundle.wrepId, summary: bundle.summary, legacy: bundle.legacy,
+      lessons: bundle.lessons.map((lesson) => ({ ...lesson })),
+      lessonCount: bundle.lessons.length,
+      approvedCount: bundle.lessons.filter((lesson) => lesson.approved).length,
+      ...gate,
+      // 메일 제목 기본값 — 사실(학생 · 주)만 잇는다. 창에서 고칠 수 있고 본문과 달리 검증하지 않는다
+      subject: `${bundle.studentName} 학생 주간 리포트 · ${label}`,
+      sentAt: bundle.sentAt, attemptCount: bundle.attemptCount, lastAttemptAt: bundle.lastAttemptAt,
+    };
+  }
+
+  /** §47 「주간 트래킹」 — 그 주 학생별 묶음. 주를 안 주면 KST 어제가 든 주(월요일이면 막 끝난 지난주) */
+  async weekly(weekOfAny: string | undefined, canWrite: boolean): Promise<WeeklyBundleListDto> {
+    const weekOf = weekOfMonday(weekOfAny ?? ReportsService.kstYesterday());
+    const label = ReportsService.weekLabel(weekOf);
+    const bundles = (await loadWeeklyBundles(this.ds, weekOf, null))
+      .map((bundle) => ReportsService.toWeekly(bundle, canWrite, label));
+    return {
+      weekOf, weekTo: addDays(weekOf, 6), label,
+      total: bundles.length,
+      remaining: bundles.filter((bundle) => bundle.sentAt === null).length,
+      bundles,
+    };
+  }
+
+  /**
+   * 총평 쓰기 — `wrep.body = {summary, by, at}` 만(N-54 ②). 그 주 리포트가 없는 학생 · 이미 보낸 묶음 · 옛 기록은 막는다.
+   * 학생 줄을 먼저 잡아 같은 학생 · 같은 주의 첫 쓰기 둘이 줄을 서고, 있던 묶음은 행을 잠근다(보내기와 같은 순서).
+   */
+  async writeWeeklySummary(dto: WeeklySummaryWriteDto, actorId: number, canWrite: boolean): Promise<WeeklyBundleDto> {
+    const summary = dto.summary.trim();
+    if (!summary) throw new BadRequestException({ code: 'WEEKLY_SUMMARY_REQUIRED', message: '총평을 써 주세요' });
+    const weekOf = weekOfMonday(dto.weekOf);
+    const label = ReportsService.weekLabel(weekOf);
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      const [student] = await q.query(`SELECT id FROM stu WHERE id = $1 FOR NO KEY UPDATE`, [dto.studentId]) as Array<{ id: string }>;
+      if (!student) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
+      const [bundle] = await loadWeeklyBundles(q, weekOf, dto.studentId, true);
+      if (!bundle) throw new ConflictException({ code: 'WEEKLY_NO_LESSONS', message: '이 주에 이 학생의 리포트가 없습니다' });
+      const gate = weeklyGate(bundle, canWrite);
+      if (!gate.canWriteSummary) {
+        if (!canWrite) throw new ForbiddenException({ code: 'WEEKLY_FORBIDDEN', message: gate.summaryBlockedReason });
+        throw new ConflictException({
+          code: bundle.legacy ? 'WEEKLY_LEGACY' : 'WEEKLY_ALREADY_SENT', message: gate.summaryBlockedReason,
+        });
+      }
+      await q.query(
+        `INSERT INTO wrep (student_id, week_of, body)
+         VALUES ($1, $2, jsonb_build_object('summary', $3::text, 'by', $4::bigint, 'at', ${kstAt('now()')}))
+         ON CONFLICT (student_id, week_of) DO UPDATE SET body = EXCLUDED.body`,
+        [dto.studentId, weekOf, summary, actorId],
+      );
+      const [saved] = await loadWeeklyBundles(q, weekOf, dto.studentId);
+      await q.commitTransaction();
+      return ReportsService.toWeekly(saved, canWrite, label);
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      throw error;
+    } finally {
+      await q.release();
+    }
+  }
+
   async detail(
     serId: number, onDate: string, actorId: number, canCrudAll: boolean, canApprove = canCrudAll,
   ): Promise<ReportDetailDto> {
@@ -887,10 +966,11 @@ export class ReportsService {
         ],
       ) as Array<{ id: string }>;
       sendId = Number(sent[0].id);
+      // 7-3 ① F3 — 파일마다 어느 리포트인지 적는다(업로드 차례 = prepared 차례 = locked 차례 · 위에서 대조했다).
       await q.query(
-        `INSERT INTO pdflog (kind, ref_id, file_url)
-         SELECT 'report_png', $1, value FROM unnest($2::text[]) AS value`,
-        [sendId, urls],
+        `INSERT INTO pdflog (kind, ref_id, file_url, rep_id)
+         SELECT 'report_png', $1, f.url, f.rep_id FROM unnest($2::text[], $3::bigint[]) AS f(url, rep_id)`,
+        [sendId, urls, prepared.map((file) => file.repId)],
       );
       await q.commitTransaction();
       committed = true;
@@ -950,8 +1030,8 @@ export class ReportsService {
       ) as Array<{ id: string }>;
       newId = Number(inserted[0].id);
       await q.query(
-        `INSERT INTO pdflog (kind, ref_id, file_url)
-         SELECT 'report_png', $1, file_url FROM pdflog
+        `INSERT INTO pdflog (kind, ref_id, file_url, rep_id)
+         SELECT 'report_png', $1, file_url, rep_id FROM pdflog
           WHERE kind='report_png' AND ref_id=$2 AND file_url IS NOT NULL`,
         [newId, sendId],
       );
@@ -1006,6 +1086,7 @@ export class ReportsService {
         throw new BadRequestException({ code: 'REPORT_FIELD_REQUIRED', message: `${field.label}을(를) 채워야 제출됩니다` });
       }
 
+      const nextState: RepStateDb = action === 'submit' ? 'wait' : 'draft';
       await q.query(
         `UPDATE rep
             SET body = $2::jsonb,
@@ -1016,8 +1097,16 @@ export class ReportsService {
                 reviewer_id = NULL,
                 reject_reason = NULL
           WHERE id = $1`,
-        [row.id, JSON.stringify(body), action === 'submit' ? 'wait' : 'draft', action === 'submit'],
+        [row.id, JSON.stringify(body), nextState, action === 'submit'],
       );
+      // N-73 — 다시 쓰면 결재 도장(reviewed_at · 반려 사유)이 지워진다. 무엇이 지워졌는지를 같은 트랜잭션에 남긴다.
+      // 본문은 싣지 않는다(학생 기록 원문 — 원장은 「누가 언제 상태를 바꿨나」만 답한다).
+      await audit(q, 'report.write', {
+        actorId,
+        entityId: row.id,
+        before: { state: row.state, reviewedAt: row.reviewed_at, rejectReason: row.reject_reason },
+        after: { state: nextState, submitted: action === 'submit' },
+      });
       const saved = await this.loadDetail(q, serId, onDate);
       if (!saved) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
       await q.commitTransaction();

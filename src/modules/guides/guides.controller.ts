@@ -73,8 +73,8 @@ export class GuidesController {
   @ApiOperation({ summary: '문구 틀 추가 — 이름이 겹치면 막는다' })
   @ApiCreatedResponse({ type: GuideTemplateDto })
   @ApiConflictResponse({ description: 'code GTPL_DUPLICATE' })
-  async createTemplate(@Body() dto: GuideTemplateWriteDto): Promise<GuideTemplateDto> {
-    return this.svc.createTemplate(dto);
+  async createTemplate(@CurrentUser() user: RequestUser, @Body() dto: GuideTemplateWriteDto): Promise<GuideTemplateDto> {
+    return this.svc.createTemplate(dto, user.id);
   }
 
   @Patch('templates/:id')
@@ -84,10 +84,11 @@ export class GuidesController {
   @ApiConflictResponse({ description: 'code GTPL_DUPLICATE' })
   @ApiNotFoundResponse({ description: '문구 없음' })
   async patchTemplate(
+    @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: GuideTemplateWriteDto,
   ): Promise<GuideTemplateDto> {
-    return this.svc.patchTemplate(id, dto);
+    return this.svc.patchTemplate(id, dto, user.id);
   }
 
   /* ══ §43 「안내 작성」 ════════════════════════════════════════════════════ */

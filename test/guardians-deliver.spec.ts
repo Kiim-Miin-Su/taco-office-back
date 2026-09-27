@@ -9,6 +9,7 @@
  * 그래야 서버리스 30초 안에 원장이 남고, 재시도가 이미 나간 메시지를 다시 보내지 않는다.
  */
 import type { DataSource } from 'typeorm';
+import type { ConsultingService } from '../src/modules/consulting/consulting.service';
 import { GuardiansService } from '../src/modules/guardians/guardians.service';
 import { SEND_TIMEOUT_MS } from '../src/modules/notify/sender';
 import { FakeSender } from './fake-sender';
@@ -21,7 +22,7 @@ describe('보호자 발송 — 한 통의 상한 시간 (보안 검토 0925)', (
     const fake = new FakeSender();
     fake.readyMap = { email: true, sms: true };
     fake.send = () => new Promise(() => undefined);
-    const service = new GuardiansService({} as DataSource, fake);
+    const service = new GuardiansService({} as DataSource, fake, {} as ConsultingService);
 
     const pending = service['deliver']('email', 'a@b.co', '제목', '본문');
     await jest.advanceTimersByTimeAsync(SEND_TIMEOUT_MS + 2_000);
@@ -33,7 +34,7 @@ describe('보호자 발송 — 한 통의 상한 시간 (보안 검토 0925)', (
   it('공급자가 제때 답하면 그 답을 그대로 쓰고 타이머를 남기지 않는다', async () => {
     const fake = new FakeSender();
     fake.readyMap = { email: true, sms: true };
-    const service = new GuardiansService({} as DataSource, fake);
+    const service = new GuardiansService({} as DataSource, fake, {} as ConsultingService);
     await expect(service['deliver']('sms', '01012345678', '제목', '본문'))
       .resolves.toEqual({ configured: true, ok: true, providerId: 'fake-1', error: null });
   });

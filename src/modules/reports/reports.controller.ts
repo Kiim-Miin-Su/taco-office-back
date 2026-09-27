@@ -14,6 +14,7 @@ import {
   ReportDetailDto, ReportDeliveryHistoryQueryDto, ReportListDto, ReportRefDto, ReportResendDto,
   ReportReviewDto, ReportSendHistoryListDto, ReportSendRefDto, ReportUpsertDto, UnwrittenDto,
   ReportQueryDto, ReportReminderCreateDto, ReportReminderResultDto, ReportTeacherQueryDto,
+  WeeklyBundleDto, WeeklyBundleListDto, WeeklyQueryDto, WeeklySummaryWriteDto,
 } from './reports.dto';
 import { ReportsService } from './reports.service';
 
@@ -124,6 +125,34 @@ export class ReportsController {
     @Body() dto: ReportResendDto,
   ): Promise<ReportDeliveryResultDto> {
     return { item: await this.svc.resend(ref.sendId, dto.requestKey, user.id, this.canCrudAll(user)) };
+  }
+
+  @Get('weekly')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§47 주간 트래킹 — 그 주(월~일) 학생별 묶음 (N-54)',
+    description: '본문은 그 주 이미 쓴 리포트를 읽을 때 모은다(저장하지 않는다). 총평은 wrep.body 에 매니저가 쓴 글만. '
+      + '보내기는 POST /guardians/send 에 wrepId 와 plainText 를 그대로 실어 DQ3 원장에 남긴다. weekOf 를 안 주면 KST 어제가 든 주.',
+  })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'canAdminPage · canCrudAll 이 필요하다(강사 403)' })
+  @ApiOkResponse({ type: WeeklyBundleListDto })
+  weekly(@CurrentUser() user: RequestUser, @Query() query: WeeklyQueryDto): Promise<WeeklyBundleListDto> {
+    return this.svc.weekly(query.weekOf, this.canCrudAll(user));
+  }
+
+  @Put('weekly')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§47 주간 묶음 총평 쓰기 (N-54)',
+    description: 'wrep.body = {summary, by, at}. 그 주 그 학생의 리포트가 없으면 409 WEEKLY_NO_LESSONS · 이미 보호자에게 나간 묶음은 409 WEEKLY_ALREADY_SENT · 예전 기록은 409 WEEKLY_LEGACY.',
+  })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'WEEKLY_SUMMARY_REQUIRED(빈 총평) · 입력 검증 오류' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WEEKLY_NO_LESSONS · WEEKLY_ALREADY_SENT · WEEKLY_LEGACY' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'canAdminPage · canCrudAll 이 필요하다(강사 403)' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND' })
+  @ApiOkResponse({ type: WeeklyBundleDto })
+  writeWeekly(@CurrentUser() user: RequestUser, @Body() dto: WeeklySummaryWriteDto): Promise<WeeklyBundleDto> {
+    return this.svc.writeWeeklySummary(dto, user.id, this.canCrudAll(user));
   }
 
   @Get(':serId/:onDate')

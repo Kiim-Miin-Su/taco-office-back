@@ -77,7 +77,7 @@ d('S4-a GUIDE 내부 발송·확인 HTTP/DB', () => {
     for (const [id, role] of [[ADMIN, 'admin'], [A, 'teacher'], [B, 'teacher'], [MANAGER, 'manager']] as const) {
       const email = `s4a-${id}@t.invalid`;
       await sql('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES ($1,$2,$3,$4,$5,true)', [id, `S4A ${role} ${id}`, email, role, hash]);
-      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password }).expect(201);
       tokens.set(id, res.body.accessToken as string);
     }
     await sql('INSERT INTO stu(id,name) VALUES ($1,$2)', [STUDENT, 'S4A 수신 학생']);
@@ -255,7 +255,11 @@ d('S4-a GUIDE 내부 발송·확인 HTTP/DB', () => {
     const students = await http('get', '/guides/students').expect(200);
     expect(students.body.items.find((s: { studentId: number }) => s.studentId === STUDENT).latestGuide).toMatchObject({ acknowledgedAfterSeconds: 95, canSend: false, canAck: false });
     const history = await http('get', '/guides/history').query({ anchor: DAY, span: 'day' }).expect(200);
-    expect(history.body.days.flatMap((day: { items: GuideView[] }) => day.items).find((g: GuideView) => g.id === guideId)).toMatchObject({ acknowledgedAfterSeconds: 95 });
+    // N-90(W11) — 사건 한 줄씩(최근 먼저): 확인 · 보냄. 같은 id 의 PNOTI 발송(entity=pnoti)은 섞지 않는다
+    const events = history.body.days.flatMap((day: { events: Array<{ action: string; guide: GuideView }> }) => day.events)
+      .filter((event: { guide: GuideView }) => event.guide.id === guideId);
+    expect(events.map((event: { action: string }) => event.action)).toEqual(['guide_ack', 'guide_send']);
+    expect(events[0].guide).toMatchObject({ acknowledgedAfterSeconds: 95 });
     expect(await snapshot()).toEqual(before);
   });
   it('역전된legacy시각은경과0으로꾸미지않고null로조회한다', async () => {

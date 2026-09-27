@@ -26,9 +26,11 @@ import {
 } from '@nestjs/common';
 import { DataSource, type QueryRunner } from 'typeorm';
 import { kstAt, writtenRows } from '../../lib/sql';
+import { ConsultingService } from '../consulting/consulting.service';
+import { assertWeeklyBundleSendable } from '../reports/weekly-bundle';
 import {
   CHANNEL_SPECS, SEND_CHANNELS, SEND_TIMEOUT_MS, SENDER, phoneDigits, scrubContact,
-  type SendChannel, type Sender, type SendResult,
+  type SendAttachment, type SendChannel, type Sender, type SendResult,
 } from '../notify/sender';
 import type {
   GuardianChannelsDto, GuardianCreateDto, GuardianDto, GuardianListDto, GuardianPatchDto,
@@ -119,6 +121,8 @@ export class GuardiansService {
   constructor(
     private readonly ds: DataSource,
     @Inject(SENDER) private readonly sender: Sender,
+    /** 「계약서 전달하기」(N-77) — 첨부 판정 · 전달 기록은 컨설팅 서비스가 한다 */
+    private readonly consulting: ConsultingService,
   ) {}
 
   /** 지금 보낼 수 있는 채널 — 설정이 없으면 까닭과 함께 잠긴다 */
@@ -214,8 +218,13 @@ export class GuardiansService {
   /**
    * 선택 발송 — 고른 보호자 × 고른 채널마다 SENDER 를 한 번 부르고 원장에 한 줄을 남긴다.
    * 서버가 다시 본다: 그 학생의 보호자인가 · 사용 중인가 · 그 채널을 받는가 · PNOTI 가 그 학생의 학부모 줄인가.
+   *
+   * §30 ③ 「계약서 전달하기」(N-77 · `consFileIds`) — 컨설팅 계약서를 **메일에만** 붙인다(문자는 알림 한 줄 · 링크 없음).
+   * 첨부 판정(그 컨설팅의 계약서 · 공개 범위 · 학생 · 개수 · 크기)은 보내기 **전에** `ConsultingService.deliveryAttachments` 가,
+   * 전달 기록은 메일이 **실제로 나간 것이 있을 때만** `markContractSent` 가 같은 트랜잭션에서 한다.
+   * @param canHide 비공개 컨설팅 열람(§76) — 계약서 첨부의 공개 범위 판정 재료
    */
-  async send(dto: GuardianSendDto, actorId: number): Promise<GuardianSendResultDto> {
+  async send(dto: GuardianSendDto, actorId: number, canHide = false): Promise<GuardianSendResultDto> {
     return this.tx(async (q) => {
       // 같은 키의 동시 요청을 줄 세운다 — 둘째는 첫째가 남긴 원장을 돌려받는다
       await q.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [dto.requestKey]);
@@ -231,6 +240,22 @@ export class GuardiansService {
       const student = await this.student(q, dto.studentId);
       const pnotiId = dto.pnotiId ?? null;
       if (pnotiId !== null) await this.assertParentNotice(q, pnotiId, dto.studentId);
+      // N-54 주간 묶음(W11 · R2) — 그 학생의 묶음 · 보낼 수 있음 · 본문이 서버가 모은 글과 같음을 같은 트랜잭션에서 본다
+      const wrepId = dto.wrepId ?? null;
+      if (wrepId !== null) {
+        if (pnotiId !== null) {
+          throw new BadRequestException({ code: 'GUARDIAN_SEND_ONE_SOURCE', message: '회차 안내와 주간 묶음은 한 번에 보내지 않습니다' });
+        }
+        await assertWeeklyBundleSendable(q, wrepId, dto.studentId, dto.body);
+      }
+      // §30 ③ 계약서 전달 (N-77) — 첨부는 메일에만 붙는다. 판정은 보내기 전에 끝낸다
+      let contract: { consId: number; attachments: SendAttachment[] } | null = null;
+      if (dto.consFileIds?.length) {
+        if (!dto.channels.includes('email')) {
+          throw new BadRequestException({ code: 'CONS_DELIVERY_EMAIL_REQUIRED', message: '계약서는 메일에만 붙습니다 — 메일을 골라 주세요' });
+        }
+        contract = await this.consulting.deliveryAttachments(q.manager, actorId, canHide, dto.studentId, dto.consFileIds);
+      }
 
       const rows = await q.query(
         `SELECT ${GUARDIAN_COLS} FROM guardian WHERE id = ANY($1::bigint[]) AND student_id = $2 FOR SHARE`,
@@ -274,7 +299,9 @@ export class GuardiansService {
       const results: SendResult[] = [];
       for (let i = 0; i < pairs.length; i += SEND_CONCURRENCY) {
         const batch = pairs.slice(i, i + SEND_CONCURRENCY);
-        results.push(...await Promise.all(batch.map((p) => this.deliver(p.channel, p.to, subject, dto.body))));
+        results.push(...await Promise.all(batch.map((p) => this.deliver(
+          p.channel, p.to, subject, dto.body, p.channel === 'email' ? contract?.attachments : undefined,
+        ))));
       }
       for (const [i, { g, channel, to }] of pairs.entries()) {
         const res = results[i];
@@ -288,6 +315,10 @@ export class GuardiansService {
         );
       }
 
+      // N-54 — 어느 주간 묶음에서 나갔는지 원장 줄에 잇는다(회차 안내 줄과 동시에 잇지 않는다 · guardian_send_one_source)
+      if (wrepId !== null) {
+        await q.query(`UPDATE guardian_send SET wrep_id = $1 WHERE request_key = $2`, [wrepId, dto.requestKey]);
+      }
       const saved = await this.ledger(q, dto.requestKey);
       const firstSent = saved.find((r) => r.status === 'sent');
       // 실제로 나간 것이 있을 때만 안내 줄을 「보냄」으로 — 설정 없음·실패만 있으면 그대로 「보낼 것」이다
@@ -297,16 +328,21 @@ export class GuardiansService {
           [pnotiId, firstSent.channel],
         );
       }
+      // 계약서 — 첨부를 실은 메일이 실제로 나간 것이 있을 때만 「전달」로 (보낸 척하지 않는다 · N-77)
+      if (contract && saved.some((r) => r.channel === 'email' && r.status === 'sent')) {
+        await this.consulting.markContractSent(q.manager, contract.consId, actorId);
+      }
       await this.log(q, actorId, 'GUARDIAN_SEND', Number(saved[0].id), 'send', null, {
         requestKey: dto.requestKey, studentId: dto.studentId, pnotiId,
         guardianIds: dto.guardianIds, channels, counts: counts(saved, skipped.length),
+        ...(contract ? { consId: contract.consId, consFileIds: dto.consFileIds } : {}),
       });
       return this.result(q, dto.requestKey, dto.studentId, pnotiId, saved, skipped, false);
     });
   }
 
   /** 설정이 없으면 부르지도 않는다. 발송기가 던져도 원장에는 「실패」로 남긴다 — 한 사람 실패로 나머지를 멈추지 않는다 */
-  private async deliver(channel: SendChannel, to: string, subject: string, body: string): Promise<SendResult> {
+  private async deliver(channel: SendChannel, to: string, subject: string, body: string, attachments?: SendAttachment[]): Promise<SendResult> {
     if (!this.sender.ready(channel)) {
       return { configured: false, ok: false, providerId: null, error: CHANNEL_SPECS[channel].notReadyReason };
     }
@@ -315,7 +351,7 @@ export class GuardiansService {
       timer = setTimeout(() => resolve({ configured: true, ok: false, providerId: null, error: DELIVER_TIMEOUT_ERROR }), DELIVER_CAP_MS);
     });
     try {
-      return await Promise.race([this.sender.send({ channel, to, subject, body }), cap]);
+      return await Promise.race([this.sender.send({ channel, to, subject, body, ...(attachments?.length ? { attachments } : {}) }), cap]);
     } catch (e) {
       return { configured: true, ok: false, providerId: null, error: e instanceof Error ? e.message : String(e) };
     } finally {

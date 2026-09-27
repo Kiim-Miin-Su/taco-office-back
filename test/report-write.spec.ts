@@ -122,7 +122,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     );
 
     const login = async (email: string) => {
-      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PW }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
     };
     teacherToken = await login(TEACHER_EMAIL);

@@ -326,3 +326,83 @@ export class ReportSendRefDto {
   @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   sendId!: number;
 }
+
+/* ══ N-54 주간 묶음 (W11 · R2) ═══════════════════════════════════════════════
+ * 그 주(월~일 · KST)의 학생별 묶음 — 본문은 그 주 이미 쓴 리포트를 **읽을 때** 모은다(저장하지 않는다).
+ * `wrep.body` 에는 매니저가 쓴 총평만 둔다. 보내기는 `POST /guardians/send` 에 `wrepId` 를 실어 DQ3 원장에 남긴다.
+ */
+
+export class WeeklyQueryDto {
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '그 주의 아무 날 — 서버가 그 주 월요일로 맞춘다. 없으면 KST 어제가 든 주' })
+  @ValidateIf((_object, value) => value !== undefined) @IsCalendarDate()
+  weekOf?: string;
+}
+
+export class WeeklySummaryWriteDto {
+  @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  studentId!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '그 주의 아무 날 — 서버가 월요일로 맞춘다' }) @IsCalendarDate()
+  weekOf!: string;
+
+  @ApiProperty({ minLength: 1, maxLength: 2000, description: '매니저가 쓴 총평 — 학부모에게 그대로 나간다. 앞뒤 공백은 서버가 걷는다' })
+  @IsString() @MaxLength(2000)
+  summary!: string;
+}
+
+export class WeeklyLessonDto {
+  @ApiProperty(ID_SCHEMA) repId!: number;
+  @ApiProperty(ID_SCHEMA) serId!: number;
+  @ApiProperty({ ...DATE_SCHEMA, description: 'REP 원래 날짜 키 — 상세 · 쓰기 경로에 그대로 쓴다' }) onDate!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '실제 KST 수업일' }) date!: string;
+  @ApiProperty({ type: 'integer', nullable: true, minimum: 0, maximum: 1439 }) startMin!: number | null;
+  @ApiProperty({ type: 'integer', nullable: true, minimum: 1, maximum: 1440 }) endMin!: number | null;
+  @ApiProperty() subjectName!: string;
+  @ApiProperty({ type: String, nullable: true }) teacherName!: string | null;
+  @ApiProperty({ enum: Object.keys(REP_STATE_FROM_DB) }) state!: RepStateDb;
+  @ApiProperty({ description: '상태 낱말(서버) — 「승인 대기」 · 「리포트 미작성」 …' }) stateLabel!: string;
+  @ApiProperty() written!: boolean;
+  @ApiProperty() approved!: boolean;
+  @ApiProperty({ type: ReportBodyDto, nullable: true, description: '쓴 리포트의 세 칸 — 안 썼으면 null' })
+  body!: ReportBodyDto | null;
+}
+
+export class WeeklySummaryDto {
+  @ApiProperty({ description: '매니저가 쓴 총평' }) text!: string;
+  @ApiProperty({ type: Number, nullable: true }) byId!: number | null;
+  @ApiProperty({ type: String, nullable: true }) byName!: string | null;
+  @ApiProperty({ description: '쓴 시각 ISO' }) at!: string;
+}
+
+export class WeeklyBundleDto {
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ type: String, nullable: true }) grade!: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: '총평을 쓴 뒤의 묶음 id(`wrep`) — 보호자 발송이 이 id 를 싣는다' })
+  wrepId!: number | null;
+  @ApiProperty({ type: WeeklySummaryDto, nullable: true }) summary!: WeeklySummaryDto | null;
+  @ApiProperty({ description: '예전 방식으로 저장된 기록(N-25 · 고치지 않는다) — 쓰기 · 보내기가 막힌다' }) legacy!: boolean;
+  @ApiProperty({ type: [WeeklyLessonDto], description: '그 주 리포트 — 수업 차례' }) lessons!: WeeklyLessonDto[];
+  @ApiProperty({ type: 'integer' }) lessonCount!: number;
+  @ApiProperty({ type: 'integer' }) approvedCount!: number;
+  @ApiProperty() canWriteSummary!: boolean;
+  @ApiProperty({ type: String, nullable: true }) summaryBlockedReason!: string | null;
+  @ApiProperty({ description: '보호자에게 보낼 수 있는가 — 전부 승인 · 총평 있음 · 본문 2,000자 안' }) canSend!: boolean;
+  @ApiProperty({ type: String, nullable: true }) sendBlockedReason!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '보낼 본문 — 보낼 수 있을 때만. 창은 이 글을 그대로 보낸다' })
+  plainText!: string | null;
+  @ApiProperty({ description: '메일 제목 기본값 — 창에서 고칠 수 있다' }) subject!: string;
+  @ApiProperty({ type: String, nullable: true, description: '처음 실제로 나간 시각(guardian_send status=sent) — 없으면 null' })
+  sentAt!: string | null;
+  @ApiProperty({ type: 'integer', description: '보호자 × 채널 시도 수(원장 줄 수)' }) attemptCount!: number;
+  @ApiProperty({ type: String, nullable: true }) lastAttemptAt!: string | null;
+}
+
+export class WeeklyBundleListDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '그 주 월요일' }) weekOf!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '그 주 일요일' }) weekTo!: string;
+  @ApiProperty({ description: '주 이름 — 「09-21 ~ 09-27」(보낸 내역 주별 묶음과 같은 모양)' }) label!: string;
+  @ApiProperty({ type: 'integer', description: '묶음 수(그 주 리포트가 있는 학생)' }) total!: number;
+  @ApiProperty({ type: 'integer', description: '아직 보호자에게 나가지 않은 묶음 수 — 탭 배지' }) remaining!: number;
+  @ApiProperty({ type: [WeeklyBundleDto] }) bundles!: WeeklyBundleDto[];
+}

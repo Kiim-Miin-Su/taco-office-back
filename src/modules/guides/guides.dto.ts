@@ -38,6 +38,28 @@ export class GuideAutoFillDto {
   @ApiProperty({ type: [GuideFactDto], description: '일곱 칸 — 순서는 서버가 정한다' }) facts!: GuideFactDto[];
 }
 
+/** §43 사다리 한 칸 — 「하루 · 6시간 · 3시간」. 지난 칸은 화면이 ✕ 로 그린다 (N-89) */
+export class GuideLadderStepDto {
+  @ApiProperty({ enum: ['day', 'h6', 'h3'] }) key!: string;
+  @ApiProperty({ description: '칸 이름 — 원문 머리 「하루 · 6시간 · 3시간」의 낱말' }) label!: string;
+  @ApiProperty({ description: '그 칸의 시각이 이미 지났는가(남은 시간 ≤ 칸의 시간)' }) passed!: boolean;
+}
+
+/**
+ * §43 안내 기한 (N-89 채택 · W11) — 기준은 그 안내가 걸린 **첫 수업 시작 시각**(회차가 없으면 기한 날 00:00 KST).
+ * 남은 시간 문장 · 사다리 칸 · 긴급도를 서버가 만든다(D-R37) — 화면은 날짜·시각을 빼지 않는다.
+ */
+export class GuideDeadlineDto {
+  @ApiProperty({ description: '기준 시각 ISO(+09:00) — 수업 시작, 회차가 없으면 기한 날 00:00' }) startAt!: string;
+  @ApiProperty({ enum: ['lesson', 'due'], description: 'lesson = 회차 시작 · due = 회차가 없어 기한 날 00:00' }) basis!: string;
+  @ApiProperty({ type: 'integer', description: '남은 분 — 지났으면 음수' }) minutesLeft!: number;
+  @ApiProperty({ description: '「5시간 남음」 · 「40분 남음」 · 「3일 지남」' }) leftLabel!: string;
+  @ApiProperty({ type: [GuideLadderStepDto], description: '하루 · 6시간 · 3시간 — 차례는 서버가 정한다' }) ladder!: GuideLadderStepDto[];
+  @ApiProperty({ enum: ['overdue', 'today', 'none'], description: 'overdue = 6시간 칸이 지남(마감 지남) · today = 하루 칸만 지남' })
+  urgency!: string;
+  @ApiProperty({ ...S, description: '「마감 지남」 · 「오늘 안에」 — 여유가 있으면 null' }) urgencyLabel!: string | null;
+}
+
 export class GuideDto {
   @ApiProperty() id!: number;
   @ApiPropertyOptional(N) serId?: number | null;
@@ -89,6 +111,12 @@ export class GuideDto {
   @ApiPropertyOptional(S) acknowledgedByName?: string | null;
   @ApiPropertyOptional({ ...S, description: 'HIST guide_ack의 최초 시각. 없으면 null' }) acknowledgedAt?: string | null;
   @ApiProperty({ description: '기한이 지난 날 수. 0이면 안 지남' }) overdueDays!: number;
+  /* 필수 nullable — 서버는 언제나 싣는다(mapGuide 한 곳). 보낸 안내·기준이 없는 안내는 null */
+  @ApiProperty({
+    type: GuideDeadlineDto, nullable: true,
+    description: '아직 안 보낸 안내의 기한(N-89) — 첫 수업 시작(없으면 기한 날 00:00)까지 남은 시간 · 사다리 · 긴급도. 보냈으면 null',
+  })
+  deadline!: GuideDeadlineDto | null;
   @ApiProperty({ description: '같은 규칙·같은 날·같은 사유의 다른 학생 안내 수 — 0이면 그룹이 아니다 (F-61)' })
   siblingCount!: number;
   @ApiPropertyOptional({
@@ -208,12 +236,9 @@ export class GuidesDto {
   stats!: GuideStatsDto;
   @ApiProperty({ type: GuideDeliveryCapabilitiesDto })
   deliveryCapabilities!: GuideDeliveryCapabilitiesDto;
-  /*
-   * 선택 칸 — 서버는 언제나 싣는다(all() 한 곳). 범위 밖 화면 시험 표본(components/guardians)이 이 칸 없이 GuidesDto 를
-   * 만들고 있어 그 표본이 고쳐질 때까지 선택으로 둔다(넘김 · wave 6). 없으면 화면은 단추를 세우지 않는다.
-   */
-  @ApiPropertyOptional({ type: ZoomNoticeBatchInfoDto, description: '§43 매번 머리 「강사 N명 한 번에」 — N·회차 수·막힌 이유 (wave 6)' })
-  zoomBatch?: ZoomNoticeBatchInfoDto;
+  /* 필수(W11 7-3 ②) — 서버는 언제나 싣는다(all() 한 곳). wave 6 이 남긴 「시험 표본을 채운 뒤 필수로」를 닫았다 */
+  @ApiProperty({ type: ZoomNoticeBatchInfoDto, description: '§43 매번 머리 「강사 N명 한 번에」 — N·회차 수·막힌 이유 (wave 6)' })
+  zoomBatch!: ZoomNoticeBatchInfoDto;
 }
 
 export class GuideBookDto {
@@ -225,6 +250,8 @@ export class GuideBookDto {
   @ApiPropertyOptional(S) edition?: string | null;
   @ApiPropertyOptional(S) seTe?: string | null;
   @ApiPropertyOptional(S) subKey?: string | null;
+  @ApiPropertyOptional({ ...S, description: '교재 레벨 — 코드표 레벨(N-47) 낱말이 있으면 그것, 아직이면 옛 원문(lib.level) · §44 교재 줄의 레벨 사각(W11 A 후속)' })
+  level?: string | null;
 }
 
 export class GuideDiagnosticDto {
@@ -287,18 +314,48 @@ export class GuideMissingDto {
   startMin?: number | null;
   @ApiPropertyOptional({ ...S, description: '강의실 이름 — 그 회차의 강의실, 없으면 규칙의 강의실. 온라인·미정이면 null' }) roomName?: string | null;
   @ApiProperty({ enum: ['new', 'teacher_change'] }) reason!: string;
-  @ApiProperty({ description: '그 수업 날(기한)이 며칠 지났는가 — 오늘이거나 앞날이면 0. §43 「마감 지남」 칩의 근거' })
+  @ApiProperty({ description: '그 수업 날(기한)이 며칠 지났는가 — 오늘이거나 앞날이면 0' })
   overdueDays!: number;
+  @ApiProperty({
+    type: GuideDeadlineDto, nullable: true,
+    description: '§43 「안내 없음」 줄의 기한(N-89) — 그 회차 시작까지 남은 시간 · 사다리 · 긴급도(「마감 지남」 칩의 근거)',
+  })
+  deadline!: GuideDeadlineDto | null;
+}
+
+/**
+ * §45 이력 한 줄 = 사건 하나 (N-90 채택 · W11) — 안내 작성 · 발송 · 강사 확인. 원장은 `hist`(entity='guide')다.
+ * 칩은 사건 뒤 상태(`stateAfter`) — 원문 §45 줄의 「발송 대기」(작성 뒤) · 「발송 완료」(발송 뒤).
+ */
+export class GuideHistoryEventDto {
+  @ApiProperty({ description: '사건 id(hist.id)' }) id!: number;
+  @ApiProperty({ enum: ['guide_write', 'guide_send', 'guide_ack'] }) action!: string;
+  @ApiProperty({ description: '사건 이름 — 원문 §40 칩 낱말(안내 작성 · 안내 발송 · 강사 확인)' }) label!: string;
+  @ApiProperty({ enum: ['ready', 'sent', 'read'], description: '그 사건 뒤의 안내 상태 — 줄의 상태 칩' }) stateAfter!: string;
+  @ApiProperty({ description: '사건 시각 ISO(+09:00)' }) at!: string;
+  @ApiProperty({ description: '사건 시각 KST HH:MM — 줄 오른쪽 끝' }) time!: string;
+  @ApiProperty({ ...N, description: '한 사람' }) byId!: number | null;
+  @ApiProperty({ ...S, description: '한 사람 이름' }) byName!: string | null;
+  @ApiProperty({ type: GuideDto, description: '그 사건의 안내(지금 상태)' }) guide!: GuideDto;
+}
+
+export class GuideHistoryTallyDto {
+  @ApiProperty({ enum: ['guide_write', 'guide_send', 'guide_ack'] }) action!: string;
+  @ApiProperty({ enum: ['ready', 'sent', 'read'] }) stateAfter!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty({ type: 'integer', minimum: 1 }) count!: number;
 }
 
 export class GuideHistoryDayDto {
-  @ApiProperty({ ...DATE_SCHEMA }) date!: string;
-  @ApiProperty({ type: [GuideDto] }) items!: GuideDto[];
+  @ApiProperty({ ...DATE_SCHEMA, description: '사건 시각의 KST 날짜' }) date!: string;
+  @ApiProperty({ type: [GuideHistoryEventDto], description: '그날 사건 — 늦은 것부터' }) events!: GuideHistoryEventDto[];
+  @ApiProperty({ type: [GuideHistoryTallyDto], description: '날짜 머리 칩 — 사건 종류별 수(0 은 싣지 않는다)' })
+  tally!: GuideHistoryTallyDto[];
 }
 
 export class GuideHistoryCountsDto {
-  @ApiProperty() created!: number;
-  @ApiProperty() sent!: number;
+  @ApiProperty({ description: '기간 안 「안내 작성」 사건 수 — 머리 「N건 만듦」' }) created!: number;
+  @ApiProperty({ description: '기간 안 「안내 발송」 사건 수 — 머리 「N건 보냄」' }) sent!: number;
   @ApiProperty() missing!: number;
 }
 

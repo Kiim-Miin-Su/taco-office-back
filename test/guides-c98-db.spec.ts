@@ -283,10 +283,32 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
     expect(all.perLesson.find((row) => row.serId === serId)).toMatchObject({ subName: 'SAT Reading', roomName: '3호', startMin: 600 });
     // §44 학생별
     expect((await svc().students()).items.find((x) => x.studentId === students[0])!.latestGuide).toMatchObject(expected);
-    // §45 이력 — 쓴 것과 안 한 것 둘 다
+    // §45 이력 — 사건(안내 작성)의 안내와 안 한 것 둘 다 (N-90 · 줄 하나 = 사건 하나)
     await q.query(`DELETE FROM guide WHERE student_id = $1`, [students[2]]);
+    await svc().writeBody(manager, await draftOf(students[0]), { body: '첫 수업 안내입니다' });
     const hist = await svc().history({ span: 'day', anchor: TODAY });
-    expect(hist.days.flatMap((x) => x.items).find((g) => g.studentId === students[0])).toMatchObject(expected);
+    expect(hist.days.flatMap((x) => x.events).find((e) => e.guide.studentId === students[0])?.guide).toMatchObject(expected);
     expect(hist.missing.find((x) => x.studentId === students[2])).toMatchObject(expected);
+  });
+
+  /* ── N-89 안내 기한 (W11 · R2) — 첫 수업 시작까지 · 사다리 · 긴급도는 서버 한 곳 ─────────────── */
+
+  it('N-89 안 보낸 안내와 「안내 없음」 줄이 같은 기한을 싣는다 — 수업 5시간 전이면 「마감 지남」, 보낸 안내는 기한이 없다', async () => {
+    // 오늘 10:00 회차 — 시계를 그날 05:00 KST 로 둔다(판정은 회차 시작 ser_occ.span 하한까지 · DB 시각은 건드리지 않는다)
+    await q.query(`DELETE FROM guide WHERE student_id = $1`, [students[2]]);
+    await q.query(`UPDATE guide SET state = 'sent' WHERE student_id = $1`, [students[1]]);
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.parse(`${TODAY}T05:00:00+09:00`));
+    let all: Awaited<ReturnType<GuidesService['all']>>;
+    try { all = await svc().all(); } finally { clock.mockRestore(); }
+    const pending = all.guides.find((g) => g.studentId === students[0])!;
+    expect(pending.deadline).toMatchObject({ basis: 'lesson', leftLabel: '5시간 남음', urgency: 'overdue', urgencyLabel: '마감 지남' });
+    expect(pending.deadline!.ladder.map((step) => [step.label, step.passed])).toEqual([['하루', true], ['6시간', true], ['3시간', false]]);
+    // 보낸 안내는 기한이 없다(할 일이 아니다)
+    expect(all.guides.find((g) => g.studentId === students[1])!.deadline).toBeNull();
+    // 「안내 없음」 줄도 같은 판정 — 원문 §43 첫 줄(마감 지남 · 5시간 남음)의 모양
+    const missing = all.missing.find((row) => row.studentId === students[2])!;
+    expect(missing.deadline).toMatchObject({ basis: 'lesson', leftLabel: '5시간 남음', urgency: 'overdue' });
+    // 머리 「마감 초과」 는 안 보낸 안내와 「안내 없음」 줄을 함께 센다(이 스위트의 둘 이상)
+    expect(all.stats.overdue).toBeGreaterThanOrEqual(2);
   });
 });

@@ -4,14 +4,16 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { kstDateOf, START_MIN, serStuOn } from '../../lib/sql';
+import { kstAt, kstDateOf, START_MIN, serStuOn } from '../../lib/sql';
 
 /**
  * 안내 한 줄의 **수업 이름표** — 과목 · 종류 · 강의실 (g4 「수업명 미정」 §43-3 · §44-1 · §45-1).
  *
  * 화면은 `SER.title` 만 받고 있었는데 정규 수업은 제목이 비어 있어(시드·등록 확정 모두) 모든 줄이
  * 「수업명 미정」이었고, 같은 학생의 두 수업이 구별되지 않았다. 과목(`sub.name`)과 종류(`kind.name`)·
- * 강의실을 함께 싣는다 — 강의실은 그 회차의 것(`ser_occ.room_id`)을 먼저, 없으면 규칙의 것.
+ * 강의실을 함께 싣는다 — 강의실은 **회차가 있으면 그 회차의 것**(`ser_occ.room_id` · 투영이 이미 예외를 반영),
+ * **회차가 없을 때만** 규칙의 것이다(안내 줄은 회차를 LEFT JOIN 한다 — 호라이즌 밖 · 투영 전).
+ * 회차의 강의실이 비어 있으면(그 회차만 온라인) 비어 있는 것이 답이다 — 전에는 `COALESCE` 라 규칙의 강의실이 붙었다(A′3).
  * `ser` 별칭만 받는다 — 회차는 언제나 `o` 다.
  */
 /**
@@ -23,9 +25,20 @@ import { kstDateOf, START_MIN, serStuOn } from '../../lib/sql';
 const GUIDE_KIND_LABEL: Readonly<Record<string, string>> = { new: '포괄 안내', teacher_change: '간이 안내' };
 export const guideKindLabel = (reason: string): string | null => GUIDE_KIND_LABEL[reason] ?? null;
 
+/**
+ * §45 이력의 사건 셋(N-90 채택 · W11) — `hist` 의 안내 사건과 **그 사건 뒤의 안내 상태**.
+ * 원문 §45 줄의 칩은 사건 뒤 상태 낱말이다(8/20 11:00 「발송 대기」 = 작성 · 8/19 16:40 「발송 완료」 = 발송).
+ * 차례는 원장 흐름(작성 → 발송 → 확인)이고 날짜 머리의 칩도 이 차례다.
+ */
+export const GUIDE_HISTORY_EVENTS = [
+  { action: 'guide_write', stateAfter: 'ready' },
+  { action: 'guide_send', stateAfter: 'sent' },
+  { action: 'guide_ack', stateAfter: 'read' },
+] as const;
+
 export const GUIDE_LESSON_JOINS = (ser: string): string => `LEFT JOIN sub sb ON sb.key=${ser}.sub_key
     LEFT JOIN kind k ON k.key=${ser}.kind_key
-    LEFT JOIN room rm ON rm.id=COALESCE(o.room_id,${ser}.room_id)`;
+    LEFT JOIN room rm ON rm.id=CASE WHEN o.id IS NULL THEN ${ser}.room_id ELSE o.room_id END`;
 
 /**
  * D-R5 누락 이벤트의 단일 계산식.
@@ -42,6 +55,7 @@ export const GUIDE_EVENT_CTE = `WITH rostered AS (
          o.teacher_id, ss.student_id, st.name AS student_name,
          t.name AS teacher_name, s.title AS ser_title,
          sb.name AS sub_name, k.name AS kind_name, ${START_MIN} AS start_min, rm.name AS room_name,
+         ${kstAt('lower(o.span)')} AS start_at,
          row_number() OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY o.on_date,o.id) AS seq,
          lag(o.teacher_id) OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY o.on_date,o.id) AS previous_teacher_id
     FROM ser_occ o

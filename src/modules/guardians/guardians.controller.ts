@@ -16,7 +16,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto } from '../../common/http.dto';
-import { Perm, type RequestUser } from '../../common/perm';
+import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
 import {
   GuardianChannelsDto, GuardianCreateDto, GuardianDto, GuardianListDto, GuardianParamsDto, GuardianPatchDto,
   GuardianSendDto, GuardianSendResultDto,
@@ -73,11 +73,17 @@ export class GuardiansController {
       + 'PNOTI.sent_at 은 실제로 나간 줄이 하나라도 있을 때만 찍힌다. 같은 requestKey 는 앞선 결과를 돌려준다.',
   })
   @ApiOkResponse({ type: GuardianSendResultDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'code GUARDIAN_NOT_OF_STUDENT | GUARDIAN_INACTIVE | GUARDIAN_CHANNEL_MISMATCH | PNOTI_NOT_OF_STUDENT' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'code REQUEST_KEY_REUSED — 다른 학생에게 쓴 키' })
-  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'code STUDENT_NOT_FOUND' })
+  @ApiBadRequestResponse({
+    type: ApiErrorDto,
+    description: 'code GUARDIAN_NOT_OF_STUDENT | GUARDIAN_INACTIVE | GUARDIAN_CHANNEL_MISMATCH | PNOTI_NOT_OF_STUDENT'
+      + ' | 계약서 전달(consFileIds · N-77): CONS_DELIVERY_EMAIL_REQUIRED | CONS_DELIVERY_FILE_INVALID | CONS_DELIVERY_STUDENT_INVALID | CONS_DELIVERY_TOO_MANY | CONS_DELIVERY_TOO_LARGE',
+  })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code REQUEST_KEY_REUSED — 다른 학생에게 쓴 키 | 계약서 전달: CONS_DELIVERY_LOCKED · CONS_CONTRACT_FILE_REQUIRED · CONS_FEEDBACK_OPEN' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'code STUDENT_NOT_FOUND | 보이지 않는 컨설팅(계약서 전달)' })
   send(@CurrentUser() user: RequestUser, @Body() dto: GuardianSendDto): Promise<GuardianSendResultDto> {
-    return this.svc.send(dto, user.id);
+    // 계약서 첨부(N-77)는 비공개 컨설팅 판정(§76 canHide)을 탄다 — 역할 문자열을 보지 않는다 (D-R39)
+    const canHide = isRole(user.role) ? hasPerm(user.role, 'canHide', user.perms) : false;
+    return this.svc.send(dto, user.id, canHide);
   }
 
   @Patch('guardians/:id')

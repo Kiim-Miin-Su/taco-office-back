@@ -175,6 +175,17 @@ export class GuardianSendDto {
   @ValidateIf((_o, v) => v !== undefined && v !== null) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   pnotiId?: number | null;
 
+  /**
+   * N-54 주간 묶음(W11 · R2) — 그 주의 묶음(`wrep`)에서 보낼 때. 서버가 다시 본다: 그 학생의 묶음인가 · 그 주 리포트가 전부 승인됐는가 ·
+   * 총평이 있는가 · **본문이 서버가 모은 주간 본문과 같은가**(사람이 쓴 리포트 · 총평을 창에서 바꿔 보내지 않는다). 회차 안내(`pnotiId`)와 함께 오면 400.
+   */
+  @ApiPropertyOptional({
+    ...ID_SCHEMA, nullable: true,
+    description: '주간 묶음(N-54)에서 보낼 때 그 묶음 id — 본문은 GET /reports/weekly 의 plainText 그대로여야 한다. pnotiId 와 함께 쓰지 않는다',
+  })
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  wrepId?: number | null;
+
   @ApiProperty({ type: [Number], minItems: 1, maxItems: 20, description: '받을 보호자 — 서버가 그 학생의 사용 중 보호자인지 다시 본다' })
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
   guardianIds!: number[];
@@ -194,6 +205,19 @@ export class GuardianSendDto {
   @ApiProperty({ format: 'uuid', description: '재시도·더블클릭 중복 방지 키 — 같은 키는 앞선 결과를 그대로 돌려준다' })
   @IsUUID()
   requestKey!: string;
+
+  /**
+   * §30 ③ 「계약서 전달하기」(N-77) — 그 컨설팅의 계약서(초안 · 수정본)를 **메일에** 붙인다. 문자에는 붙지 않는다(알림 한 줄).
+   * 서버가 다시 본다: 한 컨설팅의 계약서인가 · 그 계약을 열 수 있는가(공개 범위) · 받는 학생이 그 컨설팅의 학생인가 · 개수 · 크기.
+   * 메일이 **실제로 나간 것이 있을 때만** 그 계약이 「전달」 단계로 넘어간다.
+   */
+  @ApiPropertyOptional({
+    type: [Number], items: ID_SCHEMA, maxItems: 5, uniqueItems: true,
+    description: '계약서 전달 — 메일에 붙일 컨설팅 계약서 파일 id(최대 5개 · 합쳐 10MB). 이 칸이 있으면 메일 채널이 있어야 한다',
+  })
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(5) @ArrayUnique()
+  @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  consFileIds?: number[];
 }
 
 export class GuardianSendItemDto {

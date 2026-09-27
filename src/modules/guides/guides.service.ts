@@ -9,18 +9,24 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { canAdminPage, hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { histSql } from '../../lib/history';
+import { histLabel, histSql } from '../../lib/history';
 import { NOTI_TITLE } from '../../lib/noti';
+import { audit } from '../../lib/audit';
+import { bookLevelShown } from '../../lib/book';
 import { SENDER, type Sender } from '../notify/sender';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
-  GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDayDto, GuideHistoryDto,
+  GuideHistoryEventDto, GuideHistoryQueryDto,
   GuideHistorySpan, GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
   PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeBatchInfoDto, ZoomNoticeBatchResultDto, ZoomNoticeBatchRowDto,
   ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { guideAutoFill, guideAutoFills } from '../../lib/guide-body';
-import { GUIDE_EVENT_CTE, GUIDE_LESSON_JOINS, guideCoversEvent, guideKindLabel } from './guide-events';
+import {
+  GUIDE_EVENT_CTE, GUIDE_HISTORY_EVENTS, GUIDE_LESSON_JOINS, guideCoversEvent, guideKindLabel,
+} from './guide-events';
+import { guideDeadline } from './guide-deadline';
 import { latestLeadDiagForStudent } from '../ops/lead-diag.service';
 
 /**
@@ -30,7 +36,7 @@ import { latestLeadDiagForStudent } from '../ops/lead-diag.service';
  */
 const TODO_MISSING_BACK_DAYS = 30;
 const TODO_MISSING_AHEAD_DAYS = 7;
-import { END_MIN, kstAt, kstDateOf, START_MIN, serStuOn, writtenRows } from '../../lib/sql';
+import { END_MIN, effectiveModeOf, hhmmOf, kstAt, kstDateOf, START_MIN, serStuOn, writtenRows } from '../../lib/sql';
 import { addDays, isIsoDate, overdueDays as overdue, todayKst } from '../../lib/kst';
 
 type R = Record<string, unknown>;
@@ -83,6 +89,7 @@ export class GuidesService {
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
               o.id AS source_occurrence_id,
+              ${kstAt('lower(o.span)')} AS start_at,
               ${kstAt('g.created_at')} AS created_at,
               (SELECT h.by_id FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_send' ORDER BY h.at,h.id LIMIT 1) AS sent_by,
               (SELECT st.name FROM hist h LEFT JOIN staff st ON st.id=h.by_id WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_send' ORDER BY h.at,h.id LIMIT 1) AS sent_by_name,
@@ -146,10 +153,12 @@ export class GuidesService {
                 WHERE pt.ser_id=o.ser_id AND pt.on_date=o.on_date AND pt.audience='teacher'
                 ORDER BY pt.id DESC LIMIT 1) AS teacher_sent_at
          FROM ser_occ o
-         JOIN ser r ON r.id=o.ser_id AND r.mode='online'::class_mode_t
+         JOIN ser r ON r.id=o.ser_id
          JOIN kind k ON k.key=r.kind_key
          LEFT JOIN sub sb ON sb.key=r.sub_key
-         LEFT JOIN room rm ON rm.id=COALESCE(o.room_id,r.room_id)
+         -- 회차의 강의실 — 투영(o.room_id)이 이미 예외를 반영한다. 규칙의 강의실로 떨어지면
+         -- 그 회차만 온라인으로 바꾼 수업(강의실 NULL)에 규칙의 강의실 이름이 붙는다 (A′2 · 현황판과 같은 조인)
+         LEFT JOIN room rm ON rm.id=o.room_id
          JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
          JOIN stu st ON st.id=ss.student_id
          LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
@@ -164,6 +173,8 @@ export class GuidesService {
             LIMIT 1
          ) p ON true
         WHERE NOT o.canceled
+          -- 회차의 실제 방식 — 그 회차만 온라인/현장으로 바꾼 예외(exc.mode)가 이긴다 (N-56 · lib/sql 한 조각)
+          AND ${effectiveModeOf('x', 'r')} = 'online'
           AND ${where}
           AND NOT EXISTS (
             SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id
@@ -303,6 +314,8 @@ export class GuidesService {
       acknowledgedByName: (r.acknowledged_by_name as string) ?? null,
       acknowledgedAt: (r.acknowledged_at as string) ?? null,
       overdueDays: pending ? overdue(r.due_on as string) : 0,
+      // N-89 — 아직 안 보낸 안내만 기한이 있다. 첫 수업 시작(없으면 기한 날 00:00)까지 · 사다리 · 긴급도는 guide-deadline 한 곳
+      deadline: pending ? guideDeadline((r.start_at as string) ?? null, (r.due_on as string) ?? null) : null,
       // 「나머지 학생에게 복사」가 서는지도 서버가 센다 (F-61 · D-R37) — 화면이 목록을 다시 훑지 않는다
       siblingCount: Number(r.sibling_count ?? 0),
     };
@@ -329,7 +342,9 @@ export class GuidesService {
     }
     const stats = {
       monitoring: new Set(guides.map((guide) => guide.studentId)).size,
-      overdue: guides.filter((guide) => guide.pending && guide.overdueDays > 0).length,
+      // 「마감 초과」 — 6시간 칸을 지난 줄(N-89). 원문 §43 머리의 이 수는 「안내 없음」 줄도 센다(마감 지남 1줄 = 1)
+      overdue: guides.filter((guide) => guide.deadline?.urgency === 'overdue').length
+        + missing.filter((row) => row.deadline?.urgency === 'overdue').length,
       drafting: guides.filter((guide) => guide.state === 'draft').length,
       sendPending: guides.filter((guide) => guide.state === 'ready').length,
       teacherUnconfirmed: guides.filter((guide) => guide.state === 'sent').length,
@@ -394,7 +409,7 @@ export class GuidesService {
                   AND sg.id<>g.id) AS sibling_count,
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
-              o.id AS source_occurrence_id,${kstAt('g.created_at')} AS created_at,
+              o.id AS source_occurrence_id,${kstAt('lower(o.span)')} AS start_at,${kstAt('g.created_at')} AS created_at,
               (SELECT h.by_id FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_send' ORDER BY h.at,h.id LIMIT 1) AS sent_by,
               (SELECT sx.name FROM hist h LEFT JOIN staff sx ON sx.id=h.by_id WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_send' ORDER BY h.at,h.id LIMIT 1) AS sent_by_name,
               (SELECT ${kstAt('min(h.at)')} FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_send') AS sent_at,
@@ -415,7 +430,7 @@ export class GuidesService {
     const ids = latest.map((row) => Number(row.student_id));
     if (ids.length === 0) return { items: [] };
     const books = await this.q(
-      `SELECT i.id AS issue_id,i.student_id,i.lib_id,i.vers_id,l.code,l.title,l.se_te,l.sub_key,v.edition
+      `SELECT i.id AS issue_id,i.student_id,i.lib_id,i.vers_id,l.code,l.title,l.se_te,l.sub_key,l.level,l.book_level,v.edition
          FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
         WHERE i.student_id=ANY($1::bigint[]) AND i.state <> 'returned'
         ORDER BY i.student_id,l.title,i.id`, [ids],
@@ -434,6 +449,8 @@ export class GuidesService {
           issueId: Number(book.issue_id), libId: Number(book.lib_id),
           versId: book.vers_id === null ? null : Number(book.vers_id), code: String(book.code), title: String(book.title),
           edition: (book.edition as string) ?? null, seTe: (book.se_te as string) ?? null, subKey: (book.sub_key as string) ?? null,
+          // §44 교재 줄의 레벨 사각(원문 「P Between the Lines …」) — 서가와 같은 낱말 · 같은 함수(N-47 · W11 A 후속)
+          level: bookLevelShown(book.book_level as string | null, book.level as string | null),
         })),
         diagnostic: (() => {
           const diag = diagnostics.find((item) => Number(item.student_id) === Number(row.student_id));
@@ -485,7 +502,7 @@ export class GuidesService {
       `${GUIDE_EVENT_CTE}
        SELECT e.source_occurrence_id,e.event_on,e.ser_id,e.student_id,e.student_name,
               e.teacher_id,e.teacher_name,e.ser_title,e.reason,
-              e.sub_name,e.kind_name,e.start_min,e.room_name
+              e.sub_name,e.kind_name,e.start_min,e.room_name,e.start_at
          FROM events e
         WHERE e.reason IS NOT NULL
           AND ($1::date IS NULL OR e.event_on::date >= $1::date)
@@ -505,38 +522,74 @@ export class GuidesService {
       teacherName: (row.teacher_name as string) ?? null, serTitle: (row.ser_title as string) ?? null,
       ...GuidesService.lessonTag(row),
       reason: String(row.reason),
-      // 안내 기한 = 그 수업 날 (createDraft 가 due_on 을 event_on 으로 둔다) — 「마감 지남」 칩의 근거
+      // 안내 기한 = 그 수업 날 (createDraft 가 due_on 을 event_on 으로 둔다)
       overdueDays: overdue(String(row.event_on)),
+      // N-89 — 「마감 지남」 · 「오늘 안에」 칩과 사다리는 이 값이다(그 회차 시작까지)
+      deadline: guideDeadline((row.start_at as string) ?? null, String(row.event_on)),
     }));
   }
 
-  /** §45 날짜 이력과 같은 기간의 '필요하지만 없는' D-R5 이벤트. */
+  /**
+   * §45 이력 — N-90 채택(W11): **줄 하나 = 사건 하나**(안내 작성 · 발송 · 강사 확인)이고 **그 사건 시각의 KST 날짜**로 묶는다.
+   * 사건 원장은 `hist`(entity='guide') 한 곳이다 — 안내의 수업 날·기한·만든 날로 묶던 옛 방식(COALESCE)은 한 안내의 세 사건을
+   * 한 날에 겹쳐 적어, 「언제 무엇을 했나」를 답하지 못했다(g4). 기간 · 안 한 것(누락)은 전과 같다.
+   * 머리 「N건 만듦 · N건 보냄」은 그 기간의 작성 · 발송 사건 수다 — 날짜 머리의 칩 합과 같은 수(D-R37).
+   */
   async history(query: GuideHistoryQueryDto, viewer?: RequestUser): Promise<GuideHistoryDto> {
     const span = query.span ?? 'month';
     const anchor = query.anchor ?? todayKst();
     const { from, to } = this.range(span, anchor);
-    const [guides, missing] = await Promise.all([
-      this.guideRows(
-        `WHERE COALESCE(${kstDateOf('lower(o.span)')},g.event_on,g.due_on,${kstDateOf('g.created_at')}) BETWEEN $1::date AND $2::date`,
-        [from, to], undefined, viewer,
+    const actions = GUIDE_HISTORY_EVENTS.map((event) => event.action);
+    const [events, missing] = await Promise.all([
+      this.q(
+        `SELECT h.id,h.ref_id AS guide_id,h.action,${kstAt('h.at')} AS at,${hhmmOf('h.at')} AS time,
+                to_char(${kstDateOf('h.at')},'YYYY-MM-DD') AS date,h.by_id,st.name AS by_name
+           FROM hist h
+           JOIN guide g ON g.id=h.ref_id
+           LEFT JOIN staff st ON st.id=h.by_id
+          WHERE h.entity='guide' AND h.action=ANY($3::text[])
+            AND ${kstDateOf('h.at')} BETWEEN $1::date AND $2::date
+          ORDER BY h.at DESC,h.id DESC`,
+        [from, to, actions],
       ),
       this.candidateRows(from, to, null, null, false),
     ]);
-    const grouped = new Map<string, GuideDto[]>();
-    for (const guide of guides) {
-      const date = guide.eventOn ?? guide.dueOn ?? guide.createdAt.slice(0, 10);
-      grouped.set(date, [...(grouped.get(date) ?? []), guide]);
+    const guideIds = [...new Set(events.map((event) => Number(event.guide_id)))];
+    const guides = guideIds.length
+      ? await this.guideRows(`WHERE g.id = ANY($1::bigint[])`, [guideIds], undefined, viewer)
+      : [];
+    const byId = new Map(guides.map((guide) => [guide.id, guide]));
+    const stateOf = new Map<string, string>(GUIDE_HISTORY_EVENTS.map((event) => [event.action, event.stateAfter]));
+    const grouped = new Map<string, GuideHistoryEventDto[]>();
+    for (const row of events) {
+      const guide = byId.get(Number(row.guide_id));
+      if (!guide) continue;
+      const action = String(row.action);
+      const item: GuideHistoryEventDto = {
+        id: Number(row.id), action, label: histLabel(action), stateAfter: stateOf.get(action)!,
+        at: String(row.at), time: String(row.time),
+        byId: row.by_id == null ? null : Number(row.by_id), byName: (row.by_name as string) ?? null,
+        guide,
+      };
+      const date = String(row.date);
+      grouped.set(date, [...(grouped.get(date) ?? []), item]);
     }
-    const days = [...grouped.entries()]
+    const days: GuideHistoryDayDto[] = [...grouped.entries()]
       .sort(([a], [b]) => b.localeCompare(a))
-      .map(([date, items]) => ({ date, items }));
+      .map(([date, dayEvents]) => ({
+        date,
+        events: dayEvents,
+        tally: GUIDE_HISTORY_EVENTS
+          .map((event) => ({
+            action: event.action, stateAfter: event.stateAfter, label: histLabel(event.action),
+            count: dayEvents.filter((item) => item.action === event.action).length,
+          }))
+          .filter((entry) => entry.count > 0),
+      }));
+    const countOf = (action: string) => events.filter((row) => String(row.action) === action && byId.has(Number(row.guide_id))).length;
     return {
       span, anchor, from, to, missing, days,
-      counts: {
-        created: guides.length,
-        sent: guides.filter((guide) => (GUIDE_DONE_DB as readonly string[]).includes(guide.state)).length,
-        missing: missing.length,
-      },
+      counts: { created: countOf('guide_write'), sent: countOf('guide_send'), missing: missing.length },
     };
   }
 
@@ -855,7 +908,7 @@ export class GuidesService {
       await m.query(`SELECT id FROM ser WHERE id=$1 FOR NO KEY UPDATE`, [dto.serId]);
       const [occ] = await m.query(
         `SELECT o.ser_id, o.on_date, o.canceled, o.teacher_id, o.zacc_id,
-                r.mode::text AS mode, r.title AS ser_title,
+                ${effectiveModeOf('x', 'r')} AS mode, r.title AS ser_title,
                 k.name AS kind_name, t.name AS teacher_name,
                 z.label AS zacc_label, z.join_url, z.meeting_id,
                 to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS drawn_date,
@@ -863,6 +916,8 @@ export class GuidesService {
            FROM ser_occ o
            JOIN ser r ON r.id=o.ser_id
            JOIN kind k ON k.key=r.kind_key
+           -- 회차의 실제 방식 — 그 회차만 바꾼 예외(exc.mode)가 이긴다 (N-56)
+           LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
            LEFT JOIN staff t ON t.id=o.teacher_id
            LEFT JOIN zacc z ON z.id=o.zacc_id
           WHERE o.ser_id=$1 AND o.on_date=$2::date`,
@@ -953,51 +1008,66 @@ export class GuidesService {
   /**
    * 틀을 하나 만든다. **이름이 겹치면 막는다** — 목록에서 이름으로 고르는데
    * 같은 이름이 둘이면 어느 것을 골랐는지 화면이 말할 수 없다.
+   * N-73(W11) — 만들기 · 고치기는 감사 원장(`guide.template`)에 **같은 트랜잭션으로** 한 줄. 409 로 막히면 줄도 없다.
    */
-  async createTemplate(dto: GuideTemplateWriteDto): Promise<GuideTemplateDto> {
+  async createTemplate(dto: GuideTemplateWriteDto, actorId: number): Promise<GuideTemplateDto> {
     const name = dto.name.trim();
-    const dup = await this.q(`SELECT id FROM gtpl WHERE name = $1`, [name]);
-    if (dup.length > 0) {
-      throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
-    }
-    let made: R;
-    try {
-      [made] = await this.q(
-        `INSERT INTO gtpl (name, body) VALUES ($1, $2) RETURNING id, name, body`, [name, dto.body],
-      );
-    } catch (error) {
-      if ((error as { code?: string }).code === '23505') {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const dup = await m.query(`SELECT id FROM gtpl WHERE name = $1`, [name]) as R[];
+      if (dup.length > 0) {
         throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
       }
-      throw error;
-    }
-    return { id: Number(made.id), name: String(made.name), body: String(made.body) };
+      let made: R;
+      try {
+        [made] = await m.query(
+          `INSERT INTO gtpl (name, body) VALUES ($1, $2) RETURNING id, name, body`, [name, dto.body],
+        ) as R[];
+      } catch (error) {
+        if ((error as { code?: string }).code === '23505') {
+          throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
+        }
+        throw error;
+      }
+      await audit(m, 'guide.template', {
+        actorId, entityId: Number(made.id), action: 'create', after: { name: String(made.name), body: String(made.body) },
+      });
+      return { id: Number(made.id), name: String(made.name), body: String(made.body) };
+    });
   }
 
   /**
    * 틀을 고친다. **이미 쓴 안내는 안 바뀐다** — 안내는 본문을 복사해 갖고 있다.
    * 보낸 말이 나중에 달라지면 안 되기 때문이고, 그래서 `guide` 에 `gtpl_id` 가 없다.
    */
-  async patchTemplate(id: number, dto: GuideTemplateWriteDto): Promise<GuideTemplateDto> {
+  async patchTemplate(id: number, dto: GuideTemplateWriteDto, actorId: number): Promise<GuideTemplateDto> {
     const name = dto.name.trim();
-    const dup = await this.q(`SELECT id FROM gtpl WHERE name = $1 AND id <> $2`, [name, id]);
-    if (dup.length > 0) {
-      throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
-    }
-    let rows: R[];
-    try {
-      rows = await this.q(
-        `UPDATE gtpl SET name = $2, body = $3 WHERE id = $1 RETURNING id, name, body`, [id, name, dto.body],
-      );
-    } catch (error) {
-      if ((error as { code?: string }).code === '23505') {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const dup = await m.query(`SELECT id FROM gtpl WHERE name = $1 AND id <> $2`, [name, id]) as R[];
+      if (dup.length > 0) {
         throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
       }
-      throw error;
-    }
-    const [row] = writtenRows<R>(rows);
-    if (!row) throw new NotFoundException('문구를 찾을 수 없습니다');
-    return { id: Number(row.id), name: String(row.name), body: String(row.body) };
+      const [before] = await m.query(`SELECT name, body FROM gtpl WHERE id = $1 FOR UPDATE`, [id]) as R[];
+      if (!before) throw new NotFoundException('문구를 찾을 수 없습니다');
+      let rows: R[];
+      try {
+        rows = await m.query(
+          `UPDATE gtpl SET name = $2, body = $3 WHERE id = $1 RETURNING id, name, body`, [id, name, dto.body],
+        ) as R[];
+      } catch (error) {
+        if ((error as { code?: string }).code === '23505') {
+          throw new ConflictException({ code: 'GTPL_DUPLICATE', message: `「${name}」는 이미 있는 문구입니다` });
+        }
+        throw error;
+      }
+      const [row] = writtenRows<R>(rows);
+      if (!row) throw new NotFoundException('문구를 찾을 수 없습니다');
+      await audit(m, 'guide.template', {
+        actorId, entityId: id, action: 'patch',
+        before: { name: String(before.name), body: String(before.body) },
+        after: { name: String(row.name), body: String(row.body) },
+      });
+      return { id: Number(row.id), name: String(row.name), body: String(row.body) };
+    });
   }
 
   /* ══ §43 「안내 작성」 (C51) ═══════════════════════════════════════════════ */

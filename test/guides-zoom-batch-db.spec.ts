@@ -85,7 +85,7 @@ d('§43-6 강사 N명 한 번에 — 줌 안내 일괄 발송 HTTP/DB (wave 6)',
     for (const [id, role, name] of [[ADMIN, 'admin', 'W6 관리자'], [A, 'teacher', 'W6 강사 가'], [B, 'teacher', 'W6 강사 나'], [C, 'teacher', 'W6 강사 다']] as const) {
       const email = `w6-zoom-batch-${id}@t.invalid`;
       await sql('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES ($1,$2,$3,$4,$5,true)', [id, name, email, role, hash]);
-      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password }).expect(201);
       tokens.set(id, res.body.accessToken as string);
     }
     for (const [index, id] of students.entries()) await sql('INSERT INTO stu(id,name,grade) VALUES ($1,$2,$3)', [id, `W6 학생 ${index + 1}`, 'G9']);

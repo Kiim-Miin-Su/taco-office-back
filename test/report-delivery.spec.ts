@@ -152,7 +152,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     )).toHaveLength(4);
 
     const login = async (email: string) => (
-      await request(app.getHttpServer()).post('/auth/login').send({ email, password: PW }).expect(201)
+      await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PW }).expect(201)
     ).body.accessToken as string;
     managerToken = await login(MANAGER_EMAIL);
     teacherToken = await login(TEACHER_EMAIL);
@@ -361,6 +361,9 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
         .send({ requestKey: '00000000-0000-4000-8000-000000000098' }).expect(201);
       expect(await q('SELECT on_date,body,rep_ids FROM rsend WHERE id=$1', [copy.body.item.id])).toEqual([snapshot]);
       expect(await q('SELECT file_url FROM pdflog WHERE ref_id=$1', [copy.body.item.id])).toEqual(files);
+      // 재발송 줄도 장마다 같은 리포트 칸을 옮겨 적는다(7-3 ①)
+      expect(await q('SELECT rep_id FROM pdflog WHERE ref_id=$1 ORDER BY id', [copy.body.item.id]))
+        .toEqual(await q('SELECT rep_id FROM pdflog WHERE ref_id=$1 ORDER BY id', [sendId]));
       expect(put).not.toHaveBeenCalled();
       expect(remove).not.toHaveBeenCalled();
     });
@@ -630,6 +633,11 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     expect(saved.body).toContain('③ 수업 내용');
     expect(await q(`SELECT 1 FROM pdflog WHERE kind='report_png' AND ref_id=$1`, [first.body.item.id]))
       .toHaveLength(2);
+    // 7-3 ① F3(W11 R2) — 장마다 제 리포트(rep_id). 업로드 차례 = 리포트 차례라 파일 이름이 그 리포트의 것이다
+    const perFile = await q<{ rep_id: string; file_url: string }>(
+      `SELECT rep_id::text AS rep_id, file_url FROM pdflog WHERE kind='report_png' AND ref_id=$1 ORDER BY id`, [first.body.item.id],
+    );
+    expect(perFile.map((row) => Number(row.rep_id))).toEqual([rep1, rep2]);
   });
 
   /**
