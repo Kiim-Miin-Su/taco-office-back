@@ -48,6 +48,10 @@ export class ReportStudentDto {
   @ApiProperty() name!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
   @ApiProperty({ description: 'REP_STU.deliver — 이 학생에게 전문을 전달할지' }) deliver!: boolean;
+  @ApiProperty({
+    description: 'C-40 회차 출석은 유지하면서 학생별 지각 사실만 표시. 본문·학부모 공개에는 자동 삽입하지 않는다',
+  })
+  late!: boolean;
 }
 
 export class ReportRowDto {

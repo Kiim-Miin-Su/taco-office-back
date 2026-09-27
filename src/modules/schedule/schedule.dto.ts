@@ -14,6 +14,14 @@ import {
   type AttendanceCancelReason, type AttendanceResult, type CancelTreat,
 } from '../../lib/rules';
 
+export class AttendanceLateStudentDto {
+  @ApiProperty({ description: '이 회차에서 지각으로 표시된 학생' }) studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ description: '마지막 지각 표시/정정자' }) confirmedBy!: number;
+  @ApiProperty() confirmedByName!: string;
+  @ApiProperty({ format: 'date-time' }) confirmedAt!: string;
+}
+
 export class AttendanceDto {
   @ApiProperty() id!: number;
   @ApiProperty({ enum: ATTENDANCE_RESULTS }) result!: AttendanceResult;
@@ -24,6 +32,11 @@ export class AttendanceDto {
   @ApiProperty({ format: 'date-time' }) confirmedAt!: string;
   @ApiProperty({ description: 'completed=true, canceled=false. 정산 소비자가 문자열을 다시 비교하지 않는다' })
   countsForPay!: boolean;
+  @ApiProperty({
+    type: [AttendanceLateStudentDto],
+    description: 'C-40 회차×학생 지각 현재값. 빈 배열도 completed 출석/정산 판정을 바꾸지 않는다',
+  })
+  lateStudents!: AttendanceLateStudentDto[];
 }
 
 export class OccStudentDto {
@@ -32,6 +45,8 @@ export class OccStudentDto {
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
   @ApiProperty({ description: '그날만 빠진 학생인가 (D-R21)' }) droppedOnce!: boolean;
   @ApiProperty({ description: '그날 휴원 중인가 — 명단에 남되 시간표·청구에서는 빠진다 (C92-c · C-36)' }) paused!: boolean;
+  @ApiProperty({ description: 'C-40 이 회차에서 학생이 지각으로 기록됐는가. 출석 계산은 ATT.completed 그대로다' })
+  late!: boolean;
 }
 
 /** 학생 카드의 휴원 기간 — 진행 중이거나 앞으로 잡힌 것 하나 (C92-c) */
@@ -282,6 +297,14 @@ export class AttendanceWriteDto {
   @IsOptional()
   @IsIn(ATTENDANCE_CANCEL_REASONS as unknown as string[])
   reason?: AttendanceCancelReason | null;
+
+  @ApiPropertyOptional({
+    type: 'array', items: ID_SCHEMA, uniqueItems: true,
+    description: 'C-40 지각 학생 현재 목록. completed에서만 사용. 생략하면 기존 목록 보존, []이면 모두 해제',
+  })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsArray() @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  lateStudentIds?: number[];
 }
 
 export class AttendanceMutationResultDto {

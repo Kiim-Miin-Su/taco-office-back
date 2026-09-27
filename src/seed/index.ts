@@ -65,7 +65,7 @@ export const SEEDED_TABLES = [
   // W11 M2 — 정산 근거 줄 · 가산 규칙 · 회계 비공개 스위치 · 인수인계 메모 (N-36 · N-93 · N-94) — 시드는 안 넣는다(규칙 · 스위치는 대표가 정한다)
   'payout_line', 'payout_bonus_rule', 'acct_privacy', 'note',
   // 기록만 쌓이는 표들 — 안 비우면 dev DB 에 옛 QA 흔적이 끝없이 남는다
-  'att', 'lead_stage_log', 'lead_touch', 'log', 'pdflog', 'rsend', 'zlog',
+  'att', 'att_late', 'lead_stage_log', 'lead_touch', 'log', 'pdflog', 'rsend', 'zlog',
   // DQ3 보호자 발송 원장 — 시드는 안 넣는다(보낸 적 없는 발송을 지어내지 않는다)
   'guardian_send',
   // W8 첫 설정 인증 코드 — 시드는 안 넣는다(보낸 적 없는 코드를 지어내지 않는다)

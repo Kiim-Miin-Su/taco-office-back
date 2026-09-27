@@ -745,15 +745,20 @@ export function canEditAttendance(
   return opts.canCrudAttendance ? 'manage' : 'readonly';
 }
 
-export type AttendanceWriteIssue = 'ATTENDANCE_REASON_REQUIRED' | 'ATTENDANCE_REASON_FORBIDDEN';
+export type AttendanceWriteIssue =
+  | 'ATTENDANCE_REASON_REQUIRED'
+  | 'ATTENDANCE_REASON_FORBIDDEN'
+  | 'ATTENDANCE_LATE_FORBIDDEN';
 
 /** DTO의 두 필드와 DB CHECK가 공유하는 상태 관계. */
 export function attendanceWriteIssue(input: {
   result: AttendanceResult;
   reason?: AttendanceCancelReason | null;
+  lateStudentIds?: readonly number[];
 }): AttendanceWriteIssue | null {
   if (input.result === 'canceled' && !input.reason) return 'ATTENDANCE_REASON_REQUIRED';
   if (input.result === 'completed' && input.reason) return 'ATTENDANCE_REASON_FORBIDDEN';
+  if (input.result === 'canceled' && (input.lateStudentIds?.length ?? 0) > 0) return 'ATTENDANCE_LATE_FORBIDDEN';
   return null;
 }
 

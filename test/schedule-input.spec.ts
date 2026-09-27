@@ -9,6 +9,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { DataSource } from 'typeorm';
 import {
+  AttendanceWriteDto,
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrenceMoveItemDto,
   OccurrencePasteDto, OccurrencePatchDto, OccurrenceRefDto, RosterPatchDto,
 } from '../src/modules/schedule/schedule.dto';
@@ -87,6 +88,16 @@ describe('스케줄 CRUD 입력 형식', () => {
     await expect(parse(OccurrencePatchDto, { ...patch, startMin: null, endMin: null, date: null }))
       .resolves.toMatchObject({ startMin: null, endMin: null, date: null });
   });
+  it('C-40 지각 학생은 생략·빈 배열 또는 중복 없는 양의 안전 정수 배열이다', async () => {
+    await expect(parse(AttendanceWriteDto, { result: 'completed' })).resolves
+      .toBeInstanceOf(AttendanceWriteDto);
+    await expect(parse(AttendanceWriteDto, { result: 'completed', lateStudentIds: [] })).resolves
+      .toMatchObject({ lateStudentIds: [] });
+    for (const lateStudentIds of [['1'], [1.5], [0], [-1], [null], [1, 1], null, '1']) {
+      await expect(parse(AttendanceWriteDto, { result: 'completed', lateStudentIds }))
+        .rejects.toMatchObject({ status: 400 });
+    }
+  });
   it('반복 종료일이 시작일보다 앞서면 transaction을 열기 전에 거절한다', async () => {
     const ds = { createQueryRunner: jest.fn() };
     const service = new ScheduleWriteService(ds as unknown as DataSource);
@@ -154,6 +165,17 @@ describe('스케줄 OpenAPI/실제 HTTP 경계 (권한/DB 검증은 별도)', ()
       teacherId: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
       studentIds: { type: 'array', uniqueItems: true, items: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } },
       startMin: { type: 'integer', minimum: 0, maximum: 1439 }, endMin: { type: 'integer', maximum: 1440 },
+    });
+    const attendanceWrite = schemas.AttendanceWriteDto;
+    if ('$ref' in attendanceWrite) throw Error('missing attendance write schema');
+    expect(attendanceWrite.properties?.lateStudentIds).toMatchObject({
+      type: 'array', uniqueItems: true,
+      items: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    });
+    const attendance = schemas.AttendanceDto;
+    if ('$ref' in attendance) throw Error('missing attendance schema');
+    expect(attendance.properties?.lateStudents).toMatchObject({
+      type: 'array', items: { $ref: '#/components/schemas/AttendanceLateStudentDto' },
     });
     expect(schemas.OccurrenceMoveItemDto).toMatchObject({ required: expect.arrayContaining(['source']) });
     expect(schemas.OccurrencePasteDto).toMatchObject({ properties: { sources: { minItems: 1, maxItems: 50 } } });

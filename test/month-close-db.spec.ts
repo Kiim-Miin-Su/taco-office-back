@@ -201,7 +201,8 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
     const prevDate = ser.inPrev[0]!;
     // 마감 전 — 지난달 회차 하나를 휴강해 두고, 출결도 하나 남긴다 (마감 뒤 되돌리기가 막히는지 본다)
     await api('delete', `/schedule/${ser.id}`).send({ scope: 'this', onDate: ser.inPrev[1] ?? prevDate, cancelKind: 'student_absent', cancelTreat: 'carry' }).expect(200);
-    await api('put', `/schedule/${ser.id}/${prevDate}/attendance`).send({ result: 'completed' }).expect(200);
+    await api('put', `/schedule/${ser.id}/${prevDate}/attendance`)
+      .send({ result: 'completed', lateStudentIds: [STU_A] }).expect(200);
     await close(PREV).expect(201);
 
     const expectClosed = async (res: request.Response, what: string) => {
@@ -227,7 +228,8 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
     await expectClosed(await api('delete', `/schedule/${ser.id}`).send({ scope: 'all', onDate: prevDate }), 'delete all');
     await expectClosed(await api('delete', `/schedule/${ser.id}`).send({ scope: 'future', onDate: ser.inPrev[ser.inPrev.length - 1]! }), 'delete future');
     // 출결 — 고치기도 지우기도
-    await expectClosed(await api('put', `/schedule/${ser.id}/${prevDate}/attendance`).send({ result: 'canceled', reason: 'student_absent' }), 'attendance');
+    await expectClosed(await api('put', `/schedule/${ser.id}/${prevDate}/attendance`)
+      .send({ result: 'completed', lateStudentIds: [] }), 'attendance late correction');
     await expectClosed(await api('delete', `/schedule/${ser.id}/${prevDate}/attendance`), 'attendance clear');
     // 청구서 발행 · 이월 처리
     await expectClosed(await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: PREV, invType: 'tuition', dueOn: DUE }), 'invoice');
@@ -241,6 +243,10 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
     expect(Number(n)).toBe(1);
     const [att] = await q<{ result: string }>(`SELECT result FROM att WHERE ser_id = $1 AND on_date = $2::date`, [ser.id, prevDate]);
     expect(att.result).toBe('completed');
+    expect(await q(
+      `SELECT al.student_id FROM att_late al JOIN att a ON a.id=al.att_id
+        WHERE a.ser_id=$1 AND a.on_date=$2::date`, [ser.id, prevDate],
+    )).toEqual([{ student_id: String(STU_A) }]);
     const [{ m }] = await q<{ m: string }>(`SELECT count(*) AS m FROM stu_pause WHERE student_id = $1`, [STU_A]);
     expect(Number(m)).toBe(0);
   });

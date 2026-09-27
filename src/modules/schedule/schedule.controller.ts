@@ -32,7 +32,8 @@ const missingOccurrenceResponse = {
 };
 const attendanceWriteDescription = '일정 변경과 같은 부모 SER를 먼저 잠근 뒤 최신 투영 회차의 종료/취소 여부를 검사한다. '
   + '정상 재투영은 사라진 회차로 오인하지 않는다. 종료 전 또는 취소된 회차는 ATTENDANCE_NOT_AVAILABLE409, '
-  + '없는 회차는 OCCURRENCE_NOT_FOUND404이며 ATT/LOG를 저장하지 않는다.';
+  + '없는 회차는 OCCURRENCE_NOT_FOUND404이며 ATT/LOG를 저장하지 않는다. C-40 lateStudentIds는 회차 명단의 학생별 지각 현재값이며 '
+  + 'ATT.completed 출석·정산 판정은 바꾸지 않는다. 지각 원장과 ATT/LOG는 같은 트랜잭션이다.';
 
 @ApiTags('schedule')
 @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다' })
@@ -249,6 +250,10 @@ export class ScheduleController {
   @Put(':serId/:onDate/attendance')
   @Perm('canCrudAttendance')
   @ApiOperation({ summary: '종료 회차 출결 확정/정정 — 현재값 ATT와 append-only LOG를 함께 저장', description: attendanceWriteDescription })
+  @ApiBadRequestResponse({
+    type: ApiErrorDto,
+    description: 'ATTENDANCE_REASON_REQUIRED | ATTENDANCE_REASON_FORBIDDEN | ATTENDANCE_LATE_FORBIDDEN | ATTENDANCE_LATE_STUDENT_INVALID | ATTENDANCE_LATE_STUDENT_NOT_IN_ROSTER',
+  })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'ATTENDANCE_NOT_AVAILABLE: 최신 회차가 종료 전 또는 취소됨' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'OCCURRENCE_NOT_FOUND: 회차 없음' })
   @ApiOkResponse({ type: AttendanceMutationResultDto })

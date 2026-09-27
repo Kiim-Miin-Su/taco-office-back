@@ -11,7 +11,7 @@ import {
   type AttendanceCancelReason, type AttendanceResult,
 } from '../../lib/rules';
 import { nowMinKst, todayKst } from '../../lib/kst';
-import { END_MIN, START_MIN, kstDateOf } from '../../lib/sql';
+import { END_MIN, START_MIN, kstDateOf, serStuOn } from '../../lib/sql';
 import { assertMonthOpen } from '../../lib/month-close';
 import type { AttendanceDto, AttendanceMutationResultDto, AttendanceWriteDto } from './schedule.dto';
 import { lockScheduleSeries } from './schedule.state.repo';
@@ -30,6 +30,13 @@ interface AttendanceRow {
   confirmed_by: string;
   confirmed_by_name: string;
   confirmed_at: Date | string;
+  late_students: Array<{
+    studentId: string | number;
+    studentName: string;
+    confirmedBy: string | number;
+    confirmedByName: string;
+    confirmedAt: Date | string;
+  }> | null;
 }
 
 @Injectable()
@@ -49,12 +56,16 @@ export class ScheduleAttendanceService {
     if (issue === 'ATTENDANCE_REASON_FORBIDDEN') {
       throw new BadRequestException({ code: issue, message: '완료 출결에는 취소 사유를 넣을 수 없습니다' });
     }
+    if (issue === 'ATTENDANCE_LATE_FORBIDDEN') {
+      throw new BadRequestException({ code: issue, message: '결석 처리한 회차에는 지각 학생을 함께 기록할 수 없습니다' });
+    }
 
     return this.tx(async (q) => {
       // 마감 달의 출결은 강사료를 바꾼다 — 해제 전에는 못 고친다 (C92-d · L-123)
       await assertMonthOpen(q, onDate);
       await this.assertManageable(q, serId, onDate);
       const before = await this.current(q, serId, onDate, true);
+      let attendanceId: number;
       if (before) {
         await q.query(
           `UPDATE att
@@ -63,17 +74,75 @@ export class ScheduleAttendanceService {
             `,
           [serId, onDate, dto.result, dto.reason ?? null, actorId],
         );
+        attendanceId = before.id;
       } else {
-        await q.query(
+        const [inserted] = (await q.query(
           `INSERT INTO att (ser_id, on_date, result, reason, confirmed_by)
-           VALUES ($1,$2::date,$3,$4,$5)`,
+           VALUES ($1,$2::date,$3,$4,$5)
+           RETURNING id`,
           [serId, onDate, dto.result, dto.reason ?? null, actorId],
-        );
+        )) as Array<{ id: string }>;
+        attendanceId = Number(inserted.id);
+      }
+      if (dto.result === 'canceled') {
+        await q.query(`DELETE FROM att_late WHERE att_id=$1`, [attendanceId]);
+      } else if (dto.lateStudentIds !== undefined) {
+        await this.replaceLateStudents(q, attendanceId, serId, onDate, dto.lateStudentIds, actorId);
       }
       const after = await this.current(q, serId, onDate, false);
       await this.log(q, actorId, after!.id, before ? 'update' : 'create', before, after);
       return { attendance: after };
     });
+  }
+
+  /**
+   * C-40 지각 현재 목록 교체. 부모 SER 잠금 아래라 명단 변경과 직렬화되며,
+   * ATT 쓰기·LOG와 같은 transaction 안에서 전부 성공하거나 전부 되돌아간다.
+   */
+  private async replaceLateStudents(
+    q: QueryRunner,
+    attendanceId: number,
+    serId: number,
+    onDate: string,
+    studentIds: number[],
+    actorId: number,
+  ): Promise<void> {
+    const unique = new Set(studentIds);
+    if (unique.size !== studentIds.length
+      || studentIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+      throw new BadRequestException({
+        code: 'ATTENDANCE_LATE_STUDENT_INVALID',
+        message: '지각 학생은 중복 없는 올바른 학생 ID 목록이어야 합니다',
+      });
+    }
+    if (studentIds.length) {
+      const roster = (await q.query(
+        `SELECT ss.student_id
+           FROM ser_stu ss
+          WHERE ss.ser_id=$1 AND ss.student_id = ANY($3::bigint[])
+            AND ${serStuOn('ss', '$2::date')}
+          ORDER BY ss.student_id
+          FOR KEY SHARE OF ss`,
+        [serId, onDate, studentIds],
+      )) as Array<{ student_id: string }>;
+      const found = new Set(roster.map((row) => Number(row.student_id)));
+      if (studentIds.some((id) => !found.has(id))) {
+        throw new BadRequestException({
+          code: 'ATTENDANCE_LATE_STUDENT_NOT_IN_ROSTER',
+          message: '이 회차 명단에 없는 학생은 지각으로 표시할 수 없습니다',
+        });
+      }
+    }
+
+    await q.query(`DELETE FROM att_late WHERE att_id=$1`, [attendanceId]);
+    if (studentIds.length) {
+      await q.query(
+        `INSERT INTO att_late (att_id, student_id, confirmed_by)
+         SELECT $1, student_id, $3
+           FROM unnest($2::bigint[]) AS ids(student_id)`,
+        [attendanceId, studentIds, actorId],
+      );
+    }
   }
 
   async clear(serId: number, onDate: string, actorId: number): Promise<AttendanceMutationResultDto> {
@@ -126,7 +195,20 @@ export class ScheduleAttendanceService {
   ): Promise<AttendanceDto | null> {
     const rows = await q.query(
       `SELECT a.id, a.result, a.reason, a.confirmed_by,
-              st.name AS confirmed_by_name, a.confirmed_at
+              st.name AS confirmed_by_name, a.confirmed_at,
+              COALESCE((
+                SELECT json_agg(json_build_object(
+                  'studentId', al.student_id,
+                  'studentName', late_st.name,
+                  'confirmedBy', al.confirmed_by,
+                  'confirmedByName', late_by.name,
+                  'confirmedAt', al.confirmed_at
+                ) ORDER BY al.student_id)
+                  FROM att_late al
+                  JOIN stu late_st ON late_st.id=al.student_id
+                  JOIN staff late_by ON late_by.id=al.confirmed_by
+                 WHERE al.att_id=a.id
+              ), '[]'::json) AS late_students
          FROM att a
          JOIN staff st ON st.id=a.confirmed_by
         WHERE a.ser_id=$1 AND a.on_date=$2::date
@@ -143,6 +225,13 @@ export class ScheduleAttendanceService {
       confirmedByName: row.confirmed_by_name,
       confirmedAt: new Date(row.confirmed_at).toISOString(),
       countsForPay: row.result === 'completed',
+      lateStudents: (row.late_students ?? []).map((late) => ({
+        studentId: Number(late.studentId),
+        studentName: late.studentName,
+        confirmedBy: Number(late.confirmedBy),
+        confirmedByName: late.confirmedByName,
+        confirmedAt: new Date(late.confirmedAt).toISOString(),
+      })),
     };
   }
 

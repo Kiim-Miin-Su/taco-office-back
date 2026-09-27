@@ -32,6 +32,8 @@ d('회차 출결 계약 (D-R35)', () => {
   const FUTURE = RUN + 4;
   const CANCELED = RUN + 5;
   const STUDENT = RUN + 6;
+  const ON_TIME_STUDENT = RUN + 7;
+  const OUTSIDE_STUDENT = RUN + 8;
   const KIND = `at${process.pid}`.slice(0, 16);
   const PAST_DATE = '2025-01-02';
   const FUTURE_DATE = '2099-01-02';
@@ -44,13 +46,14 @@ d('회차 출결 계약 (D-R35)', () => {
 
   async function clean(): Promise<void> {
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, MANAGER]]);
+    await q(`DELETE FROM att_late WHERE att_id IN (SELECT id FROM att WHERE ser_id = ANY($1))`, [[PAST, FUTURE, CANCELED]]);
     await q(`DELETE FROM att WHERE ser_id = ANY($1)`, [[PAST, FUTURE, CANCELED]]);
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [[PAST, FUTURE, CANCELED]]);
     await q(`DELETE FROM rep WHERE ser_id = ANY($1)`, [[PAST, FUTURE, CANCELED]]);
     await q(`DELETE FROM ser_stu WHERE ser_id = ANY($1)`, [[PAST, FUTURE, CANCELED]]);
     await q(`DELETE FROM ser_occ WHERE ser_id = ANY($1)`, [[PAST, FUTURE, CANCELED]]);
     await q(`DELETE FROM ser WHERE id = ANY($1)`, [[PAST, FUTURE, CANCELED]]);
-    await q(`DELETE FROM stu WHERE id=$1`, [STUDENT]);
+    await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STUDENT, ON_TIME_STUDENT, OUTSIDE_STUDENT]]);
     await q(`DELETE FROM staff WHERE id = ANY($1)`, [[TEACHER, MANAGER]]);
     await q(`DELETE FROM kind WHERE key=$1`, [KIND]);
   }
@@ -81,7 +84,11 @@ d('회차 출결 계약 (D-R35)', () => {
        VALUES ($1,'출결강사',$2,'teacher',$3,true), ($4,'출결매니저',$5,'manager',$3,true)`,
       [TEACHER, TEACHER_EMAIL, hash, MANAGER, MANAGER_EMAIL],
     );
-    await q(`INSERT INTO stu (id,name,grade) VALUES ($1,'출결학생','고2')`, [STUDENT]);
+    await q(
+      `INSERT INTO stu (id,name,grade) VALUES
+       ($1,'지각학생','고2'), ($2,'정시학생','고2'), ($3,'다른반학생','고2')`,
+      [STUDENT, ON_TIME_STUDENT, OUTSIDE_STUDENT],
+    );
     for (const [serId, date, title] of [
       [PAST, PAST_DATE, '출결 지난 수업'],
       [FUTURE, FUTURE_DATE, '출결 미래 수업'],
@@ -100,12 +107,14 @@ d('회차 출결 계약 (D-R35)', () => {
         [serId, date, TEACHER, serId === CANCELED],
       );
     }
-    await q(`INSERT INTO ser_stu (ser_id,student_id) VALUES ($1,$2)`, [PAST, STUDENT]);
-    await q(
+    await q(`INSERT INTO ser_stu (ser_id,student_id) VALUES ($1,$2),($1,$3)`, [PAST, STUDENT, ON_TIME_STUDENT]);
+    const [report] = await q<{ id: string }>(
       `INSERT INTO rep (ser_id,on_date,teacher_id,kind_key,lang,body,state)
-       VALUES ($1,$2,$3,$4,'ko','{}'::jsonb,'none')`,
+       VALUES ($1,$2,$3,$4,'ko','{}'::jsonb,'none') RETURNING id`,
       [PAST, PAST_DATE, TEACHER, KIND],
     );
+    await q(`INSERT INTO rep_stu (rep_id,student_id,deliver) VALUES ($1,$2,true),($1,$3,true)`,
+      [report.id, STUDENT, ON_TIME_STUDENT]);
 
     const login = async (email: string) => (
       await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PW }).expect(201)
@@ -116,6 +125,7 @@ d('회차 출결 계약 (D-R35)', () => {
 
   beforeEach(async () => {
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, MANAGER]]);
+    await q(`DELETE FROM att_late WHERE att_id IN (SELECT id FROM att WHERE ser_id = ANY($1))`, [[PAST, FUTURE, CANCELED]]);
     await q(`DELETE FROM att WHERE ser_id = ANY($1)`, [[PAST, FUTURE, CANCELED]]);
   });
 
@@ -153,7 +163,8 @@ d('회차 출결 계약 (D-R35)', () => {
   });
 
   it('강사·종료 전·관리 취소 회차와 잘못된 DTO를 각 경계에서 막는다', async () => {
-    await save(teacherToken, PAST, PAST_DATE, { result: 'completed' }).expect(403);
+    await save(teacherToken, PAST, PAST_DATE, { result: 'completed', lateStudentIds: [STUDENT] }).expect(403);
+    expect(await q(`SELECT 1 FROM att WHERE ser_id=$1`, [PAST])).toEqual([]);
     expect((await save(managerToken, FUTURE, FUTURE_DATE, { result: 'completed' }).expect(409)).body.code)
       .toBe('ATTENDANCE_NOT_AVAILABLE');
     expect((await save(managerToken, CANCELED, PAST_DATE, { result: 'completed' }).expect(409)).body.code)
@@ -163,13 +174,107 @@ d('회차 출결 계약 (D-R35)', () => {
     expect((await save(managerToken, PAST, PAST_DATE, { result: 'completed', reason: 'academy' }).expect(400)).body.code)
       .toBe('ATTENDANCE_REASON_FORBIDDEN');
     await save(managerToken, PAST, PAST_DATE, { result: 'completed', legacy: true }).expect(400);
+    for (const lateStudentIds of [[STUDENT, STUDENT], ['1'], [0], null]) {
+      await save(managerToken, PAST, PAST_DATE, { result: 'completed', lateStudentIds }).expect(400);
+    }
+    expect((await save(managerToken, PAST, PAST_DATE, {
+      result: 'canceled', reason: 'student_absent', lateStudentIds: [STUDENT],
+    }).expect(400)).body.code).toBe('ATTENDANCE_LATE_FORBIDDEN');
     await save(managerToken, PAST, '2025-1-2', { result: 'completed' }).expect(400);
   });
 
+  it('C-40 한 회차의 한 학생만 지각으로 기록하되 출석·정산·리포트 대상은 그대로다', async () => {
+    const saved = await save(managerToken, PAST, PAST_DATE, {
+      result: 'completed', lateStudentIds: [STUDENT],
+    }).expect(200);
+    expect(saved.body.attendance).toMatchObject({
+      result: 'completed', countsForPay: true,
+      lateStudents: [{
+        studentId: STUDENT, studentName: '지각학생',
+        confirmedBy: MANAGER, confirmedByName: '출결매니저',
+      }],
+    });
+
+    const [stored] = await q<{
+      result: string; student_id: string; confirmed_by: string;
+    }>(
+      `SELECT a.result, al.student_id, al.confirmed_by
+         FROM att a JOIN att_late al ON al.att_id=a.id
+        WHERE a.ser_id=$1 AND a.on_date=$2::date`,
+      [PAST, PAST_DATE],
+    );
+    expect(stored).toEqual({
+      result: 'completed', student_id: String(STUDENT), confirmed_by: String(MANAGER),
+    });
+
+    const listed = await request(app.getHttpServer())
+      .get('/schedule/occurrences').query({ from: PAST_DATE, to: PAST_DATE })
+      .set('Authorization', `Bearer ${managerToken}`).expect(200);
+    const occurrence = listed.body.items.find((x: { serId: number }) => x.serId === PAST);
+    expect(occurrence.attendance).toMatchObject({ result: 'completed', countsForPay: true });
+    expect(occurrence.students.map((x: { id: number; late: boolean }) => [x.id, x.late])).toEqual([
+      [STUDENT, true], [ON_TIME_STUDENT, false],
+    ]);
+
+    const report = await request(app.getHttpServer())
+      .get(`/reports/${PAST}/${PAST_DATE}`)
+      .set('Authorization', `Bearer ${teacherToken}`).expect(200);
+    expect(report.body.state).toBe('none');
+    expect(report.body.students.map((x: { id: number; late: boolean }) => [x.id, x.late])).toEqual([
+      [STUDENT, true], [ON_TIME_STUDENT, false],
+    ]);
+  });
+
+  it('C-40 지각 명단 정정은 교체하고, 필드를 생략한 기존 클라이언트는 현재 명단을 보존한다', async () => {
+    await save(managerToken, PAST, PAST_DATE, {
+      result: 'completed', lateStudentIds: [STUDENT],
+    }).expect(200);
+    const corrected = await save(managerToken, PAST, PAST_DATE, {
+      result: 'completed', lateStudentIds: [ON_TIME_STUDENT],
+    }).expect(200);
+    expect(corrected.body.attendance.lateStudents).toEqual([
+      expect.objectContaining({ studentId: ON_TIME_STUDENT, studentName: '정시학생', confirmedBy: MANAGER }),
+    ]);
+
+    const compatible = await save(managerToken, PAST, PAST_DATE, { result: 'completed' }).expect(200);
+    expect(compatible.body.attendance.lateStudents).toEqual([
+      expect.objectContaining({ studentId: ON_TIME_STUDENT }),
+    ]);
+    expect(await q(
+      `SELECT al.student_id FROM att_late al JOIN att a ON a.id=al.att_id
+        WHERE a.ser_id=$1 AND a.on_date=$2::date ORDER BY al.student_id`, [PAST, PAST_DATE],
+    ))
+      .toEqual([{ student_id: String(ON_TIME_STUDENT) }]);
+
+    const canceled = await save(managerToken, PAST, PAST_DATE, {
+      result: 'canceled', reason: 'student_absent', lateStudentIds: [],
+    }).expect(200);
+    expect(canceled.body.attendance).toMatchObject({ result: 'canceled', countsForPay: false, lateStudents: [] });
+    expect(await q(
+      `SELECT 1 FROM att_late al JOIN att a ON a.id=al.att_id
+        WHERE a.ser_id=$1 AND a.on_date=$2::date`, [PAST, PAST_DATE],
+    )).toEqual([]);
+  });
+
+  it('C-40 회차 명단 밖 학생이면 ATT·지각·감사 기록을 한 트랜잭션에서 모두 되돌린다', async () => {
+    const rejected = await save(managerToken, PAST, PAST_DATE, {
+      result: 'completed', lateStudentIds: [OUTSIDE_STUDENT],
+    }).expect(400);
+    expect(rejected.body.code).toBe('ATTENDANCE_LATE_STUDENT_NOT_IN_ROSTER');
+    expect(await q(`SELECT 1 FROM att WHERE ser_id=$1`, [PAST])).toEqual([]);
+    expect(await q(
+      `SELECT 1 FROM att_late al JOIN att a ON a.id=al.att_id WHERE a.ser_id=$1`, [PAST],
+    )).toEqual([]);
+    expect(await q(`SELECT 1 FROM log WHERE actor_id=$1 AND entity='ATT'`, [MANAGER])).toEqual([]);
+  });
+
   it('생성·정정·초기화는 현재값 하나와 append-only LOG revision을 남긴다', async () => {
-    const created = await save(managerToken, PAST, PAST_DATE, { result: 'completed' }).expect(200);
+    const created = await save(managerToken, PAST, PAST_DATE, {
+      result: 'completed', lateStudentIds: [STUDENT],
+    }).expect(200);
     expect(created.body.attendance).toMatchObject({
       result: 'completed', reason: null, confirmedBy: MANAGER, confirmedByName: '출결매니저',
+      lateStudents: [expect.objectContaining({ studentId: STUDENT })],
     });
     const attendanceId = created.body.attendance.id as number;
 
@@ -186,12 +291,15 @@ d('회차 출결 계약 (D-R35)', () => {
 
     expect((await clear(managerToken).expect(200)).body.attendance).toBeNull();
     expect(await q(`SELECT 1 FROM att WHERE ser_id=$1 AND on_date=$2`, [PAST, PAST_DATE])).toHaveLength(0);
+    expect(await q(`SELECT 1 FROM att_late WHERE att_id=$1`, [attendanceId])).toHaveLength(0);
     const logs = await q<{ action: string; before: unknown; after: unknown }>(
       `SELECT action,before,after FROM log WHERE entity='ATT' AND entity_id=$1 ORDER BY id`, [attendanceId],
     );
     expect(logs.map((x) => x.action)).toEqual(['create', 'update', 'clear']);
     expect(logs[0]!.before).toBeNull();
-    expect(logs[1]!.before).toMatchObject({ result: 'completed' });
+    expect(logs[1]!.before).toMatchObject({
+      result: 'completed', lateStudents: [expect.objectContaining({ studentId: STUDENT })],
+    });
     expect(logs[2]!.after).toBeNull();
     expect((await clear(managerToken).expect(404)).body.code).toBe('ATTENDANCE_NOT_FOUND');
   });
@@ -246,6 +354,23 @@ d('회차 출결 계약 (D-R35)', () => {
        VALUES ($1,$2,'completed','academy',$3)`,
       [PAST, PAST_DATE, MANAGER],
     )).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('C-40 DB도 회차 출결×학생 한 줄만 허용하고 부모 출결 초기화에 함께 지운다', async () => {
+    const [att] = await q<{ id: string }>(
+      `INSERT INTO att (ser_id,on_date,result,confirmed_by)
+       VALUES ($1,$2,'completed',$3) RETURNING id`,
+      [PAST, PAST_DATE, MANAGER],
+    );
+    await q(`INSERT INTO att_late (att_id,student_id,confirmed_by) VALUES ($1,$2,$3)`,
+      [att.id, STUDENT, MANAGER]);
+    await expect(q(`INSERT INTO att_late (att_id,student_id,confirmed_by) VALUES ($1,$2,$3)`,
+      [att.id, STUDENT, MANAGER])).rejects.toMatchObject({ code: '23505' });
+    await expect(q(`INSERT INTO att_late (att_id,student_id,confirmed_by) VALUES ($1,$2,$3)`,
+      [Number.MAX_SAFE_INTEGER, ON_TIME_STUDENT, MANAGER])).rejects.toMatchObject({ code: '23503' });
+
+    await q(`DELETE FROM att WHERE id=$1`, [att.id]);
+    expect(await q(`SELECT 1 FROM att_late WHERE att_id=$1`, [att.id])).toEqual([]);
   });
 
   it('출결 이력이 붙은 SER 전체 삭제는 물리 삭제 대신 기간을 마감한다', async () => {

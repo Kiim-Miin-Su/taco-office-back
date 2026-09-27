@@ -254,12 +254,17 @@ describe('3. 출결 권한·입력 — 관리자 이상만 종료 회차 CRUD (D
 
   it('완료에는 사유가 없고 취소에는 허용 사유가 필수다', () => {
     ok(R.attendanceWriteIssue({ result: 'completed' }) === null, '완료 입력');
+    ok(R.attendanceWriteIssue({ result: 'completed', lateStudentIds: [1] }) === null, '지각은 출석 완료로 계산');
     ok(
       R.attendanceWriteIssue({ result: 'completed', reason: 'academy' }) === 'ATTENDANCE_REASON_FORBIDDEN',
       '완료 사유 금지',
     );
     ok(R.attendanceWriteIssue({ result: 'canceled' }) === 'ATTENDANCE_REASON_REQUIRED', '취소 사유 필수');
     ok(R.attendanceWriteIssue({ result: 'canceled', reason: 'holiday' }) === null, '취소 허용 사유');
+    ok(
+      R.attendanceWriteIssue({ result: 'canceled', reason: 'holiday', lateStudentIds: [1] }) === 'ATTENDANCE_LATE_FORBIDDEN',
+      '결석 회차에 지각 학생을 함께 적지 않음',
+    );
   });
 });
 

@@ -67,7 +67,13 @@ interface Row {
   attendance_id: string | null; attendance_result: AttendanceResult | null;
   attendance_reason: AttendanceCancelReason | null; attendance_confirmed_by: string | null;
   attendance_confirmed_by_name: string | null; attendance_confirmed_at: Date | string | null;
-  students: Array<{ id: number; name: string; grade: string | null; droppedOnce: boolean; paused: boolean }> | null;
+  attendance_late_students: Array<{
+    studentId: string | number; studentName: string; confirmedBy: string | number;
+    confirmedByName: string; confirmedAt: Date | string;
+  }> | null;
+  students: Array<{
+    id: number; name: string; grade: string | null; droppedOnce: boolean; paused: boolean; late: boolean;
+  }> | null;
 }
 
 @Injectable()
@@ -252,13 +258,29 @@ export class ScheduleService {
               a.confirmed_at AS attendance_confirmed_at,
               COALESCE((
                 SELECT json_agg(json_build_object(
+                  'studentId', al.student_id,
+                  'studentName', late_st.name,
+                  'confirmedBy', al.confirmed_by,
+                  'confirmedByName', late_by.name,
+                  'confirmedAt', al.confirmed_at
+                ) ORDER BY al.student_id)
+                  FROM att_late al
+                  JOIN stu late_st ON late_st.id=al.student_id
+                  JOIN staff late_by ON late_by.id=al.confirmed_by
+                 WHERE al.att_id=a.id
+              ), '[]'::json) AS attendance_late_students,
+              COALESCE((
+                SELECT json_agg(json_build_object(
                          'id', st.id, 'name', st.name, 'grade', st.grade,
                          -- 그날만 빠진 학생은 지우지 않고 표시만 한다 (D-R21)
                          'droppedOnce', EXISTS (
                            SELECT 1 FROM exc_stu_out xo
                             WHERE xo.exc_id = e.id AND xo.student_id = st.id),
                          -- 휴원 중인 학생도 같다 — 명단에 남기고 「휴원」으로 표시한다 (C92-c)
-                         'paused', ${stuPausedOn('st.id', 'o.on_date')}
+                         'paused', ${stuPausedOn('st.id', 'o.on_date')},
+                         'late', EXISTS (
+                           SELECT 1 FROM att_late al
+                            WHERE al.att_id=a.id AND al.student_id=st.id)
                        ) ORDER BY st.id)
                 FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
                 -- 수강 종료 뒤의 회차에는 그 학생이 없다 — 블록의 인원·이름은 그날 명단이다 (C94-c)
@@ -350,9 +372,15 @@ export class ScheduleService {
           confirmedByName: r.attendance_confirmed_by_name!,
           confirmedAt: new Date(r.attendance_confirmed_at!).toISOString(),
           countsForPay: r.attendance_result === 'completed',
+          lateStudents: (r.attendance_late_students ?? []).map((late) => ({
+            studentId: Number(late.studentId), studentName: late.studentName,
+            confirmedBy: Number(late.confirmedBy), confirmedByName: late.confirmedByName,
+            confirmedAt: new Date(late.confirmedAt).toISOString(),
+          })),
         },
         students: (r.students ?? []).map((s) => ({
-          id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce), paused: Boolean(s.paused),
+          id: Number(s.id), name: s.name, grade: s.grade, droppedOnce: Boolean(s.droppedOnce),
+          paused: Boolean(s.paused), late: Boolean(s.late),
         })),
       };
     });

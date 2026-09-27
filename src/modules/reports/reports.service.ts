@@ -50,7 +50,7 @@ interface Row {
   reportable: boolean;
   canceled: boolean;
   ended: boolean;
-  students: Array<{ id: number; name: string; grade: string | null; deliver: boolean }> | null;
+  students: Array<{ id: number; name: string; grade: string | null; deliver: boolean; late: boolean }> | null;
 }
 
 interface DetailRow extends Row {
@@ -189,7 +189,10 @@ export class ReportsService {
                    COALESCE(upper(o.span) <= now(), false) AS ended,
                    COALESCE((
                      SELECT json_agg(json_build_object(
-                       'id', st.id, 'name', st.name, 'grade', st.grade, 'deliver', rs.deliver
+                       'id', st.id, 'name', st.name, 'grade', st.grade, 'deliver', rs.deliver,
+                       'late', EXISTS (
+                         SELECT 1 FROM att_late al
+                          WHERE al.att_id=a.id AND al.student_id=st.id)
                      ) ORDER BY st.id)
                      FROM rep_stu rs JOIN stu st ON st.id = rs.student_id WHERE rs.rep_id = r.id
                    ), '[]'::json) AS students
@@ -222,7 +225,10 @@ export class ReportsService {
                    r.reject_reason,
                    COALESCE((
                      SELECT json_agg(json_build_object(
-                       'id', st.id, 'name', st.name, 'grade', st.grade, 'deliver', rs.deliver
+                       'id', st.id, 'name', st.name, 'grade', st.grade, 'deliver', rs.deliver,
+                       'late', EXISTS (
+                         SELECT 1 FROM att_late al
+                          WHERE al.att_id=a.id AND al.student_id=st.id)
                      ) ORDER BY st.id)
                      FROM rep_stu rs JOIN stu st ON st.id = rs.student_id WHERE rs.rep_id = r.id
                    ), '[]'::json) AS students
@@ -252,7 +258,7 @@ export class ReportsService {
       teacherId: r.teacher_id ? Number(r.teacher_id) : null, teacherName: r.teacher_name,
       state, written, minutesSinceEnd, penalty,
       students: (r.students ?? []).map((s) => ({
-        id: Number(s.id), name: s.name, grade: s.grade, deliver: Boolean(s.deliver),
+        id: Number(s.id), name: s.name, grade: s.grade, deliver: Boolean(s.deliver), late: Boolean(s.late),
       })),
     };
   }
