@@ -358,12 +358,11 @@ export class GpaService {
    * `log.before` 에 적는다 — S2 가 입금 줄에서 한 것과 같은 자리·같은 모양이다.
    *
    * 판정을 **잠금 안에서 다시** 본다 — 밖에서 읽고 지우면 그 사이 남이 승인한 기록이 지워진다.
+   * 대상 줄 `FOR UPDATE` 뒤 같은 트랜잭션에서 사이클을 `FOR SHARE` 로 확인한다 — 마감은 사이클을
+   * `FOR UPDATE` 로 잡으므로, 마감과 삭제가 엇갈려 닫힌 사이클의 소비 근거가 사라지지 않는다.
    * 거절 차례는 그대로다(404 → `CYCLE_CLOSED` → `USE_APPROVED`).
    */
   async deleteUse(id: number, actorId: number): Promise<{ ok: true }> {
-    const [pre] = await this.q<{ cycle_id: string }>(`SELECT cycle_id FROM gpa_use WHERE id = $1`, [id]);
-    if (!pre) throw new NotFoundException('기록을 찾을 수 없습니다');
-    await this.openCycle(Number(pre.cycle_id));
     return this.anyRepo.manager.transaction(async (em) => {
       const [row] = (await em.query(
         `SELECT cycle_id, student_id, svc_key, points, on_date::text AS on_date, start_min, ser_id,
@@ -371,6 +370,7 @@ export class GpaService {
            FROM gpa_use WHERE id = $1 FOR UPDATE`, [id],
       )) as Array<Record<string, unknown>>;
       if (!row) throw new NotFoundException('기록을 찾을 수 없습니다');
+      await this.openCycle(Number(row.cycle_id), em);
       if (row.state !== 'wait') {
         throw new ConflictException({ code: 'USE_APPROVED', message: '승인된 기록은 지울 수 없습니다 — 되돌림(wait) 후 처리하세요' });
       }

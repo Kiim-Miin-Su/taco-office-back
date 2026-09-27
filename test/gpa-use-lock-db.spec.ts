@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: gpa-use-lock-db.spec.ts — §82 GPA 소비 기록 승인·되돌림(setUseState) · 기록(createUse) · 배정(putAlloc)의 잠금과 사이클 마감 경합 회귀 (test · W11 PB-12-3 · A')
+ * 목적: gpa-use-lock-db.spec.ts — §82 GPA 소비 기록 승인·되돌림(setUseState) · 기록(createUse) · 삭제(deleteUse) · 배정(putAlloc)의 잠금과 사이클 마감 경합 회귀 (test · W11 PB-12-3 · A')
  * 책임/재사용: GpaService 공개 메서드를 실제 두 연결에서 부르고, 이 스위트가 만든 9xx 행만 지운다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -182,6 +182,17 @@ d('§82 GPA 승인·되돌림 잠금 (W11 PB-12-3)', () => {
     }));
     expect(got).toBe('CYCLE_CLOSED');
     expect(await useCount()).toBe(0);
+  });
+
+  it('마감이 진행 중이면 삭제(deleteUse)는 그 커밋을 기다렸다가 CYCLE_CLOSED — 닫힌 사이클의 소비 근거를 보존한다', async () => {
+    const id = await waitRow();
+    const got = await whileClosing(() => svc.deleteUse(id, APPROVER));
+    expect(got).toBe('CYCLE_CLOSED');
+    expect(await ds.query(`SELECT state FROM gpa_use WHERE id = $1`, [id]))
+      .toEqual([{ state: 'wait' }]);
+    expect(await ds.query(
+      `SELECT action FROM log WHERE entity = 'GPA_USE' AND entity_id = $1 AND action = 'delete'`, [id],
+    )).toEqual([]);
   });
 
   it('남의 트랜잭션에서 부르는 기록(N-99 승인 경로 · createUse(…, em))도 같은 잠금 규칙을 지난다', async () => {
