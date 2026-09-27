@@ -8,6 +8,7 @@ import { METHOD_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
 import { ApiCreatedResponse } from '@nestjs/swagger';
 import request from 'supertest';
+import type { NextFunction, Request, Response } from 'express';
 import { AuthController } from '../src/auth/auth.controller';
 import { AuthService } from '../src/auth/auth.service';
 import { HealthController } from '../src/health.controller';
@@ -18,7 +19,7 @@ import { ScheduleService } from '../src/modules/schedule/schedule.service';
 import { ReportsController } from '../src/modules/reports/reports.controller';
 import { buildOpenApi } from '../src/openapi';
 import { ApiErrorFilter } from '../src/common/filters/api-error.filter';
-import { CORS_EXPOSED_HEADERS } from '../src/app.factory';
+import { API_SECURITY_HEADERS, apiSecurityHeaders, CORS_EXPOSED_HEADERS } from '../src/app.factory';
 
 describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
   // Derive the metadata key through the public decorator; do not import package-private paths.
@@ -118,5 +119,19 @@ describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
   });
   it('교차 출처 파일 다운로드에 원래 파일명 헤더를 노출한다', () => {
     expect(CORS_EXPOSED_HEADERS).toContain('Content-Disposition');
+  });
+  it('직접 API와 same-origin rewrite 둘 다 개인정보 응답을 캐시하지 않는 공통 헤더를 쓴다', () => {
+    expect(API_SECURITY_HEADERS).toMatchObject({
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+    });
+    const res = { setHeader: jest.fn() } as unknown as Response;
+    const next = jest.fn() as NextFunction;
+    apiSecurityHeaders({} as Request, res, next);
+    for (const [key, value] of Object.entries(API_SECURITY_HEADERS)) {
+      expect(res.setHeader).toHaveBeenCalledWith(key, value);
+    }
+    expect(next).toHaveBeenCalledTimes(1);
   });
 });

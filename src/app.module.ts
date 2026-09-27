@@ -50,14 +50,19 @@ import { GuardiansModule } from './modules/guardians/guardians.module';
         JWT_EXPIRES: Joi.string().default('15m'),
         JWT_REFRESH_EXPIRES: Joi.string().default('14d'),
         PORT: Joi.number().default(3001),
-        CORS_ORIGIN: Joi.string().default('http://localhost:3000'),
+        // 운영에서 기본 localhost를 넣으면 CORS 누락을 정상 설정처럼 숨긴다. 운영은 명시값 필수,
+        // 개발·시험에서만 로컬 기본값을 쓴다.
+        CORS_ORIGIN: Joi.when('NODE_ENV', {
+          is: 'production',
+          then: Joi.string().trim().min(1).required(),
+          otherwise: Joi.string().default('http://localhost:3000'),
+        }),
         LOG_LEVEL: Joi.string().valid('debug', 'info', 'warn', 'error').default('info'),
         NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
         /**
-         * 운영에서 **필수**다. 없으면 프런트와 API 가 다른 사이트일 때
-         * 리프레시 쿠키가 실리지 않아 15분 뒤 조용히 로그아웃된다.
-         * 값의 형태까지는 `auth/cookie.ts` 의 `assertCookieConfig()` 가 본다 —
-         * 여기서는 「있는가」만 본다. Joi 는 CORS_ORIGIN 과 대조할 수 없기 때문이다.
+         * 공통 도메인 방식에서만 쓴다. same-origin proxy와 직접 cross-site는 빈 값이 정상이다.
+         * CORS_ORIGIN을 실제로 덮는지와 세 모드의 상호 배타성은 `auth/cookie.ts` 의
+         * `assertCookieConfig()`가 부팅 전에 확인한다.
          */
         COOKIE_DOMAIN: Joi.string().allow('').optional(),
         /**
@@ -65,6 +70,11 @@ import { GuardiansModule } from './modules/guardians/guardians.module';
          * 값의 조합이 말이 되는지는 `auth/cookie.ts` 가 본다 — Joi 는 CORS_ORIGIN 과 대조할 수 없다.
          */
         COOKIE_CROSS_SITE: Joi.string().valid('true', 'false').default('false'),
+        /**
+         * 브라우저가 front의 같은-origin `/api/v1`만 부르고 Next가 이 API로 넘길 때 'true'.
+         * COOKIE_DOMAIN/CROSS_SITE와의 충돌은 `auth/cookie.ts`가 부팅 전에 막는다.
+         */
+        COOKIE_SAME_ORIGIN_PROXY: Joi.string().valid('true', 'false').default('false'),
         ENABLE_DOCS: Joi.string().valid('true', 'false').default('false'),
         DB_POOL_MAX: Joi.number().optional(),
       }).unknown(true),

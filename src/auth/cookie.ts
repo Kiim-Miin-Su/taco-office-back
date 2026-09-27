@@ -16,6 +16,8 @@
  * 그래서 커스텀 도메인 하나 아래로 모으고(`app.tn.kr` · `api.tn.kr`)
  * 쿠키에 `Domain=.tn.kr` 를 준다 — 그러면 둘은 **같은 사이트**가 되고 Lax 로 충분하다.
  * 서드파티 쿠키 차단과도 무관해진다 (SameSite=None 이 위험한 이유가 그것이다).
+ * 커스텀 도메인이 없으면 브라우저가 front의 `/api/v1`만 부르고 Next가 API로 넘기는
+ * same-origin proxy도 같은 효과를 낸다. 이때 쿠키는 front host-only + Lax다.
  */
 import type { CookieOptions } from 'express';
 
@@ -33,11 +35,13 @@ const domain = () => process.env.COOKIE_DOMAIN?.trim() || undefined;
  * 도메인을 사면 `COOKIE_DOMAIN` 만 넣고 이 스위치를 끄면 된다. 코드는 안 바뀐다.
  */
 const crossSite = () => process.env.COOKIE_CROSS_SITE === 'true';
+/** 브라우저가 Next의 같은-origin `/api/v1`을 부르고 서버가 이 API로 넘기는 운영 모드 */
+const sameOriginProxy = () => process.env.COOKIE_SAME_ORIGIN_PROXY === 'true';
 
 export function cookieOptions(): CookieOptions {
   const prod = process.env.NODE_ENV === 'production';
   // 도메인이 있으면 같은 사이트가 되므로 Lax 로 충분하다 — 그게 더 안전하고 더 오래 간다.
-  const none = prod && !domain() && crossSite();
+  const none = prod && !domain() && crossSite() && !sameOriginProxy();
   return {
     httpOnly: true,                                    // JS 가 못 읽는다 — XSS 한 번에 안 털린다
     secure: prod,                                      // SameSite=None 은 Secure 가 없으면 브라우저가 버린다
@@ -55,10 +59,28 @@ export function clearOptions(): CookieOptions {
   return rest;
 }
 
-/** `https://app.tn.kr` → `app.tn.kr` · 나쁜 값이면 null */
-const hostOf = (origin: string): string | null => {
-  try { return new URL(origin.trim()).hostname; } catch { return null; }
+/** 브라우저 Origin header와 exact match 가능한 http(s) origin만 정규화한다. */
+const canonicalOrigin = (raw: string): string | null => {
+  try {
+    const parsed = new URL(raw.trim());
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    if (parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
 };
+
+/** CORS allowlist와 cookie 검증이 같은 정규 origin 목록을 쓴다. */
+export function configuredCorsOrigins(): string[] {
+  const raw = (process.env.CORS_ORIGIN ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const parsed = raw.map((value) => ({ value, origin: canonicalOrigin(value) }));
+  const bad = parsed.filter((item) => item.origin === null).map((item) => item.value);
+  if (bad.length) {
+    throw new Error(`CORS_ORIGIN은 path·query·userinfo 없는 http(s) origin이어야 합니다: ${bad.join(' · ')}`);
+  }
+  return parsed.map((item) => item.origin!);
+}
 
 /** `.tn.kr` 도 `tn.kr` 도 `app.tn.kr` 을 덮는다 */
 const covers = (cookieDomain: string, host: string): boolean => {
@@ -74,8 +96,10 @@ const covers = (cookieDomain: string, host: string): boolean => {
  */
 export function assertCookieConfig(): string {
   const prod = process.env.NODE_ENV === 'production';
-  const origins = (process.env.CORS_ORIGIN ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const origins = configuredCorsOrigins();
   const cd = domain();
+  const proxy = sameOriginProxy();
+  const cross = crossSite();
 
   if (!prod) return `개발 모드 — 쿠키 도메인 없음 · secure=false (허용 출처 ${origins.length || '기본값'})`;
 
@@ -83,16 +107,46 @@ export function assertCookieConfig(): string {
     throw new Error('CORS_ORIGIN 이 비어 있습니다 — 운영에서는 프런트 주소를 반드시 지정하세요.');
   }
 
-  const hosts = origins.map((o) => ({ o, h: hostOf(o) }));
-  const bad = hosts.filter((x) => x.h === null).map((x) => x.o);
-  if (bad.length) throw new Error(`CORS_ORIGIN 에 주소가 아닌 값이 있습니다: ${bad.join(' · ')}`);
+  const hosts = origins.map((o) => ({ o, h: new URL(o).hostname }));
+
+  // 로컬 CORS라도 운영 설정 모순은 먼저 막는다. 조기 반환이 이 검사를 건너뛰면
+  // production smoke는 통과하고 실제 배포에서 서로 다른 쿠키가 생긴다.
+  if (proxy && cross) {
+    throw new Error(
+      'COOKIE_SAME_ORIGIN_PROXY 와 COOKIE_CROSS_SITE 를 동시에 켤 수 없습니다.\n'
+      + '  브라우저가 front의 /api/v1을 부르면 proxy=true · cross-site=false로 두세요.',
+    );
+  }
+
+  if (proxy && cd) {
+    throw new Error(
+      'COOKIE_SAME_ORIGIN_PROXY 와 COOKIE_DOMAIN 을 동시에 쓰지 마세요.\n'
+      + '  same-origin proxy는 front host-only 쿠키를 쓰므로 COOKIE_DOMAIN을 비워야 합니다.',
+    );
+  }
+
+  if (cd && cross) {
+    throw new Error(
+      'COOKIE_DOMAIN 과 COOKIE_CROSS_SITE 를 동시에 쓸 수 없습니다.\n'
+      + '  공통 도메인은 domain + Lax, 직접 교차 사이트는 domain 없이 cross-site=true 하나만 선택하세요.',
+    );
+  }
 
   const local = hosts.every((x) => x.h === 'localhost' || x.h === '127.0.0.1');
-  if (local) return '운영 모드지만 허용 출처가 로컬입니다 — 쿠키 도메인 없이 둡니다.';
+  if (local) {
+    if (cd) throw new Error('로컬 CORS_ORIGIN에 COOKIE_DOMAIN을 쓸 수 없습니다 — 브라우저가 쿠키를 버립니다.');
+    return '운영 모드지만 허용 출처가 로컬입니다 — 쿠키 도메인 없이 둡니다.';
+  }
 
   if (!cd) {
+    if (proxy) {
+      return (
+        '운영 모드 — same-origin API proxy · host-only SameSite=Lax 쿠키\n'
+        + `   브라우저 허용 출처 ${origins.join(' · ')}의 /api/v1이 이 API로 전달되어야 합니다.`
+      );
+    }
     // 도메인을 아직 안 샀을 때의 임시 경로. **일부러 켜야만** 여기로 온다.
-    if (crossSite()) {
+    if (cross) {
       return (
         '⚠ 임시 설정 — COOKIE_DOMAIN 없이 SameSite=None 으로 돕니다.\n'
         + '   지금은 동작하지만 브라우저가 서드파티 쿠키를 막으면 그날로 로그인 유지가 끊깁니다.\n'
@@ -104,10 +158,11 @@ export function assertCookieConfig(): string {
       'COOKIE_DOMAIN 이 없습니다.\n'
       + `  프런트(${origins.join(' · ')})와 이 API 가 다른 사이트면 SameSite=Lax 쿠키가 실리지 않아\n`
       + '  **로그인은 되지만 15분 뒤 재발급이 조용히 실패**합니다.\n'
-      + '  고르는 길은 둘입니다.\n'
-      + '    ① (권장) 둘을 한 도메인 아래로 — app.tn.kr · api.tn.kr · COOKIE_DOMAIN=".tn.kr"\n'
-      + '    ② (임시) 도메인 없이 먼저 띄우기 — COOKIE_CROSS_SITE="true"\n'
-      + '       서드파티 쿠키가 막히면 멈추므로 도메인이 생기면 ①로 옮기세요.',
+      + '  고르는 길은 셋입니다.\n'
+      + '    ① (권장) front의 /api/v1로 프록시 — COOKIE_SAME_ORIGIN_PROXY="true"\n'
+      + '    ② 둘을 한 도메인 아래로 — app.tn.kr · api.tn.kr · COOKIE_DOMAIN=".tn.kr"\n'
+      + '    ③ (임시) 브라우저가 API를 직접 호출 — COOKIE_CROSS_SITE="true"\n'
+      + '       서드파티 쿠키가 막히면 멈추므로 ① 또는 ②로 옮기세요.',
     );
   }
 

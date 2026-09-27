@@ -16,17 +16,31 @@ import { ClassSerializerInterceptor, Logger, ValidationPipe } from '@nestjs/comm
 import { NestFactory, Reflector } from '@nestjs/core';
 import { ExpressAdapter } from '@nestjs/platform-express';
 import type { INestApplication } from '@nestjs/common';
-import type { Express } from 'express';
+import type { Express, NextFunction, Request, Response } from 'express';
 import { json, urlencoded } from 'express';
 import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
-import { assertCookieConfig } from './auth/cookie';
+import { assertCookieConfig, configuredCorsOrigins } from './auth/cookie';
 import { buildOpenApi } from './openapi';
 
 export const API_PREFIX = 'api/v1';
 export const API_BODY_MAX_BYTES = 4 * 1024 * 1024;
 /** 교차 출처 프런트가 인증 다운로드의 원래 파일명을 읽는 데 필요한 응답 헤더. */
 export const CORS_EXPOSED_HEADERS = ['Content-Disposition'] as const;
+/** rewrite·직접 API 어느 경로로 불러도 개인정보 응답을 저장하지 않는 공통 경계. */
+export const API_SECURITY_HEADERS = {
+  'Cache-Control': 'no-store',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+} as const;
+
+/** Express adapter·serverless·local이 같은 API 응답 헤더 미들웨어를 쓴다. */
+export function apiSecurityHeaders(_req: Request, res: Response, next: NextFunction): void {
+  for (const [key, value] of Object.entries(API_SECURITY_HEADERS)) res.setHeader(key, value);
+  next();
+}
 
 /** PNG data URL도 로컬·서버리스에서 같은 상한으로 읽는다. Vercel 요청 상한보다 작게 둔다. */
 export function configureApiBodyParser(app: INestApplication): void {
@@ -53,8 +67,11 @@ export async function createApp(server?: Express): Promise<INestApplication> {
   app.setGlobalPrefix(API_PREFIX);
   configureApiBodyParser(app);
   app.use(cookieParser());
+  app.use(apiSecurityHeaders);
+  // 서버 구현 식별자를 외부 API 응답에 남길 이유가 없다.
+  app.getHttpAdapter().getInstance().disable?.('x-powered-by');
 
-  const origin = process.env.CORS_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean);
+  const origin = configuredCorsOrigins();
   app.enableCors({ origin, credentials: true, exposedHeaders: [...CORS_EXPOSED_HEADERS] });
 
   app.useGlobalPipes(

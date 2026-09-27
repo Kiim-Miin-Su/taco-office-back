@@ -6,7 +6,7 @@
 
 const KEYS = [
   'NODE_ENV', 'DATABASE_URL', 'JWT_SECRET', 'JWT_REFRESH_SECRET',
-  'CORS_ORIGIN', 'COOKIE_DOMAIN', 'COOKIE_CROSS_SITE', 'AUTH_CODE_SECRET',
+  'CORS_ORIGIN', 'COOKIE_DOMAIN', 'COOKIE_CROSS_SITE', 'COOKIE_SAME_ORIGIN_PROXY', 'AUTH_CODE_SECRET',
 ] as const;
 const MIGRATION = 'DeployProbe1760000000000';
 
@@ -108,8 +108,23 @@ describe('배포 CLI — 설정 실패는 DB 연결 전에 끝난다', () => {
     expectNoDatabaseWork();
   });
 
-  it('기존 운영 필수 키 검사를 통과하지 못하면 연결하지 않는다', async () => {
+  it('COOKIE_DOMAIN 대신 명시적 cross-site 모드도 유효한 운영 설정이다', async () => {
     delete process.env.COOKIE_DOMAIN;
+    process.env.COOKIE_CROSS_SITE = 'true';
+    await runCli();
+    expect(process.exitCode).toBeUndefined();
+    expect(fixture.db.initialize).toHaveBeenCalledTimes(1);
+  });
+
+  it('same-origin proxy와 cross-site가 함께 켜지면 DB 연결 전에 중단한다', async () => {
+    delete process.env.COOKIE_DOMAIN;
+    process.env.COOKIE_CROSS_SITE = 'true';
+    process.env.COOKIE_SAME_ORIGIN_PROXY = 'true';
+    await runCli();
+    expectNoDatabaseWork();
+  });
+
+  it('COOKIE_DOMAIN과 cross-site가 함께 켜지면 DB 연결 전에 중단한다', async () => {
     process.env.COOKIE_CROSS_SITE = 'true';
     await runCli();
     expectNoDatabaseWork();
@@ -125,6 +140,15 @@ describe('배포 CLI — 설정 실패는 DB 연결 전에 끝난다', () => {
 });
 
 describe('배포 CLI — 정상 조회/적용의 경계', () => {
+  it('COOKIE_DOMAIN 없이 same-origin proxy 모드로 조회한다', async () => {
+    process.argv = ['node', 'deploy-check.ts'];
+    delete process.env.COOKIE_DOMAIN;
+    process.env.COOKIE_SAME_ORIGIN_PROXY = 'true';
+    await runCli();
+    expect(process.exitCode).toBeUndefined();
+    expect(fixture.db.initialize).toHaveBeenCalledTimes(1);
+  });
+
   it('개발 모드는 AUTH_CODE_SECRET 이 없어도 조회한다 (운영 전용 키)', async () => {
     process.argv = ['node', 'deploy-check.ts'];
     process.env.NODE_ENV = 'development';

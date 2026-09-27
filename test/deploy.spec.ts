@@ -13,12 +13,14 @@
  *
  * DB 가 필요 없다 — 전부 순수 함수다.
  */
-import { assertCookieConfig, cookieOptions, clearOptions, REFRESH_COOKIE } from '../src/auth/cookie';
+import { assertCookieConfig, configuredCorsOrigins, cookieOptions, clearOptions, REFRESH_COOKIE } from '../src/auth/cookie';
 import { describeTarget, assertWritableTarget } from '../src/lib/target';
 import { hasPerm } from '../src/common/perm';
 
 /** 환경변수를 건드리는 테스트다 — 끝나면 되돌린다 */
-const KEYS = ['NODE_ENV', 'CORS_ORIGIN', 'COOKIE_DOMAIN', 'COOKIE_CROSS_SITE', 'SEED_I_KNOW'] as const;
+const KEYS = [
+  'NODE_ENV', 'CORS_ORIGIN', 'COOKIE_DOMAIN', 'COOKIE_CROSS_SITE', 'COOKIE_SAME_ORIGIN_PROXY', 'SEED_I_KNOW',
+] as const;
 let saved: Partial<Record<(typeof KEYS)[number], string | undefined>> = {};
 
 beforeEach(() => { saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]])); });
@@ -76,9 +78,21 @@ describe('쿠키 설정 — 틀리면 15분 뒤 조용히 로그아웃된다', (
     expect(() => assertCookieConfig()).toThrow(/CORS_ORIGIN/);
   });
 
+  it('CORS allowlist는 끝 slash만 정규화하고 path·query·userinfo·다른 scheme은 거절한다', () => {
+    setEnv({ NODE_ENV: 'production', CORS_ORIGIN: 'https://app.tn.kr/,http://localhost:3000/' });
+    expect(configuredCorsOrigins()).toEqual(['https://app.tn.kr', 'http://localhost:3000']);
+
+    for (const origin of [
+      'https://app.tn.kr/path', 'https://app.tn.kr?x=1', 'https://user@app.tn.kr', 'ftp://app.tn.kr',
+    ]) {
+      setEnv({ NODE_ENV: 'production', CORS_ORIGIN: origin });
+      expect(() => configuredCorsOrigins()).toThrow(/http\(s\) origin/);
+    }
+  });
+
   it('주소가 아닌 값을 넣으면 막는다', () => {
     setEnv({ NODE_ENV: 'production', CORS_ORIGIN: 'app.tn.kr', COOKIE_DOMAIN: '.tn.kr' });
-    expect(() => assertCookieConfig()).toThrow(/주소가 아닌/);
+    expect(() => assertCookieConfig()).toThrow(/http\(s\) origin/);
   });
 
   it('지우는 옵션은 만든 것과 같아야 한다 — maxAge 만 빠진다', () => {
@@ -213,16 +227,50 @@ describe('도메인 없이 배포 (임시)', () => {
     expect(assertCookieConfig()).toContain('임시');
   });
 
-  it('도메인이 생기면 Lax 로 돌아온다 — 스위치가 켜져 있어도 도메인이 이긴다', () => {
+  it('도메인과 cross-site 모드를 같이 두면 의도를 숨기지 않고 부팅을 막는다', () => {
     setEnv({ NODE_ENV: 'production', CORS_ORIGIN: 'https://app.tn.kr', COOKIE_DOMAIN: '.tn.kr', COOKIE_CROSS_SITE: 'true' });
-    const o = cookieOptions();
-    expect(o.sameSite).toBe('lax');
-    expect(o.domain).toBe('.tn.kr');
+    expect(() => assertCookieConfig()).toThrow(/COOKIE_DOMAIN/);
   });
 
   it('개발에서는 스위치가 켜져 있어도 아무 일도 안 한다', () => {
     setEnv({ NODE_ENV: 'development', COOKIE_CROSS_SITE: 'true' });
     expect(cookieOptions().sameSite).toBe('lax');
     expect(cookieOptions().secure).toBe(false);
+  });
+});
+
+describe('same-origin API proxy 쿠키', () => {
+  const VERCEL = { NODE_ENV: 'production', CORS_ORIGIN: 'https://taco-app.vercel.app' };
+
+  it('proxy를 명시하면 host-only SameSite=Lax + Secure로 열린다', () => {
+    setEnv({ ...VERCEL, COOKIE_SAME_ORIGIN_PROXY: 'true' });
+    const o = cookieOptions();
+    expect(o.domain).toBeUndefined();
+    expect(o.sameSite).toBe('lax');
+    expect(o.secure).toBe(true);
+    expect(assertCookieConfig()).toContain('same-origin API proxy');
+  });
+
+  it('proxy와 cross-site를 함께 켜면 부팅을 막는다', () => {
+    setEnv({ ...VERCEL, COOKIE_SAME_ORIGIN_PROXY: 'true', COOKIE_CROSS_SITE: 'true' });
+    expect(() => assertCookieConfig()).toThrow(/동시에/);
+  });
+
+  it('proxy와 COOKIE_DOMAIN을 함께 두면 애매한 쿠키를 만들지 않고 막는다', () => {
+    setEnv({ ...VERCEL, COOKIE_SAME_ORIGIN_PROXY: 'true', COOKIE_DOMAIN: '.vercel.app' });
+    expect(() => assertCookieConfig()).toThrow(/COOKIE_DOMAIN/);
+  });
+
+  it('로컬 CORS 운영 smoke도 모순된 쿠키 모드를 우회하지 못한다', () => {
+    setEnv({
+      NODE_ENV: 'production', CORS_ORIGIN: 'http://localhost:3000',
+      COOKIE_DOMAIN: '.example.test', COOKIE_CROSS_SITE: 'true', COOKIE_SAME_ORIGIN_PROXY: 'true',
+    });
+    expect(() => assertCookieConfig()).toThrow(/COOKIE_SAME_ORIGIN_PROXY/);
+  });
+
+  it('로컬 CORS 운영 smoke에 도메인만 숨겨 두는 구성도 막는다', () => {
+    setEnv({ NODE_ENV: 'production', CORS_ORIGIN: 'http://localhost:3000', COOKIE_DOMAIN: '.example.test' });
+    expect(() => assertCookieConfig()).toThrow(/로컬 CORS_ORIGIN/);
   });
 });
