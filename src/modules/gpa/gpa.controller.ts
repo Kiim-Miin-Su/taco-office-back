@@ -45,7 +45,7 @@ export class GpaController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({ summary: '기록 승인(ok)·되돌림(wait) — 기록한 사람은 승인하지 못한다 · 닫힌 사이클은 잠긴다' })
   @ApiOkResponse({ type: GpaUseDto })
-  @ApiConflictResponse({ description: 'code CYCLE_CLOSED | SELF_APPROVAL_FORBIDDEN' })
+  @ApiConflictResponse({ description: 'code CYCLE_CLOSED | USE_STATE_UNCHANGED(이미 그 상태 — 승인 도장을 덮지 않는다) | SELF_APPROVAL_FORBIDDEN' })
   @ApiNotFoundResponse({ description: '기록 없음' })
   async setUseState(
     @CurrentUser() user: RequestUser,

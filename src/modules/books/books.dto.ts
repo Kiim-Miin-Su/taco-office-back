@@ -12,8 +12,12 @@ import {
 } from 'class-validator';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { HIST_ACTIONS } from '../../lib/history';
-import { ISSUE_CREATE_STATES, ISSUE_STATES, ISSUE_TRANSITION_STATES, PACK_STATES, PACK_TYPES } from '../../lib/book';
+import {
+  BOOK_EXAM_TAGS, BOOK_GRADE_MAX, BOOK_GRADE_MIN, BOOK_GRADES, BOOK_LEVELS, BOOK_UNCLASSIFIED, bookGradeKey,
+  ISSUE_CREATE_STATES, ISSUE_FORMS, ISSUE_STATES, ISSUE_TRANSITION_STATES, PACK_STATES, PACK_TYPES,
+} from '../../lib/book';
 import { FileUploadDto } from '../files/files.dto';
+import { LeadDiagDto } from '../ops/lead-diag.dto';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -52,33 +56,23 @@ export class BookDto {
   @ApiPropertyOptional(N) seFileId?: number | null;
   @ApiPropertyOptional(N) teFileId?: number | null;
   @ApiProperty({ description: '회수 완료를 포함한 누적 배부 횟수' }) issueCount!: number;
-}
 
-export class BookWriteDto {
-  @ApiProperty({ minLength: 1, maxLength: 30 }) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(30) code!: string;
-  @ApiProperty({ minLength: 1, maxLength: 120 }) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(120) title!: string;
-  @ApiPropertyOptional({ maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) subKey?: string;
-  @ApiPropertyOptional({ maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) level?: string;
-  @ApiPropertyOptional({ maxLength: 10 }) @IsOptional() @IsString() @MaxLength(10) grade?: string;
-  @ApiPropertyOptional({ minimum: 1, maximum: 32767 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32767) pages?: number;
-}
+  /* ── §39 두 층 분류 (N-47 채택 · W11) — 옛 칸(subKey · level · grade)은 그대로 두고 새 칸을 사람이 채운다 ── */
 
-/** 교재 생성·수정 뒤 목록 캐시를 갱신하기 전에 쓰는 최소 식별 응답. */
-export class BookWriteResultDto {
-  @ApiProperty() id!: number;
-  @ApiProperty() code!: string;
-  @ApiProperty() title!: string;
-}
-
-export class BookPatchDto {
-  // 필수 이름은 생략할 수 있지만 지울 수 없다. IsOptional은 null까지 통과시키므로 쓰지 않는다.
-  @ApiPropertyOptional({ minLength: 1, maxLength: 30 }) @ValidateIf((_object, value) => value !== undefined) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(30) code?: string;
-  @ApiPropertyOptional({ minLength: 1, maxLength: 120 }) @ValidateIf((_object, value) => value !== undefined) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(120) title?: string;
-  // 선택 정보는 생략하면 보존하고 null이면 삭제한다. 생성 DTO의 생략 계약은 그대로 둔다.
-  @ApiPropertyOptional({ ...S, maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) subKey?: string | null;
-  @ApiPropertyOptional({ ...S, maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) level?: string | null;
-  @ApiPropertyOptional({ ...S, maxLength: 10 }) @IsOptional() @IsString() @MaxLength(10) grade?: string | null;
-  @ApiPropertyOptional({ ...N, minimum: 1, maximum: 32767 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32767) pages?: number | null;
+  @ApiPropertyOptional({ ...S, description: '교재 과목 키(BOOK_SUBJECT) — null 이면 「미분류」' }) bookSubjectKey?: string | null;
+  @ApiPropertyOptional({ ...S, description: '교재 과목 이름 — 원문 낱말 그대로' }) bookSubjectName?: string | null;
+  @ApiPropertyOptional({ ...S, description: '교재 과목 색(#RRGGBB) — 코드표 값. 소분류 글자 · 묶음 머리가 쓴다' }) bookSubjectColor?: string | null;
+  @ApiPropertyOptional({ ...S, description: '소분류 키(BOOK_CATEGORY)' }) bookCategoryKey?: string | null;
+  @ApiPropertyOptional({ ...S, description: '소분류 이름 — 카드 윗줄 (원문 「Reading」)' }) bookCategoryName?: string | null;
+  @ApiPropertyOptional({ ...S, enum: [...BOOK_LEVELS], description: '코드표 레벨 — 편집 창 값' }) bookLevel?: string | null;
+  @ApiPropertyOptional({ ...S, description: '보여 주는 레벨 — 코드표 레벨 낱말(Foundation …), 아직이면 옛 원문(level) 그대로' })
+  levelLabel?: string | null;
+  @ApiPropertyOptional({ ...N, description: '학년 범위 시작 — K = 0 · G1~G12 = 1~12' }) gradeFrom?: number | null;
+  @ApiPropertyOptional({ ...N, description: '학년 범위 끝' }) gradeTo?: number | null;
+  @ApiPropertyOptional({ ...S, description: '보여 주는 학년 — 범위를 원문처럼 「G9·G10」, 아직이면 옛 원문(grade) 그대로' })
+  gradeLabel?: string | null;
+  @ApiPropertyOptional({ ...S, enum: [...BOOK_EXAM_TAGS], description: '시험 태그 — 편집 창 값' }) examTag?: string | null;
+  @ApiPropertyOptional({ ...S, description: '시험 태그 낱말 — 원문 칩 SAT · MAP · ISEE / SSAT' }) examTagLabel?: string | null;
 }
 
 /** §39 「+ 판 올리기」 — 새 판을 저장소에 넣는다 */
@@ -98,6 +92,68 @@ export class BookVersionCreateDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, description: '이 판을 언제부터 쓰는가 — 비우면 오늘부터' })
   @IsOptional() @IsCalendarDate()
   fromDate?: string;
+}
+
+/** §39 두 층 분류 칸의 키 모양 — 코드표 키(english · reading …). 있는지는 서비스가 코드표로 본다 */
+const TAXONOMY_KEY = /^[a-z0-9_]{1,30}$/;
+
+export class BookWriteDto {
+  @ApiProperty({ minLength: 1, maxLength: 30 }) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(30) code!: string;
+  @ApiProperty({ minLength: 1, maxLength: 120 }) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(120) title!: string;
+  @ApiPropertyOptional({ maxLength: 20, description: '시간표 과목(SUB) — 수업의 교재 요구와 맞춰 보는 칸. §39 과목 분류와는 다른 축' }) @IsOptional() @IsString() @MaxLength(20) subKey?: string;
+  @ApiPropertyOptional({ maxLength: 20, description: '옛 레벨 원문 — 새 교재는 bookLevel 을 쓴다' }) @IsOptional() @IsString() @MaxLength(20) level?: string;
+  @ApiPropertyOptional({ maxLength: 10, description: '옛 학년 원문 — 새 교재는 gradeFrom · gradeTo 를 쓴다' }) @IsOptional() @IsString() @MaxLength(10) grade?: string;
+  @ApiPropertyOptional({ minimum: 1, maximum: 32767 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32767) pages?: number;
+
+  /* ── §39 두 층 분류 (N-47) ── */
+  @ApiPropertyOptional({ maxLength: 20, description: '교재 과목(BOOK_SUBJECT) 키' }) @IsOptional() @IsString() @Matches(TAXONOMY_KEY) @MaxLength(20) bookSubjectKey?: string;
+  @ApiPropertyOptional({ maxLength: 30, description: '소분류(BOOK_CATEGORY) 키 — 고른 과목의 것만' }) @IsOptional() @IsString() @Matches(TAXONOMY_KEY) bookCategoryKey?: string;
+  @ApiPropertyOptional({ enum: [...BOOK_LEVELS] }) @IsOptional() @IsIn(BOOK_LEVELS) bookLevel?: string;
+  @ApiPropertyOptional({ minimum: BOOK_GRADE_MIN, maximum: BOOK_GRADE_MAX, description: '학년 범위 시작 — K = 0' }) @IsOptional() @Type(() => Number) @IsInt() @Min(BOOK_GRADE_MIN) @Max(BOOK_GRADE_MAX) gradeFrom?: number;
+  @ApiPropertyOptional({ minimum: BOOK_GRADE_MIN, maximum: BOOK_GRADE_MAX, description: '학년 범위 끝' }) @IsOptional() @Type(() => Number) @IsInt() @Min(BOOK_GRADE_MIN) @Max(BOOK_GRADE_MAX) gradeTo?: number;
+  @ApiPropertyOptional({ enum: [...BOOK_EXAM_TAGS] }) @IsOptional() @IsIn(BOOK_EXAM_TAGS) examTag?: string;
+
+  /**
+   * 첫 판 — 등록과 **같은 트랜잭션**에서 판(이름 · 언제부터)과 SE/TE 파일을 함께 만든다 (N-61 ① 채택 · W11).
+   * 판 이름은 사람이 적는다 — 비우면 판 없이 교재만 등록한다(이름을 지어 넣지 않는다).
+   */
+  @ApiPropertyOptional({ type: BookVersionCreateDto, description: '첫 판 — 교재와 같은 트랜잭션에 저장한다' })
+  @IsOptional() @ValidateNested() @Type(() => BookVersionCreateDto)
+  firstVersion?: BookVersionCreateDto;
+}
+
+/** 교재 생성·수정 뒤 목록 캐시를 갱신하기 전에 쓰는 최소 식별 응답. */
+export class BookWriteResultDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() code!: string;
+  @ApiProperty() title!: string;
+}
+
+export class BookPatchDto {
+  // 필수 이름은 생략할 수 있지만 지울 수 없다. IsOptional은 null까지 통과시키므로 쓰지 않는다.
+  @ApiPropertyOptional({ minLength: 1, maxLength: 30 }) @ValidateIf((_object, value) => value !== undefined) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(30) code?: string;
+  @ApiPropertyOptional({ minLength: 1, maxLength: 120 }) @ValidateIf((_object, value) => value !== undefined) @Transform(({ value }) => typeof value === 'string' ? value.trim() : value) @IsString() @MinLength(1) @MaxLength(120) title?: string;
+  // 선택 정보는 생략하면 보존하고 null이면 삭제한다. 생성 DTO의 생략 계약은 그대로 둔다.
+  @ApiPropertyOptional({ ...S, maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) subKey?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 20 }) @IsOptional() @IsString() @MaxLength(20) level?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 10 }) @IsOptional() @IsString() @MaxLength(10) grade?: string | null;
+  @ApiPropertyOptional({ ...N, minimum: 1, maximum: 32767 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32767) pages?: number | null;
+  /* §39 두 층 분류 (N-47) — 생략하면 보존, null 이면 비운다(사람이 분류를 되돌릴 수 있다) */
+  @ApiPropertyOptional({ ...S, maxLength: 20 }) @IsOptional() @IsString() @Matches(TAXONOMY_KEY) @MaxLength(20) bookSubjectKey?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 30 }) @IsOptional() @IsString() @Matches(TAXONOMY_KEY) bookCategoryKey?: string | null;
+  @ApiPropertyOptional({ ...S, enum: [...BOOK_LEVELS] }) @IsOptional() @IsIn(BOOK_LEVELS) bookLevel?: string | null;
+  @ApiPropertyOptional({ ...N, minimum: BOOK_GRADE_MIN, maximum: BOOK_GRADE_MAX }) @IsOptional() @Type(() => Number) @IsInt() @Min(BOOK_GRADE_MIN) @Max(BOOK_GRADE_MAX) gradeFrom?: number | null;
+  @ApiPropertyOptional({ ...N, minimum: BOOK_GRADE_MIN, maximum: BOOK_GRADE_MAX }) @IsOptional() @Type(() => Number) @IsInt() @Min(BOOK_GRADE_MIN) @Max(BOOK_GRADE_MAX) gradeTo?: number | null;
+  @ApiPropertyOptional({ ...S, enum: [...BOOK_EXAM_TAGS] }) @IsOptional() @IsIn(BOOK_EXAM_TAGS) examTag?: string | null;
+}
+
+/** §39 서가 필터 — 과목 · 레벨 · 학년. 거르기와 건수는 서버가 한다 (N-47 · D-R37) */
+export class BookShelfQueryDto {
+  @ApiPropertyOptional({ description: `교재 과목 키 — 「${BOOK_UNCLASSIFIED.label}」는 ${BOOK_UNCLASSIFIED.key}`, maxLength: 20 })
+  @IsOptional() @IsString() @Matches(TAXONOMY_KEY) @MaxLength(20) subject?: string;
+  @ApiPropertyOptional({ enum: [...BOOK_LEVELS] }) @IsOptional() @IsIn(BOOK_LEVELS) level?: string;
+  @ApiPropertyOptional({ enum: BOOK_GRADES.map(bookGradeKey), description: '학년 칩 키 — 범위가 이 학년을 덮는 교재' })
+  @IsOptional() @IsIn(BOOK_GRADES.map(bookGradeKey)) grade?: string;
 }
 
 export class BookVersionDto {
@@ -162,6 +218,12 @@ export class BookIssueCreateDto {
   @ApiPropertyOptional({ enum: ISSUE_CREATE_STATES, default: 'ok' }) @IsOptional() @IsIn(ISSUE_CREATE_STATES) state?: string;
   @ApiPropertyOptional({ ...DATE_SCHEMA, example: '2026-09-14' }) @IsOptional() @IsCalendarDate() issuedOn?: string;
   @ApiPropertyOptional({ minimum: 0 }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) progressPage?: number;
+  /** 배부 사유 — 무슨 교재를 왜 줬는지 (N-62 ① · 원문 슬라이드 37). 비우면 NULL. 진단 점수는 여기 옮겨 적지 않는다(D-R22) */
+  @ApiPropertyOptional({ maxLength: 500, description: '배부 사유 — 비우면 적지 않는다' })
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+  /** 배부 형태 — PDF · 실물 책 (§38-2 · W11 A'). 고르지 않으면 NULL = 칩 없음 */
+  @ApiPropertyOptional({ enum: [...ISSUE_FORMS], description: '배부 형태 — pdf | print · 고르지 않으면 칩이 서지 않는다' })
+  @IsOptional() @IsIn(ISSUE_FORMS) form?: string;
 }
 
 export class BookIssueTransitionDto {
@@ -191,6 +253,18 @@ export class BookIssueDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true }) returnedOn?: string | null;
   @ApiPropertyOptional(N) progressPage?: number | null;
   @ApiPropertyOptional(N) progressPercent?: number | null;
+  @ApiPropertyOptional({ ...S, description: '배부 사유 (N-62) — 옛 배부는 null' }) reason?: string | null;
+  @ApiPropertyOptional({ ...S, enum: [...ISSUE_FORMS], description: '배부 형태 (§38-2) — 옛 배부 · 고르지 않은 배부는 null' }) form?: string | null;
+  @ApiPropertyOptional({ ...S, description: '형태 칩 낱말 — 원문 「PDF」 · 「실물 책」(서버가 만든다 · D-R18)' }) formLabel?: string | null;
+}
+
+/**
+ * 배부 창의 진단 한 줄 — 그 학생의 **최신 상담 진단**을 보여 주기만 한다 (N-62 ① · DQ1).
+ * 값은 `lead_diag` 한 곳에 있고 배부에 옮겨 적지 않는다(D-R22). 진단이 없으면 diag = null.
+ */
+export class BookIssueDiagDto {
+  @ApiProperty() studentId!: number;
+  @ApiPropertyOptional({ type: LeadDiagDto, nullable: true, description: '최신 상담 진단 — 없으면 null' }) diag?: LeadDiagDto | null;
 }
 
 export class BookTrackingStudentDto {
@@ -214,7 +288,7 @@ export class BookProgressStudentDto {
 export class BookProgressDto {
   @ApiProperty() libId!: number;
   @ApiProperty() title!: string;
-  @ApiPropertyOptional({ ...S, description: '교재 레벨 원문(lib.level) — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). 없으면 null' })
+  @ApiPropertyOptional({ ...S, description: '교재 레벨 — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 옛 원문(lib.level). 없으면 null' })
   level?: string | null;
   @ApiProperty() studentCount!: number;
   @ApiPropertyOptional(N) minPercent?: number | null;
@@ -234,6 +308,7 @@ export class BookChangeRequestDto {
 
 export class BookTrackingDto {
   @ApiProperty({ type: [BookTrackingStudentDto] }) students!: BookTrackingStudentDto[];
+  @ApiProperty({ type: () => [BookCodeDto], description: '배부 창의 형태 선택지 — 「PDF」 · 「실물 책」(§38-2 · W11 A 후속)' }) issueForms!: BookCodeDto[];
   @ApiProperty({ type: [BookProgressDto] }) books!: BookProgressDto[];
   @ApiProperty({ type: [NamedCountDto] }) states!: NamedCountDto[];
   @ApiProperty({ type: [BookChangeRequestDto] }) teacherRequests!: BookChangeRequestDto[];
@@ -269,7 +344,7 @@ export class BookPackLibDto {
   @ApiProperty() id!: number;
   @ApiProperty() code!: string;
   @ApiProperty() title!: string;
-  @ApiPropertyOptional({ ...S, description: '교재 레벨 원문(lib.level) — 카드 교재 줄의 레벨 글자 사각(원문 §41 · g4 §41-3). 없으면 null' })
+  @ApiPropertyOptional({ ...S, description: '교재 레벨 — 카드 교재 줄의 레벨 글자 사각(원문 §41 · g4 §41-3). 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 옛 원문(lib.level). 없으면 null' })
   level?: string | null;
   @ApiPropertyOptional(N) versId?: number | null;
   @ApiPropertyOptional(N) seFileId?: number | null;
@@ -297,7 +372,7 @@ export class BookPackDto {
   @ApiProperty({ type: [BookPackStudentDto] }) students!: BookPackStudentDto[];
   @ApiProperty({ type: [BookPackLibDto] }) books!: BookPackLibDto[];
   @ApiProperty({ description: 'pending 자료를 전달해도 되는가 — 필수 링크 판정은 서버가 한다' }) canDeliver!: boolean;
-  @ApiProperty({ description: '현재 사용자가 delivered 자료의 지정 코디네이터라 수령 확인할 수 있는가' }) canReceive!: boolean;
+  @ApiProperty({ description: '현재 사용자가 delivered 자료를 수령 확인할 수 있는가 — 지정 코디네이터 또는 대표 판정(N-88). 판정은 서버가 한다' }) canReceive!: boolean;
   @ApiProperty({ type: [String], description: '전달 전에 채워야 할 항목' }) deliveryBlockers!: string[];
 }
 
@@ -312,14 +387,40 @@ export class BookPacksDto {
   @ApiProperty({ type: [BookPackCoordinatorDto] }) coordinators!: BookPackCoordinatorDto[];
 }
 
+/** §39 코드 한 칸 — 키 · 낱말 (D-R18). 편집 창 선택지가 이것을 그대로 쓴다 */
+export class BookCodeDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() label!: string;
+}
+
+/** §39 과목 칩 한 칸 — 서가 전체에서 센 권수 + 코드표 색 + 그 과목의 소분류(편집 창 선택지) */
+export class BookSubjectCountDto extends NamedCountDto {
+  @ApiProperty({ description: '칩 점 · 묶음 머리 색(#RRGGBB) — 코드표 값' }) color!: string;
+  @ApiProperty({ type: [BookCodeDto], description: '이 과목의 소분류 — 코드표 차례' }) categories!: BookCodeDto[];
+}
+
+/** §39 학년 칩 한 칸 — 범위가 이 학년을 덮는 교재 수 */
+export class BookGradeCountDto extends NamedCountDto {
+  @ApiProperty({ description: '학년 숫자 — K = 0 · G1~G12 = 1~12. 편집 창의 범위 두 칸이 쓴다' }) grade!: number;
+}
+
+/** §39 경고 띠 한 줄 — 어느 교재인지 (서가 전체 기준) */
+export class BookNoticeDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() title!: string;
+  @ApiPropertyOptional(S) edition?: string | null;
+  @ApiPropertyOptional(S) latestEdition?: string | null;
+}
+
 export class BooksDto {
-  @ApiProperty({ type: [BookDto] }) items!: BookDto[];
+  @ApiProperty({ type: [BookDto], description: '필터(과목 · 레벨 · 학년)를 서버가 적용한 교재 — 필터가 없으면 서가 전체. 차례는 과목 → 소분류 → 코드' })
+  items!: BookDto[];
   /** 과목 이름 → 권수. 키가 정해져 있지 않으므로 additionalProperties 로 적는다.
    *  이걸 빼면 front 타입이 Record<string, never> 로 내려간다 (생성기 게이트가 잡는다). */
   @ApiProperty({
     type: 'object',
     additionalProperties: { type: 'number' },
-    description: '과목별 권수 — 필터 칩에 쓴다',
+    description: '시간표 과목(SUB) 이름별 권수 — 옛 필터 값. §39 서가 칩은 subjects(교재 과목 · N-47)를 쓴다',
   })
   bySub!: Record<string, number>;
 
@@ -327,10 +428,15 @@ export class BooksDto {
   @ApiProperty({ description: '더 나중 판이 있는 교재 수' }) newerCount!: number;
   /** 지금 쓰는 판에 TE 파일이 없는 교재 수 — 「강사에게 보낼 파일이 없습니다」 띠 */
   @ApiProperty({ description: '현재 판에 교사용 TE 파일이 없는 교재 수' }) noFileCount!: number;
-  @ApiProperty({ type: [String] }) levels!: string[];
-  @ApiProperty({ type: [String] }) grades!: string[];
-  @ApiProperty({ type: [NamedCountDto], description: '레벨별 교재 수 — 필터 칩 SSOT' }) levelCounts!: NamedCountDto[];
-  @ApiProperty({ type: [NamedCountDto], description: '학년별 교재 수 — 필터 칩 SSOT' }) gradeCounts!: NamedCountDto[];
+  @ApiProperty({ type: [String], description: '옛 레벨 원문(lib.level)의 값들' }) levels!: string[];
+  @ApiProperty({ type: [String], description: '옛 학년 원문(lib.grade)의 값들' }) grades!: string[];
+  @ApiProperty({ type: [NamedCountDto], description: '레벨별 교재 수 — 코드표 레벨 셋 전부(0 도 준다) · 서가 전체 기준 · 필터 칩 SSOT (N-47)' }) levelCounts!: NamedCountDto[];
+  @ApiProperty({ type: [BookGradeCountDto], description: '학년별 교재 수 — K · G1 … G12 전부(0 도 준다) · 범위가 덮는 학년마다 센다 · 서가 전체 기준 (N-47)' }) gradeCounts!: BookGradeCountDto[];
+  @ApiProperty({ type: [BookSubjectCountDto], description: '과목별 교재 수 — 코드표 과목 넷 전부(0 도 준다) · 서가 전체 기준 (N-47)' }) subjects!: BookSubjectCountDto[];
+  @ApiProperty({ type: NamedCountDto, description: '과목을 아직 정하지 않은 교재 — 「미분류」 칩 · 묶음' }) unclassified!: NamedCountDto;
+  @ApiProperty({ type: [BookCodeDto], description: '시험 태그 셋 — 편집 창 선택지' }) examTags!: BookCodeDto[];
+  @ApiProperty({ type: [BookNoticeDto], description: '더 나중 판이 있는 교재 — 머리 띠의 이름들(서가 전체 기준 · newerCount 와 같은 줄)' }) newerBooks!: BookNoticeDto[];
+  @ApiProperty({ type: [BookNoticeDto], description: 'TE 파일이 없는 교재 — 머리 띠의 이름들(서가 전체 기준 · noFileCount 와 같은 줄)' }) noTeBooks!: BookNoticeDto[];
   @ApiProperty({ description: '새 판 SE+TE 원본 파일 합계 상한. 화면은 이 서버 값을 그대로 쓴다' })
   versionUploadMaxBytes!: number;
 }

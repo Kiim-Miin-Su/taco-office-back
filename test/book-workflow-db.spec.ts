@@ -44,6 +44,13 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
   const teacherOverride = 1774;
   const managerRecipient = 1775;
   const svc = () => new BooksService(q.manager.getRepository(Lead));
+  /*
+   * 자료 전달(§41)은 보는 사람의 **역할**까지 받는다 — 수령 확인이 「지정 코디네이터 또는 대표 판정」이라서다(N-88 · W11).
+   * 대표 판정은 지금 관리자급 모두다(P1 ceoGate) — 그래서 「아무도 아닌 사람」은 자료 권한 예외를 켠 강사로 세운다.
+   */
+  const ownerV = { id: owner, role: 'admin' };
+  const coordV = { id: coordinator, role: 'manager' };
+  const teacherV = { id: teacherOverride, role: 'teacher' };
 
   beforeAll(async () => { ds = scratchDataSource(); await ds.initialize(); });
   beforeEach(async () => {
@@ -153,7 +160,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     expect(Number((await q.query(`SELECT count(*)::int AS n FROM hist WHERE entity='issue' AND ref_id=$1 AND action='book_issue'`, [issue.id]))[0].n)).toBe(1);
   });
 
-  it('다학생·다교재 요청은 지정 코디네이터만 pending→delivered→received로 끝낸다', async () => {
+  it('다학생·다교재 요청은 pending→delivered→received로 끝나고 코디네이터도 대표 판정도 아닌 사람은 수령할 수 없다', async () => {
     const v1 = await svc().addVersion(owner, libA, {
       edition: 'v1',
       seFile: { kind: 'lib-se', name: 'v1.pdf', base64: Buffer.from('1').toString('base64') },
@@ -164,7 +171,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
       seFile: { kind: 'lib-se', name: 'b-v1.pdf', base64: Buffer.from('b-1').toString('base64') },
       teFile: { kind: 'lib-te', name: 'b-v1-te.pdf', base64: Buffer.from('b-1-te').toString('base64') },
     });
-    const made = await svc().createPack(owner, {
+    const made = await svc().createPack(ownerV, {
       packType: 'exam', title: '중간고사 자료', coordinatorId: coordinator,
       studentIds: [studentA, studentB], libIds: [libA, libB], effectiveOn: EFFECTIVE_ON,
     });
@@ -174,18 +181,21 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     await svc().addVersion(owner, libA, {
       edition: 'v2', seFile: { kind: 'lib-se', name: 'v2.pdf', base64: Buffer.from('2').toString('base64') },
     });
-    expect((await svc().packs(coordinator)).items.find((pack) => pack.id === made.id)?.books.find((book) => book.id === libA))
+    expect((await svc().packs(coordV)).items.find((pack) => pack.id === made.id)?.books.find((book) => book.id === libA))
       .toMatchObject({ versId: v1.id, seFileId: v1.seFileId });
-    await expect(svc().transitionPack(owner, made.id, 'received'))
+    await expect(svc().transitionPack(ownerV, made.id, 'received'))
       .rejects.toMatchObject({ response: { code: 'PACK_INVALID_TRANSITION' } });
-    expect(await svc().transitionPack(owner, made.id, 'delivered')).toMatchObject({ state: 'delivered', canReceive: false });
-    expect((await svc().packs(coordinator)).items.find((pack) => pack.id === made.id)).toMatchObject({ canReceive: true });
-    expect((await svc().packs(owner)).items.find((pack) => pack.id === made.id)).toMatchObject({ canReceive: false });
-    expect(await svc().patchPack(owner, made.id, { title: '중간고사 자료 수정' })).toMatchObject({ state: 'pending', title: '중간고사 자료 수정', deliveredAt: null, canReceive: false });
-    expect(await svc().transitionPack(owner, made.id, 'delivered')).toMatchObject({ state: 'delivered', canReceive: false });
-    await expect(svc().transitionPack(owner, made.id, 'received'))
+    // N-88 — 전달한 관리자도 대표 판정(지금은 관리자급 · P1)으로 수령 확인 단추가 선다
+    expect(await svc().transitionPack(ownerV, made.id, 'delivered')).toMatchObject({ state: 'delivered', canReceive: true });
+    expect((await svc().packs(coordV)).items.find((pack) => pack.id === made.id)).toMatchObject({ canReceive: true });
+    expect((await svc().packs(ownerV)).items.find((pack) => pack.id === made.id)).toMatchObject({ canReceive: true });
+    expect((await svc().packs(teacherV)).items.find((pack) => pack.id === made.id)).toMatchObject({ canReceive: false });
+    expect(await svc().patchPack(ownerV, made.id, { title: '중간고사 자료 수정' })).toMatchObject({ state: 'pending', title: '중간고사 자료 수정', deliveredAt: null, canReceive: false });
+    expect(await svc().transitionPack(ownerV, made.id, 'delivered')).toMatchObject({ state: 'delivered', canReceive: true });
+    // 코디네이터도 대표 판정도 아니면 — 단추가 없고(canReceive false) 서버도 같은 판정으로 막는다
+    await expect(svc().transitionPack(teacherV, made.id, 'received'))
       .rejects.toMatchObject({ response: { code: 'PACK_RECEIVER_ONLY' } });
-    expect(await svc().transitionPack(coordinator, made.id, 'received')).toMatchObject({ state: 'received', canReceive: false });
+    expect(await svc().transitionPack(coordV, made.id, 'received')).toMatchObject({ state: 'received', canReceive: false });
     const [stored] = await q.query(`SELECT state,delivered_at,received_at FROM gpapack WHERE id=$1`, [made.id]);
     expect(stored.state).toBe('received'); expect(stored.delivered_at).toBeTruthy(); expect(stored.received_at).toBeTruthy();
     const notices = await q.query(`SELECT to_id,from_id,body,link,category FROM noti WHERE to_id=$1 AND link='/books?tab=requests'`, [owner]);
@@ -203,19 +213,19 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     await svc().addVersion(owner, libA, {
       edition: 'se-only', seFile: { kind: 'lib-se', name: 'se.pdf', base64: Buffer.from('se').toString('base64') },
     });
-    const made = await svc().createPack(owner, {
+    const made = await svc().createPack(ownerV, {
       packType: 'self', title: '미완성 묶음', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA], libIds: [libA],
     });
     expect(made.canDeliver).toBe(false);
     expect(made.deliveryBlockers).toContain('교사용 TE 파일');
-    await expect(svc().transitionPack(owner, made.id, 'delivered'))
+    await expect(svc().transitionPack(ownerV, made.id, 'delivered'))
       .rejects.toMatchObject({ response: { code: 'PACK_NOT_READY' } });
     expect((await q.query(`SELECT state FROM gpapack WHERE id=$1`, [made.id]))[0].state).toBe('pending');
   });
 
   it('매니저 역할이어도 개인 canGpaPack=false이면 코디네이터가 될 수 없다', async () => {
-    await expect(svc().createPack(owner, {
+    await expect(svc().createPack(ownerV, {
       packType: 'self', title: '권한 방어 묶음', effectiveOn: EFFECTIVE_ON,
       coordinatorId: deniedCoordinator, studentIds: [studentA], libIds: [libA],
     })).rejects.toThrow('자료를 받을 권한이 있는 활성 코디네이터');
@@ -232,7 +242,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     )).rejects.toMatchObject({ constraint: 'issue_vers_lib_fk' });
     await q.query('ROLLBACK TO SAVEPOINT issue_fk');
 
-    const pack = await svc().createPack(owner, {
+    const pack = await svc().createPack(ownerV, {
       packType: 'self', title: '복합키 검사', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA], libIds: [libA],
     });
@@ -252,7 +262,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     );
     await q.query(`ALTER TABLE gpapack ADD CONSTRAINT gpapack_required_for_write
       CHECK (effective_on IS NOT NULL AND coordinator_id IS NOT NULL) NOT VALID`);
-    await expect(svc().patchPack(owner, Number(legacy.id), { title: '쓰이면 안 됨' }))
+    await expect(svc().patchPack(ownerV, Number(legacy.id), { title: '쓰이면 안 됨' }))
       .rejects.toMatchObject({ response: { code: 'PACK_INCOMPLETE' } });
     const [after] = await q.query(`SELECT title,state,effective_on,coordinator_id,updated_at FROM gpapack WHERE id=$1`, [legacy.id]);
     expect(after).toMatchObject({ title: '레거시 원본', state: 'pending', effective_on: null, coordinator_id: null, updated_at: legacy.updated_at });
@@ -280,11 +290,11 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     expect(made).toMatchObject({ code: 'C77-TRIM', title: '공백 정리 교재' });
     await expect(svc().createBook(owner, { code: 'C77-TRIM', title: '중복' }))
       .rejects.toMatchObject({ response: { code: 'BOOK_CODE_DUPLICATE' } });
-    await expect(svc().createPack(owner, {
+    await expect(svc().createPack(ownerV, {
       packType: 'self', title: '중복 학생', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA, studentA], libIds: [libA],
     })).rejects.toThrow('학생을 중복 선택');
-    await expect(svc().createPack(owner, {
+    await expect(svc().createPack(ownerV, {
       packType: 'self', title: '중복 교재', effectiveOn: EFFECTIVE_ON, coordinatorId: coordinator,
       studentIds: [studentA], libIds: [libA, libA],
     })).rejects.toThrow('교재를 중복 선택');
@@ -343,17 +353,17 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
         teFile: { kind: 'lib-te', name: `${lib}-te.pdf`, base64: Buffer.from('t').toString('base64') },
       });
     }
-    const make = (title: string) => svc().createPack(owner, {
+    const make = (title: string) => svc().createPack(ownerV, {
       packType: 'exam', title, coordinatorId: coordinator, studentIds: [studentA], libIds: [libA, libB], effectiveOn: EFFECTIVE_ON,
     });
     const first = await make('첫 묶음');
     const second = await make('둘째 묶음');
     await make('셋째 묶음');
-    await svc().transitionPack(owner, first.id, 'delivered');
-    await svc().transitionPack(coordinator, first.id, 'received');
-    const delivered = await svc().transitionPack(owner, second.id, 'delivered');
+    await svc().transitionPack(ownerV, first.id, 'delivered');
+    await svc().transitionPack(coordV, first.id, 'received');
+    const delivered = await svc().transitionPack(ownerV, second.id, 'delivered');
     expect(delivered).toMatchObject({ deliveredByName: '교재 담당', receivedByName: null });
-    const packs = await svc().packs(owner);
+    const packs = await svc().packs(ownerV);
     expect(packs.items.find((pack) => pack.id === first.id))
       .toMatchObject({ deliveredByName: '교재 담당', receivedByName: '수령 코디' });
     // 「수령 코디 3건 · 미확인 1」 — 미확인은 전달됐는데 아직 수령하지 않은 묶음
@@ -374,11 +384,58 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
   /** g4 §41-3 — 원문 카드의 교재 줄은 레벨 글자 사각(P·F·M)으로 시작한다. 레벨은 LIB 원문 그대로, 없으면 null */
   it('§41-3 자료 전달의 교재 줄은 교재 레벨을 싣는다', async () => {
     await q.query(`UPDATE lib SET level='Practice' WHERE id=$1`, [libA]);
-    const made = await svc().createPack(owner, {
+    const made = await svc().createPack(ownerV, {
       packType: 'exam', title: '레벨 묶음', coordinatorId: coordinator, studentIds: [studentA], libIds: [libA, libB], effectiveOn: EFFECTIVE_ON,
     });
-    const pack = (await svc().packs(owner)).items.find((row) => row.id === made.id)!;
+    const pack = (await svc().packs(ownerV)).items.find((row) => row.id === made.id)!;
     expect(pack.books.find((book) => book.id === libA)).toMatchObject({ level: 'Practice' });
     expect(pack.books.find((book) => book.id === libB)).toMatchObject({ level: null });
+  });
+  /* ── W11 · N-88 수령 확인 · N-73 감사 ─────────────────────────────────────────── */
+
+  async function deliverablePack(title: string) {
+    for (const lib of [libA]) {
+      await svc().addVersion(owner, lib, {
+        edition: `w11-${title.length}`,
+        seFile: { kind: 'lib-se', name: `${lib}-w11.pdf`, base64: Buffer.from('s').toString('base64') },
+        teFile: { kind: 'lib-te', name: `${lib}-w11-te.pdf`, base64: Buffer.from('t').toString('base64') },
+      });
+    }
+    return svc().createPack(ownerV, {
+      packType: 'exam', title, coordinatorId: coordinator, studentIds: [studentA], libIds: [libA], effectiveOn: EFFECTIVE_ON,
+    });
+  }
+
+  it('N-88 대표 판정으로 수령 확인하면 received_by 는 실제로 누른 사람이다 — 코디네이터로 바꿔 적지 않는다', async () => {
+    const made = await deliverablePack('대표 수령 묶음');
+    await svc().transitionPack(ownerV, made.id, 'delivered');
+    const received = await svc().transitionPack(ownerV, made.id, 'received');
+    expect(received).toMatchObject({ state: 'received', receivedByName: '교재 담당', coordinatorName: '수령 코디', canReceive: false });
+    const [row] = await q.query(`SELECT received_by, coordinator_id FROM gpapack WHERE id=$1`, [made.id]);
+    expect(row).toEqual({ received_by: String(owner), coordinator_id: String(coordinator) });
+    // 수령 알림은 누른 사람을 빼고 자료 권한이 있는 관리자급에게 간다(누른 사람이 코디가 아니어도 같다)
+    const recipients = (await q.query(
+      `SELECT to_id FROM noti WHERE from_id=$1 AND link='/books?tab=requests'`, [owner],
+    )).map((r: { to_id: string }) => Number(r.to_id));
+    expect(recipients).not.toContain(owner);
+    expect(recipients).toEqual(expect.arrayContaining([coordinator, managerRecipient]));
+  });
+
+  it('N-73 묶음 만들기 · 고치기 · 전달 · 수령은 같은 트랜잭션에 GPAPACK 감사 한 줄씩 남고, 거절한 쓰기는 0줄이다', async () => {
+    const made = await deliverablePack('감사 묶음');
+    await svc().patchPack(ownerV, made.id, { title: '감사 묶음 수정' });
+    await svc().transitionPack(ownerV, made.id, 'delivered');
+    await expect(svc().transitionPack(teacherV, made.id, 'received'))
+      .rejects.toMatchObject({ response: { code: 'PACK_RECEIVER_ONLY' } });
+    await svc().transitionPack(coordV, made.id, 'received');
+    await expect(svc().patchPack(ownerV, made.id, { title: '수령 뒤 수정' }))
+      .rejects.toMatchObject({ response: { code: 'PACK_ALREADY_RECEIVED' } });
+    const rows = await q.query(
+      `SELECT actor_id, action, before, after FROM log WHERE entity='GPAPACK' AND entity_id=$1 ORDER BY id`, [made.id],
+    );
+    expect(rows.map((r: { action: string }) => r.action)).toEqual(['create', 'patch', 'deliver', 'receive']);
+    expect(rows[0]).toMatchObject({ actor_id: String(owner), after: expect.objectContaining({ title: '감사 묶음', coordinatorId: coordinator, studentIds: [studentA], libIds: [libA] }) });
+    expect(rows[1]).toMatchObject({ before: expect.objectContaining({ title: '감사 묶음', state: 'pending' }), after: { title: '감사 묶음 수정', state: 'pending' } });
+    expect(rows[3]).toMatchObject({ actor_id: String(coordinator), after: { state: 'received', receivedBy: coordinator, coordinatorId: coordinator } });
   });
 });

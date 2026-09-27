@@ -14,5 +14,6 @@ import { GpaService } from './gpa.service';
   imports: [TypeOrmModule.forFeature([GpaCycle])],
   controllers: [GpaController],
   providers: [GpaService],
+  exports: [GpaService], // §14 「GPA 회차 요청」 승인이 같은 기록 함수를 부른다 (N-99 · P 영역 한 줄)
 })
 export class GpaModule {}

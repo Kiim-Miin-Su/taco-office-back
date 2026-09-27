@@ -10,7 +10,7 @@ import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { GUIDE_DONE_DB, REPORT_WRITTEN_DB } from '../../lib/rules';
 import type { BoardDto, BoardFacetsDto, CheckMarkDto } from './board.dto';
-import { hhmmOf, kstDateOf, serStuOn } from '../../lib/sql';
+import { effectiveModeOf, hhmmOf, kstDateOf, serStuOn } from '../../lib/sql';
 import { GUIDE_EVENT_CTE, guideCoversEvent } from '../guides/guide-events';
 import { boardSummary } from './board.rules';
 
@@ -108,7 +108,8 @@ export class BoardService {
               a.result AS attendance_result,
               ${hhmmOf('lower(o.span)')} AS start_at,
               ${hhmmOf('upper(o.span)')} AS end_at,
-              s.mode, s.kind_key, k.name AS kind_name, s.sub_key, sb.name AS sub_name,
+              -- 회차의 실제 방식 — 그 회차만 바꾼 예외(exc.mode)가 이긴다 (N-56 · lib/sql 한 조각) · 줌 마크가 이 값을 본다
+              ${effectiveModeOf('ex', 's')} AS mode, s.kind_key, k.name AS kind_name, s.sub_key, sb.name AS sub_name,
               o.teacher_id, t.name AS teacher_name, rm.name AS room_name,
               o.zacc_id, z.label AS zacc_label,
               /* 그날 빠진 학생은 명단에서 뺀다 (D-R21).
@@ -142,6 +143,7 @@ export class BoardService {
          LEFT JOIN sub   sb ON sb.key = s.sub_key
          LEFT JOIN zacc  z  ON z.id = o.zacc_id
          LEFT JOIN att a ON a.ser_id = o.ser_id AND a.on_date = o.on_date
+         LEFT JOIN exc ex ON ex.ser_id = o.ser_id AND ex.on_date = o.on_date
         WHERE ${kstDateOf('lower(o.span)')} BETWEEN $1::date AND $2::date
           AND ($3::bigint IS NULL OR o.teacher_id = $3)
           AND ($5::varchar IS NULL OR s.sub_key = $5)

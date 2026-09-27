@@ -7,9 +7,9 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiTags } from '@nestjs/swagger';
 import {
-  BookHistoryDto, BookHistoryQueryDto, BookIssueCreateDto, BookIssueDto, BookIssueProgressDto,
+  BookHistoryDto, BookHistoryQueryDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto, BookIssueProgressDto,
   BookIssueReturnDto, BookIssueTransitionDto, BookPackDto, BookPackPatchDto, BookPacksDto, BookPackWriteDto,
-  BookPatchDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto, BookWriteResultDto,
+  BookPatchDto, BookShelfQueryDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto, BookWriteResultDto,
 } from './books.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
@@ -22,17 +22,21 @@ export class BooksController {
   constructor(private readonly svc: BooksService) {}
 
   @Get()
-  @ApiOperation({ summary: '교재 서가 — 코드 · 과목 · 쪽수 · SE/TE (§39)' })
+  @ApiOperation({
+    summary: '교재 서가 — 코드 · 과목 · 쪽수 · SE/TE (§39)',
+    description: '과목 · 레벨 · 학년 필터는 서버가 건다(N-47). 칩 건수 · 경고 띠는 필터와 상관없이 서가 전체 기준이다.',
+  })
   @ApiOkResponse({ type: BooksDto })
-  async all(): Promise<BooksDto> {
-    return this.svc.all();
+  async all(@Query() query: BookShelfQueryDto): Promise<BooksDto> {
+    return this.svc.all(query);
   }
 
   @Post()
   @Perm('canCrudAll')
   @ApiOperation({ summary: '교재 등록 (§39)' })
   @ApiCreatedResponse({ type: BookWriteResultDto, description: '등록된 교재 식별자·코드·이름' })
-  @ApiBadRequestResponse({ description: '필드 형식 또는 과목 참조 오류' })
+  @ApiBadRequestResponse({ description: '필드 형식 · 과목 참조 · 분류(BOOK_TAXONOMY_NOT_FOUND | BOOK_CATEGORY_MISMATCH | BOOK_CATEGORY_NEEDS_SUBJECT | BOOK_GRADE_RANGE) · 첫 판 파일(BOOK_FILE_KIND_MISMATCH) 오류' })
+  @ApiPayloadTooLargeResponse({ description: 'code FILE_TOO_LARGE | BOOK_FILES_TOO_LARGE — 첫 판 SE+TE 합계 3MB' })
   @ApiConflictResponse({ description: 'BOOK_CODE_DUPLICATE' })
   async create(@CurrentUser() user: RequestUser, @Body() dto: BookWriteDto): Promise<BookWriteResultDto> {
     return this.svc.createBook(user.id, dto);
@@ -40,8 +44,9 @@ export class BooksController {
 
   @Patch(':id')
   @Perm('canCrudAll')
-  @ApiOperation({ summary: '교재 기본 정보 수정 (§39)' })
+  @ApiOperation({ summary: '교재 기본 정보 수정 (§39) — 두 층 분류(과목 · 소분류 · 레벨 · 학년 범위 · 시험 태그)를 사람이 정한다(N-47)' })
   @ApiOkResponse({ type: BookWriteResultDto, description: '수정된 교재 식별자·코드·이름' })
+  @ApiBadRequestResponse({ description: 'BOOK_TAXONOMY_NOT_FOUND | BOOK_CATEGORY_MISMATCH | BOOK_CATEGORY_NEEDS_SUBJECT | BOOK_GRADE_RANGE' })
   async patch(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: BookPatchDto): Promise<BookWriteResultDto> {
     return this.svc.patchBook(user.id, id, dto);
   }
@@ -51,9 +56,17 @@ export class BooksController {
   @ApiOkResponse({ type: BookTrackingDto })
   async tracking(): Promise<BookTrackingDto> { return this.svc.tracking(); }
 
+  @Get('students/:studentId/latest-diag')
+  @ApiOperation({ summary: '배부 창의 진단 한 줄 — 그 학생의 최신 상담 진단 (N-62 · 보여 주기만)' })
+  @ApiOkResponse({ type: BookIssueDiagDto })
+  @ApiNotFoundResponse({ description: '학생 없음' })
+  async latestDiag(@Param('studentId', ParseIntPipe) studentId: number): Promise<BookIssueDiagDto> {
+    return this.svc.latestDiag(studentId);
+  }
+
   @Post('issues')
   @Perm('canCrudAll')
-  @ApiOperation({ summary: '학생에게 교재 배부/배부 요청 (§38)' })
+  @ApiOperation({ summary: '학생에게 교재 배부/배부 요청 (§38) — 배부 사유(reason · N-62)를 함께 남긴다' })
   @ApiCreatedResponse({ type: BookIssueDto })
   async issue(@CurrentUser() user: RequestUser, @Body() dto: BookIssueCreateDto): Promise<BookIssueDto> {
     return this.svc.createIssue(user.id, dto);
@@ -105,14 +118,14 @@ export class BooksController {
   @Perm('canAdminPage', 'canGpaPack')
   @ApiOperation({ summary: '자료 전달 목록 (§41)' })
   @ApiOkResponse({ type: BookPacksDto })
-  async deliveries(@CurrentUser() user: RequestUser): Promise<BookPacksDto> { return this.svc.packs(user.id); }
+  async deliveries(@CurrentUser() user: RequestUser): Promise<BookPacksDto> { return this.svc.packs(user); }
 
   @Post('deliveries')
   @Perm('canAdminPage', 'canGpaPack')
   @ApiOperation({ summary: '자료 전달 만들기 (§41)' })
   @ApiCreatedResponse({ type: BookPackDto })
   async createDelivery(@CurrentUser() user: RequestUser, @Body() dto: BookPackWriteDto): Promise<BookPackDto> {
-    return this.svc.createPack(user.id, dto);
+    return this.svc.createPack(user, dto);
   }
 
   @Patch('deliveries/:id')
@@ -120,7 +133,7 @@ export class BooksController {
   @ApiOperation({ summary: '자료 요청 수정 (§41)', description: '전달 완료 건을 수정하면 재전달을 위해 pending으로 되돌린다. 수령 완료 건은 변경하지 않는다.' })
   @ApiOkResponse({ type: BookPackDto })
   async patchDelivery(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: BookPackPatchDto): Promise<BookPackDto> {
-    return this.svc.patchPack(user.id, id, dto);
+    return this.svc.patchPack(user, id, dto);
   }
 
   @Post('deliveries/:id/deliver')
@@ -129,16 +142,17 @@ export class BooksController {
   @ApiOperation({ summary: '코디네이터에게 자료 전달 (§41)' })
   @ApiOkResponse({ type: BookPackDto })
   async deliver(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<BookPackDto> {
-    return this.svc.transitionPack(user.id, id, 'delivered');
+    return this.svc.transitionPack(user, id, 'delivered');
   }
 
   @Post('deliveries/:id/receive')
   @HttpCode(HttpStatus.OK)
   @Perm('canAdminPage', 'canGpaPack')
-  @ApiOperation({ summary: '지정 코디네이터 수령 확인 (§41)' })
+  @ApiOperation({ summary: '수령 확인 (§41) — 지정 코디네이터 또는 대표 판정(N-88). 누른 사람이 received_by 에 남는다' })
+  @ApiConflictResponse({ description: 'code PACK_INVALID_TRANSITION | PACK_RECEIVER_ONLY' })
   @ApiOkResponse({ type: BookPackDto })
   async receive(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<BookPackDto> {
-    return this.svc.transitionPack(user.id, id, 'received');
+    return this.svc.transitionPack(user, id, 'received');
   }
 
   /* ══ §39 판(VERS) ════════════════════════════════════════════════════════ */

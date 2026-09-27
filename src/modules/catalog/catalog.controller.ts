@@ -9,7 +9,8 @@ import {
   ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse,
   ApiOperation, ApiTags,
 } from '@nestjs/swagger';
-import { Perm } from '../../common/perm';
+import { CurrentUser } from '../../auth/current-user.decorator';
+import { Perm, type RequestUser } from '../../common/perm';
 import {
   CatalogDto, KindCreateDto, KindPatchDto, KindRowsDto, SubCreateDto, SubPatchDto, SubRowDto,
 } from './catalog.dto';
@@ -44,8 +45,8 @@ export class CatalogController {
   @ApiCreatedResponse({ type: KindRowsDto })
   @ApiConflictResponse({ description: 'code KIND_KEY_TAKEN' })
   @ApiBadRequestResponse({ description: 'code REP_FORM_REQUIRED' })
-  async createKind(@Body() dto: KindCreateDto): Promise<KindRowsDto> {
-    return this.svc.createKind(dto);
+  async createKind(@CurrentUser() user: RequestUser, @Body() dto: KindCreateDto): Promise<KindRowsDto> {
+    return this.svc.createKind(user.id, dto);
   }
 
   @Patch('kinds/:key')
@@ -53,8 +54,8 @@ export class CatalogController {
   @ApiOperation({ summary: '프로그램 고치기 — 코드(key)는 바꾸지 않는다. 시간표가 그 낱말로 저장돼 있다' })
   @ApiOkResponse({ type: KindRowsDto })
   @ApiNotFoundResponse({ description: 'code KIND_NOT_FOUND' })
-  async patchKind(@Param('key') key: string, @Body() dto: KindPatchDto): Promise<KindRowsDto> {
-    return this.svc.patchKind(key, dto);
+  async patchKind(@CurrentUser() user: RequestUser, @Param('key') key: string, @Body() dto: KindPatchDto): Promise<KindRowsDto> {
+    return this.svc.patchKind(user.id, key, dto);
   }
 
   @Post('subs')
@@ -62,8 +63,8 @@ export class CatalogController {
   @ApiOperation({ summary: '과목 추가' })
   @ApiCreatedResponse({ type: SubRowDto })
   @ApiConflictResponse({ description: 'code SUB_KEY_TAKEN' })
-  async createSub(@Body() dto: SubCreateDto): Promise<SubRowDto> {
-    return this.svc.createSub(dto);
+  async createSub(@CurrentUser() user: RequestUser, @Body() dto: SubCreateDto): Promise<SubRowDto> {
+    return this.svc.createSub(user.id, dto);
   }
 
   @Patch('subs/:key')
@@ -71,7 +72,7 @@ export class CatalogController {
   @ApiOperation({ summary: '과목 고치기 — 끄면 새 수업에서 고를 수 없고, 이미 도는 수업은 그대로 둔다' })
   @ApiOkResponse({ type: SubRowDto })
   @ApiNotFoundResponse({ description: 'code SUB_NOT_FOUND' })
-  async patchSub(@Param('key') key: string, @Body() dto: SubPatchDto): Promise<SubRowDto> {
-    return this.svc.patchSub(key, dto);
+  async patchSub(@CurrentUser() user: RequestUser, @Param('key') key: string, @Body() dto: SubPatchDto): Promise<SubRowDto> {
+    return this.svc.patchSub(user.id, key, dto);
   }
 }

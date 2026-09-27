@@ -13,19 +13,26 @@ import { todayKst } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
 import { kstAt, serStuOn } from '../../lib/sql';
 import {
-  ISSUE_STATE_LABEL, PACK_STATE_LABEL, PACK_TYPE_LABEL, issueTransitionIssue, packTransitionIssue,
+  BOOK_EXAM_TAG_LABEL, BOOK_EXAM_TAGS, BOOK_GRADES, BOOK_LEVELS, BOOK_UNCLASSIFIED,
+  ISSUE_FORM_LABEL, ISSUE_FORMS, ISSUE_STATE_LABEL, issueFormLabel, PACK_STATE_LABEL, PACK_TYPE_LABEL, bookExamTagLabel, bookGradeCovers, bookGradeFromKey, bookGradeKey,
+  bookGradeRangeIssue, bookGradeRangeLabel, bookLevelLabel, bookLevelShown, issueTransitionIssue, packTransitionIssue,
   progressIssue, progressPercent, type IssueState, type PackState, type PackType,
 } from '../../lib/book';
 import type {
-  BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookIssueCreateDto, BookIssueDto,
+  BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto,
   BookPackDto, BookPackPatchDto, BookPacksDto, BookPackWriteDto,
-  BookPatchDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto,
+  BookPatchDto, BookShelfQueryDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto,
 } from './books.dto';
+import { latestLeadDiagForStudent } from '../ops/lead-diag.service';
 import { prepareFile, storePreparedFile } from '../files/files.service';
 import { FILE_MAX_BYTES } from '../files/files.dto';
-import { hasPerm, isRole } from '../../common/perm';
+import { canCeoReceivePack, hasPerm, isRole } from '../../common/perm';
+import { audit } from '../../lib/audit';
 
 type R = Record<string, unknown>;
+
+const optText = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
+const optNum = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 function addDays(day: string, n: number): string {
   const d = new Date(`${day}T00:00:00Z`);
@@ -59,6 +66,22 @@ function historyRange(span: BookHistoryQueryDto['span'], anchor: string): [strin
   return [from, d.toISOString().slice(0, 10)];
 }
 
+/**
+ * 자료 전달(§41)을 보는 사람 — 요청 사용자(`RequestUser`)가 그대로 들어온다.
+ * 「수령 확인」은 누가 보느냐에 따라 열리므로(N-88) id 만으로는 모자라 역할까지 받는다.
+ */
+export interface PackViewer { id: number; role: string }
+
+/**
+ * §41 「수령 확인」을 이 사람이 누를 수 있는가 — **판정은 여기 한 곳**이다(N-88 채택 · W11).
+ * 전달된 묶음이고 받을 코디네이터가 정해져 있을 때, 그 코디네이터 **또는 대표 판정**(`canCeoReceivePack`)이면 된다.
+ * 응답의 `canReceive`(단추가 서는가)와 쓰기 가드(`PACK_RECEIVER_ONLY`)가 같은 함수를 부른다 — 단추와 서버가 갈리지 않는다.
+ */
+function packReceiveAllowed(state: string, coordinatorId: unknown, viewer: PackViewer): boolean {
+  if (state !== 'delivered' || coordinatorId == null) return false;
+  return Number(coordinatorId) === viewer.id || (isRole(viewer.role) && canCeoReceivePack(viewer.role));
+}
+
 @Injectable()
 export class BooksService {
   constructor(@InjectRepository(Lead) private readonly anyRepo: Repository<Lead>) {}
@@ -67,20 +90,31 @@ export class BooksService {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
   }
 
-  async all(): Promise<BooksDto> {
+  /**
+   * §39 서가. 필터(과목 · 레벨 · 학년)는 **서버가 건다** — 화면은 고른 칩의 키만 보낸다(N-47 · D-R37).
+   * 칩의 건수 · 경고 띠는 **서가 전체** 기준이다 — 칩을 골라도 다른 칩의 수와 띠가 흔들리지 않는다(§40 칩과 같은 규약).
+   * 차례는 과목 → 소분류 → 코드(원문 §39 묶음 · 카드 차례). 과목이 없는 교재(「미분류」)는 맨 뒤에 모인다.
+   */
+  async all(filter: BookShelfQueryDto = {}): Promise<BooksDto> {
     /*
      * 「지금 쓰는 판」은 **시작일이 오늘 이하인 것 중 가장 나중 것**이다.
      * 「가장 나중 판」은 시작일과 상관없이 제일 나중 것 — 둘이 다르면 아직 시작 안 한 판이 있다는 뜻이고,
      * 그게 원본 §39 의 ⇧ 배지와 「더 최신 판이 있는 교재 N종」 띠다.
      * **비교를 여기서 한 번만 한다** — 화면이 두 낱말을 다시 비교하면 배지와 띠가 갈린다 (D-R39).
      */
+    // 차례대로 묻는다 — 한 연결(바깥 트랜잭션)에서 동시에 묻는 것은 pg 가 없애 가는 사용법이다(DeprecationWarning)
     const rows = await this.q(
       `SELECT l.id, l.code, l.title, l.sub_key, l.level, l.grade, l.pages, l.se_te, s.name AS sub_name,
+              l.book_subject_key, bs.name AS book_subject_name, bs.color AS book_subject_color,
+              l.book_category_key, bc.name AS book_category_name,
+              l.book_level, l.grade_from, l.grade_to, l.exam_tag,
               cur.id AS vers_id, cur.edition, cur.file_url, cur.se_file_id, cur.te_file_id,
               top.edition AS latest_edition, top.id AS latest_vers_id,
               (SELECT count(*)::int FROM issue i WHERE i.lib_id = l.id) AS issue_count
          FROM lib l
          LEFT JOIN sub s ON s.key = l.sub_key
+         LEFT JOIN book_subject bs ON bs.key = l.book_subject_key
+         LEFT JOIN book_category bc ON bc.key = l.book_category_key
          LEFT JOIN LATERAL (
            SELECT v.id, v.edition, v.file_url, v.se_file_id, v.te_file_id FROM vers v
             WHERE v.lib_id = l.id AND (v.from_date IS NULL OR v.from_date <= $1::date)
@@ -89,19 +123,23 @@ export class BooksService {
            SELECT v.id, v.edition FROM vers v
             WHERE v.lib_id = l.id
             ORDER BY v.from_date DESC NULLS LAST, v.id DESC LIMIT 1) top ON true
-        ORDER BY l.sub_key NULLS LAST, l.code`,
+        ORDER BY bs.sort NULLS LAST, bc.sort NULLS LAST, l.code`,
       [todayKst()],
     );
+    const subjectRows = await this.q(`SELECT key, name, color FROM book_subject ORDER BY sort, key`);
+    const categoryRows = await this.q(`SELECT key, subject_key, name FROM book_category ORDER BY sort, key`);
 
     const bySub: Record<string, number> = {};
     for (const r of rows) {
-      const k = (r.sub_name as string) ?? '미분류';
+      const k = (r.sub_name as string) ?? BOOK_UNCLASSIFIED.label;
       bySub[k] = (bySub[k] ?? 0) + 1;
     }
 
     const items = rows.map((r) => {
       const edition = (r.edition as string) ?? null;
       const latest = (r.latest_edition as string) ?? null;
+      const gradeFrom = optNum(r.grade_from);
+      const gradeTo = optNum(r.grade_to);
       return {
         id: Number(r.id), code: String(r.code), title: String(r.title),
         subKey: (r.sub_key as string) ?? null, subName: (r.sub_name as string) ?? null,
@@ -117,46 +155,108 @@ export class BooksService {
         teFileId: r.te_file_id === null || r.te_file_id === undefined ? null : Number(r.te_file_id),
         hasFile: r.file_url !== null && r.file_url !== undefined || r.se_file_id != null || r.te_file_id != null,
         issueCount: Number(r.issue_count ?? 0),
+        // §39 두 층 분류(N-47) — 새 칸이 비었으면 보여 주는 낱말은 옛 원문 그대로다(N-25 · 짐작해 바꾸지 않는다)
+        bookSubjectKey: optText(r.book_subject_key), bookSubjectName: optText(r.book_subject_name),
+        bookSubjectColor: r.book_subject_color == null ? null : String(r.book_subject_color).trim(),
+        bookCategoryKey: optText(r.book_category_key), bookCategoryName: optText(r.book_category_name),
+        bookLevel: optText(r.book_level), levelLabel: bookLevelShown(optText(r.book_level), optText(r.level)),
+        gradeFrom, gradeTo,
+        gradeLabel: bookGradeRangeLabel(gradeFrom, gradeTo) ?? (optText(r.grade)?.trim() || null),
+        examTag: optText(r.exam_tag), examTagLabel: bookExamTagLabel(optText(r.exam_tag)),
       };
     });
-    const namedCounts = (values: Array<string | null>) => [...values.reduce((map, value) => {
-      if (!value) return map;
-      const old = map.get(value);
-      map.set(value, { key: value, label: value, count: (old?.count ?? 0) + 1 });
-      return map;
-    }, new Map<string, { key: string; label: string; count: number }>()).values()].sort((a, b) => a.label.localeCompare(b.label));
+
+    // 거르기 — 칩 건수와 **같은 판정**(과목 키 · 레벨 키 · 범위가 학년을 덮는가)으로 고른다
+    const gradeWanted = filter.grade ? bookGradeFromKey(filter.grade) : null;
+    const shown = items.filter((item) =>
+      (!filter.subject
+        || (filter.subject === BOOK_UNCLASSIFIED.key ? item.bookSubjectKey === null : item.bookSubjectKey === filter.subject))
+      && (!filter.level || item.bookLevel === filter.level)
+      && (gradeWanted === null || bookGradeCovers(item.gradeFrom, item.gradeTo, gradeWanted)));
 
     return {
       bySub,
-      items,
+      items: shown,
       newerCount: items.filter((i) => i.hasNewer).length,
       // 원본 §39의 경고는 일반 파일이 아니라 교사용 TE 파일 누락을 센다.
       noFileCount: items.filter((i) => i.teFileId === null).length,
+      newerBooks: items.filter((i) => i.hasNewer)
+        .map((i) => ({ id: i.id, title: i.title, edition: i.edition, latestEdition: i.latestEdition })),
+      noTeBooks: items.filter((i) => i.teFileId === null).map((i) => ({ id: i.id, title: i.title })),
       levels: [...new Set(items.map((i) => i.level).filter((x): x is string => Boolean(x)))].sort(),
       grades: [...new Set(items.map((i) => i.grade).filter((x): x is string => Boolean(x)))].sort(),
-      levelCounts: namedCounts(items.map((item) => item.level)),
-      gradeCounts: namedCounts(items.map((item) => item.grade)),
+      // 칩은 코드표 전부를 0 까지 준다 — 원문 §39 는 0 인 K · G1 도 흐리게 세워 둔다
+      subjects: subjectRows.map((sb) => ({
+        key: String(sb.key), label: String(sb.name), color: String(sb.color).trim(),
+        count: items.filter((i) => i.bookSubjectKey === String(sb.key)).length,
+        categories: categoryRows.filter((c) => String(c.subject_key) === String(sb.key))
+          .map((c) => ({ key: String(c.key), label: String(c.name) })),
+      })),
+      unclassified: { ...BOOK_UNCLASSIFIED, count: items.filter((i) => i.bookSubjectKey === null).length },
+      levelCounts: BOOK_LEVELS.map((key) => ({
+        key, label: bookLevelLabel(key) ?? key, count: items.filter((i) => i.bookLevel === key).length,
+      })),
+      gradeCounts: BOOK_GRADES.map((grade) => ({
+        key: bookGradeKey(grade), label: bookGradeKey(grade), grade,
+        count: items.filter((i) => bookGradeCovers(i.gradeFrom, i.gradeTo, grade)).length,
+      })),
+      examTags: BOOK_EXAM_TAGS.map((key) => ({ key, label: BOOK_EXAM_TAG_LABEL[key] })),
       versionUploadMaxBytes: FILE_MAX_BYTES,
     };
   }
 
+  /**
+   * §39 두 층 분류 검사 — 과목이 코드표에 있고 소분류가 **그 과목의 것**인가 (N-47).
+   * 표의 두 칸 FK · `lib_book_category_needs_subject` 와 같은 규칙을 쓰기 전에 말로 돌려준다(FK 오류 500 대신 400).
+   */
+  private async assertTaxonomy(m: EntityManager, subjectKey: string | null, categoryKey: string | null): Promise<void> {
+    if (categoryKey !== null && subjectKey === null) {
+      throw new BadRequestException({ code: 'BOOK_CATEGORY_NEEDS_SUBJECT', message: '소분류는 과목을 고른 뒤에 고릅니다' });
+    }
+    if (subjectKey !== null) {
+      const [subject] = await m.query(`SELECT key FROM book_subject WHERE key = $1`, [subjectKey]) as R[];
+      if (!subject) throw new BadRequestException({ code: 'BOOK_TAXONOMY_NOT_FOUND', message: '교재 과목을 찾을 수 없습니다' });
+    }
+    if (categoryKey !== null) {
+      const [category] = await m.query(`SELECT subject_key FROM book_category WHERE key = $1`, [categoryKey]) as R[];
+      if (!category) throw new BadRequestException({ code: 'BOOK_TAXONOMY_NOT_FOUND', message: '소분류를 찾을 수 없습니다' });
+      if (String(category.subject_key) !== subjectKey) {
+        throw new BadRequestException({ code: 'BOOK_CATEGORY_MISMATCH', message: '고른 과목의 소분류가 아닙니다' });
+      }
+    }
+  }
+
+  /**
+   * 교재 등록 — §39 두 층 분류(N-47)와 **첫 판 · SE/TE 파일(N-61 ① 채택 · W11)**까지 한 트랜잭션이다.
+   * 파일은 FILE 표(bytea)라 교재 · 판 · 이력과 함께 커밋되고, 어디서든 실패하면 교재 행도 남지 않는다(고아 LIB/VERS 없음).
+   * 첫 판의 이름은 사람이 적은 것만 쓴다 — 없으면 판 없이 교재만 등록한다(원문이 주지 않은 이름을 짓지 않는다).
+   */
   async createBook(userId: number, dto: BookWriteDto) {
     const code = dto.code.trim(); const title = dto.title.trim();
     if (!code || !title) throw new BadRequestException({ code: 'BOOK_TEXT_REQUIRED', message: '교재 코드와 이름을 입력해 주세요' });
+    const gradeWhy = bookGradeRangeIssue(dto.gradeFrom ?? null, dto.gradeTo ?? null);
+    if (gradeWhy) throw new BadRequestException({ code: 'BOOK_GRADE_RANGE', message: gradeWhy });
     try {
       return await this.anyRepo.manager.transaction(async (m) => {
         if (dto.subKey) {
           const [subject] = await m.query(`SELECT key FROM sub WHERE key = $1`, [dto.subKey]);
           if (!subject) throw new BadRequestException({ code: 'BOOK_SUBJECT_NOT_FOUND', message: '과목을 찾을 수 없습니다' });
         }
+        await this.assertTaxonomy(m, dto.bookSubjectKey ?? null, dto.bookCategoryKey ?? null);
         const dup = await m.query(`SELECT id FROM lib WHERE code = $1`, [code]);
         if (dup.length) throw new ConflictException({ code: 'BOOK_CODE_DUPLICATE', message: '이미 쓰는 교재 코드입니다' });
         const [row] = await m.query(
-          `INSERT INTO lib (code,title,sub_key,level,grade,pages) VALUES ($1,$2,$3,$4,$5,$6)
+          `INSERT INTO lib (code,title,sub_key,level,grade,pages,
+                            book_subject_key,book_category_key,book_level,grade_from,grade_to,exam_tag)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
            RETURNING id,code,title`,
-          [code, title, dto.subKey ?? null, dto.level ?? null, dto.grade ?? null, dto.pages ?? null],
+          [code, title, dto.subKey ?? null, dto.level ?? null, dto.grade ?? null, dto.pages ?? null,
+           dto.bookSubjectKey ?? null, dto.bookCategoryKey ?? null, dto.bookLevel ?? null,
+           dto.gradeFrom ?? null, dto.gradeTo ?? null, dto.examTag ?? null],
         ) as R[];
         await m.query(histSql(), ['lib', Number(row.id), 'book_upload', userId]);
+        // N-61 — 첫 판은 「+ 판 올리기」와 같은 몸통(파일 종류 · 합계 크기 · 같은 이름 검사 · 이력)을 같은 트랜잭션에서 부른다
+        if (dto.firstVersion) await this.addVersionWithin(m, userId, Number(row.id), dto.firstVersion);
         return { id: Number(row.id), code: String(row.code), title: String(row.title) };
       });
     } catch (e) {
@@ -182,7 +282,12 @@ export class BooksService {
   async patchBook(userId: number, id: number, dto: BookPatchDto) {
     const keys = Object.entries(dto).filter(([, v]) => v !== undefined);
     if (!keys.length) throw new BadRequestException('바꿀 교재 값을 하나 이상 보내 주세요');
-    const col: Record<string, string> = { code: 'code', title: 'title', subKey: 'sub_key', level: 'level', grade: 'grade', pages: 'pages' };
+    const col: Record<string, string> = {
+      code: 'code', title: 'title', subKey: 'sub_key', level: 'level', grade: 'grade', pages: 'pages',
+      // §39 두 층 분류(N-47) — 사람이 편집 창에서 분류한다. 보낸 칸만 바뀌고 원장(log)에 앞뒤가 남는다
+      bookSubjectKey: 'book_subject_key', bookCategoryKey: 'book_category_key', bookLevel: 'book_level',
+      gradeFrom: 'grade_from', gradeTo: 'grade_to', examTag: 'exam_tag',
+    };
     const sets = keys.map(([k], n) => `"${col[k]}" = $${n + 2}`).join(', ');
     if (dto.code !== undefined && (typeof dto.code !== 'string' || !dto.code.trim())
       || dto.title !== undefined && (typeof dto.title !== 'string' || !dto.title.trim())) {
@@ -195,6 +300,18 @@ export class BooksService {
         if (dto.subKey) {
           const [subject] = await m.query(`SELECT key FROM sub WHERE key = $1`, [dto.subKey]);
           if (!subject) throw new BadRequestException({ code: 'BOOK_SUBJECT_NOT_FOUND', message: '과목을 찾을 수 없습니다' });
+        }
+        /*
+         * 분류는 **고친 뒤의 모양**으로 본다 — 보낸 칸은 새 값, 안 보낸 칸은 지금 값. 과목만 바꾸고 옛 소분류가 남으면
+         * 다른 과목의 소분류가 되므로 거절한다(편집 창은 둘을 함께 보낸다). 학년 범위도 두 칸을 합쳐 본다.
+         */
+        const after = (field: keyof BookPatchDto, column: string): unknown => (dto[field] !== undefined ? dto[field] : book[column]);
+        if (dto.bookSubjectKey !== undefined || dto.bookCategoryKey !== undefined) {
+          await this.assertTaxonomy(m, optText(after('bookSubjectKey', 'book_subject_key')), optText(after('bookCategoryKey', 'book_category_key')));
+        }
+        if (dto.gradeFrom !== undefined || dto.gradeTo !== undefined) {
+          const why = bookGradeRangeIssue(optNum(after('gradeFrom', 'grade_from')), optNum(after('gradeTo', 'grade_to')));
+          if (why) throw new BadRequestException({ code: 'BOOK_GRADE_RANGE', message: why });
         }
         // 전체 쪽수 미정(null)은 0쪽이 아니다. 진도 쪽수는 보존하고 비율만 null로 파생한다.
         if (dto.pages != null) {
@@ -234,9 +351,23 @@ export class BooksService {
    * 어느 것을 보고 있는지 화면이 말할 수 없다.
    */
   async addVersion(userId: number, libId: number, dto: BookVersionCreateDto): Promise<BookVersionDto> {
-    const today = todayKst();
     try {
-      return await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      return await this.anyRepo.manager.transaction((m: EntityManager) => this.addVersionWithin(m, userId, libId, dto));
+    } catch (error) {
+      if ((error as { code?: string }).code === '23505') {
+        throw new ConflictException({ code: 'VERS_DUPLICATE', message: `이 교재에 「${dto.edition}」 판은 이미 있습니다` });
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * 바깥 트랜잭션 안에서 판 하나 — 「+ 판 올리기」와 교재 등록의 첫 판(N-61)이 **같은 몸통**을 쓴다
+   * (`createIssueWithin` 과 같은 …Within 모양). 파일 검사(종류 · 합계 크기)도 여기 한 곳이다.
+   */
+  private async addVersionWithin(m: EntityManager, userId: number, libId: number, dto: BookVersionCreateDto): Promise<BookVersionDto> {
+    const today = todayKst();
+    {
       const [lib] = (await m.query(`SELECT id, title FROM lib WHERE id = $1 FOR UPDATE`, [libId])) as Array<{ id: string }>;
       if (!lib) throw new NotFoundException('교재를 찾을 수 없습니다');
 
@@ -285,12 +416,6 @@ export class BooksService {
         fromDate: (made.from_date as string) ?? null,
         inUse: Number(current?.id) === Number(made.id),
       };
-      });
-    } catch (error) {
-      if ((error as { code?: string }).code === '23505') {
-        throw new ConflictException({ code: 'VERS_DUPLICATE', message: `이 교재에 「${dto.edition}」 판은 이미 있습니다` });
-      }
-      throw error;
     }
   }
 
@@ -368,7 +493,11 @@ export class BooksService {
                 WHEN 'issue' THEN (SELECT l.code FROM issue i JOIN lib l ON l.id=i.lib_id WHERE i.id=h.ref_id)
                 WHEN 'guide' THEN (SELECT sr.title FROM guide g LEFT JOIN ser sr ON sr.id=g.ser_id WHERE g.id=h.ref_id)
                 ELSE NULL END AS code,
-              CASE WHEN h.entity='guide' THEN (SELECT g.body FROM guide g WHERE g.id=h.ref_id) END AS memo,
+              /* 메모 — 안내는 본문, 배부는 사유(N-62 · 원문 §40 「+ 교재 배부」 줄 끝 글) */
+              CASE h.entity
+                WHEN 'guide' THEN (SELECT g.body FROM guide g WHERE g.id=h.ref_id)
+                WHEN 'issue' THEN CASE WHEN h.action='book_issue' THEN (SELECT i.reason FROM issue i WHERE i.id=h.ref_id) END
+                END AS memo,
               /* 가리키던 행이 아직 있는가 — hist 에는 FK 가 없어 대상이 지워져도 줄은 남는다(지워지지 않는 원장) */
               CASE h.entity
                 WHEN 'vers'  THEN EXISTS (SELECT 1 FROM vers v WHERE v.id=h.ref_id)
@@ -454,15 +583,18 @@ export class BooksService {
       issuedOn: r.issued_on == null ? null : dbDay(r.issued_on),
       returnedOn: r.returned_on == null ? null : dbDay(r.returned_on),
       progressPage: page, progressPercent: progressPercent(page, pages),
+      reason: optText(r.reason),
+      // 형태 칩(§38-2 · W11 A') — 낱말은 서버가 만든다 · 옛 줄 NULL = 칩 없음
+      form: optText(r.form), formLabel: issueFormLabel(optText(r.form)),
     };
   }
 
   async tracking(): Promise<BookTrackingDto> {
     const rows = await this.q(
       `SELECT s.id AS student_id, s.name, s.grade,
-              i.id, i.lib_id, i.vers_id, i.state, i.progress_page,
+              i.id, i.lib_id, i.vers_id, i.state, i.progress_page, i.reason, i.form,
               to_char(i.issued_on,'YYYY-MM-DD') AS issued_on, to_char(i.returned_on,'YYYY-MM-DD') AS returned_on,
-              l.title, l.pages, l.level AS lib_level, v.edition, v.file_url, v.se_file_id, v.te_file_id,
+              l.title, l.pages, l.level AS lib_level, l.book_level, v.edition, v.file_url, v.se_file_id, v.te_file_id,
               (SELECT st.name FROM ser_stu ss JOIN ser sr ON sr.id=ss.ser_id JOIN staff st ON st.id=sr.teacher_id
                 WHERE ss.student_id=s.id ORDER BY sr.id LIMIT 1) AS teacher_name,
               (SELECT to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI')
@@ -496,9 +628,9 @@ export class BooksService {
       students: Array<{ studentId: number; name: string; percent: number | null; elapsedDays: number | null }>;
     }>();
     for (const r of active) {
-      // level — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). LIB 원문 그대로
+      // level — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 LIB 옛 원문
       const libId = Number(r.lib_id); const old = bookMap.get(libId) ?? {
-        libId, title: String(r.title), level: r.lib_level == null ? null : String(r.lib_level), studentCount: 0, values: [],
+        libId, title: String(r.title), level: bookLevelShown(optText(r.book_level), optText(r.lib_level)), studentCount: 0, values: [],
         pages: r.pages == null ? null : Number(r.pages), students: [],
       };
       old.studentCount += 1;
@@ -567,7 +699,18 @@ export class BooksService {
       books,
       teacherRequests,
       states: stateKeys.map(([key, label, count]) => ({ key, label, count })),
+      issueForms: ISSUE_FORMS.map((key) => ({ key, label: ISSUE_FORM_LABEL[key] })),
     };
+  }
+
+  /**
+   * 배부 창의 진단 한 줄 — 그 학생의 **최신 상담 진단**을 읽기만 한다 (N-62 ① · DQ1).
+   * 읽는 함수는 §44 와 같은 한 벌(`latestLeadDiagForStudent`)이다 — 점수를 배부에 옮겨 적지 않는다(D-R22).
+   */
+  async latestDiag(studentId: number): Promise<BookIssueDiagDto> {
+    const [stu] = await this.q(`SELECT id FROM stu WHERE id = $1`, [studentId]);
+    if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
+    return { studentId, diag: await latestLeadDiagForStudent(this.anyRepo.manager, studentId) };
   }
 
   async createIssue(userId: number, dto: BookIssueCreateDto): Promise<BookIssueDto> {
@@ -600,12 +743,14 @@ export class BooksService {
           FOR KEY SHARE`,
         [dto.libId, snapshotOn],
       ) as R[];
+      // 배부 사유(N-62) — 적은 것만 남긴다. 빈 칸은 NULL 이다(사유를 지어 넣지 않는다)
+      const reason = dto.reason?.trim() || null;
       try {
         const [row] = await m.query(
-          `INSERT INTO issue (lib_id,vers_id,student_id,issued_on,state,progress_page,requested_by,approved_by,delivered_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *, NULL::int AS pages`,
+          `INSERT INTO issue (lib_id,vers_id,student_id,issued_on,state,progress_page,requested_by,approved_by,delivered_at,reason,form)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *, NULL::int AS pages`,
           [dto.libId, version?.id ?? null, dto.studentId, issuedOn, state, dto.progressPage ?? null,
-           userId, state === 'ok' ? userId : null, state === 'ok' ? new Date() : null],
+           userId, state === 'ok' ? userId : null, state === 'ok' ? new Date() : null, reason, dto.form ?? null],
         ) as R[];
         if (state === 'ok') await m.query(histSql(), ['issue', Number(row.id), 'book_issue', userId]);
         return this.issueDto({
@@ -695,7 +840,7 @@ export class BooksService {
     });
   }
 
-  private async packDto(m: EntityManager, id: number, viewerId: number): Promise<BookPackDto> {
+  private async packDto(m: EntityManager, id: number, viewer: PackViewer): Promise<BookPackDto> {
     const [r] = await m.query(
       `SELECT g.*, c.name AS coordinator_name, cb.name AS created_by_name,
               db.name AS delivered_by_name, rb.name AS received_by_name,
@@ -707,13 +852,13 @@ export class BooksService {
     if (!r) throw new NotFoundException('자료 전달을 찾을 수 없습니다');
     const students = await m.query(`SELECT s.id,s.name,s.grade FROM gpapack_student gs JOIN stu s ON s.id=gs.student_id WHERE gs.gpapack_id=$1 ORDER BY s.name`, [id]) as R[];
     const books = await m.query(
-      `SELECT l.id,l.code,l.title,l.level,gl.vers_id,v.se_file_id,v.te_file_id
+      `SELECT l.id,l.code,l.title,l.level,l.book_level,gl.vers_id,v.se_file_id,v.te_file_id
          FROM gpapack_lib gl JOIN lib l ON l.id=gl.lib_id LEFT JOIN vers v ON v.id=gl.vers_id
         WHERE gl.gpapack_id=$1 ORDER BY l.title`, [id],
     ) as R[];
     const state = String(r.state) as PackState; const packType = String(r.pack_type) as PackType;
-    // 교재 줄의 레벨 글자 사각(원문 §41 카드 · g4 §41-3) — LIB 원문 그대로, 없으면 null
-    const packBooks = books.map((b) => ({ id: Number(b.id), code: String(b.code), title: String(b.title), level: b.level == null ? null : String(b.level), versId: b.vers_id == null ? null : Number(b.vers_id), seFileId: b.se_file_id == null ? null : Number(b.se_file_id), teFileId: b.te_file_id == null ? null : Number(b.te_file_id) }));
+    // 교재 줄의 레벨 글자 사각(원문 §41 카드 · g4 §41-3) — 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 LIB 옛 원문, 없으면 null
+    const packBooks = books.map((b) => ({ id: Number(b.id), code: String(b.code), title: String(b.title), level: bookLevelShown(optText(b.book_level), optText(b.level)), versId: b.vers_id == null ? null : Number(b.vers_id), seFileId: b.se_file_id == null ? null : Number(b.se_file_id), teFileId: b.te_file_id == null ? null : Number(b.te_file_id) }));
     const blockers = [
       ...(!r.effective_on ? ['적용일'] : []),
       ...(r.coordinator_id == null ? ['받는 코디네이터'] : []),
@@ -736,14 +881,15 @@ export class BooksService {
       students: students.map((s) => ({ id: Number(s.id), name: String(s.name), grade: (s.grade as string) ?? null })),
       books: packBooks,
       canDeliver: state === 'pending' && blockers.length === 0,
-      canReceive: state === 'delivered' && r.coordinator_id != null && Number(r.coordinator_id) === viewerId,
+      // N-88 — 지정 코디네이터 또는 대표 판정. 쓰기 가드와 같은 함수다
+      canReceive: packReceiveAllowed(state, r.coordinator_id, viewer),
       deliveryBlockers: blockers,
     };
   }
 
-  async packs(viewerId: number): Promise<BookPacksDto> {
+  async packs(viewer: PackViewer): Promise<BookPacksDto> {
     const ids = await this.q(`SELECT id FROM gpapack ORDER BY created_at DESC,id DESC`);
-    const items = await Promise.all(ids.map((r) => this.packDto(this.anyRepo.manager, Number(r.id), viewerId)));
+    const items = await Promise.all(ids.map((r) => this.packDto(this.anyRepo.manager, Number(r.id), viewer)));
     const count = (key: string, label: string, n: number) => ({ key, label, count: n });
     // 원문 레일 「Sophia 2건 미확인 1」 — 미확인 = 전달했는데 아직 수령 확인이 없는 묶음 (g4 §41-5)
     const coordinators = new Map<string, { key: string; label: string; count: number; unreceived: number }>();
@@ -793,29 +939,37 @@ export class BooksService {
     }
   }
 
-  async createPack(userId: number, dto: BookPackWriteDto): Promise<BookPackDto> {
+  async createPack(viewer: PackViewer, dto: BookPackWriteDto): Promise<BookPackDto> {
     if (!dto.title.trim()) throw new BadRequestException({ code: 'PACK_TITLE_REQUIRED', message: '자료 전달 이름을 입력해 주세요' });
     return this.anyRepo.manager.transaction(async (m) => {
       await this.assertPackRefs(m, dto);
       const [r] = await m.query(
         `INSERT INTO gpapack (pack_type,title,memo,effective_on,coordinator_id,created_by,state)
          VALUES ($1,$2,$3,$4,$5,$6,'pending') RETURNING id`,
-        [dto.packType, dto.title.trim(), dto.memo?.trim() || null, dto.effectiveOn, dto.coordinatorId, userId],
+        [dto.packType, dto.title.trim(), dto.memo?.trim() || null, dto.effectiveOn, dto.coordinatorId, viewer.id],
       ) as R[];
       const id = Number(r.id);
       for (const studentId of dto.studentIds) await m.query(`INSERT INTO gpapack_student VALUES ($1,$2)`, [id, studentId]);
       await this.replacePackBooks(m, id, dto.libIds, dto.effectiveOn);
-      return this.packDto(m, id, userId);
+      // N-73 — 묶음 만들기는 같은 트랜잭션에 감사 한 줄(gpapack.write)
+      await audit(m, 'gpapack.write', {
+        actorId: viewer.id, entityId: id, action: 'create',
+        after: {
+          packType: dto.packType, title: dto.title.trim(), effectiveOn: dto.effectiveOn,
+          coordinatorId: dto.coordinatorId, studentIds: dto.studentIds, libIds: dto.libIds, state: 'pending',
+        },
+      });
+      return this.packDto(m, id, viewer);
     });
   }
 
-  async patchPack(userId: number, id: number, dto: BookPackPatchDto): Promise<BookPackDto> {
+  async patchPack(viewer: PackViewer, id: number, dto: BookPackPatchDto): Promise<BookPackDto> {
     if (dto.title !== undefined && !dto.title.trim()) {
       throw new BadRequestException({ code: 'PACK_TITLE_REQUIRED', message: '자료 전달 이름은 비울 수 없습니다' });
     }
     return this.anyRepo.manager.transaction(async (m) => {
       const [old] = await m.query(
-        `SELECT id,state,coordinator_id,to_char(effective_on,'YYYY-MM-DD') AS effective_on FROM gpapack WHERE id=$1 FOR UPDATE`,
+        `SELECT id,state,pack_type,title,coordinator_id,to_char(effective_on,'YYYY-MM-DD') AS effective_on FROM gpapack WHERE id=$1 FOR UPDATE`,
         [id],
       ) as R[];
       if (!old) throw new NotFoundException('자료 전달을 찾을 수 없습니다');
@@ -839,25 +993,53 @@ export class BooksService {
         const linked = await m.query(`SELECT lib_id FROM gpapack_lib WHERE gpapack_id=$1 ORDER BY lib_id`, [id]) as R[];
         await this.replacePackBooks(m, id, linked.map((row) => Number(row.lib_id)), dto.effectiveOn);
       }
-      return this.packDto(m, id, userId);
+      /*
+       * N-73 — 고치기는 전달 도장(누가 · 언제 전달)을 지우고 준비 중으로 되돌린다. 보낸 칸만 적는다(PATCH 규약) —
+       * 안 보낸 칸까지 적으면 안 바뀐 값이 바뀐 것처럼 읽힌다. 메모 본문은 길어 원장에 옮기지 않는다(바뀌었는지만).
+       */
+      const sent = Object.fromEntries(Object.entries({
+        packType: dto.packType, title: dto.title?.trim(), effectiveOn: dto.effectiveOn,
+        coordinatorId: dto.coordinatorId, studentIds: dto.studentIds, libIds: dto.libIds,
+        memoChanged: dto.memo === undefined ? undefined : true,
+      }).filter(([, value]) => value !== undefined));
+      await audit(m, 'gpapack.write', {
+        actorId: viewer.id, entityId: id, action: 'patch',
+        before: {
+          state: old.state, packType: old.pack_type, title: old.title,
+          effectiveOn: old.effective_on ? dbDay(old.effective_on) : null,
+          coordinatorId: old.coordinator_id == null ? null : Number(old.coordinator_id),
+        },
+        after: { ...sent, state: 'pending' },
+      });
+      return this.packDto(m, id, viewer);
     });
   }
 
-  async transitionPack(userId: number, id: number, target: PackState): Promise<BookPackDto> {
+  async transitionPack(viewer: PackViewer, id: number, target: PackState): Promise<BookPackDto> {
+    const userId = viewer.id;
     return this.anyRepo.manager.transaction(async (m) => {
       const [r] = await m.query(`SELECT id,state,coordinator_id FROM gpapack WHERE id=$1 FOR UPDATE`, [id]) as R[];
       if (!r) throw new NotFoundException('자료 전달을 찾을 수 없습니다');
       const why = packTransitionIssue(String(r.state) as PackState, target);
       if (why) throw new ConflictException({ code: 'PACK_INVALID_TRANSITION', message: why });
       if (target === 'delivered') {
-        const before = await this.packDto(m, id, userId);
+        const before = await this.packDto(m, id, viewer);
         if (!before.canDeliver) {
           throw new ConflictException({ code: 'PACK_NOT_READY', message: `전달 전에 확인해 주세요: ${before.deliveryBlockers.join(' · ')}` });
         }
         await m.query(`UPDATE gpapack SET state='delivered',delivered_by=$2,delivered_at=now(),updated_at=now() WHERE id=$1`, [id, userId]);
+        await audit(m, 'gpapack.write', { actorId: userId, entityId: id, action: 'deliver', before: { state: 'pending' }, after: { state: 'delivered' } });
       } else {
-        if (Number(r.coordinator_id) !== userId) throw new ConflictException({ code: 'PACK_RECEIVER_ONLY', message: '지정된 코디네이터만 수령을 확인할 수 있습니다' });
+        // N-88 — 지정 코디네이터 또는 대표 판정. 응답의 canReceive 와 같은 함수다 · 누른 사람이 received_by 에 남는다
+        if (!packReceiveAllowed(String(r.state), r.coordinator_id, viewer)) {
+          throw new ConflictException({ code: 'PACK_RECEIVER_ONLY', message: '지정된 코디네이터나 대표만 수령을 확인할 수 있습니다' });
+        }
         await m.query(`UPDATE gpapack SET state='received',received_by=$2,received_at=now(),updated_at=now() WHERE id=$1`, [id, userId]);
+        await audit(m, 'gpapack.write', {
+          actorId: userId, entityId: id, action: 'receive',
+          before: { state: 'delivered' },
+          after: { state: 'received', receivedBy: userId, coordinatorId: Number(r.coordinator_id) },
+        });
         const [pack] = await m.query(`SELECT title FROM gpapack WHERE id=$1`, [id]) as Array<{ title: string }>;
         const heads = await m.query(
           `SELECT id,role,can_gpa_pack FROM staff WHERE active=true AND id<>$1 ORDER BY id`,
@@ -872,7 +1054,7 @@ export class BooksService {
           );
         }
       }
-      return this.packDto(m, id, userId);
+      return this.packDto(m, id, viewer);
     });
   }
 

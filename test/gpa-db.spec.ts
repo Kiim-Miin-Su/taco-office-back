@@ -328,7 +328,7 @@ d('S3-c GPA 선택 기록지 URL HTTP·DB', () => {
     ownsService = added.length > 0;
     point = Number((await sql('SELECT point FROM gpasvc WHERE key=$1', ['hw']))[0].point);
     for (const [actor, email] of [[ADMIN, 's3c-admin@t.invalid'], [TEACHER, 's3c-teacher@t.invalid']] as const) {
-      const res = await request(app.getHttpServer()).post('/auth/login').send({ email, password: PASSWORD }).expect(201);
+      const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PASSWORD }).expect(201);
       tokens.set(actor, res.body.accessToken as string);
     }
   });

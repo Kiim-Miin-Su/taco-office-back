@@ -185,6 +185,8 @@ export class FilesService {
                   JOIN LATERAL jsonb_array_elements_text(s.rep_ids) AS sent(rep_id) ON true
                   JOIN rep r ON r.id=sent.rep_id::bigint
                  WHERE p.kind='report_png' AND p.file_url=$2 AND r.teacher_id=$3
+                   -- W11 7-3 ① F3 — 장마다 리포트가 적혀 있으면 그 리포트의 강사만(옛 행은 rep_id NULL → 묶음 전체)
+                   AND (p.rep_id IS NULL OR p.rep_id=r.id)
               ) AS report_teacher,
               EXISTS (SELECT 1 FROM cons_file cf WHERE cf.file_id=f.id) AS consulting_linked,
               EXISTS (
