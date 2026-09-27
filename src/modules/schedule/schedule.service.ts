@@ -676,7 +676,11 @@ export class ScheduleService {
       prepRemainLabel: remain > 0 ? `${remain}가지 남았습니다` : '다 됐습니다',
       serId, onDate, cap, count, canAdd,
       // 원문 머리줄 그대로 — 화면이 cap − count 를 다시 하지 않는다 (D-R37)
-      capLabel: canAdd > 0 ? `정원 ${cap}명 · ${canAdd}명 더 넣을 수 있습니다` : `정원 ${cap}명 · 자리가 없습니다`,
+      capLabel: count > cap
+        ? `정원 ${cap}명 · ${count - cap}명 넘었습니다`
+        : canAdd > 0
+          ? `정원 ${cap}명 · ${canAdd}명 더 넣을 수 있습니다`
+          : `정원 ${cap}명 · 자리가 없습니다`,
       priced: pricing !== null,
       unitPrice: canSeeAmounts && pricing ? pricing.unitPrice : null,
       total: canSeeAmounts && pricing ? pricing.total : null,

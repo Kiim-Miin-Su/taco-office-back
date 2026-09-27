@@ -407,6 +407,10 @@ export class ScheduleController {
   @ApiNotFoundResponse({ ...missingOccurrenceResponse,
     description: `${missingOccurrenceResponse.description} STUDENT_NOT_FOUND: 학생 없음.`,
   })
+  @ApiConflictResponse({
+    type: ApiErrorDto,
+    description: 'ROSTER_CAP_CONFIRM_REQUIRED: 정원이 찼으므로 confirmOverCapacity=true 재요청 필요',
+  })
   @ApiOperation({ summary: '수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)' })
   @ApiOkResponse({ type: RosterResultDto })
   roster(

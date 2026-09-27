@@ -1145,6 +1145,24 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(Number(stu[0].n)).toBe(2);
   });
 
+  it('B-20 정원 초과는 확인 전에는 저장하지 않고, 명시 확인 뒤 초과 인원과 붉은 문구의 서버 사실을 남긴다', async () => {
+    const { id, from } = await makeSer({ studentIds: [1, 2, 3, 4] });
+
+    const blocked = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'add', onDate: from, studentId: ROSTER_STUDENT }).expect(409);
+    expect(blocked.body).toMatchObject({
+      code: 'ROSTER_CAP_CONFIRM_REQUIRED',
+      message: '정원 4명이 찼습니다. 그래도 넣을까요?',
+    });
+    expect(await q(`SELECT count(*)::int n FROM ser_stu WHERE ser_id=$1`, [id])).toEqual([{ n: 4 }]);
+
+    const added = await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'add', onDate: from, studentId: ROSTER_STUDENT, confirmOverCapacity: true }).expect(200);
+    expect(added.body).toMatchObject({ count: 5, cap: 4 });
+    const tracking = await get(`/schedule/tracking?serId=${id}&onDate=${from}`).expect(200);
+    expect(tracking.body).toMatchObject({ count: 5, cap: 4, canAdd: 0, capLabel: '정원 4명 · 1명 넘었습니다' });
+  });
+
   it('아주 빼기 — 정식 명단에서 사라진다', async () => {
     const { id, from } = await makeSer();
     await api('patch', `/schedule/${id}/roster`)

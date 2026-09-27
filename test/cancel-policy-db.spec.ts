@@ -24,7 +24,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
-import { DataSource } from 'typeorm';
+import { DataSource, QueryRunner } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 import { ATTENDANCE_CANCEL_REASON_LABEL, CANCEL_TREAT_LABEL } from '../src/lib/rules';
@@ -341,6 +341,36 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     // 그날 전체 휴강은 **시드 수업도** 접는다(학원 전체) — afterEach 는 이 스위트의 규칙만 치운다.
     // 시드가 투영 기간 전체에 회차를 두므로(N-49) 되돌리지 않으면 개발 DB 에 그날의 시드 휴강이 남는다 — 한 토큰으로 통째로 되돌린다(N-138)
     await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
+  });
+
+  it('그날 전체 휴강의 대상 조회와 취소 쓰기는 같은 트랜잭션·같은 연결이다 (N-133)', async () => {
+    const { from } = await makeSer(660);
+    const createRunner = ds.createQueryRunner.bind(ds);
+    let targetRunner: QueryRunner | undefined;
+    let writeRunner: QueryRunner | undefined;
+    const spy = jest.spyOn(ds, 'createQueryRunner').mockImplementation((...args) => {
+      const runner = createRunner(...args);
+      const query = runner.query.bind(runner);
+      jest.spyOn(runner, 'query').mockImplementation(async (sql: string, parameters?: unknown[], structured?: boolean) => {
+        if (sql.includes('SELECT DISTINCT ser_id FROM ser_occ')) {
+          targetRunner = runner;
+          expect(runner.isTransactionActive).toBe(true);
+        }
+        if (sql.includes('INSERT INTO exc ') || sql.includes('UPDATE exc SET')) writeRunner ??= runner;
+        return structured ? query(sql, parameters, true) : query(sql, parameters);
+      });
+      return runner;
+    });
+    try {
+      const res = await api('post', '/schedule/day-cancel')
+        .send({ date: from, cancelKind: 'academy', cancelTreat: 'carry' })
+        .expect(201);
+      expect(targetRunner).toBeDefined();
+      expect(writeRunner).toBe(targetRunner);
+      await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('그날 전체 휴강에 회차가 없으면 404 이고, 차감으로는 접을 수 없다 (전체 결석은 학생 결석이 아니다)', async () => {

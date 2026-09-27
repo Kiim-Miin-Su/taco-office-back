@@ -687,45 +687,63 @@ export class ScheduleWriteService {
     if (cancel.treat === 'makeup') {
       throw new BadRequestException({ code: 'MAKEUP_NOT_BULK', message: '그날 전체 휴강은 보강 이관을 받지 않습니다 — 보강은 회차마다 잡습니다' });
     }
-    const q0 = this.ds.createQueryRunner();
-    await q0.connect();
-    let serIds: number[];
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
     try {
-      serIds = ((await q0.query(
-        `SELECT DISTINCT ser_id FROM ser_occ WHERE ${kstDateOf('lower(span)')} = $1::date ORDER BY ser_id`, [dto.date],
+      /*
+       * 대상 조회도 아래 취소 쓰기와 같은 transaction/connection에서 한다. 별도 연결로 먼저 읽으면
+       * 조회와 BEGIN 사이에 회차가 이동·추가될 수 있어 「그날 전체」의 집합이 반쪽 snapshot이 된다.
+       * 부모 SER를 여기서 잠그면 대상 확정 뒤 같은 규칙의 이동·삭제도 txBody가 끝날 때까지 기다린다.
+       */
+      const serIds = ((await q.query(
+        `SELECT s.id AS ser_id
+           FROM ser s
+           JOIN (SELECT DISTINCT ser_id FROM ser_occ WHERE ${kstDateOf('lower(span)')} = $1::date) target
+             ON target.ser_id = s.id
+          ORDER BY s.id
+          FOR NO KEY UPDATE OF s`, [dto.date],
       )) as Array<{ ser_id: string }>).map((r) => Number(r.ser_id));
-    } finally { await q0.release(); }
-    if (!serIds.length) {
-      throw new NotFoundException({ code: 'NO_OCCURRENCES', message: `${dto.date} 에는 회차가 없습니다` });
-    }
-    let count = 0;
-    let skipped = 0;
-    const targets: Array<{ serId: number; onDate: string }> = [];
-    return this.tx<DayCancelResultDto>('schedule.day_cancel', serIds, (before) => {
-      let current = before;
-      const log: string[] = [];
-      // occ() 는 표시용이라 휴강을 그리지 않는다 — 이미 접힌 회차는 투영(project)과 같은 판정으로 센다:
-      // 규칙에 맞는 날인데 그 날짜의 EXC 가 취소인 것
-      skipped = before.SER.filter((s) => ruleHits(s, dto.date)
-        && before.EXC.some((e) => e.serId === s.id && e.onDate === dto.date && e.canceled)).length;
-      for (const o of occ(dto.date, before)) {
-        if (o.canceled) { skipped += 1; continue; }
-        const a = applyDelete(current, { serId: o.serId, onDate: o.onDate, scope: 'this', cancel });
-        current = a;
-        log.push(...a.__log);
-        targets.push({ serId: o.serId, onDate: o.onDate });
-        count += 1;
+      if (!serIds.length) {
+        throw new NotFoundException({ code: 'NO_OCCURRENCES', message: `${dto.date} 에는 회차가 없습니다` });
       }
-      return { after: current, log, effScope: 'this' };
-    }, {
-      enrich: async (q, fresh, base) => {
-        for (const t of targets) await notifyCancel(q, actorId, t.serId, t.onDate, fresh, cancel.treat);
-        return { ...base, count, skipped };
-        // 그날 전체도 **한 토큰**이다 — `tx` 가 그날의 모든 SER 를 한 스냅숏에 담으므로
-        // 되돌리기 한 번이 그날을 통째로 되살린다 (N-138 · 건너뛴 회차는 애초에 안 건드렸다)
-      },
-      actorId,
-    });
+      let count = 0;
+      let skipped = 0;
+      const targets: Array<{ serId: number; onDate: string }> = [];
+      const result = await this.tx<DayCancelResultDto>('schedule.day_cancel', serIds, (before) => {
+        let current = before;
+        const log: string[] = [];
+        // occ() 는 표시용이라 휴강을 그리지 않는다 — 이미 접힌 회차는 투영(project)과 같은 판정으로 센다:
+        // 규칙에 맞는 날인데 그 날짜의 EXC 가 취소인 것
+        skipped = before.SER.filter((s) => ruleHits(s, dto.date)
+          && before.EXC.some((e) => e.serId === s.id && e.onDate === dto.date && e.canceled)).length;
+        for (const o of occ(dto.date, before)) {
+          if (o.canceled) { skipped += 1; continue; }
+          const a = applyDelete(current, { serId: o.serId, onDate: o.onDate, scope: 'this', cancel });
+          current = a;
+          log.push(...a.__log);
+          targets.push({ serId: o.serId, onDate: o.onDate });
+          count += 1;
+        }
+        return { after: current, log, effScope: 'this' };
+      }, {
+        enrich: async (runner, fresh, base) => {
+          for (const t of targets) await notifyCancel(runner, actorId, t.serId, t.onDate, fresh, cancel.treat);
+          return { ...base, count, skipped };
+          // 그날 전체도 **한 토큰**이다 — `tx` 가 그날의 모든 SER 를 한 스냅숏에 담으므로
+          // 되돌리기 한 번이 그날을 통째로 되살린다 (N-138 · 건너뛴 회차는 애초에 안 건드렸다)
+        },
+        actorId,
+        outer: q,
+      });
+      await q.commitTransaction();
+      return result;
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      throw error;
+    } finally {
+      await q.release();
+    }
   }
 
   /** §12 · §79 — 학생 넣고 빼기. 「그날만 빼기」가 D-R21 이다. */
@@ -742,6 +760,26 @@ export class ScheduleWriteService {
           code: 'BAD_ROSTER_OP',
           message: `현재 명단에는 ${dto.op} 작업을 적용할 수 없습니다`,
         });
+      }
+      // B-20: 정원 판정은 화면의 오래된 count가 아니라, 이 쓰기 트랜잭션이 잠근 최신 명단으로 한다.
+      // 첫 요청은 409로 확인 문구를 돌려주고 사용자가 확인한 재요청만 초과 등록한다.
+      if (dto.op === 'add' && dto.confirmOverCapacity !== true) {
+        const meta = await q.query(
+          `SELECT k.cap
+             FROM ser s JOIN kind k ON k.key=s.kind_key
+            WHERE s.id=$1`,
+          [serId],
+        ) as Array<{ cap: number }>;
+        if (!meta.length) {
+          throw new BadRequestException({ code: 'KIND_NOT_FOUND', message: '수업 종류와 정원을 찾을 수 없습니다' });
+        }
+        const count = rosterAt(before, serId, dto.onDate).length;
+        if (count >= meta[0].cap) {
+          throw new ConflictException({
+            code: 'ROSTER_CAP_CONFIRM_REQUIRED',
+            message: `정원 ${meta[0].cap}명이 찼습니다. 그래도 넣을까요?`,
+          });
+        }
       }
       const a = applyRoster(before, {
         serId, onDate: dto.onDate, studentId: dto.studentId, op: dto.op,

@@ -3353,7 +3353,7 @@
             }
           },
           "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "ROSTER_CAP_CONFIRM_REQUIRED: 정원이 찼으므로 confirmOverCapacity=true 재요청 필요",
             "content": {
               "application/json": {
                 "schema": {
@@ -24010,6 +24010,10 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
+          },
+          "confirmOverCapacity": {
+            "type": "boolean",
+            "description": "정원 초과 경고를 확인하고도 학생을 넣는 경우 true"
           }
         },
         "required": [

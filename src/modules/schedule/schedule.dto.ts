@@ -510,6 +510,11 @@ export class RosterPatchDto {
 
   @ApiProperty(DATE_SCHEMA) @IsCalendarDate() onDate!: string;
   @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId!: number;
+
+  /** B-20 — 정원을 넘길 때 사용자가 경고를 읽고 다시 확인한 요청에만 선다. */
+  @ApiPropertyOptional({ description: '정원 초과 경고를 확인하고도 학생을 넣는 경우 true' })
+  @IsOptional() @IsBoolean()
+  confirmOverCapacity?: boolean;
 }
 
 /**
