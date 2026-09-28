@@ -965,6 +965,12 @@ export class ReportsService {
       [dto.studentId, dto.onDate],
     );
     if (existing[0]) {
+      // 최초 requestKey 조회 직후 같은 요청의 선행 트랜잭션이 커밋될 수 있다.
+      // 날짜 중복으로 거절하기 전에 요청 내용을 다시 대조해 네트워크 재시도를 같은 결과로 수렴시킨다.
+      const completed = await this.idempotentDelivery(
+        this.ds, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
+      );
+      if (completed) return completed;
       throw new ConflictException({ code: 'REPORT_DELIVERY_ALREADY_SENT', message: '이미 발송했습니다. 이력에서 다시 보내세요' });
     }
 

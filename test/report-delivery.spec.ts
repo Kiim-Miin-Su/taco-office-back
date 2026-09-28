@@ -463,6 +463,42 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     } finally { unblock(); }
   });
 
+  it('같은 requestKey 재시도가 최초 조회 직후 선행 커밋돼도 같은 발송 결과를 돌려준다', async () => {
+    const body = deliveryBody('00000000-0000-4000-8000-000000000097');
+    let pause!: () => void, release!: () => void, initialChecks = 0;
+    const paused = new Promise<void>((resolve) => { pause = resolve; });
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const query = ds.query.bind(ds);
+    const spy = jest.spyOn(ds, 'query').mockImplementation(async (sql: string, p?: unknown[]) => {
+      const rows = await query(sql, p);
+      if (sql.includes('FROM rsend WHERE request_key=$1') && p?.[0] === body.requestKey
+        && ++initialChecks === 1 && Array.isArray(rows) && rows.length === 0) {
+        pause();
+        await held;
+      }
+      return rows;
+    });
+    const lagging = Promise.resolve(request(app.getHttpServer()).post('/reports/deliveries')
+      .set(auth(managerToken)).send(body).timeout(10000));
+    try {
+      await paused;
+      const winner = await request(app.getHttpServer()).post('/reports/deliveries')
+        .set(auth(managerToken)).send(body).timeout(10000).expect(201);
+      release();
+      const retried = await lagging;
+      expect(retried.status).toBe(201);
+      expect(retried.body.item.id).toBe(winner.body.item.id);
+      expect(await q('SELECT id FROM rsend WHERE request_key=$1', [body.requestKey])).toHaveLength(1);
+      expect(await q(`SELECT id FROM pdflog WHERE kind='report_png' AND ref_id=$1`, [winner.body.item.id])).toHaveLength(2);
+      expect(put).toHaveBeenCalledTimes(2);
+      expect(remove).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await Promise.allSettled([lagging]);
+      spy.mockRestore();
+    }
+  });
+
   it.each([true, false])('동시 재발송 sameKey=%s: 원본 날짜/본문/파일은 불변이다', async (sameKey) => {
     const original = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
       .send(deliveryBody('00000000-0000-4000-8000-000000000094')).expect(201);
