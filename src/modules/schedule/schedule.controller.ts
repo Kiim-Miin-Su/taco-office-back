@@ -34,6 +34,8 @@ const attendanceWriteDescription = '일정 변경과 같은 부모 SER를 먼저
   + '정상 재투영은 사라진 회차로 오인하지 않는다. 종료 전 또는 취소된 회차는 ATTENDANCE_NOT_AVAILABLE409, '
   + '없는 회차는 OCCURRENCE_NOT_FOUND404이며 ATT/LOG를 저장하지 않는다. C-40 lateStudentIds는 회차 명단의 학생별 지각 현재값이며 '
   + 'ATT.completed 출석·정산 판정은 바꾸지 않는다. 지각 원장과 ATT/LOG는 같은 트랜잭션이다.';
+const monthClosedConflict = 'MONTH_CLOSED: 대상 달이 마감됐거나 같은 순간 마감이 먼저 끝남. '
+  + '대표가 마감을 해제한 뒤 다시 요청해야 하며 실패한 쓰기는 전부 되돌린다.';
 
 @ApiTags('schedule')
 @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다' })
@@ -262,7 +264,7 @@ export class ScheduleController {
     type: ApiErrorDto,
     description: 'ATTENDANCE_REASON_REQUIRED | ATTENDANCE_REASON_FORBIDDEN | ATTENDANCE_LATE_FORBIDDEN | ATTENDANCE_LATE_STUDENT_INVALID | ATTENDANCE_LATE_STUDENT_NOT_IN_ROSTER',
   })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'ATTENDANCE_NOT_AVAILABLE: 최신 회차가 종료 전 또는 취소됨' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: `ATTENDANCE_NOT_AVAILABLE: 최신 회차가 종료 전 또는 취소됨 | ${monthClosedConflict}` })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'OCCURRENCE_NOT_FOUND: 회차 없음' })
   @ApiOkResponse({ type: AttendanceMutationResultDto })
   saveAttendance(
@@ -276,7 +278,7 @@ export class ScheduleController {
   @Delete(':serId/:onDate/attendance')
   @Perm('canCrudAttendance')
   @ApiOperation({ summary: '회차 출결 현재값 초기화 — 삭제 전 값은 LOG에 보존', description: attendanceWriteDescription })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'ATTENDANCE_NOT_AVAILABLE: 최신 회차가 종료 전 또는 취소됨' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: `ATTENDANCE_NOT_AVAILABLE: 최신 회차가 종료 전 또는 취소됨 | ${monthClosedConflict}` })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'OCCURRENCE_NOT_FOUND: 회차 없음. ATTENDANCE_NOT_FOUND: 초기화할 출결 없음' })
   @ApiOkResponse({ type: AttendanceMutationResultDto })
   clearAttendance(
@@ -289,6 +291,7 @@ export class ScheduleController {
   @Post()
   @Perm('canCrudAll')
   @ApiOperation({ summary: '수업 만들기 — 겹치면 DB 가 409 로 막는다 (D-R43)' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
   @ApiCreatedResponse({ type: WriteResultDto })
   create(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrenceCreateDto): Promise<WriteResultDto> {
     return user ? this.write.create(dto, user.id) : this.write.create(dto);
@@ -297,6 +300,7 @@ export class ScheduleController {
   @Post('paste')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '회차 1~50건 복제 — 결과는 새 SER, EXC는 따라오지 않는다 (D-R19)' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
   @ApiCreatedResponse({ type: WriteResultDto })
   paste(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrencePasteDto): Promise<WriteResultDto> {
     return user ? this.write.paste(dto, user.id) : this.write.paste(dto);
@@ -305,6 +309,7 @@ export class ScheduleController {
   @Post('move')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '다중 선택 회차 이동 — 전부 저장되거나 전부 되돌아간다 (C-7)' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
   @ApiCreatedResponse({ type: WriteResultDto })
   moveMany(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrenceMoveDto): Promise<WriteResultDto> {
     return user ? this.write.moveMany(dto, user.id) : this.write.moveMany(dto);
@@ -318,6 +323,7 @@ export class ScheduleController {
       + '전일 휴원은 사유와 무관하게 차감·보강 이관을 받지 않는다. 학생별 학부모 안내 준비행을 함께 만들며 실제 발송은 보호자·채널 선택을 거친다.',
   })
   @ApiCreatedResponse({ type: DayCancelResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
   @ApiNotFoundResponse({ description: 'code NO_OCCURRENCES — 그날 회차가 없다', type: ApiErrorDto })
   @ApiBadRequestResponse({ description: 'code CANCEL_DEDUCT_FORBIDDEN | DAY_CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED', type: ApiErrorDto })
   dayCancel(@CurrentUser() user: RequestUser | undefined, @Body() dto: DayCancelDto): Promise<DayCancelResultDto> {
@@ -337,7 +343,7 @@ export class ScheduleController {
   })
   @ApiCreatedResponse({ type: StudentPauseResultDto })
   @ApiNotFoundResponse({ description: 'code STUDENT_NOT_FOUND', type: ApiErrorDto })
-  @ApiConflictResponse({ description: 'code PAUSE_OVERLAP — 이미 잡힌 휴원 기간과 겹친다', type: ApiErrorDto })
+  @ApiConflictResponse({ description: `PAUSE_OVERLAP: 이미 잡힌 휴원 기간과 겹침 | ${monthClosedConflict}`, type: ApiErrorDto })
   @ApiBadRequestResponse({ description: 'code BAD_RANGE — 종료일이 시작일보다 앞', type: ApiErrorDto })
   pauseStudent(
     @CurrentUser() user: RequestUser,
@@ -356,7 +362,7 @@ export class ScheduleController {
   })
   @ApiCreatedResponse({ type: StudentPauseResultDto })
   @ApiNotFoundResponse({ description: 'code PAUSE_NOT_FOUND — 그 학생의 휴원 기록이 아니다', type: ApiErrorDto })
-  @ApiConflictResponse({ description: 'code PAUSE_ALREADY_RESUMED', type: ApiErrorDto })
+  @ApiConflictResponse({ description: `PAUSE_ALREADY_RESUMED | ${monthClosedConflict}`, type: ApiErrorDto })
   @ApiBadRequestResponse({ description: 'code BAD_RANGE', type: ApiErrorDto })
   resumeStudent(
     @CurrentUser() user: RequestUser,
@@ -388,7 +394,7 @@ export class ScheduleController {
       + 'SER/EXC 저장과 회차 투영은 한 transaction이다. 버전 충돌 검출/멱등 키 계약은 제공하지 않는다.',
   })
   @ApiOkResponse({ type: WriteResultDto })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'SERIES_HAS_REPORTS | SERIES_HAS_EXCEPTIONS — 종류·반복 규칙 변경으로 연결된 리포트·회차 예외가 고아가 되는 것을 막는다' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: `SERIES_HAS_REPORTS | SERIES_HAS_EXCEPTIONS — 종류·반복 규칙 변경으로 연결된 리포트·회차 예외가 고아가 되는 것을 막는다 | ${monthClosedConflict}` })
   patch(
     @CurrentUser() user: RequestUser | undefined,
     @Param() params: ScheduleParamsDto,
@@ -407,6 +413,7 @@ export class ScheduleController {
       + '둘 다 비우면 옛 방식(취소만 · 기본 정책 이월)이다. future·all 은 수업 종료라 사유를 받지 않는다(CANCEL_SCOPE).',
   })
   @ApiBadRequestResponse({ description: 'code CANCEL_DEDUCT_FORBIDDEN | CANCEL_REASON_REQUIRED | CANCEL_SCOPE', type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
   @ApiOkResponse({ type: WriteResultDto })
   remove(
     @CurrentUser() user: RequestUser | undefined,
@@ -423,7 +430,7 @@ export class ScheduleController {
   })
   @ApiConflictResponse({
     type: ApiErrorDto,
-    description: 'ROSTER_CAP_CONFIRM_REQUIRED: 정원이 찼으므로 confirmOverCapacity=true 재요청 필요',
+    description: `ROSTER_CAP_CONFIRM_REQUIRED: 정원이 찼으므로 confirmOverCapacity=true 재요청 필요 | ${monthClosedConflict}`,
   })
   @ApiOperation({ summary: '수강 학생 넣고 빼기 — 「그날만 빼기」가 D-R21 이다 (§12 · §79)' })
   @ApiOkResponse({ type: RosterResultDto })

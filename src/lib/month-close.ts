@@ -13,12 +13,16 @@
  *   · 달(청구서 발행 · 이월 처리)         → `assertMonthOpenForWrite(q, 'YYYY-MM')` — 마감 · 해제와 같은 달 열쇠(공유)를 잡고 읽는다
  *   · 스케줄 쓰기(규칙 전체가 바뀐다)     → `closedOccSnapshot` 을 persist/project 앞뒤로 견줘 다르면 던진다
  * 마감 달은 `month_close` 의 열린 행(`reopened_at IS NULL`)이다 — 해제된 달은 이력만 남고 다시 열린다.
+ * 모든 월 민감 쓰기는 전역 공유 advisory xact lock을 먼저 잡고, 마감·해제는 같은 키를 배타로 잡는다.
+ * 따라서 열린 달을 확인한 쓰기와 마감이 겹쳐도 둘의 커밋 순서가 항상 직렬화된다.
  */
 import { ConflictException } from '@nestjs/common';
 
 export interface Queryable { query(sql: string, params?: unknown[]): Promise<unknown> }
 
 export const MONTH_CLOSED = 'MONTH_CLOSED' as const;
+
+const MONTH_CLOSE_WRITE_LOCK = 'month_close:all-sensitive-writes';
 
 export const monthOf = (iso: string): string => iso.slice(0, 7);
 
@@ -47,6 +51,7 @@ export function assertClosedOccUnchanged(f: {
 
 /** 지금 마감돼 있는 달 전부 — `YYYY-MM` 오름차순 */
 export async function closedMonths(q: Queryable): Promise<string[]> {
+  await lockMonthSensitiveWrite(q);
   const rows = await q.query(`SELECT year_month FROM month_close WHERE reopened_at IS NULL ORDER BY year_month`) as Array<{ year_month: string }>;
   return rows.map((r) => r.year_month);
 }
@@ -64,6 +69,7 @@ export async function closedMonthBetween(q: Queryable, from: string, to: string 
 
 /** 날짜(`YYYY-MM-DD`) 또는 달(`YYYY-MM`) 하나가 마감이면 409 */
 export async function assertMonthOpen(q: Queryable, dateOrMonth: string): Promise<void> {
+  await lockMonthSensitiveWrite(q);
   const hit = await closedMonthBetween(q, dateOrMonth, dateOrMonth);
   if (hit) throw monthClosedError(hit);
 }
@@ -80,19 +86,32 @@ export async function assertMonthOpen(q: Queryable, dateOrMonth: string): Promis
  */
 const monthLockKey = (month: string): string => `month_close:${month}`;
 
+/**
+ * 출결·일정·휴원·수강 종료·청구처럼 월 마감과 경합할 수 있는 쓰기의 공용 공유 잠금.
+ * 공유끼리는 동시에 실행되고, 드문 마감·해제만 모든 진행 중 쓰기가 끝날 때까지 기다린다.
+ * PostgreSQL transaction advisory lock이므로 반드시 쓰기 transaction 안에서 호출한다.
+ */
+export async function lockMonthSensitiveWrite(q: Queryable): Promise<void> {
+  await q.query(`SELECT pg_advisory_xact_lock_shared(hashtext($1))`, [MONTH_CLOSE_WRITE_LOCK]);
+}
+
 /** 마감 · 해제 — 그 달 열쇠를 배타로. 같은 달의 마감 · 해제 둘을 한 줄로 세우고, 도는 발행 · 이월이 끝나기를 기다린다 */
 export async function lockMonthExclusive(q: Queryable, month: string): Promise<void> {
+  await q.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [MONTH_CLOSE_WRITE_LOCK]);
   await q.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [monthLockKey(month)]);
 }
 
 /** 그 달에 쓰는 쪽(발행 · 이월) — 열쇠를 공유로 잡은 **뒤** 마감을 읽는다. 날짜를 줘도 그 달로 본다 */
 export async function assertMonthOpenForWrite(q: Queryable, dateOrMonth: string): Promise<void> {
+  await lockMonthSensitiveWrite(q);
   await q.query(`SELECT pg_advisory_xact_lock_shared(hashtext($1))`, [monthLockKey(monthOf(dateOrMonth))]);
-  await assertMonthOpen(q, dateOrMonth);
+  const hit = await closedMonthBetween(q, dateOrMonth, dateOrMonth);
+  if (hit) throw monthClosedError(hit);
 }
 
 /** 기간이 마감 달과 겹치면 409 — 휴원·복귀처럼 여러 달을 덮는 쓰기 */
 export async function assertRangeOpen(q: Queryable, from: string, to: string | null): Promise<void> {
+  await lockMonthSensitiveWrite(q);
   const hit = await closedMonthBetween(q, from, to);
   if (hit) throw monthClosedError(hit);
 }

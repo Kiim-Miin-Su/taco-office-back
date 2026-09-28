@@ -20,6 +20,10 @@ import { HttpException } from '@nestjs/common';
 import { dataSourceOptions } from '../src/data-source';
 import { Inv } from '../src/entities';
 import { AccountingService } from '../src/modules/accounting/accounting.service';
+import { StudentWithdrawService } from '../src/modules/accounting/withdraw.service';
+import { ScheduleAttendanceService } from '../src/modules/schedule/schedule.attendance.service';
+import { SchedulePauseService } from '../src/modules/schedule/schedule.pause.service';
+import { ScheduleWriteService } from '../src/modules/schedule/schedule.write.service';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -48,6 +52,11 @@ const CLOSE_M = '2026-05';
 const CARRY_FROM = '2026-06';
 const CARRY_TO = '2026-07';
 const REOPEN_M = '2026-08';
+const VOID_M = '2026-01';
+const ATTENDANCE_M = '2025-10';
+const PAUSE_M = '2025-09';
+const WITHDRAW_M = '2025-11';
+const SCHEDULE_M = '2025-12';
 
 type Outcome = { ok: true; value: unknown } | { ok: false; code: string };
 const settle = (p: Promise<unknown>): Promise<Outcome> =>
@@ -154,7 +163,10 @@ d('회계 청구 경합 — 중복 발행 · 이월과 다음 달 발행 (7-3 �
     await ds.query(`INSERT INTO sub (key,name,color) VALUES ($1,'경합 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
     await ds.query(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
     await ds.query(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, 50000, '2026-01-01', 1)`, [KIND, SUB]);
-    await ds.query(`DELETE FROM month_close WHERE year_month = ANY($1::text[])`, [[FROM, TO, CLOSE_M, CARRY_FROM, CARRY_TO, REOPEN_M]]);
+    await ds.query(`DELETE FROM month_close WHERE year_month = ANY($1::text[])`, [[
+      FROM, TO, CLOSE_M, CARRY_FROM, CARRY_TO, REOPEN_M,
+      VOID_M, ATTENDANCE_M, PAUSE_M, WITHDRAW_M, SCHEDULE_M,
+    ]]);
   });
 
   afterAll(async () => {
@@ -171,14 +183,16 @@ d('회계 청구 경합 — 중복 발행 · 이월과 다음 달 발행 (7-3 �
         await ds.query(`DELETE FROM inv WHERE id = ANY($1::bigint[])`, [invIds]);
       }
       if (series.length) {
+        await ds.query(`DELETE FROM att WHERE ser_id = ANY($1::bigint[])`, [series]);
         await ds.query(`DELETE FROM ser_occ WHERE ser_id = ANY($1::bigint[])`, [series]);
         await ds.query(`DELETE FROM ser_stu WHERE ser_id = ANY($1::bigint[])`, [series]);
         await ds.query(`DELETE FROM ser WHERE id = ANY($1::bigint[])`, [series]);
       }
+      if (students.length) await ds.query(`DELETE FROM stu_pause WHERE student_id = ANY($1::bigint[])`, [students]);
       if (students.length) await ds.query(`DELETE FROM stu WHERE id = ANY($1::bigint[])`, [students]);
       await ds.query(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
-      await ds.query(`DELETE FROM sub WHERE key = $1`, [SUB]);
-      await ds.query(`DELETE FROM kind WHERE key = $1`, [KIND]);
+      await ds.query(`DELETE FROM sub WHERE key = $1 AND NOT EXISTS (SELECT 1 FROM ser WHERE sub_key = $1)`, [SUB]);
+      await ds.query(`DELETE FROM kind WHERE key = $1 AND NOT EXISTS (SELECT 1 FROM ser WHERE kind_key = $1)`, [KIND]);
       await ds.query(`DELETE FROM log WHERE actor_id = $1`, [ACTOR]);
       await ds.query(`DELETE FROM month_close WHERE closed_by = $1 OR reopened_by = $1`, [ACTOR]);
       await ds.query(`DELETE FROM staff WHERE id = $1`, [ACTOR]);
@@ -315,5 +329,130 @@ d('회계 청구 경합 — 중복 발행 · 이월과 다음 달 발행 (7-3 �
     // 해제가 먼저 커밋됐으므로 발행은 열린 달을 읽는다 — 「마감됐다」를 읽고 먼저 409 로 끝나지 않는다
     expect(i).toMatchObject({ ok: true });
     expect(await liveInvoices(sid, REOPEN_M)).toHaveLength(1);
+  });
+
+  /*
+   * 월 마감의 전역 공유/배타 축 — 청구 발행·이월뿐 아니라 청구 취소, 출결, 휴원,
+   * 수강 종료, 일정 쓰기도 열린 달 판정과 실제 저장 사이에 마감이 끼지 못해야 한다.
+   * 각 시험은 제품 쓰기를 표 잠금에서 멈춘 뒤 마감을 겹쳐 실제 두 연결의 대기를 확인한다.
+   */
+  it('청구 취소와 월 마감이 겹쳐도 취소가 마감 뒤에 커밋되지 않는다', async () => {
+    const sid = await newStudent();
+    await lesson(sid, [{ on: `${VOID_M}-05` }]);
+    const invoice = await svc().issueInvoice(ACTOR, {
+      studentId: sid, yearMonth: VOID_M, invType: 'tuition', dueOn: DUE,
+    }, true);
+
+    const blocker = await hold(['inv']);
+    const voided = settle(svc().voidInvoice(ACTOR, true, invoice.id, { reason: '경합 검증' }, true));
+    await waitForLockWaiters(1);
+    const close = settle(svc().closeMonth(ACTOR, true, { month: VOID_M }));
+    await doneOrWaiting(close, 2);
+    await release(blocker);
+    const [v, c] = await Promise.all([voided, close]);
+
+    expect(v.ok).toBe(true);
+    expect(c.ok).toBe(true);
+    expect(await logIdOf('INV', invoice.id, 'void')).toBeLessThan(
+      await logIdOf('MONTH_CLOSE', (c as { value: { id: number } }).value.id, 'close'),
+    );
+  });
+
+  it('출결 저장과 월 마감이 겹쳐도 출결은 마감보다 먼저 끝나거나 MONTH_CLOSED다', async () => {
+    const sid = await newStudent();
+    const onDate = `${ATTENDANCE_M}-06`;
+    await lesson(sid, [{ on: onDate }]);
+    const serId = series[series.length - 1]!;
+
+    const blocker = await hold(['att']);
+    const saved = settle(new ScheduleAttendanceService(ds).save(serId, onDate, { result: 'completed' }, ACTOR));
+    await waitForLockWaiters(1);
+    const close = settle(svc().closeMonth(ACTOR, true, { month: ATTENDANCE_M }));
+    await doneOrWaiting(close, 2);
+    await release(blocker);
+    const [a, c] = await Promise.all([saved, close]);
+
+    expect(a.ok).toBe(true);
+    expect(c.ok).toBe(true);
+    const attendanceId = (a as { value: { attendance: { id: number } } }).value.attendance.id;
+    expect(await logIdOf('ATT', attendanceId, 'create')).toBeLessThan(
+      await logIdOf('MONTH_CLOSE', (c as { value: { id: number } }).value.id, 'close'),
+    );
+  });
+
+  it('휴원 저장과 월 마감이 겹쳐도 휴원은 마감보다 먼저 끝나거나 MONTH_CLOSED다', async () => {
+    const sid = await newStudent();
+    const blocker = await hold(['stu_pause']);
+    const paused = settle(new SchedulePauseService(ds).pause(sid, {
+      fromDate: `${PAUSE_M}-01`, toDate: `${PAUSE_M}-30`, reason: '경합 검증',
+    }, ACTOR));
+    await waitForLockWaiters(1);
+    const close = settle(svc().closeMonth(ACTOR, true, { month: PAUSE_M }));
+    await doneOrWaiting(close, 2);
+    await release(blocker);
+    const [p, c] = await Promise.all([paused, close]);
+
+    expect(p.ok).toBe(true);
+    expect(c.ok).toBe(true);
+    const pauseId = (p as { value: { id: number } }).value.id;
+    expect(await logIdOf('STU_PAUSE', pauseId, 'create')).toBeLessThan(
+      await logIdOf('MONTH_CLOSE', (c as { value: { id: number } }).value.id, 'close'),
+    );
+  });
+
+  it('수강 종료와 월 마감이 겹쳐도 종료가 마감 뒤에 커밋되지 않는다', async () => {
+    const sid = await newStudent();
+    const endedOn = `${WITHDRAW_M}-10`;
+    await lesson(sid, [{ on: `${WITHDRAW_M}-03` }]);
+
+    const blocker = await hold(['ser_stu']);
+    const withdrawn = settle(new StudentWithdrawService(ds).withdraw(
+      ACTOR, { studentId: sid, endedOn, reason: '경합 검증' }, true, true,
+    ));
+    await waitForLockWaiters(1);
+    const close = settle(svc().closeMonth(ACTOR, true, { month: WITHDRAW_M }));
+    await doneOrWaiting(close, 2);
+    await release(blocker);
+    const [w, c] = await Promise.all([withdrawn, close]);
+
+    expect(w.ok).toBe(true);
+    expect(c.ok).toBe(true);
+    const closeLog = await logIdOf('MONTH_CLOSE', (c as { value: { id: number } }).value.id, 'close');
+    const [withdrawLog] = (await ds.query(
+      `SELECT id FROM log WHERE actor_id=$1 AND entity='STU' AND entity_id=$2 AND action='withdraw' ORDER BY id DESC LIMIT 1`,
+      [ACTOR, sid],
+    )) as Array<{ id: string }>;
+    expect(Number(withdrawLog!.id)).toBeLessThan(closeLog);
+  });
+
+  it('일정 생성과 월 마감이 겹쳐도 새 회차가 마감 뒤에 서지 않는다', async () => {
+    const sid = await newStudent();
+    const blocker = await hold(['ser']);
+    const created = settle(new ScheduleWriteService(ds).create({
+      kindKey: KIND,
+      subKey: SUB,
+      mode: 'offline',
+      fromDate: `${SCHEDULE_M}-01`,
+      rrule: 'ONCE',
+      startMin: 660,
+      endMin: 720,
+      teacherId: ACTOR,
+      roomId: null,
+      title: '마감 경합 일정',
+      studentIds: [sid],
+    }, ACTOR));
+    await waitForLockWaiters(1);
+    const close = settle(svc().closeMonth(ACTOR, true, { month: SCHEDULE_M }));
+    await doneOrWaiting(close, 2);
+    await release(blocker);
+    const [s, c] = await Promise.all([created, close]);
+
+    expect(s.ok).toBe(true);
+    expect(c.ok).toBe(true);
+    const serId = (s as { value: { serIds: number[] } }).value.serIds[0]!;
+    series.push(serId);
+    expect(await logIdOf('SER', serId, 'create')).toBeLessThan(
+      await logIdOf('MONTH_CLOSE', (c as { value: { id: number } }).value.id, 'close'),
+    );
   });
 });
