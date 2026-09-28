@@ -41,9 +41,10 @@ beforeEach(() => {
   KEYS.forEach((key) => delete process.env[key]);
   Object.assign(process.env, {
     NODE_ENV: 'production', DATABASE_URL: 'postgresql://mock@127.0.0.1:1/mock_only',
-    JWT_SECRET: 'mock-access', JWT_REFRESH_SECRET: 'mock-refresh',
+    // 비밀 셋은 서로 다르고 16자 이상이다 — 부팅 Joi(min 16)와 같은 하한을 배포 점검이 먼저 본다 (AUTH-OPS)
+    JWT_SECRET: 'mock-access-secret-0001', JWT_REFRESH_SECRET: 'mock-refresh-secret-0002',
     CORS_ORIGIN: 'https://app.example.test', COOKIE_DOMAIN: '.example.test',
-    AUTH_CODE_SECRET: 'mock-code-secret',
+    AUTH_CODE_SECRET: 'mock-code-secret-0003',
   });
   process.argv = ['node', 'deploy-check.ts', '--run'];
   process.exitCode = undefined;
@@ -136,6 +137,60 @@ describe('배포 CLI — 설정 실패는 DB 연결 전에 끝난다', () => {
     else delete process.env.AUTH_CODE_SECRET;
     await runCli();
     expectNoDatabaseWork();
+  });
+
+  /*
+   * AUTH-OPS (TBO-54 · 2026-09-29) — 비밀 값의 **모양**도 배포 전에 본다.
+   * Access · Refresh 서명 비밀이 같으면 Access 토큰이 Refresh 쿠키 자리에서도 검증을 지난다(refresh 는 `sub` 만 본다) —
+   * 쿠키(httpOnly)에만 두려던 재발급 권한이 본문 토큰에도 생긴다. N-105 는 코드 비밀 값을 「JWT 두 값과 다른 값」으로 정했다.
+   * 부팅 Joi 는 길이(16)만 보고 서로 같은지 · 개발 기본값 그대로인지는 보지 않는다 — 배포 뒤에 아는 것은 늦다.
+   */
+  describe('비밀 값 모양 — 배포 전에 멈춘다 (AUTH-OPS)', () => {
+    it('Access 와 Refresh 서명 비밀이 같으면 연결·마이그레이션 0', async () => {
+      process.env.JWT_REFRESH_SECRET = process.env.JWT_SECRET;
+      await runCli();
+      expectNoDatabaseWork();
+    });
+
+    it.each(['JWT_SECRET', 'JWT_REFRESH_SECRET'] as const)('운영에서 AUTH_CODE_SECRET 이 %s 와 같으면 연결·마이그레이션 0 (N-105)', async (key) => {
+      process.env.AUTH_CODE_SECRET = process.env[key];
+      await runCli();
+      expectNoDatabaseWork();
+    });
+
+    it.each([
+      ['JWT_SECRET', 'dev-only-change-me'],
+      ['JWT_REFRESH_SECRET', 'dev-only-change-me-too'],
+    ] as const)('운영에서 %s 가 개발 기본값(%s)이면 연결·마이그레이션 0', async (key, value) => {
+      process.env[key] = value;
+      await runCli();
+      expectNoDatabaseWork();
+    });
+
+    it.each(['JWT_SECRET', 'JWT_REFRESH_SECRET', 'AUTH_CODE_SECRET'] as const)('%s 가 16자보다 짧으면 연결·마이그레이션 0 (부팅 Joi 와 같은 하한)', async (key) => {
+      process.env[key] = 'short-secret-15';
+      await runCli();
+      expectNoDatabaseWork();
+    });
+
+    it('개발 모드는 개발 기본값을 막지 않지만 같은 두 값은 막는다', async () => {
+      process.env.NODE_ENV = 'development';
+      delete process.env.AUTH_CODE_SECRET;
+      process.env.CORS_ORIGIN = 'http://localhost:3000';
+      delete process.env.COOKIE_DOMAIN;
+      process.env.JWT_SECRET = 'dev-only-change-me';
+      process.env.JWT_REFRESH_SECRET = 'dev-only-change-me-too';
+      await runCli();
+      expect(process.exitCode).toBeUndefined();
+      expect(fixture.db.initialize).toHaveBeenCalledTimes(1);
+
+      process.exitCode = undefined;
+      fixture = fakeDatabase();
+      jest.doMock('../src/data-source', () => ({ __esModule: true, default: fixture.db }));
+      process.env.JWT_REFRESH_SECRET = process.env.JWT_SECRET;
+      await runCli();
+      expectNoDatabaseWork();
+    });
   });
 });
 
