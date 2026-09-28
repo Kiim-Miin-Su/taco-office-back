@@ -56,8 +56,9 @@ export const GUIDE_EVENT_CTE = `WITH rostered AS (
          t.name AS teacher_name, s.title AS ser_title,
          sb.name AS sub_name, k.name AS kind_name, ${START_MIN} AS start_min, rm.name AS room_name,
          ${kstAt('lower(o.span)')} AS start_at,
-         row_number() OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY o.on_date,o.id) AS seq,
-         lag(o.teacher_id) OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY o.on_date,o.id) AS previous_teacher_id
+         -- 「첫 수업」·「직전 회차」는 **실제로 한 차례**다 — 옮긴 회차는 옮긴 시각 자리에 선다 (span 순 · MEETING-MOVE)
+         row_number() OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY lower(o.span),o.id) AS seq,
+         lag(o.teacher_id) OVER (PARTITION BY o.ser_id,ss.student_id ORDER BY lower(o.span),o.id) AS previous_teacher_id
     FROM ser_occ o
     JOIN ser s ON s.id=o.ser_id
     JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}

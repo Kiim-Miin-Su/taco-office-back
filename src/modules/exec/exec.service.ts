@@ -114,7 +114,7 @@ function areaMemos(memo: unknown): ExecAreaMemoDto[] {
     memo: typeof m[key] === 'string' ? (m[key] as string) : '',
   }));
 }
-import { kstAt, serStuOn } from '../../lib/sql';
+import { drawnDateOf, kstAt, serStuOn } from '../../lib/sql';
 
 /**
  * **아직 고칠 수 있는 보고의 상태** — 낱말은 여기 하나다 (S5 · D-R18).
@@ -872,19 +872,21 @@ export class ExecService {
   }
 
   async range(from: string, to: string, canSeeAmounts: boolean, viewer?: ExecViewer): Promise<ExecDto> {
+    // 기간에 드는 회차는 **실제 수업일**로 센다 — 현황판 · 캘린더 · 리포트 목록과 같은 집합이다. 옮긴 회차는 옮긴 날에 든다 (MEETING-MOVE)
+    const DRAWN = drawnDateOf('o');
     const [lessons, canceled, students, newLeads, enrolled, unwritten] = await Promise.all([
       this.one(`SELECT count(*)::text n FROM ser_occ o
                  LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
-                WHERE o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
+                WHERE ${DRAWN} BETWEEN $1::date AND $2::date AND NOT o.canceled
                   AND COALESCE(a.result,'completed') <> 'canceled'`, [from, to]),
       this.one(`SELECT count(*)::text n FROM ser_occ o
                  LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
-                WHERE o.on_date BETWEEN $1::date AND $2::date
+                WHERE ${DRAWN} BETWEEN $1::date AND $2::date
                   AND (o.canceled OR a.result='canceled')`, [from, to]),
       this.one(`SELECT count(DISTINCT ss.student_id)::text n FROM ser_occ o
                  JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
                  LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
-                WHERE o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
+                WHERE ${DRAWN} BETWEEN $1::date AND $2::date AND NOT o.canceled
                   AND COALESCE(a.result,'completed') <> 'canceled'`, [from, to]),
       // 주간의 지난주 값(weekPrev)이 같은 문장을 −7일에 부른다 — §70 「같은 방식으로」
       this.one(LEADS_IN_SQL, [from, to]),
@@ -901,7 +903,7 @@ export class ExecService {
            LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
           WHERE r.state = ANY($3::rep_state_t[]) AND upper(o.span) < now()
             AND k.rep AND NOT o.canceled AND COALESCE(a.result,'completed') <> 'canceled'
-            AND r.on_date BETWEEN $1::date AND $2::date`,
+            AND ${DRAWN} BETWEEN $1::date AND $2::date`,
         [from, to, REPORT_UNWRITTEN_CANDIDATE_DB],
       ),
     ]);

@@ -32,7 +32,7 @@
  *   · `dropped` — 휴강·결강만               → 「다음 달로 넘길 돈」
  * 세 토막의 합(`done + 남은 것`)은 `month` 와 정확히 같다 — 회귀가 그것을 증명한다.
  */
-import { kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
+import { drawnDateOf, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
 
 export interface InvoiceLineRow {
   sub_key: string | null;
@@ -148,7 +148,8 @@ const sqlFor = (slice: LineSlice, invType: LineInvType): string => `
              (SELECT su.unit_price FROM sturate su
                WHERE su.student_id = $1
                  AND (su.kind_key IS NULL OR su.kind_key = se.kind_key)
-                 AND su.from_date <= o.on_date
+                 -- 단가의 적용일은 **실제 수업일**과 견준다 — 옮긴 회차는 옮긴 날의 단가 (달을 span 으로 가르는 것과 같은 기준 · MEETING-MOVE)
+                 AND su.from_date <= ${drawnDateOf('o')}
                ORDER BY su.kind_key NULLS LAST, su.from_date DESC
                LIMIT 1),
              (SELECT r.unit_price FROM rate r
@@ -156,7 +157,7 @@ const sqlFor = (slice: LineSlice, invType: LineInvType): string => `
                  AND (r.sub_key IS NULL OR r.sub_key = se.sub_key)
                  -- 인원은 **그 날짜의 명단**이다 — 수강 종료한 학생이 빠지면 남은 학생의 구간이 다시 잡힌다 (C94-c · N-136)
                  AND r.heads <= (SELECT count(*) FROM ser_stu x WHERE x.ser_id = se.id AND ${serStuOn('x', 'o.on_date')})
-                 AND r.from_date <= o.on_date
+                 AND r.from_date <= ${drawnDateOf('o')}
                ORDER BY r.sub_key NULLS LAST, r.heads DESC, r.from_date DESC
                LIMIT 1)
            )::int AS unit_price
@@ -172,7 +173,9 @@ const sqlFor = (slice: LineSlice, invType: LineInvType): string => `
        AND NOT ${consultingCovered('se.id', '$1')}
        -- 청구 종류가 세는 회차만 — 진단고사 · 상담은 제 종류로, 나머지는 수업료로 (N-75)
        AND ${lineKindScope(invType, 'se.kind_key')}
-       ${slice.kind === 'done' ? 'AND o.on_date <= $3::date' : ''}
+       -- 「지금까지 한 수업」은 실제 수업일이 지난 회차다 — 옮긴 회차를 규칙 날짜로 세면 안 한 수업이 든다 (MEETING-MOVE)
+       ${slice.kind === 'done' ? `AND ${drawnDateOf('o')} <= $3::date` : ''}
+       -- 수강 종료 뒤의 회차는 **규칙 날짜**로 가른다 — 명단 판정(serStuOn · to_date)과 짝이라 둘이 같은 회차를 말한다
        ${slice.kind === 'after' ? 'AND o.on_date > $3::date' : ''}
        ${slice.kind === 'after' && slice.serIds ? 'AND se.id = ANY($4::bigint[])' : ''}
   )

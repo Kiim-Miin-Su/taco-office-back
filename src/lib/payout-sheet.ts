@@ -15,6 +15,11 @@
  *   · 끝났는데 리포트를 안 쓴 회차는 **빠진다** — 얼마가 빠지는지(unwrittenAmount)를 함께 센다 (D-43)
  *   · 시급은 그 회차 날짜의 것(WAGE from_date) — 달 중간에 시급이 바뀌면 회차마다 다르다 (D8)
  *   · 수업 방식은 그날의 것 — 회차 예외(EXC.mode)가 있으면 그것 (`effectiveModeOf`)
+ *   · **회차의 날짜는 실제 수업일**(`drawnDateOf` · span · MEETING-MOVE) — 몇 월 시트에 드는가 · 끝났는가 · 지각 차감 ·
+ *     시급 적용일 전부. 규칙이 원래 찍은 날(`on_date`)은 키일 뿐이다(근거 줄 `payout_line` 도 그 키로 잇는다).
+ *     수업료(`kstMonthOf(lower(o.span))`)와 같은 달을 세므로 옮긴 회차가 두 장부에서 다른 달에 서지 않는다.
+ *     확정된 달의 근거 줄은 회차를 뒤에 다른 달로 옮겨도 **그 달 시트에 그대로 남는다**(굳은 값 · N-36 ①) —
+ *     새 달 시트에는 「확정된 달 — N월 지급」으로만 보이고 다시 더해지지 않는다.
  *
  * W11 M2 로 셋이 더해졌다 —
  *   ① **가산**(N-93) — `lessonBonus` 한 함수가 시트 · 확정 · 강사 히스토리에 같이 더한다. 규칙은 `payout_bonus_rule`
@@ -30,7 +35,7 @@ import {
   REPORT_WRITTEN_DB, effectiveRepStateFromEnded, latePenalty, minutesSinceEnd, payoutConfirmed, tierFor, withholding,
   type SessionLike,
 } from './rules';
-import { effectiveModeOf, serStuOn, stuPausedOn } from './sql';
+import { drawnDateOf, drawnMonthOf, effectiveModeOf, serStuOn, stuPausedOn } from './sql';
 
 export interface Queryable { query(sql: string, params?: unknown[]): Promise<unknown> }
 
@@ -95,6 +100,7 @@ function ruleAt(rules: readonly BonusRuleRow[], kind: BonusKind, kindKey: string
  * 금액 0 인 줄은 「그 날부터 멈춤」이다.
  */
 export function lessonBonus(
+  /** `onDate` 는 가산 규칙의 적용일을 견줄 **그 회차의 실제 수업일**이다(옮긴 회차는 옮긴 날 · MEETING-MOVE) */
   l: { kindKey: string; onDate: string; durMin: number; bonusHeads: number },
   rules: readonly BonusRuleRow[],
 ): { total: number; parts: BonusPart[] } {
@@ -150,7 +156,12 @@ export function payoutSettleLabel(l: { settle: PayoutSettle; correctionOf: strin
 }
 
 export interface PayoutLesson {
-  serId: number; onDate: string; startMin: number; durMin: number;
+  serId: number;
+  /** 규칙상 원래 날짜 — 회차의 키 */
+  onDate: string;
+  /** 실제 수업일 — 옮긴 회차는 옮긴 날 (이 달 시트에 드는가 · 끝났는가 · 지각 차감의 기준) */
+  date: string;
+  startMin: number; durMin: number;
   kindKey: string; subKey: string | null; mode: 'offline' | 'online'; title: string | null;
   students: string | null; studentCount: number;
   repState: string; canceled: boolean; submittedAt: string | null;
@@ -297,7 +308,8 @@ const SUBMITTED_KST = `to_char(r.submitted_at AT TIME ZONE 'Asia/Seoul','YYYY-MM
 
 /** 회차 한 줄의 공통 칸 — 이 달 회차 · 보정 후보 · 보정 줄이 같은 조각을 쓴다 */
 const LESSON_COLUMNS = `
-  o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, to_char(o.on_date,'YYYY-MM') AS on_month, o.canceled,
+  o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+  to_char(${drawnDateOf('o')},'YYYY-MM-DD') AS date, ${drawnMonthOf('o')} AS on_month, o.canceled,
   (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
   (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
   s.kind_key, s.sub_key, ${effectiveModeOf('e', 's')} AS mode, s.title, k.rep AS reportable,
@@ -319,7 +331,7 @@ const LESSON_JOINS = `
   LEFT JOIN exc e ON e.ser_id = o.ser_id AND e.on_date = o.on_date
   LEFT JOIN LATERAL (
          SELECT rate FROM wage
-          WHERE staff_id = $1 AND from_date <= o.on_date
+          WHERE staff_id = $1 AND from_date <= ${drawnDateOf('o')}
           ORDER BY from_date DESC LIMIT 1
        ) w ON true`;
 
@@ -370,10 +382,11 @@ export async function payoutSheet(
        LEFT JOIN payout_line pl ON pl.ser_id = o.ser_id AND pl.on_date = o.on_date
        LEFT JOIN payout lp ON lp.id = pl.payout_id
       WHERE ${TEACHER_OF_OCC} = $1
-        AND o.on_date >= $2::date
-        AND o.on_date < $2::date + interval '1 month'
-      ORDER BY o.on_date DESC, start_min`,
-    [teacherId, first, confirmed ? (po.confirmed_at as Date) : null],
+        AND ((${drawnDateOf('o')} >= $2::date AND ${drawnDateOf('o')} < $2::date + interval '1 month')
+             -- 확정된 달의 근거 줄은 회차를 나중에 다른 달로 옮겨도 이 시트에 남는다 (굳은 값)
+             OR pl.payout_id = $4::bigint)
+      ORDER BY ${drawnDateOf('o')} DESC, start_min`,
+    [teacherId, first, confirmed ? (po.confirmed_at as Date) : null, confirmed ? confirmed.payoutId : null],
   )) as Row[];
 
   const lessons: PayoutLesson[] = [];
@@ -387,16 +400,18 @@ export async function payoutSheet(
 
   const base = (r: Row) => {
     const onDate = String(r.on_date);
+    const date = String(r.date);
     const startMin = Number(r.start_min);
     const durMin = Number(r.dur_min);
     const canceled = Boolean(r.canceled);
     const submittedAt = (r.submitted_at as string) ?? null;
     const rate = r.wage_rate === null || r.wage_rate === undefined ? null : Number(r.wage_rate);
-    const s: SessionLike = { date: onDate, startMin, durationMin: durMin, canceled, submittedAt };
+    // 「끝났는가」 · 지각 차감은 실제 수업일로 — 규칙 날짜로 재면 옮긴 회차의 리포트가 수업 전에 낸 것이 되거나 안 한 수업이 미작성이 된다
+    const s: SessionLike = { date, startMin, durationMin: durMin, canceled, submittedAt };
     return {
-      onDate, startMin, durMin, canceled, submittedAt, rate, s,
+      onDate, date, startMin, durMin, canceled, submittedAt, rate, s,
       lesson: {
-        serId: Number(r.ser_id), onDate, startMin, durMin,
+        serId: Number(r.ser_id), onDate, date, startMin, durMin,
         kindKey: String(r.kind_key), subKey: (r.sub_key as string) ?? null,
         mode: (r.mode === 'online' ? 'online' : 'offline') as 'offline' | 'online',
         title: (r.title as string) ?? null,
@@ -411,7 +426,7 @@ export async function payoutSheet(
   /** 지금 규칙으로 센 쓴 수업 한 줄의 돈 */
   const live = (b: ReturnType<typeof base>) => {
     if (b.rate === null) return null;
-    const bonus = lessonBonus({ kindKey: b.lesson.kindKey, onDate: b.onDate, durMin: b.durMin, bonusHeads: b.bonusHeads }, rules);
+    const bonus = lessonBonus({ kindKey: b.lesson.kindKey, onDate: b.date, durMin: b.durMin, bonusHeads: b.bonusHeads }, rules);
     return { pay: payOf(b.rate, b.durMin), lateCut: latePenalty(b.s), bonus: bonus.total, parts: bonus.parts, unitRate: b.rate };
   };
 
@@ -492,7 +507,7 @@ export async function payoutSheet(
          ${LESSON_JOINS}
          LEFT JOIN rep r ON r.ser_id = o.ser_id AND r.on_date = o.on_date
         WHERE pl.payout_id = $2 AND pl.correction
-        ORDER BY o.on_date DESC, start_min`,
+        ORDER BY ${drawnDateOf('o')} DESC, start_min`,
       [teacherId, confirmed.payoutId],
     )) as Row[];
     for (const r of lined) {
@@ -515,14 +530,14 @@ export async function payoutSheet(
            FROM ser_occ o
            ${LESSON_JOINS}
            JOIN rep r     ON r.ser_id = o.ser_id AND r.on_date = o.on_date
-           JOIN payout po ON po.staff_id = $1 AND po.year_month = to_char(o.on_date,'YYYY-MM') AND po.confirmed_by IS NOT NULL
+           JOIN payout po ON po.staff_id = $1 AND po.year_month = ${drawnMonthOf('o')} AND po.confirmed_by IS NOT NULL
           WHERE ${TEACHER_OF_OCC} = $1
-            AND o.on_date < $2::date
+            AND ${drawnDateOf('o')} < $2::date
             AND NOT o.canceled AND k.rep
             AND r.state::text = ANY($3::text[])
             AND NOT EXISTS (SELECT 1 FROM payout_line x WHERE x.ser_id = o.ser_id AND x.on_date = o.on_date)
             AND (EXISTS (SELECT 1 FROM payout_line x WHERE x.payout_id = po.id) OR r.submitted_at > po.confirmed_at)
-          ORDER BY o.on_date DESC, start_min`,
+          ORDER BY ${drawnDateOf('o')} DESC, start_min`,
         [teacherId, first, [...REPORT_WRITTEN_DB]],
       )) as Row[];
       for (const r of cand) {

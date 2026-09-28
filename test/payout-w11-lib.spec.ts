@@ -63,7 +63,7 @@ describe('가산 한 함수 (N-93 · lib/payout-sheet.lessonBonus)', () => {
 
 describe('강사 히스토리 정산 종류별 근거 (N-93 · 강사 덱 29)', () => {
   const paid = (over: Partial<PayoutLesson>): PayoutLesson => ({
-    serId: 1, onDate: '2026-09-15', startMin: 600, durMin: 60,
+    serId: 1, onDate: '2026-09-15', date: '2026-09-15', startMin: 600, durMin: 60,
     kindKey: 'class', subKey: null, mode: 'offline', title: null,
     students: '김민준', studentCount: 1, repState: 'ok', canceled: false, submittedAt: '2026-09-15 12:00',
     pay: 45000, lateCut: 0, penaltyIfNow: null, bonus: 0, bonusParts: [], unitRate: 45000,

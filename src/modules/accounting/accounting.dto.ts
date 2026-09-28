@@ -793,7 +793,9 @@ export class PayoutRateDto {
 
 export class PayoutLessonDto {
   @ApiProperty() serId!: number;
-  @ApiProperty({ description: 'YYYY-MM-DD' }) onDate!: string;
+  @ApiProperty({ description: '규칙상 원래 날짜 YYYY-MM-DD — 회차의 키 (근거 줄 `payout_line` 도 이 키)' }) onDate!: string;
+  @ApiProperty({ description: '실제 수업일 YYYY-MM-DD — 옮긴 회차는 옮긴 날. 이 달 시트에 드는가 · 끝났는가 · 지각 차감 · 표시는 이 값 (MEETING-MOVE)' })
+  date!: string;
   @ApiProperty() startMin!: number;
   @ApiProperty() durMin!: number;
   @ApiProperty({ description: '수업 이름 — 제목 → 과목 → 종류 순 (서버가 고른다)' }) name!: string;

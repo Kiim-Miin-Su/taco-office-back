@@ -24,6 +24,7 @@ export const minOf = (expr: string): string =>
 /** KST 날짜 — 옮긴 EXC는 `on_date`와 실제 `span` 날짜가 다르므로 표시 날짜는 이것을 쓴다. */
 export const kstDateOf = (expr: string): string => `(${expr} AT TIME ZONE '${KST}')::date`;
 
+
 /**
  * 그 시각이 **KST 로 몇 월인가** — `'YYYY-MM'`.
  *
@@ -31,6 +32,23 @@ export const kstDateOf = (expr: string): string => `(${expr} AT TIME ZONE '${KST
  * 시간대를 쿼리마다 적으면 그런 한 줄이 어딘가 하나 빠진다 (D-R12 — 시간대는 한 곳에서 정한다).
  */
 export const kstMonthOf = (expr: string): string => `to_char(${expr} AT TIME ZONE '${KST}', 'YYYY-MM')`;
+
+/**
+ * 회차의 **실제 수업일** — `ser_occ.span` 이 시작하는 KST 날짜 (TBO-54 MEETING-MOVE · 옮긴 회차의 날짜 정본).
+ *
+ * 회차에는 날짜가 둘이다. `on_date` 는 규칙이 원래 찍은 날이고 **키**다(EXC · REP · ATT · TODO · GUIDE 가 이 값으로
+ * 회차를 찾는다 — 옮겨도 바뀌지 않는다). 이것은 그 회차를 **언제 하는가**다 — 캘린더 · 현황판 · 리포트 목록(REPORT_DATE_SQL) ·
+ * 수업료의 달(`kstMonthOf(lower(o.span))`) · 강사 홈 · 강사료 시트 · 대표 보고가 「오늘인가 · 이번 주인가 · 몇 월인가 ·
+ * 끝났는가 · 늦게 냈는가 · 첫 수업인가」를 이 날짜로 답한다. 규칙 날짜로 답하면 다음 주로 옮긴 수업이 오늘 목록에 서고,
+ * 아직 안 한 수업이 강사료에서 「미작성」으로 빠진다.
+ *
+ * **명단 · 휴원 · 그날만 빠짐 · 교재 대상은 규칙 날짜다**(`serStuOn(ss, o.on_date)` · CR-BE-01 · `recurrence.occ`) —
+ * 「누가 이 회차의 학생인가」는 키를 따르고, 「언제 하는가」는 이 날짜를 따른다. 둘을 섞어 쓰지 않는다.
+ * @param alias `ser_occ` 별칭 (예: `o`)
+ */
+export const drawnDateOf = (alias: string): string => kstDateOf(`lower(${alias}.span)`);
+/** 실제 수업일이 속한 달 'YYYY-MM' — 수업료 · 강사료가 같은 달을 센다 */
+export const drawnMonthOf = (alias: string): string => kstMonthOf(`lower(${alias}.span)`);
 
 /** `ser_occ` 별칭의 시작 분 — 수업 시작일의 KST 자정 기준 */
 export const startMinOf = (alias: string): string => minOf(`lower(${alias}.span)`);

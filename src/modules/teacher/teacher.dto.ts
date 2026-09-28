@@ -19,7 +19,9 @@ const S = { type: String, nullable: true } as const;
 /** 강사 덱 §7~9 — 홈의 수업 한 줄. 시각은 회차 span에서 KST 분 단위 정수로 뽑는다. */
 export class TeacherLessonDto {
   @ApiProperty() serId!: number;
-  @ApiProperty({ description: 'YYYY-MM-DD (KST)' }) onDate!: string;
+  @ApiProperty({ description: '규칙상 원래 날짜 YYYY-MM-DD (KST) — 회차의 **키**. 리포트 화면이 `serId·onDate` 로 연다' }) onDate!: string;
+  @ApiProperty({ description: '실제 수업일 YYYY-MM-DD (KST) — 옮긴 회차는 옮긴 날. 「오늘」·「다가오는」 묶음과 날짜 표시는 이 값 (MEETING-MOVE)' })
+  date!: string;
   @ApiProperty({ description: 'KST 0~1439 분' }) startMin!: number;
   @ApiProperty({ description: '분 단위 수업 길이' }) durMin!: number;
   @ApiProperty({ description: 'class·mock·gpa·study… (kind.key)' }) kindKey!: string;
@@ -190,7 +192,9 @@ export class TeacherHistoryQueryDto {
 /** 히스토리의 수업 한 줄 — 금액은 본인 것만 실리는 표면이므로 projection 없이 그대로 준다. */
 export class TeacherHistoryLessonDto {
   @ApiProperty() serId!: number;
-  @ApiProperty({ description: 'YYYY-MM-DD (KST)' }) onDate!: string;
+  @ApiProperty({ description: '규칙상 원래 날짜 YYYY-MM-DD (KST) — 회차의 키' }) onDate!: string;
+  @ApiProperty({ description: '실제 수업일 YYYY-MM-DD (KST) — 옮긴 회차는 옮긴 날. 달 묶음 · 날짜 표시 · 끝났는가 · 지각 차감은 이 값 (MEETING-MOVE)' })
+  date!: string;
   @ApiProperty({ description: 'KST 0~1439 분' }) startMin!: number;
   @ApiProperty({ description: '분 단위 수업 길이' }) durMin!: number;
   @ApiProperty() kindKey!: string;
@@ -328,7 +332,9 @@ export class TeacherSuggestionCreateDto {
 export class TeacherGuideLessonDto {
   /** 진단을 「어느 수업에서 봤는가」로 달 수 있게 회차의 시리즈 id 를 함께 준다 (C61) */
   @ApiProperty({ description: '이 회차의 시리즈 id' }) serId!: number;
-  @ApiProperty({ description: 'YYYY-MM-DD (KST)' }) onDate!: string;
+  @ApiProperty({ description: '규칙상 원래 날짜 YYYY-MM-DD (KST) — 회차의 키' }) onDate!: string;
+  @ApiProperty({ description: '실제 수업일 YYYY-MM-DD (KST) — 옮긴 회차는 옮긴 날. 이번 주 판정과 표시는 이 값 (MEETING-MOVE)' })
+  date!: string;
   @ApiProperty() startMin!: number;
   @ApiProperty() durMin!: number;
   @ApiPropertyOptional(S) subKey?: string | null;

@@ -16,7 +16,7 @@ import {
   BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL, KINDER_MARKER_EXISTS, KINDER_NOT_APPLIED,
   loadBonusRules, payoutBreakdown, payoutSettleLabel, payoutSheet,
 } from '../../lib/payout-sheet';
-import { effectiveModeOf, kstAt, serStuOn } from '../../lib/sql';
+import { drawnDateOf, effectiveModeOf, kstAt, serStuOn } from '../../lib/sql';
 import { REQ_TYPE_LABEL, labelOf, reqAsked, reqAskedLine } from '../../lib/approval';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory } from '../../lib/noti';
 import { wageRateAt } from '../../lib/wage';
@@ -134,13 +134,19 @@ export class TeacherService {
     };
   }
 
-  /** 강사 홈 — 서버가 teacherId 로 고정한다. 화면은 거르지 않는다 (D-R39). */
+  /**
+   * 강사 홈 — 서버가 teacherId 로 고정한다. 화면은 거르지 않는다 (D-R39).
+   *
+   * 「오늘」 · 「다가오는 7일」 · 이번 주 수는 **실제 수업일**(`drawnDateOf` · span)로 센다 — 옮긴 회차는 옮긴 날에 선다
+   * (MEETING-MOVE). `onDate` 는 키(리포트 화면이 `serId·onDate` 로 연다)라 그대로 실리고, 날짜 표시 · 묶음은 `date` 다.
+   */
   async home(teacherId: number): Promise<TeacherHomeDto> {
     const today = todayKst();
     const candidates = [...REPORT_UNWRITTEN_CANDIDATE_DB];
+    const DRAWN = drawnDateOf('o');
 
     const lessons = (await this.q(
-      `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, o.canceled,
+      `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, to_char(${DRAWN},'YYYY-MM-DD') AS date, o.canceled,
               (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
               (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
               -- 회차의 실제 방식 — 그 회차만 바꾼 예외(exc.mode)가 이긴다 (N-56 · lib/sql 한 조각)
@@ -158,12 +164,13 @@ export class TeacherService {
          LEFT JOIN rep r   ON r.ser_id = o.ser_id AND r.on_date = o.on_date
          LEFT JOIN exc ex  ON ex.ser_id = o.ser_id AND ex.on_date = o.on_date
         WHERE ${TEACHER_OF} = $1
-          AND o.on_date BETWEEN $2::date AND $2::date + 7
-        ORDER BY o.on_date, start_min`,
+          AND ${DRAWN} BETWEEN $2::date AND $2::date + 7
+        ORDER BY ${DRAWN}, start_min`,
       [teacherId, today],
     )).map((r): TeacherLessonDto => ({
       serId: Number(r.ser_id),
       onDate: String(r.on_date),
+      date: String(r.date),
       startMin: Number(r.start_min),
       durMin: Number(r.dur_min),
       kindKey: String(r.kind_key),
@@ -187,16 +194,16 @@ export class TeacherService {
                        FILTER (WHERE ${HELD}), 0)::int AS minutes,
               COUNT(*) FILTER (WHERE ${HELD} AND k.rep AND upper(o.span) < now()
                                  AND COALESCE(r.state::text,'none') = ANY($3))::int AS unwritten,
-              COUNT(*) FILTER (WHERE ${HELD} AND o.on_date = $2::date)::int AS today_lessons,
+              COUNT(*) FILTER (WHERE ${HELD} AND ${DRAWN} = $2::date)::int AS today_lessons,
               COALESCE(SUM(EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)
-                       FILTER (WHERE ${HELD} AND o.on_date = $2::date), 0)::int AS today_minutes
+                       FILTER (WHERE ${HELD} AND ${DRAWN} = $2::date), 0)::int AS today_minutes
          FROM ser_occ o
          JOIN ser s      ON s.id = o.ser_id
          LEFT JOIN rep r ON r.ser_id = o.ser_id AND r.on_date = o.on_date
          ${KIND_JOIN}
          ${ATT_JOIN}
         WHERE ${TEACHER_OF} = $1
-          AND o.on_date BETWEEN date_trunc('week',$2::date)::date
+          AND ${DRAWN} BETWEEN date_trunc('week',$2::date)::date
                             AND date_trunc('week',$2::date)::date + 6`,
       [teacherId, today, candidates],
     );
@@ -231,8 +238,8 @@ export class TeacherService {
 
     return {
       todayDate: today,
-      today: lessons.filter((l) => l.onDate === today),
-      upcoming: lessons.filter((l) => l.onDate > today),
+      today: lessons.filter((l) => l.date === today),
+      upcoming: lessons.filter((l) => l.date > today),
       todaySummary: {
         lessons: Number(week?.today_lessons ?? 0),
         minutes: Number(week?.today_minutes ?? 0),
@@ -644,7 +651,7 @@ export class TeacherService {
       wageFrom: (me?.wage_from as string) ?? null,
       // 계약 모양 그대로 옮긴다 — 시트의 안쪽 칸(가산 내역 · 스냅숏 시급)을 그대로 흘리지 않는다
       lessons: lessons.map((l) => ({
-        serId: l.serId, onDate: l.onDate, startMin: l.startMin, durMin: l.durMin,
+        serId: l.serId, onDate: l.onDate, date: l.date, startMin: l.startMin, durMin: l.durMin,
         kindKey: l.kindKey, subKey: l.subKey, mode: l.mode, title: l.title,
         students: l.students, studentCount: l.studentCount, repState: l.repState, canceled: l.canceled,
         submittedAt: l.submittedAt, pay: l.pay, lateCut: l.lateCut, penaltyIfNow: l.penaltyIfNow,
@@ -672,7 +679,7 @@ export class TeacherService {
        )
        SELECT st.id AS student_id, st.name, st.grade, st.school, st.target_exam,
               st.guidance, st.lang,
-              o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, to_char(${drawnDateOf('o')},'YYYY-MM-DD') AS date,
               (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
               (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
               s.sub_key, s.title
@@ -683,8 +690,9 @@ export class TeacherService {
          CROSS JOIN wk
         WHERE ${TEACHER_OF} = $1
           AND NOT o.canceled
-          AND o.on_date BETWEEN wk.f AND wk.t
-        ORDER BY o.on_date, start_min, st.name`,
+          -- 이번 주에 **실제로 하는** 회차 — 옮긴 회차는 옮긴 주에 든다 (MEETING-MOVE · drawnDateOf)
+          AND ${drawnDateOf('o')} BETWEEN wk.f AND wk.t
+        ORDER BY ${drawnDateOf('o')}, start_min, st.name`,
       [teacherId, anchor],
     );
 
@@ -712,7 +720,7 @@ export class TeacherService {
       s.weekCount += 1;
       s.lessons.push({
         serId: Number(r.ser_id),
-        onDate: String(r.on_date), startMin: Number(r.start_min), durMin: Number(r.dur_min),
+        onDate: String(r.on_date), date: String(r.date), startMin: Number(r.start_min), durMin: Number(r.dur_min),
         subKey: (r.sub_key as string) ?? null, title: (r.title as string) ?? null,
       });
     }

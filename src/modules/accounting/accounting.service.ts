@@ -17,7 +17,7 @@ import { audit } from '../../lib/audit';
 import { todayKst } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
 import { INV_BILLABLE, INV_DELIVERABLE, INV_OPEN, payoutConfirmed, payoutConfirmedSql, won } from '../../lib/rules';
-import { kstAt, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
+import { drawnDateOf, kstAt, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
 import { assertMonthOpen, assertMonthOpenForWrite, lockMonthExclusive, monthClosedMessage } from '../../lib/month-close';
 import { insertWage } from '../../lib/wage';
 import {
@@ -1282,6 +1282,8 @@ export class AccountingService {
     const occRows = students.length ? (await this.inv.query(
       `SELECT ss.student_id,
               to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              -- 「이미 한 수업」은 실제 수업일로 — 옮긴 회차는 옮긴 날 (invoice-lines 의 done 토막과 같은 기준 · MEETING-MOVE)
+              to_char(${drawnDateOf('o')},'YYYY-MM-DD') AS drawn,
               o.canceled,
               -- 추가 수업(KIND.extra)은 회차로 세되 「추가」 칸에 따로 센다 (C-38 「정규 회차로 세어지면 실패」)
               (SELECT k.extra FROM ser s JOIN kind k ON k.key = s.kind_key WHERE s.id = o.ser_id) AS extra,
@@ -1298,7 +1300,7 @@ export class AccountingService {
           AND NOT ${consultingCovered('o.ser_id', 'ss.student_id')}
           AND ${lineKindScope('tuition', 'se.kind_key')}`,
       [month, students.map((s) => Number(s.id))],
-    )) as Array<{ student_id: string; on_date: string; canceled: boolean; extra: boolean | null; treat: string | null; stu_out: boolean }> : [];
+    )) as Array<{ student_id: string; on_date: string; drawn: string; canceled: boolean; extra: boolean | null; treat: string | null; stu_out: boolean }> : [];
 
     const counts = new Map<number, { done: number; total: number; canceled: number; deducted: number; extra: number }>();
     for (const r of occRows) {
@@ -1311,7 +1313,7 @@ export class AccountingService {
       } else if (r.canceled || r.stu_out) c.canceled += 1;
       else {
         c.total += 1;
-        if (r.on_date <= today) c.done += 1;
+        if (r.drawn <= today) c.done += 1;
         // 추가 수업은 전체에 들되 따로도 센다 — 「이번 달 청구 회차 13 → 14 · 상단 추가 칸 +1」(C-38)
         if (r.extra === true) c.extra += 1;
       }
@@ -1611,7 +1613,7 @@ export class AccountingService {
     const kindName = new Map(names.filter((n) => n.t === 'kind').map((n) => [n.key, n.name]));
 
     const lessons: PayoutLessonDto[] = sheet.lessons.map((l) => ({
-      serId: l.serId, onDate: l.onDate, startMin: l.startMin, durMin: l.durMin,
+      serId: l.serId, onDate: l.onDate, date: l.date, startMin: l.startMin, durMin: l.durMin,
       name: l.title ?? (l.subKey ? subName.get(l.subKey) : undefined) ?? kindName.get(l.kindKey) ?? '수업',
       students: l.students, studentCount: l.studentCount, canceled: l.canceled,
       // 갈래는 시트 함수가 이미 정했다 — 여기서 다시 재지 않는다
