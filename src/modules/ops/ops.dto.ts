@@ -428,6 +428,7 @@ export class PlanDto {
   @ApiPropertyOptional(S) goal?: string | null;
   @ApiPropertyOptional(S) ask?: string | null;
   @ApiPropertyOptional(S) dueOn?: string | null;
+  @ApiPropertyOptional(N) ownerId?: number | null;
   @ApiPropertyOptional(S) ownerName?: string | null;
   @ApiProperty() overdueDays!: number;
   /** 기한이 대표를 지나왔는가 — 「최종 승인」이 열리는 조건이다 (원문 §61·§65) */
@@ -510,7 +511,10 @@ export class PlanDetailDto {
   @ApiProperty() title!: string;
   @ApiProperty({ enum: PLAN_STAGES }) stage!: string;
   @ApiProperty() stageLabel!: string;
+  @ApiPropertyOptional(N) ownerId?: number | null;
   @ApiPropertyOptional(S) ownerName?: string | null;
+  @ApiProperty({ description: '담당을 바꿀 수 있는가 — 기획 결재권자만. 쓰기 권한과 같은 판정' })
+  canChangeOwner!: boolean;
   @ApiProperty({ description: '작성일 YYYY-MM-DD' }) createdOn!: string;
 
   @ApiPropertyOptional({ ...S, description: '1 · 목표' }) goal?: string | null;
@@ -662,6 +666,13 @@ export class PlanPatchDto {
   pickIds?: number[];
 }
 
+/** 기획 담당 변경 — 본문/공개 범위와 별도 원자적 쓰기. 활동 중인 구성원만 받을 수 있다. */
+export class PlanOwnerPatchDto {
+  @ApiProperty({ description: '새 담당 — 활동 중인 구성원' })
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId!: number;
+}
+
 /** 단계 이동 (S6) — 받아 주는 값은 `PlanDetailDto.nextStages` 뿐. 결재는 `:id/review` 가 옮긴다 */
 export class PlanStageMoveDto {
   @ApiProperty({ enum: [...PLAN_STAGES], description: '옮길 단계 — 전이표 밖이면 409 PLAN_STAGE_INVALID · 옮길 곳이 없으면 409 PLAN_STAGE_LOCKED' })
@@ -787,6 +798,38 @@ export class MarketingCreateDto {
   byId?: number | null;
 
   @ApiPropertyOptional({ ...S, maxLength: 120, description: '메모 한 줄 — 카드 제목 아래(원문 「상담 예약 4건 전환」). 비우면 없음 (N-29 ②)' })
+  @IsOptional() @IsString() @MaxLength(120)
+  memo?: string | null;
+}
+
+/** §59 활동 수정 — 보낸 칸만 고치고 성과 숫자는 이 경로에서 받지 않는다. */
+export class MarketingPatchDto {
+  @ApiPropertyOptional({ maxLength: 120, description: '활동 이름 — 빈 문자열은 허용하지 않는다' })
+  @IsOptional() @IsString() @MinLength(1, { message: '무엇을 했는지 적어 주세요' }) @MaxLength(120)
+  title?: string;
+
+  @ApiPropertyOptional({ enum: [...MKT_CHANNELS], description: '어디에 — 낱말은 GET /ops.mktChannels' })
+  @IsOptional() @IsIn([...MKT_CHANNELS], { message: '채널을 목록에서 고르세요' })
+  channel?: string;
+
+  @ApiPropertyOptional({ enum: [...MKT_ITEMS], description: '무엇을 — 낱말은 GET /ops.mktItems' })
+  @IsOptional() @IsIn([...MKT_ITEMS], { message: '항목을 목록에서 고르세요' })
+  item?: string;
+
+  @ApiPropertyOptional({ ...S, maxLength: 2000, description: 'HTTP(S) URL — null 또는 빈 문자열이면 비운다' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  @IsSafeHttpUrl({ allowBlank: true, message: 'URL은 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다' })
+  url?: string | null;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '활동 날짜 — null이면 비운다' })
+  @IsOptional() @IsCalendarDate()
+  onDate?: string | null;
+
+  @ApiPropertyOptional({ ...N, description: '담당 — 활동 중인 구성원' })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  byId?: number | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 120, description: '메모 — null 또는 빈 문자열이면 비운다' })
   @IsOptional() @IsString() @MaxLength(120)
   memo?: string | null;
 }
@@ -973,7 +1016,16 @@ export class SuggestionDto {
   @ApiProperty() body!: string;
   @ApiProperty({ enum: ['open', 'reviewing', 'done'] }) state!: string;
   @ApiPropertyOptional(S) reply?: string | null;
+  @ApiPropertyOptional({ ...S, description: '답변한 관리자 이름' }) replyBy?: string | null;
+  @ApiPropertyOptional({ ...S, description: '답변일 YYYY-MM-DD (KST)' }) replyOn?: string | null;
   @ApiProperty() createdAt!: string;
+}
+
+/** 건의 관리자 답변 — 답변 완료로 옮기고 답변자·시각을 같은 트랜잭션에 남긴다. */
+export class SuggestionReplyDto {
+  @ApiProperty({ maxLength: 2000 })
+  @IsString() @MinLength(1, { message: '답변을 적어 주세요' }) @MaxLength(2000)
+  reply!: string;
 }
 
 /**

@@ -46,6 +46,7 @@ const day = (n: number): string => {
 
 const CEO = 71;
 const MGR = 72;
+const NEXT = 73;
 
 d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   let ds: DataSource;
@@ -66,7 +67,7 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
     await q.query(`DELETE FROM log WHERE entity = 'plan'`);
     await q.query(`DELETE FROM plan`);
     await q.query(
-      `INSERT INTO staff (id,name,email,role) VALUES (${CEO},'대표','s6-ceo@t.kr','ceo'),(${MGR},'매니저','s6-mgr@t.kr','manager')
+      `INSERT INTO staff (id,name,email,role) VALUES (${CEO},'대표','s6-ceo@t.kr','ceo'),(${MGR},'매니저','s6-mgr@t.kr','manager'),(${NEXT},'새 담당','s6-next@t.kr','manager')
        ON CONFLICT (id) DO NOTHING`,
     );
     // **올린 기획은 언제나 첫 칸이다** — 제품이 만드는 그대로 시작한다(손으로 review 를 박지 않는다)
@@ -144,6 +145,23 @@ d('S6 기획이 결재까지 간다 (전수 검수 §5)', () => {
   });
 
   /* ── ② research 를 쓰는 길 ──────────────────────────────────────── */
+
+  it('기획 담당은 결재권자가 활동 중인 구성원으로 바꾼다 — 알림·감사·재조회가 함께 맞는다', async () => {
+    await expect(svc().patchPlanOwner(MGR, false, planId, { ownerId: NEXT }))
+      .rejects.toMatchObject({ response: { code: 'PLAN_OWNER_FORBIDDEN' } });
+    const changed = await svc().patchPlanOwner(CEO, true, planId, { ownerId: NEXT });
+    expect(changed).toMatchObject({ ownerId: NEXT, ownerName: '새 담당', canChangeOwner: true });
+    expect((await svc().all(CEO, false, true)).plans.find((p) => p.id === planId))
+      .toMatchObject({ ownerId: NEXT, ownerName: '새 담당' });
+    expect((await q.query(`SELECT owner_id FROM plan WHERE id = $1`, [planId]))[0].owner_id).toBe(String(NEXT));
+    expect((await q.query(
+      `SELECT to_id, title FROM noti WHERE to_id = $1 AND link = $2 ORDER BY id DESC LIMIT 1`,
+      [NEXT, `/ops?tab=plan&plan=${planId}`],
+    ))[0]).toMatchObject({ to_id: String(NEXT), title: '기획 담당 지정' });
+    expect((await q.query(
+      `SELECT before, after FROM log WHERE entity = 'plan' AND entity_id = $1 AND action = 'owner'`, [planId],
+    ))[0]).toMatchObject({ before: { ownerId: MGR }, after: { ownerId: NEXT, ownerName: '새 담당' } });
+  });
 
   it('§65 「3 · 리서치」에 처음으로 글이 들어간다 — 그전에는 시드만 채웠다', async () => {
     expect((await row()).research).toBeNull();

@@ -74,6 +74,7 @@ import type {
   MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
   MarketingCreateDto, MarketingDto,
+  MarketingPatchDto, PlanOwnerPatchDto, SuggestionDto, SuggestionReplyDto,
   PlanCreateDto, PlanCreateResultDto,
 } from './ops.dto';
 
@@ -95,7 +96,7 @@ const PLAN_REWORK_COUNT_SQL =
  * 「과제 1/3」은 §65 보고서의 `tasks` 와 **같은 집합**(TODO `plan_id`)을 센다 — 세는 칸을 파지 않는다 (D-R22).
  */
 const PLAN_ROW_SELECT = `SELECT p.id, p.title, p.stage, p.goal, p.ask, to_char(p.due_on,'YYYY-MM-DD') AS due_on,
-         p.due_approved_at, s.name AS owner_name,
+         p.due_approved_at, p.owner_id, s.name AS owner_name,
          -- W11 · N-72 공개 범위 · N-95 반려된 기한 (옛 기획은 둘 다 NULL)
          p.share, to_char(p.due_rejected_on,'YYYY-MM-DD') AS due_rejected_on,
          ${PLAN_REWORK_COUNT_SQL} AS rework_count,
@@ -323,15 +324,7 @@ export class OpsService {
     const feedback = await this.feedbackThreads(viewerId);
     const feedbackNeedsFix = feedback.filter((t) => t.state === 'needs_fix').length;
 
-    const suggestions = (await this.q(
-      `SELECT g.id, s.name AS staff_name, g.category, g.body, g.state, g.reply,
-              to_char(g.created_at,'YYYY-MM-DD') AS created_at
-         FROM suggestion g JOIN staff s ON s.id = g.staff_id ORDER BY g.created_at DESC`,
-    )).map((r) => ({
-      id: Number(r.id), staffName: String(r.staff_name), category: String(r.category),
-      body: String(r.body), state: String(r.state), reply: (r.reply as string) ?? null,
-      createdAt: String(r.created_at),
-    }));
+    const suggestions = await this.suggestionRows();
 
     return {
       leads, complaints, todos, plans,
@@ -402,6 +395,26 @@ export class OpsService {
     });
   }
 
+  /** 건의 목록과 답변 쓰기 응답의 단일 읽기 모양. 강사 화면과 같은 답변자·날짜를 싣는다. */
+  private async suggestionRows(where = '', params: unknown[] = []): Promise<SuggestionDto[]> {
+    return (await this.q(
+      `SELECT g.id, s.name AS staff_name, g.category, g.body, g.state, g.reply,
+              rb.name AS reply_by_name,
+              to_char(g.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS created_at,
+              to_char(g.reply_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS reply_on
+         FROM suggestion g
+         JOIN staff s ON s.id = g.staff_id
+         LEFT JOIN staff rb ON rb.id = g.reply_by
+        ${where}
+        ORDER BY g.created_at DESC, g.id DESC`, params,
+    )).map((r) => ({
+      id: Number(r.id), staffName: String(r.staff_name), category: String(r.category),
+      body: String(r.body), state: String(r.state), reply: (r.reply as string) ?? null,
+      replyBy: (r.reply_by_name as string) ?? null, replyOn: (r.reply_on as string) ?? null,
+      createdAt: String(r.created_at),
+    }));
+  }
+
   /** 칩 줄 건수 — 건수가 있는 것만 · 많은 순 · 같으면 이름 · 키 (§64 담당 칩 `ownerCounts` 와 같은 차례) */
   private static countBy<T>(rows: T[], keyOf: (r: T) => string, labelOf: (r: T) => string): OpsCountDto[] {
     const counts = new Map<string, OpsCountDto>();
@@ -449,6 +462,60 @@ export class OpsService {
     return created;
   }
 
+  /** §59 활동 수정 — 행 잠금, 앞뒤 감사, 담당 검증을 한 트랜잭션에 묶는다. */
+  async patchMarketing(viewerId: number, canSeeAmounts: boolean, id: number, dto: MarketingPatchDto): Promise<MarketingDto> {
+    if (!Object.keys(dto).length) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 내용을 보내 주세요' });
+    const title = dto.title === undefined ? undefined : dto.title.trim();
+    if (dto.title !== undefined && !title) {
+      throw new ConflictException({ code: 'MKT_TITLE_REQUIRED', message: '무엇을 했는지 적어 주세요' });
+    }
+    if ((dto.channel !== undefined && !MKT_CHANNELS.includes(dto.channel))
+      || (dto.item !== undefined && !MKT_ITEMS.includes(dto.item))) {
+      throw new ConflictException({ code: 'MKT_WORD_UNKNOWN', message: '채널과 항목은 목록에서 고르세요' });
+    }
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(
+        `SELECT id, title, channel, item, url, to_char(on_date,'YYYY-MM-DD') AS on_date, by_id, memo
+           FROM mkt WHERE id = $1 FOR UPDATE`, [id],
+      )) as R[];
+      if (!cur) throw new NotFoundException({ code: 'MKT_NOT_FOUND', message: '마케팅 활동을 찾을 수 없습니다' });
+      if (dto.byId != null) {
+        const [by] = (await em.query(`SELECT id FROM staff WHERE id = $1 AND active`, [dto.byId])) as R[];
+        if (!by) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
+      }
+      const sets: string[] = [];
+      const params: unknown[] = [id];
+      const put = (col: string, value: unknown, cast = ''): void => {
+        params.push(value); sets.push(`${col} = $${params.length}${cast}`);
+      };
+      if (title !== undefined) put('title', title);
+      if (dto.channel !== undefined) put('channel', dto.channel);
+      if (dto.item !== undefined) put('item', dto.item);
+      if (dto.url !== undefined) put('url', dto.url?.trim() || null);
+      if (dto.onDate !== undefined) put('on_date', dto.onDate ?? null, '::date');
+      if (dto.byId !== undefined) put('by_id', dto.byId);
+      if (dto.memo !== undefined) put('memo', dto.memo?.trim() || null);
+      await em.query(`UPDATE mkt SET ${sets.join(', ')} WHERE id = $1`, params);
+      const after = {
+        title: title ?? cur.title, channel: dto.channel ?? cur.channel, item: dto.item ?? cur.item,
+        url: dto.url === undefined ? cur.url : (dto.url?.trim() || null),
+        onDate: dto.onDate === undefined ? cur.on_date : dto.onDate,
+        byId: dto.byId === undefined ? leadId(cur.by_id, true) : dto.byId,
+        memo: dto.memo === undefined ? cur.memo : (dto.memo?.trim() || null),
+      };
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1,'MKT',$2,'edit',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify({
+          title: cur.title, channel: cur.channel, item: cur.item, url: cur.url,
+          onDate: cur.on_date, byId: leadId(cur.by_id, true), memo: cur.memo,
+        }), JSON.stringify(after)],
+      );
+    });
+    const [updated] = await this.marketingRows('WHERE m.id = $1', [id], canSeeAmounts);
+    return updated!;
+  }
+
   /**
    * §61 카드 한 장 — 목록(`GET /ops`)과 「+ 기획 올리기」 응답이 **같은 변환**을 쓴다 (C90 `leadRows` 와 같은 규약).
    *
@@ -470,7 +537,7 @@ export class OpsService {
       // 단계 이름을 만드는 자리는 서버 한 곳이다 — §61 보드 · §62 기한 표 · §65 보고서가 같이 쓴다 (D-R18)
       stageLabel: planStageLabel(stage),
       goal: (r.goal as string) ?? null, ask: (r.ask as string) ?? null,
-      dueOn: due, ownerName: (r.owner_name as string) ?? null,
+      dueOn: due, ownerId: leadId(r.owner_id, true), ownerName: (r.owner_name as string) ?? null,
       overdueDays: open && due && due < today ? daysSince(due) : 0,
       dueState: dueState as string,
       reworkCount: Number(r.rework_count ?? 0),
@@ -1863,7 +1930,8 @@ export class OpsService {
 
     return {
       id: leadId(p.id), title: String(p.title), stage, stageLabel: planStageLabel(stage),
-      ownerName: (p.owner_name as string) ?? null, createdOn: String(p.created_on),
+      ownerId: leadId(p.owner_id, true), ownerName: (p.owner_name as string) ?? null,
+      canChangeOwner: canApprove, createdOn: String(p.created_on),
       goal: (p.goal as string) ?? null,
       tasks, taskDone: tasks.filter((t) => t.done).length,
       research: (p.research as string) ?? null, ask: (p.ask as string) ?? null,
@@ -2116,6 +2184,71 @@ export class OpsService {
       if (shareSent) await this.writePlanShare(em, viewerId, cur, dto);
     });
     return (await this.planDetail(id, canApprove, viewerId))!;
+  }
+
+  /** 기획 담당 변경 — 결재권자만, 활동 중인 구성원만. 새 담당 알림과 감사 줄까지 원자적이다. */
+  async patchPlanOwner(
+    viewerId: number, canApprove: boolean, id: number, dto: PlanOwnerPatchDto,
+  ): Promise<PlanDetailDto> {
+    if (!canApprove) {
+      throw new ForbiddenException({ code: 'PLAN_OWNER_FORBIDDEN', message: '기획 담당은 결재권자만 바꿀 수 있습니다' });
+    }
+    await this.lead.manager.transaction(async (em) => {
+      const cur = await this.lockPlan(em, id, viewerId, canApprove);
+      const [next] = (await em.query(
+        `SELECT id, name FROM staff WHERE id = $1 AND active`, [dto.ownerId],
+      )) as Array<{ id: string; name: string }>;
+      if (!next) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
+      const beforeId = leadId(cur.owner_id, true);
+      if (beforeId === dto.ownerId) return;
+      await em.query(`UPDATE plan SET owner_id = $2 WHERE id = $1`, [id, dto.ownerId]);
+      if (dto.ownerId !== viewerId) {
+        await em.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category, title)
+           VALUES ($1,$2,$3,$4,'request',$5)`,
+          [dto.ownerId, viewerId, `기획 「${cur.title}」 담당이 됐습니다`, `/ops?tab=plan&plan=${id}`, NOTI_TITLE.planOwner],
+        );
+      }
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1,'plan',$2,'owner',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify({ ownerId: beforeId }), JSON.stringify({ ownerId: dto.ownerId, ownerName: next.name })],
+      );
+    });
+    return (await this.planDetail(id, canApprove, viewerId))!;
+  }
+
+  /** 관리자 건의 답변 — 강사 수신 사실, 알림, 감사 줄이 한 트랜잭션에 남는다. */
+  async replySuggestion(viewerId: number, id: number, dto: SuggestionReplyDto): Promise<SuggestionDto> {
+    const reply = dto.reply.trim();
+    if (!reply) throw new ConflictException({ code: 'SUGGESTION_REPLY_REQUIRED', message: '답변을 적어 주세요' });
+    await this.lead.manager.transaction(async (em) => {
+      const [cur] = (await em.query(
+        `SELECT id, staff_id, reply, reply_by, reply_at FROM suggestion WHERE id = $1 FOR UPDATE`, [id],
+      )) as R[];
+      if (!cur) throw new NotFoundException({ code: 'SUGGESTION_NOT_FOUND', message: '건의를 찾을 수 없습니다' });
+      await em.query(
+        `UPDATE suggestion SET state = 'done', reply = $2, reply_by = $3, reply_at = now() WHERE id = $1`,
+        [id, reply, viewerId],
+      );
+      const teacherId = leadId(cur.staff_id);
+      if (teacherId !== viewerId) {
+        await em.query(
+          `INSERT INTO noti (to_id, from_id, body, link, category, title)
+           VALUES ($1,$2,$3,'/teacher/suggestions','request',$4)`,
+          [teacherId, viewerId, `보낸 건의에 관리자가 답변했습니다 — ${reply.slice(0, 80)}`, NOTI_TITLE.suggestionReply],
+        );
+      }
+      await em.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+         VALUES ($1,'SUGGESTION',$2,'reply',$3::jsonb,$4::jsonb)`,
+        [viewerId, id,
+          JSON.stringify({ reply: cur.reply ?? null, replyBy: leadId(cur.reply_by, true), replyAt: cur.reply_at ?? null }),
+          JSON.stringify({ reply, replyBy: viewerId, state: 'done' })],
+      );
+    });
+    const [updated] = await this.suggestionRows('WHERE g.id = $1', [id]);
+    return updated!;
   }
 
   /**

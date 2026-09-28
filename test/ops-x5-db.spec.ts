@@ -18,8 +18,9 @@
  */
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
-import { Lead } from '../src/entities';
+import { Lead, Ser } from '../src/entities';
 import { makeOpsService } from './ops-svc';
+import { TeacherService } from '../src/modules/teacher/teacher.service';
 import { todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
 
@@ -45,6 +46,7 @@ const day = (n: number): string => {
 const CEO = 5591;
 const MGR = 5592;
 const GONE = 5593;
+const TEACHER = 5594;
 
 d('운영 잔여 물결 (x5)', () => {
   let ds: DataSource;
@@ -57,7 +59,7 @@ d('운영 잔여 물결 (x5)', () => {
     q = ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
-    for (const t of ['mfb', 'todo', 'noti', 'mtattd', 'mtrec']) await q.query(`DELETE FROM ${t}`);
+    for (const t of ['mfb', 'todo', 'noti', 'mtattd', 'mtrec', 'suggestion']) await q.query(`DELETE FROM ${t}`);
     await q.query(`DELETE FROM mkt`);
     await q.query(`DELETE FROM log WHERE entity IN ('plan','MKT')`);
     await q.query(`DELETE FROM plan`);
@@ -65,7 +67,8 @@ d('운영 잔여 물결 (x5)', () => {
       `INSERT INTO staff (id,name,email,role,title,active) VALUES
          (${CEO},'대표x5','x5-ceo@t.kr','ceo','대표',true),
          (${MGR},'매니저x5','x5-mgr@t.kr','manager','매니저',true),
-         (${GONE},'퇴사x5','x5-gone@t.kr','manager',NULL,false)
+         (${GONE},'퇴사x5','x5-gone@t.kr','manager',NULL,false),
+         (${TEACHER},'강사x5','x5-teacher@t.kr','teacher','강사',true)
        ON CONFLICT (id) DO NOTHING`,
     );
   });
@@ -134,6 +137,46 @@ d('운영 잔여 물결 (x5)', () => {
       .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
     const [n] = (await q.query(`SELECT count(*)::int AS n FROM mkt`)) as Array<{ n: number }>;
     expect(n.n).toBe(0);
+  });
+
+  it('마케팅 활동은 보낸 칸만 고친다 — 담당 검증·앞뒤 감사·목록 재조회가 함께 맞는다', async () => {
+    const made = await svc().createMarketing(CEO, true, {
+      title: '수정 전', channel: 'kakao', item: 'reply', onDate: day(-2), byId: CEO, memo: '전 메모',
+    });
+    const changed = await svc().patchMarketing(MGR, true, made.id, {
+      title: '  수정 후  ', channel: 'naver_blog', item: 'post', byId: MGR, memo: null,
+    });
+    expect(changed).toMatchObject({
+      title: '수정 후', name: '수정 후', channel: 'naver_blog', channelLabel: '네이버 블로그',
+      item: 'post', itemLabel: '글 발행', byId: MGR, byName: '매니저x5', memo: null, onDate: day(-2),
+    });
+    expect((await svc().all(CEO, true, true)).marketing.find((m) => m.id === made.id)).toEqual(changed);
+    const [log] = await q.query(`SELECT before, after FROM log WHERE entity='MKT' AND entity_id=$1 AND action='edit'`, [made.id]);
+    expect(log).toMatchObject({ before: { title: '수정 전', byId: CEO, memo: '전 메모' }, after: { title: '수정 후', byId: MGR, memo: null } });
+    await expect(svc().patchMarketing(CEO, true, made.id, { byId: GONE }))
+      .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
+    expect((await q.query(`SELECT by_id FROM mkt WHERE id=$1`, [made.id]))[0].by_id).toBe(String(MGR));
+  });
+
+  it('관리자 건의 답변은 done·답변자·시각·알림·감사로 남고 강사 재조회에 보인다', async () => {
+    const [made] = await q.query(
+      `INSERT INTO suggestion (staff_id, category, body) VALUES ($1,'schedule','목요일 수업을 앞당기고 싶습니다') RETURNING id`,
+      [TEACHER],
+    );
+    const id = Number(made.id);
+    const answered = await svc().replySuggestion(CEO, id, { reply: '  담당자와 확인 후 목요일 4시로 옮겼습니다.  ' });
+    expect(answered).toMatchObject({
+      id, staffName: '강사x5', state: 'done', reply: '담당자와 확인 후 목요일 4시로 옮겼습니다.', replyBy: '대표x5',
+    });
+    expect(answered.replyOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const teacher = new TeacherService(q.manager.getRepository(Ser));
+    expect((await teacher.suggestions(TEACHER)).items[0]).toMatchObject({
+      id, state: 'done', reply: answered.reply, replyBy: '대표x5', replyOn: answered.replyOn,
+    });
+    expect((await q.query(`SELECT title, link FROM noti WHERE to_id=$1 ORDER BY id DESC LIMIT 1`, [TEACHER]))[0])
+      .toEqual({ title: '건의 답변', link: '/teacher/suggestions' });
+    expect((await q.query(`SELECT before, after FROM log WHERE entity='SUGGESTION' AND entity_id=$1`, [id]))[0])
+      .toMatchObject({ before: { reply: null, replyBy: null }, after: { replyBy: CEO, state: 'done' } });
   });
 
   /* ── ② §59 필터 띠 · 범례 ─────────────────────────────────────────── */

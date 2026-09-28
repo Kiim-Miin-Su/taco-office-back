@@ -131,6 +131,7 @@ export const NOTI_TITLE = {
   complaintOwner: '컴플레인 담당 지정',
   mktFeedback: '대표 피드백',
   mktReply: '피드백 답변',
+  suggestionReply: '건의 답변',
   enrollNewStudent: '새 학생 등록',
   enrollConfirmed: '등록 확정',
   // 대표 보고

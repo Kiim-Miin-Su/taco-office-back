@@ -12,10 +12,10 @@ import {
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
   LeadCreateDto, LeadDto, LeadFailDto, LeadPatchDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
-  PlanDetailDto, PlanDueDecisionDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
+  PlanDetailDto, PlanDueDecisionDto, PlanOwnerPatchDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
   MeetingAttendDto, MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto, PlanTaskCreateDto,
-  MarketingCreateDto, MarketingDto,
+  MarketingCreateDto, MarketingDto, MarketingPatchDto, SuggestionDto, SuggestionReplyDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
 import { EnrollResultDto, LeadEnrollDto } from './enroll.dto';
@@ -273,6 +273,23 @@ export class OpsController {
     return this.svc.createMarketing(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto);
   }
 
+  @Patch('marketing/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '§59 마케팅 활동 수정 — 보낸 칸만',
+    description: '활동 이름·채널·항목·URL·날짜·담당·메모만 고친다. 성과 숫자는 받지 않으며 앞뒤 값과 감사 줄이 같은 트랜잭션에 남는다.',
+  })
+  @ApiOkResponse({ type: MarketingDto })
+  @ApiConflictResponse({ description: 'code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN' })
+  @ApiNotFoundResponse({ description: 'MKT_NOT_FOUND | STAFF_NOT_FOUND' })
+  patchMarketing(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MarketingPatchDto,
+  ): Promise<MarketingDto> {
+    return this.svc.patchMarketing(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), id, dto);
+  }
+
   /* ══ §60 대표 피드백 ═══════════════════════════════════════════════════ */
 
   @Post('marketing/:id/comments')
@@ -364,6 +381,41 @@ export class OpsController {
     @Body() dto: PlanPatchDto,
   ): Promise<PlanDetailDto> {
     return this.svc.patchPlan(user.id, isRole(user.role) && canCeoApprovePlan(user.role), id, dto);
+  }
+
+  @Patch('plans/:id/owner')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '기획 담당 변경 — 결재권자만',
+    description: '활동 중인 구성원으로 바꾸며 새 담당 알림과 앞뒤 감사 줄을 같은 트랜잭션에 남긴다. 본문·단계·공개 범위는 건드리지 않는다.',
+  })
+  @ApiOkResponse({ type: PlanDetailDto })
+  @ApiForbiddenResponse({ description: 'PLAN_OWNER_FORBIDDEN — 기획 결재권자만' })
+  @ApiNotFoundResponse({ description: 'PLAN_NOT_FOUND | STAFF_NOT_FOUND' })
+  patchPlanOwner(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PlanOwnerPatchDto,
+  ): Promise<PlanDetailDto> {
+    const canApprove = isRole(user.role) && canCeoApprovePlan(user.role);
+    return this.svc.patchPlanOwner(user.id, canApprove, id, dto);
+  }
+
+  @Patch('suggestions/:id/reply')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '건의 관리자 답변 — 강사 화면에 답변자·날짜와 함께 전달',
+    description: '답변·답변자·답변 시각·done 상태, 강사 알림과 감사 줄을 한 트랜잭션에 남긴다. 다시 답하면 같은 건의 답변을 고친다.',
+  })
+  @ApiOkResponse({ type: SuggestionDto })
+  @ApiConflictResponse({ description: 'code SUGGESTION_REPLY_REQUIRED' })
+  @ApiNotFoundResponse({ description: 'SUGGESTION_NOT_FOUND' })
+  replySuggestion(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SuggestionReplyDto,
+  ): Promise<SuggestionDto> {
+    return this.svc.replySuggestion(user.id, id, dto);
   }
 
   @Patch('plans/:id/stage')
