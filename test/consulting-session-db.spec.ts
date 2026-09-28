@@ -216,7 +216,7 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
     expect(row.sessionsLog.map((s: { seq: number; done: boolean }) => [s.seq, s.done])).toEqual([[1, true], [2, true], [3, true]]);
     let detail = (await api('get', `/consulting/${consA}`).expect(200)).body;
     expect(detail).toMatchObject({ sessionsDone: 3, sessionsPlanned: 0, requiredLeft: 1, closedAt: null, closedByName: null });
-    expect(detail.capabilities).toMatchObject({ canAddSession: true, canClose: false });
+    expect(detail.capabilities).toMatchObject({ canAddSession: true, addSessionBlockedReason: null, canClose: false });
     expect(detail.capabilities.closeBlockedReason).toContain('필수 항목 1개');
 
     // ② 육하원칙 — 보낸 칸만 · 다 적으면 그 회차의 할 일만 접힌다
@@ -255,7 +255,7 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
     detail = (await api('get', `/consulting/${consA}`).expect(200)).body;
     expect(detail).toMatchObject({ stage: 'done', closedByName: '회차대표', endOn: TODAY });
     expect(detail.closedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(detail.capabilities).toMatchObject({ canAddSession: false, canClose: false, closeBlockedReason: '이미 종료된 컨설팅입니다' });
+    expect(detail.capabilities).toMatchObject({ canAddSession: false, addSessionBlockedReason: '종료된 컨설팅에는 회차를 더할 수 없습니다', canClose: false, closeBlockedReason: '이미 종료된 컨설팅입니다' });
     // 종료 뒤에는 회차도 기록도 잠긴다 · 두 번 종료 409
     expect((await api('post', `/consulting/${consA}/sessions`).send({ dates: [plus(TODAY, 3)], startMin: 600, endMin: 660 }).expect(409)).body.code).toBe('CONS_LOCKED');
     expect((await api('patch', `/consulting/${consA}/sessions/${sessId}`).send({ how: 'x' }).expect(409)).body.code).toBe('CONS_LOCKED');
@@ -264,7 +264,12 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
 
   it('계약 단계는 회차를 못 잡고 · 앞으로 잡아 둔 날짜는 한 회차가 아니며 종료를 막고 · 겹치면 전부 되돌아간다 (I-91 · I-95)', async () => {
     const consB = await makeCons({ stage: 'contract', step: 3, sessions: 4, students: [STU2] });
-    expect((await api('post', `/consulting/${consB}/sessions`).send({ dates: [plus(TODAY, 3)], startMin: 600, endMin: 660 }).expect(409)).body.code).toBe('CONS_NOT_RUNNING');
+    const lockedRes = (await api('post', `/consulting/${consB}/sessions`).send({ dates: [plus(TODAY, 3)], startMin: 600, endMin: 660 }).expect(409)).body;
+    expect(lockedRes.code).toBe('CONS_NOT_RUNNING');
+    // 상세의 「못 잡는 이유」는 쓰기의 409 와 같은 문장이다 — 진행 탭이 그 문장을 그대로 말한다 (I-89)
+    const lockedDetail = (await api('get', `/consulting/${consB}`).expect(200)).body;
+    expect(lockedDetail.capabilities).toMatchObject({ canAddSession: false, addSessionBlockedReason: lockedRes.message });
+    expect(lockedRes.message).toBe('수납이 끝나야 회차를 기록할 수 있습니다 (계약 → 진행)');
     expect((await api('post', `/consulting/${consB}/close`).send({}).expect(409)).body.code).toBe('CONS_NOT_RUNNING');
 
     const consC = await makeCons({ stage: 'running', step: 5, sessions: null, students: [STU2] });

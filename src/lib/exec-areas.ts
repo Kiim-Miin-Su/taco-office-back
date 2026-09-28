@@ -84,13 +84,16 @@ export const todoOverdueWhere = (a = '', d = '$1'): string =>
   `NOT ${col(a, 'done')} AND ${col(a, 'due_on')} IS NOT NULL AND ${col(a, 'due_on')} < ${d}::date`;
 
 /**
- * 수납 전이라 진행이 잠긴 컨설팅 — 계약 5단계의 마지막이 수납이다.
- * running/done 은 제약(cons_paid_stage_check)상 이미 5단계다.
+ * 수납 전이라 진행이 잠긴 컨설팅 — 계약은 `stage='contract'` 인 동안 잠겨 있다.
+ * running/done 은 제약(cons_paid_stage_check)상 이미 5단계이고, 계약 → 진행은 **받은 합 ≥ 계약 금액**일 때만
+ * 옮긴다(`ConsultingService.promoteWhenPaid`). 그래서 단계를 다시 묻지 않는다 — 한동안 `contract_step < 5` 를
+ * 더 물어 **서명본까지 올리고 아직 못 받은 계약**(5단계 · 수납 전)이 대표 보고에서 조용히 사라졌다(I-89 · TBO-54).
+ * 원문 「수납 전에는 진행이 잠깁니다 … 이 잠금이 풀리지 않으면 대표 보고에 '잠긴 계약'으로 올라갑니다」의 그 계약이다.
  * **보관 삭제한 건은 뺀다** — 대표 보고 수입이 이미 그 집합으로 뺀다(PB-02). 여기만 세면
  * 카드의 「받은 돈」과 배지가 서로 다른 건을 가리킨다.
  */
 export const consLockedWhere = (a = ''): string =>
-  `${col(a, 'stage')} = 'contract' AND COALESCE(${col(a, 'contract_step')}, 0) < 5 AND ${col(a, 'deleted_at')} IS NULL`;
+  `${col(a, 'stage')} = 'contract' AND ${col(a, 'deleted_at')} IS NULL`;
 
 /** 아직 안 끝난 컴플레인 — 낱말은 `lib/complaint-words` 한 곳에서 온다 */
 export const cplOpenWhere = (a = ''): string => `${col(a, 'stage')} IN (${sqlWordList(CPL_OPEN_STAGES)})`;

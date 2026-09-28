@@ -18,6 +18,7 @@ import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { BoardService } from '../src/modules/board/board.service';
 import { ExecService } from '../src/modules/exec/exec.service';
+import { ConsultingService } from '../src/modules/consulting/consulting.service';
 import {
   execAreaDetails, execPeriodKind, execPeriodLabel, type ExecAreaFacts,
 } from '../src/lib/exec-areas';
@@ -268,6 +269,34 @@ d('§69~§71 시트 — 머리 지표 · 카드 타일 · 기간 (DB)', () => {
     expect(area(out, 'consulting').count - before).toBe(1);
     expect(tileOf(out, 'consulting', 'paid').sub).toContain('계약 ₩');
     expect(tileOf(out, 'consulting', 'due').sub).toBe('다음 회차 08-24');
+  });
+
+  it('서명까지 끝나 수납 단계(5)인데 아직 못 받은 계약도 「수납 전이라 잠긴」 계약이다 — 다 받아 진행으로 넘어가야 빠진다 (I-89)', async () => {
+    /*
+     * 계약은 `stage='contract'` 인 동안 잠겨 있다 — 5단계(수납)에 **와 있는 것**과 **다 받은 것**은 다르다(`promoteWhenPaid`
+     * 가 받은 합 ≥ 계약 금액일 때만 running 으로 옮긴다). 한동안 이 판정이 `contract_step < 5` 를 더 물어, 서명본까지
+     * 올리고 돈을 한 푼도 못 받은 계약이 대표 보고에서 조용히 사라졌다 — 원문 「수납 전에는 진행이 잠깁니다 … 이 잠금이
+     * 풀리지 않으면 대표 보고에 '잠긴 계약'으로 올라갑니다」의 바로 그 계약이다.
+     */
+    const before = area(await svc().range('2026-08-21', '2026-08-21', true), 'consulting');
+    const [c] = (await q.query(
+      `INSERT INTO cons (cons_type, stage, contract_step, amount, sessions, owner_id, share)
+       VALUES ('essay','contract',5,1000000,4,$1,'all') RETURNING id`, [staffId],
+    )) as Array<{ id: string }>;
+    const consId = Number(c.id);
+    const unpaid = await svc().range('2026-08-21', '2026-08-21', true);
+    expect(area(unpaid, 'consulting').count - before.count).toBe(1);
+    expect(area(unpaid, 'consulting').items.map((i) => i.key)).toContain(`cons-${consId}`);
+    expect(area(unpaid, 'consulting').items.find((i) => i.key === `cons-${consId}`)!.sub).toBe('계약 5/5단계 · 수납 전');
+    // 일부만 받아도 잠겨 있다
+    await q.query(`INSERT INTO cons_pay (cons_id, amount, paid_on, memo, by_id) VALUES ($1,400000,'2026-08-05','QA',$2)`, [consId, staffId]);
+    expect(area(await svc().range('2026-08-21', '2026-08-21', true), 'consulting').count - before.count).toBe(1);
+    // 다 받아 진행으로 넘어가면 빠진다 — 옮기는 것은 수납 경로 하나(promoteWhenPaid)다
+    await q.query(`INSERT INTO cons_pay (cons_id, amount, paid_on, memo, by_id) VALUES ($1,600000,'2026-08-06','QA',$2)`, [consId, staffId]);
+    expect(await ConsultingService.promoteWhenPaid(q.manager, consId, staffId)).toBe(true);
+    const running = await svc().range('2026-08-21', '2026-08-21', true);
+    expect(area(running, 'consulting').count).toBe(before.count);
+    expect(area(running, 'consulting').items.map((i) => i.key)).not.toContain(`cons-${consId}`);
   });
 
   it('컴플레인 접수 타일은 이 기간에 들어온 건의 학생 이름을 적는다', async () => {

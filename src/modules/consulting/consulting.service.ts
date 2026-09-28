@@ -530,6 +530,8 @@ export class ConsultingService {
         externalParentSendReason: null,
         canSendContract: mutable && (step === 2 || step === 4) && contractFiles.length > 0 && unresolved === 0,
         canAddSession: consultingSessionAddIssue(stage) === null,
+        // 진행 탭이 잠긴 까닭을 말한다 — 단추가 없는 것과 왜 없는지는 다른 정보다(I-89 「진행이 잠겨 있다」 · S5 규약)
+        addSessionBlockedReason: consultingSessionAddIssue(stage)?.message ?? null,
         canClose: closeIssue === null,
         closeBlockedReason: closeIssue?.message ?? null,
         // 예외 종료 — 건의 상태(항목·회차만 남음)와 승인 권한 둘 다 (N-18-a · DQ6)

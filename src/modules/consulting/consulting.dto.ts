@@ -328,6 +328,8 @@ export class ConsultingCapabilitiesDto {
   canSendContract!: boolean;
   /* ── C95 · §31 회차 · 종료 ── */
   @ApiProperty({ description: '회차를 더 잡을 수 있는가 — 진행(running) 중인 건만 (I-91)' }) canAddSession!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '회차를 못 잡는 이유 — 수납 전(계약 단계) · 종료. 쓰기의 409(CONS_NOT_RUNNING · CONS_LOCKED)와 같은 문장이라 진행 탭이 그대로 말한다(I-89). 잡을 수 있으면 null' })
+  addSessionBlockedReason!: string | null;
   @ApiProperty({ description: '종료할 수 있는가 — N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」를 서버가 판정한다 (I-95)' }) canClose!: boolean;
   @ApiProperty({ type: String, nullable: true, description: '종료가 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null' }) closeBlockedReason!: string | null;
   @ApiProperty({ description: '예외 종료를 할 수 있는가 — 필수 항목·약정 회차만 남아 종료가 막혔고 이 사람이 승인 권한이 있을 때 (N-18-a · DQ6)' })
