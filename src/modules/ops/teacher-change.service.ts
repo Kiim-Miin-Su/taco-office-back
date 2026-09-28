@@ -20,6 +20,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { ruleLabel } from '../../lib/recurrence';
 import { NOTI_TITLE } from '../../lib/noti';
+import { issueActiveSql } from '../../lib/book';
 import { kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
 import { GuidesService } from '../guides/guides.service';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
@@ -162,7 +163,7 @@ export class TeacherChangeService {
     const books = (await m.query(
       `SELECT DISTINCT st.name AS student_name, l.title, i.state
          FROM issue i JOIN lib l ON l.id = i.lib_id JOIN stu st ON st.id = i.student_id
-        WHERE i.state IN ('wait','ok') AND i.returned_on IS NULL
+        WHERE ${issueActiveSql('i')}
           AND i.student_id IN (SELECT ss.student_id FROM ser_stu ss WHERE ss.ser_id = ANY($1))
         ORDER BY st.name, l.title`,
       [liveIds],

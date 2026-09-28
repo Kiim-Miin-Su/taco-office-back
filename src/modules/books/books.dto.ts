@@ -218,6 +218,8 @@ export class BookIssueCreateDto {
   @ApiPropertyOptional({ enum: ISSUE_CREATE_STATES, default: 'ok' }) @IsOptional() @IsIn(ISSUE_CREATE_STATES) state?: string;
   @ApiPropertyOptional({ ...DATE_SCHEMA, example: '2026-09-14' }) @IsOptional() @IsCalendarDate() issuedOn?: string;
   @ApiPropertyOptional({ minimum: 0 }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) progressPage?: number;
+  @ApiPropertyOptional({ minimum: 1, description: '회수·취소·반려된 배부에서 재배부할 때의 부모 ISSUE id' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) reissuedFrom?: number;
   /** 배부 사유 — 무슨 교재를 왜 줬는지 (N-62 ① · 원문 슬라이드 37). 비우면 NULL. 진단 점수는 여기 옮겨 적지 않는다(D-R22) */
   @ApiPropertyOptional({ maxLength: 500, description: '배부 사유 — 비우면 적지 않는다' })
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
@@ -227,7 +229,12 @@ export class BookIssueCreateDto {
 }
 
 export class BookIssueTransitionDto {
-  @ApiProperty({ enum: ISSUE_TRANSITION_STATES }) @IsIn(ISSUE_TRANSITION_STATES) state!: 'auto' | 'ok';
+  @ApiProperty({ enum: ISSUE_TRANSITION_STATES }) @IsIn(ISSUE_TRANSITION_STATES) state!: 'auto' | 'ok' | 'canceled' | 'rejected';
+  @ApiPropertyOptional({ minLength: 1, maxLength: 500, description: '취소·반려 사유 — 종료 상태에서 필수' })
+  @ValidateIf((dto: BookIssueTransitionDto) => dto.state === 'canceled' || dto.state === 'rejected')
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(500)
+  reason?: string;
 }
 
 export class BookIssueProgressDto {
@@ -251,6 +258,11 @@ export class BookIssueDto {
   @ApiProperty() stateLabel!: string;
   @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true }) issuedOn?: string | null;
   @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true }) returnedOn?: string | null;
+  @ApiPropertyOptional(S) endedReason?: string | null;
+  @ApiPropertyOptional(N) endedBy?: number | null;
+  @ApiPropertyOptional(S) endedByName?: string | null;
+  @ApiPropertyOptional(S) endedAt?: string | null;
+  @ApiPropertyOptional(N) reissuedFrom?: number | null;
   @ApiPropertyOptional(N) progressPage?: number | null;
   @ApiPropertyOptional(N) progressPercent?: number | null;
   @ApiPropertyOptional({ ...S, description: '배부 사유 (N-62) — 옛 배부는 null' }) reason?: string | null;
@@ -274,6 +286,7 @@ export class BookTrackingStudentDto {
   @ApiPropertyOptional(S) teacherName?: string | null;
   @ApiPropertyOptional(S) nextLesson?: string | null;
   @ApiProperty({ type: [BookIssueDto] }) issues!: BookIssueDto[];
+  @ApiProperty({ type: [BookIssueDto], description: '재배부 계보의 끝인 회수·취소·반려 배부' }) reissueCandidates!: BookIssueDto[];
   @ApiProperty({ type: [NamedCountDto], description: '행에 보일 할 일 칩 — 분류·건수는 서버가 계산' }) todos!: NamedCountDto[];
   @ApiProperty() todoLabel!: string;
 }

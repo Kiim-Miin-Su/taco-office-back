@@ -124,6 +124,55 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     expect((await svc().all()).items.find((book) => book.id === libA)?.issueCount).toBe(1);
     const rows = await q.query(`SELECT action FROM hist WHERE entity='issue' AND ref_id=$1 ORDER BY id`, [issue.id]);
     expect(rows.map((row: { action: string }) => row.action)).toEqual(['book_issue', 'book_drop']);
+    expect((await svc().tracking()).students.find((student) => student.id === studentA)?.reissueCandidates)
+      .toEqual([expect.objectContaining({ id: issue.id, state: 'returned' })]);
+    expect(await svc().createIssue(owner, {
+      studentId: studentA, libId: libA, state: 'wait', reissuedFrom: issue.id,
+    })).toMatchObject({ state: 'wait', reissuedFrom: issue.id });
+  });
+
+  it('대기 배부는 사유·처리자·시각을 남기고 취소·반려로 종료한 뒤만 같은 교재를 재배부한다', async () => {
+    const canceled = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'wait' });
+    await expect(svc().transitionIssue(owner, canceled.id, 'canceled'))
+      .rejects.toMatchObject({ response: { code: 'ISSUE_END_REASON_REQUIRED' } });
+    const ended = await svc().transitionIssue(owner, canceled.id, 'canceled', '학부모 요청');
+    expect(ended).toMatchObject({
+      state: 'canceled', endedReason: '학부모 요청', endedBy: owner, reissuedFrom: null,
+    });
+    expect(ended.endedAt).toBeTruthy();
+    expect((await svc().tracking()).students.find((student) => student.id === studentA)?.reissueCandidates)
+      .toEqual([expect.objectContaining({ id: canceled.id, state: 'canceled', endedReason: '학부모 요청' })]);
+    await expect(svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'auto' }))
+      .rejects.toMatchObject({ response: { code: 'BOOK_REISSUE_SOURCE_REQUIRED' } });
+
+    const reissued = await svc().createIssue(owner, {
+      studentId: studentA, libId: libA, state: 'auto', reissuedFrom: canceled.id,
+    });
+    expect(reissued).toMatchObject({ state: 'auto', reissuedFrom: canceled.id });
+    expect((await svc().tracking()).students.find((student) => student.id === studentA)?.reissueCandidates).toEqual([]);
+    await expect(svc().createIssue(owner, {
+      studentId: studentA, libId: libA, state: 'wait', reissuedFrom: canceled.id,
+    })).rejects.toMatchObject({ response: { code: 'BOOK_ALREADY_REISSUED' } });
+
+    const [stored] = await q.query(
+      `SELECT state,ended_reason,ended_by,ended_at FROM issue WHERE id=$1`, [canceled.id],
+    );
+    expect(stored).toMatchObject({ state: 'canceled', ended_reason: '학부모 요청', ended_by: String(owner) });
+    expect(stored.ended_at).toBeTruthy();
+    expect((await q.query(`SELECT action,after FROM log WHERE entity='ISSUE' AND entity_id=$1`, [canceled.id])))
+      .toEqual([expect.objectContaining({ action: 'cancel', after: { state: 'canceled', reason: '학부모 요청' } })]);
+  });
+
+  it('반려는 wait/auto에서만 가능하고 배부 완료·종료 행은 다시 종료할 수 없다', async () => {
+    const wait = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'wait' });
+    expect(await svc().transitionIssue(owner, wait.id, 'rejected', '교재 재선정'))
+      .toMatchObject({ state: 'rejected', endedReason: '교재 재선정' });
+    await expect(svc().transitionIssue(owner, wait.id, 'auto'))
+      .rejects.toMatchObject({ response: { code: 'ISSUE_INVALID_TRANSITION' } });
+
+    const ok = await svc().createIssue(owner, { studentId: studentB, libId: libB, state: 'ok' });
+    await expect(svc().transitionIssue(owner, ok.id, 'canceled', '잘못 배부'))
+      .rejects.toMatchObject({ response: { code: 'ISSUE_INVALID_TRANSITION' } });
   });
 
   it('배부 생성은 그 날짜의 현재 판·파일을 ISSUE에 고정하고 이후 판 전환에도 소급 변경하지 않는다', async () => {

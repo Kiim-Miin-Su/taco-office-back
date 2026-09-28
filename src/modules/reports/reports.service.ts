@@ -18,7 +18,7 @@ import {
   type RepStateDb, type ReportBody, type ReportDeliveryIssue, type ReportPngIssue,
   type ReportReminderIssue, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
-import { END_MIN, START_MIN, kstAt, kstDateOf } from '../../lib/sql';
+import { END_MIN, START_MIN, effectiveModeOf, kstAt, kstDateOf } from '../../lib/sql';
 import { roleLabel } from '../../lib/role-words';
 import { NOTI_TITLE } from '../../lib/noti';
 import { audit } from '../../lib/audit';
@@ -33,6 +33,8 @@ import { REPORT_CANCELED_SQL, REPORT_DATE_SQL } from './report-sql';
 import { loadWeeklyBundles, weekOfMonday, weeklyGate, type WeeklyBundle } from './weekly-bundle';
 import { addDays } from '../../lib/kst';
 import { lockScheduleSeries } from '../schedule/schedule.state.repo';
+import type { FileRefDto } from '../files/files.dto';
+import { storedFileRef } from '../files/files.service';
 
 interface Row {
   id: string;
@@ -41,6 +43,7 @@ interface Row {
   on_date: string;
   start_min: number | null;
   end_min: number | null;
+  mode: 'offline' | 'online';
   end_min_utc: string | null;
   sub_key: string | null;
   kind_key: string;
@@ -181,6 +184,7 @@ export class ReportsService {
                    to_char(${REPORT_DATE_SQL}, 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
                    ${START_MIN} AS start_min, ${END_MIN} AS end_min,
+                   ${effectiveModeOf('x', 's')} AS mode,
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
@@ -200,6 +204,7 @@ export class ReportsService {
               JOIN ser s ON s.id = r.ser_id
               JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
               LEFT JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
+              LEFT JOIN exc x ON x.ser_id = r.ser_id AND x.on_date = r.on_date
               LEFT JOIN att a ON a.ser_id = r.ser_id AND a.on_date = r.on_date
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
              WHERE ${where}
@@ -212,6 +217,7 @@ export class ReportsService {
                    to_char(${REPORT_DATE_SQL}, 'YYYY-MM-DD') AS date,
                    to_char(r.on_date, 'YYYY-MM-DD') AS on_date,
                    ${START_MIN} AS start_min, ${END_MIN} AS end_min,
+                   ${effectiveModeOf('x', 's')} AS mode,
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
@@ -235,6 +241,7 @@ export class ReportsService {
               FROM rep r
               JOIN ser s ON s.id = r.ser_id
               LEFT JOIN ser_occ o ON o.ser_id = r.ser_id AND o.on_date = r.on_date
+              LEFT JOIN exc x ON x.ser_id = r.ser_id AND x.on_date = r.on_date
               LEFT JOIN att a ON a.ser_id = r.ser_id AND a.on_date = r.on_date
               JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
               LEFT JOIN sub sb ON sb.key = s.sub_key
@@ -253,7 +260,7 @@ export class ReportsService {
     const penalty = written || minutesSinceEnd < 0 ? 0 : tierFor(minutesSinceEnd).amount;
     return {
       id: Number(r.id), serId: Number(r.ser_id), date: r.date, onDate: r.on_date, startMin: r.start_min,
-      endMin: r.end_min,
+      endMin: r.end_min, mode: r.mode,
       subKey: r.sub_key, kindKey: r.kind_key,
       teacherId: r.teacher_id ? Number(r.teacher_id) : null, teacherName: r.teacher_name,
       state, written, minutesSinceEnd, penalty,
@@ -392,7 +399,7 @@ export class ReportsService {
    *
    * 단추가 서는지도 그 수에서 나온다(D-R39) — 화면이 `fileCount` 를 다시 해석하지 않는다.
    */
-  private static historyRow(row: SendHistoryRow): ReportSendHistoryDto {
+  private static historyRow(row: SendHistoryRow, downloadFiles: FileRefDto[] = []): ReportSendHistoryDto {
     const repIds = Array.isArray(row.rep_ids)
       ? row.rep_ids.map(Number).filter((id) => Number.isInteger(id) && id > 0)
       : [];
@@ -401,11 +408,40 @@ export class ReportsService {
       id: Number(row.id), sourceSendId: row.source_send_id ? Number(row.source_send_id) : null,
       studentId: Number(row.student_id), studentName: row.student_name,
       onDate: row.on_date, repIds, channel: row.channel, fileCount,
+      downloadFiles,
       canResend: fileCount > 0,
       resendBlockedReason: fileCount > 0 ? null : '재발송할 보존 파일이 없습니다',
       sentAt: row.sent_at, sentBy: Number(row.sent_by), sentByName: row.sent_by_name,
       subjectNames: row.subject_names ?? [], teacherNames: row.teacher_names ?? [],
     };
+  }
+
+  /**
+   * 발송에 붙은 현재 FILE 참조만 돌려준다. 예전 외부 Blob/seed URL은 FILE id로 추정하지 않고
+   * 빈 배열에 남긴다. 실제 바이트 열람은 `/files/:id` 중앙 ACL이 다시 판정한다.
+   */
+  private static async downloadFilesBySend(q: Queryer, sendIds: number[]): Promise<Map<number, FileRefDto[]>> {
+    const grouped = new Map<number, FileRefDto[]>();
+    if (sendIds.length === 0) return grouped;
+    const rows = await q.query<Array<Record<string, unknown>>>(
+      `SELECT p.ref_id AS send_id, f.id AS file_id, f.kind AS file_kind, f.name AS file_name,
+              f.mime AS file_mime, f.bytes AS file_bytes, u.name AS file_uploader_name,
+              to_char(f.uploaded_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS file_uploaded_at
+         FROM pdflog p
+         JOIN file f ON p.file_url = '/files/' || f.id::text AND f.kind = 'report-png'
+         LEFT JOIN staff u ON u.id = f.uploaded_by
+        WHERE p.kind='report_png' AND p.ref_id = ANY($1::bigint[])
+        ORDER BY p.id`,
+      [sendIds],
+    );
+    for (const row of rows) {
+      const ref = storedFileRef(row);
+      if (!ref) continue;
+      const sendId = Number(row.send_id);
+      if (!grouped.has(sendId)) grouped.set(sendId, []);
+      grouped.get(sendId)!.push(ref);
+    }
+    return grouped;
   }
 
   /** 묶음 이름 — 일 「MM-DD」 · 주 「MM-DD ~ MM-DD」(원문 §48) · 달 「YYYY년 M월」. 낱말은 여기 한 곳 */
@@ -428,7 +464,9 @@ export class ReportsService {
         WHERE rs.id=$1`,
       [sendId],
     );
-    return rows[0] ? ReportsService.historyRow(rows[0]) : null;
+    if (!rows[0]) return null;
+    const files = await ReportsService.downloadFilesBySend(q, [sendId]);
+    return ReportsService.historyRow(rows[0], files.get(sendId) ?? []);
   }
 
   private async requireHistoryItem(q: Queryer, sendId: number): Promise<ReportSendHistoryDto> {
@@ -861,9 +899,10 @@ export class ReportsService {
       count: Number(row.count), sheets: Number(row.sheets), students: Number(row.students),
       sendIds: row.send_ids.map(Number),
     }));
+    const downloads = await ReportsService.downloadFilesBySend(this.ds, rows.map((row) => Number(row.id)));
     return {
       total: rows[0] ? Number(rows[0].total_count) : 0,
-      items: rows.map(ReportsService.historyRow),
+      items: rows.map((row) => ReportsService.historyRow(row, downloads.get(Number(row.id)) ?? [])),
       span,
       groups,
       sheets: groupRows.reduce((sum, row) => sum + Number(row.sheets), 0),

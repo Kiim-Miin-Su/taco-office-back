@@ -11932,7 +11932,7 @@
             }
           }
         },
-        "summary": "교재 배부 상태 전이 — 승인 대기→전달 대기→배부 완료 (§38)",
+        "summary": "교재 배부 상태 전이 — 승인·전달 전이 또는 사유가 남는 취소·반려 (§38)",
         "tags": [
           "books"
         ]
@@ -24636,6 +24636,14 @@
             "maximum": 1440,
             "description": "실제 SER_OCC.span 종료의 KST 분. 자정 종료는 1440, 회차 투영이 없으면 null; 쓰기 입력이 아니다."
           },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ],
+            "description": "회차 예외(EXC.mode)를 반영한 실제 수업 방식. 쓰기 입력이 아니다."
+          },
           "subKey": {
             "type": "string",
             "nullable": true
@@ -24689,6 +24697,7 @@
           "onDate",
           "startMin",
           "endMin",
+          "mode",
           "kindKey",
           "state",
           "written",
@@ -24968,6 +24977,14 @@
             "maximum": 1440,
             "description": "실제 SER_OCC.span 종료의 KST 분. 자정 종료는 1440, 회차 투영이 없으면 null; 쓰기 입력이 아니다."
           },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ],
+            "description": "회차 예외(EXC.mode)를 반영한 실제 수업 방식. 쓰기 입력이 아니다."
+          },
           "subKey": {
             "type": "string",
             "nullable": true
@@ -25077,6 +25094,7 @@
           "onDate",
           "startMin",
           "endMin",
+          "mode",
           "kindKey",
           "state",
           "written",
@@ -25159,6 +25177,57 @@
           "students"
         ]
       },
+      "FileRefDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cons-contract",
+              "cons-item",
+              "lib-se",
+              "lib-te",
+              "expense-receipt",
+              "guide-png",
+              "report-png",
+              "meet-brief"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "number",
+            "description": "바이트 수 — 표가 실제 길이와 같은지 지킨다"
+          },
+          "url": {
+            "type": "string",
+            "description": "내려받는 자리. `/files/{id}` 면 Neon, `https://` 면 레거시 외부 저장소다"
+          },
+          "uploaderName": {
+            "type": "string",
+            "nullable": true
+          },
+          "uploadedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "mime",
+          "bytes",
+          "url",
+          "uploadedAt"
+        ]
+      },
       "ReportSendHistoryDto": {
         "type": "object",
         "properties": {
@@ -25194,6 +25263,13 @@
           "fileCount": {
             "type": "number",
             "description": "보존된 파일 수 — 재발송이 세는 것과 같은 것이다(pdflog 의 file_url 이 있는 행 · S5)"
+          },
+          "downloadFiles": {
+            "description": "Neon FILE에 보존된 기록지 PNG. 레거시 외부 URL은 내려보내지 않는다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileRefDto"
+            }
           },
           "canResend": {
             "type": "boolean",
@@ -25236,6 +25312,7 @@
           "repIds",
           "channel",
           "fileCount",
+          "downloadFiles",
           "canResend",
           "resendBlockedReason",
           "sentAt",
@@ -25794,57 +25871,6 @@
           "base64"
         ]
       },
-      "FileRefDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "cons-contract",
-              "cons-item",
-              "lib-se",
-              "lib-te",
-              "expense-receipt",
-              "guide-png",
-              "report-png",
-              "meet-brief"
-            ]
-          },
-          "name": {
-            "type": "string"
-          },
-          "mime": {
-            "type": "string"
-          },
-          "bytes": {
-            "type": "number",
-            "description": "바이트 수 — 표가 실제 길이와 같은지 지킨다"
-          },
-          "url": {
-            "type": "string",
-            "description": "내려받는 자리. `/files/{id}` 면 Neon, `https://` 면 레거시 외부 저장소다"
-          },
-          "uploaderName": {
-            "type": "string",
-            "nullable": true
-          },
-          "uploadedAt": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "kind",
-          "name",
-          "mime",
-          "bytes",
-          "url",
-          "uploadedAt"
-        ]
-      },
       "MoneySummaryDto": {
         "type": "object",
         "properties": {
@@ -26260,6 +26286,16 @@
             "type": "boolean",
             "description": "영수증 없이는 승인할 수 없다 (A-4)"
           },
+          "receiptFile": {
+            "nullable": true,
+            "description": "Neon FILE에 보존된 영수증. 레거시 외부 URL은 노출하지 않는다.",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FileRefDto"
+              }
+            ]
+          },
           "requesterName": {
             "type": "string",
             "nullable": true
@@ -26304,6 +26340,7 @@
           "requestedAmount",
           "amount",
           "hasReceipt",
+          "receiptFile",
           "requesterId",
           "filedById",
           "state"
@@ -31787,7 +31824,9 @@
               "wait",
               "auto",
               "ok",
-              "returned"
+              "returned",
+              "canceled",
+              "rejected"
             ]
           },
           "stateLabel": {
@@ -31803,6 +31842,26 @@
             "type": "string",
             "format": "date",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "endedReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "endedBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "endedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "endedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "reissuedFrom": {
+            "type": "number",
             "nullable": true
           },
           "progressPage": {
@@ -34097,6 +34156,13 @@
               "$ref": "#/components/schemas/BookIssueDto"
             }
           },
+          "reissueCandidates": {
+            "description": "재배부 계보의 끝인 회수·취소·반려 배부",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookIssueDto"
+            }
+          },
           "todos": {
             "description": "행에 보일 할 일 칩 — 분류·건수는 서버가 계산",
             "type": "array",
@@ -34112,6 +34178,7 @@
           "id",
           "name",
           "issues",
+          "reissueCandidates",
           "todos",
           "todoLabel"
         ]
@@ -34305,6 +34372,11 @@
             "type": "number",
             "minimum": 0
           },
+          "reissuedFrom": {
+            "type": "number",
+            "minimum": 1,
+            "description": "회수·취소·반려된 배부에서 재배부할 때의 부모 ISSUE id"
+          },
           "reason": {
             "type": "string",
             "maxLength": 500,
@@ -34331,8 +34403,16 @@
             "type": "string",
             "enum": [
               "auto",
-              "ok"
+              "ok",
+              "canceled",
+              "rejected"
             ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "취소·반려 사유 — 종료 상태에서 필수"
           }
         },
         "required": [

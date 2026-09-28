@@ -55,4 +55,20 @@ export class Issue {
   /** 배부 형태 — pdf | print (§38 칩 「PDF」 · 「실물 책」 · 7-3 §38-2 · W11 A'). 옛 줄은 NULL = 칩 없음 */
   @Column({ type: 'varchar', length: 8, nullable: true })
   form: string | null;
+
+  /** 취소·반려 사유. 활성/반납 상태에는 NULL 이다. */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  endedReason: string | null;
+
+  /** 취소·반려를 확정한 직원. */
+  @Column({ type: 'bigint', nullable: true })
+  endedBy: number | null;
+
+  /** 취소·반려 확정 시각. */
+  @Column({ type: 'timestamptz', nullable: true })
+  endedAt: Date | null;
+
+  /** 종료 건을 근거로 다시 배부한 경우 원본 ISSUE id. */
+  @Column({ type: 'bigint', nullable: true })
+  reissuedFrom: number | null;
 }

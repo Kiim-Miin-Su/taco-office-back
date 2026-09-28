@@ -32,6 +32,27 @@ export const mimeOf = (name: string): string =>
 /** 내려받는 자리 — 저장소가 어디인지 **주소 모양으로** 갈린다 (`/files/{id}` = Neon) */
 export const fileUrlOf = (id: number): string => `/files/${id}`;
 
+/**
+ * FILE JOIN 결과를 공용 응답 모양으로 바꾼다. 업무 서비스는 접두사만 정하고,
+ * URL·숫자 변환·업로더/시각 null 처리를 각각 다시 적지 않는다.
+ */
+export function storedFileRef(row: Record<string, unknown>, prefix = 'file_'): FileRefDto | null {
+  const rawId = row[`${prefix}id`];
+  if (rawId == null) return null;
+  const id = Number(rawId);
+  if (!Number.isSafeInteger(id) || id < 1) return null;
+  return {
+    id,
+    kind: String(row[`${prefix}kind`]),
+    name: String(row[`${prefix}name`]),
+    mime: String(row[`${prefix}mime`]),
+    bytes: Number(row[`${prefix}bytes`]),
+    url: fileUrlOf(id),
+    uploaderName: (row[`${prefix}uploader_name`] as string | null) ?? null,
+    uploadedAt: String(row[`${prefix}uploaded_at`]),
+  };
+}
+
 /** base64 본문을 바이트로. data URL 접두사가 붙어 있어도 벗겨 준다 */
 export function decodeBase64(raw: string): Buffer | null {
   const body = raw.includes(',') && raw.trimStart().startsWith('data:') ? raw.slice(raw.indexOf(',') + 1) : raw;

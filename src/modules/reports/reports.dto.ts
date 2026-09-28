@@ -14,6 +14,7 @@ import {
   REP_STATE_FROM_DB, REPORT_FIELDS, REPORT_PNG_DATA_URL_MAX_CHARS, type RepStateDb, type ReportFieldKey, type ReportReviewDecision,
 } from '../../lib/rules';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
+import { FileRefDto } from '../files/files.dto';
 
 const EXPORT_REVISION_PATTERN = /^[a-f0-9]{64}$/;
 const EXPORT_REVISION_SCHEMA = {
@@ -65,6 +66,11 @@ export class ReportRowDto {
   @ApiProperty({ type: 'integer', nullable: true, minimum: 1, maximum: 1440,
     description: '실제 SER_OCC.span 종료의 KST 분. 자정 종료는 1440, 회차 투영이 없으면 null; 쓰기 입력이 아니다.' })
   endMin!: number | null;
+  @ApiProperty({
+    enum: ['offline', 'online'],
+    description: '회차 예외(EXC.mode)를 반영한 실제 수업 방식. 쓰기 입력이 아니다.',
+  })
+  mode!: 'offline' | 'online';
   @ApiPropertyOptional({ type: String, nullable: true }) subKey?: string | null;
   @ApiProperty() kindKey!: string;
   @ApiPropertyOptional({ type: Number, nullable: true }) teacherId?: number | null;
@@ -288,6 +294,8 @@ export class ReportSendHistoryDto {
   @ApiProperty({ enum: ['blob'] }) channel!: string;
   @ApiProperty({ description: '보존된 파일 수 — 재발송이 세는 것과 같은 것이다(pdflog 의 file_url 이 있는 행 · S5)' })
   fileCount!: number;
+  @ApiProperty({ type: [FileRefDto], description: 'Neon FILE에 보존된 기록지 PNG. 레거시 외부 URL은 내려보내지 않는다.' })
+  downloadFiles!: FileRefDto[];
   @ApiProperty({ description: '다시 보낼 수 있는가 — 보존 파일이 한 장이라도 있어야 한다 (D-R39)' }) canResend!: boolean;
   @ApiProperty({ type: String, nullable: true, description: '재발송이 막힌 이유 — 보낼 수 있으면 null' })
   resendBlockedReason!: string | null;

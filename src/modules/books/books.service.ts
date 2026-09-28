@@ -11,12 +11,12 @@ import { Lead } from '../../entities';
 import { HIST_ACTIONS, histLabel, histSql } from '../../lib/history';
 import { todayKst } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
-import { kstAt, serStuOn } from '../../lib/sql';
+import { kstAt, serStuOn, writtenRows } from '../../lib/sql';
 import {
   BOOK_EXAM_TAG_LABEL, BOOK_EXAM_TAGS, BOOK_GRADES, BOOK_LEVELS, BOOK_UNCLASSIFIED,
   ISSUE_FORM_LABEL, ISSUE_FORMS, ISSUE_STATE_LABEL, issueFormLabel, PACK_STATE_LABEL, PACK_TYPE_LABEL, bookExamTagLabel, bookGradeCovers, bookGradeFromKey, bookGradeKey,
-  bookGradeRangeIssue, bookGradeRangeLabel, bookLevelLabel, bookLevelShown, issueTransitionIssue, packTransitionIssue,
-  progressIssue, progressPercent, type IssueState, type PackState, type PackType,
+  bookGradeRangeIssue, bookGradeRangeLabel, bookLevelLabel, bookLevelShown, isIssueTerminal, issueActiveSql, issueTransitionIssue, packTransitionIssue,
+  progressIssue, progressPercent, type IssueState, type IssueTransitionState, type PackState, type PackType,
 } from '../../lib/book';
 import type {
   BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto,
@@ -582,6 +582,11 @@ export class BooksService {
       teFileId: r.te_file_id == null ? null : Number(r.te_file_id),
       issuedOn: r.issued_on == null ? null : dbDay(r.issued_on),
       returnedOn: r.returned_on == null ? null : dbDay(r.returned_on),
+      endedReason: optText(r.ended_reason),
+      endedBy: optNum(r.ended_by),
+      endedByName: optText(r.ended_by_name),
+      endedAt: r.ended_at == null ? null : new Date(r.ended_at as string | Date).toISOString(),
+      reissuedFrom: optNum(r.reissued_from),
       progressPage: page, progressPercent: progressPercent(page, pages),
       reason: optText(r.reason),
       // 형태 칩(§38-2 · W11 A') — 낱말은 서버가 만든다 · 옛 줄 NULL = 칩 없음
@@ -603,7 +608,7 @@ export class BooksService {
                 ORDER BY lower(o.span) LIMIT 1) AS next_lesson,
               (SELECT g.state::text FROM guide g WHERE g.student_id=s.id ORDER BY g.id DESC LIMIT 1) AS guide_state
          FROM stu s
-         LEFT JOIN issue i ON i.student_id=s.id AND i.state <> 'returned'
+         LEFT JOIN issue i ON i.student_id=s.id AND ${issueActiveSql('i')}
          LEFT JOIN lib l ON l.id=i.lib_id
          LEFT JOIN vers v ON v.id=i.vers_id
         ORDER BY s.name, i.id`,
@@ -615,12 +620,27 @@ export class BooksService {
       const row = students.get(id) ?? {
         id, name: String(r.name), grade: (r.grade as string) ?? null,
         teacherName: (r.teacher_name as string) ?? null, nextLesson: (r.next_lesson as string) ?? null,
-        issues: [], todos: [], todoLabel: '정상',
+        issues: [], reissueCandidates: [], todos: [], todoLabel: '정상',
       };
       guideStateByStudent.set(id, (r.guide_state as string) ?? null);
       if (r.id != null) row.issues.push(this.issueDto(r));
       row.todoLabel = row.issues.length === 0 ? '교재 없음' : row.issues.some((i) => i.state === 'wait' || i.state === 'auto') ? '확인 필요' : '정상';
       students.set(id, row);
+    }
+    const reissueRows = await this.q(
+      `SELECT i.*,l.pages,v.edition,v.file_url,v.se_file_id,v.te_file_id,ended.name AS ended_by_name
+         FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
+         LEFT JOIN staff ended ON ended.id=i.ended_by
+        WHERE i.state IN ('returned','canceled','rejected')
+          AND NOT EXISTS (SELECT 1 FROM issue child WHERE child.reissued_from=i.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM issue active
+             WHERE active.student_id=i.student_id AND active.lib_id=i.lib_id AND ${issueActiveSql('active')}
+          )
+        ORDER BY COALESCE(i.ended_at,i.returned_on::timestamptz) DESC,i.id DESC`,
+    );
+    for (const r of reissueRows) {
+      students.get(Number(r.student_id))?.reissueCandidates.push(this.issueDto(r));
     }
     const active = rows.filter((r) => r.id != null);
     const bookMap = new Map<number, {
@@ -724,6 +744,39 @@ export class BooksService {
       if (!lib) throw new NotFoundException('교재를 찾을 수 없습니다');
       const stu = await m.query(`SELECT id FROM stu WHERE id=$1 FOR KEY SHARE`, [dto.studentId]);
       if (!stu.length) throw new NotFoundException('학생을 찾을 수 없습니다');
+      if (dto.reissuedFrom !== undefined) {
+        const [source] = await m.query(
+          `SELECT parent.*,child.id AS reissued_to
+             FROM issue parent LEFT JOIN issue child ON child.reissued_from=parent.id
+            WHERE parent.id=$1 FOR UPDATE OF parent`,
+          [dto.reissuedFrom],
+        ) as R[];
+        if (!source) throw new NotFoundException('재배부할 이전 배부를 찾을 수 없습니다');
+        if (!isIssueTerminal(String(source.state))) {
+          throw new ConflictException({ code: 'BOOK_REISSUE_SOURCE_ACTIVE', message: '종료된 배부만 재배부할 수 있습니다' });
+        }
+        if (Number(source.student_id) !== dto.studentId || Number(source.lib_id) !== dto.libId) {
+          throw new ConflictException({ code: 'BOOK_REISSUE_SOURCE_MISMATCH', message: '이전 배부와 같은 학생·교재로만 재배부할 수 있습니다' });
+        }
+        if (source.reissued_to != null) {
+          throw new ConflictException({ code: 'BOOK_ALREADY_REISSUED', message: '이미 재배부한 내역입니다' });
+        }
+      } else {
+        const [terminal] = await m.query(
+          `SELECT parent.id FROM issue parent
+            WHERE parent.student_id=$1 AND parent.lib_id=$2
+              AND parent.state IN ('returned','canceled','rejected')
+              AND NOT EXISTS (SELECT 1 FROM issue child WHERE child.reissued_from=parent.id)
+            ORDER BY COALESCE(parent.ended_at,parent.returned_on::timestamptz) DESC,parent.id DESC LIMIT 1`,
+          [dto.studentId, dto.libId],
+        ) as R[];
+        if (terminal) {
+          throw new ConflictException({
+            code: 'BOOK_REISSUE_SOURCE_REQUIRED',
+            message: '이전 회수·취소·반려 내역에서 재배부해 계보를 이어 주세요',
+          });
+        }
+      }
       const state = (dto.state ?? 'ok') as IssueState;
       if (state !== 'ok' && (dto.issuedOn !== undefined || dto.progressPage !== undefined)) {
         throw new BadRequestException('배부일과 진도는 배부 완료 상태에서만 기록할 수 있습니다');
@@ -750,10 +803,10 @@ export class BooksService {
       const reason = dto.reason?.trim() || null;
       try {
         const [row] = await m.query(
-          `INSERT INTO issue (lib_id,vers_id,student_id,issued_on,state,progress_page,requested_by,approved_by,delivered_at,reason,form)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *, NULL::int AS pages`,
+          `INSERT INTO issue (lib_id,vers_id,student_id,issued_on,state,progress_page,requested_by,approved_by,delivered_at,reason,form,reissued_from)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *, NULL::int AS pages`,
           [dto.libId, version?.id ?? null, dto.studentId, issuedOn, state, dto.progressPage ?? null,
-           userId, state === 'ok' ? userId : null, state === 'ok' ? new Date() : null, reason, dto.form ?? null],
+           userId, state === 'ok' ? userId : null, state === 'ok' ? new Date() : null, reason, dto.form ?? null, dto.reissuedFrom ?? null],
         ) as R[];
         if (state === 'ok') await m.query(histSql(), ['issue', Number(row.id), 'book_issue', userId]);
         return this.issueDto({
@@ -765,13 +818,18 @@ export class BooksService {
           pages: lib.pages,
         });
       } catch (e) {
-        if ((e as { code?: string }).code === '23505') throw new ConflictException({ code: 'BOOK_ALREADY_ACTIVE', message: '이 학생에게 이미 배부 중인 교재입니다' });
+        if ((e as { code?: string; constraint?: string }).code === '23505') {
+          if ((e as { constraint?: string }).constraint === 'issue_reissued_from_unique') {
+            throw new ConflictException({ code: 'BOOK_ALREADY_REISSUED', message: '이미 재배부한 내역입니다' });
+          }
+          throw new ConflictException({ code: 'BOOK_ALREADY_ACTIVE', message: '이 학생에게 이미 배부 중인 교재입니다' });
+        }
         throw e;
       }
     }
   }
 
-  async transitionIssue(userId: number, id: number, target: 'auto' | 'ok'): Promise<BookIssueDto> {
+  async transitionIssue(userId: number, id: number, target: IssueTransitionState, reason?: string): Promise<BookIssueDto> {
     return this.anyRepo.manager.transaction(async (m) => {
       const [r] = await m.query(
         `SELECT i.*,l.pages,v.edition,v.file_url,v.se_file_id,v.te_file_id
@@ -782,6 +840,27 @@ export class BooksService {
       if (!r) throw new NotFoundException('배부 내역을 찾을 수 없습니다');
       const why = issueTransitionIssue(String(r.state) as IssueState, target);
       if (why) throw new ConflictException({ code: 'ISSUE_INVALID_TRANSITION', message: why });
+
+      if (target === 'canceled' || target === 'rejected') {
+        const endedReason = reason?.trim();
+        if (!endedReason) throw new BadRequestException({ code: 'ISSUE_END_REASON_REQUIRED', message: '취소·반려 사유를 적어 주세요' });
+        const [ended] = writtenRows<R>(await m.query(
+          `UPDATE issue SET state=$2,ended_reason=$3,ended_by=$4,ended_at=now()
+            WHERE id=$1 RETURNING *`,
+          [id, target, endedReason, userId],
+        ));
+        await m.query(
+          `INSERT INTO log (actor_id,entity,entity_id,action,before,after)
+           VALUES ($1,'ISSUE',$2,$3,$4::jsonb,$5::jsonb)`,
+          [userId, id, target === 'canceled' ? 'cancel' : 'reject',
+            JSON.stringify({ state: r.state }), JSON.stringify({ state: target, reason: endedReason })],
+        );
+        return this.issueDto({
+          ...r, ...ended, pages: r.pages, edition: r.edition, file_url: r.file_url,
+          se_file_id: r.se_file_id, te_file_id: r.te_file_id,
+        });
+      }
+      if (reason !== undefined) throw new BadRequestException('취소·반려 사유는 종료 상태에서만 적을 수 있습니다');
 
       if (target === 'auto') {
         await m.query(`UPDATE issue SET state='auto',approved_by=$2 WHERE id=$1`, [id, userId]);

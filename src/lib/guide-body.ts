@@ -20,6 +20,7 @@
  * **낱말은 전부 여기 하나다** (D-R18). 화면이 「온라인」·「교재 아직 없습니다」를 짓지 않는다 —
  * 지으면 §43 작성 창과 §44 전문이 같은 사실을 다른 말로 적는다.
  */
+import { issueActiveSql } from './book';
 import { effectiveModeOf, kstDateOf } from './sql';
 
 export const GUIDE_FACT_KEYS = ['student', 'grade', 'teacher', 'subject', 'mode', 'startOn', 'books'] as const;
@@ -69,7 +70,7 @@ type Queryable = { query(sql: string, params?: unknown[]): Promise<unknown> };
  *
  * 시작일은 **회차가 실제로 그려지는 날**이다(`ser_occ.span` 의 KST 날짜). 옮긴 회차도 옳게 적히고,
  * 투영이 없으면 저장된 `guide.event_on` 으로 떨어진다 — `guideRows` 가 쓰는 판정과 같다.
- * 교재는 **그 학생이 지금 갖고 있는 것**이다(`issue.state <> 'returned'` — §44 학생별과 같은 조건).
+ * 교재는 **그 학생이 지금 갖고 있는 것**이다(`issueActiveSql` — §44 학생별과 같은 조건).
  */
 export const GUIDE_FACT_SQL = `
   SELECT g.id, g.reason,
@@ -83,7 +84,7 @@ export const GUIDE_FACT_SQL = `
          COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'), to_char(g.event_on,'YYYY-MM-DD')) AS start_on,
          (SELECT string_agg(DISTINCT l.title, ', ' ORDER BY l.title)
             FROM issue i JOIN lib l ON l.id = i.lib_id
-           WHERE i.student_id = g.student_id AND i.state <> 'returned') AS books
+           WHERE i.student_id = g.student_id AND ${issueActiveSql('i')}) AS books
     FROM guide g
     LEFT JOIN stu   st ON st.id = g.student_id
     LEFT JOIN staff t  ON t.id  = g.teacher_id

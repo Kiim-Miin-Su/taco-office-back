@@ -8,6 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
+import { FileRefDto } from '../files/files.dto';
 
 /** 입금 수단 — 지금 저장되는 두 가지뿐이다. 코드표 확장은 원문 근거가 생길 때 한다 (발명 금지) */
 export const PAY_METHODS = ['transfer', 'cash'] as const;
@@ -432,6 +433,8 @@ export class ExpenseDto {
   @ApiProperty({ type: Number, nullable: true, description: '확정 금액. null 은 미심사이거나 금액 권한 없음' }) amount!: number | null;
   @ApiPropertyOptional({ type: String, nullable: true, description: '신청액과 다를 때 필수 (A-3)' }) reason?: string | null;
   @ApiProperty({ description: '영수증 없이는 승인할 수 없다 (A-4)' }) hasReceipt!: boolean;
+  @ApiProperty({ type: FileRefDto, nullable: true, description: 'Neon FILE에 보존된 영수증. 레거시 외부 URL은 노출하지 않는다.' })
+  receiptFile!: FileRefDto | null;
   @ApiPropertyOptional({ type: String, nullable: true }) requesterName?: string | null;
   @ApiProperty({ type: Number, nullable: true, description: '본인 신청은 본인이 승인할 수 없다 (A-5)' }) requesterId!: number | null;
   @ApiProperty({

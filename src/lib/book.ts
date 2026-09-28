@@ -5,16 +5,35 @@
  */
 import { LEAD_DIAG_LEVELS, LEAD_DIAG_LEVEL_LABEL, type LeadDiagLevel } from './lead-diag-words';
 
-export const ISSUE_STATES = ['wait', 'auto', 'ok', 'returned'] as const;
+export const ISSUE_STATES = ['wait', 'auto', 'ok', 'returned', 'canceled', 'rejected'] as const;
 export type IssueState = (typeof ISSUE_STATES)[number];
+export const ISSUE_ACTIVE_STATES = ['wait', 'auto', 'ok'] as const;
+export type ActiveIssueState = (typeof ISSUE_ACTIVE_STATES)[number];
+export const ISSUE_TERMINAL_STATES = ['returned', 'canceled', 'rejected'] as const;
+export type TerminalIssueState = (typeof ISSUE_TERMINAL_STATES)[number];
 export const ISSUE_CREATE_STATES = ['wait', 'auto', 'ok'] as const;
-export const ISSUE_TRANSITION_STATES = ['auto', 'ok'] as const;
+export const ISSUE_TRANSITION_STATES = ['auto', 'ok', 'canceled', 'rejected'] as const;
+export type IssueTransitionState = (typeof ISSUE_TRANSITION_STATES)[number];
 export const ISSUE_STATE_LABEL: Record<IssueState, string> = {
   wait: '승인 대기', auto: '전달 대기', ok: '배부 완료', returned: '회수 완료',
+  canceled: '취소', rejected: '반려',
 };
 
-/** §38 배부는 승인 대기 → 전달 대기 → 배부 완료의 한 방향으로만 흐른다. */
+export const isIssueActive = (state: string): state is ActiveIssueState =>
+  (ISSUE_ACTIVE_STATES as readonly string[]).includes(state);
+export const isIssueTerminal = (state: string): state is TerminalIssueState =>
+  (ISSUE_TERMINAL_STATES as readonly string[]).includes(state);
+
+/** ISSUE 활성 행 SQL 조건. alias는 소스에 쓴 식별자만 받아 값을 SQL에 복제하지 않는다. */
+export function issueActiveSql(alias = 'issue'): string {
+  if (!/^[a-z][a-z0-9_]*$/i.test(alias)) throw new Error('Invalid ISSUE SQL alias');
+  return `${alias}.state IN ('wait','auto','ok')`;
+}
+
 /**
+ * §38 배부는 승인 대기 → 전달 대기 → 배부 완료의 한 방향으로 흐르고,
+ * 배부 전 wait·auto는 사유를 남겨 취소·반려로 종료할 수 있다.
+ *
  * 배부 형태 — 원문 §38 교재 칸 아래 칩 「PDF」 · 「실물 책」(7-3 §38-2 · 리드 채택 W11 A'). 배부 창에서 고른다(선택).
  * 저장값은 `issue.form`(issue_form_words CHECK) · NULL = 고르지 않음 = 칩 없음(옛 줄 전부).
  */
@@ -24,9 +43,10 @@ export const ISSUE_FORM_LABEL: Record<IssueForm, string> = { pdf: 'PDF', print: 
 export const issueFormLabel = (form: string | null | undefined): string | null =>
   form == null ? null : (ISSUE_FORM_LABEL[form as IssueForm] ?? null);
 
-export function issueTransitionIssue(from: IssueState, to: 'auto' | 'ok'): string | null {
+export function issueTransitionIssue(from: IssueState, to: IssueTransitionState): string | null {
   if (from === 'wait' && to === 'auto') return null;
   if (from === 'auto' && to === 'ok') return null;
+  if ((from === 'wait' || from === 'auto') && (to === 'canceled' || to === 'rejected')) return null;
   return `${ISSUE_STATE_LABEL[from]}에서 ${ISSUE_STATE_LABEL[to]} 상태로 바꿀 수 없습니다`;
 }
 

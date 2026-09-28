@@ -268,7 +268,11 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     const made1 = (await api('post', '/accounting/expenses', managerToken).send({
       spendOn: kst(), category: 'supply', merchant: '문구점', purpose: '화이트보드 마커', requestedAmount: 35000, receiptFileId: file.id,
     }).expect(201)).body;
-    expect(made1).toMatchObject({ state: 'pending', amount: null, requestedAmount: 35000, requesterId: MANAGER, requesterName: '단가매니저', hasReceipt: true, category: 'supply', categoryLabel: '소모품비', merchant: '문구점', purpose: '화이트보드 마커', reviewerName: null, reviewedAt: null });
+    expect(made1).toMatchObject({
+      state: 'pending', amount: null, requestedAmount: 35000, requesterId: MANAGER, requesterName: '단가매니저',
+      hasReceipt: true, receiptFile: { id: file.id, kind: 'expense-receipt', name: '영수증.png', mime: 'image/png', url: `/files/${file.id}` },
+      category: 'supply', categoryLabel: '소모품비', merchant: '문구점', purpose: '화이트보드 마커', reviewerName: null, reviewedAt: null,
+    });
     const [db] = await q<{ state: string; amount: number | null; receipt_url: string }>(`SELECT state, amount, receipt_url FROM expense WHERE id = $1`, [made1.id]);
     expect(db).toMatchObject({ state: 'pending', amount: null, receipt_url: `/files/${file.id}` });
     // 같은 영수증을 두 지출에 붙일 수 없다
@@ -285,8 +289,14 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     // 매니저는 심사할 수 없다 (canMoney) — 「바로 확정되면 실패」
     await api('post', `/accounting/expenses/${made1.id}/review`, managerToken).send({ decision: 'approve', amount: 35000 }).expect(403);
     // 대표의 「나간 돈」에 pending 으로 선다
+    const [legacy] = await q<{ id: string }>(
+      `INSERT INTO expense (spend_on,category,requested_amount,receipt_url,requester_id,filed_by,state)
+       VALUES ($1,'etc',1000,'https://legacy.example/receipt.png',$2,$2,'pending') RETURNING id::text`,
+      [kst(), MANAGER],
+    );
     const acc = (await api('get', '/accounting').expect(200)).body;
     expect(acc.expenses.find((e: { id: number }) => e.id === made1.id)).toMatchObject({ state: 'pending', requestedAmount: 35000, amount: null });
+    expect(acc.expenses.find((e: { id: number }) => e.id === Number(legacy.id))).toMatchObject({ hasReceipt: true, receiptFile: null });
     // 대표가 심사한다 — 그때야 확정
     const reviewed = (await api('post', `/accounting/expenses/${made1.id}/review`).send({ decision: 'approve', amount: 35000 }).expect(201)).body;
     expect(reviewed).toMatchObject({ state: 'approved', amount: 35000, reviewerName: '단가대표' });

@@ -54,7 +54,7 @@ import type {
   WageHistoryDto, WageRowDto, WageWriteDto, MyExpenseListDto,
   PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, PayoutBonusSlotDto, AcctPrivacyDto, AcctPrivacyWriteDto,
 } from './accounting.dto';
-import { fileUrlOf } from '../files/files.service';
+import { fileUrlOf, storedFileRef } from '../files/files.service';
 import { ConsultingService } from '../consulting/consulting.service';
 
 
@@ -340,11 +340,17 @@ const EXPENSE_SELECT = `
          e.requested_amount, e.amount, e.reason, (e.receipt_url IS NOT NULL) AS has_receipt,
          e.requester_id, rq.name AS requester_name, e.state, rv.name AS reviewer_name,
          e.filed_by, fb.name AS filed_by_name,
-         to_char(e.reviewed_at,'YYYY-MM-DD') AS reviewed_at
+         to_char(e.reviewed_at,'YYYY-MM-DD') AS reviewed_at,
+         rf.id AS receipt_file_id, rf.kind AS receipt_file_kind, rf.name AS receipt_file_name,
+         rf.mime AS receipt_file_mime, rf.bytes AS receipt_file_bytes, ru.name AS receipt_file_uploader_name,
+         to_char(rf.uploaded_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS receipt_file_uploaded_at
     FROM expense e
     LEFT JOIN staff rq ON rq.id = e.requester_id
     LEFT JOIN staff rv ON rv.id = e.reviewer_id
-    LEFT JOIN staff fb ON fb.id = e.filed_by`;
+    LEFT JOIN staff fb ON fb.id = e.filed_by
+    -- /files/{id}만 현재 FILE 계약이다. 외부/seed URL을 id로 추정해 노출하지 않는다.
+    LEFT JOIN file rf ON e.receipt_url = '/files/' || rf.id::text AND rf.kind = 'expense-receipt'
+    LEFT JOIN staff ru ON ru.id = rf.uploaded_by`;
 
 @Injectable()
 export class AccountingService {
@@ -571,6 +577,7 @@ export class AccountingService {
       requestedAmount: money(r.requested_amount), amount: money(r.amount),
       reason: (r.reason as string | null) ?? null,
       hasReceipt: r.has_receipt === true,
+      receiptFile: storedFileRef(r, 'receipt_file_'),
       requesterId: r.requester_id == null ? null : Number(r.requester_id),
       requesterName: (r.requester_name as string | null) ?? null,
       filedById: r.filed_by == null ? null : Number(r.filed_by),

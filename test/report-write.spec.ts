@@ -58,6 +58,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)`, [SER]);
     await q(`DELETE FROM rep WHERE ser_id=$1`, [SER]);
+    await q(`DELETE FROM exc WHERE ser_id=$1`, [SER]);
     await q(`DELETE FROM ser_occ WHERE ser_id=$1`, [SER]);
     await q(`DELETE FROM ser WHERE id=$1`, [SER]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STUDENT, STUDENT2]]);
@@ -140,6 +141,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
                       reviewed_at=NULL, reviewer_id=NULL, reject_reason=NULL WHERE id=$1`,
       [repId],
     );
+    await q(`DELETE FROM exc WHERE ser_id=$1`, [SER]);
   });
 
   afterAll(async () => {
@@ -273,15 +275,36 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     }
   });
 
+  it('목록과 상세는 규칙이 아니라 회차 예외를 반영한 실제 수업 방식을 내린다', async () => {
+    const listMode = async () => {
+      const response = await request(app.getHttpServer()).get('/reports').query({ from: DATE, to: DATE })
+        .set('Authorization', `Bearer ${teacherToken}`).expect(200);
+      return response.body.items.find((item: { id: number }) => item.id === repId)?.mode;
+    };
+
+    expect((await get(teacherToken).expect(200)).body.mode).toBe('offline');
+    expect(await listMode()).toBe('offline');
+
+    await q(`INSERT INTO exc (ser_id,on_date,mode) VALUES ($1,$2,'online')`, [SER, DATE]);
+    try {
+      expect((await get(teacherToken).expect(200)).body.mode).toBe('online');
+      expect(await listMode()).toBe('online');
+    } finally {
+      await q(`DELETE FROM exc WHERE ser_id=$1 AND on_date=$2`, [SER, DATE]);
+    }
+  });
+
   it('파생 시간은 nullable 응답이며 리포트 쓰기 입력으로 허용하지 않는다', async () => {
     const schemas = buildOpenApi(app).components!.schemas!;
     for (const name of ['ReportRowDto', 'ReportDetailDto']) {
       expect(schemas[name]).toMatchObject({ properties: {
         startMin: { type: 'integer', nullable: true, minimum: 0, maximum: 1439 },
         endMin: { type: 'integer', nullable: true, minimum: 1, maximum: 1440 },
+        mode: { type: 'string', enum: ['offline', 'online'] },
       } });
     }
     await put(teacherToken, { ...body, endMin: 600 }).expect(400);
+    await put(teacherToken, { ...body, mode: 'online' }).expect(400);
   });
 
   it.each([

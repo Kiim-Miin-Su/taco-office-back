@@ -12,7 +12,7 @@ import { canAdminPage, hasPerm, isRole, type RequestUser } from '../../common/pe
 import { histLabel, histSql } from '../../lib/history';
 import { NOTI_TITLE } from '../../lib/noti';
 import { audit } from '../../lib/audit';
-import { bookLevelShown } from '../../lib/book';
+import { bookLevelShown, issueActiveSql } from '../../lib/book';
 import { SENDER, type Sender } from '../notify/sender';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
@@ -432,7 +432,7 @@ export class GuidesService {
     const books = await this.q(
       `SELECT i.id AS issue_id,i.student_id,i.lib_id,i.vers_id,l.code,l.title,l.se_te,l.sub_key,l.level,l.book_level,v.edition
          FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
-        WHERE i.student_id=ANY($1::bigint[]) AND i.state <> 'returned'
+        WHERE i.student_id=ANY($1::bigint[]) AND ${issueActiveSql('i')}
         ORDER BY i.student_id,l.title,i.id`, [ids],
     );
     const diagnostics = await this.q(

@@ -46,7 +46,8 @@ export class FilesController {
       // 이름에 한글이 들어가므로 RFC 5987 형식으로도 함께 싣는다
       'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
       'X-Content-Type-Options': 'nosniff',
-      'Cache-Control': 'private, max-age=3600',
+      // 계약서·영수증·학생 리포트가 브라우저/중간 캐시에 남지 않게 한다.
+      'Cache-Control': 'no-store',
     });
     return new StreamableFile(file.data);
   }

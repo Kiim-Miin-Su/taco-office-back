@@ -6,6 +6,7 @@
 
 /** §48~§50: 학생별 승인 완료 집합 → private Blob → RSEND/PDFLOG → 재발송. */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { Test } from '@nestjs/testing';
 import * as bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
@@ -72,6 +73,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     await q(`DELETE FROM pdflog WHERE ref_id IN (SELECT id FROM rsend WHERE student_id = ANY($1))`,
       [[STUDENT_READY, STUDENT_BLOCKED]]);
     await q(`DELETE FROM rsend WHERE student_id = ANY($1)`, [[STUDENT_READY, STUDENT_BLOCKED]]);
+    await q(`DELETE FROM file WHERE name LIKE $1`, [`report-delivery-${RUN}-%`]);
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [[SER1, SER2, SER3]]);
     await q(`DELETE FROM rep WHERE ser_id = ANY($1)`, [[SER1, SER2, SER3]]);
     await q(`DELETE FROM ser_occ WHERE ser_id = ANY($1)`, [[SER1, SER2, SER3]]);
@@ -165,6 +167,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
   beforeEach(async () => {
     await q(`DELETE FROM pdflog WHERE ref_id IN (SELECT id FROM rsend WHERE student_id = $1)`, [STUDENT_READY]);
     await q(`DELETE FROM rsend WHERE student_id = $1`, [STUDENT_READY]);
+    await q(`DELETE FROM file WHERE name LIKE $1`, [`report-delivery-${RUN}-%`]);
     put.mockReset();
     remove.mockReset();
     put.mockImplementation(async (pathname) => `https://private.blob/${encodeURIComponent(pathname)}`);
@@ -612,7 +615,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     const first = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
       .send(body).expect(201);
     expect(first.body.item).toMatchObject({
-      sourceSendId: null, studentId: STUDENT_READY, repIds: [rep1, rep2], fileCount: 2,
+      sourceSendId: null, studentId: STUDENT_READY, repIds: [rep1, rep2], fileCount: 2, downloadFiles: [],
     });
     expect(put).toHaveBeenCalledTimes(2);
     const retried = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
@@ -638,6 +641,21 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       `SELECT rep_id::text AS rep_id, file_url FROM pdflog WHERE kind='report_png' AND ref_id=$1 ORDER BY id`, [first.body.item.id],
     );
     expect(perFile.map((row) => Number(row.rep_id))).toEqual([rep1, rep2]);
+
+    // 현재 Neon FILE만 다운로드 참조로 보인다. 같은 이력의 레거시 외부 URL 둘은 추정해서 노출하지 않는다.
+    const bytes = Buffer.from('local-report-png');
+    const [local] = await q<{ id: string }>(
+      `INSERT INTO file (kind,name,mime,bytes,sha256,data,uploaded_by)
+       VALUES ('report-png',$1,'image/png',$2,$3,$4,$5) RETURNING id::text`,
+      [`report-delivery-${RUN}-local.png`, bytes.length, createHash('sha256').update(bytes).digest('hex'), bytes, MANAGER],
+    );
+    await q(`INSERT INTO pdflog (kind,ref_id,file_url,rep_id) VALUES ('report_png',$1,$2,$3)`,
+      [first.body.item.id, `/files/${local.id}`, rep1]);
+    const history = await request(app.getHttpServer()).get('/reports/deliveries/history').set(auth(managerToken)).expect(200);
+    const item = history.body.items.find((row: { id: number }) => row.id === first.body.item.id);
+    expect(item.downloadFiles).toEqual([expect.objectContaining({
+      id: Number(local.id), kind: 'report-png', name: `report-delivery-${RUN}-local.png`, mime: 'image/png', url: `/files/${local.id}`,
+    })]);
   });
 
   /**

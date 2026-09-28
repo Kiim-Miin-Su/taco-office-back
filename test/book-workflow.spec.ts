@@ -4,11 +4,11 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { issueTransitionIssue, packTransitionIssue, progressIssue, progressPercent } from '../src/lib/book';
+import { isIssueActive, isIssueTerminal, issueActiveSql, issueTransitionIssue, packTransitionIssue, progressIssue, progressPercent } from '../src/lib/book';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import {
-  BookHistoryQueryDto, BookIssueCreateDto, BookIssueReturnDto, BookPackPatchDto,
+  BookHistoryQueryDto, BookIssueCreateDto, BookIssueReturnDto, BookIssueTransitionDto, BookPackPatchDto,
   BookPackWriteDto, BookPatchDto, BookVersionCreateDto, BookWriteDto,
 } from '../src/modules/books/books.dto';
 
@@ -28,12 +28,34 @@ describe('교재 진도 단일 판정', () => {
 });
 
 describe('교재 배부 자동 전이', () => {
-  it('wait→auto→ok 한 방향만 허용한다', () => {
+  it('wait→auto→ok 한 방향과 wait/auto의 명시적 종료만 허용한다', () => {
     expect(issueTransitionIssue('wait', 'auto')).toBeNull();
     expect(issueTransitionIssue('auto', 'ok')).toBeNull();
     expect(issueTransitionIssue('wait', 'ok')).toContain('바꿀 수 없습니다');
     expect(issueTransitionIssue('ok', 'auto')).toContain('바꿀 수 없습니다');
     expect(issueTransitionIssue('returned', 'ok')).toContain('바꿀 수 없습니다');
+    expect(issueTransitionIssue('wait', 'rejected')).toBeNull();
+    expect(issueTransitionIssue('auto', 'canceled')).toBeNull();
+    expect(issueTransitionIssue('ok', 'canceled')).toContain('바꿀 수 없습니다');
+    expect(issueTransitionIssue('canceled', 'auto')).toContain('바꿀 수 없습니다');
+  });
+
+  it('활성·종료 판정과 SQL은 같은 세 상태를 쓴다', () => {
+    expect(['wait', 'auto', 'ok', 'returned', 'canceled', 'rejected'].map((state) => isIssueActive(state)))
+      .toEqual([true, true, true, false, false, false]);
+    expect(['wait', 'auto', 'ok', 'returned', 'canceled', 'rejected'].map((state) => isIssueTerminal(state)))
+      .toEqual([false, false, false, true, true, true]);
+    expect(issueActiveSql('i')).toBe("i.state IN ('wait','auto','ok')");
+    expect(() => issueActiveSql('i;drop')).toThrow('Invalid ISSUE SQL alias');
+  });
+});
+
+describe('교재 배부 종료 입력', () => {
+  it.each(['canceled', 'rejected'] as const)('%s은 빈 사유를 거절하고 trim한다', async (state) => {
+    expect(await validate(plainToInstance(BookIssueTransitionDto, { state, reason: '  ' }))).not.toHaveLength(0);
+    const dto = plainToInstance(BookIssueTransitionDto, { state, reason: '  사유  ' });
+    expect(await validate(dto)).toHaveLength(0);
+    expect(dto.reason).toBe('사유');
   });
 });
 

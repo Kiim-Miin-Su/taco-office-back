@@ -74,7 +74,7 @@ export class BooksController {
 
   @Patch('issues/:id/state')
   @Perm('canCrudAll')
-  @ApiOperation({ summary: '교재 배부 상태 전이 — 승인 대기→전달 대기→배부 완료 (§38)' })
+  @ApiOperation({ summary: '교재 배부 상태 전이 — 승인·전달 전이 또는 사유가 남는 취소·반려 (§38)' })
   @ApiOkResponse({ type: BookIssueDto })
   @ApiConflictResponse({ description: 'ISSUE_INVALID_TRANSITION' })
   async issueState(
@@ -82,7 +82,7 @@ export class BooksController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: BookIssueTransitionDto,
   ): Promise<BookIssueDto> {
-    return this.svc.transitionIssue(user.id, id, dto.state);
+    return this.svc.transitionIssue(user.id, id, dto.state, dto.reason);
   }
 
   @Patch('issues/:id/progress')
