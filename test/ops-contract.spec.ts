@@ -303,13 +303,16 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       // §67 컴플레인 접수·처리 · 강사 교체 미리보기·실제 (C93 · J-96 · J-97). 검색 GET·query 계약은 그대로 0이다
       '/ops/complaints', '/ops/complaints/{id}', '/ops/teacher-change/preview', '/ops/teacher-change',
       // §60 대표 피드백 — 코멘트·답변·답 고치기 (C53). 검색 GET·query 계약은 그대로 0이다.
-      // §59 「+ 오늘 한 것」 (x5 · 59-3) — 쓰기 경로다. 검색 GET·query 계약은 여전히 0이다
-      '/ops/marketing',
+      // §59 「+ 오늘 한 것」·활동 수정 (x5 · 59-3) — 쓰기 경로다. 검색 GET·query 계약은 여전히 0이다
+      '/ops/marketing', '/ops/marketing/{id}',
       '/ops/marketing/{id}/comments', '/ops/marketing/{id}/replies', '/ops/marketing/feedback/{id}',
-      // §65 기획 보고서 — 상세·본문 고치기·단계 이동·기한 결재·최종 결재 (C56 · S6)
+      // §65 기획 보고서 — 상세·본문/담당 고치기·단계 이동·기한 결재·최종 결재 (C56 · S6)
       // 늘어난 둘은 **결재까지 가는 길**이지 검색이 아니다 — stage='review' 로 가는 길이 없어
       // §69 「결재 대기」 배지가 구조적으로 0 이었고, research 를 쓰는 API 도 없었다 (전수 검수 §5).
-      '/ops/plans/{id}', '/ops/plans/{id}/stage', '/ops/plans/{id}/due', '/ops/plans/{id}/review',
+      '/ops/plans/{id}', '/ops/plans/{id}/owner',
+      // 관리자 건의 답변 — 기존 `/ops` 읽기 모델 한 줄을 갱신한다. 별도 검색 GET은 만들지 않는다.
+      '/ops/suggestions/{id}/reply',
+      '/ops/plans/{id}/stage', '/ops/plans/{id}/due', '/ops/plans/{id}/review',
       // §65 「+ 대표 지시」 (w5 · 65-4) — 과제(TODO) 한 줄을 쓰는 길이지 검색이 아니다
       '/ops/plans/{id}/tasks',
       // §66 회의 상세 — 상세·속기록·할 일 배정 (C57)
