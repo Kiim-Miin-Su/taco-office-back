@@ -38,7 +38,7 @@ export class TeacherChangeDto {
   @IsOptional() @IsArray() @ArrayMaxSize(100) @IsInt({ each: true }) @Min(1, { each: true }) @Max(ID_MAX, { each: true })
   serIds?: number[];
 
-  @ApiPropertyOptional({ description: '이 학생의 수업만 (컴플레인에서 온 교체 · J-97) — 컴플레인에 학생이 있으면 기본값' })
+  @ApiPropertyOptional({ description: '이 학생의 수업만 (컴플레인에서 온 교체 · J-97) — 컴플레인에 학생이 있으면 그 학생으로 **고정**되고, 다른 학생을 함께 보내면 400 CPL_STUDENT_MISMATCH (CR-BE-02)' })
   @IsOptional() @IsInt() @Min(1) @Max(ID_MAX) studentId?: number;
 
   @ApiPropertyOptional({ description: '컴플레인 — 있으면 `cpl.teacher_changed` 를 세우고 접수 건은 대응으로 옮긴다' })

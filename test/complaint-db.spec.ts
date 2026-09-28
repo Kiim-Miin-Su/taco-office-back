@@ -348,4 +348,38 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM pnoti WHERE ser_id = $1`, [s6]))[0]!.n).toBe(0);
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM exc WHERE ser_id = $1`, [s6]))[0]!.n).toBe(1); // 옮긴 예외 하나만
   });
+
+  /* ── ⑤ CR-BE-02 — 컴플레인의 학생과 교체 대상 학생은 하나다 ─────────────── */
+  it('CR-BE-02: 학생 A 의 cplId 와 학생 B 의 studentId 를 함께 보내면 400 이고 수업·컴플레인·LOG·NOTI 가 모두 그대로다 — 같은 학생이면 그대로 성공한다', async () => {
+    const TUE = firstDow(plus(MON2, 7), 2);
+    const s7 = await makeSeries('WEEKLY:TU', 780, T_A, [STU1, STU2], '교체 S7 (컴플레인 결속)');
+    const cpl = (await api('post', '/ops/complaints').send({ area: 'teacher', studentId: STU1, body: '교체 시험 — A 학생의 컴플레인' }).expect(201)).body;
+    cplIds.push(cpl.id);
+    const snapshot = async () => ({
+      sers: (await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser WHERE teacher_id = ANY($1)`, [[T_A, T_B]]))[0]!.n,
+      exc: (await q<{ n: number }>(`SELECT count(*)::int AS n FROM exc WHERE ser_id = $1`, [s7]))[0]!.n,
+      teacherB: (await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser_occ WHERE ser_id = $1 AND teacher_id = $2`, [s7, T_B]))[0]!.n,
+      cpl: (await q<{ stage: string; t: boolean; owner_id: string | null }>(`SELECT stage, teacher_changed AS t, owner_id FROM cpl WHERE id = $1`, [cpl.id]))[0],
+      logs: (await q<{ n: number }>(`SELECT count(*)::int AS n FROM log WHERE actor_id = $1 AND action = 'teacher-change'`, [CEO]))[0]!.n,
+      notis: (await q<{ n: number }>(`SELECT count(*)::int AS n FROM noti WHERE from_id = $1`, [CEO]))[0]!.n,
+      guides: (await q<{ n: number }>(`SELECT count(*)::int AS n FROM guide WHERE ser_id = $1`, [s7]))[0]!.n,
+      pnoti: (await q<{ n: number }>(`SELECT count(*)::int AS n FROM pnoti WHERE ser_id = $1`, [s7]))[0]!.n,
+    });
+    const before = await snapshot();
+    expect(before.cpl).toEqual({ stage: 'received', t: false, owner_id: null });
+
+    // 불일치 — A 의 컴플레인 + B 의 학생: 미리보기도 실제도 400, 어느 표도 바뀌지 않는다
+    for (const path of ['/ops/teacher-change/preview', '/ops/teacher-change']) {
+      const res = await api('post', path).send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: TUE, serIds: [s7], cplId: cpl.id, studentId: STU2 }).expect(400);
+      expect(res.body.code).toBe('CPL_STUDENT_MISMATCH');
+    }
+    expect(await snapshot()).toEqual(before);
+
+    // 일치 — 같은 학생을 함께 보내면 그대로 성공한다(컴플레인의 학생으로 고정)
+    const r = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: TUE, serIds: [s7], cplId: cpl.id, studentId: STU1 }).expect(201)).body;
+    expect(r.series.map((s: { serId: number }) => s.serId)).toEqual([s7]);
+    serIds.push(Number(r.series[0].newSerId));
+    expect(r.cpl).toMatchObject({ id: cpl.id, stage: 'acting', teacherChanged: true });
+    expect((await q<{ stage: string; t: boolean }>(`SELECT stage, teacher_changed AS t FROM cpl WHERE id = $1`, [cpl.id]))[0]).toEqual({ stage: 'acting', t: true });
+  });
 });

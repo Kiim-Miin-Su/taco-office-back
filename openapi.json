@@ -9254,7 +9254,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "SAME_TEACHER | STAFF_INACTIVE | NOTHING_TO_CHANGE | CPL_STUDENT_MISMATCH(컴플레인의 학생과 studentId 가 다르다 — 쓰기 전에 거절 · CR-BE-02)",
             "content": {
               "application/json": {
                 "schema": {
@@ -9333,7 +9333,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "SAME_TEACHER | STAFF_INACTIVE | NOTHING_TO_CHANGE | CPL_STUDENT_MISMATCH(컴플레인의 학생과 studentId 가 다르다 — 어느 쓰기도 하기 전에 원자적으로 거절 · CR-BE-02)",
             "content": {
               "application/json": {
                 "schema": {
@@ -32559,7 +32559,7 @@
           },
           "studentId": {
             "type": "number",
-            "description": "이 학생의 수업만 (컴플레인에서 온 교체 · J-97) — 컴플레인에 학생이 있으면 기본값"
+            "description": "이 학생의 수업만 (컴플레인에서 온 교체 · J-97) — 컴플레인에 학생이 있으면 그 학생으로 **고정**되고, 다른 학생을 함께 보내면 400 CPL_STUDENT_MISMATCH (CR-BE-02)"
           },
           "cplId": {
             "type": "number",

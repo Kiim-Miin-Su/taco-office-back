@@ -237,6 +237,7 @@ export class OpsController {
     description: '같은 트랜잭션을 끝까지 돌리고 되돌린다 — 겹침(409)·불가 시간·옮겨 갈 회차·정산 달이 실제와 같다. 화면이 짓지 않는다 (D-R37).',
   })
   @ApiCreatedResponse({ type: TeacherChangeResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'SAME_TEACHER | STAFF_INACTIVE | NOTHING_TO_CHANGE | CPL_STUDENT_MISMATCH(컴플레인의 학생과 studentId 가 다르다 — 쓰기 전에 거절 · CR-BE-02)' })
   @ApiConflictResponse({ description: '시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED' })
   @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND | CPL_NOT_FOUND' })
   teacherChangePreview(@CurrentUser() user: RequestUser, @Body() dto: TeacherChangeDto): Promise<TeacherChangeResultDto> {
@@ -251,6 +252,7 @@ export class OpsController {
       + '→ 교재 확인(읽기) → 정산 시수(회차가 옮겨 가므로 시트가 따라온다 · 확정된 달은 알린다) → 새 강사·원래 강사·관리자 알림 → 컴플레인이면 teacher_changed + 대응. 겹치면 전부 되돌린다.',
   })
   @ApiCreatedResponse({ type: TeacherChangeResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'SAME_TEACHER | STAFF_INACTIVE | NOTHING_TO_CHANGE | CPL_STUDENT_MISMATCH(컴플레인의 학생과 studentId 가 다르다 — 어느 쓰기도 하기 전에 원자적으로 거절 · CR-BE-02)' })
   @ApiConflictResponse({ description: '시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED' })
   @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND | CPL_NOT_FOUND' })
   teacherChange(@CurrentUser() user: RequestUser, @Body() dto: TeacherChangeDto): Promise<TeacherChangeResultDto> {

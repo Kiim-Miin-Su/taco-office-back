@@ -20,6 +20,8 @@
  *   CR-BE-01 · 학생 명단은 규칙 날짜(`on_date`)로, 교재 대상은 옮긴 달력 날짜(`lower(o.span)`)로 세고 있었다. 명단 경계일을 넘어 옮긴
  *     EXC 회차에서 화면의 학생과 교재의 학생이 갈렸다. 이제 명단·학부모 안내·교재가 **같은 실효 명단 기준일 하나**(`rosterDate` — 규칙 날짜)를 쓴다.
  *     기준을 규칙 날짜로 둔 근거: 투영(schedule.project)·수업 상세·청구(invoice-lines)·정산(payout-sheet)·안내 초안이 전부 `serStuOn(ss, o.on_date)` 다.
+ *   CR-BE-02 · 학생 A 의 `cplId` 와 학생 B 의 `studentId` 를 함께 보내면 B 의 수업을 바꾸면서 A 의 컴플레인을 완료 처리할 수 있었다.
+ *     컴플레인에 학생이 있으면 대상은 **그 학생으로 고정**하고, 다른 학생을 함께 보낸 요청은 어느 쓰기도 하기 전에 400 `CPL_STUDENT_MISMATCH` 로 거절한다.
  */
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
@@ -78,14 +80,22 @@ export class TeacherChangeService {
     const to = await this.staff(m, dto.toTeacherId);
     if (!to.active) throw new BadRequestException({ code: 'STAFF_INACTIVE', message: `${to.name} 은(는) 활동 중이 아닙니다 — 그만둔 사람에게 수업을 줄 수 없습니다` });
 
-    /* ── 컴플레인 — 있으면 잠그고, 학생이 있으면 그 학생의 수업으로 좁힌다 (J-97) ── */
+    /* ── 컴플레인 — 있으면 잠그고, 학생이 있으면 그 학생의 수업으로 **고정**한다 (J-97 · CR-BE-02) ── */
     let cplRow: { id: number; stage: string; studentId: number | null } | null = null;
     if (dto.cplId) {
       const [c] = (await m.query(`SELECT id, stage, student_id FROM cpl WHERE id = $1 FOR UPDATE`, [dto.cplId])) as Array<{ id: string; stage: string; student_id: string | null }>;
       if (!c) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
       cplRow = { id: Number(c.id), stage: c.stage, studentId: c.student_id == null ? null : Number(c.student_id) };
+      // 학생 A 의 컴플레인에 학생 B 를 실어 보내면 B 의 수업을 바꾸며 A 의 컴플레인이 완료된다 — 어느 쓰기도 하기 전에 거절한다 (CR-BE-02)
+      if (cplRow.studentId != null && dto.studentId != null && dto.studentId !== cplRow.studentId) {
+        throw new BadRequestException({
+          code: 'CPL_STUDENT_MISMATCH',
+          message: `컴플레인 #${cplRow.id} 의 학생과 요청의 학생이 다릅니다 — 컴플레인에서 온 교체는 그 컴플레인의 학생 수업만 바꿉니다`,
+        });
+      }
     }
-    const studentId = dto.studentId ?? cplRow?.studentId ?? null;
+    // 컴플레인의 학생이 있으면 그 학생이 대상이다(요청의 studentId 는 같은 값일 때만 통과했다) · 없으면 요청이 좁힌 학생 · 둘 다 없으면 전부
+    const studentId = cplRow?.studentId ?? dto.studentId ?? null;
 
     /* ── ① 대상 — 그날(day) 또는 그 날부터(from)의 원래 강사 회차 ── */
     const targets = await this.targets(m, dto, from.id, studentId);
