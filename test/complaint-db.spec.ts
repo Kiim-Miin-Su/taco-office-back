@@ -311,4 +311,41 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(r.payout).toEqual([{ month, occurrences: 1, fromConfirmed: false, toConfirmed: false }]);
     expect(r.steps[0].note).toContain('이날만 대강');
   });
+
+  /* ── ④ CR-BE-01 — 옮긴 회차의 명단과 교재는 같은 기준일이다 ─────────────── */
+  it('CR-BE-01: 명단 경계를 넘어 옮긴 EXC 회차에서도 series.students 와 books 의 학생 집합이 같다 — 옮기지 않은 회차의 기존 동작은 그대로다', async () => {
+    const MON3 = plus(MON2, 7);
+    const MON4 = plus(MON3, 7);
+    const WED3 = plus(MON3, 2); // 옮겨 갈 날 — 명단 경계(MON3) 뒤
+    const s6 = await makeSeries('WEEKLY:MO', 780, T_A, [STU1, STU2], '교체 S6 (옮긴 회차)');
+    // STU2 의 명단은 규칙 날짜 MON3 까지만 유효하다 — 옮긴 달력 날짜(WED3)에는 없다
+    await q(`UPDATE ser_stu SET to_date = $3::date WHERE ser_id = $1 AND student_id = $2`, [s6, STU2, MON3]);
+    // 두 학생 모두 배부 교재가 있다 — 교재 대상이 명단과 갈리면 여기서 보인다
+    const [lib] = await q<{ id: string }>(`SELECT id FROM lib WHERE code = $1`, [BOOK_CODE]);
+    await q(`INSERT INTO issue (lib_id, student_id, issued_on, state) VALUES ($1, $2, $3::date, 'ok')`, [lib.id, STU2, START]);
+    // MON3 회차를 WED3 으로 옮긴다 — 규칙 날짜(EXC 키)는 MON3 그대로, 달력 날짜만 WED3
+    await api('patch', `/schedule/${s6}`).send({ scope: 'this', onDate: MON3, date: WED3 }).expect(200);
+    const [moved] = await q<{ on_date: string; cal: string }>(
+      `SELECT to_char(on_date,'YYYY-MM-DD') AS on_date, to_char((lower(span) AT TIME ZONE 'Asia/Seoul')::date,'YYYY-MM-DD') AS cal FROM ser_occ WHERE ser_id = $1 AND on_date = $2::date`, [s6, MON3]);
+    expect(moved).toEqual({ on_date: MON3, cal: WED3 });
+
+    // 그날(WED3)의 대강 미리보기 — 옮긴 회차 하나가 대상이다
+    const pre = (await api('post', '/ops/teacher-change/preview').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'day', date: WED3, serIds: [s6] }).expect(201)).body;
+    expect(pre.series).toHaveLength(1);
+    expect(pre.series[0]).toMatchObject({ serId: s6, firstOn: WED3, students: ['교체학생1', '교체학생2'] });
+    // 명단(규칙 날짜 기준)과 교재 대상의 학생 집합이 같다 — 전에는 교재만 달력 날짜(WED3)로 세어 교체학생2 가 빠졌다
+    const bookStudents = [...new Set(pre.books.map((b: { studentName: string }) => b.studentName))].sort();
+    expect(bookStudents).toEqual([...pre.series[0].students].sort());
+    expect(pre.books.map((b: { studentId: number }) => b.studentId).sort()).toEqual([STU1, STU2].sort());
+    // 학부모 안내도 같은 명단이다(미리보기라 되돌아가지만 수는 센다)
+    expect(pre.parentNotices).toBe(2);
+
+    // 옮기지 않은 다음 회차(MON4) — STU2 의 명단은 끝났으니 학생도 교재도 교체학생1 하나다
+    const plain = (await api('post', '/ops/teacher-change/preview').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'day', date: MON4, serIds: [s6] }).expect(201)).body;
+    expect(plain.series[0]).toMatchObject({ serId: s6, firstOn: MON4, students: ['교체학생1'] });
+    expect(plain.books.map((b: { studentId: number }) => b.studentId)).toEqual([STU1]);
+    // 미리보기는 쓰기 0
+    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM pnoti WHERE ser_id = $1`, [s6]))[0]!.n).toBe(0);
+    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM exc WHERE ser_id = $1`, [s6]))[0]!.n).toBe(1); // 옮긴 예외 하나만
+  });
 });

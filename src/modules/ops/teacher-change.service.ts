@@ -15,6 +15,11 @@
  *   ⑤ 정산 시수 — 회차가 새 강사로 갔으니 `lib/payout-sheet` 가 저절로 따라온다 · 달마다 세어 주고 이미 확정된 달(N-51)은 그렇다고 말한다
  *   ⑥ 선생님 전달 — 새 강사 · 원래 강사(활성이면) · 관리자 NOTI
  * + 컴플레인이 있으면 `cpl.teacher_changed` 와 단계(접수 → 대응) · LOG. 미리보기는 같은 트랜잭션을 끝까지 돌리고 되돌린다(D-R37).
+ *
+ * **코드 리뷰 2026-09-28 (TBO-54)** —
+ *   CR-BE-01 · 학생 명단은 규칙 날짜(`on_date`)로, 교재 대상은 옮긴 달력 날짜(`lower(o.span)`)로 세고 있었다. 명단 경계일을 넘어 옮긴
+ *     EXC 회차에서 화면의 학생과 교재의 학생이 갈렸다. 이제 명단·학부모 안내·교재가 **같은 실효 명단 기준일 하나**(`rosterDate` — 규칙 날짜)를 쓴다.
+ *     기준을 규칙 날짜로 둔 근거: 투영(schedule.project)·수업 상세·청구(invoice-lines)·정산(payout-sheet)·안내 초안이 전부 `serStuOn(ss, o.on_date)` 다.
  */
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
@@ -92,6 +97,8 @@ export class TeacherChangeService {
     }
     const unavailable: UnavWarnDto[] = [];
     const series: TcSeriesDto[] = [];
+    /** 규칙마다 실제로 살아 있는 규칙(from 이면 갈라진 새 규칙)과 **명단 기준일 하나** — 명단·학부모 안내·교재가 전부 이것을 본다 (CR-BE-01) */
+    const live: Array<{ liveId: number; rosterDate: string }> = [];
     const touchedAll: number[] = [];
     for (const t of targets) {
       let written;
@@ -117,10 +124,12 @@ export class TeacherChangeService {
       unavailable.push(...written.unavailable);
       const newSerId = written.serIds.find((id) => id !== t.serId) ?? null;
       const liveId = newSerId ?? t.serId;
+      const rosterDate = this.rosterDate(t);
+      live.push({ liveId, rosterDate });
       touchedAll.push(...written.serIds);
       const students = (await m.query(
         `SELECT st.name FROM ser_stu ss JOIN stu st ON st.id = ss.student_id WHERE ss.ser_id = $1 AND ${serStuOn('ss', '$2::date')} ORDER BY st.name`,
-        [liveId, t.onDate],
+        [liveId, rosterDate],
       )) as Array<{ name: string }>;
       const [cnt] = (await m.query(
         `SELECT count(*)::int AS n FROM ser_occ o JOIN ser s ON s.id = o.ser_id
@@ -142,8 +151,8 @@ export class TeacherChangeService {
 
     /* ── ③ 학부모 안내 (PNOTI parent) — 첫 바뀐 회차에 학생마다 한 줄 · 발송처는 아직 없다 (N-42) ── */
     let parentNotices = 0;
-    for (const s of series) {
-      const liveId = s.newSerId ?? s.serId;
+    for (const [i, s] of series.entries()) {
+      const { liveId, rosterDate } = live[i]!;
       const label = s.subName ?? (s.title || s.kindName);
       const body = dto.mode === 'day'
         ? `강사 대강 안내 — ${md(s.firstOn)} ${label} 수업은 ${to.name} 선생님이 대신 진행합니다${dto.memo ? ` · ${dto.memo.trim()}` : ''}`
@@ -154,15 +163,16 @@ export class TeacherChangeService {
            FROM ser_stu ss WHERE ss.ser_id = $1 AND ${serStuOn('ss', '$2::date')}
             AND NOT EXISTS (SELECT 1 FROM pnoti p WHERE p.ser_id = $1 AND p.on_date = $2::date AND p.student_id = ss.student_id AND p.audience = 'parent' AND p.body = $3)
          RETURNING id`,
-        [liveId, await this.ruleDate(m, liveId, s.firstOn), body],
+        [liveId, rosterDate, body],
       )) as Array<{ id: string }>;
       parentNotices += rows.length;
     }
 
     /* ── ④ 교재 확인 — 이관 학생의 배부 교재 (읽기) ── */
-    // 규칙에 한 번이라도 속했던 모든 학생이 아니라 **교체가 시작되는 날의 실제 명단**만 교재 대상이다.
+    // 규칙에 한 번이라도 속했던 모든 학생이 아니라 **교체가 시작되는 회차의 실제 명단**만 교재 대상이다 — 그 명단은 ①의 `students` 와
+    // 같은 기준일(`rosterDate` · 규칙 날짜)로 센다. 옮긴 달력 날짜로 세면 명단 경계를 넘어 옮긴 회차에서 두 집합이 갈린다 (CR-BE-01).
     // ID 네 개를 함께 내려 화면·후속 쓰기가 이름으로 강사/학생/교재를 재추정하지 않게 한다.
-    const bookTargets = series.map((s) => ({ ser_id: s.newSerId ?? s.serId, on_date: s.firstOn }));
+    const bookTargets = live.map((l) => ({ ser_id: l.liveId, on_date: l.rosterDate }));
     const books = (await m.query(
       `WITH target AS (
          SELECT x.ser_id, x.on_date
@@ -274,14 +284,15 @@ export class TeacherChangeService {
     return { id: Number(st.id), name: st.name, active: Boolean(st.active) };
   }
 
-  /** 규칙 날짜(EXC 키) — 달력 날짜로 첫 바뀐 회차를 찾았으니 그 회차의 on_date 를 되짚는다 */
-  private async ruleDate(m: EntityManager, serId: number, calDate: string): Promise<string> {
-    const [r] = (await m.query(
-      `SELECT to_char(o.on_date,'YYYY-MM-DD') AS on_date FROM ser_occ o WHERE o.ser_id = $1 AND ${kstDateOf('lower(o.span)')} = $2::date ORDER BY o.id LIMIT 1`,
-      [serId, calDate],
-    )) as Array<{ on_date: string }>;
-    return r?.on_date ?? calDate;
-  }
+  /**
+   * 실효 회차의 **명단 기준일** — 이 서비스의 학생 명단 · 학부모 안내(PNOTI 키) · 교재 대상이 전부 이 값 하나를 쓴다 (CR-BE-01).
+   *
+   * 값은 **규칙 날짜**(`ser_occ.on_date` = EXC 키)다. 옮긴 회차(달력 날짜 ≠ 규칙 날짜)도 명단은 옮기기 전 그 회차의 날로 판정한다 —
+   * 투영(`schedule.project`)·수업 상세·청구(`invoice-lines`)·정산(`payout-sheet`)·안내 초안(`draftsForTeacherChange`)이 전부
+   * `serStuOn(ss, o.on_date)` 이고, 이 서비스만 교재를 달력 날짜(`lower(o.span)`)로 세어 명단 경계를 넘어 옮긴 회차에서 두 집합이 갈렸다.
+   * 달력 날짜(`calDate`)는 사람에게 보이는 「첫 바뀐 회차 날짜」(`firstOn`)로만 쓴다.
+   */
+  private rosterDate(t: Pick<Target, 'onDate'>): string { return t.onDate; }
 
   /** 대상 회차 — day: 그날의 회차 하나씩 · from: 규칙마다 그 날 이후 첫 회차 (patch 의 onDate = 규칙 날짜) */
   private async targets(m: EntityManager, dto: TeacherChangeDto, fromId: number, studentId: number | null): Promise<Target[]> {
