@@ -43,6 +43,7 @@ import {
 import { leadCareJson } from './lead-care';
 import { writtenRows } from '../../lib/sql';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
+import { lockActiveStaff } from '../../lib/staff-lock';
 import { LEAD_DIAG_LATEST_JOIN, leadDiagFromRow } from './lead-diag.service';
 import { LEAD_APPTS_JSON, LEAD_PLAN_JSON, leadApptsFromRow, leadPlanFromRow } from './lead-plan.service';
 import { INV_OPEN } from '../../lib/rules';
@@ -446,7 +447,8 @@ export class OpsService {
     const url = dto.url?.trim() ? dto.url.trim() : null;
     const memo = dto.memo?.trim() ? dto.memo.trim() : null;
     const id = await this.lead.manager.transaction(async (em) => {
-      const [by] = (await em.query(`SELECT id FROM staff WHERE id = $1 AND active`, [byId])) as R[];
+      // 담당은 같은 트랜잭션에서 잠가 읽는다 — 확인과 저장 사이에 「사용 중지」가 커밋되지 않게 (CR-BE-04 · lib/staff-lock)
+      const by = await lockActiveStaff(em, byId);
       if (!by) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
       const [row] = (await em.query(
         `INSERT INTO mkt (channel, item, url, on_date, title, by_id, memo) VALUES ($1, $2, $3, $4::date, $5, $6, $7) RETURNING id`,
@@ -480,7 +482,8 @@ export class OpsService {
       )) as R[];
       if (!cur) throw new NotFoundException({ code: 'MKT_NOT_FOUND', message: '마케팅 활동을 찾을 수 없습니다' });
       if (dto.byId != null) {
-        const [by] = (await em.query(`SELECT id FROM staff WHERE id = $1 AND active`, [dto.byId])) as R[];
+        // 활동 중 확인은 잠금과 함께 — 비활성화 UPDATE 와 충돌하는 FOR SHARE (CR-BE-04)
+        const by = await lockActiveStaff(em, dto.byId);
         if (!by) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
       }
       const sets: string[] = [];
@@ -1457,11 +1460,9 @@ export class OpsService {
       if (!cur) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
       let owner: { id: number; name: string } | null = null;
       if (dto.ownerId != null) {
-        const [staff] = (await em.query(
-          `SELECT id, name FROM staff WHERE id=$1 AND active FOR KEY SHARE`, [dto.ownerId],
-        )) as Array<{ id: string; name: string }>;
-        if (!staff) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
-        owner = { id: Number(staff.id), name: staff.name };
+        // FOR KEY SHARE 는 active 만 고치는 비활성화 UPDATE 와 충돌하지 않았다 — 같은 한 함수(FOR SHARE)로 (CR-BE-04)
+        owner = await lockActiveStaff(em, dto.ownerId);
+        if (!owner) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
       }
       const before = {
         name: String(cur.name), school: (cur.school as string) ?? null, source: (cur.source as string) ?? null,
@@ -2195,9 +2196,8 @@ export class OpsService {
     }
     await this.lead.manager.transaction(async (em) => {
       const cur = await this.lockPlan(em, id, viewerId, canApprove);
-      const [next] = (await em.query(
-        `SELECT id, name FROM staff WHERE id = $1 AND active`, [dto.ownerId],
-      )) as Array<{ id: string; name: string }>;
+      // 기획 잠금 → 담당 잠금(FOR SHARE) 차례 — 비활성화가 먼저 잠갔으면 그 커밋을 기다린 뒤 최신 active 로 판정한다 (CR-BE-04)
+      const next = await lockActiveStaff(em, dto.ownerId);
       if (!next) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
       const beforeId = leadId(cur.owner_id, true);
       if (beforeId === dto.ownerId) return;
