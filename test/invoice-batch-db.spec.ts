@@ -56,14 +56,10 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86400e3).toISOString().slice(0, 10);
   const THIS = kst().slice(0, 7);
   const PREV = plus(`${THIS}-01`, -1).slice(0, 7);
-  /** 이번 달 안에서 오늘 뒤 첫 월요일 — 이번 달에 회차가 서게 */
-  const nextMonInMonth = () => {
-    let d0 = plus(kst(), 1);
-    for (let i = 0; i < 7; i++) {
-      if (new Date(`${d0}T00:00:00Z`).getUTCDay() === 1) break;
-      d0 = plus(d0, 1);
-    }
-    return d0;
+  /** 월말에도 반드시 이번 달인 ONCE 회차 — 내일이 다음 달이면 오늘을 쓴다. */
+  const lessonDateInMonth = () => {
+    const tomorrow = plus(kst(), 1);
+    return tomorrow.startsWith(THIS) ? tomorrow : kst();
   };
 
   beforeAll(async () => {
@@ -143,7 +139,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
   /** 이번 달 ONCE 수업 — 시각을 갈라 겹침을 피한다 */
   async function lesson(studentIds: number[], sub: string, startMin: number) {
     const res = await api('post', '/schedule').send({
-      kindKey: KIND, subKey: sub, mode: 'offline', fromDate: nextMonInMonth(), rrule: 'ONCE',
+      kindKey: KIND, subKey: sub, mode: 'offline', fromDate: lessonDateInMonth(), rrule: 'ONCE',
       startMin, endMin: startMin + 60, teacherId: TEACHER, roomId: null, title: '발행 수업', studentIds,
     }).expect(201);
     made.push(res.body.serIds[0]);
