@@ -160,15 +160,33 @@ export class TeacherChangeService {
     }
 
     /* ── ④ 교재 확인 — 이관 학생의 배부 교재 (읽기) ── */
+    // 규칙에 한 번이라도 속했던 모든 학생이 아니라 **교체가 시작되는 날의 실제 명단**만 교재 대상이다.
+    // ID 네 개를 함께 내려 화면·후속 쓰기가 이름으로 강사/학생/교재를 재추정하지 않게 한다.
+    const bookTargets = series.map((s) => ({ ser_id: s.newSerId ?? s.serId, on_date: s.firstOn }));
     const books = (await m.query(
-      `SELECT DISTINCT st.name AS student_name, l.title, i.state
-         FROM issue i JOIN lib l ON l.id = i.lib_id JOIN stu st ON st.id = i.student_id
-        WHERE ${issueActiveSql('i')}
-          AND i.student_id IN (SELECT ss.student_id FROM ser_stu ss WHERE ss.ser_id = ANY($1))
-        ORDER BY st.name, l.title`,
-      [liveIds],
-    )) as Array<{ student_name: string; title: string; state: string }>;
-    const bookRows: TcBookDto[] = books.map((b) => ({ studentName: b.student_name, title: b.title, state: b.state }));
+      `WITH target AS (
+         SELECT x.ser_id, x.on_date
+           FROM jsonb_to_recordset($1::jsonb) AS x(ser_id bigint, on_date date)
+       )
+       SELECT DISTINCT $2::bigint AS teacher_id, $3::text AS teacher_name,
+              st.id AS student_id, st.name AS student_name,
+              i.id AS issue_id, l.id AS lib_id, l.title, i.state
+         FROM target t
+         JOIN ser_stu ss ON ss.ser_id = t.ser_id AND ${serStuOn('ss', 't.on_date')}
+         JOIN stu st ON st.id = ss.student_id
+         JOIN issue i ON i.student_id = st.id AND ${issueActiveSql('i')}
+         JOIN lib l ON l.id = i.lib_id
+        ORDER BY st.name, l.title, i.id`,
+      [JSON.stringify(bookTargets), to.id, to.name],
+    )) as Array<{
+      teacher_id: string; teacher_name: string; student_id: string; student_name: string;
+      issue_id: string; lib_id: string; title: string; state: string;
+    }>;
+    const bookRows: TcBookDto[] = books.map((b) => ({
+      teacherId: Number(b.teacher_id), teacherName: b.teacher_name,
+      studentId: Number(b.student_id), studentName: b.student_name,
+      issueId: Number(b.issue_id), libId: Number(b.lib_id), title: b.title, state: b.state,
+    }));
 
     /* ── ⑤ 정산 시수 — 달마다 옮겨 간 회차 · 확정된 달은 되돌리지 않는다 (N-51) ── */
     const months = (await m.query(

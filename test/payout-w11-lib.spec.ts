@@ -12,7 +12,7 @@
  */
 import {
   BONUS_D1_DEFAULTS, KINDER_MARKER_EXISTS, correctionTargetMonth, lessonBonus, nextMonth, payOf, payoutSettleLabel,
-  type BonusRuleRow,
+  payoutBreakdown, type BonusRuleRow, type PayoutLesson,
 } from '../src/lib/payout-sheet';
 import { ACCT_PRIVACY_KEYS, acctPrivacyAuditId, lineAmountVisible } from '../src/lib/acct-privacy';
 import { AUDIT_WRITES } from '../src/lib/audit';
@@ -58,6 +58,48 @@ describe('가산 한 함수 (N-93 · lib/payout-sheet.lessonBonus)', () => {
       { kind: 'kinder_hourly', kindKey: null, amount: 10000 },
       { kind: 'group_per_student', kindKey: null, amount: 5000 },
     ]);
+  });
+});
+
+describe('강사 히스토리 정산 종류별 근거 (N-93 · 강사 덱 29)', () => {
+  const paid = (over: Partial<PayoutLesson>): PayoutLesson => ({
+    serId: 1, onDate: '2026-09-15', startMin: 600, durMin: 60,
+    kindKey: 'class', subKey: null, mode: 'offline', title: null,
+    students: '김민준', studentCount: 1, repState: 'ok', canceled: false, submittedAt: '2026-09-15 12:00',
+    pay: 45000, lateCut: 0, penaltyIfNow: null, bonus: 0, bonusParts: [], unitRate: 45000,
+    settle: 'written', correctionOf: null, paidIn: null, frozen: false,
+    ...over,
+  });
+
+  it('기본 시급과 그룹·진단·모의 가산을 서버가 각각 합계한다 — 겹친 모의 그룹도 총액과 맞다', () => {
+    const out = payoutBreakdown([
+      paid({ serId: 10, durMin: 30, pay: 22500 }),
+      paid({
+        serId: 11, kindKey: 'mock', durMin: 60, pay: 45000, bonus: 25000,
+        bonusParts: [{ kind: 'per_session', amount: 15000 }, { kind: 'group_per_student', amount: 10000 }],
+      }),
+      paid({
+        serId: 12, kindKey: 'diagx', durMin: 90, pay: 67500, bonus: 15000,
+        bonusParts: [{ kind: 'per_session', amount: 15000 }],
+      }),
+    ]);
+    expect(out.map((r) => [r.key, r.lessonCount, r.minutes, r.amount])).toEqual([
+      ['general', 1, 30, 22500],
+      ['kinder', 0, 0, 0],
+      ['group', 1, 60, 10000],
+      ['diag', 1, 90, 82500],
+      ['mock', 1, 60, 60000],
+      ['other', 0, 0, 0],
+    ]);
+    expect(out.reduce((sum, row) => sum + row.amount, 0)).toBe(175000);
+  });
+
+  it('정산에 들지 않는 미작성·취소 회차는 breakdown에 섞지 않는다', () => {
+    const out = payoutBreakdown([
+      paid({ settle: 'unwritten', pay: null, bonus: null }),
+      paid({ settle: 'canceled', canceled: true, pay: null, bonus: null }),
+    ]);
+    expect(out.every((r) => r.lessonCount === 0 && r.minutes === 0 && r.amount === 0)).toBe(true);
   });
 });
 

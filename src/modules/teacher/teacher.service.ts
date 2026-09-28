@@ -14,7 +14,7 @@ import {
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import {
   BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL, KINDER_MARKER_EXISTS, KINDER_NOT_APPLIED,
-  loadBonusRules, payoutSettleLabel, payoutSheet,
+  loadBonusRules, payoutBreakdown, payoutSettleLabel, payoutSheet,
 } from '../../lib/payout-sheet';
 import { effectiveModeOf, kstAt, serStuOn } from '../../lib/sql';
 import { REQ_TYPE_LABEL, labelOf, reqAsked, reqAskedLine } from '../../lib/approval';
@@ -588,6 +588,15 @@ export class TeacherService {
       bonus: agg.bonus, correctionCount: agg.correctionCount, lateCount: agg.lateCount,
       note: noteParts.length ? noteParts.join(' · ') : null,
     };
+    const breakdown = payoutBreakdown(lessons);
+    const breakdownTotal = breakdown.reduce((sum, row) => sum + row.amount, 0);
+    const settlementGross = po ? Number(po.gross) : agg.gross;
+    const breakdownExtra = {
+      breakdown,
+      breakdownTotal,
+      // 예전 확정 행에 payout_line이 없거나 미확정 저장값이 현재 근거와 다르면 숨기지 않고 차이를 내려준다.
+      breakdownUnallocatedAmount: settlementGross - breakdownTotal,
+    };
     const settlement = po
       ? {
           yearMonth: ym, confirmed: confirmedMonth, saved: true,
@@ -596,7 +605,7 @@ export class TeacherService {
           incomeTax: Number(po.income_tax), localTax: Number(po.local_tax), net: Number(po.net),
           unwrittenCount: agg.unwrittenCount, unwrittenMinutes: agg.unwrittenMinutes, unwrittenAmount: agg.unwrittenAmount,
           remainingCount: agg.remainingCount, remainingMinutes: agg.remainingMinutes, remainingAmount: agg.remainingAmount,
-          ...extra,
+          ...extra, ...breakdownExtra,
         }
       : {
           yearMonth: ym, confirmed: false, saved: false,
@@ -605,7 +614,7 @@ export class TeacherService {
           incomeTax: sheet.incomeTax, localTax: sheet.localTax, net: sheet.net,
           unwrittenCount: agg.unwrittenCount, unwrittenMinutes: agg.unwrittenMinutes, unwrittenAmount: agg.unwrittenAmount,
           remainingCount: agg.remainingCount, remainingMinutes: agg.remainingMinutes, remainingAmount: agg.remainingAmount,
-          ...extra,
+          ...extra, ...breakdownExtra,
         };
 
     // 오늘 걸린 가산 규칙 — 대표 정리 · 기준 탭의 칸 그대로(같은 표 · 같은 적용일 셈)

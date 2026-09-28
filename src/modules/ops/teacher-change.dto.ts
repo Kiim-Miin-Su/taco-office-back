@@ -69,9 +69,14 @@ export class TcSeriesDto {
 }
 
 export class TcBookDto {
+  @ApiProperty({ description: '이 교재를 이어받을 새 강사 (STAFF)' }) teacherId!: number;
+  @ApiProperty() teacherName!: string;
+  @ApiProperty({ description: '교체 시작일에 실제 명단에 있는 학생 (STU)' }) studentId!: number;
   @ApiProperty() studentName!: string;
+  @ApiProperty({ description: '이어받을 배부 행 (ISSUE)' }) issueId!: number;
+  @ApiProperty({ description: '배부된 교재 (LIB)' }) libId!: number;
   @ApiProperty() title!: string;
-  @ApiProperty({ description: 'ISSUE 상태 — wait | ok' }) state!: string;
+  @ApiProperty({ description: 'ISSUE 활성 상태 — wait | auto | ok' }) state!: string;
 }
 
 export class TcPayoutMonthDto {

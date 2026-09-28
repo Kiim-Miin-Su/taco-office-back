@@ -172,6 +172,87 @@ export interface PayoutLesson {
   frozen: boolean;
 }
 
+/**
+ * 강사 히스토리의 정산 종류별 근거 — 화면이 총액에서 역산하지 않도록
+ * `payoutSheet` 회차의 기본 시급·가산 스냅숏을 서버가 합계한다. 기본 시급은 회차의 주된 종류
+ * (진단·모의, Kinder, 그룹, 그 밖의 일반)에 싣고, 겹쳐 붙은 가산은 그 가산 종류에 싣는다.
+ * 따라서 겹친 모의+그룹 회차도 빠뜨리거나 두 번 넣지 않으며 이 줄 합은 회차 근거의 gross와 같다.
+ */
+export const PAYOUT_BREAKDOWN_KEYS = ['general', 'kinder', 'group', 'diag', 'mock', 'other'] as const;
+export type PayoutBreakdownKey = (typeof PAYOUT_BREAKDOWN_KEYS)[number];
+export interface PayoutBreakdownLine {
+  key: PayoutBreakdownKey;
+  label: string;
+  lessonCount: number;
+  minutes: number;
+  amount: number;
+  note: string | null;
+}
+
+const BREAKDOWN_LABEL: Record<PayoutBreakdownKey, string> = {
+  general: '일반 수업',
+  kinder: 'Kinder 수업 가산',
+  group: '그룹 수업 가산',
+  diag: '진단고사 가산',
+  mock: '모의수업 가산',
+  other: '그 밖의 가산',
+};
+
+/** 일반·Kinder·그룹·진단·모의 종류별 합. 확정 회차는 `payout_line.bonus_detail` 스냅숏을 그대로 쓴다. */
+export function payoutBreakdown(lessons: readonly PayoutLesson[]): PayoutBreakdownLine[] {
+  const lines = new Map<PayoutBreakdownKey, PayoutBreakdownLine>(PAYOUT_BREAKDOWN_KEYS.map((key) => [key, {
+    key,
+    label: BREAKDOWN_LABEL[key],
+    lessonCount: 0,
+    minutes: 0,
+    amount: 0,
+    note: key === 'kinder' && !KINDER_MARKER_EXISTS ? KINDER_NOT_APPLIED : null,
+  }]));
+  for (const lesson of lessons) {
+    if ((lesson.settle !== 'written' && lesson.settle !== 'correction') || lesson.pay === null) continue;
+    const partKey = (part: BonusPart): PayoutBreakdownKey => part.kind === 'kinder_hourly'
+      ? 'kinder'
+      : part.kind === 'group_per_student'
+        ? 'group'
+        : lesson.kindKey === 'diagx'
+          ? 'diag'
+          : lesson.kindKey === 'mock'
+            ? 'mock'
+            : 'other';
+    // 기본 시급은 종류가 겹쳐도 한 줄에만 둔다. 진단·모의 종류가 먼저고, 그 밖은 실제 가산 표시를 따른다.
+    const primary: PayoutBreakdownKey = lesson.kindKey === 'diagx'
+      ? 'diag'
+      : lesson.kindKey === 'mock'
+        ? 'mock'
+        : lesson.bonusParts.some((part) => part.kind === 'kinder_hourly')
+          ? 'kinder'
+          : lesson.bonusParts.some((part) => part.kind === 'group_per_student')
+            ? 'group'
+            : 'general';
+    const main = lines.get(primary)!;
+    main.lessonCount += 1;
+    main.minutes += lesson.durMin;
+    main.amount += lesson.pay;
+
+    const counted = new Set<PayoutBreakdownKey>([primary]);
+    for (const part of lesson.bonusParts) {
+      const key = partKey(part);
+      const row = lines.get(key)!;
+      row.amount += part.amount;
+      if (!counted.has(key)) {
+        row.lessonCount += 1;
+        row.minutes += lesson.durMin;
+        counted.add(key);
+      }
+    }
+  }
+  return PAYOUT_BREAKDOWN_KEYS.map((key) => {
+    const row = lines.get(key)!;
+    if (key === 'kinder' && row.amount !== 0) row.note = null;
+    return row;
+  });
+}
+
 export interface PayoutAgg {
   doneCount: number; doneMinutes: number;
   writtenCount: number; writtenMinutes: number;

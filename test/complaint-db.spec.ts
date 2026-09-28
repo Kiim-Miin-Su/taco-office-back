@@ -26,6 +26,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { payoutSheet } from '../src/lib/payout-sheet';
 import { NOTI_TITLE } from '../src/lib/noti';
+import { serStuOn } from '../src/lib/sql';
 import { DEV_URL } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
@@ -43,8 +44,10 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   const ADMIN = 954; // 관리자 — 담당 · 대강 후보
   const STU1 = 9951;
   const STU2 = 9952;
+  const STU_OLD = 9953; // 교체 시작 전에 명단이 끝난 학생 — 교재 대상에 섞으면 안 된다
   const KIND = 'cp_kind';
   const SUB = 'cp-sub';
+  const BOOK_CODE = 'CP-TARGET-BOOK';
   const serIds: number[] = [];
   const cplIds: number[] = [];
 
@@ -92,7 +95,8 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
          ($4,'교체관리자','cp-adm@t.kr','admin',$5,true,null)`,
       [CEO, T_A, T_B, ADMIN, hash],
     );
-    await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'교체학생1','10','테스트고'), ($2,'교체학생2','11','테스트고')`, [STU1, STU2]);
+    await q(`INSERT INTO stu (id, name, grade, school) VALUES
+      ($1,'교체학생1','10','테스트고'), ($2,'교체학생2','11','테스트고'), ($3,'과거학생','9','테스트고')`, [STU1, STU2, STU_OLD]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'교체 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
     await q(`INSERT INTO sub (key,name,color) VALUES ($1,'교체 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
     const login = async (email: string) => {
@@ -106,7 +110,7 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   async function cleanup() {
     const sers = await q<{ id: string }>(
       `SELECT id FROM ser WHERE kind_key = $1 OR teacher_id = ANY($2) OR id IN (SELECT ser_id FROM ser_stu WHERE student_id = ANY($3))`,
-      [KIND, [T_A, T_B, ADMIN], [STU1, STU2]],
+      [KIND, [T_A, T_B, ADMIN], [STU1, STU2, STU_OLD]],
     );
     const ids = sers.map((s) => Number(s.id));
     if (ids.length) {
@@ -120,10 +124,12 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
       await q(`DELETE FROM ser_stu WHERE ser_id = ANY($1)`, [ids]);
       await q(`DELETE FROM ser WHERE id = ANY($1)`, [ids]);
     }
-    await q(`DELETE FROM guide WHERE student_id = ANY($1)`, [[STU1, STU2]]);
-    await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [[STU1, STU2]]);
-    await q(`DELETE FROM cpl WHERE student_id = ANY($1) OR owner_id = ANY($2) OR body LIKE '교체 시험%'`, [[STU1, STU2], [CEO, T_A, T_B, ADMIN]]);
-    await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU1, STU2]]);
+    await q(`DELETE FROM guide WHERE student_id = ANY($1)`, [[STU1, STU2, STU_OLD]]);
+    await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [[STU1, STU2, STU_OLD]]);
+    await q(`DELETE FROM cpl WHERE student_id = ANY($1) OR owner_id = ANY($2) OR body LIKE '교체 시험%'`, [[STU1, STU2, STU_OLD], [CEO, T_A, T_B, ADMIN]]);
+    await q(`DELETE FROM issue WHERE student_id = ANY($1) OR lib_id IN (SELECT id FROM lib WHERE code = $2)`, [[STU1, STU2, STU_OLD], BOOK_CODE]);
+    await q(`DELETE FROM lib WHERE code = $1`, [BOOK_CODE]);
+    await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU1, STU2, STU_OLD]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, T_A, T_B, ADMIN]]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, T_A, T_B, ADMIN]]);
     await q(`DELETE FROM sub WHERE key = $1`, [SUB]);
@@ -180,6 +186,11 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   it('컴플레인의 강사 교체는 그 학생의 규칙만 그 날부터 가른다 — 회차·리포트·안내 초안·학부모 안내·알림·cpl 도장이 한 트랜잭션 · 미리보기는 쓰기 0 · 퇴사는 나머지 전부 (J-97 · F-62 · D-46)', async () => {
     const s1 = await makeSeries('WEEKLY:MO,WE', 600, T_A, [STU1, STU2], '교체 S1');
     const s2 = await makeSeries('WEEKLY:FR', 600, T_A, [STU2], '교체 S2');
+    // 같은 규칙에 남아 있지만 교체 시작 전에 끝난 예전 명단. 기존 교재 질의는 날짜를 보지 않아 이 학생의 교재도 섞었다.
+    await q(`INSERT INTO ser_stu (ser_id, student_id, from_date, to_date) VALUES ($1, $2, $3::date, $4::date)`, [s1, STU_OLD, START, plus(MON2, -1)]);
+    const [lib] = await q<{ id: string }>(`INSERT INTO lib (code, title, sub_key, pages) VALUES ($1, '교체 대상 교재', $2, 120) RETURNING id`, [BOOK_CODE, SUB]);
+    const [targetIssue] = await q<{ id: string }>(`INSERT INTO issue (lib_id, student_id, issued_on, state) VALUES ($1, $2, $3::date, 'ok') RETURNING id`, [lib.id, STU1, START]);
+    await q(`INSERT INTO issue (lib_id, student_id, issued_on, state) VALUES ($1, $2, $3::date, 'ok')`, [lib.id, STU_OLD, START]);
     const cpl = (await api('post', '/ops/complaints').send({ area: 'teacher', studentId: STU1, body: '교체 시험 — 강사를 바꿔 주세요' }).expect(201)).body;
     cplIds.push(cpl.id);
 
@@ -195,6 +206,10 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(pre.series[0].newSerId).toBeGreaterThan(0);
     expect(pre.guideDrafts).toBe(2);
     expect(pre.parentNotices).toBe(2);
+    expect(pre.books).toEqual([{
+      teacherId: T_B, teacherName: '교체B', studentId: STU1, studentName: '교체학생1',
+      issueId: Number(targetIssue.id), libId: Number(lib.id), title: '교체 대상 교재', state: 'ok',
+    }]);
     expect(pre.steps.map((s: { key: string }) => s.key)).toEqual(['schedule', 'guide', 'parent', 'book', 'payout', 'notify']);
     expect(pre.cpl).toMatchObject({ id: cpl.id, stage: 'acting', teacherChanged: true });
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser WHERE id = ANY($1)`, [serIds]))[0]!.n).toBe(2);
@@ -213,7 +228,9 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     const [fresh] = await q<{ from_date: string; teacher_id: string }>(`SELECT to_char(from_date,'YYYY-MM-DD') AS from_date, teacher_id FROM ser WHERE id = $1`, [newId]);
     expect(fresh).toEqual({ from_date: MON2, teacher_id: String(T_B) });
     // 명단이 따라간다 · 첫 주(MON1)는 A 그대로, MON2 부터 B · 리포트(미작성)도 B
-    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser_stu WHERE ser_id = $1`, [newId]))[0]!.n).toBe(2);
+    // 기간이 끝난 명단은 감사 이력으로 복사되어도, 교체 시작일의 실제 대상은 두 명뿐이다.
+    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser_stu WHERE ser_id = $1`, [newId]))[0]!.n).toBe(3);
+    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser_stu ss WHERE ser_id = $1 AND ${serStuOn('ss', '$2::date')}`, [newId, MON2]))[0]!.n).toBe(2);
     expect((await q<{ t: string }>(`SELECT teacher_id AS t FROM ser_occ WHERE ser_id = $1 AND on_date = $2::date`, [s1, MON1]))[0]!.t).toBe(String(T_A));
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser_occ WHERE ser_id = $1 AND teacher_id = $2 AND NOT canceled`, [newId, T_B]))[0]!.n).toBe(r.occurrences);
     expect((await q<{ t: string }>(`SELECT teacher_id AS t FROM rep WHERE ser_id = $1 AND on_date = $2::date`, [newId, MON2]))[0]!.t).toBe(String(T_B));

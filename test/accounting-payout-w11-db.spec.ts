@@ -341,6 +341,11 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
     expect(det.lessons.reduce((n, x) => n + (x.pay ?? 0) + (x.bonus ?? 0), 0)).toBe(row.gross);
     const h = await history(M2);
     expect(h.settlement).toMatchObject({ bonus: 15000, gross: RATE + 15000 });
+    expect(h.settlement.breakdown.map((x: { key: string; amount: number }) => [x.key, x.amount])).toEqual([
+      ['general', RATE], ['kinder', 0], ['group', 0], ['diag', 0], ['mock', 0], ['other', 15000],
+    ]);
+    expect(h.settlement.breakdownTotal).toBe(h.settlement.gross);
+    expect(h.settlement.breakdownUnallocatedAmount).toBe(0);
     expect(h.lessons.find((x: { serId: number }) => x.serId === s)).toMatchObject({ bonus: 15000 });
 
     await confirm(M2, TEACHER).expect(201);
@@ -348,6 +353,10 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
     expect(line).toEqual({ bonus: 15000, bonus_detail: [{ kind: 'per_session', amount: 15000 }] });
     const [po] = await q<{ gross: number }>(`SELECT gross FROM payout WHERE staff_id = $1 AND year_month = $2`, [TEACHER, M2]);
     expect(po.gross).toBe(RATE + 15000);
+    // 확정 뒤에는 payout_line의 금액·bonus_detail 스냅숏으로 같은 종류별 합을 다시 읽는다.
+    const frozen = await history(M2);
+    expect(frozen.settlement.breakdownTotal).toBe(RATE + 15000);
+    expect(frozen.settlement.breakdownUnallocatedAmount).toBe(0);
   });
 
   /* ── ④ 회계 비공개 (N-94) ─────────────────────────────────────────────── */

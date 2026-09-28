@@ -8,6 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { REP_STATE_T_VALUES, SUG_CAT_T_VALUES, SUG_STATE_T_VALUES } from '../../entities/enums';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
+import { PAYOUT_BREAKDOWN_KEYS, type PayoutBreakdownKey } from '../../lib/payout-sheet';
 
 /** 강사가 올리는 요청 갈래 — 내 설정 둘(덱 §8) + 교재 변경 · GPA 회차 요청(N-99 · W11) */
 export const TEACHER_REQ_TYPES = ['wage_change', 'tz_change', 'book_change', 'gpa_request'] as const;
@@ -229,6 +230,16 @@ export class TeacherHistoryStatsDto {
   @ApiProperty() unwrittenMinutes!: number;
 }
 
+/** 정산 총액의 서버 근거 한 줄 — 기본 시급과 종류별 가산을 화면이 역산하지 않는다. */
+export class TeacherSettlementBreakdownDto {
+  @ApiProperty({ enum: PAYOUT_BREAKDOWN_KEYS }) key!: PayoutBreakdownKey;
+  @ApiProperty({ description: '사람이 읽는 줄 이름 — 낱말은 서버' }) label!: string;
+  @ApiProperty({ description: '이 성분이 든 인정 회차 수' }) lessonCount!: number;
+  @ApiProperty({ description: '이 성분이 든 인정 시수(분)' }) minutes!: number;
+  @ApiProperty({ description: '이 성분의 금액 합' }) amount!: number;
+  @ApiPropertyOptional({ ...S, description: '적용하지 못한 이유 · 없으면 null' }) note!: string | null;
+}
+
 /**
  * 월 정산 — 저장된 payout 행이 있으면 **그 값이 정본**이고, 없으면 실시간 계산이다
  * (D-R7 리포트 기준 시수 · D-R32 지각 차감 · D-15 원천징수).
@@ -260,6 +271,11 @@ export class TeacherSettlementDto {
   @ApiProperty({ description: '이 달에 보정으로 들어온 앞선 확정 달 회차 수 (N-51)' }) correctionCount!: number;
   @ApiProperty({ description: '이 달의 회차인데 확정 뒤에 써서 다음 달 보정으로 간 수 (N-51)' }) lateCount!: number;
   @ApiProperty({ ...S, description: '확정 · 보정 안내 한 문장(서버) — 「확정된 달 — 다음 달 보정」 등 · 없으면 null' }) note!: string | null;
+  @ApiProperty({ type: [TeacherSettlementBreakdownDto], description: '기본 시급·Kinder·그룹·진단·모의·기타 성분별 서버 합계' })
+  breakdown!: TeacherSettlementBreakdownDto[];
+  @ApiProperty({ description: 'breakdown 줄 금액의 합' }) breakdownTotal!: number;
+  @ApiProperty({ description: '저장 gross - breakdownTotal. 옛 확정 행처럼 종류별 근거가 없으면 0이 아닐 수 있다' })
+  breakdownUnallocatedAmount!: number;
 }
 
 /** 강사 화면의 가산 규칙 한 칸 — 강사 덱 §30 오른쪽 규칙 상자 (N-93 · 오늘 걸린 줄) */
