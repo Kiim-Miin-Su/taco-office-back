@@ -658,6 +658,12 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       .send(body).expect(201);
     expect(retried.body.item.id).toBe(first.body.item.id);
     expect(put).toHaveBeenCalledTimes(2);
+    // 같은 키여도 파일명/revision 검증을 건너뛰고 과거 201을 돌려주면 안 된다.
+    const changedFile = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+      .send({ ...body, files: body.files.map((file, index) => index === 0 ? { ...file, fileName: 'changed.png' } : file) })
+      .expect(400);
+    expect(changedFile.body.code).toBe('REPORT_DELIVERY_FILES_MISMATCH');
+    expect(put).toHaveBeenCalledTimes(2);
     const reused = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
       .send({ ...body, onDate: '2025-02-04' }).expect(409);
     expect(reused.body.code).toBe('REPORT_DELIVERY_REQUEST_KEY_REUSED');

@@ -132,6 +132,7 @@ interface RequestSendRow {
   student_id: string;
   on_date: string;
   rep_ids: unknown;
+  body: string;
   source_send_id: string | null;
 }
 
@@ -911,7 +912,7 @@ export class ReportsService {
 
   private async sendForRequest(q: Queryer, requestKey: string): Promise<RequestSendRow | null> {
     const rows = await q.query<RequestSendRow[]>(
-      `SELECT id, student_id, to_char(on_date, 'YYYY-MM-DD') AS on_date, rep_ids, source_send_id
+      `SELECT id, student_id, to_char(on_date, 'YYYY-MM-DD') AS on_date, rep_ids, body, source_send_id
          FROM rsend WHERE request_key=$1`,
       [requestKey],
     );
@@ -925,20 +926,31 @@ export class ReportsService {
     });
   }
 
-  private async idempotentDelivery(
-    q: Queryer, requestKey: string, studentId: number, onDate: string, repIds: number[],
-  ): Promise<ReportSendHistoryDto | null> {
-    const prior = await this.sendForRequest(q, requestKey);
-    if (!prior) return null;
-    const savedRepIds = Array.isArray(prior.rep_ids) ? prior.rep_ids.map(Number).sort((a, b) => a - b) : [];
-    const askedRepIds = [...repIds].sort((a, b) => a - b);
-    const sameRepIds = savedRepIds.length === askedRepIds.length
-      && savedRepIds.every((id, index) => id === askedRepIds[index]);
+  private assertDeliveryIdentity(
+    prior: RequestSendRow, studentId: number, onDate: string, repIds: number[],
+  ): void {
+    const savedRepIds = Array.isArray(prior.rep_ids) ? prior.rep_ids.map(Number) : [];
+    const sameRepIds = savedRepIds.length === repIds.length
+      && savedRepIds.every((id, index) => id === repIds[index]);
     if (
       Number(prior.student_id) !== studentId || prior.on_date !== onDate
       || prior.source_send_id !== null || !sameRepIds
     ) this.requestKeyConflict();
+  }
+
+  private async idempotentDelivery(
+    q: Queryer, requestKey: string, studentId: number, onDate: string, files: DeliveryFile[],
+  ): Promise<ReportSendHistoryDto | null> {
+    const prior = await this.sendForRequest(q, requestKey);
+    if (!prior) return null;
+    const askedRepIds = files.map((file) => file.repId);
+    this.assertDeliveryIdentity(prior, studentId, onDate, askedRepIds);
+    if (prior.body !== ReportsService.deliveryBody(files)) this.requestKeyConflict();
     return this.requireHistoryItem(q, Number(prior.id));
+  }
+
+  private static deliveryBody(files: DeliveryFile[]): string {
+    return files.map((file) => file.plainText).join('\n\n────────\n\n');
   }
 
   private async idempotentResend(
@@ -953,13 +965,18 @@ export class ReportsService {
   /** PNG 보존과 RSEND/PDFLOG 기록. 실제 카카오·알림톡 전송은 명세서의 미구현 외부 경계다. */
   async deliver(dto: ReportDeliveryCreateDto, actorId: number, canCrudAll: boolean): Promise<ReportSendHistoryDto> {
     this.requireDeliveryPermission(canCrudAll);
-    const prior = await this.idempotentDelivery(
-      this.ds, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
-    );
-    if (prior) return prior;
-
+    const claimed = await this.sendForRequest(this.ds, dto.requestKey);
+    if (claimed) {
+      this.assertDeliveryIdentity(claimed, dto.studentId, dto.onDate, dto.files.map((file) => file.repId));
+    }
+    // 파일명·revision·PNG 형식까지 먼저 검증한다. 같은 requestKey라도 다른 출력 요청을
+    // 과거 201로 조용히 수렴시키지 않는다.
     const rows = await this.deliveryRows(this.ds, dto.onDate, dto.studentId);
     const prepared = this.deliveryFiles(rows, dto, actorId);
+    const prior = await this.idempotentDelivery(
+      this.ds, dto.requestKey, dto.studentId, dto.onDate, prepared,
+    );
+    if (prior) return prior;
     const existing = await this.ds.query<Array<{ id: string }>>(
       `SELECT id FROM rsend WHERE student_id=$1 AND on_date=$2 AND source_send_id IS NULL LIMIT 1`,
       [dto.studentId, dto.onDate],
@@ -968,7 +985,7 @@ export class ReportsService {
       // 최초 requestKey 조회 직후 같은 요청의 선행 트랜잭션이 커밋될 수 있다.
       // 날짜 중복으로 거절하기 전에 요청 내용을 다시 대조해 네트워크 재시도를 같은 결과로 수렴시킨다.
       const completed = await this.idempotentDelivery(
-        this.ds, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
+        this.ds, dto.requestKey, dto.studentId, dto.onDate, prepared,
       );
       if (completed) return completed;
       throw new ConflictException({ code: 'REPORT_DELIVERY_ALREADY_SENT', message: '이미 발송했습니다. 이력에서 다시 보내세요' });
@@ -994,7 +1011,7 @@ export class ReportsService {
       // 일정/출결/리포트 쓰기와 같은 SER→REP 순서. 잠금 뒤 별도 SELECT로 현재 투영을 읽는다.
       await lockScheduleSeries(q, [...new Set(rows.map((row) => Number(row.ser_id)))]);
       const idempotent = await this.idempotentDelivery(
-        q, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
+        q, dto.requestKey, dto.studentId, dto.onDate, prepared,
       );
       if (idempotent) {
         await q.rollbackTransaction();
@@ -1013,7 +1030,7 @@ export class ReportsService {
          VALUES ($1,$2,$3::jsonb,'blob',$4,$5,$6,NULL) RETURNING id`,
         [
           dto.studentId, dto.onDate, JSON.stringify(locked.map((file) => file.repId)),
-          locked.map((file) => file.plainText).join('\n\n────────\n\n'), actorId, dto.requestKey,
+          ReportsService.deliveryBody(locked), actorId, dto.requestKey,
         ],
       ) as Array<{ id: string }>;
       sendId = Number(sent[0].id);
@@ -1031,7 +1048,7 @@ export class ReportsService {
       const e = error as { code?: string; constraint?: string };
       if (e.code === '23505') {
         const raced = await this.idempotentDelivery(
-          this.ds, dto.requestKey, dto.studentId, dto.onDate, dto.files.map((file) => file.repId),
+          this.ds, dto.requestKey, dto.studentId, dto.onDate, prepared,
         );
         if (raced) return raced;
         if (e.constraint === 'rsend_student_date_first_uniq') {
