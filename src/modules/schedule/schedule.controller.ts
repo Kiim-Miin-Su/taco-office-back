@@ -36,6 +36,7 @@ const attendanceWriteDescription = '일정 변경과 같은 부모 SER를 먼저
   + 'ATT.completed 출석·정산 판정은 바꾸지 않는다. 지각 원장과 ATT/LOG는 같은 트랜잭션이다.';
 const monthClosedConflict = 'MONTH_CLOSED: 대상 달이 마감됐거나 같은 순간 마감이 먼저 끝남. '
   + '대표가 마감을 해제한 뒤 다시 요청해야 하며 실패한 쓰기는 전부 되돌린다.';
+const scheduleWriteConflict = `RESOURCE_CONFLICT: 강사·강의실·Zoom 시간이 겹침 | ${monthClosedConflict}`;
 
 @ApiTags('schedule')
 @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다' })
@@ -291,7 +292,7 @@ export class ScheduleController {
   @Post()
   @Perm('canCrudAll')
   @ApiOperation({ summary: '수업 만들기 — 겹치면 DB 가 409 로 막는다 (D-R43)' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
+  @ApiConflictResponse({ type: ApiErrorDto, description: scheduleWriteConflict })
   @ApiCreatedResponse({ type: WriteResultDto })
   create(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrenceCreateDto): Promise<WriteResultDto> {
     return user ? this.write.create(dto, user.id) : this.write.create(dto);
@@ -300,7 +301,7 @@ export class ScheduleController {
   @Post('paste')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '회차 1~50건 복제 — 결과는 새 SER, EXC는 따라오지 않는다 (D-R19)' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
+  @ApiConflictResponse({ type: ApiErrorDto, description: scheduleWriteConflict })
   @ApiCreatedResponse({ type: WriteResultDto })
   paste(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrencePasteDto): Promise<WriteResultDto> {
     return user ? this.write.paste(dto, user.id) : this.write.paste(dto);
@@ -309,7 +310,7 @@ export class ScheduleController {
   @Post('move')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '다중 선택 회차 이동 — 전부 저장되거나 전부 되돌아간다 (C-7)' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: monthClosedConflict })
+  @ApiConflictResponse({ type: ApiErrorDto, description: scheduleWriteConflict })
   @ApiCreatedResponse({ type: WriteResultDto })
   moveMany(@CurrentUser() user: RequestUser | undefined, @Body() dto: OccurrenceMoveDto): Promise<WriteResultDto> {
     return user ? this.write.moveMany(dto, user.id) : this.write.moveMany(dto);
@@ -394,7 +395,7 @@ export class ScheduleController {
       + 'SER/EXC 저장과 회차 투영은 한 transaction이다. 버전 충돌 검출/멱등 키 계약은 제공하지 않는다.',
   })
   @ApiOkResponse({ type: WriteResultDto })
-  @ApiConflictResponse({ type: ApiErrorDto, description: `SERIES_HAS_REPORTS | SERIES_HAS_EXCEPTIONS — 종류·반복 규칙 변경으로 연결된 리포트·회차 예외가 고아가 되는 것을 막는다 | ${monthClosedConflict}` })
+  @ApiConflictResponse({ type: ApiErrorDto, description: `SERIES_HAS_REPORTS | SERIES_HAS_EXCEPTIONS — 종류·반복 규칙 변경으로 연결된 리포트·회차 예외가 고아가 되는 것을 막는다 | ${scheduleWriteConflict}` })
   patch(
     @CurrentUser() user: RequestUser | undefined,
     @Param() params: ScheduleParamsDto,

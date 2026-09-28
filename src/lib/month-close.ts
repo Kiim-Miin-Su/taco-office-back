@@ -19,6 +19,10 @@
 import { ConflictException } from '@nestjs/common';
 
 export interface Queryable { query(sql: string, params?: unknown[]): Promise<unknown> }
+interface TransactionalQueryable extends Queryable {
+  isTransactionActive?: boolean;
+  queryRunner?: { isTransactionActive?: boolean };
+}
 
 export const MONTH_CLOSED = 'MONTH_CLOSED' as const;
 
@@ -86,17 +90,25 @@ export async function assertMonthOpen(q: Queryable, dateOrMonth: string): Promis
  */
 const monthLockKey = (month: string): string => `month_close:${month}`;
 
+function assertActiveTransaction(q: Queryable): void {
+  const tx = q as TransactionalQueryable;
+  if (tx.isTransactionActive === true || tx.queryRunner?.isTransactionActive === true) return;
+  throw new Error('월 마감 잠금은 활성 transaction 안에서만 사용할 수 있습니다');
+}
+
 /**
  * 출결·일정·휴원·수강 종료·청구처럼 월 마감과 경합할 수 있는 쓰기의 공용 공유 잠금.
  * 공유끼리는 동시에 실행되고, 드문 마감·해제만 모든 진행 중 쓰기가 끝날 때까지 기다린다.
  * PostgreSQL transaction advisory lock이므로 반드시 쓰기 transaction 안에서 호출한다.
  */
 export async function lockMonthSensitiveWrite(q: Queryable): Promise<void> {
+  assertActiveTransaction(q);
   await q.query(`SELECT pg_advisory_xact_lock_shared(hashtext($1))`, [MONTH_CLOSE_WRITE_LOCK]);
 }
 
 /** 마감 · 해제 — 그 달 열쇠를 배타로. 같은 달의 마감 · 해제 둘을 한 줄로 세우고, 도는 발행 · 이월이 끝나기를 기다린다 */
 export async function lockMonthExclusive(q: Queryable, month: string): Promise<void> {
+  assertActiveTransaction(q);
   await q.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [MONTH_CLOSE_WRITE_LOCK]);
   await q.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [monthLockKey(month)]);
 }

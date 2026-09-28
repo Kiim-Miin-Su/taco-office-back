@@ -55,6 +55,7 @@ const REOPEN_M = '2026-08';
 const VOID_M = '2026-01';
 const ATTENDANCE_M = '2025-10';
 const PAUSE_M = '2025-09';
+const CLOSE_FIRST_M = '2025-08';
 const WITHDRAW_M = '2025-11';
 const SCHEDULE_M = '2025-12';
 
@@ -165,7 +166,7 @@ d('회계 청구 경합 — 중복 발행 · 이월과 다음 달 발행 (7-3 �
     await ds.query(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, 50000, '2026-01-01', 1)`, [KIND, SUB]);
     await ds.query(`DELETE FROM month_close WHERE year_month = ANY($1::text[])`, [[
       FROM, TO, CLOSE_M, CARRY_FROM, CARRY_TO, REOPEN_M,
-      VOID_M, ATTENDANCE_M, PAUSE_M, WITHDRAW_M, SCHEDULE_M,
+      VOID_M, ATTENDANCE_M, PAUSE_M, CLOSE_FIRST_M, WITHDRAW_M, SCHEDULE_M,
     ]]);
   });
 
@@ -398,6 +399,25 @@ d('회계 청구 경합 — 중복 발행 · 이월과 다음 달 발행 (7-3 �
     expect(await logIdOf('STU_PAUSE', pauseId, 'create')).toBeLessThan(
       await logIdOf('MONTH_CLOSE', (c as { value: { id: number } }).value.id, 'close'),
     );
+  });
+
+  it('월 마감이 먼저 배타 잠금을 잡으면 뒤 출결은 기다렸다가 MONTH_CLOSED로 끝난다', async () => {
+    const sid = await newStudent();
+    const onDate = `${CLOSE_FIRST_M}-04`;
+    await lesson(sid, [{ on: onDate }]);
+    const serId = series[series.length - 1]!;
+
+    const blocker = await hold(['month_close']);
+    const close = settle(svc().closeMonth(ACTOR, true, { month: CLOSE_FIRST_M }));
+    await waitForLockWaiters(1);
+    const saved = settle(new ScheduleAttendanceService(ds).save(serId, onDate, { result: 'completed' }, ACTOR));
+    await doneOrWaiting(saved, 2);
+    await release(blocker);
+    const [c, a] = await Promise.all([close, saved]);
+
+    expect(c.ok).toBe(true);
+    expect(a).toEqual({ ok: false, code: 'MONTH_CLOSED' });
+    expect(await ds.query(`SELECT id FROM att WHERE ser_id=$1 AND on_date=$2::date`, [serId, onDate])).toEqual([]);
   });
 
   it('수강 종료와 월 마감이 겹쳐도 종료가 마감 뒤에 커밋되지 않는다', async () => {
