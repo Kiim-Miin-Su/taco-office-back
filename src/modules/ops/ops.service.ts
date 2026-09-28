@@ -2227,9 +2227,12 @@ export class OpsService {
         `SELECT id, staff_id, reply, reply_by, reply_at FROM suggestion WHERE id = $1 FOR UPDATE`, [id],
       )) as R[];
       if (!cur) throw new NotFoundException({ code: 'SUGGESTION_NOT_FOUND', message: '건의를 찾을 수 없습니다' });
+      // TypeORM의 UPDATE ... RETURNING raw 값은 드라이버별로 `[rows, count]`일 수 있다.
+      // DB 시계를 먼저 한 번 읽어 화면 사실과 감사 사실에 같은 시각을 쓴다.
+      const [clock] = (await em.query(`SELECT now() AS reply_at`)) as R[];
       await em.query(
-        `UPDATE suggestion SET state = 'done', reply = $2, reply_by = $3, reply_at = now() WHERE id = $1`,
-        [id, reply, viewerId],
+        `UPDATE suggestion SET state = 'done', reply = $2, reply_by = $3, reply_at = $4 WHERE id = $1`,
+        [id, reply, viewerId, clock!.reply_at],
       );
       const teacherId = leadId(cur.staff_id);
       if (teacherId !== viewerId) {
@@ -2244,7 +2247,7 @@ export class OpsService {
          VALUES ($1,'SUGGESTION',$2,'reply',$3::jsonb,$4::jsonb)`,
         [viewerId, id,
           JSON.stringify({ reply: cur.reply ?? null, replyBy: leadId(cur.reply_by, true), replyAt: cur.reply_at ?? null }),
-          JSON.stringify({ reply, replyBy: viewerId, state: 'done' })],
+          JSON.stringify({ reply, replyBy: viewerId, replyAt: clock!.reply_at, state: 'done' })],
       );
     });
     const [updated] = await this.suggestionRows('WHERE g.id = $1', [id]);

@@ -9500,7 +9500,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "BAD_REQUEST — 형식·허용 밖 필드",
             "content": {
               "application/json": {
                 "schema": {
@@ -9530,10 +9530,24 @@
             }
           },
           "404": {
-            "description": "MKT_NOT_FOUND | STAFF_NOT_FOUND"
+            "description": "MKT_NOT_FOUND | STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "409": {
-            "description": "code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN"
+            "description": "code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -10024,7 +10038,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "BAD_REQUEST — 안전한 양의 담당 ID",
             "content": {
               "application/json": {
                 "schema": {
@@ -10044,10 +10058,24 @@
             }
           },
           "403": {
-            "description": "PLAN_OWNER_FORBIDDEN — 기획 결재권자만"
+            "description": "PLAN_OWNER_FORBIDDEN — 기획 결재권자만",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "404": {
-            "description": "PLAN_NOT_FOUND | STAFF_NOT_FOUND"
+            "description": "PLAN_NOT_FOUND | STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "409": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -10112,7 +10140,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "BAD_REQUEST — 답변 형식·길이·허용 밖 필드",
             "content": {
               "application/json": {
                 "schema": {
@@ -10142,10 +10170,24 @@
             }
           },
           "404": {
-            "description": "SUGGESTION_NOT_FOUND"
+            "description": "SUGGESTION_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "409": {
-            "description": "code SUGGESTION_REPLY_REQUIRED"
+            "description": "code SUGGESTION_REPLY_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",

@@ -5,9 +5,10 @@
  */
 
 import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
-import { ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { ApiErrorDto } from '../../common/http.dto';
 import {
   ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
   LeadCreateDto, LeadDto, LeadFailDto, LeadPatchDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
@@ -280,8 +281,9 @@ export class OpsController {
     description: '활동 이름·채널·항목·URL·날짜·담당·메모만 고친다. 성과 숫자는 받지 않으며 앞뒤 값과 감사 줄이 같은 트랜잭션에 남는다.',
   })
   @ApiOkResponse({ type: MarketingDto })
-  @ApiConflictResponse({ description: 'code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN' })
-  @ApiNotFoundResponse({ description: 'MKT_NOT_FOUND | STAFF_NOT_FOUND' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST — 형식·허용 밖 필드' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'MKT_NOT_FOUND | STAFF_NOT_FOUND' })
   patchMarketing(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
@@ -390,8 +392,9 @@ export class OpsController {
     description: '활동 중인 구성원으로 바꾸며 새 담당 알림과 앞뒤 감사 줄을 같은 트랜잭션에 남긴다. 본문·단계·공개 범위는 건드리지 않는다.',
   })
   @ApiOkResponse({ type: PlanDetailDto })
-  @ApiForbiddenResponse({ description: 'PLAN_OWNER_FORBIDDEN — 기획 결재권자만' })
-  @ApiNotFoundResponse({ description: 'PLAN_NOT_FOUND | STAFF_NOT_FOUND' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST — 안전한 양의 담당 ID' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'PLAN_OWNER_FORBIDDEN — 기획 결재권자만' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'PLAN_NOT_FOUND | STAFF_NOT_FOUND' })
   patchPlanOwner(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
@@ -408,8 +411,9 @@ export class OpsController {
     description: '답변·답변자·답변 시각·done 상태, 강사 알림과 감사 줄을 한 트랜잭션에 남긴다. 다시 답하면 같은 건의 답변을 고친다.',
   })
   @ApiOkResponse({ type: SuggestionDto })
-  @ApiConflictResponse({ description: 'code SUGGESTION_REPLY_REQUIRED' })
-  @ApiNotFoundResponse({ description: 'SUGGESTION_NOT_FOUND' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST — 답변 형식·길이·허용 밖 필드' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code SUGGESTION_REPLY_REQUIRED' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'SUGGESTION_NOT_FOUND' })
   replySuggestion(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,

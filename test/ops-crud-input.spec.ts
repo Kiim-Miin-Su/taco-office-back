@@ -22,6 +22,7 @@ describe('운영 CRUD 입력 계약', () => {
     await expect(parse(MarketingPatchDto, {
       title: '학습실 하루', channel: 'instagram', item: 'video', url: null, onDate: null, byId: null, memo: null,
     })).resolves.toMatchObject({ url: null, onDate: null, byId: null, memo: null });
+    await expect(parse(MarketingPatchDto, { title: null })).rejects.toMatchObject({ status: 400 });
     await expect(parse(MarketingPatchDto, { impressions: 10 })).rejects.toMatchObject({ status: 400 });
   });
 

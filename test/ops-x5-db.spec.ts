@@ -61,7 +61,7 @@ d('운영 잔여 물결 (x5)', () => {
     await q.startTransaction();
     for (const t of ['mfb', 'todo', 'noti', 'mtattd', 'mtrec', 'suggestion']) await q.query(`DELETE FROM ${t}`);
     await q.query(`DELETE FROM mkt`);
-    await q.query(`DELETE FROM log WHERE entity IN ('plan','MKT')`);
+    await q.query(`DELETE FROM log WHERE entity IN ('plan','MKT','SUGGESTION')`);
     await q.query(`DELETE FROM plan`);
     await q.query(
       `INSERT INTO staff (id,name,email,role,title,active) VALUES
@@ -175,8 +175,8 @@ d('운영 잔여 물결 (x5)', () => {
     });
     expect((await q.query(`SELECT title, link FROM noti WHERE to_id=$1 ORDER BY id DESC LIMIT 1`, [TEACHER]))[0])
       .toEqual({ title: '건의 답변', link: '/teacher/suggestions' });
-    expect((await q.query(`SELECT before, after FROM log WHERE entity='SUGGESTION' AND entity_id=$1`, [id]))[0])
-      .toMatchObject({ before: { reply: null, replyBy: null }, after: { replyBy: CEO, state: 'done' } });
+    expect((await q.query(`SELECT before, after FROM log WHERE entity='SUGGESTION' AND entity_id=$1 ORDER BY id DESC LIMIT 1`, [id]))[0])
+      .toMatchObject({ before: { reply: null, replyBy: null }, after: { replyBy: CEO, replyAt: expect.any(String), state: 'done' } });
   });
 
   /* ── ② §59 필터 띠 · 범례 ─────────────────────────────────────────── */

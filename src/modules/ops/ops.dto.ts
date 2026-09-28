@@ -6,7 +6,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { CPL_AREAS, CPL_REQUESTERS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
 import { INTAKE_FUNNEL_STAGES, LEAD_AFTERCARE_KEYS, LEAD_CARD_ACTION_KEYS, LEAD_REASON_KINDS, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
 import { MFB_ANSWER_KINDS, MFB_KINDS, MFB_STATES, MKT_CHANNELS, MKT_ITEMS } from '../../lib/marketing-words';
@@ -805,7 +805,8 @@ export class MarketingCreateDto {
 /** §59 활동 수정 — 보낸 칸만 고치고 성과 숫자는 이 경로에서 받지 않는다. */
 export class MarketingPatchDto {
   @ApiPropertyOptional({ maxLength: 120, description: '활동 이름 — 빈 문자열은 허용하지 않는다' })
-  @IsOptional() @IsString() @MinLength(1, { message: '무엇을 했는지 적어 주세요' }) @MaxLength(120)
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsString() @MinLength(1, { message: '무엇을 했는지 적어 주세요' }) @MaxLength(120)
   title?: string;
 
   @ApiPropertyOptional({ enum: [...MKT_CHANNELS], description: '어디에 — 낱말은 GET /ops.mktChannels' })

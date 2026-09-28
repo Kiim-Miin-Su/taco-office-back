@@ -235,6 +235,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     for (const handler of [
       'all', 'createLead', 'patchLead', 'moveLeadStage', 'addLeadTouch', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
       'planDetail', 'decidePlanDue', 'reviewPlan',
+      'patchMarketing', 'patchPlanOwner', 'replySuggestion',
       'sendMeetingNotice', 'writeMinutes', 'assignMeetingTask',
       'createComplaint', 'patchComplaint', 'teacherChangePreview', 'teacherChange',
     ] as const) {
