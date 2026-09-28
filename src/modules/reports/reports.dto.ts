@@ -225,7 +225,7 @@ export class ReportDeliveryFileInputDto {
 
 /** RSEND 한 행과 같은 학생 1명 단위. 전체 발송은 이 요청을 순차 재사용한다. */
 export class ReportDeliveryCreateDto {
-  @ApiProperty({ format: 'uuid', description: '재시도·더블클릭 중복 방지 키' }) @IsUUID()
+  @ApiProperty({ format: 'uuid', description: '재시도·더블클릭 중복 방지 키 — 같은 키는 학생·날짜·리포트 집합·본문·PNG 바이트(SHA-256)가 모두 같을 때만 기존 결과로 수렴한다 (CR-BE-03)' }) @IsUUID()
   requestKey!: string;
 
   @ApiProperty({ ...DATE_SCHEMA, example: '2026-08-27', description: '발송 묶음의 실제 KST 수업일. 각 리포트의 원래 onDate와 구분한다' }) @IsCalendarDate()

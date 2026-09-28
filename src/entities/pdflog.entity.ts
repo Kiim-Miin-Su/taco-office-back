@@ -10,8 +10,9 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, ForeignKey, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, ForeignKey, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+@Check('pdflog_sha256_hex', "sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'")
 @Index('pdflog_rep_idx', ['repId'], { where: '"rep_id" IS NOT NULL' })
 @ForeignKey('rep', ['repId'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'pdflog' })
@@ -37,4 +38,12 @@ export class Pdflog {
    */
   @Column({ type: 'bigint', nullable: true })
   repId: number | null;
+
+  /**
+   * 보존한 PNG 바이트의 SHA-256(소문자 16진 64자 · migration 1765200000000 · CR-BE-03). 같은 requestKey 의 멱등 재시도가
+   * 파일명·revision·본문에 더해 **바이트**까지 대조하는 열쇠다 — 같은 키 · 다른 바이트는 409 로 거절한다.
+   * 재발송은 원본 장의 값을 복사한다. 옛 행은 NULL(N-25 — 되짚어 해시할 원본이 없다 · 읽는 쪽은 그 장의 대조를 건너뛴다).
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  sha256: string | null;
 }

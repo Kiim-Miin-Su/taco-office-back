@@ -701,6 +701,47 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
   });
 
   /**
+   * CR-BE-03 (TBO-54 코드 리뷰) — 같은 requestKey · revision · fileName 에 **다른 유효 PNG** 를 보내도 요청 동일성에 바이트가 없어
+   * 최초 201 로 수렴했다. 이제 장마다 PNG SHA-256 을 PDFLOG 에 적고 재시도가 그 값까지 대조한다.
+   */
+  it('CR-BE-03: 같은 requestKey 에 다른 유효 PNG 는 409 REQUEST_KEY_REUSED · 같은 바이트 재시도는 기존 결과로 수렴 · 지문은 PDFLOG 에 남고 재발송이 복사한다', async () => {
+    const body = deliveryBody('00000000-0000-4000-8000-000000000030');
+    const first = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+      .send(body).expect(201);
+    const puts = put.mock.calls.length;
+    // 장마다 저장된 지문은 보낸 PNG 바이트의 SHA-256 이다
+    const pngBytes = Buffer.from(png.slice('data:image/png;base64,'.length), 'base64');
+    const pngSha = createHash('sha256').update(pngBytes).digest('hex');
+    const stored = await q<{ rep_id: string; sha256: string | null }>(
+      `SELECT rep_id::text AS rep_id, sha256 FROM pdflog WHERE kind='report_png' AND ref_id=$1 ORDER BY id`, [first.body.item.id]);
+    expect(stored).toEqual([{ rep_id: String(rep1), sha256: pngSha }, { rep_id: String(rep2), sha256: pngSha }]);
+
+    // 같은 키 · 같은 바이트 — 기존 결과로 수렴하고 업로드는 없다
+    const same = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken)).send(body).expect(201);
+    expect(same.body.item.id).toBe(first.body.item.id);
+    expect(put.mock.calls.length).toBe(puts);
+
+    // 같은 키 · 같은 파일명 · 같은 revision · **다른 유효 PNG** — 최초 결과로 수렴하지 않고 409 · 업로드 0 · 이력 그대로 한 줄
+    const otherPng = `data:image/png;base64,${Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.alloc(128 * 1024, 2),
+    ]).toString('base64')}`;
+    const swapped = await request(app.getHttpServer()).post('/reports/deliveries').set(auth(managerToken))
+      .send({ ...body, files: body.files.map((file, index) => index === 1 ? { ...file, pngDataUrl: otherPng } : file) })
+      .expect(409);
+    expect(swapped.body.code).toBe('REPORT_DELIVERY_REQUEST_KEY_REUSED');
+    expect(put.mock.calls.length).toBe(puts);
+    expect(await q(`SELECT id FROM rsend WHERE request_key=$1`, [body.requestKey])).toHaveLength(1);
+    expect(await q(`SELECT id FROM pdflog WHERE kind='report_png' AND ref_id=$1`, [first.body.item.id])).toHaveLength(2);
+
+    // 재발송은 원본 장의 지문을 그대로 복사한다 — 바이트가 같은 파일을 가리킨다
+    const resent = await request(app.getHttpServer()).post(`/reports/deliveries/${first.body.item.id}/resend`)
+      .set(auth(managerToken)).send({ requestKey: '00000000-0000-4000-8000-000000000031' }).expect(201);
+    const copied = await q<{ sha256: string | null }>(
+      `SELECT sha256 FROM pdflog WHERE kind='report_png' AND ref_id=$1 ORDER BY id`, [resent.body.item.id]);
+    expect(copied.map((row) => row.sha256)).toEqual([pngSha, pngSha]);
+  });
+
+  /**
    * **「다시 보내기」가 서는지도 서버가 정한다** (S5 · D-R39).
    *
    * 이 단추에는 **조건이 아예 없었다** — 보존 파일이 한 장도 없는 줄에서도 서 있었고 누르면

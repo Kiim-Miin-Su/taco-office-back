@@ -121,6 +121,8 @@ interface DeliveryFile {
   fileName: string;
   plainText: string;
   bytes: Buffer;
+  /** PNG 바이트의 SHA-256 — 같은 requestKey 의 요청 동일성에 바이트를 넣는 열쇠 (CR-BE-03) */
+  sha256: string;
 }
 
 interface Queryer {
@@ -387,7 +389,10 @@ export class ReportsService {
       }
       const decoded = decodeReportPng(input.pngDataUrl);
       if (decoded.issue) this.throwDeliveryIssue(decoded.issue);
-      return { repId, fileName: expected.fileName, plainText: expected.plainText, bytes: decoded.bytes };
+      return {
+        repId, fileName: expected.fileName, plainText: expected.plainText, bytes: decoded.bytes,
+        sha256: createHash('sha256').update(decoded.bytes).digest('hex'),
+      };
     });
   }
 
@@ -938,6 +943,11 @@ export class ReportsService {
     ) this.requestKeyConflict();
   }
 
+  /**
+   * 같은 requestKey 의 재시도가 **같은 요청**인가 — 학생 · 날짜 · 리포트 집합 · 본문에 더해 **PNG 바이트**(장마다 SHA-256)까지 본다 (CR-BE-03).
+   * 같은 키 · 같은 바이트는 기존 결과로 수렴하고, 같은 키 · 다른 바이트는 409 `REPORT_DELIVERY_REQUEST_KEY_REUSED` 다.
+   * 지문이 없는 옛 장(NULL · N-25)은 그 장의 대조를 건너뛴다 — 되짚어 해시할 원본이 없다.
+   */
   private async idempotentDelivery(
     q: Queryer, requestKey: string, studentId: number, onDate: string, files: DeliveryFile[],
   ): Promise<ReportSendHistoryDto | null> {
@@ -946,6 +956,14 @@ export class ReportsService {
     const askedRepIds = files.map((file) => file.repId);
     this.assertDeliveryIdentity(prior, studentId, onDate, askedRepIds);
     if (prior.body !== ReportsService.deliveryBody(files)) this.requestKeyConflict();
+    const stored = await q.query<Array<{ rep_id: string | null; sha256: string | null }>>(
+      `SELECT rep_id::text AS rep_id, sha256 FROM pdflog WHERE kind='report_png' AND ref_id=$1 AND rep_id IS NOT NULL ORDER BY id`,
+      [Number(prior.id)],
+    );
+    for (const file of files) {
+      const saved = stored.find((row) => Number(row.rep_id) === file.repId);
+      if (saved?.sha256 && saved.sha256 !== file.sha256) this.requestKeyConflict();
+    }
     return this.requireHistoryItem(q, Number(prior.id));
   }
 
@@ -1022,7 +1040,8 @@ export class ReportsService {
       const locked = this.deliveryFiles(lockedRows, dto, actorId);
       // 종료 시각/본문은 파일명에 모두 포함되지 않는다. 업로드 전후 출력 원문도 같아야 한다.
       if (locked.some((file, index) => file.repId !== prepared[index]?.repId
-        || file.fileName !== prepared[index]?.fileName || file.plainText !== prepared[index]?.plainText)) {
+        || file.fileName !== prepared[index]?.fileName || file.plainText !== prepared[index]?.plainText
+        || file.sha256 !== prepared[index]?.sha256)) {
         this.throwDeliveryIssue('REPORT_DELIVERY_FILES_MISMATCH');
       }
       const sent = await q.query(
@@ -1035,10 +1054,11 @@ export class ReportsService {
       ) as Array<{ id: string }>;
       sendId = Number(sent[0].id);
       // 7-3 ① F3 — 파일마다 어느 리포트인지 적는다(업로드 차례 = prepared 차례 = locked 차례 · 위에서 대조했다).
+      // 장마다 바이트 지문(sha256)을 함께 적는다 — 같은 키의 다음 요청이 바이트까지 대조할 열쇠다 (CR-BE-03).
       await q.query(
-        `INSERT INTO pdflog (kind, ref_id, file_url, rep_id)
-         SELECT 'report_png', $1, f.url, f.rep_id FROM unnest($2::text[], $3::bigint[]) AS f(url, rep_id)`,
-        [sendId, urls, prepared.map((file) => file.repId)],
+        `INSERT INTO pdflog (kind, ref_id, file_url, rep_id, sha256)
+         SELECT 'report_png', $1, f.url, f.rep_id, f.sha FROM unnest($2::text[], $3::bigint[], $4::text[]) AS f(url, rep_id, sha)`,
+        [sendId, urls, prepared.map((file) => file.repId), prepared.map((file) => file.sha256)],
       );
       await q.commitTransaction();
       committed = true;
@@ -1098,8 +1118,8 @@ export class ReportsService {
       ) as Array<{ id: string }>;
       newId = Number(inserted[0].id);
       await q.query(
-        `INSERT INTO pdflog (kind, ref_id, file_url, rep_id)
-         SELECT 'report_png', $1, file_url, rep_id FROM pdflog
+        `INSERT INTO pdflog (kind, ref_id, file_url, rep_id, sha256)
+         SELECT 'report_png', $1, file_url, rep_id, sha256 FROM pdflog
           WHERE kind='report_png' AND ref_id=$2 AND file_url IS NOT NULL`,
         [newId, sendId],
       );
