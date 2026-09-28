@@ -45,12 +45,18 @@ d('① 대표 보고 회계 펼칠 줄 — 분납이면 지금 기한으로 적�
   let ds: DataSource;
   let q: QueryRunner;
 
-  const exec = () => {
+  /**
+   * 기준일은 기간 끝이 아니라 **오늘**이다(H-79 · 2026-09-29 · `lib/exec-areas.execAsOf`) — 2031년을 「그날 보는」 시험이라
+   * 그날을 오늘로 넣어 준다. 안 넣으면 실제 오늘(2026)로 재어 2031년 기한은 아직 안 지난 것이 된다.
+   */
+  const exec = (today: string) => {
     const repo = q.manager.getRepository(Lead);
-    return new ExecService(repo, new BoardService(repo));
+    const s = new ExecService(repo, new BoardService(repo));
+    s.today = () => today;
+    return s;
   };
   const moneyItems = async (day: string) =>
-    (await exec().range(day, day, true)).areas.find((a) => a.key === 'money')!.items;
+    (await exec(day).range(day, day, true)).areas.find((a) => a.key === 'money')!.items;
 
   beforeAll(async () => { ds = scratchDataSource(); await ds.initialize(); });
   beforeEach(async () => { q = ds.createQueryRunner(); await q.connect(); await q.startTransaction(); });

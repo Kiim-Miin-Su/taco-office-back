@@ -13,7 +13,7 @@ import { NOTI_TITLE } from '../../lib/noti';
 import {
   consLockedWhere, cplOpenWhere, EXEC_AREA_ITEM_LIMIT, EXEC_AREA_KEYS, EXEC_AREAS, EXEC_FUNNEL_SECOND_LABEL, EXEC_LESSON_MARK_LABEL,
   EXEC_PERIOD_WORD, EXEC_SHEET_TITLE, execAreaDetails, execAreaItemsLabel, execDayLabel, execLessonItems, execPeriodKind,
-  execPeriodLabel, execWeekDelta, filledAreas, invDueSql, invOpenWhere, invOverdueWhere, isWholeMonth, krw,
+  execAsOf, execPeriodLabel, execWeekDelta, filledAreas, invDueSql, invOpenWhere, invOverdueWhere, isWholeMonth, krw,
   planRunningWhere, planWaitingWhere, todoOverdueWhere,
   type ExecAreaFacts, type ExecAreaItem, type ExecAreaKey, type ExecPeriodKind,
 } from '../../lib/exec-areas';
@@ -23,7 +23,7 @@ import { audit } from '../../lib/audit';
 import { mktChannelLabel, mktTitle } from '../../lib/marketing-words';
 import { cplAreaLabel, cplStageLabel } from '../../lib/complaint-words';
 import { csCan, type ConsShare } from '../../lib/rules';
-import { addDays } from '../../lib/kst';
+import { addDays, todayKst } from '../../lib/kst';
 import { consultingTypeLabel } from '../consulting/consulting.rules';
 import { BOARD_MARK_KEYS } from '../board/board.rules';
 import type { BoardDto } from '../board/board.dto';
@@ -161,6 +161,9 @@ export class ExecService {
     private readonly board: BoardService,
   ) {}
 
+  /** 오늘(KST) — 「지금 남아 있는 것」의 기준일은 기간 끝과 오늘 중 앞선 날이다(`execAsOf` · H-79). 시험이 바꿔 끼운다 */
+  today: () => string = () => todayKst();
+
   private async one(sql: string, p: unknown[] = []): Promise<number> {
     const r = (await this.anyRepo.query(sql, p)) as Array<{ n: string }>;
     return Number(r[0]?.n ?? 0);
@@ -186,7 +189,7 @@ export class ExecService {
    * §69 6영역 — 살펴볼 것을 센다. 정의는 `lib/exec-areas.ts` 한 곳에 있다.
    * 수업만 현황판(`clChk()`)의 판정을 그대로 가져온다.
    */
-  private async areaCounts(from: string, to: string, board?: BoardDto, viewer?: ExecViewer): Promise<AreaCount[]> {
+  private async areaCounts(from: string, to: string, board?: BoardDto, viewer?: ExecViewer, asOf = to): Promise<AreaCount[]> {
     const out: AreaCount[] = [];
     for (const a of EXEC_AREAS) {
       let count = 0;
@@ -195,7 +198,7 @@ export class ExecService {
       } else if (a.sql) {
         // 기준일을 안 쓰는 판정(안 끝난 컴플레인 등)에 인자를 넘기면 bind 오류가 난다 ·
         // 보는 사람을 받는 판정(운영 — 지정 공개 기획 · N-72)은 `$2` · `$3` 을 더 받는다
-        count = await this.one(a.sql, a.viewer ? [to, ...planViewerParams(viewer)] : a.sql.includes('$1') ? [to] : []);
+        count = await this.one(a.sql, a.viewer ? [asOf, ...planViewerParams(viewer)] : a.sql.includes('$1') ? [asOf] : []);
       }
       out.push({ key: a.key, label: a.label, review: a.review, count, go: a.go });
     }
@@ -214,6 +217,7 @@ export class ExecService {
     from: string, to: string, canSeeAmounts: boolean, board: BoardDto,
     revenue: { total: number | null; n: number },
     viewer?: ExecViewer,
+    asOf = to,
   ): Promise<ExecAreaFacts> {
     const [inv] = await this.q(
       `SELECT count(*) FILTER (WHERE ${invOpenWhere()})::int AS unpaid_n,
@@ -221,7 +225,7 @@ export class ExecService {
               count(*) FILTER (WHERE ${invOverdueWhere()})::int AS overdue_n,
               CASE WHEN $2::boolean THEN COALESCE(sum(amount - paid_amount) FILTER (WHERE ${invOverdueWhere()}),0) END::bigint AS overdue_sum
          FROM inv`,
-      [to, canSeeAmounts],
+      [asOf, canSeeAmounts],
     );
     const [mkt] = await this.q(
       `SELECT count(*)::int AS posts, count(DISTINCT channel)::int AS channels,
@@ -250,7 +254,7 @@ export class ExecService {
               (SELECT to_char(min(s.on_date),'YYYY-MM-DD') FROM cons_sess s JOIN cons c2 ON c2.id = s.cons_id
                 WHERE ${consLockedWhere('c2')} AND s.on_date > $1::date) AS next_on
          FROM cons c WHERE ${consLockedWhere('c')}`,
-      [to, canSeeAmounts],
+      [asOf, canSeeAmounts],
     );
     const [cpl] = await this.q(
       `SELECT count(*) FILTER (WHERE ${cplOpenWhere('c')})::int AS open,
@@ -323,7 +327,7 @@ export class ExecService {
    *   컴플레인 `cpl` · 현황판 `date`(W11 · 7-3 ① · 대상 화면이 읽는다). 그런 질의가 없는 목록(마케팅 · 할 일)은 그 목록으로 보낸다.
    */
   private async areaItems(
-    from: string, to: string, canSeeAmounts: boolean, board: BoardDto, viewer?: ExecViewer,
+    from: string, to: string, canSeeAmounts: boolean, board: BoardDto, viewer?: ExecViewer, asOf = to,
   ): Promise<Record<ExecAreaKey, ExecAreaItem[]>> {
     const L = EXEC_AREA_ITEM_LIMIT;
     const md = (iso: string) => iso.slice(5);
@@ -337,7 +341,7 @@ export class ExecService {
         CROSS JOIN LATERAL (SELECT ${invDueSql('i')} AS due) cd
         WHERE ${invOverdueWhere('i')}
         ORDER BY cd.due, i.id LIMIT ${L}`,
-      [to, canSeeAmounts],
+      [asOf, canSeeAmounts],
     );
     const mkt = await this.q(
       `SELECT id, title, channel, item, to_char(on_date,'YYYY-MM-DD') AS on_date
@@ -352,7 +356,7 @@ export class ExecService {
          UNION ALL
          SELECT 'todo', t.id, t.title, to_char(t.due_on,'YYYY-MM-DD'), ($1::date - t.due_on)::int FROM todo t WHERE ${todoOverdueWhere('t')}
        ) x ORDER BY (kind = 'todo'), due_on NULLS FIRST, id LIMIT ${L}`,
-      [to, ...planViewerParams(viewer)],
+      [asOf, ...planViewerParams(viewer)],
     );
     const cons = await this.q(
       `SELECT c.id, c.cons_type, c.contract_step, c.share, c.owner_id,
@@ -771,7 +775,7 @@ export class ExecService {
       const rptType = String(r.rpt_type);
       const onDate = String(r.on_date);
       const span = ExecService.periodRange(rptType, onDate);
-      const areas = await this.areaCounts(span.from, span.to, undefined, viewer);
+      const areas = await this.areaCounts(span.from, span.to, undefined, viewer, execAsOf(span.to, this.today()));
       out.push({
         id: Number(r.id), rptType, onDate,
         label: ExecService.periodLabel(rptType, onDate),
@@ -1006,11 +1010,13 @@ export class ExecService {
 
     // 현황판은 **한 번만** 부른다 — 수업 배지 · 수업 타일 · 주간 「수업 준비 x/y」가 같은 판정을 읽는다
     const board = await this.board.range({ from, to });
-    const counts = await this.areaCounts(from, to, board, viewer);
+    // 「지금 남아 있는 것」의 기준일 — 기간 끝과 오늘 중 앞선 날(H-79). 기간에 일어난 것(입금 · 접수 …)은 그대로 from~to
+    const asOf = execAsOf(to, this.today());
+    const counts = await this.areaCounts(from, to, board, viewer, asOf);
     const kind = execPeriodKind(from, to);
-    const facts = await this.areaFacts(from, to, canSeeAmounts, board, revenueFacts, viewer);
+    const facts = await this.areaFacts(from, to, canSeeAmounts, board, revenueFacts, viewer, asOf);
     const details = execAreaDetails(kind, facts);
-    const items = await this.areaItems(from, to, canSeeAmounts, board, viewer);
+    const items = await this.areaItems(from, to, canSeeAmounts, board, viewer, asOf);
     const owners = await this.areaOwners();
     const areas = counts.map((a) => ({
       ...a, headline: details[a.key].headline, tiles: details[a.key].tiles,

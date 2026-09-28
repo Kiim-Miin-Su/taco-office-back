@@ -108,9 +108,12 @@ d('§69~§71 지난주 대비 · 펼칠 줄 · 퍼널 네 줄 (DB)', () => {
   let q: QueryRunner;
   let staffId = 0;
 
-  const svc = () => {
+  const svc = (today = '2031-12-31') => {
     const repo = q.manager.getRepository(Lead);
-    return new ExecService(repo, new BoardService(repo));
+    const s = new ExecService(repo, new BoardService(repo));
+    // 이 스위트의 기간은 2031년이라 **기준일도 그 뒤**로 둔다 — 기준일이 기간 끝보다 앞이면 오늘 기준으로 접힌다(H-79)
+    s.today = () => today;
+    return s;
   };
   type Out = Awaited<ReturnType<ExecService['range']>>;
   const head = (out: Out, key: string) => out.head.find((h) => h.key === key)!;
@@ -178,6 +181,27 @@ d('§69~§71 지난주 대비 · 펼칠 줄 · 퍼널 네 줄 (DB)', () => {
     const month = await svc().range('2031-03-01', '2031-03-31', true);
     month.head.forEach((h) => expect(h.prev ?? null).toBeNull());
     expect(head(month, 'revenue').note).toBeNull();
+  });
+
+  it('기준일은 기간 끝이 아니라 **오늘**이다 — 이번 달 보고를 달 중간에 보면 「N일 지남」과 배지는 오늘 기준이다 (H-79 · 회계 머리와 같은 수)', async () => {
+    const [stu] = (await q.query(`INSERT INTO stu (name) VALUES ('오늘 학생') RETURNING id`)) as { id: string }[];
+    const inv = (state: string, amount: number, due: string, title: string) => q.query(
+      `INSERT INTO inv (student_id, year_month, inv_type, title, amount, paid_amount, state, due_on)
+       VALUES ($1,'2031-03','tuition',$4,$2,0,$3::inv_state_t,$5::date) RETURNING id`,
+      [Number(stu.id), amount, state, title, due],
+    ) as Promise<Array<{ id: string }>>;
+    await inv('sent', 300000, '2031-02-20', '2월 수업료');   // 오늘(03-11) 기준 19일 지남 — 달 끝(03-31) 기준이면 39일
+    await inv('sent', 400000, '2031-03-20', '3월 수업료');   // 기한이 오늘 뒤 · 달 끝 앞 — 아직 지나지 않았다
+    const out = await svc('2031-03-11').range('2031-03-01', '2031-03-31', true);
+    const money = area(out, 'money');
+    expect(money.count).toBe(1);
+    expect(money.items.map((i) => i.title)).toEqual(['오늘 학생 · 2월 수업료']);
+    expect(money.items[0].sub).toBe('₩300,000 · 기한 02-20 · 19일 지남');
+    expect(money.tiles.find((t) => t.key === 'overdue')).toMatchObject({ value: 1, sub: '₩300,000' });
+    // 지난 달 보고는 그 달 끝이 기준이다 — 오늘이 그 뒤면 기간 끝 그대로
+    const past = area(await svc('2031-04-15').range('2031-03-01', '2031-03-31', true), 'money');
+    expect(past.count).toBe(2);
+    expect(past.items[0].sub).toBe('₩300,000 · 기한 02-20 · 39일 지남');
   });
 
   it('회계 펼칠 줄 = 기한 지난 청구서 — 배지와 같은 수 · 오래된 기한 먼저 · 학생 · 남은 돈 · 청구서 목록으로 (K-111)', async () => {

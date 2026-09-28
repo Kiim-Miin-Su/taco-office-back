@@ -53,6 +53,15 @@ export const invDueSql = (a = ''): string => {
 export const invOverdueWhere = (a = '', d = '$1'): string =>
   `${invOpenWhere(a)} AND ${invDueSql(a)} < ${d}::date`;
 
+/**
+ * 「지금 남아 있는 것」(못 받은 돈 · 기한 지남 · 기한 지난 할 일 · 다음 회차)의 **기준일** — 기간 끝과 오늘 중 앞선 날.
+ *
+ * 지난 기간의 보고는 그 기간 끝을 기준으로 본다(달이 끝난 뒤 8월 보고를 열면 8월 31일의 상태). 그러나 **이번 달 보고를 달 중간에
+ * 열면 기간 끝은 아직 오지 않은 날**이라 그날을 기준으로 재면 안 된다 — 09-29 에 9월 보고를 열면 09-13 기한이 「17일 지남」(09-30 기준)
+ * 으로 찍히고 회계 머리는 「16일 지남」(오늘)을 적어 두 화면이 갈렸다(H-79 · 2026-09-29). 오늘 뒤의 기한은 아직 지난 것이 아니다.
+ */
+export const execAsOf = (to: string, today: string): string => (to < today ? to : today);
+
 /** 대표 검토(review)를 기다리는 기획 — 초안은 아직 아무도 기다리지 않는다 */
 export const planWaitingWhere = (a = ''): string => `${col(a, 'stage')} = 'review'`;
 
