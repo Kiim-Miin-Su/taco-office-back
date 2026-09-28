@@ -216,6 +216,32 @@ d('회계 청구 W11 — 진단고사 · 상담 분리 · 분납 일정 · 받�
     expect(masked.installments.map((x) => x.amount)).toEqual([null, null, null]);
   });
 
+  it('「전달」은 학부모 안내(PNOTI 보낼 것)를 만든다 — 청구서 줄이 그 안내를 들고 오고, 두 번째 전달은 409 · 안내는 하나 (H-76 「학부모 안내가 생성된다」)', async () => {
+    await lesson('w11_class', 'w11-sub', [{ on: '2026-05-04' }, { on: '2026-05-11' }]); // 100,000
+    const inv = await issue('tuition');
+    expect(inv.notice).toBeNull();                        // 초안에는 아직 안내가 없다
+    const sent = await svc().deliverInvoice(ACTOR, inv.id, true);
+    expect(sent.state).toBe('sent');
+    expect(sent.notice).toEqual({ id: expect.any(Number), body: expect.stringContaining('청구 학생'), sentAt: null });
+    expect(sent.notice!.body).toContain('100,000원');
+    expect(sent.notice!.body).toContain(DUE);
+    const rows = (await q.query(
+      `SELECT id, audience::text AS audience, student_id::text AS student_id, ser_id, body, sent_at FROM pnoti WHERE student_id = $1`, [stuId],
+    )) as Array<{ id: string; audience: string; student_id: string; ser_id: string | null; body: string; sent_at: string | null }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: String(sent.notice!.id), audience: 'parent', student_id: String(stuId), ser_id: null, sent_at: null });
+    expect(rows[0].body).toBe(sent.notice!.body);
+    // 목록 줄도 같은 안내를 들고 온다 — 화면이 pnoti 를 따로 찾지 않는다
+    const listed = (await svc().all(true)).invoices.find((i) => i.id === inv.id)!;
+    expect(listed.notice).toEqual(sent.notice);
+    // 이력에 안내 번호가 남는다
+    const logs = await logRows('INV', inv.id);
+    expect(logs.find((l) => l.action === 'deliver')?.after).toMatchObject({ state: 'sent', noticeId: sent.notice!.id });
+    // 두 번째 전달은 거절 — 안내가 둘이 되지 않는다
+    await expect(svc().deliverInvoice(ACTOR, inv.id, true)).rejects.toMatchObject({ response: { code: 'INV_NOT_DELIVERABLE' } });
+    expect(((await q.query(`SELECT count(*)::int AS n FROM pnoti WHERE student_id = $1`, [stuId])) as Array<{ n: number }>)[0].n).toBe(1);
+  });
+
   it('연체는 **누적 입금이 못 채운 가장 이른 회차**로 판정한다 — 줄 · §69 배지 조각 · 지금 기한이 같은 답', async () => {
     await lesson('w11_class', 'w11-sub', [{ on: '2026-05-04' }, { on: '2026-05-11' }, { on: '2026-05-18' }]); // 150,000
     const inv = await issue('tuition', {

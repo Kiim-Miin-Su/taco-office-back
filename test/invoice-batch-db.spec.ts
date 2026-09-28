@@ -121,6 +121,8 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     await q(`DELETE FROM pay WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [stus]);
     await q(`DELETE FROM inv_line WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [stus]);
     await q(`DELETE FROM inv WHERE student_id = ANY($1)`, [stus]);
+    // 「전달」이 만든 학부모 안내(PNOTI · stu FK · H-76)는 학생을 지우기 전에 치운다
+    await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER]]);
     if (!made.length) return;
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [made]);

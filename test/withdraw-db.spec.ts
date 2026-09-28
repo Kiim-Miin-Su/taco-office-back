@@ -132,6 +132,8 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     await q(`DELETE FROM pay WHERE student_id = ANY($1) OR inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [stus]);
     await q(`DELETE FROM inv_line WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [stus]);
     await q(`DELETE FROM inv WHERE student_id = ANY($1)`, [stus]);
+    // 「전달」이 만든 학부모 안내(PNOTI · stu FK · H-76)는 학생을 지우기 전에 치운다
+    await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, MONEY_MGR, MONEY_TEACHER]]);
     if (!made.length) return;
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [made]);

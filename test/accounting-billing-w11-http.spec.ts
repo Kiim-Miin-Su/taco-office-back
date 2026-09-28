@@ -96,6 +96,8 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
     await q(`DELETE FROM pay WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM inv_line WHERE inv_id = ANY($1::bigint[])`, [invIds]);
     await q(`DELETE FROM inv WHERE id = ANY($1::bigint[])`, [invIds]);
+    // 「전달」이 만든 학부모 안내(PNOTI · stu FK · H-76)는 학생을 지우기 전에 치운다
+    await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM enr WHERE student_id = ANY($1)`, [stus]);
     if (!made.length) return;
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [made]);

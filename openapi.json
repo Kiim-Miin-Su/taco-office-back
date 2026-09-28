@@ -26281,6 +26281,29 @@
           "covered"
         ]
       },
+      "InvoiceNoticeDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "description": "PNOTI id — 보호자 발송 창에 pnotiId 로 넘긴다"
+          },
+          "body": {
+            "type": "string",
+            "description": "서버가 만든 안내 본문(학생 · 청구 · 금액 · 납부 기한)"
+          },
+          "sentAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "보호자에게 실제로 보낸 시각(ISO) — 안 보냈으면 null"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "sentAt"
+        ]
+      },
       "InvoiceDto": {
         "type": "object",
         "properties": {
@@ -26402,6 +26425,16 @@
             "type": "string",
             "nullable": true,
             "description": "취소 사유 — 취소된 청구서에만 (N-139 「이력에 남는다」)"
+          },
+          "notice": {
+            "nullable": true,
+            "description": "「전달」이 만든 학부모 안내 — 전달 전이면 null (H-76)",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InvoiceNoticeDto"
+              }
+            ]
           }
         },
         "required": [
@@ -26424,7 +26457,8 @@
           "nextInstallmentSeq",
           "canDeliver",
           "canVoid",
-          "voidBlockedReason"
+          "voidBlockedReason",
+          "notice"
         ]
       },
       "PaymentDto": {

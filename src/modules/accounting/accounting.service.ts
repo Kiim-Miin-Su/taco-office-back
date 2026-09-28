@@ -286,8 +286,11 @@ const INV_SELECT = `
             'seq', x.seq, 'dueOn', to_char(x.due_on,'YYYY-MM-DD'), 'amount', x.amount, 'cum', x.cum) ORDER BY x.seq)
            FROM (SELECT ix.seq, ix.due_on, ix.amount, sum(ix.amount) OVER (ORDER BY ix.seq) AS cum
                    FROM inv_installment ix WHERE ix.inv_id = i.id) x), '[]'::json) AS installments,
-         to_char(${invDueSql('i')}, 'YYYY-MM-DD') AS eff_due
-    FROM inv i JOIN stu s ON s.id = i.student_id`;
+         to_char(${invDueSql('i')}, 'YYYY-MM-DD') AS eff_due,
+         -- 「전달」이 만든 학부모 안내(H-76) — 청구서가 detail.notice 로 가리키고, 보낸 시각은 PNOTI 가 안다
+         pn.id AS notice_id, pn.body AS notice_body, pn.sent_at AS notice_sent_at
+    FROM inv i JOIN stu s ON s.id = i.student_id
+    LEFT JOIN pnoti pn ON pn.id = (i.detail->'notice'->>'id')::bigint`;
 
 /**
  * 입금을 받을 수 있는 상태인가 — §53 단계 순서(①작성 ②청구서 작성 ③학부모 안내 ④입금 완료 ⑤입금 기록).
@@ -429,6 +432,10 @@ export class AccountingService {
       installments,
       nextDueOn: nextDue,
       nextInstallmentSeq: nextSeq === null ? null : Number(nextSeq),
+      notice: r.notice_id == null ? null : {
+        id: Number(r.notice_id), body: String(r.notice_body ?? ''),
+        sentAt: r.notice_sent_at ? new Date(r.notice_sent_at as string).toISOString() : null,
+      },
     };
   }
 
@@ -667,7 +674,14 @@ export class AccountingService {
     });
   }
 
-  /** 「전달」 — 학부모께 보냈다 (H-76). 초안·미전달만 된다. 입금이 시작된 청구서는 이미 보낸 것이다 */
+  /**
+   * 「전달」 — 학부모께 보냈다 (H-76). 초안·미전달만 된다. 입금이 시작된 청구서는 이미 보낸 것이다.
+   *
+   * **학부모 안내를 함께 만든다**(「학부모 안내가 생성된다」) — 컨설팅 종료 · 휴강과 같은 모양의 PNOTI 「보낼 것」 한 줄
+   * (audience parent · 회차 없음 · 오늘). 본문은 서버가 학생 · 청구 · 금액 · 지금 기한으로 짓고, 실제 발송은 보호자 발송
+   * (`POST /guardians/send` · `pnotiId` · DQ3)이 한다 — 여기서 보낸 척하지 않는다(N-42). 청구서는 `detail.notice` 로 그 줄을
+   * 가리키고(`InvoiceDto.notice`), 두 번째 전달은 상태가 막으므로 안내도 둘이 되지 않는다.
+   */
   async deliverInvoice(userId: number, id: number, canSeeAmounts: boolean, canVoidInvoice = false): Promise<InvoiceDto> {
     const today = todayKst();
     return this.inv.manager.transaction(async (m: EntityManager) => {
@@ -677,9 +691,25 @@ export class AccountingService {
         throw new ConflictException({ code: 'INV_NOT_DELIVERABLE', message: `이미 ${INV_STATE_LABEL[inv.state] ?? inv.state} 상태입니다 — 초안만 전달할 수 있습니다` });
       }
       await m.query(`UPDATE inv SET state = 'sent', sent_at = now() WHERE id = $1`, [id]);
+      const [fact] = (await m.query(
+        `SELECT i.student_id, s.name AS student, i.title, i.amount,
+                to_char(COALESCE(${invDueSql('i')}, i.due_on), 'YYYY-MM-DD') AS due
+           FROM inv i JOIN stu s ON s.id = i.student_id WHERE i.id = $1`, [id],
+      )) as Array<{ student_id: string; student: string; title: string; amount: number; due: string | null }>;
+      const body = `${fact.student} 학생 ${fact.title} — 청구 금액 ${won(Number(fact.amount))}${fact.due ? ` · 납부 기한 ${fact.due}` : ''}`;
+      const [notice] = (await m.query(
+        `INSERT INTO pnoti (ser_id, on_date, audience, student_id, channel, body)
+         VALUES (NULL, $1::date, 'parent', $2, 'app', $3) RETURNING id`,
+        [today, Number(fact.student_id), body],
+      )) as Array<{ id: string }>;
+      await m.query(
+        `UPDATE inv SET detail = COALESCE(detail, '{}'::jsonb) || jsonb_build_object('notice', jsonb_build_object('id', $2::bigint, 'at', now()))
+          WHERE id = $1`,
+        [id, Number(notice.id)],
+      );
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'INV',$2,'deliver',$3::jsonb,$4::jsonb)`,
-        [userId, id, JSON.stringify({ state: inv.state }), JSON.stringify({ state: 'sent' })],
+        [userId, id, JSON.stringify({ state: inv.state }), JSON.stringify({ state: 'sent', noticeId: Number(notice.id) })],
       );
       const [row] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [id])) as Array<Record<string, unknown>>;
       return this.invoiceRow(row, canSeeAmounts, today, canVoidInvoice);
