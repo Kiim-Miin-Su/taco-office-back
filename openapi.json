@@ -14002,7 +14002,7 @@
     },
     "/guides/{id}/copy": {
       "post": {
-        "description": "같은 규칙·같은 날·같은 사유의 다른 학생 **초안**에만 옮긴다. 이미 쓴 형제는 덮지 않고 이유를 돌려준다. 머리말은 받는 학생 것으로 다시 만든다 — 그대로 옮기면 남의 이름이 학부모에게 간다.",
+        "description": "같은 규칙·같은 날·같은 사유의 다른 학생 **초안**에만 옮긴다. 이미 쓴 형제는 덮지 않고 이유를 돌려준다. 머리말은 받는 학생 것으로 다시 만든다 — 그대로 옮기면 남의 이름이 학부모에게 간다. `targetIds` 를 보내면 작성 창에서 고른 형제에게만 옮긴다(F-60 「같은 반 학생이 함께 선택됨」) — 안 보내면 형제 전부.",
         "operationId": "GuidesController_copyBody",
         "parameters": [
           {
@@ -14014,6 +14014,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuideCopyDto"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "description": "",
@@ -14026,14 +14036,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
+            "description": "code GUIDE_COPY_NOT_SIBLING — 형제가 아닌 번호 · 아무것도 쓰지 않았다"
           },
           "401": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -35812,6 +35815,39 @@
           "urgencyLabel"
         ]
       },
+      "GuideSiblingDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true,
+            "description": "학생 이름 — 학생이 지워졌으면 null"
+          },
+          "state": {
+            "type": "string",
+            "description": "그 형제 안내의 상태 낱말 (draft | ready | sent | read)"
+          },
+          "copyable": {
+            "type": "boolean",
+            "description": "본문을 옮길 수 있는가 — 아직 안 쓴 초안만 받는다(쓴 글은 덮지 않는다)"
+          },
+          "skipReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "못 옮기는 까닭 — 복사 결과의 「건너뛴 이유」와 같은 문장. 옮길 수 있으면 null"
+          }
+        },
+        "required": [
+          "id",
+          "studentName",
+          "state",
+          "copyable",
+          "skipReason"
+        ]
+      },
       "GuideFactDto": {
         "type": "object",
         "properties": {
@@ -36053,7 +36089,14 @@
           },
           "siblingCount": {
             "type": "number",
-            "description": "같은 규칙·같은 날·같은 사유의 다른 학생 안내 수 — 0이면 그룹이 아니다 (F-61)"
+            "description": "같은 규칙·같은 날·같은 사유의 다른 학생 안내 수 — 0이면 그룹이 아니다 (F-61). `siblings` 의 길이다"
+          },
+          "siblings": {
+            "description": "같은 반 학생 — 이름 차례 (F-60 · 작성 창이 함께 보낼 학생을 고른다). 그룹이 아니면 빈 목록",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideSiblingDto"
+            }
           },
           "autoFill": {
             "nullable": true,
@@ -36082,7 +36125,8 @@
           "createdAt",
           "overdueDays",
           "deadline",
-          "siblingCount"
+          "siblingCount",
+          "siblings"
         ]
       },
       "PerLessonNoticeRecordDto": {
@@ -36922,6 +36966,18 @@
         "required": [
           "body"
         ]
+      },
+      "GuideCopyDto": {
+        "type": "object",
+        "properties": {
+          "targetIds": {
+            "description": "받을 형제 안내 id — 같은 규칙·같은 날·같은 사유의 다른 학생 안내만. 하나라도 형제가 아니면 400 GUIDE_COPY_NOT_SIBLING",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
       },
       "GuideCopySkippedDto": {
         "type": "object",

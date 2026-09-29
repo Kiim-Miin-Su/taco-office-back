@@ -6,7 +6,7 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BadRequestException } from '@nestjs/common';
-import { IsIn, IsInt, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { GUIDE_FACT_KEYS_TEACHER_CHANGE, type GuideFactKey } from '../../lib/guide-body';
 import { LeadDiagDto } from '../ops/lead-diag.dto';
@@ -58,6 +58,19 @@ export class GuideDeadlineDto {
   @ApiProperty({ enum: ['overdue', 'today', 'none'], description: 'overdue = 6시간 칸이 지남(마감 지남) · today = 하루 칸만 지남' })
   urgency!: string;
   @ApiProperty({ ...S, description: '「마감 지남」 · 「오늘 안에」 — 여유가 있으면 null' }) urgencyLabel!: string | null;
+}
+
+/**
+ * 같은 반 학생 — 같은 규칙·같은 날·같은 사유의 다른 학생 안내 (PDF F-60 「같은 반 학생이 함께 선택됨」 · all160 2026-09-30).
+ * 작성 창이 이 목록으로 함께 보낼 학생을 고른다. **옮길 수 있는가와 못 옮기는 까닭은 서버가 정한다** — 복사(F-61)가 덮지 않는
+ * 규칙(초안만 받는다)과 같은 함수다. 화면이 상태 낱말로 다시 판정하면 체크가 서는데 복사는 건너뛰는 줄이 생긴다.
+ */
+export class GuideSiblingDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ ...S, description: '학생 이름 — 학생이 지워졌으면 null' }) studentName!: string | null;
+  @ApiProperty({ description: '그 형제 안내의 상태 낱말 (draft | ready | sent | read)' }) state!: string;
+  @ApiProperty({ description: '본문을 옮길 수 있는가 — 아직 안 쓴 초안만 받는다(쓴 글은 덮지 않는다)' }) copyable!: boolean;
+  @ApiProperty({ ...S, description: '못 옮기는 까닭 — 복사 결과의 「건너뛴 이유」와 같은 문장. 옮길 수 있으면 null' }) skipReason!: string | null;
 }
 
 export class GuideDto {
@@ -122,8 +135,10 @@ export class GuideDto {
     description: '아직 안 보낸 안내의 기한(N-89) — 첫 수업 시작(없으면 기한 날 00:00)까지 남은 시간 · 사다리 · 긴급도. 보냈으면 null',
   })
   deadline!: GuideDeadlineDto | null;
-  @ApiProperty({ description: '같은 규칙·같은 날·같은 사유의 다른 학생 안내 수 — 0이면 그룹이 아니다 (F-61)' })
+  @ApiProperty({ description: '같은 규칙·같은 날·같은 사유의 다른 학생 안내 수 — 0이면 그룹이 아니다 (F-61). `siblings` 의 길이다' })
   siblingCount!: number;
+  @ApiProperty({ type: [GuideSiblingDto], description: '같은 반 학생 — 이름 차례 (F-60 · 작성 창이 함께 보낼 학생을 고른다). 그룹이 아니면 빈 목록' })
+  siblings!: GuideSiblingDto[];
   @ApiPropertyOptional({
     type: GuideAutoFillDto, nullable: true,
     description: '아직 안 쓴 초안의 자동 채움 일곱 칸 (F-60). 이미 쓴/보낸 안내는 null — 저장하지 않는다',
@@ -440,6 +455,14 @@ export class GuideBodyDto {
  * 사람이 머리말까지 고쳐 써서 앞자락이 안 맞으면 **그대로 복사하고 `headReplaced:false` 로 알린다**
  * — 조용히 머리말을 지어내지 않는다.
  */
+/** 「나머지 학생에게 복사」의 받을 학생 — 안 보내면 형제 전부(F-61 그대로), 보내면 그 형제만 (F-60 · all160 2026-09-30) */
+export class GuideCopyDto {
+  @ApiPropertyOptional({ type: [Number], description: '받을 형제 안내 id — 같은 규칙·같은 날·같은 사유의 다른 학생 안내만. 하나라도 형제가 아니면 400 GUIDE_COPY_NOT_SIBLING' })
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50)
+  @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
+  targetIds?: number[];
+}
+
 export class GuideCopySkippedDto {
   @ApiProperty() id!: number;
   @ApiProperty() studentName!: string;

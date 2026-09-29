@@ -74,6 +74,15 @@ const INHERITED_DIRECTION_SQL = (studentParam: string): string =>
   `(SELECT pg.direction FROM guide pg WHERE pg.student_id=${studentParam} ORDER BY pg.created_at DESC,pg.id DESC LIMIT 1)`;
 
 
+/**
+ * 같은 반 학생(형제 안내) — 같은 규칙·같은 날·같은 사유의 다른 학생 안내를 이름 차례로 (F-60 · F-61 · all160 2026-09-30).
+ * 수(`siblingCount`)도 이 목록의 길이로 낸다 — 수와 목록을 따로 세면 둘이 갈린다 (D-R22).
+ * 복사(`copyBody`)의 형제 판정과 같은 조건 · 같은 차례다.
+ */
+const SIBLINGS_SQL = `(SELECT COALESCE(json_agg(json_build_object('id', sg.id, 'studentName', ss.name, 'state', sg.state) ORDER BY ss.name, sg.id), '[]'::json)
+                 FROM guide sg LEFT JOIN stu ss ON ss.id=sg.student_id
+                WHERE sg.ser_id=g.ser_id AND sg.event_on=g.event_on AND sg.reason=g.reason AND sg.id<>g.id)`;
+
 @Injectable()
 export class GuidesService {
   constructor(
@@ -91,9 +100,7 @@ export class GuidesService {
       : (sql: string, p: unknown[]) => this.q(sql, p);
     const rows = await run(
       `SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.created_by,
-              (SELECT count(*)::int FROM guide sg
-                WHERE sg.ser_id=g.ser_id AND sg.event_on=g.event_on AND sg.reason=g.reason
-                  AND sg.id<>g.id) AS sibling_count,
+              ${SIBLINGS_SQL} AS siblings,
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
               o.id AS source_occurrence_id,
@@ -299,6 +306,7 @@ export class GuidesService {
       state: String(r.state), teacherId, body,
       recipientActive: r.recipient_active === true, recipientRole: (r.recipient_role as string) ?? null,
     });
+    const siblings = GuidesService.siblingsOf(r.siblings);
     const elapsed = r.sent_at && r.acknowledged_at
       ? (Date.parse(String(r.acknowledged_at)) - Date.parse(String(r.sent_at))) / 1000 : NaN;
     return {
@@ -331,7 +339,9 @@ export class GuidesService {
       // N-89 — 아직 안 보낸 안내만 기한이 있다. 첫 수업 시작(없으면 기한 날 00:00)까지 · 사다리 · 긴급도는 guide-deadline 한 곳
       deadline: pending ? guideDeadline((r.start_at as string) ?? null, (r.due_on as string) ?? null) : null,
       // 「나머지 학생에게 복사」가 서는지도 서버가 센다 (F-61 · D-R37) — 화면이 목록을 다시 훑지 않는다
-      siblingCount: Number(r.sibling_count ?? 0),
+      siblingCount: siblings.length,
+      // 같은 반 학생 — 작성 창이 함께 보낼 학생을 고른다(F-60). 옮길 수 있는가 · 까닭은 복사와 같은 규칙
+      siblings,
     };
   }
 
@@ -418,9 +428,7 @@ export class GuidesService {
            FROM guide g
        )
        SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.guide_count,g.created_by,
-              (SELECT count(*)::int FROM guide sg
-                WHERE sg.ser_id=g.ser_id AND sg.event_on=g.event_on AND sg.reason=g.reason
-                  AND sg.id<>g.id) AS sibling_count,
+              ${SIBLINGS_SQL} AS siblings,
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
               o.id AS source_occurrence_id,${kstAt('lower(o.span)')} AS start_at,${kstAt('g.created_at')} AS created_at,
@@ -744,7 +752,7 @@ export class GuidesService {
    * 남고 그 말이 학부모에게 나간다. 원본이 자기 머리말로 시작할 때만 앞자락을 갈아 끼우고,
    * 사람이 머리말까지 고쳐 써서 앞자락이 안 맞으면 그대로 옮기며 `headReplaced:false` 로 알린다.
    */
-  async copyBody(userId: number, id: number, viewer?: RequestUser): Promise<GuideCopyResultDto> {
+  async copyBody(userId: number, id: number, viewer?: RequestUser, targetIds?: number[]): Promise<GuideCopyResultDto> {
     const copiedIds: number[] = [];
     const skipped: GuideCopyResultDto['skipped'] = [];
     let headReplaced = false;
@@ -786,6 +794,18 @@ export class GuidesService {
           message: '이 수업에는 같은 날 안내를 받는 다른 학생이 없습니다',
         });
       }
+      /*
+        작성 창에서 고른 학생만 받는다(F-60 · all160 2026-09-30) — 안 고르면 형제 전부(F-61 그대로).
+        형제가 아닌 번호가 섞이면 **아무것도 쓰기 전에** 거절한다 — 다른 수업의 초안에 본문이 들어가면 남의 학부모에게 간다.
+      */
+      const siblingIds = new Set(siblings.map((sib) => Number(sib.id)));
+      if (targetIds !== undefined && targetIds.some((t) => !siblingIds.has(t))) {
+        throw new BadRequestException({
+          code: 'GUIDE_COPY_NOT_SIBLING',
+          message: '같은 수업 같은 날의 다른 학생 안내에만 옮길 수 있습니다',
+        });
+      }
+      const wanted = targetIds === undefined ? null : new Set(targetIds);
 
       /* 원본 머리말 — 이 앞자락으로 시작할 때만 갈아 끼운다 */
       const srcFill = await guideAutoFill(m, id);
@@ -796,6 +816,7 @@ export class GuidesService {
 
       for (const sib of siblings) {
         const sibId = Number(sib.id);
+        if (wanted && !wanted.has(sibId)) continue;
         const name = (sib.student_name as string) ?? '이름 없음';
         if (String(sib.state) !== 'draft') {
           skipped.push({ id: sibId, studentName: name, reason: GuidesService.copySkipReason(String(sib.state)) });
@@ -821,6 +842,19 @@ export class GuidesService {
       ? await this.guideRows(`WHERE g.id = ANY($1::bigint[])`, [copiedIds], undefined, viewer)
       : [];
     return { copied, skipped, headReplaced };
+  }
+
+  /** 형제 안내 줄 — 옮길 수 있는가(초안만)와 까닭은 복사가 건너뛰는 규칙과 같은 함수다 */
+  private static siblingsOf(raw: unknown): GuideDto['siblings'] {
+    const rows = Array.isArray(raw) ? raw as Array<{ id: unknown; studentName: unknown; state: unknown }> : [];
+    return rows.map((x) => {
+      const state = String(x.state);
+      const copyable = state === 'draft';
+      return {
+        id: Number(x.id), studentName: (x.studentName as string | null) ?? null, state,
+        copyable, skipReason: copyable ? null : GuidesService.copySkipReason(state),
+      };
+    });
   }
 
   /** 왜 건너뛰었는지 — 낱말은 여기 하나다 (D-R18) */

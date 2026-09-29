@@ -176,6 +176,43 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
     expect(row.body).toBe('이 학생 것은 따로 썼습니다');
   });
 
+  it('F-60 같은 반 학생 — 작성 창이 고를 형제(이름 · 옮길 수 있는가 · 못 옮기는 까닭)를 서버가 준다 (all160 2026-09-30)', async () => {
+    const source = await draftOf(students[0]);
+    const written = await draftOf(students[1]);
+    const fresh = (await svc().all()).guides.find((g) => g.id === source);
+    expect(fresh?.siblings).toEqual([
+      { id: await draftOf(students[2]), studentName: '강라율', state: 'draft', copyable: true, skipReason: null },
+      { id: written, studentName: '이하린', state: 'draft', copyable: true, skipReason: null },
+    ]);
+    // 수는 같은 목록의 길이다 — 두 값이 따로 세지지 않는다
+    expect(fresh?.siblingCount).toBe(2);
+    await svc().writeBody(manager, written, { body: '따로 쓴 안내' });
+    const after = (await svc().all()).guides.find((g) => g.id === source);
+    expect(after?.siblings.find((x) => x.id === written)).toEqual(
+      { id: written, studentName: '이하린', state: 'ready', copyable: false, skipReason: '이미 쓴 안내라 덮지 않았습니다' },
+    );
+  });
+
+  it('F-60 고른 형제에게만 옮긴다 — 고르지 않은 학생의 초안은 그대로 · 형제가 아닌 번호는 아무것도 쓰기 전에 거절', async () => {
+    const source = await draftOf(students[0]);
+    const picked = await draftOf(students[2]);
+    const left = await draftOf(students[1]);
+    const before = (await svc().all()).guides.find((g) => g.id === source);
+    await svc().writeBody(manager, source, { body: `${before!.autoFill!.body}공통 문단` });
+
+    const res = await svc().copyBody(manager, source, undefined, [picked]);
+    expect(res.copied.map((g) => g.id)).toEqual([picked]);
+    expect(res.skipped).toEqual([]);
+    const [leftRow] = await q.query(`SELECT body,state FROM guide WHERE id=$1`, [left]);
+    expect(leftRow).toEqual({ body: null, state: 'draft' });
+
+    await expect(svc().copyBody(manager, source, undefined, [left, source])).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'GUIDE_COPY_NOT_SIBLING' }),
+    });
+    const [stillLeft] = await q.query(`SELECT body,state FROM guide WHERE id=$1`, [left]);
+    expect(stillLeft).toEqual({ body: null, state: 'draft' });
+  });
+
   it('F-61 아직 안 쓴 안내는 복사할 수 없고, 형제가 없으면 거절한다', async () => {
     const source = await draftOf(students[0]);
     await expect(svc().copyBody(manager, source)).rejects.toMatchObject({

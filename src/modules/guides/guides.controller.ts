@@ -5,11 +5,11 @@
  */
 
 import { Body, Controller, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
-import { ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
-  GuideActionDto, GuideActionParamsDto, GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideActionDto, GuideActionParamsDto, GuideBodyDto, GuideCopyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
   GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto, ZoomNoticeBatchResultDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { GuidesService } from './guides.service';
@@ -116,16 +116,19 @@ export class GuidesController {
     summary: '나머지 학생에게 복사 — 그룹 수업 안내 (§43 · F-61)',
     description:
       '같은 규칙·같은 날·같은 사유의 다른 학생 **초안**에만 옮긴다. 이미 쓴 형제는 덮지 않고 이유를 돌려준다. '
-      + '머리말은 받는 학생 것으로 다시 만든다 — 그대로 옮기면 남의 이름이 학부모에게 간다.',
+      + '머리말은 받는 학생 것으로 다시 만든다 — 그대로 옮기면 남의 이름이 학부모에게 간다. '
+      + '`targetIds` 를 보내면 작성 창에서 고른 형제에게만 옮긴다(F-60 「같은 반 학생이 함께 선택됨」) — 안 보내면 형제 전부.',
   })
   @ApiCreatedResponse({ type: GuideCopyResultDto })
+  @ApiBadRequestResponse({ description: 'code GUIDE_COPY_NOT_SIBLING — 형제가 아닌 번호 · 아무것도 쓰지 않았다' })
   @ApiConflictResponse({ description: 'code GUIDE_COPY_EMPTY · GUIDE_COPY_NO_SIBLING' })
   @ApiNotFoundResponse({ description: '안내 없음' })
   async copyBody(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
+    @Body() dto: GuideCopyDto,
   ): Promise<GuideCopyResultDto> {
-    return this.svc.copyBody(user.id, id, user);
+    return this.svc.copyBody(user.id, id, user, dto?.targetIds);
   }
 
   @Post(':id/send')
