@@ -248,6 +248,38 @@ async function prepareLessonCancelParentNotices(
 }
 
 /**
+ * 휴강했던 회차가 이 쓰기로 **되살아나면**(복원 — 휴강 블록을 끌어 옮기거나 시각 · 강사 · 강의실을 고치면 `applyEdit` 가 휴강을 푼다)
+ * 그 회차의 학원 사정 휴강 안내(C-32 · 회차 단위 준비행)를 정리한다 — SCHEDULE-EDGES 가 찾은 자리다.
+ *   · 아직 보내지 않았으면 같은 트랜잭션에서 걷는다 — 되살아난 수업에 「휴강 안내」가 남아 있으면 그대로 학부모에게 나갈 수 있다.
+ *   · 이미 보냈으면 409 `CANCEL_NOTICE_SENT` — 보낸 말은 회수할 수 없다. 되돌리기(undo)의 `UNDO_HAS_DELIVERY` 와 같은 판정이다.
+ * 규칙이 갈라질 때(향후 · 모두) 휴강 예외는 새 규칙으로 옮겨 갈 수 있다 — 같은 날짜의 휴강이 새 규칙에 있으면 되살아난 것이 아니다.
+ * 전일 휴원 안내(N-133)는 학생 · 날짜 단위라 한 회차를 되살려도 그날 휴원이 끝난 것이 아니다 — 여기서 건드리지 않는다.
+ */
+async function settleRestoredCancelNotices(q: QueryRunner, before: State, after: State): Promise<void> {
+  const beforeIds = new Set(before.SER.map((row) => row.id));
+  const restored = before.EXC
+    .filter((e) => e.canceled)
+    .filter((e) => !after.EXC.some((x) => x.canceled && x.onDate === e.onDate && (x.serId === e.serId || !beforeIds.has(x.serId))))
+    .map((e) => `${e.serId}:${e.onDate}`);
+  if (!restored.length) return;
+  const keyOf = `(ser_id::text || ':' || to_char(on_date,'YYYY-MM-DD'))`;
+  const sent = await q.query(
+    `SELECT id FROM pnoti WHERE audience = 'parent' AND sent_at IS NOT NULL AND body LIKE $2 AND ${keyOf} = ANY($1::text[]) LIMIT 1`,
+    [restored, `${LESSON_CANCEL_NOTICE_PREFIX}%`],
+  ) as Array<{ id: string }>;
+  if (sent.length) {
+    throw new ConflictException({
+      code: 'CANCEL_NOTICE_SENT',
+      message: '학부모에게 휴강 안내가 이미 나가 이 회차를 되살릴 수 없습니다 — 새 일정과 정정 안내로 처리해 주세요',
+    });
+  }
+  await q.query(
+    `DELETE FROM pnoti WHERE audience = 'parent' AND sent_at IS NULL AND body LIKE $2 AND ${keyOf} = ANY($1::text[])`,
+    [restored, `${LESSON_CANCEL_NOTICE_PREFIX}%`],
+  );
+}
+
+/**
  * **학생을 넣으면 알림 세 건** (테스트 시나리오 M-124 · 원본 §16).
  *
  * M 영역 머리글이 이 함수의 이유다 — 「학생을 한 명 넣으면 안내와 교재가 필요해지는데,
@@ -481,6 +513,8 @@ export class ScheduleWriteService {
       if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
 
       await assertScheduleReferences(q, after);
+      // 되살아나는 휴강 회차의 안내 — 보낸 뒤면 409, 아니면 같은 트랜잭션에서 걷는다 (C-32 · SCHEDULE-EDGES)
+      await settleRestoredCancelNotices(q, before, after);
       /*
        * 월 마감 (C92-d · L-123) — 「마감 후에도 자유롭게 고쳐지면 실패」.
        * 날짜 하나로는 못 막는다: 규칙 전체를 고치면(scope=all · 시각 변경) 투영이 지난 달 회차까지 다시 쓴다.

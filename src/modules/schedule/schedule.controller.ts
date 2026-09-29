@@ -36,7 +36,7 @@ const attendanceWriteDescription = '일정 변경과 같은 부모 SER를 먼저
   + 'ATT.completed 출석·정산 판정은 바꾸지 않는다. 지각 원장과 ATT/LOG는 같은 트랜잭션이다.';
 const monthClosedConflict = 'MONTH_CLOSED: 대상 달이 마감됐거나 같은 순간 마감이 먼저 끝남. '
   + '대표가 마감을 해제한 뒤 다시 요청해야 하며 실패한 쓰기는 전부 되돌린다.';
-const scheduleWriteConflict = `RESOURCE_CONFLICT: 강사·강의실·Zoom 시간이 겹침 | ${monthClosedConflict}`;
+const scheduleWriteConflict = `RESOURCE_CONFLICT: 강사·강의실·Zoom 시간이 겹침 | CANCEL_NOTICE_SENT: 휴강 안내가 이미 나간 회차를 되살리려 함(C-32 · 되살리기는 새 일정과 정정 안내로) | ${monthClosedConflict}`;
 
 @ApiTags('schedule')
 @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다' })

@@ -675,6 +675,36 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     await q(`UPDATE pnoti SET sent_at=NULL WHERE id=$1`, [rows[0].id]);
   });
 
+  it('휴강한 회차를 옮겨 되살리면(복원 · applyEdit) 보내지 않은 휴강 안내도 함께 걷힌다 — 되살아난 수업의 「휴강 안내」가 남지 않는다 (C-32 · SCHEDULE-EDGES)', async () => {
+    const { id, from } = await makeSer(1230, { studentIds: [STU_A, STU_B] });
+    await api('delete', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, cancelKind: 'academy', cancelTreat: 'carry' })
+      .expect(200);
+    expect(await pnotiOf(id, from)).toHaveLength(2);
+    // 휴강 블록을 끌어 옮기는 것과 같은 요청 — 시각만 보낸다
+    await api('patch', `/schedule/${id}`).send({ scope: 'this', onDate: from, startMin: 1260, endMin: 1320 }).expect(200);
+    expect(await excOf(id)).toEqual([expect.objectContaining({ canceled: false, cancel_kind: null, cancel_treat: null })]);
+    expect(await pnotiOf(id, from)).toEqual([]);
+    expect((await noticesOf(from)).filter((n) => n.body.includes('수업 휴강 안내') && n.body.includes('20:30'))).toEqual([]);
+  });
+
+  it('휴강 안내가 이미 나간 회차는 옮겨 되살리지 못한다 — 409 CANCEL_NOTICE_SENT · 휴강 · 안내 그대로 (C-32 · SCHEDULE-EDGES)', async () => {
+    const { id, from } = await makeSer(1290);
+    await api('delete', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, cancelKind: 'academy', cancelTreat: 'carry' })
+      .expect(200);
+    const rows = await pnotiOf(id, from);
+    madeNotices.push(...rows.map((r) => Number(r.id)));
+    await q(`UPDATE pnoti SET sent_at=now() WHERE id=$1`, [rows[0].id]);
+    const res = await api('patch', `/schedule/${id}`).send({ scope: 'this', onDate: from, startMin: 1320, endMin: 1380 });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('CANCEL_NOTICE_SENT');
+    expect(await excOf(id)).toEqual([expect.objectContaining({ canceled: true, cancel_kind: 'academy' })]);
+    expect(await pnotiOf(id, from)).toHaveLength(1);
+    // 메모만 고치는 것은 되살리기가 아니다 — 그대로 된다
+    await api('patch', `/schedule/${id}`).send({ scope: 'this', onDate: from, memo: '공사 연장' }).expect(200);
+  });
+
   it('전일 휴원 안내의 이름은 「전일 휴원 안내」다 — 같은 목록이 두 갈래를 서버 낱말로 가른다 (N-133 · C-32)', async () => {
     const { from } = await makeSer(1170);
     const res = await api('post', '/schedule/day-cancel')
