@@ -143,11 +143,22 @@ export class LeadEnrollService {
     /* ── ③ SER + SER_STU — 줄마다 시간표 쓰기 그대로. 겹치면 시간표가 409 로 막고 전부 되돌아간다 (A-06) ── */
     const serIds: number[] = [];
     const unavailable: UnavWarnDto[] = [];
+    /* 제목 — 등록 확정 창에는 제목 칸이 없다. 비워 보내면 시간표 리듀서가 빈 칸 드래그의 자리 이름(「새 일정」)을 적어
+       달력 블록과 409 뒤 「누구와」 설명이 그 수업을 「새 일정」이라 부른다(A-06 「무엇과 겹치는지(수업명)」 · all160 실브라우저 QA
+       2026-09-29). 그래서 과목 이름(과목이 없으면 종류 이름)을 제목으로 둔다 — 보낸 제목이 있으면 그대로다. 이름은 코드표 그대로다(D-R18). */
+    const names = (await m.query(
+      `SELECT 'sub' AS t, key, name FROM sub WHERE key = ANY($1::text[])
+        UNION ALL SELECT 'kind' AS t, key, name FROM kind WHERE key = ANY($2::text[])`,
+      [dto.lines.map((l) => l.subKey).filter((k): k is string => Boolean(k)), dto.lines.map((l) => l.kindKey)],
+    )) as Array<{ t: string; key: string; name: string }>;
+    const nameOf = (t: 'sub' | 'kind', key: string | null | undefined): string | null =>
+      (key ? names.find((n) => n.t === t && n.key === key)?.name ?? null : null);
     for (const line of dto.lines) {
+      const title = line.title?.trim() || nameOf('sub', line.subKey) || nameOf('kind', line.kindKey);
       const written = await this.schedule.create({
         kindKey: line.kindKey, subKey: line.subKey ?? null, mode: line.mode, fromDate: dto.startedOn, toDate: null,
         rrule: line.rrule, startMin: line.startMin, endMin: line.endMin,
-        teacherId: line.teacherId ?? null, roomId: line.roomId ?? null, title: line.title ?? null, studentIds: [studentId],
+        teacherId: line.teacherId ?? null, roomId: line.roomId ?? null, title, studentIds: [studentId],
       }, userId, q);
       serIds.push(...written.serIds);
       unavailable.push(...written.unavailable);

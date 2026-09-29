@@ -280,6 +280,43 @@ d('C96 — 회의 잡기 · 기획 올리기 · 기간/갈래 (N-46 ②③ · J-
     expect(res.body.plans.some((p: { id: number }) => p.id === Number(plan.id))).toBe(true);
   });
 
+  it('기간의 첫날 새벽 · 끝날 밤에 들어온 상담·컴플레인도 그 기간에 든다 — 「들어온 날」은 KST 날짜다', async () => {
+    // all160 (2026-09-30 · 달의 마지막 날 실브라우저 QA 가 찾았다): `created_at <= to::date` 는 끝날 **자정**에서
+    // 끊겨 그날 들어온 건이 월별 목록에서 통째로 빠졌다. 첫날은 세션 시간대가 UTC 면 새벽 0~9시가 빠진다.
+    const from = '2026-06-01';
+    const to = '2026-06-30';
+    const [lateCpl] = await q<{ id: string }>(
+      `INSERT INTO cpl (area, stage, body, created_at) VALUES ('lesson','received','C96 끝날 밤', '2026-06-30 23:50+09') RETURNING id`,
+    );
+    const [earlyCpl] = await q<{ id: string }>(
+      `INSERT INTO cpl (area, stage, body, created_at) VALUES ('lesson','received','C96 첫날 새벽', '2026-06-01 00:10+09') RETURNING id`,
+    );
+    const [outCpl] = await q<{ id: string }>(
+      `INSERT INTO cpl (area, stage, body, created_at) VALUES ('lesson','received','C96 다음 달 첫 새벽', '2026-07-01 00:10+09') RETURNING id`,
+    );
+    const [lateLead] = await q<{ id: string }>(
+      `INSERT INTO lead (name, stage, owner_id, created_at) VALUES ('C96끝날','first',$1,'2026-06-30 23:50+09') RETURNING id`, [CEO],
+    );
+    const [earlyLead] = await q<{ id: string }>(
+      `INSERT INTO lead (name, stage, owner_id, created_at) VALUES ('C96첫날','first',$1,'2026-06-01 00:10+09') RETURNING id`, [CEO],
+    );
+    try {
+      const res = await api('get', `/ops?from=${from}&to=${to}`).expect(200);
+      const cplIds = res.body.complaints.map((c: { id: number }) => c.id);
+      expect(cplIds).toEqual(expect.arrayContaining([Number(lateCpl.id), Number(earlyCpl.id)]));
+      expect(cplIds).not.toContain(Number(outCpl.id));
+      const leadIds = res.body.leads.map((l: { id: number }) => l.id);
+      expect(leadIds).toEqual(expect.arrayContaining([Number(lateLead.id), Number(earlyLead.id)]));
+      // 칩 건수도 같은 날짜 판정으로 센다 — 목록과 칩이 갈리면 안 된다
+      const sum = res.body.areaCounts.reduce((n: number, a: { count: number }) => n + a.count, 0);
+      expect(sum).toBe(res.body.complaints.length);
+    } finally {
+      await q(`DELETE FROM cpl WHERE id = ANY($1)`, [[lateCpl.id, earlyCpl.id, outCpl.id].map(Number)]);
+      await q(`DELETE FROM lead_stage_log WHERE lead_id = ANY($1)`, [[lateLead.id, earlyLead.id].map(Number)]);
+      await q(`DELETE FROM lead WHERE id = ANY($1)`, [[lateLead.id, earlyLead.id].map(Number)]);
+    }
+  });
+
   it('끝 날짜가 시작보다 앞서면 거절하고 잘못된 갈래도 거절한다', async () => {
     expect((await api('get', '/ops?from=2026-09-20&to=2026-09-01').expect(409)).body.code).toBe('BAD_RANGE');
     await api('get', '/ops?from=2026-09-32').expect(400);

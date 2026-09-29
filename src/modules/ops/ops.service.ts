@@ -242,14 +242,16 @@ export class OpsService {
       return { where: parts.length ? `WHERE ${parts.join(' AND ')}` : '', params };
     };
 
+    // 「들어온 날」은 timestamptz 라 **KST 날짜로 바꿔서** 견준다 — 그대로 `<= to::date` 에 대면 끝날 자정에서 끊겨
+    // 그날 들어온 건이 월별 목록에서 통째로 빠지고, 세션 시간대가 UTC 면 첫날 새벽이 앞 달로 간다 (all160 · 2026-09-30)
     // 한 줄의 모양은 leadRows 한 곳 — GET /ops 와 쓰기 응답이 같은 SELECT·같은 판정을 쓴다 (C90)
-    const leadScope = scoped('l.created_at');
+    const leadScope = scoped(kstDateOf('l.created_at'));
     const leads = await this.leadRows(leadScope.where, leadScope.params, today, canSeeAmounts);
 
-    const cplScope = scoped('c.created_at', area ? { sql: 'c.area = $?', value: area } : undefined);
+    const cplScope = scoped(kstDateOf('c.created_at'), area ? { sql: 'c.area = $?', value: area } : undefined);
     const complaints = await this.complaintRows(cplScope.where, cplScope.params, today, canSeeAmounts);
     // 칩 줄의 건수는 **갈래 필터를 빼고** 센다 — 「수업 1」을 고른 뒤에도 다른 갈래의 수가 보여야 고를 수 있다
-    const cplCountScope = scoped('c.created_at');
+    const cplCountScope = scoped(kstDateOf('c.created_at'));
     // 같은 문장이 §67 「기한 지남 N」·컴플레인 탭 동그라미도 센다 (w5 · 67-2 · C-4) — 갈래를 골라도 흔들리지 않는다
     const { counts: areaCounts, overdue: cplOverdue } = await this.areaCounts(cplCountScope.where, cplCountScope.params, today);
 
@@ -845,6 +847,9 @@ export class OpsService {
   private async complaintRows(
     where: string, params: unknown[], today = todayKst(), canMoney = false,
   ): Promise<ComplaintDto[]> {
+    /* 차례 — **기한이 지난 열린 건이 맨 앞**(J-98 「목록에서 위로 정렬」 · all160 실브라우저 QA 2026-09-29).
+       판정은 줄의 `overdueDays` 와 같다(열린 단계 · 기한 < 오늘 · 기한 없는 건은 아니다). 그다음은 예전 그대로 접수 → 최근 순. */
+    const p = [...params, [...CPL_OPEN_STAGES], today];
     const rows = (await this.q(
       `SELECT c.id, c.area, c.student_id, s.name AS student_name, c.stage, c.body, c.action, c.result,
               to_char(c.created_at,'YYYY-MM-DD') AS created_at, c.owner_id, o.name AS owner_name,
@@ -855,8 +860,9 @@ export class OpsService {
          LEFT JOIN stu s ON s.id = c.student_id
          LEFT JOIN staff o ON o.id = c.owner_id
         ${where}
-        ORDER BY (c.stage = 'received') DESC, c.created_at DESC, c.id DESC`,
-      params,
+        ORDER BY (c.stage = ANY($${p.length - 1}::text[]) AND c.due_on IS NOT NULL AND c.due_on < $${p.length}::date) DESC,
+                 (c.stage = 'received') DESC, c.created_at DESC, c.id DESC`,
+      p,
     )).map((r) => {
       const due = (r.due_on as string) ?? null;
       const open = CPL_OPEN_STAGES.includes(String(r.stage) as (typeof CPL_OPEN_STAGES)[number]);

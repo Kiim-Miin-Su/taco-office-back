@@ -48,7 +48,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
    */
   const ADMIN = 963;
   const STU_EXISTING = 9961; // 이미 있는 「등록A · 10 · 테스트고」
-  const LEADS = { hold: 8801, first: 8802, same: 8803, failed: 8804, norate: 8805, parent: 8806, parentDup: 8807 };
+  const LEADS = { hold: 8801, first: 8802, same: 8803, failed: 8804, norate: 8805, parent: 8806, parentDup: 8807, titleless: 8808 };
   const KIND = 'en_kind';
   const KIND_NORATE = 'en_norate';
   const SUB = 'en-sub';
@@ -117,7 +117,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
   });
 
   async function cleanup() {
-    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록D','등록E','등록F','등록P')`, [STU_EXISTING]);
+    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록D','등록E','등록F','등록P','등록T')`, [STU_EXISTING]);
     const ids = stus.map((s) => Number(s.id));
     const sers = await q<{ id: string }>(`SELECT DISTINCT ser_id AS id FROM ser_stu WHERE student_id = ANY($1) UNION SELECT id FROM ser WHERE kind_key = ANY($2)`, [ids, [KIND, KIND_NORATE]]);
     const serIds = sers.map((s) => Number(s.id));
@@ -290,6 +290,21 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(real.body.series[0].firstLessonOn).toBe(FIRST_WED);
     expect(real.body.unavailable).toHaveLength(1);
     expect(real.body.preview).toBe(false);
+  });
+
+  /* ── A-06 · 제목 없이 등록한 수업의 이름 (all160 실브라우저 QA 2026-09-29) ─────────────── */
+  it('제목 없이 등록한 수업은 과목 이름으로 선다 — 그 수업과 겹친 배치안의 설명이 「새 일정」이 아니라 수업명을 말한다 (A-06 「무엇과 겹치는지(수업명)」)', async () => {
+    await q(`INSERT INTO lead (id, name, stage, owner_id) VALUES ($1,'등록T','first',$2)`, [LEADS.titleless, ADMIN]);
+    // 화면(등록 확정 창)은 제목 칸이 없어 title 을 보내지 않는다 — 그대로 재현한다
+    const made = await api('post', `/ops/leads/${LEADS.titleless}/enroll`).send({
+      startedOn: START, dueOn: DUE, lines: [line({ title: undefined, rrule: 'WEEKLY:TU', startMin: 1200, endMin: 1260 })],
+    }).expect(201);
+    const [s0] = made.body.series as Array<{ serId: number; firstLessonOn: string }>;
+    expect((await q<{ title: string | null }>(`SELECT title FROM ser WHERE id = $1`, [s0.serId]))[0]!.title).toBe('등록 과목');
+    // 같은 강사 · 같은 시각을 묻는 겹침 설명(409 뒤 「누구와」)이 그 수업을 과목 이름으로 부른다
+    const probe = await api('get', `/schedule/conflicts?date=${s0.firstLessonOn}&startMin=1200&endMin=1260&teacherId=${TEACHER}`).expect(200);
+    const hit = (probe.body.conflicts as Array<{ serId: number; title: string | null }>).find((c) => c.serId === s0.serId);
+    expect(hit?.title).toBe('등록 과목');
   });
 
   /* ── ③ N-137 · 기존 학생 재등록 · 단가 없음 ───────────────────────── */

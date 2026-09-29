@@ -383,4 +383,30 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(r.cpl).toMatchObject({ id: cpl.id, stage: 'acting', teacherChanged: true });
     expect((await q<{ stage: string; t: boolean }>(`SELECT stage, teacher_changed AS t FROM cpl WHERE id = $1`, [cpl.id]))[0]).toEqual({ stage: 'acting', t: true });
   });
+
+  /* ── ⑥ J-98 「목록에서 위로 정렬」 — 기한이 지난 열린 건이 먼저 선다 (all160 실브라우저 QA 가 찾음 · 2026-09-29) ── */
+  it('J-98: 기한이 지난 열린 컴플레인이 목록 앞으로 — 새로 들어온 건보다 먼저 · 마무리한 건은 기한이 지났어도 올리지 않는다', async () => {
+    const overdue = (await api('post', '/ops/complaints').send({
+      area: 'lesson', studentId: STU1, body: '교체 시험 — 기한 지난 건', ownerId: ADMIN, dueOn: plus(TODAY, -3),
+    }).expect(201)).body;
+    cplIds.push(overdue.id);
+    await api('patch', `/ops/complaints/${overdue.id}`).send({ stage: 'acting', action: '연락 중' }).expect(200);
+    const fresh = (await api('post', '/ops/complaints').send({ area: 'lesson', studentId: STU1, body: '교체 시험 — 새로 들어온 건' }).expect(201)).body;
+    cplIds.push(fresh.id);
+    const closedLate = (await api('post', '/ops/complaints').send({
+      area: 'lesson', studentId: STU1, body: '교체 시험 — 기한 지나 마무리', ownerId: ADMIN, dueOn: plus(TODAY, -5),
+    }).expect(201)).body;
+    cplIds.push(closedLate.id);
+    await api('patch', `/ops/complaints/${closedLate.id}`).send({ stage: 'closed', result: '끝' }).expect(200);
+
+    const rows = (await api('get', '/ops').expect(200)).body.complaints as { id: number; overdueDays: number }[];
+    const at = (id: number) => rows.findIndex((c) => c.id === id);
+    // 전에는 접수 단계(received)가 먼저라 새 건이 기한 지난 대응 건보다 위였다
+    expect(at(overdue.id)).toBeLessThan(at(fresh.id));
+    // 기한 지난 열린 건은 맨 앞 한 묶음이다 — 그 뒤에 다시 나오지 않는다(줄의 overdueDays 와 같은 판정)
+    const firstCalm = rows.findIndex((c) => c.overdueDays === 0);
+    expect(rows.slice(firstCalm).some((c) => c.overdueDays > 0)).toBe(false);
+    // 마무리한 건은 재촉 대상이 아니다 — 기한이 지났어도 새 건 뒤다
+    expect(at(closedLate.id)).toBeGreaterThan(at(fresh.id));
+  });
 });

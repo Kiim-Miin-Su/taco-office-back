@@ -24,6 +24,8 @@ import { mktChannelLabel, mktTitle } from '../../lib/marketing-words';
 import { cplAreaLabel, cplStageLabel } from '../../lib/complaint-words';
 import { csCan, type ConsShare } from '../../lib/rules';
 import { addDays, todayKst } from '../../lib/kst';
+// 「들어온 날」의 KST 날짜 — LEADS_IN_SQL 이 모듈을 읽는 순간 쓰므로 맨 위에서 가져온다(아래쪽 import 는 그 뒤에 풀린다)
+import { kstDateOf } from '../../lib/sql';
 import { consultingTypeLabel } from '../consulting/consulting.rules';
 import { BOARD_MARK_KEYS } from '../board/board.rules';
 import type { BoardDto } from '../board/board.dto';
@@ -100,7 +102,8 @@ const REVENUE_SQL = `
  * 기간에 들어온 문의 · 올린 마케팅 — 머리 「신규 문의」·「마케팅 게시」와 **주간 지난주 값**이 같은 문장을 읽는다
  * (원본 §70 규칙 「직전 주를 **같은 방식으로** 집계해 비교」 · N-66 주간). `$1`·`$2` = 기간.
  */
-const LEADS_IN_SQL = `SELECT count(*)::text n FROM lead WHERE created_at::date BETWEEN $1::date AND $2::date`;
+// 「들어온 날」은 KST 날짜다 — `created_at::date` 는 세션 시간대를 따라 UTC DB 에서 새벽 0~9시 문의가 앞날로 간다 (all160 · ops 기간과 같은 판정)
+const LEADS_IN_SQL = `SELECT count(*)::text n FROM lead WHERE ${kstDateOf('created_at')} BETWEEN $1::date AND $2::date`;
 const POSTS_IN_WHERE = `on_date BETWEEN $1::date AND $2::date`;
 
 /**
@@ -823,7 +826,7 @@ export class ExecService {
               count(*) FILTER (WHERE l.stage = 'enrolled' OR EXISTS (SELECT 1 FROM lead_stage_log g WHERE g.lead_id = l.id AND g.stage = 'enrolled'))::int AS enrolled,
               (SELECT to_char(min(at) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') FROM lead_stage_log WHERE stage = ANY($3)) AS since
          FROM lead l
-        WHERE l.created_at::date BETWEEN $1::date AND $2::date`,
+        WHERE ${kstDateOf('l.created_at')} BETWEEN $1::date AND $2::date`,
       [from, to, [...INTAKE_FUNNEL_STAGES]],
     );
     const f = funnelRows[0] ?? {};
@@ -846,7 +849,7 @@ export class ExecService {
               count(*)::int AS n,
               count(*) FILTER (WHERE l.stage = 'failed')::int AS lost
          FROM lead l
-        WHERE l.created_at::date BETWEEN $1::date AND $2::date
+        WHERE ${kstDateOf('l.created_at')} BETWEEN $1::date AND $2::date
         GROUP BY 1`,
       [from, to],
     );
