@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
@@ -44,6 +44,7 @@ import { leadCareJson } from './lead-care';
 import { writtenRows } from '../../lib/sql';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
 import { lockActiveStaff } from '../../lib/staff-lock';
+import { maskPhone, phoneDigits, phoneDigitsDisplay } from '../notify/sender';
 import { LEAD_DIAG_LATEST_JOIN, leadDiagFromRow } from './lead-diag.service';
 import { LEAD_APPTS_JSON, LEAD_PLAN_JSON, leadApptsFromRow, leadPlanFromRow } from './lead-plan.service';
 import { INV_OPEN } from '../../lib/rules';
@@ -1259,6 +1260,7 @@ export class OpsService {
     const rows = await this.q(
       `SELECT l.id, l.name, l.school, l.stage, l.stop_at, l.reason, l.owner_id, l.student_id, l.fail_from, l.source,
               l.grade, l.reason_kind, to_char(l.recheck_on,'YYYY-MM-DD') AS recheck_on,
+              l.parent_relation, l.parent_phone, l.want,
               -- 배치안 초안 · 2차/진단 일정(23-15 · 23-16)도 같은 SELECT 의 JSON 한 칸씩이다 — 카드마다 묻지 않는다(왕복 수 그대로)
               ${LEAD_PLAN_JSON}, ${LEAD_APPTS_JSON},
               to_char(l.created_at,'YYYY-MM-DD') AS created_at, o.name AS owner_name,
@@ -1359,6 +1361,11 @@ export class OpsService {
         nextLabel: next?.label ?? null, nextTone: next?.tone ?? null,
         latestDiag: leadDiagFromRow(r),
         grade: (r.grade as string) ?? null,
+        // A-01 — 연락처는 숫자만 저장하고 보이는 모양은 서버가 만든다(보호자와 같은 함수)
+        parentRelation: (r.parent_relation as string) ?? null,
+        parentPhone: (r.parent_phone as string) ?? null,
+        parentPhoneDisplay: phoneDigitsDisplay((r.parent_phone as string) ?? null),
+        want: (r.want as string) ?? null,
         reasonKind: (r.reason_kind as string) ?? null,
         reasonKindLabel: leadReasonKindLabel(r.reason_kind as string | null),
         failedAt: failedAt ? failedAt.slice(0, 10) : null,
@@ -1446,10 +1453,14 @@ export class OpsService {
     const owner = dto.ownerId != null ? await this.activeStaff(dto.ownerId) : null;
     const note = dto.note?.trim() || null;
     const grade = dto.grade?.trim() || null;
+    // 접수는 칸 셋을 언제나 적는다 — 안 보낸 칸도 null(옛 건과 같은 모양 · N-25)
+    const sent = leadParentFields(dto);
+    const parent = { parentRelation: sent.parentRelation ?? null, parentPhone: sent.parentPhone ?? null, want: sent.want ?? null };
     const id = await this.lead.manager.transaction(async (em) => {
       const [made] = (await em.query(
-        `INSERT INTO lead (name, school, owner_id, stage, source, grade) VALUES ($1, $2, $3, 'first', $4, $5) RETURNING id`,
-        [name, dto.school?.trim() || null, owner?.id ?? null, dto.source, grade],
+        `INSERT INTO lead (name, school, owner_id, stage, source, grade, parent_relation, parent_phone, want)
+         VALUES ($1, $2, $3, 'first', $4, $5, $6, $7, $8) RETURNING id`,
+        [name, dto.school?.trim() || null, owner?.id ?? null, dto.source, grade, parent.parentRelation, parent.parentPhone, parent.want],
       )) as Array<{ id: string }>;
       const lid = leadId(made.id);
       await em.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'first', $2)`, [lid, viewerId]);
@@ -1461,7 +1472,7 @@ export class OpsService {
       }
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'create','{}'::jsonb,$3::jsonb)`,
-        [viewerId, lid, JSON.stringify({ name, school: dto.school?.trim() || null, ownerId: owner?.id ?? null, source: dto.source, grade })],
+        [viewerId, lid, JSON.stringify({ name, school: dto.school?.trim() || null, ownerId: owner?.id ?? null, source: dto.source, grade, ...leadParentAudit(parent) })],
       );
       return lid;
     });
@@ -1470,7 +1481,7 @@ export class OpsService {
 
   /** 카드 머리 수정 — nullable 칸은 명시한 null/빈 문자열만 비우고, 생략한 칸은 그대로 둔다. */
   async patchLead(viewerId: number, id: number, dto: LeadPatchDto): Promise<LeadDto> {
-    const fields = ['name', 'school', 'source', 'ownerId', 'grade'] as const;
+    const fields = ['name', 'school', 'source', 'ownerId', 'grade', 'parentRelation', 'parentPhone', 'want'] as const;
     if (!fields.some((key) => dto[key] !== undefined)) {
       throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
     }
@@ -1478,9 +1489,11 @@ export class OpsService {
     if (name !== undefined && !name) {
       throw new ConflictException({ code: 'LEAD_NAME_REQUIRED', message: '이름을 적어 주세요' });
     }
+    // 보낸 칸만 판정한다 — 안 보낸 칸은 앞 값 그대로(undefined)
+    const parent = leadParentFields(dto);
     await this.lead.manager.transaction(async (em) => {
       const [cur] = (await em.query(
-        `SELECT id, name, school, source, owner_id, grade FROM lead WHERE id=$1 FOR UPDATE`, [id],
+        `SELECT id, name, school, source, owner_id, grade, parent_relation, parent_phone, want FROM lead WHERE id=$1 FOR UPDATE`, [id],
       )) as R[];
       if (!cur) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
       let owner: { id: number; name: string } | null = null;
@@ -1492,6 +1505,8 @@ export class OpsService {
       const before = {
         name: String(cur.name), school: (cur.school as string) ?? null, source: (cur.source as string) ?? null,
         ownerId: cur.owner_id == null ? null : Number(cur.owner_id), grade: (cur.grade as string) ?? null,
+        parentRelation: (cur.parent_relation as string) ?? null, parentPhone: (cur.parent_phone as string) ?? null,
+        want: (cur.want as string) ?? null,
       };
       const after = {
         name: name ?? before.name,
@@ -1499,14 +1514,18 @@ export class OpsService {
         source: dto.source ?? before.source,
         ownerId: dto.ownerId === undefined ? before.ownerId : owner?.id ?? null,
         grade: dto.grade === undefined ? before.grade : dto.grade?.trim() || null,
+        parentRelation: parent.parentRelation === undefined ? before.parentRelation : parent.parentRelation,
+        parentPhone: parent.parentPhone === undefined ? before.parentPhone : parent.parentPhone,
+        want: parent.want === undefined ? before.want : parent.want,
       };
       await em.query(
-        `UPDATE lead SET name=$2, school=$3, source=$4, owner_id=$5, grade=$6 WHERE id=$1`,
-        [id, after.name, after.school, after.source, after.ownerId, after.grade],
+        `UPDATE lead SET name=$2, school=$3, source=$4, owner_id=$5, grade=$6, parent_relation=$7, parent_phone=$8, want=$9 WHERE id=$1`,
+        [id, after.name, after.school, after.source, after.ownerId, after.grade, after.parentRelation, after.parentPhone, after.want],
       );
+      // 감사 줄에는 가린 번호만 — 보호자 LOG 와 같은 규약 (연락처는 관리 응답에만)
       await em.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'edit',$3::jsonb,$4::jsonb)`,
-        [viewerId, id, JSON.stringify(before), JSON.stringify(after)],
+        [viewerId, id, JSON.stringify({ ...before, ...leadParentAudit(before) }), JSON.stringify({ ...after, ...leadParentAudit(after) })],
       );
     });
     return this.leadOne(id);
@@ -2603,4 +2622,33 @@ export class OpsService {
     });
     return (await this.meetingDetail(id, { id: viewerId, canManage: true }))!;
   }
+}
+
+/**
+ * A-01 — 상담 건의 학부모 관계 · 연락처 · 원하는 것을 한 번에 다듬는다. 안 보낸 칸은 undefined(고치기에서 앞 값 그대로),
+ * 빈 글은 null(비운다). 연락처는 보호자 번호와 같은 모양(숫자만 010xxxxxxxx)이어야 하고 아니면 400 이다 — DTO 도 같은 판정을 하지만
+ * 서비스를 직접 부르는 길(시험 · 다른 서비스)도 같은 문을 지나게 한다.
+ */
+function leadParentFields(dto: { parentRelation?: string | null; parentPhone?: string | null; want?: string | null }): {
+  parentRelation: string | null | undefined; parentPhone: string | null | undefined; want: string | null | undefined;
+} {
+  const text = (v: string | null | undefined) => (v === undefined ? undefined : v?.trim() || null);
+  const raw = text(dto.parentPhone);
+  let parentPhone: string | null | undefined = raw;
+  if (raw) {
+    parentPhone = phoneDigits(raw);
+    if (!parentPhone) {
+      throw new BadRequestException({ code: 'LEAD_PARENT_PHONE', message: '학부모 연락처가 휴대폰 번호 모양이 아닙니다 — 010-1234-5678 처럼 적어 주세요' });
+    }
+  }
+  return { parentRelation: text(dto.parentRelation), parentPhone, want: text(dto.want) };
+}
+
+/** 감사 줄에 남기는 모양 — 연락처는 가린 번호(010-****-5678)만. 안 보낸 칸(undefined)은 싣지 않는다 */
+function leadParentAudit(v: { parentRelation?: string | null; parentPhone?: string | null; want?: string | null }): Record<string, string | null> {
+  const out: Record<string, string | null> = {};
+  if (v.parentRelation !== undefined) out.parentRelation = v.parentRelation;
+  if (v.parentPhone !== undefined) out.parentPhone = v.parentPhone ? maskPhone(v.parentPhone) : null;
+  if (v.want !== undefined) out.want = v.want;
+  return out;
 }

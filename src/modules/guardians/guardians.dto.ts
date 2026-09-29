@@ -44,8 +44,8 @@ function IsGuardianEmail(options?: ValidationOptions): PropertyDecorator {
   }, options);
 }
 
-/** 휴대폰 모양 — 발송 경계의 `phoneDigits` 가 숫자 10~11자리(0으로 시작)로 읽을 수 있어야 한다 */
-function IsGuardianPhone(options?: ValidationOptions): PropertyDecorator {
+/** 휴대폰 모양 — 발송 경계의 `phoneDigits` 가 숫자 10~11자리(0으로 시작)로 읽을 수 있어야 한다. 상담 건의 학부모 연락처(A-01)도 같은 모양이라 함께 쓴다 */
+export function IsGuardianPhone(options?: ValidationOptions): PropertyDecorator {
   return ValidateBy({
     name: 'isGuardianPhone',
     validator: {

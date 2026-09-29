@@ -48,7 +48,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
    */
   const ADMIN = 963;
   const STU_EXISTING = 9961; // 이미 있는 「등록A · 10 · 테스트고」
-  const LEADS = { hold: 8801, first: 8802, same: 8803, failed: 8804, norate: 8805 };
+  const LEADS = { hold: 8801, first: 8802, same: 8803, failed: 8804, norate: 8805, parent: 8806, parentDup: 8807 };
   const KIND = 'en_kind';
   const KIND_NORATE = 'en_norate';
   const SUB = 'en-sub';
@@ -99,6 +99,13 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
          ($1,'등록B','테스트고','hold',$6), ($2,'등록C',NULL,'first',$6), ($3,'등록A','테스트고','second',$6), ($4,'등록D',NULL,'failed',$6), ($5,'등록E',NULL,'second',$6)`,
       [LEADS.hold, LEADS.first, LEADS.same, LEADS.failed, LEADS.norate, ADMIN],
     );
+    // A-01 — 문의 때 적은 학부모 · 연락처가 있는 건(등록 확정이 보호자로 잇는다)
+    await q(
+      `INSERT INTO lead (id, name, school, stage, owner_id, parent_relation, parent_phone, want)
+       VALUES ($1,'등록P','연락고','first',$3,'어머니','01055556666','MAP Reading 점수 올리기'),
+              ($2,'등록A','테스트고','first',$3,'아버지','01077778888',NULL)`,
+      [LEADS.parent, LEADS.parentDup, ADMIN],
+    );
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())
         .post('/auth/login').timeout({ response: 5000, deadline: 10000 })
@@ -110,7 +117,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
   });
 
   async function cleanup() {
-    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록D','등록E','등록F')`, [STU_EXISTING]);
+    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록D','등록E','등록F','등록P')`, [STU_EXISTING]);
     const ids = stus.map((s) => Number(s.id));
     const sers = await q<{ id: string }>(`SELECT DISTINCT ser_id AS id FROM ser_stu WHERE student_id = ANY($1) UNION SELECT id FROM ser WHERE kind_key = ANY($2)`, [ids, [KIND, KIND_NORATE]]);
     const serIds = sers.map((s) => Number(s.id));
@@ -126,6 +133,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     }
     if (ids.length) {
       await q(`DELETE FROM guide WHERE student_id = ANY($1)`, [ids]);
+      await q(`DELETE FROM guardian WHERE student_id = ANY($1)`, [ids]);
       await q(`DELETE FROM issue WHERE student_id = ANY($1)`, [ids]);
       await q(`DELETE FROM pay WHERE student_id = ANY($1) OR inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [ids]);
       await q(`DELETE FROM inv_line WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [ids]);
@@ -177,6 +185,8 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     // 첫 달 청구서 — §53 그대로: 과목 단가 60,000 × 월·수 회차 + 종류 단가 50,000 × 금 회차. 관리자는 금액을 못 본다(null) — 줄 수만
     expect(r.invoice).toMatchObject({ studentId: r.studentId, yearMonth: NEXT, state: 'draft', amount: null });
     expect(r.invoiceSkipped).toBeNull();
+    // 문의 때 연락처를 안 적은 건 — 보호자로 이을 것이 없다 (A-01)
+    expect(r.guardianCarried).toBeNull();
     const [inv] = await q<{ amount: number; n: number }>(`SELECT amount, (SELECT count(*) FROM inv_line l WHERE l.inv_id = i.id)::int AS n FROM inv i WHERE i.id = $1`, [r.invoice.id]);
     expect(Number(inv.amount)).toBe(RATE_SUB * r.series[0].monthCount + RATE_KIND * r.series[1].monthCount);
     expect(inv.n).toBe(2);
@@ -311,5 +321,46 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(n.body).toContain('청구서 없음: 단가표에 없는 과목이 있습니다');
     expect(n.body).not.toContain('INV_NO_RATE');
     expect(n.title).toBe(NOTI_TITLE.enrollConfirmed);
+  });
+  /* ── A-01 → 등록 확정 — 문의 때 적은 학부모 · 연락처가 보호자(DQ3)로 이어진다 ─────────────────── */
+  it('A-01 문의의 학부모 · 연락처는 등록 확정 때 그 학생의 대표 보호자로 이어진다(받는 채널은 꺼 둔 채) · 미리보기는 남기지 않는다', async () => {
+    const body = { startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:TH', startMin: 780, endMin: 840 })] };
+    const pre = (await api('post', `/ops/leads/${LEADS.parent}/enroll/preview`).send(body).expect(201)).body;
+    expect(pre.guardianCarried).toEqual({ name: '등록P 어머니', relation: '어머니', phoneDisplay: '010-5555-6666' });
+    expect(await q(`SELECT 1 FROM guardian g JOIN stu s ON s.id = g.student_id WHERE s.name = '등록P'`)).toEqual([]);
+
+    const r = (await api('post', `/ops/leads/${LEADS.parent}/enroll`).send(body).expect(201)).body;
+    expect(r.guardianCarried).toEqual({ name: '등록P 어머니', relation: '어머니', phoneDisplay: '010-5555-6666' });
+    const rows = await q(`SELECT name, relation, phone, email, receive_sms, receive_email, is_primary, active, created_by FROM guardian WHERE student_id = $1`, [r.studentId]);
+    expect(rows).toEqual([{
+      name: '등록P 어머니', relation: '어머니', phone: '01055556666', email: null,
+      // 받는 채널은 「+ 보호자 추가」의 기본과 같다 — 문자 받기는 사람이 켠다(발송 대상이 조용히 늘지 않는다)
+      receive_sms: false, receive_email: false, is_primary: true, active: true, created_by: String(ADMIN),
+    }]);
+    // 보호자 쓰기와 같은 함수 — GUARDIAN create LOG 도 가린 번호로 남는다
+    const [glog] = await q<{ after: Record<string, unknown> }>(
+      `SELECT after FROM log WHERE entity = 'GUARDIAN' AND action = 'create' AND entity_id = (SELECT id FROM guardian WHERE student_id = $1)`, [r.studentId],
+    );
+    expect(glog.after).toMatchObject({ name: '등록P 어머니', phone: '010-****-6666', isPrimary: true, receiveSms: false });
+    // 보호자 관리 화면(GET /guardians)이 같은 줄을 읽는다
+    const g = (await api('get', `/students/${r.studentId}/guardians`).expect(200)).body;
+    expect(g.guardians ?? g).toEqual(expect.arrayContaining([expect.objectContaining({ name: '등록P 어머니', phoneDisplay: '010-5555-6666', isPrimary: true })]));
+    // 감사 줄 — 등록 LOG after 에 가린 번호로 남는다
+    const [log] = await q<{ after: Record<string, unknown> }>(`SELECT after FROM log WHERE entity = 'LEAD' AND entity_id = $1 AND action = 'enroll'`, [LEADS.parent]);
+    expect(log.after.guardianCarried).toEqual({ name: '등록P 어머니', relation: '어머니', phone: '010-****-6666' });
+    expect(JSON.stringify(log.after)).not.toContain('01055556666');
+  });
+
+  it('A-01 같은 번호의 보호자가 이미 있으면(사용 중지한 줄이어도) 잇지 않는다 — 기존 학생에 붙이는 등록', async () => {
+    const [had] = await q<{ id: string }>(
+      `INSERT INTO guardian (student_id, name, relation, phone, receive_email, receive_sms, is_primary, active, created_by)
+       VALUES ($1,'등록A 아버지(옛)','아버지','01077778888',false,false,false,false,$2) RETURNING id`, [STU_EXISTING, ADMIN],
+    );
+    const body = { studentId: STU_EXISTING, startedOn: START, issueInvoice: false, lines: [line({ rrule: 'WEEKLY:SA', startMin: 900, endMin: 960 })] };
+    const r = (await api('post', `/ops/leads/${LEADS.parentDup}/enroll`).send(body).expect(201)).body;
+    expect(r).toMatchObject({ studentId: STU_EXISTING, studentCreated: false, guardianCarried: null });
+    const rows = await q<{ id: string; active: boolean }>(`SELECT id, active FROM guardian WHERE student_id = $1 AND phone = '01077778888'`, [STU_EXISTING]);
+    // 사람이 꺼 둔 줄을 되살리지도, 같은 번호를 하나 더 만들지도 않는다
+    expect(rows).toEqual([{ id: had.id, active: false }]);
   });
 });

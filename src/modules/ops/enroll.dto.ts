@@ -171,6 +171,13 @@ export class EnrollAftercareDto {
   @ApiProperty({ type: String, nullable: true }) ownerName!: string | null;
 }
 
+/** 문의 때 적은 학부모 · 연락처(A-01)가 이어진 보호자 — 번호는 보이는 모양(서버) */
+export class EnrollGuardianCarryDto {
+  @ApiProperty({ description: '보호자 이름 — 「학생 이름 + 관계」(관계가 없으면 「보호자」)' }) name!: string;
+  @ApiProperty({ type: String, nullable: true }) relation!: string | null;
+  @ApiProperty({ description: '010-1234-5678 모양' }) phoneDisplay!: string;
+}
+
 /** `POST /ops/leads/{id}/enroll(/preview)` 의 결과 — 일곱 가지가 무엇이 됐는지 줄마다 */
 export class EnrollResultDto {
   @ApiProperty() leadId!: number;
@@ -194,6 +201,11 @@ export class EnrollResultDto {
   @ApiProperty({ description: '교재를 적지 않은 줄에 상담 진단에서 담당자가 고른 교재를 기본으로 요청했는가' }) diagBookApplied!: boolean;
   @ApiPropertyOptional({ type: LeadDiagDto, nullable: true, description: '그 학생의 최신 상담 진단 — 등록으로 생긴 연결(lead.student_id)을 따라 읽은 값. 없으면 null' })
   latestDiag?: LeadDiagDto | null;
+  @ApiPropertyOptional({
+    type: () => EnrollGuardianCarryDto, nullable: true,
+    description: '문의 연락처(A-01)를 이은 보호자 — 받는 채널은 꺼 둔 채(「+ 보호자 추가」 기본). 문의에 연락처가 없거나 같은 번호의 보호자가 이미 있으면 null',
+  })
+  guardianCarried?: EnrollGuardianCarryDto | null;
   /* W11 · N-86 — 등록 뒤 사후 관리. 같은 트랜잭션에서 상담 담당의 할 일 둘(해피콜 · 첫 월간 상담)이 선다 (S13 「등록 완료에서 실제 후속 예약 날짜·담당 표시」) */
   @ApiPropertyOptional({ type: () => EnrollAftercareDto, description: '해피콜 · 첫 월간 상담 — 날짜와 담당(할 일로 만들어졌다)' })
   aftercare?: EnrollAftercareDto;

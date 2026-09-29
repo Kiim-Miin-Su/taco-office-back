@@ -79,6 +79,13 @@ export function phoneDigits(raw: string): string | null {
   return /^0\d{9,10}$/.test(digits) ? digits : null;
 }
 
+/** 숫자만 저장한 한국 번호의 보이는 모양 — 「010-1234-5678」 · 「02-123-4567」. 보호자 · 상담 건 학부모 연락처가 같이 쓴다 */
+export function phoneDigitsDisplay(d: string | null): string | null {
+  if (!d) return null;
+  if (d.startsWith('02')) return `02-${d.slice(2, d.length - 4)}-${d.slice(-4)}`;
+  return `${d.slice(0, 3)}-${d.slice(3, d.length - 4)}-${d.slice(-4)}`;
+}
+
 /**
  * 문자를 보낼 곳 — 한국 번호는 숫자만(SENS 기본 국가 82), 해외 번호(`+…` · N-103)는 SENS 가 따로 받는 국가번호와 국내 번호로 가른다.
  * 모양이 아니면 null 이다 — 보내지 않는다. 보호자 번호(한국만)는 앞의 `phoneDigits` 모양 그대로 지난다.

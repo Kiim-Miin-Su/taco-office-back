@@ -68,6 +68,8 @@ describe('§23·§24 LEAD 응답 projection', () => {
       // W11 · N-87 — §24 중단 지점은 실패 당시 단계에서 읽는다: 명시값도 도달 기록도 없는 옛 실패는 「미분류」(대응표 이관 없음) ·
       // 옛 중단 지점은 읽기 전용 낱말로 곁에 선다
       failStopKey: 'none', failStopLabel: '미분류', stopAtLabel: '2차 후 미등록',
+      // A-01 — 문의의 학부모 · 연락처 · 원하는 것. 옛 건은 null(접촉 글에서 뽑지 않는다 · N-25) · 보이는 번호 모양도 서버
+      parentRelation: null, parentPhone: null, parentPhoneDisplay: null, want: null,
     }]);
     // 7 고정 목록 + 접촉 원장 1회(lead_id = ANY — 건마다 묻지 않는다 · C90) + 명시값 없는 failed 건이 있을 때만 도달 기록 판정 1회 (N-25 · C35)
     // + §60 대표 피드백 글타래 1회 (C53) + §62 기획 기한 1회 (C56)
@@ -249,10 +251,15 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     }
   });
 
-  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 38필드로 명시한다 (11 + N-25 실패 이력 3 + C90 유입·접촉·다음 단계 8 + DQ1 최신 진단 1 + wave 3 여섯 + 배치안·일정·재확인 셋 + wave 5 사후 관리 줄 + wave 6 등록 수업 · 카드 단추 줄 + W11 N-87 중단 지점 셋)', () => {
+  it('실제 OpenAPI에 FQ 네 문자열의 원문·nullable 계약을 42필드로 명시한다 (11 + N-25 실패 이력 3 + C90 유입·접촉·다음 단계 8 + DQ1 최신 진단 1 + wave 3 여섯 + 배치안·일정·재확인 셋 + wave 5 사후 관리 줄 + wave 6 등록 수업 · 카드 단추 줄 + W11 N-87 중단 지점 셋 + A-01 학부모 · 연락처 · 원하는 것 넷)', () => {
     const schema = openApi.components?.schemas?.LeadDto;
     if (!schema || '$ref' in schema) throw new Error('LeadDto schema 누락');
-    expect(Object.keys(schema.properties ?? {})).toHaveLength(38);
+    expect(Object.keys(schema.properties ?? {})).toHaveLength(42);
+    // A-01 — 학부모 관계 · 연락처(숫자) · 보이는 모양 · 원하는 것은 더해진 선택 칸이고 옛 건은 null 이다(기존 소비자를 깨지 않는다)
+    for (const field of ['parentRelation', 'parentPhone', 'parentPhoneDisplay', 'want']) {
+      expect(schema.required ?? []).not.toContain(field);
+      expect(schema.properties?.[field]).toMatchObject({ type: 'string', nullable: true });
+    }
     // W11 · N-87 — 중단 지점 키 · 낱말(실패 건만) · 옛 중단 지점 낱말(읽기 전용)은 더해진 칸이고 선택이다(기존 소비자를 깨지 않는다)
     for (const field of ['failStopKey', 'failStopLabel', 'stopAtLabel']) {
       expect(schema.required ?? []).not.toContain(field);
@@ -367,8 +374,8 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     expect(JSON.stringify(create.post?.requestBody)).toContain('#/components/schemas/LeadCreateDto');
     const createDto = openApi.components?.schemas?.LeadCreateDto;
     if (!createDto || '$ref' in createDto) throw new Error('LeadCreateDto schema 누락');
-    // wave 3 (23-10) — 학년은 더해진 선택 칸이다(필수 둘은 그대로)
-    expect(Object.keys(createDto.properties ?? {})).toEqual(['name', 'school', 'source', 'ownerId', 'note', 'grade']);
+    // wave 3 (23-10) — 학년은 더해진 선택 칸이다(필수 둘은 그대로) · A-01 — 학부모 관계 · 연락처 · 원하는 것도 선택 칸
+    expect(Object.keys(createDto.properties ?? {})).toEqual(['name', 'school', 'source', 'ownerId', 'note', 'grade', 'parentRelation', 'parentPhone', 'want']);
     expect(createDto.required).toEqual(['name', 'source']);
     expect(createDto.properties?.source).toMatchObject({ enum: ['kakao', 'phone', 'blog', 'instagram', 'referral', 'walkin'] });
     const move = openApi.paths['/ops/leads/{id}/stage'];

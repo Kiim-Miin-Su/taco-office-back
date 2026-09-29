@@ -15,6 +15,7 @@ import { MINUTES_TEMPLATES, MT_ATTEND_STATES, MT_TYPES } from '../../lib/meeting
 import { DATE_SCHEMA, IsCalendarDate, IsSafeHttpUrl } from '../../common/validation';
 import { LeadDiagDto } from './lead-diag.dto';
 import { LeadApptDto, LeadPlanLineDto } from './lead-plan.dto';
+import { IsGuardianPhone } from '../guardians/guardians.dto';
 import { UnavWarnDto } from '../schedule/schedule.dto';
 
 const S = { type: String, nullable: true } as const;
@@ -76,6 +77,17 @@ export class LeadDto {
   /* 1:1 대조 wave 3 (23-10 · 23-12 · 24-04 · 24-05 · 24-06) — 전부 추가 칸이고 옛 건은 null 이다(추정 0 · N-25) */
   @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — 원본 §23 카드의 학년 칩. 적은 그대로(표기 규약을 서버가 바꾸지 않는다) · 옛 건 null' })
   grade?: string | null;
+
+  /* A-01 — 문의 때 적은 학부모 · 연락처 · 원하는 것. 더해진 선택 칸이고 옛 건은 null(N-25 · 기존 소비자를 깨지 않는다 · wave 3 학년과 같은 규약).
+     연락처는 관리 API(canAdminPage+canCrudAll)에만 실린다 */
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '학부모 관계 — 「어머니」 · 사람이 적는 짧은 말(코드 아님) · 보호자 relation 과 같은 칸' })
+  parentRelation?: string | null;
+  @ApiPropertyOptional({ ...S, description: '학부모 연락처 — 숫자만(010xxxxxxxx · 보호자 번호와 같은 모양)' })
+  parentPhone?: string | null;
+  @ApiPropertyOptional({ ...S, description: '보이는 모양 010-1234-5678 — 서버가 만든다' })
+  parentPhoneDisplay?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 120, description: '원하는 것 — 1차 카드의 한 줄(원본 §23 · 23-11)' })
+  want?: string | null;
   @ApiPropertyOptional({ ...S, description: '실패 사유 분류 — unreachable | other_academy | schedule | cost | timing (원본 §24 다섯) · 분류 전·옛 건 null' })
   reasonKind?: string | null;
   @ApiPropertyOptional({ ...S, description: '실패 사유 분류 낱말 — 「연락 두절」. 서버가 만든다 (D-R18)' })
@@ -199,6 +211,19 @@ export class LeadCreateDto {
   @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — 원본 §23 카드의 학년 칩(23-10). 비우면 null' })
   @IsOptional() @IsString() @MaxLength(10)
   grade?: string | null;
+
+  /* A-01 ③ ⑤ — 비우면 null. 첫 접촉 한 줄(note)에 섞어 적지 않아도 된다 */
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '학부모 관계 — 「어머니」' })
+  @IsOptional() @IsString() @MaxLength(20)
+  parentRelation?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '학부모 연락처 — 010-1234-5678 처럼. 숫자만 저장한다(보호자 번호와 같은 모양)' })
+  @IsOptional() @ValidateIf((o: { parentPhone?: string | null }) => !!o.parentPhone?.trim()) @IsString() @IsGuardianPhone()
+  parentPhone?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 120, description: '원하는 것 — 「MAP Reading 점수 올리기」 · 1차 카드의 한 줄' })
+  @IsOptional() @IsString() @MaxLength(120)
+  want?: string | null;
 }
 
 /** 상담 카드 핵심정보 수정 — 단계/실패/진단/배치와 섞지 않고 카드 머리의 사실만 바꾼다. */
@@ -222,6 +247,18 @@ export class LeadPatchDto {
   @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — null 또는 빈 문자열이면 비운다' })
   @IsOptional() @IsString() @MaxLength(10)
   grade?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '학부모 관계 — null 또는 빈 문자열이면 비운다 (A-01)' })
+  @IsOptional() @IsString() @MaxLength(20)
+  parentRelation?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 20, description: '학부모 연락처 — null 또는 빈 문자열이면 비운다 (A-01)' })
+  @IsOptional() @ValidateIf((o: { parentPhone?: string | null }) => !!o.parentPhone?.trim()) @IsString() @IsGuardianPhone()
+  parentPhone?: string | null;
+
+  @ApiPropertyOptional({ ...S, maxLength: 120, description: '원하는 것 — null 또는 빈 문자열이면 비운다 (A-01)' })
+  @IsOptional() @IsString() @MaxLength(120)
+  want?: string | null;
 }
 
 /** 단계 이동 (C90 · N-45) — 받아 주는 값은 LeadDto.nextStages 뿐. 등록·실패는 각자의 길이다 */

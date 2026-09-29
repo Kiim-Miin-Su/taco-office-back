@@ -14,6 +14,7 @@ import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 @Check('lead_source_words', "source IS NULL OR source IN ('kakao','phone','blog','instagram','referral','walkin')")
 @Check('lead_reason_kind_words', "reason_kind IS NULL OR reason_kind IN ('unreachable','other_academy','schedule','cost','timing')")
+@Check('lead_parent_phone_digits', "parent_phone IS NULL OR parent_phone ~ '^0[0-9]{9,10}$'")
 @Entity({ name: 'lead' })
 export class Lead {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -71,6 +72,19 @@ export class Lead {
    */
   @Column({ type: 'date', nullable: true })
   firstLessonOn: string | null;
+
+  /**
+   * A-01 · 문의 때 적는 학부모 관계(「어머니」 · 사람이 적는 짧은 말 — 보호자 relation 과 같은 칸) · 연락처(숫자만 · 보호자 번호와 같은 모양) ·
+   * 원하는 것(카드 1차 한 줄 · 23-11). 옛 건 NULL(N-25). 등록 확정이 연락처를 그 학생의 보호자(GUARDIAN)로 잇는다 — migration 1765400000000
+   */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  parentRelation: string | null;
+
+  @Column({ type: 'varchar', length: 11, nullable: true })
+  parentPhone: string | null;
+
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  want: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;

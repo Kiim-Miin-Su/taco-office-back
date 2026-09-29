@@ -28,9 +28,11 @@ import type { InvoiceDto } from '../accounting/accounting.dto';
 import { BooksService } from '../books/books.service';
 import type { BookIssueDto } from '../books/books.dto';
 import { GuidesService } from '../guides/guides.service';
+import { createGuardianWithin } from '../guardians/guardians.service';
+import { maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
-import type { EnrollMissingBookDto, EnrollResultDto, EnrollSeriesDto, LeadEnrollDto } from './enroll.dto';
+import type { EnrollGuardianCarryDto, EnrollMissingBookDto, EnrollResultDto, EnrollSeriesDto, LeadEnrollDto } from './enroll.dto';
 import { latestLeadDiagBookId, latestLeadDiagForStudent } from './lead-diag.service';
 import { planLeadCare } from './lead-care';
 
@@ -82,8 +84,11 @@ export class LeadEnrollService {
 
     /* ── 상담 건 잠금 — 등록된 건은 다시 못 한다. 보류 → 등록(A-12)도 실패 → 등록(24-07 「바로 수업 등록」)도 같은 길이다 ── */
     const [lead] = (await m.query(
-      `SELECT id, name, school, stage, student_id, stop_at, fail_from FROM lead WHERE id = $1 FOR UPDATE`, [leadId],
-    )) as Array<{ id: string; name: string; school: string | null; stage: string; student_id: string | null; stop_at: string | null; fail_from: string | null }>;
+      `SELECT id, name, school, stage, student_id, stop_at, fail_from, parent_relation, parent_phone FROM lead WHERE id = $1 FOR UPDATE`, [leadId],
+    )) as Array<{
+      id: string; name: string; school: string | null; stage: string; student_id: string | null; stop_at: string | null; fail_from: string | null;
+      parent_relation: string | null; parent_phone: string | null;
+    }>;
     if (!lead) throw new NotFoundException({ code: 'LEAD_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
     if (lead.stage === 'enrolled') throw new ConflictException({ code: 'ALREADY_ENROLLED', message: '이미 등록된 건입니다 — 수업을 더하려면 시간표에서 합니다' });
 
@@ -244,6 +249,20 @@ export class LeadEnrollService {
       notifiedStaff += rows.length;
     }
 
+    /* ── ⑧ 보호자 — 문의 때 적은 학부모 · 연락처(A-01)를 그 학생의 보호자로 잇는다 (DQ3 · 「+ 보호자 추가」와 같은 함수) ──
+       같은 번호의 보호자가 이미 있으면(사용 중지한 줄 포함 — 사람이 끈 것을 되살리지 않는다) 잇지 않는다.
+       받는 채널은 켜지 않는다 — 「+ 보호자 추가」의 기본(문자 받기 꺼짐)과 같다. 문자를 받을지는 보호자 화면에서 사람이 켠다. */
+    let guardianCarried: EnrollGuardianCarryDto | null = null;
+    if (lead.parent_phone) {
+      const same = (await m.query(`SELECT 1 FROM guardian WHERE student_id = $1 AND phone = $2`, [studentId, lead.parent_phone])) as unknown[];
+      if (!same.length) {
+        const g = await createGuardianWithin(q, studentId, {
+          name: `${studentName} ${lead.parent_relation ?? '보호자'}`.slice(0, 40), relation: lead.parent_relation ?? undefined, phone: lead.parent_phone,
+        }, userId);
+        guardianCarried = { name: g.name, relation: g.relation ?? null, phoneDisplay: g.phoneDisplay ?? lead.parent_phone };
+      }
+    }
+
     /* ── LEAD 단계 → enrolled · 도달 기록 · LOG ── */
     // 실패 건에서 바로 온 경우 실패 전 단계(fail_from — 지금 실패 중인 건의 판정 값)를 비운다(되살리기와 같다) — 이력은 도달 기록과 아래 LOG before 에 남는다 (24-07)
     // 옛 중단 지점(stop_at)은 읽기 전용 기록이라 건드리지 않는다(W11 · N-87)
@@ -260,6 +279,9 @@ export class LeadEnrollService {
         stage: 'enrolled', studentId, studentCreated, startedOn: dto.startedOn, serIds, enrIds: enrollments.map((e) => e.id),
         invId: invoice?.id ?? null, invoiceSkipped: invoiceSkipped?.code ?? null, issueIds: bookIssues.map((b) => b.id), guideIds, preview,
         diagBookApplied,
+        // 번호는 가린 모양만 (N-42 · 보호자 LOG 와 같다)
+        guardianCarried: guardianCarried && lead.parent_phone
+          ? { name: guardianCarried.name, relation: guardianCarried.relation, phone: maskPhone(lead.parent_phone) } : null,
       })],
     );
     // 상담 진단은 방금 채운 lead.student_id 를 따라 그 학생의 것이 된다 — 같은 트랜잭션에서 그 연결로 다시 읽어 보여 준다(DQ1)
@@ -272,7 +294,7 @@ export class LeadEnrollService {
       leadId, preview, studentId, studentName, studentCreated, startedOn: dto.startedOn,
       enrollments, series, invoice, invoiceSkipped, bookIssues, booksMissing,
       guideDrafts: guideIds.length, notifiedTeachers, notifiedStaff, unavailable, stage: 'enrolled',
-      diagBookApplied, latestDiag,
+      diagBookApplied, latestDiag, guardianCarried,
       aftercare: {
         firstLessonOn: care.firstLessonOn, happyCallOn: care.happyCallOn, monthlyOn: care.monthlyOn,
         ownerId: care.ownerId, ownerName: care.ownerName,

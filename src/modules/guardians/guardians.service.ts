@@ -29,7 +29,7 @@ import { kstAt, writtenRows } from '../../lib/sql';
 import { ConsultingService } from '../consulting/consulting.service';
 import { assertWeeklyBundleSendable } from '../reports/weekly-bundle';
 import {
-  CHANNEL_SPECS, SEND_CHANNELS, SEND_TIMEOUT_MS, SENDER, phoneDigits, scrubContact,
+  CHANNEL_SPECS, SEND_CHANNELS, SEND_TIMEOUT_MS, SENDER, phoneDigits, phoneDigitsDisplay, scrubContact,
   type SendAttachment, type SendChannel, type Sender, type SendResult,
 } from '../notify/sender';
 import type {
@@ -141,7 +141,7 @@ export class GuardiansService {
   }
 
   async list(studentId: number): Promise<GuardianListDto> {
-    const student = await this.student(this.ds, studentId);
+    const student = await studentOf(this.ds, studentId);
     const rows = await this.ds.query(
       `SELECT ${GUARDIAN_COLS} FROM guardian WHERE student_id = $1
         ORDER BY active DESC, is_primary DESC, name, id`,
@@ -151,26 +151,7 @@ export class GuardiansService {
   }
 
   async create(studentId: number, dto: GuardianCreateDto, actorId: number): Promise<GuardianDto> {
-    return this.tx(async (q) => {
-      // 학생 줄을 잡아 대표 보호자 바꾸기를 학생 단위로 줄 세운다 (부분 유니크가 마지막에 막는다)
-      await this.student(q, studentId, true);
-      const email = dto.email ?? null;
-      const phone = dto.phone ? phoneDigits(dto.phone) : null;
-      const receiveEmail = dto.receiveEmail ?? email !== null;
-      const receiveSms = dto.receiveSms ?? false;
-      assertContacts({ email, phone, receiveEmail, receiveSms });
-      // 대표를 따로 고르지 않았으면 첫 보호자가 대표가 된다 — 발송 창이 미리 체크할 사람이 없으면 매번 고르게 된다
-      const isPrimary = dto.isPrimary ?? !(await this.hasPrimary(q, studentId));
-      if (isPrimary) await this.demotePrimary(q, studentId);
-      const [row] = await q.query(
-        `INSERT INTO guardian (student_id, name, relation, email, phone, receive_email, receive_sms, is_primary, created_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         RETURNING ${GUARDIAN_COLS}`,
-        [studentId, dto.name, dto.relation ?? null, email, phone, receiveEmail, receiveSms, isPrimary, actorId],
-      ) as GuardianRow[];
-      await this.log(q, actorId, 'GUARDIAN', Number(row.id), 'create', null, snapshot(row));
-      return toDto(row);
-    });
+    return this.tx((q) => createGuardianWithin(q, studentId, dto, actorId));
   }
 
   async patch(id: number, dto: GuardianPatchDto, actorId: number): Promise<GuardianDto> {
@@ -186,7 +167,7 @@ export class GuardiansService {
       const receiveSms = dto.receiveSms ?? (before.receive_sms && phone !== null);
       assertContacts({ email, phone, receiveEmail, receiveSms });
       const isPrimary = dto.isPrimary ?? before.is_primary;
-      if (isPrimary && !before.is_primary) await this.demotePrimary(q, Number(before.student_id));
+      if (isPrimary && !before.is_primary) await demotePrimary(q, Number(before.student_id));
       const [after] = writtenRows<GuardianRow>(await q.query(
         `UPDATE guardian
             SET name = $2, relation = $3, email = $4, phone = $5, receive_email = $6, receive_sms = $7,
@@ -196,7 +177,7 @@ export class GuardiansService {
         [id, dto.name ?? before.name, dto.relation === undefined ? before.relation : dto.relation,
           email, phone, receiveEmail, receiveSms, isPrimary],
       ));
-      await this.log(q, actorId, 'GUARDIAN', id, before.active ? 'update' : 'reactivate', snapshot(before), snapshot(after));
+      await writeLog(q, actorId, 'GUARDIAN', id, before.active ? 'update' : 'reactivate', snapshot(before), snapshot(after));
       return toDto(after);
     });
   }
@@ -210,7 +191,7 @@ export class GuardiansService {
         `UPDATE guardian SET active = false, is_primary = false WHERE id = $1 RETURNING ${GUARDIAN_COLS}`,
         [id],
       ));
-      await this.log(q, actorId, 'GUARDIAN', id, 'deactivate', snapshot(before), snapshot(after));
+      await writeLog(q, actorId, 'GUARDIAN', id, 'deactivate', snapshot(before), snapshot(after));
       return toDto(after);
     });
   }
@@ -237,7 +218,7 @@ export class GuardiansService {
         return this.result(q, dto.requestKey, dto.studentId, pnotiId, prior, [], true);
       }
 
-      const student = await this.student(q, dto.studentId);
+      const student = await studentOf(q, dto.studentId);
       const pnotiId = dto.pnotiId ?? null;
       if (pnotiId !== null) await this.assertParentNotice(q, pnotiId, dto.studentId);
       // N-54 주간 묶음(W11 · R2) — 그 학생의 묶음 · 보낼 수 있음 · 본문이 서버가 모은 글과 같음을 같은 트랜잭션에서 본다
@@ -332,7 +313,7 @@ export class GuardiansService {
       if (contract && saved.some((r) => r.channel === 'email' && r.status === 'sent')) {
         await this.consulting.markContractSent(q.manager, contract.consId, actorId);
       }
-      await this.log(q, actorId, 'GUARDIAN_SEND', Number(saved[0].id), 'send', null, {
+      await writeLog(q, actorId, 'GUARDIAN_SEND', Number(saved[0].id), 'send', null, {
         requestKey: dto.requestKey, studentId: dto.studentId, pnotiId,
         guardianIds: dto.guardianIds, channels, counts: counts(saved, skipped.length),
         ...(contract ? { consId: contract.consId, consFileIds: dto.consFileIds } : {}),
@@ -405,43 +386,13 @@ export class GuardiansService {
     }
   }
 
-  private async student(q: DataSource | QueryRunner, studentId: number, lock = false): Promise<{ id: number; name: string }> {
-    const [row] = await q.query(
-      `SELECT id, name FROM stu WHERE id = $1${lock ? ' FOR NO KEY UPDATE' : ''}`,
-      [studentId],
-    ) as Array<{ id: string; name: string }>;
-    if (!row) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생이 없습니다' });
-    return { id: Number(row.id), name: row.name };
-  }
-
   /** 보호자 한 명을 잡는다 — 학생 줄을 먼저 잡아 대표 바꾸기와 같은 순서로 줄 선다 */
   private async lockGuardian(q: QueryRunner, id: number): Promise<GuardianRow> {
     const [head] = await q.query(`SELECT student_id FROM guardian WHERE id = $1`, [id]) as Array<{ student_id: string }>;
     if (!head) throw new NotFoundException({ code: 'GUARDIAN_NOT_FOUND', message: '보호자가 없습니다' });
-    await this.student(q, Number(head.student_id), true);
+    await studentOf(q, Number(head.student_id), true);
     const [row] = await q.query(`SELECT ${GUARDIAN_COLS} FROM guardian WHERE id = $1 FOR UPDATE`, [id]) as GuardianRow[];
     return row;
-  }
-
-  private async hasPrimary(q: QueryRunner, studentId: number): Promise<boolean> {
-    const rows = await q.query(`SELECT 1 FROM guardian WHERE student_id = $1 AND is_primary`, [studentId]) as unknown[];
-    return rows.length > 0;
-  }
-
-  /** 대표는 학생당 하나 — 새 대표를 세우기 전에 전 대표를 내린다 (부분 유니크 guardian_one_primary 가 마지막 방어) */
-  private async demotePrimary(q: QueryRunner, studentId: number): Promise<void> {
-    await q.query(`UPDATE guardian SET is_primary = false WHERE student_id = $1 AND is_primary`, [studentId]);
-  }
-
-  private async log(
-    q: QueryRunner, actorId: number, entity: 'GUARDIAN' | 'GUARDIAN_SEND', entityId: number, action: string,
-    before: Record<string, unknown> | null, after: Record<string, unknown>,
-  ): Promise<void> {
-    await q.query(
-      `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
-      [actorId, entity, entityId, action, before ? JSON.stringify(before) : null, JSON.stringify(after)],
-    );
   }
 
   private async tx<T>(run: (q: QueryRunner) => Promise<T>): Promise<T> {
@@ -461,6 +412,61 @@ export class GuardiansService {
   }
 }
 
+/**
+ * 보호자 한 명을 더한다 — 「+ 보호자 추가」(`create`)와 등록 확정의 문의 연락처 잇기(A-01 · `LeadEnrollService`)가 **같은 규칙**을 쓴다:
+ * 학생 줄 잠금 · 연락처 · 받는 채널 · 대표를 안 골랐으면 첫 보호자가 대표 · 가린 값의 LOG. 트랜잭션은 부르는 쪽이 쥔다.
+ */
+export async function createGuardianWithin(q: QueryRunner, studentId: number, dto: GuardianCreateDto, actorId: number): Promise<GuardianDto> {
+  // 학생 줄을 잡아 대표 보호자 바꾸기를 학생 단위로 줄 세운다 (부분 유니크가 마지막에 막는다)
+  await studentOf(q, studentId, true);
+  const email = dto.email ?? null;
+  const phone = dto.phone ? phoneDigits(dto.phone) : null;
+  const receiveEmail = dto.receiveEmail ?? email !== null;
+  const receiveSms = dto.receiveSms ?? false;
+  assertContacts({ email, phone, receiveEmail, receiveSms });
+  // 대표를 따로 고르지 않았으면 첫 보호자가 대표가 된다 — 발송 창이 미리 체크할 사람이 없으면 매번 고르게 된다
+  const isPrimary = dto.isPrimary ?? !(await hasPrimary(q, studentId));
+  if (isPrimary) await demotePrimary(q, studentId);
+  const [row] = await q.query(
+    `INSERT INTO guardian (student_id, name, relation, email, phone, receive_email, receive_sms, is_primary, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING ${GUARDIAN_COLS}`,
+    [studentId, dto.name, dto.relation ?? null, email, phone, receiveEmail, receiveSms, isPrimary, actorId],
+  ) as GuardianRow[];
+  await writeLog(q, actorId, 'GUARDIAN', Number(row.id), 'create', null, snapshot(row));
+  return toDto(row);
+}
+
+async function studentOf(q: DataSource | QueryRunner, studentId: number, lock = false): Promise<{ id: number; name: string }> {
+  const [row] = await q.query(
+    `SELECT id, name FROM stu WHERE id = $1${lock ? ' FOR NO KEY UPDATE' : ''}`,
+    [studentId],
+  ) as Array<{ id: string; name: string }>;
+  if (!row) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생이 없습니다' });
+  return { id: Number(row.id), name: row.name };
+}
+
+async function hasPrimary(q: QueryRunner, studentId: number): Promise<boolean> {
+  const rows = await q.query(`SELECT 1 FROM guardian WHERE student_id = $1 AND is_primary`, [studentId]) as unknown[];
+  return rows.length > 0;
+}
+
+/** 대표는 학생당 하나 — 새 대표를 세우기 전에 전 대표를 내린다 (부분 유니크 guardian_one_primary 가 마지막 방어) */
+async function demotePrimary(q: QueryRunner, studentId: number): Promise<void> {
+  await q.query(`UPDATE guardian SET is_primary = false WHERE student_id = $1 AND is_primary`, [studentId]);
+}
+
+async function writeLog(
+  q: QueryRunner, actorId: number, entity: 'GUARDIAN' | 'GUARDIAN_SEND', entityId: number, action: string,
+  before: Record<string, unknown> | null, after: Record<string, unknown>,
+): Promise<void> {
+  await q.query(
+    `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
+    [actorId, entity, entityId, action, before ? JSON.stringify(before) : null, JSON.stringify(after)],
+  );
+}
+
 /** 연락처는 최소 하나 · 받는 채널에는 그 연락처가 있어야 한다 — DB CHECK 와 같은 규칙을 사람 말로 먼저 막는다 */
 function assertContacts(v: { email: string | null; phone: string | null; receiveEmail: boolean; receiveSms: boolean }): void {
   if (v.email === null && v.phone === null) {
@@ -475,16 +481,10 @@ function assertContacts(v: { email: string | null; phone: string | null; receive
   }
 }
 
-function phoneDisplay(d: string | null): string | null {
-  if (!d) return null;
-  if (d.startsWith('02')) return `02-${d.slice(2, d.length - 4)}-${d.slice(-4)}`;
-  return `${d.slice(0, 3)}-${d.slice(3, d.length - 4)}-${d.slice(-4)}`;
-}
-
 function toDto(r: GuardianRow): GuardianDto {
   return {
     id: Number(r.id), studentId: Number(r.student_id), name: r.name, relation: r.relation,
-    email: r.email, phone: r.phone, phoneDisplay: phoneDisplay(r.phone),
+    email: r.email, phone: r.phone, phoneDisplay: phoneDigitsDisplay(r.phone),
     receiveEmail: r.receive_email, receiveSms: r.receive_sms,
     receives: SEND_CHANNELS.filter((c) => RECEIVES[c].accepts(r)),
     isPrimary: r.is_primary, active: r.active,
