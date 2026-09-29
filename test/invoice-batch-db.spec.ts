@@ -17,6 +17,7 @@
  *
  * ⚠ 이 파일은 **표를 비우지 않는다.** 스위트 전용 번호대로 만들고 스스로 치운다.
  */
+import { randomUUID } from 'crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -249,7 +250,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
 
     // 입금이 붙으면 못 지운다 — 입금을 먼저 지운다
     await api('post', `/accounting/invoices/${inv.id}/deliver`).expect(201);
-    const pay = await api('post', '/accounting/payments').send({ invId: inv.id, amount: 10000, paidOn: kst(), method: 'cash' }).expect(201);
+    const pay = await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId: inv.id, amount: 10000, paidOn: kst(), method: 'cash' }).expect(201);
     expect(pay.body.paidAmount).toBe(10000);
     const blocked = await api('post', `/accounting/invoices/${inv.id}/void`).send({ reason: '잘못 냄' }).expect(409);
     expect(blocked.body.code).toBe('INV_HAS_PAYMENTS');

@@ -15,6 +15,7 @@
  *
  * 실제 HTTP(가드 · DTO · 트랜잭션)와 시드가 든 개발 DB 로 돈다. 바꾼 것은 끝에 되돌린다.
  */
+import { randomUUID } from 'crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -110,7 +111,7 @@ d('S5 단추와 서버가 같은 질문 — can* 과 실제 거절이 맞는가'
     if (!target) throw new Error('취소할 수 있는 청구서가 없습니다');
 
     const pay = await api('post', '/accounting/payments')
-      .send({ invId: target.id, amount: 1000, paidOn: '2026-09-18', method: 'cash' }).expect(201);
+      .send({ requestKey: randomUUID(), invId: target.id, amount: 1000, paidOn: '2026-09-18', method: 'cash' }).expect(201);
     try {
       const after = (await api('get', '/accounting').expect(200)).body;
       const row = (after.invoices as Json[]).find((i) => i.id === target.id)!;
@@ -143,7 +144,7 @@ d('S5 단추와 서버가 같은 질문 — can* 과 실제 거절이 맞는가'
     try {
       for (const row of rows) {
         const id = Number(row.id);
-        const res = await api('post', `/consulting/${id}/payments`).send({ amount: 1, paidOn: '2026-09-18' });
+        const res = await api('post', `/consulting/${id}/payments`).send({ requestKey: randomUUID(), amount: 1, paidOn: '2026-09-18' });
         if (row.canAddPayment === true) {
           // 열린 자리는 실제로 통과한다 — 막기만 하고 못 여는 판정은 기능을 죽인다
           expect([201, 200]).toContain(res.status);

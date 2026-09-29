@@ -3,6 +3,7 @@
  * 책임/재사용: ConsultingService 공개 메서드와 DB 제약을 함께 검증하고 스크래치 트랜잭션 밖에 데이터를 남기지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
+import { randomUUID } from 'crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
@@ -115,11 +116,11 @@ d('§29·§30 컨설팅 계약 워크플로 (C79-product)', () => {
     expect(signed.role).toBe('signed');
     expect((await svc().detail(owner, true, false, made.id)).contractStep).toBe(5);
 
-    expect((await svc().addPayment(owner, true, false, made.id, { amount: 400_000, paidOn: todayKst() })).stage).toBe('contract');
-    await expect(svc().addPayment(owner, true, false, made.id, { amount: 600_001, paidOn: todayKst() }))
+    expect((await svc().addPayment(owner, true, false, made.id, { requestKey: randomUUID(), amount: 400_000, paidOn: todayKst() })).stage).toBe('contract');
+    await expect(svc().addPayment(owner, true, false, made.id, { requestKey: randomUUID(), amount: 600_001, paidOn: todayKst() }))
       .rejects.toMatchObject({ response: { code: 'OVERPAY' } });
-    expect((await svc().addPayment(owner, true, false, made.id, { amount: 600_000, paidOn: todayKst() })).stage).toBe('running');
-    await expect(svc().addPayment(owner, true, false, made.id, { amount: 1, paidOn: todayKst() }))
+    expect((await svc().addPayment(owner, true, false, made.id, { requestKey: randomUUID(), amount: 600_000, paidOn: todayKst() })).stage).toBe('running');
+    await expect(svc().addPayment(owner, true, false, made.id, { requestKey: randomUUID(), amount: 1, paidOn: todayKst() }))
       .rejects.toMatchObject({ response: { code: 'OVERPAY' } });
     // 단계 잠금을 보는 줄이므로 **비공개 지정 권한은 주고**(canHide=true) 부른다 — S4 가 그 앞에 문을 하나 세웠다
     await expect(svc().updateShare(owner, true, true, made.id, { share: 'private' }))

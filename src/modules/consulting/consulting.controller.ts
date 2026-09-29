@@ -363,7 +363,7 @@ export class ConsultingController {
   @ApiCreatedResponse({ type: ConsAccountRowDto, description: '바뀐 줄 하나 — 화면이 숫자를 다시 만들지 않게' })
   @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
   @ApiNotFoundResponse({ description: '보이지 않는 건 — 존재를 누출하지 않는다' })
-  @ApiConflictResponse({ description: 'code CONS_PAY_LOCKED(종료된 건) | CONS_PAY_NOT_READY(서명 전) | OVERPAY(남은 금액 초과)' })
+  @ApiConflictResponse({ description: 'code CONS_PAY_LOCKED(종료된 건) | CONS_PAY_NOT_READY(서명 전) | OVERPAY(남은 금액 초과) | PAY_REQUEST_KEY_REUSED(같은 요청 키 · 다른 내용 · N-132)' })
   async addPayment(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,

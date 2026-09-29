@@ -52,4 +52,11 @@ export class Pay {
 
   @Column({ type: 'timestamptz', nullable: true })
   confirmedAt: Date | null;
+
+  /**
+   * 입금 요청 키 (안건 N-132) — 같은 키 · 같은 내용의 재시도는 이 줄로 수렴한다. 옛 행 · 표에 직접 넣은 행은 NULL.
+   * 부분 유니크 `pay_request_key_once`(WHERE request_key IS NOT NULL)는 마이그레이션 `1765300000000` 이 소유한다.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  requestKey: string | null;
 }

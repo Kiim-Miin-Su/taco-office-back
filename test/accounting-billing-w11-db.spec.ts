@@ -16,6 +16,7 @@
  *   ④ **7-3 ①** 이월은 받는 달이 마감이면 409 — 단추(`carryBlockedReason`)와 쓰기가 같은 문장.
  *   ⑤ **N-73** 발행 · 이월은 같은 트랜잭션에 감사 한 줄 — 409 로 되돌린 쓰기에는 0줄.
  */
+import { randomUUID } from 'crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Inv } from '../src/entities';
@@ -265,7 +266,7 @@ d('회계 청구 W11 — 진단고사 · 상담 분리 · 분납 일정 · 받�
     expect(before.nextInstallmentSeq).toBe(1);
 
     // 1회차 몫을 받으면 지금 기한은 2회차 — 연체가 아니다
-    const paid = await svc().addPayment(ACTOR, { invId: inv.id, amount: 100_000, paidOn: '2026-05-20', method: 'transfer' }, true);
+    const paid = await svc().addPayment(ACTOR, { requestKey: randomUUID(), invId: inv.id, amount: 100_000, paidOn: '2026-05-20', method: 'transfer' }, true);
     expect(paid.state).toBe('partial');
     expect(paid.installments.map((x) => x.covered)).toEqual([true, false]);
     expect(paid.nextDueOn).toBe('2099-12-31');
@@ -275,7 +276,7 @@ d('회계 청구 W11 — 진단고사 · 상담 분리 · 분납 일정 · 받�
     expect(await overdueOf()).toBe(0);
 
     // 다 받으면 볼 기한이 없다
-    const done = await svc().addPayment(ACTOR, { invId: inv.id, amount: 50_000, paidOn: '2026-06-01', method: 'transfer' }, true);
+    const done = await svc().addPayment(ACTOR, { requestKey: randomUUID(), invId: inv.id, amount: 50_000, paidOn: '2026-06-01', method: 'transfer' }, true);
     expect(done.state).toBe('paid');
     expect(done.nextDueOn).toBeNull();
     expect(await dueOf()).toBeNull();
@@ -300,7 +301,7 @@ d('회계 청구 W11 — 진단고사 · 상담 분리 · 분납 일정 · 받�
       installments: [{ dueOn: '2026-05-20', amount: 100_000 }, { dueOn: '2026-06-20', amount: 100_000 }, { dueOn: '2026-07-20', amount: 50_000 }],
     });
     await svc().deliverInvoice(ACTOR, inv.id, true);
-    await svc().addPayment(ACTOR, { invId: inv.id, amount: 150_000, paidOn: '2026-05-20', method: 'cash' }, true);
+    await svc().addPayment(ACTOR, { requestKey: randomUUID(), invId: inv.id, amount: 150_000, paidOn: '2026-05-20', method: 'cash' }, true);
 
     const flow = await svc().cashflow(true, {}, '2026-06-10');
     const mine = flow.open.filter((o) => o.invId === inv.id);

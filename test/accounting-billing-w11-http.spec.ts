@@ -16,6 +16,7 @@
  *   ⑤ 수강 종료 환불이 분납 일정의 **끝 회차부터** 줄인다 — 커밋 때 지연 제약(합 = 청구액)을 지난다.
  *   ⑥ 다 채운 분납 카드는 「기한 없음」이 아니라 기한(마지막 회차 예정일)을 적는다.
  */
+import { randomUUID } from 'crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -213,9 +214,9 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
     expect(await where()).toBe('draft');
     await api('post', `/accounting/invoices/${inv.id}/deliver`).expect(201);
     expect(await where()).toBe('sent');
-    await api('post', '/accounting/payments').send({ invId: inv.id, amount: 20_000, paidOn: today, method: 'cash' }).expect(201);
+    await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId: inv.id, amount: 20_000, paidOn: today, method: 'cash' }).expect(201);
     expect(await where()).toBe('record');
-    await api('post', '/accounting/payments').send({ invId: inv.id, amount: 30_000, paidOn: today, method: 'cash' }).expect(201);
+    await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId: inv.id, amount: 30_000, paidOn: today, method: 'cash' }).expect(201);
     expect(await where()).toBe('paid');
   });
 
@@ -227,7 +228,7 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
       installments: [{ dueOn: `${NEXT}-05`, amount: 20_000 }, { dueOn: `${NEXT}-25`, amount: 30_000 }],
     }).expect(201)).body;
     await api('post', `/accounting/invoices/${inv.id}/deliver`).expect(201);
-    await api('post', '/accounting/payments').send({ invId: inv.id, amount: 50_000, paidOn: kst(), method: 'cash' }).expect(201);
+    await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId: inv.id, amount: 50_000, paidOn: kst(), method: 'cash' }).expect(201);
     const b = (await api('get', '/accounting/board').expect(200)).body;
     const paid = b.stages.find((s: { key: string }) => s.key === 'paid');
     const card = paid.cards.find((c: { invId: number }) => c.invId === inv.id);

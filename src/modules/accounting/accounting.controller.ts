@@ -428,7 +428,7 @@ export class AccountingController {
     description: '누계·상태 전이(partial/paid)·초과 거절은 서버 한 곳에서 한다. 화면은 잔여를 placeholder 로만 쓴다.',
   })
   @ApiCreatedResponse({ type: InvoiceDto, description: '누계와 전이가 반영된 청구서' })
-  @ApiConflictResponse({ description: 'code OVERPAY(남은 금액 초과) | INV_NOT_BILLABLE(초안·취소)' })
+  @ApiConflictResponse({ description: 'code OVERPAY(남은 금액 초과) | INV_NOT_BILLABLE(초안·취소) | PAY_REQUEST_KEY_REUSED(같은 요청 키 · 다른 내용 또는 지운 줄의 키 · N-132)' })
   @ApiNotFoundResponse({ description: '청구서 없음' })
   async addPayment(@CurrentUser() user: RequestUser, @Body() dto: PaymentCreateDto): Promise<InvoiceDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
@@ -443,7 +443,7 @@ export class AccountingController {
   })
   @ApiCreatedResponse({ type: PaymentDto, description: '저장된 입금 줄 — 목록의 줄과 같은 모양' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'code STUDENT_NOT_FOUND' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'code PAY_REASON_REQUIRED(사유가 공백뿐)' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code PAY_REASON_REQUIRED(사유가 공백뿐) | PAY_REQUEST_KEY_REUSED(같은 요청 키 · 다른 내용 또는 지운 줄의 키 · N-132)' })
   async addManualPayment(@CurrentUser() user: RequestUser, @Body() dto: ManualPaymentCreateDto): Promise<PaymentDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.addManualPayment(user.id, dto, canSee);

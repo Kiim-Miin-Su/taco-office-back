@@ -7,12 +7,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString,
+  ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID,
   Matches, Max, MaxLength, Min, MinLength, ValidateBy, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { UnavWarnDto } from '../schedule/schedule.dto';
 import { CONS_SHARES, type ConsShare } from '../../lib/rules';
+import { PAY_REQUEST_KEY_DESCRIPTION } from '../../lib/pay-request-key';
 import {
   CONS_ITEM_FILE_MAX, CONS_ITEM_MAX,
   CONSULTING_FILE_MAX, CONSULTING_FILE_ROLES, CONSULTING_REQUESTERS, CONSULTING_SESSION_MAX,
@@ -462,6 +463,9 @@ export class ConsPaymentCreateDto {
 
   @ApiPropertyOptional({ maxLength: 80 })
   @IsOptional() @IsString() @MaxLength(80) memo?: string;
+
+  @ApiProperty({ format: 'uuid', description: PAY_REQUEST_KEY_DESCRIPTION })
+  @IsUUID() requestKey!: string;
 }
 
 /**

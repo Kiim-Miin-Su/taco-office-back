@@ -10,6 +10,7 @@
  * 여기서 증명하는 것은 「화면이 더한 값」이 아니라 **서버가 다시 센 누계**다.
  * 초과·초안·완납 정정의 거절도 전부 서버 한 곳(AccountingService)에서 나온다.
  */
+import { randomUUID } from 'crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Inv } from '../src/entities';
@@ -71,11 +72,11 @@ d('§53·§55 분납 입금 — 누계·전이·거절은 서버 한 곳 (A-D2 �
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
   it('두 줄로 나눠 받으면 누계는 줄의 합이고, 채우는 순간 partial → paid 로 넘어간다', async () => {
-    const first = await svc().addPayment(61, { invId, amount: 200000, paidOn: '2026-09-10', method: 'transfer' }, true);
+    const first = await svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 200000, paidOn: '2026-09-10', method: 'transfer' }, true);
     expect(first).toMatchObject({ state: 'partial', paidAmount: 200000, remaining: 300000 });
     expect((await row()).paid_at).toBeNull();
 
-    const second = await svc().addPayment(61, { invId, amount: 300000, paidOn: '2026-09-20', method: 'cash' }, true);
+    const second = await svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 300000, paidOn: '2026-09-20', method: 'cash' }, true);
     expect(second).toMatchObject({ state: 'paid', paidAmount: 500000, remaining: 0 });
 
     expect(await payCount()).toBe(2);
@@ -85,8 +86,8 @@ d('§53·§55 분납 입금 — 누계·전이·거절은 서버 한 곳 (A-D2 �
   });
 
   it('누계가 청구액을 넘는 줄은 OVERPAY 로 거절하고 **행을 남기지 않는다**', async () => {
-    await svc().addPayment(61, { invId, amount: 400000, paidOn: '2026-09-10' }, true);
-    await expect(svc().addPayment(61, { invId, amount: 200000, paidOn: '2026-09-11' }, true))
+    await svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 400000, paidOn: '2026-09-10' }, true);
+    await expect(svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 200000, paidOn: '2026-09-11' }, true))
       .rejects.toMatchObject({ response: { code: 'OVERPAY' } });
     expect(await payCount()).toBe(1);
     expect((await row()).paid_amount).toBe(400000);
@@ -94,16 +95,16 @@ d('§53·§55 분납 입금 — 누계·전이·거절은 서버 한 곳 (A-D2 �
 
   it('초안·취소 청구서에는 입금이 붙지 않는다 — §53 은 작성 → 안내 → 입금 순서다', async () => {
     await q.query(`UPDATE inv SET state = 'draft' WHERE id = $1`, [invId]);
-    await expect(svc().addPayment(61, { invId, amount: 1000, paidOn: '2026-09-10' }, true))
+    await expect(svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 1000, paidOn: '2026-09-10' }, true))
       .rejects.toMatchObject({ response: { code: 'INV_NOT_BILLABLE' } });
     await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [invId]);
-    await expect(svc().addPayment(61, { invId, amount: 1000, paidOn: '2026-09-10' }, true))
+    await expect(svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 1000, paidOn: '2026-09-10' }, true))
       .rejects.toMatchObject({ response: { code: 'INV_NOT_BILLABLE' } });
     expect(await payCount()).toBe(0);
   });
 
   it('부분 납부는 줄을 지워 정정할 수 있고, 마지막 줄을 지우면 발행 사실(전달)로 돌아간다', async () => {
-    await svc().addPayment(61, { invId, amount: 120000, paidOn: '2026-09-10' }, true);
+    await svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 120000, paidOn: '2026-09-10' }, true);
     const [pay] = (await q.query(`SELECT id FROM pay WHERE inv_id = $1 ORDER BY id DESC LIMIT 1`, [invId])) as { id: string }[];
     await expect(svc().removePayment(61, Number(pay.id))).resolves.toEqual({ ok: true });
     const after = await row();
@@ -118,7 +119,7 @@ d('§53·§55 분납 입금 — 누계·전이·거절은 서버 한 곳 (A-D2 �
   });
 
   it('완납된 청구서의 줄은 지울 수 없다 — 되돌리기가 없다 (erd INV Note)', async () => {
-    await svc().addPayment(61, { invId, amount: 500000, paidOn: '2026-09-10' }, true);
+    await svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 500000, paidOn: '2026-09-10' }, true);
     const [pay] = (await q.query(`SELECT id FROM pay WHERE inv_id = $1 ORDER BY id DESC LIMIT 1`, [invId])) as { id: string }[];
     await expect(svc().removePayment(61, Number(pay.id)))
       .rejects.toMatchObject({ response: { code: 'INV_PAID_LOCKED' } });
@@ -126,7 +127,7 @@ d('§53·§55 분납 입금 — 누계·전이·거절은 서버 한 곳 (A-D2 �
   });
 
   it('금액 권한이 없으면 잔액도 내려보내지 않는다 — 빼기로 복원되면 가린 뜻이 없다', async () => {
-    const out = await svc().addPayment(61, { invId, amount: 100000, paidOn: '2026-09-10' }, false);
+    const out = await svc().addPayment(61, { requestKey: randomUUID(), invId, amount: 100000, paidOn: '2026-09-10' }, false);
     expect(out).toMatchObject({ amount: null, paidAmount: null, remaining: null, state: 'partial' });
   });
 });
@@ -164,8 +165,8 @@ d('경합 — 같은 청구서 동시 입금은 하나만 남는다 (C36-a)', ()
   it('각각 60%를 동시에 적으면 한 줄만 남고 나머지는 OVERPAY 다', async () => {
     const svc = new AccountingService(ds.getRepository(Inv));
     const results = await Promise.allSettled([
-      svc.addPayment(61, { invId, amount: 60000, paidOn: '2026-09-10' }, true),
-      svc.addPayment(61, { invId, amount: 60000, paidOn: '2026-09-10' }, true),
+      svc.addPayment(61, { requestKey: randomUUID(), invId, amount: 60000, paidOn: '2026-09-10' }, true),
+      svc.addPayment(61, { requestKey: randomUUID(), invId, amount: 60000, paidOn: '2026-09-10' }, true),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     (results.filter((r) => r.status === 'rejected') as PromiseRejectedResult[]).forEach((r) =>

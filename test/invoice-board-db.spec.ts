@@ -13,6 +13,7 @@
  *   ③ 칸은 비어도 선다 — 칸은 어휘이지 데이터가 아니다.
  *   ④ 건수·합계는 서버가 센다 (D-R37).
  */
+import { randomUUID } from 'crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Inv } from '../src/entities';
@@ -139,10 +140,10 @@ d('§52 회계 트래킹 보드 (C69)', () => {
     const id = await inv('sent', 100_000, 0);
     expect(await colOf(id)).toBe('sent');
 
-    await svc().addPayment(92, { invId: id, amount: 40_000, paidOn: '2026-08-20' }, true);
+    await svc().addPayment(92, { requestKey: randomUUID(), invId: id, amount: 40_000, paidOn: '2026-08-20' }, true);
     expect(await colOf(id)).toBe('record');   // 일부 납부
 
-    await svc().addPayment(92, { invId: id, amount: 60_000, paidOn: '2026-08-21' }, true);
+    await svc().addPayment(92, { requestKey: randomUUID(), invId: id, amount: 60_000, paidOn: '2026-08-21' }, true);
     expect(await colOf(id)).toBe('paid');     // 완납
   });
 

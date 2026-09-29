@@ -14,6 +14,7 @@
  *
  * ⚠ 제 픽스처만 만들고 지운다(전역 DELETE 없음).
  */
+import { randomUUID } from 'crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -88,7 +89,7 @@ d('§55 「+ 결제 등록」 — 청구서 없이 들어온 돈 (A-D1 ② · HT
 
   it('① 청구서 없는 한 줄로 남고 누가·무엇에 대한 돈인지가 남는다 — 같은 트랜잭션에 LOG · ② 목록과 §55 분류는 「기타」', async () => {
     const res = await api('post', '/accounting/payments/manual', ceoToken)
-      .send({ studentId: STU, amount: 35000, paidOn: '2026-09-21', method: 'transfer', reason: '  교재비 — MAP Reading 5  ' })
+      .send({ studentId: STU, amount: 35000, paidOn: '2026-09-21', method: 'transfer', reason: '  교재비 — MAP Reading 5  ', requestKey: randomUUID() })
       .expect(201);
     const row = res.body as PaymentDto;
     expect(row).toMatchObject({
@@ -114,7 +115,7 @@ d('§55 「+ 결제 등록」 — 청구서 없이 들어온 돈 (A-D1 ② · HT
 
   it('③ 권한 · 입력 · 없는 학생 · 공백 사유 — 어느 거절에서도 줄이 늘지 않는다', async () => {
     const before = await count();
-    const ok = { studentId: STU, amount: 10000, paidOn: '2026-09-22', reason: '조정' };
+    const ok = { studentId: STU, amount: 10000, paidOn: '2026-09-22', reason: '조정', requestKey: randomUUID() };
 
     await api('post', '/accounting/payments/manual', teacherToken).send(ok).expect(403);
     await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, amount: 0 }).expect(400);
@@ -122,6 +123,10 @@ d('§55 「+ 결제 등록」 — 청구서 없이 들어온 돈 (A-D1 ② · HT
     await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, method: 'card' }).expect(400);
     await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, invId: 1 }).expect(400);
     await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, reason: undefined }).expect(400);
+    // 요청 키가 없거나 UUID 가 아니면 400 — 재시도 방지 키 없는 입금은 받지 않는다(안건 N-132)
+    await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, requestKey: undefined }).expect(400);
+    await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, requestKey: 'not-a-uuid' }).expect(400);
+    await api('post', '/accounting/payments', ceoToken).send({ invId: 1, amount: 1000, paidOn: '2026-09-22' }).expect(400);
     const missing = await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, studentId: MISSING_STU }).expect(404);
     expect(missing.body.code).toBe('STUDENT_NOT_FOUND');
     const blank = await api('post', '/accounting/payments/manual', ceoToken).send({ ...ok, reason: '   ' }).expect(409);

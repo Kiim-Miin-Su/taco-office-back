@@ -6,9 +6,10 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { FileRefDto } from '../files/files.dto';
+import { PAY_REQUEST_KEY_DESCRIPTION } from '../../lib/pay-request-key';
 
 /** 입금 수단 — 지금 저장되는 두 가지뿐이다. 코드표 확장은 원문 근거가 생길 때 한다 (발명 금지) */
 export const PAY_METHODS = ['transfer', 'cash'] as const;
@@ -401,6 +402,10 @@ export class PaymentCreateDto {
   @ApiPropertyOptional({ description: '청구액과 다를 때의 사유 — 분납 회차 메모로도 쓴다' })
   @IsOptional() @IsString() @MaxLength(500)
   reason?: string;
+
+  @ApiProperty({ format: 'uuid', description: PAY_REQUEST_KEY_DESCRIPTION })
+  @IsUUID()
+  requestKey!: string;
 }
 
 /**
@@ -431,6 +436,10 @@ export class ManualPaymentCreateDto {
   @ApiProperty({ description: '무엇에 대한 돈인가 — 교재비 · 조정 등. 청구서가 없으니 필수(공백뿐이면 409 PAY_REASON_REQUIRED)' })
   @IsString() @MaxLength(500)
   reason!: string;
+
+  @ApiProperty({ format: 'uuid', description: PAY_REQUEST_KEY_DESCRIPTION })
+  @IsUUID()
+  requestKey!: string;
 }
 
 /** 나간 돈 한 줄 — 법인카드 신청분은 `requestedAmount` 가 채워져 있다 (§56) */

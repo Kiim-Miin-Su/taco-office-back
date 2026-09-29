@@ -261,13 +261,13 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
       const invId = Number((await api('post', `/consulting/${id}/invoice`).send({}).expect(201)).body.invId);
       await api('post', `/accounting/invoices/${invId}/deliver`).send({}).expect(201);
 
-      await api('post', '/accounting/payments').send({ invId, amount: 150000, paidOn: TODAY }).expect(201);
+      await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId, amount: 150000, paidOn: TODAY }).expect(201);
       expect((await stageOf(id)).stage).toBe('contract');
       expect(await notisTo(MGR)).toHaveLength(0);                        // 아직 다 안 받았다
       const mid = (await api('get', '/consulting/accounting').expect(200)).body.items.find((x: Row) => x.id === id);
       expect(mid).toMatchObject({ paid: 350000, due: 250000 });           // 7-3 — 전환 청구서 입금을 안다
 
-      await api('post', '/accounting/payments').send({ invId, amount: 250000, paidOn: TODAY }).expect(201);
+      await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId, amount: 250000, paidOn: TODAY }).expect(201);
       expect((await stageOf(id)).stage).toBe('running');
       const notis = await notisTo(MGR);
       expect(notis.map((n) => n.title)).toEqual([NOTI_TITLE.consPaid, NOTI_TITLE.consRecordRequest]);
@@ -291,19 +291,19 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
 
     it('납부 넣기로 다 받아도 같은 두 건 — 조금씩 받는 동안에는 없고 넘어간 뒤에는 다시 가지 않는다', async () => {
       const id = await makeCons({ stage: 'contract', step: 5, amount: 300000, students: [STU_A] });
-      await api('post', `/consulting/${id}/payments`).send({ amount: 100000, paidOn: TODAY }).expect(201);
+      await api('post', `/consulting/${id}/payments`).send({ requestKey: randomUUID(), amount: 100000, paidOn: TODAY }).expect(201);
       expect(await notisTo(MGR)).toHaveLength(0);
-      await api('post', `/consulting/${id}/payments`).send({ amount: 200000, paidOn: TODAY }).expect(201);
+      await api('post', `/consulting/${id}/payments`).send({ requestKey: randomUUID(), amount: 200000, paidOn: TODAY }).expect(201);
       expect((await stageOf(id)).stage).toBe('running');
       expect(await notisTo(MGR)).toHaveLength(2);
       // 더 넣을 돈은 없다(OVERPAY) — 알림도 더 가지 않는다
-      await api('post', `/consulting/${id}/payments`).send({ amount: 1, paidOn: TODAY }).expect(409);
+      await api('post', `/consulting/${id}/payments`).send({ requestKey: randomUUID(), amount: 1, paidOn: TODAY }).expect(409);
       expect(await notisTo(MGR)).toHaveLength(2);
     });
 
     it('수납을 넣은 사람이 담당이면 되알리지 않는다 — 진행으로 넘어가기는 한다', async () => {
       const id = await makeCons({ stage: 'contract', step: 5, amount: 100000, students: [STU_A], owner: CEO });
-      await api('post', `/consulting/${id}/payments`).send({ amount: 100000, paidOn: TODAY }).expect(201);
+      await api('post', `/consulting/${id}/payments`).send({ requestKey: randomUUID(), amount: 100000, paidOn: TODAY }).expect(201);
       expect((await stageOf(id)).stage).toBe('running');
       expect(await notisTo(CEO)).toHaveLength(0);
     });

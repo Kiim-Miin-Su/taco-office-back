@@ -14,6 +14,7 @@
  *   ④ **청구서는 남은 돈으로 낸다** — 계약 전액으로 내면 받은 돈이 미수금에 한 번 더 얹힌다.
  *   ⑤ **한 컨설팅에 살아 있는 청구서는 하나다** — 두 번 눌러도 하나.
  */
+import { randomUUID } from 'crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Inv, Lead } from '../src/entities';
@@ -183,7 +184,7 @@ d('§28 컨설팅 회계 (C58)', () => {
   /* ── 납부 넣기 ────────────────────────────────────────────────────── */
 
   it('납부를 넣으면 받음이 늘고 남음이 줄어든다 — 받은 합은 저장하지 않는다', async () => {
-    const after = await svc().addPayment(OWNER, true, true, OPEN, { amount: 300000, paidOn: day(-1) });
+    const after = await svc().addPayment(OWNER, true, true, OPEN, { requestKey: randomUUID(), amount: 300000, paidOn: day(-1) });
     expect(after.paid).toBe(300000);
     expect(after.due).toBe(600000);
     expect(after.payments).toHaveLength(1);
@@ -197,20 +198,20 @@ d('§28 컨설팅 회계 (C58)', () => {
   });
 
   it('납부일이 오늘보다 뒤면 막는다 — 아직 안 받은 돈이다', async () => {
-    await expect(svc().addPayment(OWNER, true, true, OPEN, { amount: 1, paidOn: day(1) }))
+    await expect(svc().addPayment(OWNER, true, true, OPEN, { requestKey: randomUUID(), amount: 1, paidOn: day(1) }))
       .rejects.toMatchObject({ status: 400 });
   });
 
   it('종료된 건에는 납부를 더하지 못한다', async () => {
     await q.query(`UPDATE cons SET stage = 'done' WHERE id = ${OPEN}`);
-    await expect(svc().addPayment(OWNER, true, true, OPEN, { amount: 1000, paidOn: day(0) }))
+    await expect(svc().addPayment(OWNER, true, true, OPEN, { requestKey: randomUUID(), amount: 1000, paidOn: day(0) }))
       .rejects.toMatchObject({ response: { code: 'CONS_PAY_LOCKED' } });
   });
 
   it('금액이 공개 범위 밖이면 납부를 못 넣는다 — 보이지 않는 건은 404 로 끝낸다', async () => {
-    await expect(svc().addPayment(OWNER, false, false, OPEN, { amount: 1000, paidOn: day(0) }))
+    await expect(svc().addPayment(OWNER, false, false, OPEN, { requestKey: randomUUID(), amount: 1000, paidOn: day(0) }))
       .rejects.toMatchObject({ status: 403 });
-    await expect(svc().addPayment(OTHER, true, false, PICKED, { amount: 1000, paidOn: day(0) }))
+    await expect(svc().addPayment(OTHER, true, false, PICKED, { requestKey: randomUUID(), amount: 1000, paidOn: day(0) }))
       .rejects.toMatchObject({ status: 404 });
   });
 
@@ -259,7 +260,7 @@ d('§28 컨설팅 회계 (C58)', () => {
   });
 
   it('남은 돈이 없으면 낼 청구서도 없다 — 0 원 청구서를 만들지 않는다', async () => {
-    await svc().addPayment(OWNER, true, true, OPEN, { amount: 900000, paidOn: day(0) });
+    await svc().addPayment(OWNER, true, true, OPEN, { requestKey: randomUUID(), amount: 900000, paidOn: day(0) });
     expect((await row(OPEN)).due).toBe(0);
     expect((await row(OPEN)).canInvoice).toBe(false);
     await expect(svc().toInvoice(OWNER, true, true, OPEN))
@@ -307,7 +308,7 @@ d('§28 컨설팅 회계 (C58)', () => {
   it('전환한 건에 납부를 넣으면 409 — 같은 돈이 두 원장에 적히지 않는다 (PB-03)', async () => {
     await svc().toInvoice(OWNER, true, true, PAY_ONLY);
     const reason = (await row(PAY_ONLY)).payBlockedReason;
-    await expect(svc().addPayment(OWNER, true, true, PAY_ONLY, { amount: 100000, paidOn: day(0) }))
+    await expect(svc().addPayment(OWNER, true, true, PAY_ONLY, { requestKey: randomUUID(), amount: 100000, paidOn: day(0) }))
       .rejects.toMatchObject({ status: 409, response: { code: 'CONS_PAY_INVOICED', message: reason } });
     const [{ n }] = (await q.query(
       `SELECT count(*)::int AS n FROM cons_pay WHERE cons_id = ${PAY_ONLY}`,
@@ -319,16 +320,16 @@ d('§28 컨설팅 회계 (C58)', () => {
     const { invId } = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
     await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [invId]);
     expect((await row(PAY_ONLY)).canAddPayment).toBe(true);
-    const after = await svc().addPayment(OWNER, true, true, PAY_ONLY, { amount: 100000, paidOn: day(0) });
+    const after = await svc().addPayment(OWNER, true, true, PAY_ONLY, { requestKey: randomUUID(), amount: 100000, paidOn: day(0) });
     expect(after.paid).toBe(500000);
   });
 
   it('전환 청구서로 **다 받으면** 진행으로 넘어간다 — 회차 잡기가 막힌 채 남지 않는다 (PB-03)', async () => {
     expect(await stageOf(SIGNED)).toBe('contract');
     const invId = await convertAndSend(SIGNED);          // 남은 돈 400,000
-    await acct().addPayment(OWNER, { invId, amount: 150000, paidOn: day(0) }, true);
+    await acct().addPayment(OWNER, { requestKey: randomUUID(), invId, amount: 150000, paidOn: day(0) }, true);
     expect(await stageOf(SIGNED)).toBe('contract');      // 아직 250,000 남았다
-    await acct().addPayment(OWNER, { invId, amount: 250000, paidOn: day(0) }, true);
+    await acct().addPayment(OWNER, { requestKey: randomUUID(), invId, amount: 250000, paidOn: day(0) }, true);
     expect(await stageOf(SIGNED)).toBe('running');
   });
   /* ── 30-02 상세가 사실을 말한다 ──────────────────────────────────── */

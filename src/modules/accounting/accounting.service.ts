@@ -56,6 +56,7 @@ import type {
 } from './accounting.dto';
 import { fileUrlOf, storedFileRef } from '../files/files.service';
 import { ConsultingService } from '../consulting/consulting.service';
+import { lockPayRequestKey, priorPayForKey } from '../../lib/pay-request-key';
 
 
 /** 날짜 눈금의 시작일 — 주는 **월요일**에 건다 (§73 결재함과 같은 셈 · C67) */
@@ -971,6 +972,16 @@ export class AccountingService {
   async addPayment(userId: number, dto: PaymentCreateDto, canSeeAmounts: boolean): Promise<InvoiceDto> {
     const today = todayKst();
     return this.inv.manager.transaction(async (m: EntityManager) => {
+      // 안건 N-132 — 같은 요청 키는 한 줄. 잠금 차례: 권고 잠금 → 청구서 행(세 입금 쓰기가 같다 · lib/pay-request-key)
+      await lockPayRequestKey(m, dto.requestKey);
+      const prior = await priorPayForKey(m, dto.requestKey, {
+        invId: dto.invId, studentId: null, amount: dto.amount, paidOn: dto.paidOn, method: dto.method, reason: dto.reason,
+      });
+      if (prior != null) {
+        // 앞선 요청이 이미 넣었다 — 줄을 더하지 않고 그 청구서의 지금 모습을 돌려준다(첫 응답이 끊긴 재시도의 답)
+        const [again] = (await m.query(`${INV_SELECT} WHERE i.id = $1`, [dto.invId])) as Array<Record<string, unknown>>;
+        return this.invoiceRow(again, canSeeAmounts, today);
+      }
       const [inv] = (await m.query(
         `SELECT id, amount, state, cs_id FROM inv WHERE id = $1 FOR UPDATE`, [dto.invId],
       )) as Array<{ id: string; amount: number; state: string; cs_id: string | null }>;
@@ -999,9 +1010,9 @@ export class AccountingService {
 
       await m.query(
         `INSERT INTO pay (inv_id, student_id, amount, paid_on, method, reason, entered_by, entered_at,
-                          confirmed_by, confirmed_at)
-         SELECT $1, i.student_id, $2, $3::date, $4, $5, $6, now(), $6, now() FROM inv i WHERE i.id = $1`,
-        [dto.invId, dto.amount, dto.paidOn, dto.method ?? null, dto.reason?.trim() || null, userId],
+                          confirmed_by, confirmed_at, request_key)
+         SELECT $1, i.student_id, $2, $3::date, $4, $5, $6, now(), $6, now(), $7 FROM inv i WHERE i.id = $1`,
+        [dto.invId, dto.amount, dto.paidOn, dto.method ?? null, dto.reason?.trim() || null, userId, dto.requestKey],
       );
       await m.query(
         `UPDATE inv SET paid_amount = $2,
@@ -1034,22 +1045,29 @@ export class AccountingService {
     return this.inv.manager.transaction(async (m: EntityManager) => {
       const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1`, [dto.studentId])) as Array<{ id: string; name: string }>;
       if (!stu) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
+      const category = payCategory(null, false);
+      const shaped = (id: number, paidOn: string) => ({
+        id, paidOn, studentId: Number(stu.id), studentName: stu.name,
+        amount: canSeeAmounts ? dto.amount : null, method: dto.method ?? null, reason, invId: null,
+        category, categoryLabel: PAY_CATEGORY_LABEL[category] ?? category,
+      });
+      // 안건 N-132 — 같은 요청 키는 한 줄(청구서 입금과 같은 판정 · 청구서 입금의 키를 빌려 오면 409)
+      await lockPayRequestKey(m, dto.requestKey);
+      const prior = await priorPayForKey(m, dto.requestKey, {
+        invId: null, studentId: dto.studentId, amount: dto.amount, paidOn: dto.paidOn, method: dto.method, reason,
+      });
+      if (prior != null) return shaped(prior, dto.paidOn);
       const [row] = (await m.query(
-        `INSERT INTO pay (inv_id, student_id, amount, paid_on, method, reason, entered_by, entered_at, confirmed_by, confirmed_at)
-         VALUES (NULL, $1, $2, $3::date, $4, $5, $6, now(), $6, now())
+        `INSERT INTO pay (inv_id, student_id, amount, paid_on, method, reason, entered_by, entered_at, confirmed_by, confirmed_at, request_key)
+         VALUES (NULL, $1, $2, $3::date, $4, $5, $6, now(), $6, now(), $7)
          RETURNING id, to_char(paid_on,'YYYY-MM-DD') AS paid_on`,
-        [dto.studentId, dto.amount, dto.paidOn, dto.method ?? null, reason, userId],
+        [dto.studentId, dto.amount, dto.paidOn, dto.method ?? null, reason, userId, dto.requestKey],
       )) as Array<{ id: string; paid_on: string }>;
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1,'PAY',$2,'create',$3::jsonb)`,
-        [userId, row.id, JSON.stringify({ invId: null, studentId: dto.studentId, amount: dto.amount, paidOn: dto.paidOn, method: dto.method ?? null, reason })],
+        [userId, row.id, JSON.stringify({ invId: null, studentId: dto.studentId, amount: dto.amount, paidOn: dto.paidOn, method: dto.method ?? null, reason, requestKey: dto.requestKey })],
       );
-      const category = payCategory(null, false);
-      return {
-        id: Number(row.id), paidOn: row.paid_on, studentId: Number(stu.id), studentName: stu.name,
-        amount: canSeeAmounts ? dto.amount : null, method: dto.method ?? null, reason, invId: null,
-        category, categoryLabel: PAY_CATEGORY_LABEL[category] ?? category,
-      };
+      return shaped(Number(row.id), row.paid_on);
     });
   }
 
@@ -1067,11 +1085,11 @@ export class AccountingService {
   async removePayment(actorId: number, payId: number): Promise<{ ok: true }> {
     return this.inv.manager.transaction(async (m: EntityManager) => {
       const [pay] = (await m.query(
-        `SELECT id, inv_id, student_id, amount, to_char(paid_on,'YYYY-MM-DD') AS paid_on, method, reason
+        `SELECT id, inv_id, student_id, amount, to_char(paid_on,'YYYY-MM-DD') AS paid_on, method, reason, request_key
            FROM pay WHERE id = $1`, [payId],
       )) as Array<{
         id: string; inv_id: string | null; student_id: string | null; amount: number | null;
-        paid_on: string | null; method: string | null; reason: string | null;
+        paid_on: string | null; method: string | null; reason: string | null; request_key: string | null;
       }>;
       if (!pay) throw new NotFoundException('입금 기록을 찾을 수 없습니다');
       const before = JSON.stringify({
@@ -1079,6 +1097,8 @@ export class AccountingService {
         studentId: pay.student_id == null ? null : Number(pay.student_id),
         amount: pay.amount == null ? null : Number(pay.amount),
         paidOn: pay.paid_on, method: pay.method, reason: pay.reason,
+        // 지운 줄의 요청 키 — 같은 키의 늦은 재시도가 줄을 되살리지 않게 판정이 여기를 읽는다(안건 N-132 · lib/pay-request-key)
+        requestKey: pay.request_key,
       });
       const trace = (invId: number | null): Promise<unknown> => m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'PAY',$2,'delete',$3::jsonb,$4::jsonb)`,

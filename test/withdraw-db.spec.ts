@@ -16,6 +16,7 @@
  *
  * ⚠ 이 파일은 **표를 비우지 않는다.** 스위트 전용 번호대로 만들고 스스로 치운다.
  */
+import { randomUUID } from 'crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -167,7 +168,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
   async function paidInvoice(studentId: number) {
     const inv = (await api('post', '/accounting/invoices').send({ studentId, yearMonth: NEXT, invType: 'tuition', dueOn: DUE }).expect(201)).body;
     await api('post', `/accounting/invoices/${inv.id}/deliver`).expect(201);
-    await api('post', '/accounting/payments').send({ invId: inv.id, amount: inv.amount, paidOn: kst(), method: 'cash' }).expect(201);
+    await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId: inv.id, amount: inv.amount, paidOn: kst(), method: 'cash' }).expect(201);
     return inv as { id: number; amount: number; lines: Array<{ count: number; unitPrice: number; amount: number }> };
   }
   const withdraw = (body: Record<string, unknown>, t = token) => api('post', '/accounting/withdrawals', t).send(body);

@@ -34,4 +34,11 @@ export class ConsPay {
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
+
+  /**
+   * 수납 요청 키 (안건 N-132) — 청구서 입금(`pay.request_key`)과 같은 규약. 옛 행은 NULL.
+   * 부분 유니크 `cons_pay_request_key_once` 는 마이그레이션 `1765300000000` 이 소유한다.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  requestKey: string | null;
 }

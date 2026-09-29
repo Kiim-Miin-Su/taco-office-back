@@ -41,6 +41,7 @@ import {
   type ConsultingFileRole, type ConsultingType,
   type ConsultingRecord,
 } from './consulting.rules';
+import { lockPayRequestKey, priorConsPayForKey } from '../../lib/pay-request-key';
 
 type R = Record<string, unknown>;
 
@@ -1376,8 +1377,13 @@ export class ConsultingService {
   ): Promise<ConsAccountRowDto> {
     if (dto.paidOn > todayKst()) throw new BadRequestException('납부일이 오늘보다 뒤일 수 없습니다');
     await this.anyRepo.manager.transaction(async (m) => {
+      // 안건 N-132 — 같은 요청 키는 한 줄. 잠금 차례: 권고 잠금 → 컨설팅 행(청구서 입금과 같다 · lib/pay-request-key)
+      await lockPayRequestKey(m, dto.requestKey);
       const { row: locked, share, viewer } = await this.lockVisible(m, viewerId, canHide, canMoney, consId);
       if (!csCanAmount(share, viewer)) throw new ForbiddenException('이 건의 금액은 공개 범위 밖입니다');
+      // 보이는지 · 금액을 볼 수 있는지를 먼저 본 뒤에 판정한다 — 앞선 줄이 있다는 사실도 공개 범위 안의 일이다
+      const prior = await priorConsPayForKey(m, dto.requestKey, { consId, amount: dto.amount, paidOn: dto.paidOn, memo: dto.memo });
+      if (prior != null) return; // 앞선 요청이 이미 넣었다 — 줄을 더하지 않고 그 건의 지금 모습을 돌려준다
       if (String(locked.stage) === 'done') {
         throw new ConflictException({ code: 'CONS_PAY_LOCKED', message: '종료된 컨설팅에는 납부를 더할 수 없습니다' });
       }
@@ -1405,8 +1411,8 @@ export class ConsultingService {
         });
       }
       const [pay] = (await m.query(
-        `INSERT INTO cons_pay (cons_id,amount,paid_on,memo,by_id) VALUES ($1,$2,$3::date,$4,$5) RETURNING id`,
-        [consId, dto.amount, dto.paidOn, dto.memo?.trim() || null, viewerId],
+        `INSERT INTO cons_pay (cons_id,amount,paid_on,memo,by_id,request_key) VALUES ($1,$2,$3::date,$4,$5,$6) RETURNING id`,
+        [consId, dto.amount, dto.paidOn, dto.memo?.trim() || null, viewerId, dto.requestKey],
       )) as Array<{ id: string }>;
       await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'payment_added',$2,$3)`, [consId, pay.id, viewerId]);
       await ConsultingService.promoteWhenPaid(m, consId, viewerId);
