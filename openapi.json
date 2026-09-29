@@ -11588,6 +11588,94 @@
         ]
       }
     },
+    "/ops/leads/{id}/appts/book": {
+      "post": {
+        "description": "한 트랜잭션 — 적기(PUT appts 와 같은 판정) → 담당 지정(상담 건의 담당이 바뀐다) → 시간표 회차(ONCE · 진단 = 진단고사, 2차 = 상담 · 입학 상담 · 강사 자리 = 담당) → 1차면 2차 대기로(도달 기록 · 그 밖 단계는 그대로) → 상담 예약 접촉(다음은 그날) → LOG(LEAD appt_book). 겹치면 409 RESOURCE_CONFLICT 로 전부 되돌린다. 이미 시간표에 만든 종류 409 LEAD_APPT_SCHEDULED · 깔때기 밖 409 LEAD_APPT_LOCKED · 그만둔 담당 404 STAFF_NOT_FOUND · 담당 빠짐 400. 담당의 불가 시간은 막지 않고 unavailable 로 돌려준다.",
+        "operationId": "LeadPlanController_bookAppt",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LeadApptBookDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeadApptScheduleResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "LEAD_NOT_FOUND | STAFF_NOT_FOUND | ROOM_NOT_FOUND"
+          },
+          "409": {
+            "description": "LEAD_APPT_LOCKED | LEAD_APPT_SCHEDULED | LEAD_APPT_PLACE | LEAD_APPT_CODE_MISSING | RESOURCE_CONFLICT | BAD_RANGE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "「상담 일정 잡기」 — 날짜 · 시각 · 담당 · 방식을 한 번에: 시간표 회차 · 담당 지정 · 1차 → 2차 대기 · 상담 예약 접촉 (A-02)",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/books": {
       "get": {
         "description": "과목 · 레벨 · 학년 필터는 서버가 건다(N-47). 칩 건수 · 경고 띠는 필터와 상관없이 서가 전체 기준이다.",
@@ -22507,11 +22595,22 @@
             ],
             "nullable": true,
             "description": "성별(선택 · N-83) — 관리자 §10 아바타에만 쓴다. 학생 명단(students)은 관리 화면에만 실리므로 강사에게 가지 않는다. 비어 있으면 null"
+          },
+          "tag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 없으면 null. 판정은 서버 한 곳(lib/student-label)"
+          },
+          "label": {
+            "type": "string",
+            "description": "고르기에 적는 이름 — 「이름 · 꼬리」(꼬리가 없으면 이름). 화면은 이 글을 그대로 쓴다 (D-R18)"
           }
         },
         "required": [
           "id",
-          "name"
+          "name",
+          "tag",
+          "label"
         ]
       },
       "InvTypeDto": {
@@ -26330,6 +26429,11 @@
             "type": "string",
             "nullable": true
           },
+          "studentTag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)"
+          },
           "yearMonth": {
             "type": "string"
           },
@@ -26451,6 +26555,7 @@
           "id",
           "studentId",
           "studentName",
+          "studentTag",
           "yearMonth",
           "title",
           "amount",
@@ -26852,6 +26957,11 @@
             "type": "string",
             "nullable": true
           },
+          "tag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)"
+          },
           "done": {
             "type": "number",
             "description": "이번 달에 **이미 한** 수업 수"
@@ -26937,6 +27047,7 @@
         "required": [
           "studentId",
           "name",
+          "tag",
           "done",
           "total",
           "percent",
@@ -28286,6 +28397,11 @@
             "type": "string",
             "nullable": true
           },
+          "studentTag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)"
+          },
           "invType": {
             "type": "string",
             "description": "청구 종류 코드"
@@ -28332,6 +28448,7 @@
           "invId",
           "studentId",
           "studentName",
+          "studentTag",
           "invType",
           "invTypeLabel",
           "title",
@@ -28391,6 +28508,11 @@
             "type": "string",
             "nullable": true
           },
+          "studentTag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)"
+          },
           "yearMonth": {
             "type": "string",
             "description": "청구할 달 — YYYY-MM"
@@ -28425,6 +28547,7 @@
         "required": [
           "studentId",
           "studentName",
+          "studentTag",
           "yearMonth",
           "invType",
           "invTypeLabel",
@@ -30017,6 +30140,28 @@
             "nullable": true,
             "maxLength": 10,
             "description": "학년 — 원본 §23 카드의 학년 칩. 적은 그대로(표기 규약을 서버가 바꾸지 않는다) · 옛 건 null"
+          },
+          "parentRelation": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "학부모 관계 — 「어머니」 · 사람이 적는 짧은 말(코드 아님) · 보호자 relation 과 같은 칸"
+          },
+          "parentPhone": {
+            "type": "string",
+            "nullable": true,
+            "description": "학부모 연락처 — 숫자만(010xxxxxxxx · 보호자 번호와 같은 모양)"
+          },
+          "parentPhoneDisplay": {
+            "type": "string",
+            "nullable": true,
+            "description": "보이는 모양 010-1234-5678 — 서버가 만든다"
+          },
+          "want": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 120,
+            "description": "원하는 것 — 1차 카드의 한 줄(원본 §23 · 23-11)"
           },
           "reasonKind": {
             "type": "string",
@@ -31812,6 +31957,24 @@
             "nullable": true,
             "maxLength": 10,
             "description": "학년 — 원본 §23 카드의 학년 칩(23-10). 비우면 null"
+          },
+          "parentRelation": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "학부모 관계 — 「어머니」"
+          },
+          "parentPhone": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "학부모 연락처 — 010-1234-5678 처럼. 숫자만 저장한다(보호자 번호와 같은 모양)"
+          },
+          "want": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 120,
+            "description": "원하는 것 — 「MAP Reading 점수 올리기」 · 1차 카드의 한 줄"
           }
         },
         "required": [
@@ -31855,6 +32018,24 @@
             "nullable": true,
             "maxLength": 10,
             "description": "학년 — null 또는 빈 문자열이면 비운다"
+          },
+          "parentRelation": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "학부모 관계 — null 또는 빈 문자열이면 비운다 (A-01)"
+          },
+          "parentPhone": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 20,
+            "description": "학부모 연락처 — null 또는 빈 문자열이면 비운다 (A-01)"
+          },
+          "want": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 120,
+            "description": "원하는 것 — null 또는 빈 문자열이면 비운다 (A-01)"
           }
         }
       },
@@ -32352,6 +32533,28 @@
           "label"
         ]
       },
+      "EnrollGuardianCarryDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "보호자 이름 — 「학생 이름 + 관계」(관계가 없으면 「보호자」)"
+          },
+          "relation": {
+            "type": "string",
+            "nullable": true
+          },
+          "phoneDisplay": {
+            "type": "string",
+            "description": "010-1234-5678 모양"
+          }
+        },
+        "required": [
+          "name",
+          "relation",
+          "phoneDisplay"
+        ]
+      },
       "EnrollAftercareDto": {
         "type": "object",
         "properties": {
@@ -32493,6 +32696,16 @@
             "allOf": [
               {
                 "$ref": "#/components/schemas/LeadDiagDto"
+              }
+            ]
+          },
+          "guardianCarried": {
+            "nullable": true,
+            "description": "문의 연락처(A-01)를 이은 보호자 — 받는 채널은 꺼 둔 채(「+ 보호자 추가」 기본). 문의에 연락처가 없거나 같은 번호의 보호자가 이미 있으면 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EnrollGuardianCarryDto"
               }
             ]
           },
@@ -34073,6 +34286,64 @@
           "lead",
           "created",
           "unavailable"
+        ]
+      },
+      "LeadApptBookDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "diag",
+              "second"
+            ],
+            "description": "diag(진단고사) | second(2차 상담)"
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "날짜"
+          },
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439,
+            "description": "시작 분 (0~1439 · 시간표 회차와 같은 범위)"
+          },
+          "endMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1440,
+            "description": "끝 분 — 시작보다 뒤"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ],
+            "description": "현장이면 강의실, 온라인이면 강의실 없음"
+          },
+          "roomId": {
+            "type": "number",
+            "nullable": true,
+            "description": "강의실 — 현장일 때(비우면 「장소 미정」)"
+          },
+          "ownerId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "담당 — 재직 중인 직원. 상담 건의 담당이 되고 시간표 회차의 강사 자리가 된다"
+          }
+        },
+        "required": [
+          "kind",
+          "onDate",
+          "startMin",
+          "endMin",
+          "mode",
+          "ownerId"
         ]
       },
       "BookDto": {
@@ -41149,6 +41420,15 @@
             "type": "string",
             "nullable": true
           },
+          "tag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. lib/student-label 한 곳"
+          },
+          "label": {
+            "type": "string",
+            "description": "기록 창 학생 고르기에 적는 이름 — 「이름 · 꼬리」"
+          },
           "coordName": {
             "type": "string",
             "nullable": true,
@@ -41185,6 +41465,8 @@
         "required": [
           "studentId",
           "name",
+          "tag",
+          "label",
           "alloc",
           "used",
           "wait",
