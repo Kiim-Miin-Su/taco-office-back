@@ -14,7 +14,7 @@ import { Body, Controller, Delete, HttpCode, Param, ParseIntPipe, Post, Put } fr
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, hasPerm, isRole, type RequestUser } from '../../common/perm';
-import { LeadApptParamsDto, LeadApptWriteDto, LeadPlanWriteDto } from './lead-plan.dto';
+import { LeadApptBookDto, LeadApptParamsDto, LeadApptWriteDto, LeadPlanWriteDto } from './lead-plan.dto';
 import { LeadPlanService } from './lead-plan.service';
 import { LeadApptScheduleResultDto, LeadDto } from './ops.dto';
 import { OpsService } from './ops.service';
@@ -100,6 +100,23 @@ export class LeadPlanController {
   @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND' })
   async scheduleAppts(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<LeadApptScheduleResultDto> {
     const { created, unavailable } = await this.svc.scheduleAppts(user.id, id);
+    return { lead: await this.ops.leadOne(id, canSeeMoney(user)), created, unavailable };
+  }
+
+  @Post(':id/appts/book')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '「상담 일정 잡기」 — 날짜 · 시각 · 담당 · 방식을 한 번에: 시간표 회차 · 담당 지정 · 1차 → 2차 대기 · 상담 예약 접촉 (A-02)',
+    description: '한 트랜잭션 — 적기(PUT appts 와 같은 판정) → 담당 지정(상담 건의 담당이 바뀐다) → 시간표 회차(ONCE · 진단 = 진단고사, 2차 = 상담 · 입학 상담 · 강사 자리 = 담당) '
+      + '→ 1차면 2차 대기로(도달 기록 · 그 밖 단계는 그대로) → 상담 예약 접촉(다음은 그날) → LOG(LEAD appt_book). '
+      + '겹치면 409 RESOURCE_CONFLICT 로 전부 되돌린다. 이미 시간표에 만든 종류 409 LEAD_APPT_SCHEDULED · 깔때기 밖 409 LEAD_APPT_LOCKED · '
+      + '그만둔 담당 404 STAFF_NOT_FOUND · 담당 빠짐 400. 담당의 불가 시간은 막지 않고 unavailable 로 돌려준다.',
+  })
+  @ApiCreatedResponse({ type: LeadApptScheduleResultDto })
+  @ApiConflictResponse({ description: 'LEAD_APPT_LOCKED | LEAD_APPT_SCHEDULED | LEAD_APPT_PLACE | LEAD_APPT_CODE_MISSING | RESOURCE_CONFLICT | BAD_RANGE' })
+  @ApiNotFoundResponse({ description: 'LEAD_NOT_FOUND | STAFF_NOT_FOUND | ROOM_NOT_FOUND' })
+  async bookAppt(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: LeadApptBookDto): Promise<LeadApptScheduleResultDto> {
+    const { created, unavailable } = await this.svc.bookAppt(user.id, id, dto);
     return { lead: await this.ops.leadOne(id, canSeeMoney(user)), created, unavailable };
   }
 }

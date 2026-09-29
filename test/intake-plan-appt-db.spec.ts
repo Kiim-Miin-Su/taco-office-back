@@ -303,4 +303,75 @@ d('상담 배치안 초안 · 보류 연장 · 2차/진단 일정 (23-15 · 23-1
     expect(after.appts.map((a) => [a.kind, a.mode, a.placeLabel])).toEqual([['second', 'offline', '장소 미정']]);
     expect(await q(`SELECT mode::text AS mode FROM ser WHERE id = $1`, [occ.ser_id])).toEqual([{ mode: 'online' }]);
   });
+
+  /* ── A-02 「전화 문의 후 상담 일정을 잡음」 — ① 카드 열기 → 상담 일정 잡기 ② 날짜 · 시각 ③ 담당 지정 · 방식 현장 ④ 저장 ──
+     스케줄에 입학 상담이 생긴다 · 카드가 1차 → 2차 대기 · 담당의 시간표에도 같은 일정 · 「이러면 실패 — 스케줄에 안 생기거나 · 담당자 시간표에 안 보이거나 · 단계가 그대로」.
+     전에는 적기(PUT appts)와 「스케줄에 N건 만들기」와 단계 이동이 세 번의 쓰기였고 담당은 카드 담당으로만 정해졌다. */
+  it('⑦ A-02 상담 일정 잡기 — 한 트랜잭션에 시간표 회차(입학 상담 · 담당 자리) · 담당 지정 · 1차 → 2차 대기(도달 기록) · 상담 예약 접촉 · LOG', async () => {
+    const lead = (await api('post', '/ops/leads').send({ name: '사차예약', source: 'phone' }).expect(201)).body as Lead;
+    expect(lead.ownerId ?? null).toBeNull();
+    const day = plus(TODAY, 11);
+    const book = (body: Record<string, unknown>, id = lead.id, t = ceoToken) => api('post', `/ops/leads/${id}/appts/book`, t).send(body);
+
+    const res = (await book({ kind: 'second', onDate: day, startMin: 960, endMin: 1020, mode: 'offline', roomId: ROOM, ownerId: MGR }).expect(201)).body as {
+      lead: Lead & { appts: Array<Record<string, unknown>>; touches: Array<Record<string, unknown>> }; created: number; unavailable: unknown[];
+    };
+    expect(res.created).toBe(1);
+    expect(res.lead).toMatchObject({ stage: 'wait2nd', ownerId: MGR, ownerName: '사차담당' });
+    const serId = res.lead.appts[0]?.serId as number;
+    expect(res.lead.appts).toEqual([{
+      kind: 'second', kindLabel: '2차', onDate: day, startMin: 960, endMin: 1020, mode: 'offline', roomId: ROOM, placeLabel: 'W3P 상담실', serId: expect.any(Number), scheduled: true,
+    }]);
+    // 스케줄 — 입학 상담(상담 종류 · 입학 상담 과목) · 담당 자리 · 한 번(ONCE)
+    expect(await q(`SELECT kind_key, sub_key, teacher_id, title, rrule, room_id FROM ser WHERE id = $1`, [serId])).toEqual([
+      { kind_key: 'consult', sub_key: 'intake', teacher_id: String(MGR), title: '사차예약 2차 상담', rrule: 'ONCE', room_id: String(ROOM) },
+    ]);
+    // 담당의 시간표(선생님별) · 담당 본인의 시간표에도 같은 회차
+    const occOf = async (path: string, t = ceoToken) =>
+      ((await api('get', path, t).expect(200)).body as { items: Array<{ serId: number; startMin: number }> }).items.filter((o) => o.serId === serId);
+    expect(await occOf(`/schedule/occurrences?from=${day}&to=${day}&teacherId=${MGR}`)).toEqual([expect.objectContaining({ serId, startMin: 960 })]);
+    expect(await occOf(`/schedule/occurrences?from=${day}&to=${day}`, mgrToken)).toHaveLength(1);
+    // 단계 — 도달 기록 [first, wait2nd] · 상담 예약 접촉(다음은 그날) → A-03 의 「상담 오늘 · 지남」이 이 날짜를 본다
+    expect((await q<{ stage: string }>(`SELECT stage FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [lead.id])).map((r) => r.stage)).toEqual(['first', 'wait2nd']);
+    expect(await q(`SELECT kind, to_char(next_on,'YYYY-MM-DD') AS next_on, by_id FROM lead_touch WHERE lead_id = $1`, [lead.id])).toEqual([
+      { kind: 'book', next_on: day, by_id: String(CEO) },
+    ]);
+    expect(res.lead.touches[0]).toMatchObject({ kind: 'book', nextOn: day });
+    expect(String(res.lead.touches[0]?.note)).toContain('2차 상담');
+    const [log] = await q<{ after: Record<string, unknown> }>(`SELECT after FROM log WHERE entity = 'LEAD' AND entity_id = $1 AND action = 'appt_book'`, [lead.id]);
+    expect(log.after).toMatchObject({ kind: 'second', onDate: day, startMin: 960, endMin: 1020, mode: 'offline', roomId: ROOM, ownerId: MGR, serId, stage: 'wait2nd' });
+
+    // 다시 잡으면 — 이미 시간표에 있는 종류는 시간표에서 옮긴다(409)
+    expect((await book({ kind: 'second', onDate: day, startMin: 600, endMin: 660, mode: 'online', ownerId: MGR }).expect(409)).body.code).toBe('LEAD_APPT_SCHEDULED');
+    // 2차 대기 건에 진단을 더 잡으면 — 단계는 그대로(앞으로만 · 1차일 때만 2차 대기로 옮긴다)
+    await book({ kind: 'diag', onDate: plus(TODAY, 10), startMin: 600, endMin: 660, mode: 'online', ownerId: MGR }).expect(201);
+    expect((await leadOf(lead.id)).stage).toBe('wait2nd');
+    expect((await q<{ stage: string }>(`SELECT stage FROM lead_stage_log WHERE lead_id = $1 ORDER BY id`, [lead.id])).map((r) => r.stage)).toEqual(['first', 'wait2nd']);
+  });
+
+  it('⑧ A-02 실패는 전부 되돌린다 — 겹침 409(일정 · 단계 · 접촉 · 담당 모두 그대로) · 그만둔 담당 404 · 담당 빠짐 400 · 담당(관리자)도 잡는다 · 끝난 건 409', async () => {
+    const first = (await api('post', '/ops/leads').send({ name: '사차예약겹침', source: 'kakao' }).expect(201)).body as Lead;
+    const day = plus(TODAY, 12);
+    const body = { kind: 'second', onDate: day, startMin: 840, endMin: 900, mode: 'offline', roomId: ROOM, ownerId: MGR };
+    const book = (b: Record<string, unknown>, id = first.id, t = ceoToken) => api('post', `/ops/leads/${id}/appts/book`, t).send(b);
+    const other = await newLead('사차예약앞');
+    await book(body, other.id).expect(201);
+
+    // 같은 강의실 · 같은 시각 — 시간표가 막는다. 적어 둔 일정도 단계도 접촉도 담당도 남지 않는다
+    const refused = (await book(body).expect(409)).body as { code: string; message: string };
+    expect(refused.code).toBe('RESOURCE_CONFLICT');
+    expect(refused.message).toContain(`${day} 14:00`);
+    expect(await q(`SELECT 1 FROM lead_appt WHERE lead_id = $1`, [first.id])).toEqual([]);
+    expect(await q(`SELECT stage, owner_id FROM lead WHERE id = $1`, [first.id])).toEqual([{ stage: 'first', owner_id: null }]);
+    expect(await q(`SELECT kind FROM lead_touch WHERE lead_id = $1`, [first.id])).toEqual([]);
+    expect(await q(`SELECT count(*)::int AS n FROM ser WHERE title = '사차예약겹침 2차 상담'`)).toEqual([{ n: 0 }]);
+
+    expect((await book({ ...body, startMin: 1080, endMin: 1140, ownerId: GONE }).expect(404)).body.code).toBe('STAFF_NOT_FOUND');
+    const { ownerId: _o, ...noOwner } = body;
+    void _o;
+    await book({ ...noOwner, startMin: 1080, endMin: 1140 }).expect(400);
+    await book({ ...body, startMin: 1080, endMin: 1140 }, first.id, mgrToken).expect(201);
+    await api('post', `/ops/leads/${first.id}/fail`).send({}).expect(201);
+    expect((await book({ ...body, kind: 'diag', startMin: 1150, endMin: 1200 }).expect(409)).body.code).toBe('LEAD_APPT_LOCKED');
+  });
 });

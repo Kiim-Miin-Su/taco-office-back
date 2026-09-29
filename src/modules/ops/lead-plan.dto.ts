@@ -109,6 +109,16 @@ export class LeadApptWriteDto {
   roomId?: number | null;
 }
 
+/**
+ * A-02 「상담 일정 잡기」 — 적기와 같은 칸에 **담당**을 더한다. 저장하면 한 트랜잭션에 시간표 회차 · 담당 지정 · 1차 → 2차 대기 · 상담 예약 접촉.
+ * 담당은 반드시 고른다 — 시간표의 강사 자리이고 「담당자 시간표에 안 보이면 실패」(A-02)다.
+ */
+export class LeadApptBookDto extends LeadApptWriteDto {
+  @ApiProperty({ ...ID_SCHEMA, description: '담당 — 재직 중인 직원. 상담 건의 담당이 되고 시간표 회차의 강사 자리가 된다' })
+  @IsInt({ message: '담당을 골라 주세요' }) @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  ownerId!: number;
+}
+
 /** DELETE /ops/leads/{id}/appts/{kind} 경로 — 일정 한 줄 지우기 (23-15 · impl3-w8) */
 export class LeadApptParamsDto {
   @ApiProperty(ID_SCHEMA)

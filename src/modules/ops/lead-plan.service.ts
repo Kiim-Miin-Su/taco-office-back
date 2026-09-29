@@ -15,19 +15,22 @@
  *   (`ScheduleWriteService.create`)로 만들고 `ser_id` 로 잇는다. 겹침은 시간표의 EXCLUDE 가 막는다(회의 잡기 · C96 과 같은 길).
  *   이은 뒤의 날짜·시각·강의실은 시간표가 정본이라 읽기도 그 회차를 따른다(두 곳이면 옮겼을 때 갈린다 · D-R22).
  *
+ * - A-02 「상담 일정 잡기」(`bookAppt`) — 적기 · 시간표 회차 · 담당 지정 · 1차 → 2차 대기 · 상담 예약 접촉을 **한 트랜잭션**에서 한다.
+ *   적기(`upsertAppt`)와 회차 만들기(`createApptSer`)는 위 둘과 같은 함수이고, 단계 이동은 전이표(`leadNextStages`)를 본다.
+ *
  * 쓰기는 깔때기 안(1차 · 2차 대기 · 2차 상담 · 보류)에서만 한다 — 등록 건은 시간표가, 실패 건은 「당시」 기록이 정본이다.
  * 응답(LeadDto)은 컨트롤러가 `OpsService.leadOne` 으로 만든다 — 상담 한 줄의 모양은 한 곳이다(C90).
  */
 import { ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import {
   INTAKE_FUNNEL_STAGES, LEAD_APPT_SER_CODE, intakeStageLabel, leadApptKindLabel, leadApptPlaceLabel,
-  leadHoldExtended, leadPlanLineLabel, leadRecheckOn, type LeadApptKind,
+  leadHoldExtended, leadNextStages, leadPlanLineLabel, leadRecheckOn, type LeadApptKind,
 } from '../../lib/intake-words';
 import { todayKst } from '../../lib/kst';
 import { END_MIN, START_MIN, effectiveModeOf, kstDateOf } from '../../lib/sql';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
-import type { LeadApptDto, LeadApptWriteDto, LeadPlanLineDto, LeadPlanWriteDto } from './lead-plan.dto';
+import type { LeadApptBookDto, LeadApptDto, LeadApptWriteDto, LeadPlanLineDto, LeadPlanWriteDto } from './lead-plan.dto';
 
 type R = Record<string, unknown>;
 
@@ -116,6 +119,17 @@ export function leadApptsFromRow(r: R): LeadApptDto[] {
 
 const FUNNEL = INTAKE_FUNNEL_STAGES as readonly string[];
 const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+type Unav = { serId: number; date: string; teacherId: number; teacherName: string; startMin: number; endMin: number; reason: string };
+
+/** 적기의 모양 판정 — 끝이 시작보다 뒤 · 온라인에는 강의실 없음. 강의실(현장일 때만)을 돌려준다 */
+function apptRoomOf(dto: LeadApptWriteDto): number | null {
+  if (dto.endMin <= dto.startMin) throw new ConflictException({ code: 'BAD_RANGE', message: '끝나는 시각이 시작보다 뒤여야 합니다' });
+  if (dto.mode === 'online' && dto.roomId != null) {
+    throw new ConflictException({ code: 'LEAD_APPT_PLACE', message: '온라인 일정에는 강의실을 고르지 않습니다' });
+  }
+  return dto.mode === 'offline' ? dto.roomId ?? null : null;
+}
 
 @Injectable()
 export class LeadPlanService {
@@ -211,42 +225,47 @@ export class LeadPlanService {
    * 이미 시간표에 만든 줄은 여기서 못 고친다 — 시간표가 정본이다(옮기면 카드도 따라간다).
    */
   async saveAppt(viewerId: number, id: number, dto: LeadApptWriteDto): Promise<void> {
-    if (dto.endMin <= dto.startMin) throw new ConflictException({ code: 'BAD_RANGE', message: '끝나는 시각이 시작보다 뒤여야 합니다' });
-    if (dto.mode === 'online' && dto.roomId != null) {
-      throw new ConflictException({ code: 'LEAD_APPT_PLACE', message: '온라인 일정에는 강의실을 고르지 않습니다' });
-    }
-    const roomId = dto.mode === 'offline' ? dto.roomId ?? null : null;
+    const roomId = apptRoomOf(dto);
     await this.ds.transaction(async (m) => {
       await this.lockOpen(m, id, 'LEAD_APPT_LOCKED', '일정');
-      if (roomId !== null) {
-        const [room] = (await m.query(`SELECT id FROM room WHERE id = $1 AND active`, [roomId])) as R[];
-        if (!room) throw new NotFoundException({ code: 'ROOM_NOT_FOUND', message: '고른 강의실을 찾을 수 없습니다' });
-      }
-      const [cur] = (await m.query(
-        `SELECT kind, to_char(on_date,'YYYY-MM-DD') AS "onDate", start_min AS "startMin", end_min AS "endMin", mode, room_id AS "roomId", ser_id
-           FROM lead_appt WHERE lead_id = $1 AND kind = $2`, [id, dto.kind],
-      )) as R[];
-      if (cur?.ser_id != null) {
-        throw new ConflictException({
-          code: 'LEAD_APPT_SCHEDULED',
-          message: `${leadApptKindLabel(dto.kind)} 일정은 이미 시간표에 만들었습니다 — 시간표에서 옮기면 카드도 따라갑니다`,
-        });
-      }
-      await m.query(
-        `INSERT INTO lead_appt (lead_id, kind, on_date, start_min, end_min, mode, room_id, created_by)
-         VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8)
-         ON CONFLICT (lead_id, kind) DO UPDATE
-           SET on_date = EXCLUDED.on_date, start_min = EXCLUDED.start_min, end_min = EXCLUDED.end_min,
-               mode = EXCLUDED.mode, room_id = EXCLUDED.room_id`,
-        [id, dto.kind, dto.onDate, dto.startMin, dto.endMin, dto.mode, roomId, viewerId],
-      );
-      const after = { kind: dto.kind, onDate: dto.onDate, startMin: dto.startMin, endMin: dto.endMin, mode: dto.mode, roomId };
-      const before = cur ? { kind: cur.kind, onDate: cur.onDate, startMin: cur.startMin, endMin: cur.endMin, mode: cur.mode, roomId: optId(cur.roomId) } : {};
+      const { before, after } = await this.upsertAppt(m, viewerId, id, dto, roomId);
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'appt',$3::jsonb,$4::jsonb)`,
         [viewerId, id, JSON.stringify(before), JSON.stringify(after)],
       );
     });
+  }
+
+  /** 일정 한 줄 적기의 몸통 — 강의실 확인 · 시간표에 만든 줄은 409 · 종류마다 한 줄(upsert). 잠금은 부르는 쪽이 쥔다 */
+  private async upsertAppt(
+    m: EntityManager, viewerId: number, id: number, dto: LeadApptWriteDto, roomId: number | null,
+  ): Promise<{ apptId: number; before: Record<string, unknown>; after: Record<string, unknown> }> {
+    if (roomId !== null) {
+      const [room] = (await m.query(`SELECT id FROM room WHERE id = $1 AND active`, [roomId])) as R[];
+      if (!room) throw new NotFoundException({ code: 'ROOM_NOT_FOUND', message: '고른 강의실을 찾을 수 없습니다' });
+    }
+    const [cur] = (await m.query(
+      `SELECT kind, to_char(on_date,'YYYY-MM-DD') AS "onDate", start_min AS "startMin", end_min AS "endMin", mode, room_id AS "roomId", ser_id
+         FROM lead_appt WHERE lead_id = $1 AND kind = $2`, [id, dto.kind],
+    )) as R[];
+    if (cur?.ser_id != null) {
+      throw new ConflictException({
+        code: 'LEAD_APPT_SCHEDULED',
+        message: `${leadApptKindLabel(dto.kind)} 일정은 이미 시간표에 만들었습니다 — 시간표에서 옮기면 카드도 따라갑니다`,
+      });
+    }
+    const [row] = (await m.query(
+      `INSERT INTO lead_appt (lead_id, kind, on_date, start_min, end_min, mode, room_id, created_by)
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8)
+       ON CONFLICT (lead_id, kind) DO UPDATE
+         SET on_date = EXCLUDED.on_date, start_min = EXCLUDED.start_min, end_min = EXCLUDED.end_min,
+             mode = EXCLUDED.mode, room_id = EXCLUDED.room_id
+       RETURNING id`,
+      [id, dto.kind, dto.onDate, dto.startMin, dto.endMin, dto.mode, roomId, viewerId],
+    )) as R[];
+    const after = { kind: dto.kind, onDate: dto.onDate, startMin: dto.startMin, endMin: dto.endMin, mode: dto.mode, roomId };
+    const before = cur ? { kind: cur.kind, onDate: cur.onDate, startMin: cur.startMin, endMin: cur.endMin, mode: cur.mode, roomId: optId(cur.roomId) } : {};
+    return { apptId: toId(row.id), before, after };
   }
 
   /**
@@ -296,40 +315,14 @@ export class LeadPlanService {
            FROM lead_appt WHERE lead_id = $1 AND ser_id IS NULL ORDER BY kind FOR UPDATE`, [id],
       )) as R[];
       if (!todo.length) throw new ConflictException({ code: 'LEAD_APPT_NONE', message: '시간표에 만들 일정이 없습니다 — 2차·진단 일정을 먼저 잡아 주세요' });
-      const codes = [...new Set(todo.map((a) => LEAD_APPT_SER_CODE[String(a.kind) as LeadApptKind]))];
-      const [known] = (await q.query(
-        `SELECT (SELECT count(*)::int FROM kind WHERE key = ANY($1)) AS kinds, (SELECT count(*)::int FROM sub WHERE key = ANY($2)) AS subs`,
-        [codes.map((c) => c.kindKey), codes.map((c) => c.subKey)],
-      )) as R[];
-      if (Number(known.kinds) !== codes.length || Number(known.subs) !== codes.length) {
-        throw new ConflictException({ code: 'LEAD_APPT_CODE_MISSING', message: '시간표 코드표에 「진단고사」·「상담」 종류가 없어 만들 수 없습니다 — 코드표를 먼저 채워 주세요' });
-      }
-      const unavailable: Array<{ serId: number; date: string; teacherId: number; teacherName: string; startMin: number; endMin: number; reason: string }> = [];
+      await this.assertApptCodes(q, todo.map((a) => String(a.kind)));
+      const unavailable: Unav[] = [];
       for (const a of todo) {
-        const code = LEAD_APPT_SER_CODE[String(a.kind) as LeadApptKind];
-        const onDate = String(a.on_date);
-        const startMin = Number(a.start_min);
-        let serId: number;
-        try {
-          const written = await this.schedule.create({
-            kindKey: code.kindKey, subKey: code.subKey, mode: String(a.mode),
-            fromDate: onDate, toDate: onDate, rrule: 'ONCE', startMin, endMin: Number(a.end_min),
-            teacherId: lead.ownerId, roomId: optId(a.room_id), title: `${lead.name} ${code.title}`, studentIds: [],
-          }, viewerId, q);
-          serId = written.serIds[0]!;
-          unavailable.push(...written.unavailable);
-        } catch (e) {
-          // 겹침은 시간표(EXCLUDE · pg 23P01)가 막는다 — **무엇과** 부딪혔는지만 문장에 보탠다(회의 잡기 · C96 과 같은 자리)
-          const pg = (e as { driverError?: { code?: string }; code?: string }) ?? {};
-          if ((pg.driverError?.code ?? pg.code) === '23P01') {
-            throw new ConflictException({
-              code: 'RESOURCE_CONFLICT',
-              message: `같은 시간에 담당·강의실이 이미 잡혀 있습니다 — ${leadApptKindLabel(String(a.kind))} · ${onDate} ${hm(startMin)}`,
-            });
-          }
-          throw e;
-        }
-        await q.query(`UPDATE lead_appt SET ser_id = $2 WHERE id = $1`, [a.id, serId]);
+        const written = await this.createApptSer(q, viewerId, {
+          apptId: toId(a.id), kind: String(a.kind), onDate: String(a.on_date), startMin: Number(a.start_min), endMin: Number(a.end_min),
+          mode: String(a.mode), roomId: optId(a.room_id), teacherId: lead.ownerId, leadName: lead.name,
+        });
+        unavailable.push(...written.unavailable);
       }
       await q.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'appt_schedule','{}'::jsonb,$3::jsonb)`,
@@ -343,5 +336,101 @@ export class LeadPlanService {
     } finally {
       await q.release();
     }
+  }
+
+  /**
+   * A-02 「상담 일정 잡기」 — ① 카드 → 상담 일정 잡기 ② 날짜 · 시각 ③ 담당 지정 · 방식 ④ 저장. **한 트랜잭션**이다.
+   *   적기(`upsertAppt` · 적기와 같은 함수) → 담당 지정(카드 담당이 바뀐다) → 시간표 회차(`createApptSer` · 강사 자리 = 담당)
+   *   → 1차면 2차 대기로(전이표 · 도달 기록 · 재확인 날짜 비움 — 단계 이동과 같은 줄) → 상담 예약 접촉(`book` · 다음은 그날 — A-03 의 「상담 오늘 · 지남」이 이 날짜를 본다) → LOG.
+   * 겹치면 시간표가 막고 **전부** 되돌아간다 — 「일정은 적혔는데 시간표에 없다」 · 「단계만 옮겨졌다」가 생기지 않는다(A-02 「이러면 실패」).
+   * 이미 시간표에 만든 종류는 409(시간표에서 옮긴다) · 2차 대기 이후 건은 단계를 옮기지 않는다(앞으로만 · 전이표).
+   */
+  async bookAppt(viewerId: number, id: number, dto: LeadApptBookDto): Promise<{ created: number; unavailable: Unav[] }> {
+    const roomId = apptRoomOf(dto);
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      const lead = await this.lockOpen(q.manager, id, 'LEAD_APPT_LOCKED', '일정');
+      const [owner] = (await q.query(`SELECT id, name FROM staff WHERE id = $1 AND active`, [dto.ownerId])) as R[];
+      if (!owner) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '고른 담당을 찾을 수 없습니다 — 재직 중인 사람만 고릅니다' });
+      await this.assertApptCodes(q, [dto.kind]);
+      const { apptId } = await this.upsertAppt(q.manager, viewerId, id, dto, roomId);
+      if (lead.ownerId !== dto.ownerId) await q.query(`UPDATE lead SET owner_id = $2 WHERE id = $1`, [id, dto.ownerId]);
+      const { serId, unavailable } = await this.createApptSer(q, viewerId, {
+        apptId, kind: dto.kind, onDate: dto.onDate, startMin: dto.startMin, endMin: dto.endMin, mode: dto.mode, roomId,
+        teacherId: dto.ownerId, leadName: lead.name,
+      });
+      // 1차에서 잡으면 다음 칸은 2차 대기다(원본 §23 · A-02 「카드가 1차 → 2차 대기로 이동한다」) — 전이표 밖으로는 옮기지 않는다
+      const moved = lead.stage === 'first' && (leadNextStages(lead.stage) as readonly string[]).includes('wait2nd');
+      if (moved) {
+        await q.query(`UPDATE lead SET stage = 'wait2nd', recheck_on = NULL WHERE id = $1`, [id]);
+        await q.query(`INSERT INTO lead_stage_log (lead_id, stage, by_id) VALUES ($1, 'wait2nd', $2)`, [id, viewerId]);
+      }
+      const [room] = roomId === null ? [] : (await q.query(`SELECT name FROM room WHERE id = $1`, [roomId])) as R[];
+      const code = LEAD_APPT_SER_CODE[dto.kind as LeadApptKind];
+      await q.query(
+        `INSERT INTO lead_touch (lead_id, kind, note, next_on, by_id) VALUES ($1, 'book', $2, $3::date, $4)`,
+        [id, `${code.title} 예약 — ${dto.onDate.slice(5)} ${hm(dto.startMin)} · ${leadApptPlaceLabel(dto.mode, text(room?.name))} · 담당 ${String(owner.name)}`, dto.onDate, viewerId],
+      );
+      await q.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'LEAD',$2,'appt_book',$3::jsonb,$4::jsonb)`,
+        [viewerId, id, JSON.stringify({ stage: lead.stage, ownerId: lead.ownerId }), JSON.stringify({
+          kind: dto.kind, onDate: dto.onDate, startMin: dto.startMin, endMin: dto.endMin, mode: dto.mode, roomId,
+          ownerId: dto.ownerId, serId, stage: moved ? 'wait2nd' : lead.stage,
+        })],
+      );
+      await q.commitTransaction();
+      return { created: 1, unavailable };
+    } catch (e) {
+      await q.rollbackTransaction();
+      throw e;
+    } finally {
+      await q.release();
+    }
+  }
+
+  /** 시간표 코드표에 그 종류의 짝(진단고사 · 상담)이 있어야 만든다 — 없으면 사람이 읽을 문장으로 막는다 */
+  private async assertApptCodes(q: QueryRunner, kinds: string[]): Promise<void> {
+    const codes = [...new Set(kinds.map((k) => LEAD_APPT_SER_CODE[k as LeadApptKind]))];
+    const [known] = (await q.query(
+      `SELECT (SELECT count(*)::int FROM kind WHERE key = ANY($1)) AS kinds, (SELECT count(*)::int FROM sub WHERE key = ANY($2)) AS subs`,
+      [codes.map((c) => c.kindKey), codes.map((c) => c.subKey)],
+    )) as R[];
+    if (Number(known.kinds) !== codes.length || Number(known.subs) !== codes.length) {
+      throw new ConflictException({ code: 'LEAD_APPT_CODE_MISSING', message: '시간표 코드표에 「진단고사」·「상담」 종류가 없어 만들 수 없습니다 — 코드표를 먼저 채워 주세요' });
+    }
+  }
+
+  /**
+   * 일정 한 줄의 시간표 회차(ONCE)를 **있는 길**(`ScheduleWriteService.create`)로 만들고 잇는다 — 「스케줄에 N건 만들기」와 A-02 가 같이 쓴다.
+   * 겹침은 시간표(EXCLUDE · pg 23P01)가 막는다 — **무엇과** 부딪혔는지만 문장에 보탠다(회의 잡기 · C96 과 같은 자리).
+   */
+  private async createApptSer(q: QueryRunner, viewerId: number, a: {
+    apptId: number; kind: string; onDate: string; startMin: number; endMin: number; mode: string; roomId: number | null; teacherId: number | null; leadName: string;
+  }): Promise<{ serId: number; unavailable: Unav[] }> {
+    const code = LEAD_APPT_SER_CODE[a.kind as LeadApptKind];
+    let serId: number;
+    let unavailable: Unav[];
+    try {
+      const written = await this.schedule.create({
+        kindKey: code.kindKey, subKey: code.subKey, mode: a.mode,
+        fromDate: a.onDate, toDate: a.onDate, rrule: 'ONCE', startMin: a.startMin, endMin: a.endMin,
+        teacherId: a.teacherId, roomId: a.roomId, title: `${a.leadName} ${code.title}`, studentIds: [],
+      }, viewerId, q);
+      serId = written.serIds[0]!;
+      unavailable = written.unavailable;
+    } catch (e) {
+      const pg = (e as { driverError?: { code?: string }; code?: string }) ?? {};
+      if ((pg.driverError?.code ?? pg.code) === '23P01') {
+        throw new ConflictException({
+          code: 'RESOURCE_CONFLICT',
+          message: `같은 시간에 담당·강의실이 이미 잡혀 있습니다 — ${leadApptKindLabel(a.kind)} · ${a.onDate} ${hm(a.startMin)}`,
+        });
+      }
+      throw e;
+    }
+    await q.query(`UPDATE lead_appt SET ser_id = $2 WHERE id = $1`, [a.apptId, serId]);
+    return { serId, unavailable };
   }
 }
