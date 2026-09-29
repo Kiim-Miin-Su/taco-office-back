@@ -17,7 +17,7 @@ import { Kind, Room, Staff, Stu, Sub, Zacc } from '../../entities';
 import { INV_TYPES, INV_TYPES_MANUAL, INV_TYPE_LABEL, INV_TYPE_SUB, invTypeIssueBlockedReason } from '../accounting/accounting.dto';
 import { permsOf } from '../../common/perm';
 import {
-  ATTENDANCE_CANCEL_REASONS, ATTENDANCE_CANCEL_REASON_LABEL, DEDUCTIBLE_CANCEL_REASONS,
+  ATTENDANCE_CANCEL_REASONS, ATTENDANCE_CANCEL_REASON_LABEL, DEDUCTIBLE_CANCEL_REASONS, PARENT_NOTICE_CANCEL_REASONS,
   CANCEL_TREATS, CANCEL_TREAT_LABEL, CANCEL_TREAT_SUB, PENALTY_RULE,
 } from '../../lib/rules';
 import { teacherPolicies } from '../../lib/teacher-policy';
@@ -80,6 +80,7 @@ export class MetaService {
       // 휴강 창의 낱말과 정책 — 화면은 select 를 채우고 판정은 서버가 한다 (C92 · D-R39)
       cancelReasons: ATTENDANCE_CANCEL_REASONS.map((key) => ({
         key, label: ATTENDANCE_CANCEL_REASON_LABEL[key], deductible: DEDUCTIBLE_CANCEL_REASONS.includes(key),
+        parentNotice: PARENT_NOTICE_CANCEL_REASONS.includes(key),
       })),
       cancelTreats: CANCEL_TREATS.map((key) => ({ key, label: CANCEL_TREAT_LABEL[key], sub: CANCEL_TREAT_SUB[key] })),
       // 리포트 지각 차감 — 판정 정본을 그대로 (작은 것부터). 화면은 금액을 적지 않고 이 배열을 그린다 (D-R32 · 2026-09-25)

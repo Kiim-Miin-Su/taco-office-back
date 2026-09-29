@@ -115,7 +115,7 @@ export class ScheduleController {
 
   @Get('day-cancel/notices')
   @Perm('canCrudAll')
-  @ApiOperation({ summary: '전일 휴원 학부모 안내 준비행 — 새로고침 뒤 선택 발송 재개 (N-133)' })
+  @ApiOperation({ summary: '학원 사유 휴강 학부모 안내 준비행(전일 휴원 N-133 · 한 회차 학원 사정 휴강 C-32) — 새로고침 뒤 선택 발송 재개' })
   @ApiOkResponse({ type: DayCancelNoticeListDto })
   async dayCancelNotices(@Query() query: DayCancelNoticeQueryDto): Promise<DayCancelNoticeListDto> {
     return { date: query.date, items: await this.svc.dayCancelNotices(query.date) };

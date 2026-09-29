@@ -106,6 +106,7 @@ export class CancelReasonDto {
   key!: AttendanceCancelReason;
   @ApiProperty() label!: string;
   @ApiProperty({ description: '이 사유로 차감(소진) 처리를 고를 수 있는가 — 학생 결석만 true' }) deductible!: boolean;
+  @ApiProperty({ description: '이 사유로 한 회차를 접으면 학부모 안내 준비행을 남기는가 — 학원 사정만 true (C-32 · lib/rules.PARENT_NOTICE_CANCEL_REASONS)' }) parentNotice!: boolean;
 }
 
 export class CancelTreatDto {

@@ -714,6 +714,12 @@ export const CANCEL_TREAT_SUB: Record<CancelTreat, string> = {
 };
 /** 차감이 허용되는 사유 — 학생 쪽 사정뿐이다 */
 export const DEDUCTIBLE_CANCEL_REASONS: readonly AttendanceCancelReason[] = ['student_absent'];
+/**
+ * 한 회차를 접으면 학부모 안내 준비행을 남기는 사유 — 학원 사정뿐이다 (C-32 「학원 사정 휴강 → 학부모 안내가 생성된다」).
+ * 학생 결석은 학부모가 이미 안다 · 강사 결강 · 공휴일 · 기타는 원문이 안내를 말하지 않는다 (D-R44).
+ * 전일 휴원(N-133)은 사유와 무관하게 늘 안내를 남긴다 — 그것은 이 목록이 아니라 그날 전체의 규칙이다.
+ */
+export const PARENT_NOTICE_CANCEL_REASONS: readonly AttendanceCancelReason[] = ['academy'];
 
 export type CancelPolicyIssue = 'CANCEL_REASON_REQUIRED' | 'CANCEL_DEDUCT_FORBIDDEN' | 'CANCEL_TREAT_INVALID';
 

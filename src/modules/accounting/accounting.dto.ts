@@ -939,6 +939,13 @@ export class StudentWithdrawDto {
 
   @ApiPropertyOptional({ maxLength: 200, description: '사유 — 장부(환불 줄)와 이력에 남는다' })
   @IsOptional() @IsString() @MaxLength(200) reason?: string;
+
+  @ApiPropertyOptional({
+    ...ID_SCHEMA,
+    description: '이 종료를 연 컴플레인(J-99 · N-135) — 같은 학생의 열린 건만 받는다(다른 학생 400 CPL_STUDENT_MISMATCH · 없으면 404 · 마무리한 건 409 CPL_CLOSED). '
+      + '이어지면 같은 트랜잭션에 컴플레인 감사 줄이 남아 §67 컴플레인 이력에 환불 금액이 선다',
+  })
+  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) cplId?: number;
 }
 
 export class WithdrawSeriesDto {
@@ -971,6 +978,7 @@ export class WithdrawResultDto {
   @ApiProperty() endedOn!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) reason?: string | null;
   @ApiProperty({ description: '미리보기인가 — true 면 아무것도 쓰지 않았다' }) preview!: boolean;
+  @ApiProperty({ type: Number, nullable: true, description: '이어진 컴플레인(J-99) — 컴플레인에서 열지 않았으면 null' }) cplId!: number | null;
   @ApiProperty({ type: [WithdrawSeriesDto] }) series!: WithdrawSeriesDto[];
   @ApiProperty({ type: [WithdrawInvoiceDto], description: '종료일 뒤 회차가 들어 있던 청구서 — 줄이 빠지고 넘친 돈은 환불 줄로' }) invoices!: WithdrawInvoiceDto[];
   @ApiProperty({ description: '정리된 회차 수(규칙 합)' }) remainingCount!: number;

@@ -25,7 +25,7 @@ import {
   PLAN_WRITABLE_STAGES, planLockedMessage, planNextStages,
 } from '../../lib/plan-words';
 import { CPL_AREAS, CPL_AREA_LABEL, CPL_OPEN_STAGES, CPL_SEVERITIES, CPL_SEVERITY_LABEL, CPL_STAGES, CPL_STAGE_LABEL, CPL_STAGE_SUB, cplAreaLabel, cplSeverityLabel } from '../../lib/complaint-words';
-import { CPL_REQUESTERS, CPL_REQUESTER_LABEL, cplRequesterLabel } from '../../lib/complaint-words';
+import { CPL_REFUND_LOG, CPL_REQUESTERS, CPL_REQUESTER_LABEL, cplRequesterLabel } from '../../lib/complaint-words';
 import {
   INTAKE_FUNNEL_STAGES, INTAKE_STAGES, INTAKE_STAGE_LABEL, INTAKE_STAGE_SUB, isIntakeFunnel,
   LEAD_SOURCES, LEAD_SOURCE_LABEL, LEAD_SOURCE_TOUCH_KIND, LEAD_SOURCE_UNSET, LEAD_SOURCE_UNSET_LABEL,
@@ -67,7 +67,7 @@ import {
 } from '../../lib/meeting-words';
 import type {
   IntakeAlertDto, IntakeFailReasonDto, IntakeHeadDto,
-  ComplaintCreateDto, ComplaintDto, ComplaintPatchDto,
+  ComplaintCreateDto, ComplaintDto, ComplaintPatchDto, ComplaintRefundDto,
   LeadCreateDto, LeadDto, LeadFailDto, LeadPatchDto, LeadStageMoveDto, LeadTouchDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
@@ -844,7 +844,7 @@ export class OpsService {
   private async complaintRows(
     where: string, params: unknown[], today = todayKst(), canMoney = false,
   ): Promise<ComplaintDto[]> {
-    return (await this.q(
+    const rows = (await this.q(
       `SELECT c.id, c.area, c.student_id, s.name AS student_name, c.stage, c.body, c.action, c.result,
               to_char(c.created_at,'YYYY-MM-DD') AS created_at, c.owner_id, o.name AS owner_name,
               to_char(c.due_on,'YYYY-MM-DD') AS due_on, c.severity, c.teacher_changed,
@@ -880,8 +880,33 @@ export class OpsService {
         requester: (r.requester as string) ?? null,
         requesterLabel: cplRequesterLabel(r.requester as string | null),
         closedOn: (r.closed_on as string) ?? null,
+        refunds: [] as ComplaintRefundDto[],
       };
     });
+    /*
+     * 컴플레인 → 환불 (J-99 · N-135) — 수강 종료가 같은 트랜잭션에 남긴 CPL 감사 줄을 **한 번에** 읽는다(줄마다 묻지 않는다).
+     * 금액은 권한을 탄다 — 못 보면 줄은 서되 금액만 null 이다(D-R39 · 수강 종료 경로가 canMoney 이므로 같은 질문).
+     */
+    if (rows.length) {
+      const refunds = await this.q(
+        `SELECT l.entity_id, to_char(l.at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI') AS at, l.after, s.name AS by_name
+           FROM log l LEFT JOIN staff s ON s.id = l.actor_id
+          WHERE l.entity = $1 AND l.action = $2 AND l.entity_id = ANY($3::bigint[])
+          ORDER BY l.at, l.id`,
+        [CPL_REFUND_LOG.entity, CPL_REFUND_LOG.action, rows.map((r) => r.id)],
+      );
+      const byCpl = new Map(rows.map((r) => [r.id, r]));
+      for (const l of refunds) {
+        const after = (l.after ?? {}) as { endedOn?: unknown; refundTotal?: unknown };
+        byCpl.get(Number(l.entity_id))?.refunds.push({
+          at: String(l.at),
+          endedOn: String(after.endedOn ?? ''),
+          refundTotal: canMoney && typeof after.refundTotal === 'number' ? after.refundTotal : null,
+          byName: (l.by_name as string) ?? null,
+        });
+      }
+    }
+    return rows;
   }
 
   /** 문의자 관계 — DTO 가 먼저 막고 표의 CHECK 가 마지막에 막는다. 서비스도 한 번 더 본다(직접 호출 경로 · 67-5) */

@@ -16,6 +16,8 @@
  *   ⑥ 「그날 전체 휴강」은 한 트랜잭션이고 이미 휴강인 회차는 건너뛰어 센다 (C-33).
  *   ⑦ 강사(canCrudAll 없음)는 그날 전체 휴강을 못 한다 (D-R39).
  *   ⑧ 학원 사정 휴강은 강사 정산에서 빠진다 — 취소 회차는 리포트가 없고 정산은 리포트를 쓴 수업만 센다 (C-32).
+ *   ⑩ 학원 사정 휴강 한 회차는 **학부모 안내 준비행**을 그 회차 명단 학생마다 같은 트랜잭션에 남긴다 (C-32 「학부모 안내가 생성된다」).
+ *      다른 사유는 남기지 않는다 · 되돌리기는 안 보낸 준비행을 걷고 보낸 뒤에는 409 다 · 안내 이름은 서버가 준다.
  *
  * ⚠ 이 파일은 **표를 비우지 않는다.** 스위트 전용 번호대로 만들고 스스로 치운다.
  */
@@ -104,6 +106,9 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     await q(`DELETE FROM noti WHERE link LIKE '/schedule?date=%' AND from_id = $1`, [CEO]);
     await q(`DELETE FROM noti WHERE link LIKE '/accounting?tab=tuition%' AND from_id = $1`, [CEO]);
     await q(`DELETE FROM log WHERE actor_id = $1`, [CEO]);
+    // 학원 사정 휴강은 그 회차에 학부모 안내 준비행을 남긴다(C-32) — 규칙을 지우기 전에 이 스위트 규칙의 안내를 치운다
+    await q(`DELETE FROM guardian_send WHERE pnoti_id IN (SELECT id FROM pnoti WHERE ser_id = ANY($1))`, [made]);
+    await q(`DELETE FROM pnoti WHERE ser_id = ANY($1)`, [made]);
     // class 종류는 투영이 리포트 초안을 함께 만든다 — 규칙을 지우면 초안도 치운다 (schedule-write.spec 과 같다)
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [made]);
     await q(`DELETE FROM rep WHERE ser_id = ANY($1)`, [made]);
@@ -578,5 +583,114 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     expect(row).toBeDefined();
     expect(row!.canceled).toBe(true);
     expect(row!.pay ?? 0).toBe(0);
+  });
+  /* ── ⑩ 학원 사정 휴강의 학부모 안내 (C-32 · 운영 전 마감 4) ─────────────── */
+
+  type Notice = { id: number; studentId: number; studentName: string; body: string; title: string; sentAt: string | null };
+  const noticesOf = async (from: string) =>
+    ((await api('get', '/schedule/day-cancel/notices').query({ date: from }).expect(200)).body.items as Notice[]);
+  const pnotiOf = (id: number, from: string) =>
+    q<{ id: string; student_id: string; body: string; sent_at: string | null }>(
+      `SELECT id, student_id, body, sent_at FROM pnoti WHERE ser_id=$1 AND on_date=$2::date AND audience='parent' ORDER BY student_id`,
+      [id, from],
+    );
+
+  it('학원 사정 휴강 한 회차 → 그 회차 명단 학생마다 학부모 안내 준비행 하나 · 이월 문장 · 보내지 않았다 (C-32)', async () => {
+    const { id, from } = await makeSer(750, { studentIds: [STU_A, STU_B] });
+    const res = await api('delete', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, cancelKind: 'academy', cancelTreat: 'carry', memo: '강의실 공사' })
+      .expect(200);
+    const rows = await pnotiOf(id, from);
+    madeNotices.push(...rows.map((r) => Number(r.id)));
+    expect(rows.map((r) => Number(r.student_id))).toEqual([STU_A, STU_B]);
+    for (const r of rows) {
+      expect(r.sent_at).toBeNull();
+      expect(r.body.startsWith('[학원 사정 휴강]')).toBe(true);
+      expect(r.body).toContain(from);
+      expect(r.body).toContain('12:30');
+      expect(r.body).toContain('차감하지 않고 이월');
+      expect(r.body).toContain('강의실 공사');
+    }
+    // 화면이 읽는 자리 — 그날의 학부모 안내 목록에 이름과 함께 선다 (안내 이름은 서버 낱말)
+    const listed = (await noticesOf(from)).filter((n) => rows.some((r) => Number(r.id) === n.id));
+    expect(listed).toHaveLength(2);
+    expect(listed.every((n) => n.title === '휴강 안내' && n.sentAt === null)).toBe(true);
+    expect(listed.map((n) => n.studentName).sort()).toEqual(['휴강학생A', '휴강학생B']);
+
+    // 되돌리기는 휴강과 **안 보낸** 준비행을 함께 걷는다
+    await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
+    expect(await pnotiOf(id, from)).toEqual([]);
+    expect(await excOf(id)).toEqual([]);
+    madeNotices.length = 0;
+  });
+
+  it('보강 이관이면 안내에 보강 날짜·시각이 든다 (C-32 · C-34)', async () => {
+    const { id, from } = await makeSer(780);
+    const makeupDate = plus(from, 2);
+    const res = await api('delete', `/schedule/${id}`)
+      .send({
+        scope: 'this', onDate: from, cancelKind: 'academy', cancelTreat: 'makeup',
+        makeup: { date: makeupDate, startMin: 1020, endMin: 1080 },
+      })
+      .expect(200);
+    made.push(...(res.body.serIds as number[]).filter((x) => x !== id));
+    const rows = await pnotiOf(id, from);
+    madeNotices.push(...rows.map((r) => Number(r.id)));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].body).toContain(`보강 ${makeupDate} 17:00`);
+    expect(rows[0].body).not.toContain('이월');
+  });
+
+  it('휴강 창이 읽는 코드표가 「안내를 남기는 사유」를 말한다 — 학원 사정만 true (C-32 · D-R39)', async () => {
+    const meta = await api('get', '/meta').expect(200);
+    const rows = meta.body.cancelReasons as Array<{ key: string; parentNotice: boolean }>;
+    expect(rows.filter((r) => r.parentNotice).map((r) => r.key)).toEqual(['academy']);
+  });
+
+  it('학원 사정이 아닌 휴강은 학부모 안내를 만들지 않는다 — 원문은 학원 사정만 말한다 (D-R44)', async () => {
+    for (const [i, kind] of (['student_absent', 'teacher_absent', 'holiday', 'other'] as const).entries()) {
+      const { id, from } = await makeSer(800 + i * 70);
+      await api('delete', `/schedule/${id}`)
+        .send({ scope: 'this', onDate: from, cancelKind: kind, cancelTreat: 'carry' })
+        .expect(200);
+      expect(await pnotiOf(id, from)).toEqual([]);
+    }
+  });
+
+  it('같은 휴강을 다시 보내도 준비행이 늘지 않는다 · 보낸 뒤에는 되돌리기가 409 다 (C-32)', async () => {
+    const { id, from } = await makeSer(1110);
+    const res = await api('delete', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, cancelKind: 'academy', cancelTreat: 'carry' })
+      .expect(200);
+    const again = await api('delete', `/schedule/${id}`)
+      .send({ scope: 'this', onDate: from, cancelKind: 'academy', cancelTreat: 'carry' });
+    expect([200, 404, 409]).toContain(again.status);
+    const rows = await pnotiOf(id, from);
+    madeNotices.push(...rows.map((r) => Number(r.id)));
+    expect(rows).toHaveLength(1);
+    await q(`UPDATE pnoti SET sent_at=now() WHERE id=$1`, [rows[0].id]);
+    const blocked = await api('post', '/schedule/undo').send({ token: res.body.undoToken });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.code).toBe('UNDO_HAS_DELIVERY');
+    await q(`UPDATE pnoti SET sent_at=NULL WHERE id=$1`, [rows[0].id]);
+  });
+
+  it('전일 휴원 안내의 이름은 「전일 휴원 안내」다 — 같은 목록이 두 갈래를 서버 낱말로 가른다 (N-133 · C-32)', async () => {
+    const { from } = await makeSer(1170);
+    const res = await api('post', '/schedule/day-cancel')
+      .send({ date: from, cancelKind: 'holiday', cancelTreat: 'carry' })
+      .expect(201);
+    const mine = res.body.parentNotices as Notice[];
+    madeNotices.push(...mine.map((n) => n.id));
+    // 그날 전체 휴강은 시드 수업도 접는다 — 단언이 실패해도 되돌린다(안 그러면 그날의 시드가 휴강으로 남아 다른 스위트를 오염시킨다)
+    try {
+      expect(mine.length).toBeGreaterThan(0);
+      expect(mine.every((n) => n.title === '전일 휴원 안내')).toBe(true);
+      const listed = (await noticesOf(from)).filter((n) => mine.some((m) => m.id === n.id));
+      expect(listed.every((n) => n.title === '전일 휴원 안내')).toBe(true);
+    } finally {
+      await api('post', '/schedule/undo').send({ token: res.body.undoToken }).expect(201);
+      madeNotices.length = 0;
+    }
   });
 });

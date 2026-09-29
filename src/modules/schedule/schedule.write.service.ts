@@ -28,11 +28,12 @@ import {
 } from '../../lib/recurrence';
 import {
   rosterPricing, GUIDE_DONE_DB, cancelPolicyIssue, CANCEL_POLICY_MESSAGE, CANCEL_TREAT_LABEL,
-  ATTENDANCE_CANCEL_REASON_LABEL,
+  ATTENDANCE_CANCEL_REASON_LABEL, PARENT_NOTICE_CANCEL_REASONS,
   type AttendanceCancelReason, type CancelTreat,
 } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
+import { CANCEL_NOTICE_LIKE, DAY_CANCEL_NOTICE_PREFIX, LESSON_CANCEL_NOTICE_PREFIX, cancelNoticeTitle } from '../../lib/cancel-notice';
 import { START_MIN, END_MIN, endMinOf, kstAt, kstDateOf, serStuOn, startMinOf, stuPausedOn } from '../../lib/sql';
 import type { AuditKey } from '../../lib/audit';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
@@ -46,8 +47,6 @@ import type {
   OccurrenceCreateDto, OccurrenceDeleteDto, OccurrenceMoveDto, OccurrencePasteDto, OccurrencePatchDto,
   RosterPatchDto, RosterResultDto, StudentOverlapDto, UnavWarnDto, WriteResultDto,
 } from './schedule.dto';
-
-const DAY_CANCEL_NOTICE_PREFIX = '[학원 전체 휴원]';
 
 /**
  * 휴강의 사유·처리 — DTO 의 두 칸을 정책으로 판정한다 (C92 · lib/rules 한 곳).
@@ -188,8 +187,64 @@ async function prepareDayCancelParentNotices(
     studentId: Number(row.student_id),
     studentName: row.student_name,
     body: row.body,
+    title: cancelNoticeTitle(row.body),
     sentAt: row.sent_at,
   }));
+}
+
+/**
+ * C-32 「학원 사정 휴강 → 학부모 안내가 생성된다」 — 한 회차를 학원 사정으로 접으면 그 회차 명단 학생마다
+ * 학부모 안내 **준비행**을 같은 트랜잭션에 남긴다(D-R43). 전일 휴원(N-133)과 같은 이유로 여기서 외부 발송은 하지 않는다 —
+ * 보호자 · 채널 선택은 공용 발송 창(DQ3)의 일이고, rollback 뒤 이미 나간 메시지는 회수할 수 없다.
+ *
+ * 다른 사유(학생 결석 · 강사 결강 · 공휴일 · 기타)는 남기지 않는다 — 원문 C-32 가 말하는 것은 학원 사정뿐이다(D-R44).
+ * 같은 회차 · 같은 학생에 이 머리말의 줄이 이미 있으면 새로 만들지 않는다(다시 보낸 요청 · 재시도).
+ * 명단 판정은 전일 휴원과 같다 — 그날 유효한 명단 · 휴원 중 아님 · 그날만 빠짐 아님.
+ */
+async function prepareLessonCancelParentNotices(
+  q: QueryRunner,
+  serId: number,
+  onDate: string,
+  treat: string,
+  memo: string | null,
+  makeup?: { date: string; startMin: number },
+): Promise<void> {
+  const [head] = await q.query(
+    `SELECT COALESCE(sb.name, k.name) AS subject, ${START_MIN} AS start_min
+       FROM ser_occ o
+       JOIN ser s ON s.id = o.ser_id
+       JOIN kind k ON k.key = s.kind_key
+       LEFT JOIN sub sb ON sb.key = s.sub_key
+      WHERE o.ser_id = $1 AND o.on_date = $2::date`,
+    [serId, onDate],
+  ) as Array<{ subject: string; start_min: number | string }>;
+  if (!head) return;
+  const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const body = [
+    LESSON_CANCEL_NOTICE_PREFIX,
+    `${onDate} ${head.subject} ${hhmm(Number(head.start_min))} 수업 휴강 안내`,
+    '학원 사정으로 이 수업을 휴강합니다.',
+    makeup
+      ? `보강 ${makeup.date} ${hhmm(makeup.startMin)} 에 진행합니다.`
+      : treat === 'carry' ? '수업료는 차감하지 않고 이월합니다.' : null,
+    memo ? `사유: ${memo}` : null,
+  ].filter((line): line is string => line !== null).join('\n');
+  await q.query(
+    `INSERT INTO pnoti (ser_id,on_date,audience,student_id,channel,body)
+     SELECT $1,$2::date,'parent',ss.student_id,'app',$3
+       FROM ser_occ o
+       JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', '$2::date')}
+       LEFT JOIN exc x ON x.ser_id=o.ser_id AND x.on_date=o.on_date
+      WHERE o.ser_id=$1 AND o.on_date=$2::date
+        AND NOT ${stuPausedOn('ss.student_id', '$2::date')}
+        AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=x.id AND xo.student_id=ss.student_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM pnoti p
+           WHERE p.ser_id=$1 AND p.on_date=$2::date AND p.audience='parent'
+             AND p.student_id=ss.student_id AND p.body LIKE $4
+        )`,
+    [serId, onDate, body, `${LESSON_CANCEL_NOTICE_PREFIX}%`],
+  );
 }
 
 /**
@@ -769,6 +824,11 @@ export class ScheduleWriteService {
     const after = cancel
       ? async (q: QueryRunner, fresh: State, base: WriteResultDto): Promise<WriteResultDto> => {
         await notifyCancel(q, actorId, serId, dto.onDate, fresh, cancel.treat, makeup ? { date: makeup.date, startMin: makeup.startMin } : undefined);
+        if (PARENT_NOTICE_CANCEL_REASONS.includes(cancel.kind as AttendanceCancelReason)) {
+          await prepareLessonCancelParentNotices(
+            q, serId, dto.onDate, cancel.treat, cancel.memo, makeup ? { date: makeup.date, startMin: makeup.startMin } : undefined,
+          );
+        }
         if (inside) await inside(q);
         return base;
       }
@@ -1036,8 +1096,9 @@ export class ScheduleWriteService {
         });
       }
       /*
-       * 전일 휴원 undo는 아직 보내지 않은 보호자 준비행도 함께 걷는다. 실제 발송 뒤에는 메시지를
-       * 회수할 수 없으므로 조용히 일정만 되살리지 않고 409로 막는다.
+       * 휴강 undo(전일 휴원 · 한 회차 학원 사정 휴강 · C-32)는 아직 보내지 않은 보호자 준비행도 함께 걷는다.
+       * 실제 발송 뒤에는 메시지를 회수할 수 없으므로 조용히 일정만 되살리지 않고 409로 막는다.
+       * 머리말 목록은 lib/cancel-notice 한 곳이다 — 쓰는 곳과 걷는 곳이 같은 목록을 본다.
        */
       const beforeCanceled = new Set(payload.before.EXC.filter((row) => row.canceled).map((row) => `${row.serId}:${row.onDate}`));
       const restoredCancelKeys = payload.after.EXC
@@ -1046,22 +1107,22 @@ export class ScheduleWriteService {
       if (restoredCancelKeys.length) {
         const delivered = await q.query(
           `SELECT id FROM pnoti
-            WHERE sent_at IS NOT NULL AND body LIKE $2
+            WHERE sent_at IS NOT NULL AND body LIKE ANY($2::text[])
               AND (ser_id::text || ':' || to_char(on_date,'YYYY-MM-DD'))=ANY($1::text[])
             LIMIT 1`,
-          [restoredCancelKeys, `${DAY_CANCEL_NOTICE_PREFIX}%`],
+          [restoredCancelKeys, CANCEL_NOTICE_LIKE],
         ) as Array<{ id: string }>;
         if (delivered.length) {
           throw new ConflictException({
             code: 'UNDO_HAS_DELIVERY',
-            message: '학부모 안내가 이미 발송되어 전일 휴원을 되돌릴 수 없습니다 — 새 일정과 정정 안내로 처리해 주세요',
+            message: '학부모 안내가 이미 발송되어 휴강을 되돌릴 수 없습니다 — 새 일정과 정정 안내로 처리해 주세요',
           });
         }
         await q.query(
           `DELETE FROM pnoti
-            WHERE sent_at IS NULL AND body LIKE $2
+            WHERE sent_at IS NULL AND body LIKE ANY($2::text[])
               AND (ser_id::text || ':' || to_char(on_date,'YYYY-MM-DD'))=ANY($1::text[])`,
-          [restoredCancelKeys, `${DAY_CANCEL_NOTICE_PREFIX}%`],
+          [restoredCancelKeys, CANCEL_NOTICE_LIKE],
         );
       }
       /*

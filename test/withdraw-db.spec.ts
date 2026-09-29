@@ -13,6 +13,8 @@
  *   ② 명단 행은 남고 to_date 만 적힌다 — 종료일 전 회차는 그대로(이력), 뒤 회차는 시간표·§54·명단에서 빠진다. 같은 규칙에 다시 넣을 수 없다.
  *   ③ 그룹 수업의 남은 학생 단가가 **종료일 뒤부터** 다시 잡힌다(N-136) — 같은 달 청구 줄이 45,000×2 + 60,000×3 으로 갈린다.
  *   ④ 미리보기는 실제와 같은 수를 주고 아무것도 쓰지 않는다 · 두 번은 409 · 마감 달 409 · 금액 권한 없는 매니저 403 · ENR 종료일 · LOG 2줄.
+ *   ⑤ 컴플레인에서 연 종료는 그 컴플레인에 **이어진다**(J-99 · N-135 「연결이 끊기면 실패」) — `cplId` 는 같은 학생 · 열린 건만 받고,
+ *      같은 트랜잭션에 CPL 감사 줄(refund)이 남아 컴플레인 이력에 금액이 선다(금액 권한이 없으면 금액만 가린다).
  *
  * ⚠ 이 파일은 **표를 비우지 않는다.** 스위트 전용 번호대로 만들고 스스로 치운다.
  */
@@ -133,6 +135,8 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     await q(`DELETE FROM pay WHERE student_id = ANY($1) OR inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [stus]);
     await q(`DELETE FROM inv_line WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [stus]);
     await q(`DELETE FROM inv WHERE student_id = ANY($1)`, [stus]);
+    // 컴플레인(J-99)은 학생을 가리킨다 — 학생을 지우기 전에 치운다
+    await q(`DELETE FROM cpl WHERE student_id = ANY($1)`, [stus]);
     // 「전달」이 만든 학부모 안내(PNOTI · stu FK · H-76)는 학생을 지우기 전에 치운다
     await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, MANAGER, MONEY_MGR, MONEY_TEACHER]]);
@@ -352,5 +356,66 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     // 이제 내는 청구서는 종료일까지의 회차만 — 1회 × 2인 단가 (B 도 그날은 둘이었다)
     const inv = (await api('post', '/accounting/invoices').send({ studentId: STU_A, yearMonth: NEXT, invType: 'tuition', dueOn: DUE }).expect(201)).body;
     expect(inv.lines).toEqual([expect.objectContaining({ count: 1, unitPrice: DUO })]);
+  });
+  /* ── ⑤ 컴플레인 → 환불 연결 (J-99 · N-135) ─────────────────────────────── */
+
+  const complaint = async (studentId: number) =>
+    (await api('post', '/ops/complaints').send({ area: 'lesson', studentId, body: '수업 불만 — 환불 요구' }).expect(201)).body as { id: number };
+  const cplRow = async (cplId: number, t = token) => {
+    const ops = (await api('get', '/ops', t).expect(200)).body as { complaints: Array<Record<string, unknown>> };
+    return ops.complaints.find((c) => c.id === cplId) as {
+      refunds: Array<{ at: string; endedOn: string; refundTotal: number | null; byName: string | null }>;
+    };
+  };
+
+  it('컴플레인에서 연 종료는 그 컴플레인에 이어진다 — 결과가 cplId 를 말하고 CPL 감사 줄 · 컴플레인 이력에 금액이 선다 (J-99 · N-135)', async () => {
+    await fiveLessons();
+    await paidInvoice(STU_A);
+    const cpl = await complaint(STU_A);
+    const endedOn = DAYS[1];
+    const pv = await preview({ studentId: STU_A, endedOn, reason: '환불 요구', cplId: cpl.id }).expect(201);
+    expect(pv.body).toMatchObject({ preview: true, cplId: cpl.id, refundTotal: DUO * 3 });
+    // 미리보기는 컴플레인에도 아무것도 남기지 않는다
+    expect(await q(`SELECT 1 FROM log WHERE entity = 'CPL' AND entity_id = $1 AND action = 'refund'`, [cpl.id])).toEqual([]);
+
+    const res = await withdraw({ studentId: STU_A, endedOn, reason: '환불 요구', cplId: cpl.id }).expect(201);
+    expect(res.body).toMatchObject({ preview: false, cplId: cpl.id, refundTotal: DUO * 3 });
+    // 감사 줄 — 컴플레인 쪽(CPL refund)과 학생 쪽(STU withdraw)이 서로를 가리킨다
+    const [cplLog] = await q<{ actor_id: string; after: Record<string, unknown> }>(
+      `SELECT actor_id, after FROM log WHERE entity = 'CPL' AND entity_id = $1 AND action = 'refund'`, [cpl.id],
+    );
+    expect(Number(cplLog.actor_id)).toBe(CEO);
+    expect(cplLog.after).toMatchObject({ studentId: STU_A, endedOn, refundTotal: DUO * 3 });
+    const [stuLog] = await q<{ after: Record<string, unknown> }>(
+      `SELECT after FROM log WHERE entity = 'STU' AND entity_id = $1 AND action = 'withdraw'`, [STU_A],
+    );
+    expect(stuLog.after).toMatchObject({ cplId: cpl.id });
+
+    // 컴플레인 이력 — 금액이 남는다 (대표)
+    const row = await cplRow(cpl.id);
+    expect(row.refunds).toEqual([expect.objectContaining({ endedOn, refundTotal: DUO * 3, byName: '종료대표' })]);
+    // 금액 권한이 없는 사람에게는 줄은 서되 금액만 가린다 (D-R39)
+    const hidden = await cplRow(cpl.id, managerToken);
+    expect(hidden.refunds).toEqual([expect.objectContaining({ endedOn, refundTotal: null, byName: '종료대표' })]);
+  });
+
+  it('다른 학생의 컴플레인 · 없는 컴플레인 · 마무리한 컴플레인은 받지 않는다 — 어느 쓰기도 하기 전에 거절 (J-99 · CR-BE-02 와 같은 말)', async () => {
+    await fiveLessons();
+    const other = await complaint(STU_B);
+    const mismatch = await withdraw({ studentId: STU_A, endedOn: DAYS[1], cplId: other.id }).expect(400);
+    expect(mismatch.body.code).toBe('CPL_STUDENT_MISMATCH');
+    const pvMismatch = await preview({ studentId: STU_A, endedOn: DAYS[1], cplId: other.id }).expect(400);
+    expect(pvMismatch.body.code).toBe('CPL_STUDENT_MISMATCH');
+    const missing = await withdraw({ studentId: STU_A, endedOn: DAYS[1], cplId: 987654321 }).expect(404);
+    expect(missing.body.code).toBe('CPL_NOT_FOUND');
+    const mine = await complaint(STU_A);
+    await api('patch', `/ops/complaints/${mine.id}`).send({ result: '다른 방법으로 마무리', stage: 'closed' }).expect(200);
+    const closed = await withdraw({ studentId: STU_A, endedOn: DAYS[1], cplId: mine.id }).expect(409);
+    expect(closed.body.code).toBe('CPL_CLOSED');
+    // 아무것도 쓰지 않았다 — 명단 · 감사 줄 그대로
+    expect(await q(`SELECT 1 FROM ser_stu WHERE student_id = $1 AND to_date IS NOT NULL`, [STU_A])).toEqual([]);
+    expect(await q(`SELECT 1 FROM log WHERE action IN ('withdraw', 'refund') AND actor_id = $1`, [CEO])).toEqual([]);
+    // 이어지지 않은 컴플레인의 이력은 빈 배열이다 — 금액을 짓지 않는다
+    expect((await cplRow(other.id)).refunds).toEqual([]);
   });
 });

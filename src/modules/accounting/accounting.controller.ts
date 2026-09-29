@@ -222,7 +222,9 @@ export class AccountingController {
       + '진단고사 · 상담 줄이 섞인 옛 수업료 청구서에 그 회차가 종료일 뒤로 남으면 409 WITHDRAW_MIXED_INVOICE(사람이 확인 · W11 A\' 후속).',
   })
   @ApiCreatedResponse({ type: WithdrawResultDto })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_MIXED_INVOICE | MONTH_CLOSED' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'CPL_STUDENT_MISMATCH(컴플레인의 학생과 다르다 · J-99) · 입력 검증' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND | CPL_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_MIXED_INVOICE | MONTH_CLOSED | CPL_CLOSED(마무리한 컴플레인 · J-99)' })
   withdrawPreview(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.withdrawSvc.preview(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));
@@ -236,8 +238,9 @@ export class AccountingController {
       + '금액 0 이면 void → ENR.ended_on → LOG. 그룹 수업의 남은 학생 단가는 그 날짜의 인원으로 다시 잡힌다. 되돌리는 길은 없다.',
   })
   @ApiCreatedResponse({ type: WithdrawResultDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'WITHDRAW_BAD_SERIES · 입력 검증' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_NEEDS_CEO_VOID | WITHDRAW_MIXED_INVOICE | MONTH_CLOSED' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'WITHDRAW_BAD_SERIES · CPL_STUDENT_MISMATCH(컴플레인의 학생과 다르다 · J-99) · 입력 검증' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND | CPL_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'WITHDRAW_NOTHING | WITHDRAW_NO_RATE | WITHDRAW_EXCEEDS | WITHDRAW_NEEDS_CEO_VOID | WITHDRAW_MIXED_INVOICE | MONTH_CLOSED | CPL_CLOSED(마무리한 컴플레인 · J-99)' })
   withdraw(@CurrentUser() user: RequestUser, @Body() dto: StudentWithdrawDto): Promise<WithdrawResultDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.withdrawSvc.withdraw(user.id, dto, canSee, isRole(user.role) && canCeoVoidInvoice(user.role));

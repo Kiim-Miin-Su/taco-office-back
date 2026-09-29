@@ -647,13 +647,15 @@ export class WriteResultDto {
   studentOverlaps!: StudentOverlapDto[];
 }
 
-/** 전일 휴원 뒤 보호자 선택 발송으로 넘기는 학생별 준비행 (N-133 · DQ3) */
+/** 학원 사유 휴강(전일 휴원 N-133 · 한 회차 학원 사정 휴강 C-32) 뒤 보호자 선택 발송으로 넘기는 학생별 준비행 (DQ3) */
 export class DayCancelParentNoticeDto {
   @ApiProperty(ID_SCHEMA) id!: number;
   @ApiProperty(ID_SCHEMA) studentId!: number;
   @ApiProperty() studentName!: string;
-  @ApiProperty({ description: '서버가 만든 전일 휴원 안내문 — 화면은 이 본문으로 공용 보호자 선택 발송 창을 연다' })
+  @ApiProperty({ description: '서버가 만든 휴강 안내문 — 화면은 이 본문으로 공용 보호자 선택 발송 창을 연다' })
   body!: string;
+  @ApiProperty({ description: '안내 이름 — 「전일 휴원 안내」 · 「휴강 안내」 (서버 낱말 · 본문 머리말에서 고른다 · lib/cancel-notice)' })
+  title!: string;
   @ApiPropertyOptional({ type: String, format: 'date-time', nullable: true, description: '실제 외부 발송이 한 건이라도 성공한 시각' })
   sentAt!: string | null;
 }

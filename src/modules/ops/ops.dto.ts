@@ -277,6 +277,17 @@ export class LeadResumeDto {
 }
 
 /** §67 컴플레인 */
+/**
+ * 컴플레인 → 환불 한 줄 (J-99 · N-135 「컴플레인 이력에 금액이 남는다 · 연결이 끊기면 실패」).
+ * 수강 종료가 `cplId` 를 받아 같은 트랜잭션에 남긴 감사 줄(LOG CPL refund)에서 읽는다 — 화면이 금액을 짓지 않는다.
+ */
+export class ComplaintRefundDto {
+  @ApiProperty({ description: '처리한 때 (KST · YYYY-MM-DD HH:MM)' }) at!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '수강 종료일 — 이 날 뒤의 회차가 정리됐다' }) endedOn!: string;
+  @ApiProperty({ type: Number, nullable: true, description: '돌려준 돈 합계 — 금액 권한이 없으면 null(줄은 선다 · D-R39)' }) refundTotal!: number | null;
+  @ApiProperty({ type: String, nullable: true, description: '처리한 사람' }) byName!: string | null;
+}
+
 export class ComplaintDto {
   @ApiProperty() id!: number;
   @ApiProperty({ enum: [...CPL_AREAS] }) area!: string;
@@ -310,6 +321,8 @@ export class ComplaintDto {
   requesterLabel?: string | null;
   @ApiPropertyOptional({ ...S, format: 'date', description: '마무리한 날(KST) — 「결과」로 옮긴 순간 서버가 찍는다(입력 칸 아님). 열린 건 · 옛 「결과」 행(모름)은 null' })
   closedOn?: string | null;
+  @ApiProperty({ type: [ComplaintRefundDto], description: '이 컴플레인에서 연 수강 종료 · 환불 (J-99 · 오래된 것부터) — 없으면 빈 배열' })
+  refunds!: ComplaintRefundDto[];
 }
 
 /** §67 「+ 접수」 (C93 · J-96 · N-46 ①) — 상태는 받지 않는다: 접수는 언제나 `received` */

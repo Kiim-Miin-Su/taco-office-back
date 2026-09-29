@@ -15,7 +15,7 @@
  *   ② 명단에 종료일을 적는다(`ser_stu.to_date`) — 행을 지우지 않는다(N-50 ①). 그 뒤 회차는 시간표·§54·청구서·단가 구간에서 빠진다
  *   ③ 그 회차가 들어 있던 청구서에서 그만큼을 **음수 줄로** 뺀다(C92-b 이월과 같은 모양) · 받은 돈이 새 금액보다 많으면 **PAY 음수 줄**로 돌려준다
  *      · 금액이 0 이 되면 void 로 접는다 · 상태는 받은 돈 ÷ 금액으로 다시 선다
- *   ④ 수강(ENR)에 종료일 · LOG `STU withdraw` — 누가·언제·무엇을·얼마를
+ *   ④ 수강(ENR)에 종료일 · LOG `STU withdraw` — 누가·언제·무엇을·얼마를 · 컴플레인에서 열었으면 LOG `CPL refund`(J-99 · N-135)
  * 미리보기는 같은 트랜잭션을 끝까지 돌리고 되돌린다 — 화면이 「환불 예정 N원」을 따로 세지 않는다(D-R37).
  * 되돌리는 길은 없다 — 종료한 학생을 같은 규칙에 다시 넣을 수 없다(ROSTER_ENDED · 새 규칙으로 등록한다).
  */
@@ -25,6 +25,7 @@ import { DataSource, EntityManager } from 'typeorm';
 import { todayKst } from '../../lib/kst';
 import { assertMonthOpen } from '../../lib/month-close';
 import { writtenRows } from '../../lib/sql';
+import { CPL_OPEN_STAGES, CPL_REFUND_LOG, type CplStage } from '../../lib/complaint-words';
 import { invoiceLines, linesTotal, mixedDiagIntakeLines, type InvoiceLineRow, type LineInvType } from './invoice-lines';
 import type { StudentWithdrawDto, WithdrawInvoiceDto, WithdrawResultDto, WithdrawSeriesDto } from './accounting.dto';
 
@@ -81,6 +82,25 @@ export class StudentWithdrawService {
 
     const [stu] = (await m.query(`SELECT id, name FROM stu WHERE id = $1 FOR UPDATE`, [dto.studentId])) as Array<{ id: string; name: string }>;
     if (!stu) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
+    /*
+     * 컴플레인에서 연 종료 (J-99 · N-135 「연결이 끊기면 실패」) — 어느 쓰기도 하기 전에 잠그고 판정한다.
+     * 학생 A 의 컴플레인에 학생 B 의 환불을 이으면 A 의 이력에 B 의 돈이 선다 — 강사 교체(CR-BE-02)와 같은 말로 거절한다.
+     * 마무리한 건은 받지 않는다 — §67 「수강 종료 · 환불」 단추가 서는 조건(canWithdraw · 열린 건)과 같은 질문이다(D-R39).
+     */
+    const cplId = dto.cplId ?? null;
+    if (cplId !== null) {
+      const [c] = (await m.query(`SELECT id, stage, student_id FROM cpl WHERE id = $1 FOR UPDATE`, [cplId])) as Array<{ id: string; stage: string; student_id: string | null }>;
+      if (!c) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
+      if (c.student_id == null || Number(c.student_id) !== dto.studentId) {
+        throw new BadRequestException({
+          code: 'CPL_STUDENT_MISMATCH',
+          message: `컴플레인 #${cplId} 의 학생과 종료할 학생이 다릅니다 — 컴플레인에서 연 환불은 그 컴플레인의 학생만 처리합니다`,
+        });
+      }
+      if (!CPL_OPEN_STAGES.includes(c.stage as CplStage)) {
+        throw new ConflictException({ code: 'CPL_CLOSED', message: `컴플레인 #${cplId} 은(는) 이미 마무리됐습니다 — 새로 접수한 뒤 환불을 이으세요` });
+      }
+    }
     // 마감 달의 명단·청구를 바꾸는 일이다 — 종료일이 마감 달이면 409 (C92-d 와 같은 판정)
     await assertMonthOpen(m, dto.endedOn);
 
@@ -256,11 +276,19 @@ export class StudentWithdrawService {
     const remainingCount = seriesOut.reduce((n, r) => n + r.remainingCount, 0);
     await m.query(
       `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STU',$2,'withdraw',NULL,$3::jsonb)`,
-      [userId, dto.studentId, JSON.stringify({ endedOn: dto.endedOn, serIds, remainingCount, refundTotal, invoices: invOut.map((i) => i.id), reason, enrollmentsEnded })],
+      [userId, dto.studentId, JSON.stringify({ endedOn: dto.endedOn, serIds, remainingCount, refundTotal, invoices: invOut.map((i) => i.id), reason, enrollmentsEnded, cplId })],
     );
+    if (cplId !== null) {
+      // 컴플레인 쪽 감사 줄 — §67 컴플레인 이력이 이 줄을 읽어 「환불 N원」을 세운다(모양은 lib/complaint-words.CPL_REFUND_LOG 의 계약)
+      await m.query(
+        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,$2,$3,$4,NULL,$5::jsonb)`,
+        [userId, CPL_REFUND_LOG.entity, cplId, CPL_REFUND_LOG.action,
+          JSON.stringify({ studentId: dto.studentId, endedOn: dto.endedOn, refundTotal, invoices: invOut.map((i) => i.id), serIds, reason })],
+      );
+    }
 
     const result: WithdrawResultDto = {
-      studentId: Number(stu.id), studentName: stu.name, endedOn: dto.endedOn, reason, preview,
+      studentId: Number(stu.id), studentName: stu.name, endedOn: dto.endedOn, reason, preview, cplId,
       series: seriesOut, invoices: invOut, remainingCount, refundTotal: money(refundTotal), enrollmentsEnded, canSeeAmounts,
       canConfirm: needsCeoVoid.length === 0,
       confirmBlockedReason: needsCeoVoid.length === 0 ? null

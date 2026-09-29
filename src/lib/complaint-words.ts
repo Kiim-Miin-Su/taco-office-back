@@ -40,6 +40,13 @@ export const CPL_STAGE_SUB: Record<CplStage, string> = {
 /** 아직 안 끝난 것 — 대표 보고의 컴플레인 배지가 세는 집합 (§69) */
 export const CPL_OPEN_STAGES: readonly CplStage[] = ['received', 'acting'];
 
+/**
+ * 컴플레인 → 환불 연결의 감사 줄 (J-99 · N-135 「연결이 끊기면 실패」) — 쓰는 곳(수강 종료)과 읽는 곳(§67 컴플레인 이력)이
+ * 같은 표지를 본다. `after` 의 모양(studentId · endedOn · refundTotal · invoices · serIds · reason)은 이 두 곳의 계약이다 —
+ * 모양을 바꾸면 컴플레인 이력이 조용히 빈다(withdraw-db.spec ⑤ 가 둘을 함께 본다).
+ */
+export const CPL_REFUND_LOG = { entity: 'CPL', action: 'refund' } as const;
+
 export const cplStageLabel = (stage: string): string =>
   CPL_STAGE_LABEL[stage as CplStage] ?? stage;
 

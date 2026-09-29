@@ -23,6 +23,7 @@ import { START_MIN, END_MIN, effectiveModeOf, kstAt, kstDateOf, serStuEndedOn, s
 import { REPORT_CANCELED_SQL } from '../reports/report-sql';
 import { nowMinKst, todayKst } from '../../lib/kst';
 import { progressPercent } from '../../lib/book';
+import { CANCEL_NOTICE_LIKE, cancelNoticeTitle } from '../../lib/cancel-notice';
 import { KIND_GROUPS, kindGroupLabel } from '../../lib/catalog-words';
 
 export interface OccQuery extends OccurrenceQueryDto {
@@ -84,24 +85,29 @@ export class ScheduleService {
     return this.occ.query(sql, p) as Promise<T[]>;
   }
 
-  /** N-133 — 전일 휴원 저장 뒤 reload해도 남은 보호자 선택 발송을 같은 날짜에서 이어 간다. */
+  /**
+   * N-133 · C-32 — 학원 사유 휴강 뒤 reload해도 남은 보호자 선택 발송을 같은 날짜에서 이어 간다.
+   * 두 갈래(전일 휴원 · 한 회차 학원 사정 휴강)를 같은 목록에 싣고, 무슨 안내인지는 서버가 이름(`title`)으로 준다(D-R18).
+   * 한 학생이 한 날 두 수업에서 휴강 안내를 받으면 두 줄이다 — 학생으로 접으면 한 수업의 안내가 사라진다.
+   */
   async dayCancelNotices(date: string): Promise<DayCancelParentNoticeDto[]> {
     const rows = await this.q<{
       id: string; student_id: string; student_name: string; body: string; sent_at: string | null;
     }>(
-      `SELECT DISTINCT ON (p.student_id) p.id,p.student_id,st.name AS student_name,p.body,
+      `SELECT p.id,p.student_id,st.name AS student_name,p.body,
               ${kstAt('p.sent_at')} AS sent_at
          FROM pnoti p
          JOIN stu st ON st.id=p.student_id
-        WHERE p.on_date=$1::date AND p.audience='parent' AND p.body LIKE '[학원 전체 휴원]%'
-        ORDER BY p.student_id,p.id DESC`,
-      [date],
+        WHERE p.on_date=$1::date AND p.audience='parent' AND p.body LIKE ANY($2::text[])
+        ORDER BY st.name,p.student_id,p.id`,
+      [date, CANCEL_NOTICE_LIKE],
     );
     return rows.map((row) => ({
       id: Number(row.id),
       studentId: Number(row.student_id),
       studentName: row.student_name,
       body: row.body,
+      title: cancelNoticeTitle(row.body),
       sentAt: row.sent_at,
     }));
   }
