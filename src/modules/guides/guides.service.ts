@@ -22,7 +22,7 @@ import type {
   PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeBatchInfoDto, ZoomNoticeBatchResultDto, ZoomNoticeBatchRowDto,
   ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
-import { guideAutoFill, guideAutoFills } from '../../lib/guide-body';
+import { guideAutoFill, guideAutoFills, PREVIOUS_TEACHER_SQL } from '../../lib/guide-body';
 import {
   GUIDE_EVENT_CTE, GUIDE_HISTORY_EVENTS, GUIDE_LESSON_JOINS, guideCoversEvent, guideKindLabel,
 } from './guide-events';
@@ -65,6 +65,14 @@ type PerLessonScope =
   | { drawnOn: string; teacherId: number | null }
   | { serId: number; onDate: string };
 
+/**
+ * 강사 교체 초안이 물려받는 **지도 방향** — 그 학생의 가장 최근 안내(§44 「가장 최근 안내가 현재 유효한 것」)의 `direction`.
+ * 규칙을 가리지 않는다(「이 날부터」는 규칙을 가르므로 새 규칙에는 이전 안내가 없다). 없으면 NULL — 지어내지 않는다.
+ * `studentParam` 은 학생 id 자리 표시자(`$2` 등)다.
+ */
+const INHERITED_DIRECTION_SQL = (studentParam: string): string =>
+  `(SELECT pg.direction FROM guide pg WHERE pg.student_id=${studentParam} ORDER BY pg.created_at DESC,pg.id DESC LIMIT 1)`;
+
 
 @Injectable()
 export class GuidesService {
@@ -99,7 +107,8 @@ export class GuidesService {
               (SELECT ${kstAt('min(h.at)')} FROM hist h WHERE h.entity='guide' AND h.ref_id=g.id AND h.action='guide_ack') AS acknowledged_at,
               s.name AS student_name,t.name AS teacher_name,r.title AS ser_title,cb.name AS created_by_name,
               sb.name AS sub_name,k.name AS kind_name,COALESCE(${START_MIN},r.start_min) AS start_min,rm.name AS room_name,
-              t.active AS recipient_active,t.role AS recipient_role
+              t.active AS recipient_active,t.role AS recipient_role,
+              pt.id AS previous_teacher_id,pt.name AS previous_teacher_name
          FROM guide g
          LEFT JOIN stu s ON s.id=g.student_id
          LEFT JOIN staff t ON t.id=g.teacher_id
@@ -107,6 +116,8 @@ export class GuidesService {
          LEFT JOIN staff cb ON cb.id=g.created_by
          LEFT JOIN ser_occ o ON o.ser_id=g.ser_id AND o.on_date=g.event_on
          ${GUIDE_LESSON_JOINS('r')}
+         -- 이전 강사(간이 안내만 · 장부에서 되짚는다 · TEACHER-LINEAGE) — 첫 수업 안내는 NULL
+         LEFT JOIN staff pt ON pt.id=${PREVIOUS_TEACHER_SQL('g', 'o')}
          ${where}
          ORDER BY g.created_at DESC,g.id DESC`,
       params,
@@ -298,6 +309,9 @@ export class GuidesService {
       acknowledgedAfterSeconds: Number.isFinite(elapsed) && elapsed >= 0 ? Math.floor(elapsed) : null,
       studentName: (r.student_name as string) ?? null,
       teacherName: (r.teacher_name as string) ?? null,
+      // 이전 강사 → 받는 강사(교체 강사) — 간이 안내만 · 장부에서 되짚은 값 (TEACHER-LINEAGE)
+      previousTeacherId: r.previous_teacher_id == null ? null : Number(r.previous_teacher_id),
+      previousTeacherName: (r.previous_teacher_name as string) ?? null,
       serTitle: (r.ser_title as string) ?? null,
       ...GuidesService.lessonTag(r),
       body,
@@ -419,12 +433,14 @@ export class GuidesService {
               st.name AS student_name,st.grade,st.guidance,st.lang,
               t.name AS teacher_name,s.title AS ser_title,cb.name AS created_by_name,
               sb.name AS sub_name,k.name AS kind_name,COALESCE(${START_MIN},s.start_min) AS start_min,rm.name AS room_name,
-              t.active AS recipient_active,t.role AS recipient_role
+              t.active AS recipient_active,t.role AS recipient_role,
+              pt.id AS previous_teacher_id,pt.name AS previous_teacher_name
          FROM ranked g JOIN stu st ON st.id=g.student_id
          LEFT JOIN staff t ON t.id=g.teacher_id LEFT JOIN ser s ON s.id=g.ser_id
          LEFT JOIN staff cb ON cb.id=g.created_by
          LEFT JOIN ser_occ o ON o.ser_id=g.ser_id AND o.on_date=g.event_on
          ${GUIDE_LESSON_JOINS('s')}
+         LEFT JOIN staff pt ON pt.id=${PREVIOUS_TEACHER_SQL('g', 'o')}
         WHERE g.rn=1 ORDER BY st.name,st.id`,
     );
     const ids = latest.map((row) => Number(row.student_id));
@@ -621,9 +637,12 @@ export class GuidesService {
         [candidate.serId, source.on_date, candidate.studentId, candidate.reason],
       ) as Array<{ id: string }>;
       if (existing[0]) return Number(existing[0].id);
+      // 강사 교체 초안은 그 학생의 **이전 안내**에서 지도 방향을 물려받는다 (원문 §44 「연동」 · F-62 · TEACHER-LINEAGE)
+      // (같은 $4 를 대입과 비교에 함께 쓰면 pg 가 inconsistent types 로 거절한다 — 갈래는 여기서 정한다)
+      const inherited = candidate.reason === 'teacher_change' ? INHERITED_DIRECTION_SQL('$2') : 'NULL';
       const made = await manager.query(
-        `INSERT INTO guide (ser_id,student_id,teacher_id,reason,state,due_on,event_on,created_by)
-         VALUES ($1,$2,$3,$4,'draft'::guide_state_t,$5::date,$6::date,$7)
+        `INSERT INTO guide (ser_id,student_id,teacher_id,reason,state,due_on,event_on,created_by,direction)
+         VALUES ($1,$2,$3,$4,'draft'::guide_state_t,$5::date,$6::date,$7,${inherited})
          ON CONFLICT (ser_id,event_on,student_id,reason)
            WHERE ser_id IS NOT NULL AND event_on IS NOT NULL DO NOTHING
          RETURNING id`,
@@ -672,6 +691,13 @@ export class GuidesService {
    * 바뀐 규칙들의 **첫 바뀐 회차**(그날부터)에 그 명단의 학생마다 `teacher_change` 초안 하나. 이유를 CTE 로 되짚지 않는다:
    * 「이 날부터 계속」은 규칙을 가르므로(D-R16) CTE 가 새 규칙의 첫 회차를 「첫 수업」으로 읽는다 — 마법사는 그것이 교체라는 것을 안다.
    * 이미 있으면 건너뛴다(같은 유니크). 만든 id 를 돌려준다.
+   *
+   * **이전 안내를 물려받는다** (원문 §44 「연동 — 강사 교체 시 이전 안내에서 지도 방향·교재를 물려받습니다」 · F-62 · TEACHER-LINEAGE 2026-09-29):
+   * 지도 방향은 그 학생의 **가장 최근 안내**(§44 「가장 최근 안내가 현재 유효한 것」 · 규칙을 가리지 않는다)의 `direction` 을 초안에 복사한다 —
+   * 관리자가 작성 창에서 고칠 수 있는 칸이라 저장한다(자동 채움처럼 읽을 때 만들면 「물려받았다」가 저장되지 않는다).
+   * 교재는 자동 채움이 그 학생의 지금 교재를 읽으므로(`GUIDE_FACT_SQL`) 따로 복사하지 않는다. 관리자 코멘트는 원문이 말하지 않아 물려주지 않는다.
+   * 이전 강사는 새 칸 없이 마법사 LOG 에서 되짚는다(`PREVIOUS_TEACHER_SQL`). 만든 초안마다 `hist(guide · teacher_swap)` 한 줄 —
+   * §40 이력의 「강사 교체」 칩(HIST_ACTIONS)의 생산자는 이제 시드가 아니라 마법사다.
    */
   async draftsForTeacherChange(manager: EntityManager, userId: number, serIds: number[], from: string, to: string | null): Promise<number[]> {
     if (!serIds.length) return [];
@@ -691,14 +717,18 @@ export class GuidesService {
     const made: number[] = [];
     for (const r of rows) {
       const ins = await manager.query(
-        `INSERT INTO guide (ser_id,student_id,teacher_id,reason,state,due_on,event_on,created_by)
-         VALUES ($1,$2,$3,'teacher_change','draft'::guide_state_t,$4::date,$5::date,$6)
+        `INSERT INTO guide (ser_id,student_id,teacher_id,reason,state,due_on,event_on,created_by,direction)
+         VALUES ($1,$2,$3,'teacher_change','draft'::guide_state_t,$4::date,$5::date,$6,${INHERITED_DIRECTION_SQL('$2')})
          ON CONFLICT (ser_id,event_on,student_id,reason)
            WHERE ser_id IS NOT NULL AND event_on IS NOT NULL DO NOTHING
          RETURNING id`,
         [Number(r.ser_id), Number(r.student_id), r.teacher_id === null ? null : Number(r.teacher_id), r.event_on, r.on_date, userId],
       ) as Array<{ id: string }>;
-      if (ins[0]) made.push(Number(ins[0].id));
+      if (ins[0]) {
+        const id = Number(ins[0].id);
+        made.push(id);
+        await manager.query(histSql(), ['guide', id, 'teacher_swap', userId]);
+      }
     }
     return made;
   }

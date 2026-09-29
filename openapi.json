@@ -35480,8 +35480,10 @@
               "subject",
               "mode",
               "startOn",
-              "books"
-            ]
+              "books",
+              "previousTeacher"
+            ],
+            "description": "일곱 칸(F-60) — 강사 교체 안내는 여덟째 「이전 강사」(previousTeacher)가 붙는다"
           },
           "label": {
             "type": "string",
@@ -35588,6 +35590,16 @@
           "teacherName": {
             "type": "string",
             "nullable": true
+          },
+          "previousTeacherId": {
+            "type": "number",
+            "nullable": true,
+            "description": "이전 강사 id — 강사 교체 안내(reason=teacher_change)만. 받는 강사(teacherId)가 교체 강사다. 첫 수업 안내는 null"
+          },
+          "previousTeacherName": {
+            "type": "string",
+            "nullable": true,
+            "description": "이전 강사 이름 — 「이전 강사 → 교체 강사」 readback. 첫 수업 안내 · 되짚을 수 없으면 null"
           },
           "serTitle": {
             "type": "string",
@@ -35721,6 +35733,8 @@
           "canAck",
           "sendBlockedReason",
           "acknowledgedAfterSeconds",
+          "previousTeacherId",
+          "previousTeacherName",
           "createdAt",
           "overdueDays",
           "deadline",
@@ -40262,14 +40276,39 @@
             "type": "string",
             "description": "SE | TE"
           },
+          "state": {
+            "type": "string",
+            "enum": [
+              "wait",
+              "auto",
+              "ok",
+              "returned"
+            ],
+            "description": "배부 상태 — wait 승인 대기 · auto 전달 대기 · ok 사용 중 · returned 회수(교재 완료)"
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "상태 낱말 — 서가·§38 과 같은 표(ISSUE_STATE_LABEL)"
+          },
           "issuedOn": {
             "type": "string",
-            "description": "배부일 YYYY-MM-DD"
+            "nullable": true,
+            "description": "배부일 YYYY-MM-DD — 배부 전(wait · auto)이면 null"
           },
           "returnedOn": {
             "type": "string",
             "nullable": true,
             "description": "반환일 — null 이면 사용 중"
+          },
+          "reissuedFrom": {
+            "type": "number",
+            "nullable": true,
+            "description": "이 배부가 이어받은 이전 배부(회수·취소·반려)의 issueId — 없으면 null"
+          },
+          "reissuedTo": {
+            "type": "number",
+            "nullable": true,
+            "description": "이 배부를 이어받은 새 배부의 issueId — 없으면 null(아직 재배부하지 않음)"
           },
           "changePending": {
             "type": "boolean",
@@ -40285,7 +40324,11 @@
           "code",
           "title",
           "seTe",
-          "issuedOn"
+          "state",
+          "stateLabel",
+          "issuedOn",
+          "reissuedFrom",
+          "reissuedTo"
         ]
       },
       "TeacherGuideDiagDto": {

@@ -8,7 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BadRequestException } from '@nestjs/common';
 import { IsIn, IsInt, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
-import { GUIDE_FACT_KEYS, type GuideFactKey } from '../../lib/guide-body';
+import { GUIDE_FACT_KEYS_TEACHER_CHANGE, type GuideFactKey } from '../../lib/guide-body';
 import { LeadDiagDto } from '../ops/lead-diag.dto';
 
 const S = { type: String, nullable: true } as const;
@@ -23,7 +23,7 @@ const N = { type: Number, nullable: true } as const;
  * 못 채운 칸은 `value=null` 이고 **왜 없는지**는 서버가 문장으로 준다 — 화면이 「—」를 짓지 않는다.
  */
 export class GuideFactDto {
-  @ApiProperty({ enum: GUIDE_FACT_KEYS }) key!: GuideFactKey;
+  @ApiProperty({ enum: GUIDE_FACT_KEYS_TEACHER_CHANGE, description: '일곱 칸(F-60) — 강사 교체 안내는 여덟째 「이전 강사」(previousTeacher)가 붙는다' }) key!: GuideFactKey;
   @ApiProperty({ description: '칸 이름 — 본문 머리말과 같은 낱말' }) label!: string;
   @ApiPropertyOptional({ ...S, description: '못 채웠으면 null' }) value?: string | null;
   @ApiProperty() filled!: boolean;
@@ -82,6 +82,11 @@ export class GuideDto {
   acknowledgedAfterSeconds!: number | null;
   @ApiPropertyOptional(S) studentName?: string | null;
   @ApiPropertyOptional(S) teacherName?: string | null;
+  /* 필수 nullable — 간이 안내(강사 교체)만 값이 있다. 서버가 장부(마법사 LOG · 같은 규칙의 직전 회차)에서 되짚는다 (TEACHER-LINEAGE 2026-09-29) */
+  @ApiProperty({ ...N, description: '이전 강사 id — 강사 교체 안내(reason=teacher_change)만. 받는 강사(teacherId)가 교체 강사다. 첫 수업 안내는 null' })
+  previousTeacherId!: number | null;
+  @ApiProperty({ ...S, description: '이전 강사 이름 — 「이전 강사 → 교체 강사」 readback. 첫 수업 안내 · 되짚을 수 없으면 null' })
+  previousTeacherName!: string | null;
   @ApiPropertyOptional(S) serTitle?: string | null;
   /* 수업 이름표 — 정규 수업은 serTitle 이 비어 있다. 화면은 이 넷으로 「과목 · 시각 · 강의실」을 적는다 (g4 「수업명 미정」) */
   @ApiPropertyOptional({ ...S, description: '과목 이름(sub.name) — 과목 없는 회차는 null' }) subName?: string | null;

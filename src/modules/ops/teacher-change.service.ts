@@ -233,7 +233,8 @@ export class TeacherChangeService {
     let notifiedTeachers = 0;
     const link = `/schedule?date=${dto.date}`;
     for (const [who, text, title] of [
-      [to.id, `강사 교체 — ${what} · ${when} · 회차 ${occurrences}회를 맡습니다${dto.memo ? ` · ${dto.memo.trim()}` : ''}`, NOTI_TITLE.teacherChange],
+      // 새 강사에게는 **누구에게서** 넘겨받는지도 적는다 — 「이전 강사 → 교체 강사」 readback 의 첫 줄 (TEACHER-LINEAGE 2026-09-29)
+      [to.id, `강사 교체 — ${from.name} → ${to.name} · ${what} · ${when} · 회차 ${occurrences}회를 맡습니다${dto.memo ? ` · ${dto.memo.trim()}` : ''}`, NOTI_TITLE.teacherChange],
       [from.id, `담당 이관 — ${what} · ${when} → ${to.name}`, NOTI_TITLE.teacherHandover],
     ] as Array<[number, string, string]>) {
       if (who === userId) continue;

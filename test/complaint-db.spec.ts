@@ -254,7 +254,8 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(toB[0]!.title).toBe(NOTI_TITLE.teacherChange);
     expect((await q<{ title: string }>(`SELECT title FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '담당 이관%'`, [T_A, CEO]))[0]!.title).toBe(NOTI_TITLE.teacherHandover);
     expect((await q<{ title: string }>(`SELECT title FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '강사 교체 — 교체A → 교체B%'`, [ADMIN, CEO]))[0]!.title).toBe(NOTI_TITLE.teacherChange);
-    expect(toB[0]!.body).toContain('강사 교체 — 교체 과목 (교체학생1 · 교체학생2)');
+    // 새 강사 알림은 누구에게서 넘겨받는지도 적는다 (TEACHER-LINEAGE 2026-09-29)
+    expect(toB[0]!.body).toContain('강사 교체 — 교체A → 교체B · 교체 과목 (교체학생1 · 교체학생2)');
     expect(toB[0]!.link).toBe(`/schedule?date=${MON2}`);
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM noti WHERE to_id = $1 AND from_id = $2 AND body LIKE '담당 이관%'`, [T_A, CEO]))[0]!.n).toBe(1);
     expect(r.notifiedStaff).toBeGreaterThanOrEqual(1);

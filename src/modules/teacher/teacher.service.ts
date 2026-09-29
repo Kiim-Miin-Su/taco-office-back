@@ -30,7 +30,7 @@ import type {
 } from './teacher.dto';
 import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS } from '../../lib/teacher-policy';
 import { audit } from '../../lib/audit';
-import { bookLevelShown } from '../../lib/book';
+import { bookLevelShown, ISSUE_STATE_LABEL, type IssueState } from '../../lib/book';
 
 /** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
 const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
@@ -727,25 +727,38 @@ export class TeacherService {
 
     const ids = [...byStudent.keys()];
     if (ids.length > 0) {
+      /*
+       * 학생 교재 — 배부 원장(ISSUE)의 **배부됐거나 배부 예정인** 줄만(취소·반려는 학생 손에 간 적이 없다).
+       * 상태는 원장 낱말 그대로 싣고 화면이 「사용 중 · 교재 완료 · 배부 대기」를 그 값으로 가른다 — 전에는 회수일 유무로만 갈라
+       * 승인 대기(wait) · 전달 대기(auto)가 「사용 중」으로 서고 배부일이 "null" 로 찍혔다(TEACHER-LINEAGE 2026-09-29).
+       * 재배부 계보(`issue.reissued_from` · 1:1)는 양쪽 id 로 싣는다 — 옛 배부 줄은 「→ 재배부」, 새 줄은 「이전 배부에서 재배부」.
+       */
       const books = await this.q(
-        `SELECT i.id AS issue_id, i.student_id, l.code, l.title, l.sub_key, l.level, l.book_level, l.se_te,
+        `SELECT i.id AS issue_id, i.student_id, i.state, l.code, l.title, l.sub_key, l.level, l.book_level, l.se_te,
                 to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
                 to_char(i.returned_on,'YYYY-MM-DD') AS returned_on,
+                i.reissued_from,
+                (SELECT c.id FROM issue c WHERE c.reissued_from = i.id) AS reissued_to,
                 EXISTS (SELECT 1 FROM req q WHERE q.req_type = 'book_change' AND q.state = 'pending'
                            AND q.staff_id = $2 AND (q.payload->>'issueId') = i.id::text) AS change_pending,
                 (i.state = 'ok') AS in_use
            FROM issue i JOIN lib l ON l.id = i.lib_id
-          WHERE i.student_id = ANY($1)
-          ORDER BY (i.returned_on IS NOT NULL), i.issued_on DESC`,
+          WHERE i.student_id = ANY($1) AND i.state IN ('wait','auto','ok','returned')
+          ORDER BY (i.returned_on IS NOT NULL), i.issued_on DESC NULLS FIRST, i.id DESC`,
         [ids, teacherId],
       );
       for (const b of books) {
+        const state = String(b.state) as IssueState;
         byStudent.get(Number(b.student_id))?.books.push({
           issueId: Number(b.issue_id), code: String(b.code), title: String(b.title),
           // 레벨은 서가와 같은 낱말 — 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 옛 원문(lib/book 한 함수 · W11 A')
           subKey: (b.sub_key as string) ?? null, level: bookLevelShown(b.book_level as string | null, b.level as string | null),
-          seTe: String(b.se_te ?? 'SE'), issuedOn: String(b.issued_on),
+          seTe: String(b.se_te ?? 'SE'),
+          state, stateLabel: ISSUE_STATE_LABEL[state],
+          issuedOn: (b.issued_on as string) ?? null,
           returnedOn: (b.returned_on as string) ?? null,
+          reissuedFrom: b.reissued_from == null ? null : Number(b.reissued_from),
+          reissuedTo: b.reissued_to == null ? null : Number(b.reissued_to),
           // 내가 올린 교재 변경 요청이 이 교재에 열려 있는가 — 단추가 「변경 요청 중」으로 선다 (N-99 · P 영역 두 칸)
           changePending: b.change_pending === true,
           // 「변경 요청」이 눌리는가 — 쓰는 중(ok)이고 열린 요청이 없을 때만. 쓰기(`bookChangePayload`)와 같은 판정이다

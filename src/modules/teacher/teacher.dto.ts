@@ -15,6 +15,7 @@ export const TEACHER_REQ_TYPES = ['wage_change', 'tz_change', 'book_change', 'gp
 export type TeacherReqType = (typeof TEACHER_REQ_TYPES)[number];
 
 const S = { type: String, nullable: true } as const;
+const N = { type: Number, nullable: true } as const;
 
 /** 강사 덱 §7~9 — 홈의 수업 한 줄. 시각은 회차 span에서 KST 분 단위 정수로 뽑는다. */
 export class TeacherLessonDto {
@@ -348,8 +349,15 @@ export class TeacherGuideBookDto {
   @ApiPropertyOptional(S) subKey?: string | null;
   @ApiPropertyOptional({ ...S, description: '교재 레벨 — 코드표 레벨(N-47) 낱말이 있으면 그것, 아직이면 옛 원문(lib.level) · 서가와 같은 함수(W11 A 후속)' }) level?: string | null;
   @ApiProperty({ description: 'SE | TE' }) seTe!: string;
-  @ApiProperty({ description: '배부일 YYYY-MM-DD' }) issuedOn!: string;
+  /* 배부 원장 상태 — 화면은 이 낱말로 「사용 중(ok) · 교재 완료(returned) · 배부 대기(wait·auto)」를 가른다. 취소·반려는 싣지 않는다 (TEACHER-LINEAGE 2026-09-29) */
+  @ApiProperty({ enum: ['wait', 'auto', 'ok', 'returned'], description: '배부 상태 — wait 승인 대기 · auto 전달 대기 · ok 사용 중 · returned 회수(교재 완료)' })
+  state!: string;
+  @ApiProperty({ description: '상태 낱말 — 서가·§38 과 같은 표(ISSUE_STATE_LABEL)' }) stateLabel!: string;
+  @ApiProperty({ ...S, description: '배부일 YYYY-MM-DD — 배부 전(wait · auto)이면 null' }) issuedOn!: string | null;
   @ApiPropertyOptional({ ...S, description: '반환일 — null 이면 사용 중' }) returnedOn?: string | null;
+  /* 재배부 계보(issue.reissued_from · 1:1 · 같은 학생·같은 교재) — 「이전 교재 → 교체 교재」 readback. 다른 교재로 바꾼 것은 원장에 링크가 없다(N-134) */
+  @ApiProperty({ ...N, description: '이 배부가 이어받은 이전 배부(회수·취소·반려)의 issueId — 없으면 null' }) reissuedFrom!: number | null;
+  @ApiProperty({ ...N, description: '이 배부를 이어받은 새 배부의 issueId — 없으면 null(아직 재배부하지 않음)' }) reissuedTo!: number | null;
   @ApiPropertyOptional({ description: '이 교재에 진행 중인 변경 요청이 있는가 — 「변경 요청」이 「변경 요청 중」으로 선다(N-99)' })
   changePending?: boolean;
   @ApiPropertyOptional({ description: '「변경 요청」이 눌리는가 — 쓰는 중(사용 중)이고 열린 요청이 없을 때만. 쓰기와 같은 판정(N-99)' })
