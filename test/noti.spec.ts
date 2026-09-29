@@ -16,14 +16,14 @@ describe('notiTone', () => {
   it('막힌 일은 warn', () => {
     expect(notiTone('/reports/unwritten')).toBe('warn');
     expect(notiTone('/reports?section=unwritten')).toBe('warn');
-    expect(notiTone('/ops/complaints')).toBe('warn');
+    expect(notiTone('/ops?tab=complaint&cpl=3')).toBe('warn');
   });
-  it('끝난 소식은 ok', () => {
-    expect(notiTone('/accounting/paid')).toBe('ok');
-    expect(notiTone('/guides/sent')).toBe('ok');
+  it('front 에 없는 옛 주소는 색을 받지 않는다 — 지금 「끝난 소식」만 가리키는 주소는 없다 (deep-link-contract)', () => {
+    expect(notiTone('/accounting/paid')).toBe('alarm');
+    expect(notiTone('/ops/complaints')).toBe('alarm');
   });
   it('그 밖에는 alarm — 색이 없어 안 보이는 일은 없다', () => {
-    expect(notiTone('/ops/marketing')).toBe('alarm');
+    expect(notiTone('/ops?tab=mkt')).toBe('alarm');
     expect(notiTone(null)).toBe('alarm');
     expect(notiTone('')).toBe('alarm');
     expect(notiTone(undefined)).toBe('alarm');

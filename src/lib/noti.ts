@@ -26,8 +26,13 @@ export type NotiTone = (typeof NOTI_TONES)[number];
  *   ok     끝났다는 소식 — 승인 · 입금 · 발송 완료
  *   alarm  그 밖의 알림 (기본값)
  */
-const WARN = ['/reports/unwritten', '/reports?section=unwritten', '/ops/complaints', '/accounting/overdue', '/exec/pending'];
-const OK = ['/accounting/paid', '/reports/sent', '/guides/sent'];
+/*
+ * 주소는 front 가 실제로 여는 것만 둔다(deep-link-contract.spec) — 옛 프로토타입 주소 여섯(컴플레인 · 미수 · 결재 대기 · 입금 완료 ·
+ * 보낸 리포트 · 보낸 안내의 옛 경로)은 front 에 없는 경로라 2026-09-29 에 걷어 냈다.
+ * 지금 알림 가운데 「끝났다는 소식」만 가리키는 주소는 없다 — ok 는 그런 주소가 생기면 여기에 적는다.
+ */
+const WARN = ['/reports/unwritten', '/reports?section=unwritten', '/ops?tab=complaint'];
+const OK: string[] = [];
 
 export function notiTone(link: string | null | undefined): NotiTone {
   const l = (link ?? '').trim();

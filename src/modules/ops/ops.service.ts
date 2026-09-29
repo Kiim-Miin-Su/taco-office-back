@@ -1722,7 +1722,7 @@ export class OpsService {
       );
       await em.query(
         `INSERT INTO noti (to_id, from_id, body, link, category, title)
-         SELECT id, $1, $2, '/ops?mkt', 'request', $3 FROM staff WHERE role <> 'teacher' AND id <> $1`,
+         SELECT id, $1, $2, '/ops?tab=mkt', 'request', $3 FROM staff WHERE role <> 'teacher' AND id <> $1`,
         [viewerId, `대표 피드백 — ${name}`, NOTI_TITLE.mktFeedback],
       );
     });
@@ -1779,7 +1779,7 @@ export class OpsService {
       const to = leadId(parent.by_id);
       if (to !== viewerId) {
         await em.query(
-          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?mkt', 'request', $4)`,
+          `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, '/ops?tab=mkt', 'request', $4)`,
           [to, viewerId, `${kind === 'hold' ? '피드백 보류' : '피드백 답변'} — ${name}`, NOTI_TITLE.mktReply],
         );
       }
@@ -2572,7 +2572,7 @@ export class OpsService {
         )) as Array<{ role: string; attendee: boolean }>;
         await em.query(
           `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, $4, 'request', $5)`,
-          [dto.toId, viewerId, `회의 할 일 — ${name}`, meetingNotiLink(who?.role ?? '', id, '/ops?todo', who?.attendee === true), NOTI_TITLE.meetingTodo],
+          [dto.toId, viewerId, `회의 할 일 — ${name}`, meetingNotiLink(who?.role ?? '', id, '/ops?tab=todo', who?.attendee === true), NOTI_TITLE.meetingTodo],
         );
       }
     });

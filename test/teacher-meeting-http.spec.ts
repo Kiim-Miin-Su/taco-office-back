@@ -142,7 +142,7 @@ d('강사 참석자의 회의 상세 — 알림 링크는 받는 사람이 열 �
     await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr).send({ title: '자료 올리기', toId: TEACHER }).expect(201);
     await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr).send({ title: '예산 확인', toId: MGR2 }).expect(201);
     expect(await linksTo(TEACHER)).toEqual([`/teacher?meeting=${meetingId}`]);
-    expect(await linksTo(MGR2)).toEqual(['/ops?todo']);
+    expect(await linksTo(MGR2)).toEqual(['/ops?tab=todo']);
     // 참석자가 아닌 강사는 그 회의를 읽을 수 없다(③ 404) — 열리지 않는 자리로 보내지 않고 알림 글만 남긴다
     await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr).send({ title: '교재 확인', toId: TEACHER2 }).expect(201);
     expect(await q(`SELECT link FROM noti WHERE to_id = $1`, [TEACHER2])).toEqual([{ link: null }]);

@@ -15,7 +15,7 @@ import { hasPerm, isRole } from '../common/perm';
  * 참석자도 아니면 그 회의를 읽을 수 없으므로 링크를 두지 않는다(null — 알림 글만 읽는다). 읽기 범위는 넓히지 않는다.
  * 두 권한은 사람별 예외 칸이 아니라 역할에서만 나온다 — 그래서 역할 기본값으로 가른다.
  *
- * @param adminLink 운영 화면을 여는 사람에게 보낼 링크(예: `/ops?tab=meeting&meeting=7` · 할 일이면 `/ops?todo`)
+ * @param adminLink 운영 화면을 여는 사람에게 보낼 링크(예: `/ops?tab=meeting&meeting=7` · 할 일이면 `/ops?tab=todo`)
  * @param attendee 받는 사람이 그 회의의 참석자인가(안내는 참석자에게만 가므로 늘 참이다)
  */
 export function meetingNotiLink(role: string, meetingId: number, adminLink: string, attendee = true): string | null {
