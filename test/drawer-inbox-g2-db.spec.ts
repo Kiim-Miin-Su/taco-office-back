@@ -191,7 +191,7 @@ d('§14 · §16 서랍 응답 — 사유 · 자료 요청 제목 · 알림 제�
        VALUES (99018002, '2026-09-30', 'cancel', '{}'::jsonb, '병가', $1) RETURNING id`,
       [TEACHER],
     )) as Array<{ id: string }>;
-    await svc().reviewChangeRequest(Number(c.id), HEAD, { decision: 'reject', reason: '대체 강사가 없습니다' });
+    await svc().reviewChangeRequest(Number(c.id), HEAD, { decision: 'reject', reason: '대체 강사가 없습니다' }, true);
     const [n] = (await q.query(
       `SELECT title, body FROM noti WHERE to_id = $1 ORDER BY id DESC LIMIT 1`, [TEACHER],
     )) as Array<{ title: string | null; body: string }>;

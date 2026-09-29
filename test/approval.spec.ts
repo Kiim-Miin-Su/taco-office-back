@@ -12,7 +12,7 @@
  */
 import {
   apFlow, approvalFlowProjection, apSentence, toApState, AP_KINDS, AP_KINDS_MISSING, AP_STATE_WORDS,
-  isKnownApWord, type ApRow,
+  CHREQ_REVIEW_FORBIDDEN_MESSAGE, isKnownApWord, type ApRow,
 } from '../src/lib/approval';
 
 const row = (p: Partial<ApRow> & Pick<ApRow, 'id'>): ApRow => ({
@@ -212,5 +212,26 @@ describe('§75 approvalFlowProjection — exact 5종·수신자·역할 투영',
     expect(approvalFlowProjection(rows, ME, 'none')).toEqual({
       canView: false, tiles: [], back: [], waiting: [], mine: [], total: 0, backCount: 0,
     });
+  });
+});
+
+describe('P1 CROSS-CUT — 변경 요청 줄은 시간표를 쓸 수 있어야 단추가 선다 (D-R39)', () => {
+  const chreq = row({ id: 7, kind: 'chreq', byId: OTHER, state: 'waiting', applicable: true });
+
+  it('결재 권한만 있고 시간표를 못 쓰면 줄은 보이되 단추가 없고, 막힌 이유가 쓰기의 403 문장이다', () => {
+    const f = apFlow([{ ...chreq }], ME, true, true, false);
+    const r = f.waiting.find((x) => x.id === 7)!;
+    expect(r.canAct).toBe(false);
+    expect(r.actBlockedReason).toBe(CHREQ_REVIEW_FORBIDDEN_MESSAGE);
+  });
+
+  it('시간표를 쓸 수 있으면 그대로 선다 · 인자를 안 주면 예전처럼 결재 권한만 본다', () => {
+    expect(apFlow([{ ...chreq }], ME, true, true, true).waiting[0].canAct).toBe(true);
+    expect(apFlow([{ ...chreq }], ME, true).waiting[0].canAct).toBe(true);
+  });
+
+  it('다른 갈래(시간대 요청)는 시간표 권한과 무관하다', () => {
+    const req = row({ id: 8, kind: 'req', reqType: 'tz_change', byId: OTHER, state: 'waiting' } as Partial<ApRow> & Pick<ApRow, 'id'>);
+    expect(apFlow([req], ME, true, true, false).waiting[0].canAct).toBe(true);
   });
 });

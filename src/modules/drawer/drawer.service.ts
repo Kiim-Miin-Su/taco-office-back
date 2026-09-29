@@ -23,7 +23,7 @@ import {
 } from '../../common/perm';
 import {
   apFlow, approvalFlowProjection, approvalPlanVisible, labelOf, reqAsked, reqAskedLine, reqTitle, requesterReason, toApState,
-  GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
+  CHREQ_REVIEW_FORBIDDEN_MESSAGE, GPAPACK_TYPE_LABEL, REQ_TYPE_LABEL, RPT_TYPE_LABEL, type ApRow,
 } from '../../lib/approval';
 import { AUDIT_WRITES, audit, type AuditKey } from '../../lib/audit';
 import { payoutConfirmedSql } from '../../lib/rules';
@@ -248,7 +248,7 @@ export class DrawerService {
         title: `줌 계정 미배정 · ${str(r.title) ?? String(r.kind_key)}`,
         sub: [str(r.teacher_name), str(r.on_date)].filter(Boolean).join(' · '),
         byId: num(r.teacher_id), byName: str(r.teacher_name), at: String(r.at),
-        state: 'waiting', why: null, go: `/schedule?d=${String(r.on_date)}`, applicable: false,
+        state: 'waiting', why: null, go: `/schedule?date=${String(r.on_date)}`, applicable: false,
       });
     }
 
@@ -419,7 +419,8 @@ export class DrawerService {
     canHide = true,
   ): Promise<DrawerDto> {
     const approvalRows = await this.approvalRows(viewerId, flowScope);
-    const approvals = apFlow(approvalRows, viewerId, canApprove, canWage);
+    // 변경 요청 줄은 시간표를 쓸 수 있어야 단추가 선다 — 쓰기(reviewChangeRequest)와 같은 판정 (P1 CROSS-CUT · D-R39)
+    const approvals = apFlow(approvalRows, viewerId, canApprove, canWage, canSeeAll);
     const approvalFlow = approvalFlowProjection(approvalRows, viewerId, flowScope);
 
     // 할 일 — 강사는 자기 것만 (주고받은 것). 화면이 안 걸러도 서버가 거른다 (D-R39)
@@ -1358,7 +1359,12 @@ export class DrawerService {
    */
   async reviewChangeRequest(
     chreqId: number, viewerId: number, dto: ChreqReviewDto,
+    /** 시간표를 쓸 수 있는가(`canCrudAll`) — 반영 · 반려 모두 시간표 관리다. 결재 권한만으로는 403 (P1 CROSS-CUT) */
+    canWriteSchedule: boolean,
   ): Promise<{ id: number; state: string; applied: string | null; undoToken: string | null; undoExpiresAt: string | null }> {
+    if (!canWriteSchedule) {
+      throw new ForbiddenException({ code: 'CHREQ_REVIEW_FORBIDDEN', message: CHREQ_REVIEW_FORBIDDEN_MESSAGE });
+    }
     const approving = dto.decision === 'approve';
     const reason = dto.reason?.trim() || null;
     if (!approving && !reason) {
@@ -1520,10 +1526,17 @@ export class DrawerService {
      본인 · 10분 · 그 처리 하나. 토큰이 무엇을 거꾸로 할지 말하고, 서버는 **그 사이 바뀐 것이 없는지**(신선도)를 본 뒤에만
      되돌린다. 이미 간 알림은 지우지도 새로 짓지도 않는다(N-55 ②). LOG 는 한 줄(`approval.undo` · `approval.undo_chreq`). */
 
-  async undoApproval(actorId: number, token: string, canWage: boolean): Promise<ApprovalUndoResultDto> {
+  async undoApproval(
+    actorId: number, token: string, canWage: boolean,
+    /** 변경 요청 처리의 되돌리기는 시간표를 되돌리는 쓰기다 — 처리와 같은 권한(`canCrudAll`)이 있어야 한다 (P1 CROSS-CUT) */
+    canWriteSchedule: boolean,
+  ): Promise<ApprovalUndoResultDto> {
     const p = readApprovalUndo(token, actorId);
     if (!p) {
       throw new BadRequestException({ code: 'BAD_UNDO_TOKEN', message: '되돌리기 시간이 지났거나 토큰이 올바르지 않습니다' });
+    }
+    if (p.target === 'chreq' && !canWriteSchedule) {
+      throw new ForbiddenException({ code: 'CHREQ_REVIEW_FORBIDDEN', message: CHREQ_REVIEW_FORBIDDEN_MESSAGE });
     }
     return p.target === 'req' ? this.undoReq(p, actorId, canWage) : this.undoChreq(p, actorId);
   }

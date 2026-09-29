@@ -271,15 +271,17 @@ export class DrawerController {
       + '반영은 기존 일정 쓰기(patch·remove)를 그대로 타므로 3범위·겹침·참조 방어가 한 벌이다. '
       + '범위는 apply_all 이면 이후 전체, 아니면 이 회차만이다(D-R16). '
       + '시간표 변경과 요청 종결이 한 트랜잭션이라, 겹쳐서 막히면 요청도 대기로 되돌아간다. '
-      + '줌 계정 변경은 아직 배정 경로가 없어 CHREQ_NOT_APPLICABLE 로 거절한다.',
+      + '줌 계정 변경은 아직 배정 경로가 없어 CHREQ_NOT_APPLICABLE 로 거절한다. '
+      + '반영 · 반려는 시간표 관리라 결재 권한에 더해 전체 편집 권한(canCrudAll)이 있어야 한다 — 없으면 403 CHREQ_REVIEW_FORBIDDEN(P1 CROSS-CUT).',
   })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'CHREQ_REVIEW_FORBIDDEN — 결재 권한만 있고 전체 편집 권한이 없다' })
   @ApiCreatedResponse({ type: ReqReviewResultDto })
   async reviewChangeRequest(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ChreqReviewDto,
   ): Promise<ReqReviewResultDto> {
-    return this.svc.reviewChangeRequest(id, user.id, dto);
+    return this.svc.reviewChangeRequest(id, user.id, dto, this.gate(user).canSeeAll);
   }
 
   @Post('approvals/undo')
@@ -295,11 +297,12 @@ export class DrawerController {
   })
   @ApiCreatedResponse({ type: ApprovalUndoResultDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_UNDO_TOKEN — 만료 · 변조 · 남의 토큰' })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'WAGE_REVIEW_FORBIDDEN — 시급 줄을 지우려면 시급 권한' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'WAGE_REVIEW_FORBIDDEN — 시급 줄을 지우려면 시급 권한 | CHREQ_REVIEW_FORBIDDEN — 변경 요청 처리를 되돌리려면 전체 편집 권한' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: '요청을 찾을 수 없다' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'UNDO_STALE | UNDO_PAYOUT_CONFIRMED | UNDO_HAS_REFS | CYCLE_CLOSED | MONTH_CLOSED(변경 요청 반영을 되돌리면 마감한 달의 회차가 바뀔 때 · W11)' })
   undoApproval(@CurrentUser() user: RequestUser, @Body() dto: ApprovalUndoDto): Promise<ApprovalUndoResultDto> {
-    return this.svc.undoApproval(user.id, dto.token, this.gate(user).canWage);
+    const g = this.gate(user);
+    return this.svc.undoApproval(user.id, dto.token, g.canWage, g.canSeeAll);
   }
 
   @Post('change-requests')

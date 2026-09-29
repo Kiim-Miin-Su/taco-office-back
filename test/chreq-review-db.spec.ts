@@ -109,7 +109,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
 
   it('강사 변경을 반영하면 **시간표의 강사가 실제로 바뀐다** — 그리고 이력·알림이 남는다', async () => {
     const id = await chreq('teacher', { teacherId: T2 });
-    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
 
     expect(out).toMatchObject({ state: 'approved' });
     expect(out.applied).toBe('강사 → 바뀔 강사');
@@ -125,7 +125,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
 
   it('시간 이동을 반영하면 회차 시각이 바뀐다', async () => {
     const id = await chreq('time_move', { startMin: 1200, endMin: 1290 });
-    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
     expect(out.applied).toBe('20:00–21:30 로 이동');
     const after = await occ();
     expect(new Date(String(after.from_at)).toISOString()).toContain('T11:00');
@@ -133,7 +133,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
 
   it('휴강을 반영하면 그 회차가 취소된다 — 규칙은 그대로 둔다 (EXC · D-R21)', async () => {
     const id = await chreq('cancel', {});
-    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
     expect(out.applied).toBe('휴강');
     const [exc] = await q(`SELECT canceled FROM exc WHERE ser_id=$1 AND on_date=$2`, [SER, ON]);
     expect(exc.canceled).toBe(true);
@@ -154,7 +154,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     );
 
     const id = await chreq('teacher', { teacherId: T2 });
-    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' })).rejects.toBeDefined();
+    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true)).rejects.toBeDefined();
 
     // 요청도 시간표도 **아무것도 바뀌지 않았다**
     expect(await row(id)).toMatchObject({ state: 'pending' });
@@ -164,10 +164,10 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
 
   it('반려는 시간표를 건드리지 않고 **신청 사유를 덮어쓰지 않는다** (v4.18 · D-R13)', async () => {
     const id = await chreq('teacher', { teacherId: T2 });
-    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'reject' }))
+    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'reject' }, true))
       .rejects.toMatchObject({ response: { code: 'REJECT_REASON_REQUIRED' } });
 
-    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '그날은 진단고사가 있습니다' });
+    const out = await svc.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '그날은 진단고사가 있습니다' }, true);
     expect(out).toMatchObject({ state: 'rejected', applied: null });
     expect(await row(id)).toMatchObject({
       state: 'rejected', reason: '원문 사유입니다', reject_reason: '그날은 진단고사가 있습니다',
@@ -177,12 +177,12 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
 
   it('한 줄은 한 번만 처리된다 · 자기 요청은 자기가 못 한다', async () => {
     const id = await chreq('teacher', { teacherId: T2 });
-    await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' });
-    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }))
+    await svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
+    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true))
       .rejects.toMatchObject({ response: { code: 'CHREQ_NOT_PENDING' } });
 
     const mine = await chreq('cancel', {}, false, BOSS);
-    await expect(svc.reviewChangeRequest(mine, BOSS, { decision: 'approve' }))
+    await expect(svc.reviewChangeRequest(mine, BOSS, { decision: 'approve' }, true))
       .rejects.toMatchObject({ response: { code: 'SELF_APPROVAL_FORBIDDEN' } });
   });
 
@@ -200,7 +200,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     )) as { id: string }[];
     const zaccId = Number(z.id);
     const id = await chreq('room', { zaccId });
-    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }))
+    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true))
       .resolves.toMatchObject({ state: 'approved' });
     expect(await row(id)).toMatchObject({ state: 'approved' });
 

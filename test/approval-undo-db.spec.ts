@@ -194,7 +194,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     expect((await q(`SELECT id FROM wage WHERE staff_id = $1`, [T])).length).toBe(2);
     const sent = await notiCount();
 
-    const res = await drawer.undoApproval(BOSS, out.undoToken!, true);
+    const res = await drawer.undoApproval(BOSS, out.undoToken!, true, true);
     expect(res).toEqual({ id, target: 'req', state: 'pending', reverted: '시급 줄 삭제' });
     const lines = await q<{ rate: number; from_date: string }>(
       `SELECT rate, to_char(from_date,'YYYY-MM-DD') AS from_date FROM wage WHERE staff_id = $1`, [T]);
@@ -204,7 +204,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     // N-55 ② — 이미 간 알림을 지우지도 새로 짓지도 않는다
     expect(await notiCount()).toBe(sent);
     // 같은 토큰을 다시 — 이제 그 처리는 지난 일이다(요청이 대기다)
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, true, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     expect(await logCount('REQ', id, 'undo')).toBe(1);
   });
 
@@ -212,7 +212,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     const id = await openReq('wage_change', { from: 42000, to: 45000 });
     const out = await drawer.reviewRequest(id, BOSS, { decision: 'approve' }, true);
     await q(`INSERT INTO wage (staff_id, rate, from_date) VALUES ($1, 47000, '2099-01-01')`, [T]);
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, true, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     expect((await q(`SELECT id FROM wage WHERE staff_id = $1`, [T])).length).toBe(3);
     expect((await req(id)).state).toBe('approved');
     expect(await logCount('REQ', id, 'undo')).toBe(0);
@@ -221,12 +221,12 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
   it('시급 — 그 달 정산이 확정됐으면 409 UNDO_PAYOUT_CONFIRMED · 시급 권한이 없으면 403', async () => {
     const id = await openReq('wage_change', { from: 42000, to: 45000 });
     const out = await drawer.reviewRequest(id, BOSS, { decision: 'approve' }, true);
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).rejects.toMatchObject({ response: { code: 'WAGE_REVIEW_FORBIDDEN' } });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'WAGE_REVIEW_FORBIDDEN' } });
     await q(
       `INSERT INTO payout (staff_id, year_month, hours, gross, net, state, confirmed_by, confirmed_at)
        VALUES ($1, $2, 1, 1, 1, 'confirmed', $3, now())`, [T, todayKst().slice(0, 7), BOSS],
     );
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, true)).rejects.toMatchObject({ response: { code: 'UNDO_PAYOUT_CONFIRMED' } });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, true, true)).rejects.toMatchObject({ response: { code: 'UNDO_PAYOUT_CONFIRMED' } });
     expect((await q(`SELECT id FROM wage WHERE staff_id = $1`, [T])).length).toBe(2);
     expect((await req(id)).state).toBe('approved');
     expect(await logCount('REQ', id, 'undo')).toBe(0);
@@ -238,13 +238,13 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     const id = await openReq('tz_change', { from: 'Asia/Seoul', tz: 'America/New_York' });
     const out = await drawer.reviewRequest(id, BOSS, { decision: 'approve' }, true);
     expect((await q<{ tz: string }>(`SELECT tz FROM staff WHERE id = $1`, [T]))[0].tz).toBe('America/New_York');
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).resolves.toMatchObject({ reverted: '시간대 되돌림' });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ reverted: '시간대 되돌림' });
     expect((await q<{ tz: string }>(`SELECT tz FROM staff WHERE id = $1`, [T]))[0].tz).toBe('Asia/Seoul');
 
     const id2 = await openReq('tz_change', { from: 'Asia/Seoul', tz: 'America/New_York' });
     const out2 = await drawer.reviewRequest(id2, BOSS, { decision: 'approve' }, true);
     await q(`UPDATE staff SET tz = 'Asia/Seoul' WHERE id = $1`, [T]);
-    await expect(drawer.undoApproval(BOSS, out2.undoToken!, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+    await expect(drawer.undoApproval(BOSS, out2.undoToken!, true, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     expect((await req(id2)).state).toBe('approved');
   });
 
@@ -252,7 +252,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     const id = await openReq('wage_change', { from: 42000, to: 99000 });
     const out = await drawer.reviewRequest(id, BOSS, { decision: 'reject', reason: '근거가 없습니다' }, true);
     expect((await req(id)).reject_reason).toBe('근거가 없습니다');
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).resolves.toMatchObject({ state: 'pending', reverted: '상태만' });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ state: 'pending', reverted: '상태만' });
     expect(await req(id)).toEqual({ state: 'pending', resolved_by: null, reject_reason: null });
     const [row] = await q<{ before: { rejectReason: string } }>(
       `SELECT before FROM log WHERE entity = 'REQ' AND entity_id = $1 AND action = 'undo'`, [id]);
@@ -262,16 +262,16 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
   it('토큰은 본인 것만 · 변조 · 만료는 400 BAD_UNDO_TOKEN (서버 판정 · 화면이 풀지 않는다)', async () => {
     const id = await openReq('tz_change', { from: 'Asia/Seoul', tz: 'America/New_York' });
     const out = await drawer.reviewRequest(id, BOSS, { decision: 'approve' }, true);
-    await expect(drawer.undoApproval(OTHER, out.undoToken!, true)).rejects.toMatchObject({ response: { code: 'BAD_UNDO_TOKEN' } });
+    await expect(drawer.undoApproval(OTHER, out.undoToken!, true, true)).rejects.toMatchObject({ response: { code: 'BAD_UNDO_TOKEN' } });
     const [body, sig] = out.undoToken!.split('.');
-    await expect(drawer.undoApproval(BOSS, `${body}x.${sig}`, true)).rejects.toMatchObject({ response: { code: 'BAD_UNDO_TOKEN' } });
+    await expect(drawer.undoApproval(BOSS, `${body}x.${sig}`, true, true)).rejects.toMatchObject({ response: { code: 'BAD_UNDO_TOKEN' } });
     // 만료 — 10분 뒤에는 서명이 맞아도 읽지 않는다
     expect(readApprovalUndo(out.undoToken!, BOSS, Date.now() + 11 * 60_000)).toBeNull();
     expect(readApprovalUndo(out.undoToken!, BOSS)).not.toBeNull();
     // 일정 되돌리기와 **같은 서명 함수**지만 입력 앞말이 달라 서로 흉내 내지 못한다 — 앞말 없이 서명한 본문은 읽지 않는다
     const plain = issueApprovalUndo(BOSS, { target: 'req', id, decision: 'approve', logId: 1, effect: { kind: 'none' } }).token.split('.')[0];
     expect(readApprovalUndo(`${plain}.${sign(plain)}`, BOSS)).toBeNull();
-    await expect(drawer.undoApproval(BOSS, `${plain}.${sign(plain)}`, true)).rejects.toMatchObject({ response: { code: 'BAD_UNDO_TOKEN' } });
+    await expect(drawer.undoApproval(BOSS, `${plain}.${sign(plain)}`, true, true)).rejects.toMatchObject({ response: { code: 'BAD_UNDO_TOKEN' } });
     expect((await req(id)).state).toBe('approved');
   });
 
@@ -283,12 +283,12 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       [SER_CH, ON, T],
     );
     const id = Number(c.id);
-    const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+    const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
     expect(out.undoToken).toEqual(expect.any(String));
     expect(await occStart()).toBe('14:00');
     const sent = await notiCount();
 
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).resolves.toMatchObject({ target: 'chreq', reverted: '시간표 되돌림' });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ target: 'chreq', reverted: '시간표 되돌림' });
     expect(await occStart()).toBe('10:00');
     const [row] = await q<{ state: string; resolved_by: string | null }>(`SELECT state, resolved_by FROM chreq WHERE id = $1`, [id]);
     expect(row).toEqual({ state: 'pending', resolved_by: null });
@@ -302,9 +302,9 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       [SER_CH, ON, T],
     );
     const id = Number(c.id);
-    const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+    const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
     await new ScheduleWriteService(ds).patch(SER_CH, { scope: 'this', onDate: ON, startMin: 900, endMin: 960 } as never);
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     expect(await occStart()).toBe('15:00');
     expect((await q<{ state: string }>(`SELECT state FROM chreq WHERE id = $1`, [id]))[0].state).toBe('approved');
     expect(await logCount('CHREQ', id, 'undo')).toBe(0);
@@ -316,8 +316,8 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       [SER_CH, ON, T],
     );
     const id = Number(c.id);
-    const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '대체 강사를 먼저 찾아 주세요' });
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).resolves.toMatchObject({ reverted: '상태만' });
+    const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '대체 강사를 먼저 찾아 주세요' }, true);
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ reverted: '상태만' });
     const [row] = await q<{ state: string; reject_reason: string | null }>(`SELECT state, reject_reason FROM chreq WHERE id = $1`, [id]);
     expect(row).toEqual({ state: 'pending', reject_reason: null });
     expect(await occStart()).toBe('10:00');
@@ -351,7 +351,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     // 새 교재를 정하지 않는다 — 배부는 그대로(관리자가 §38 에서 바꾼다)
     expect((await q<{ state: string; lib_id: string }>(`SELECT state, lib_id FROM issue WHERE id = $1`, [ISSUE]))[0]).toEqual({ state: 'ok', lib_id: String(LIB) });
     expect(await logCount('REQ', made.id, 'approve')).toBe(1);
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).resolves.toMatchObject({ reverted: '상태만' });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ reverted: '상태만' });
     expect((await req(made.id)).state).toBe('pending');
   });
 
@@ -388,7 +388,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     expect(uses[0]).toMatchObject({ state: 'wait', points: 2, start_min: 1200, coord_id: String(T), ser_id: String(SER_GPA) });
     expect(out.applied).toContain('2p');
 
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).resolves.toMatchObject({ reverted: 'GPA 기록 삭제' });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ reverted: 'GPA 기록 삭제' });
     expect(await q(`SELECT id FROM gpa_use WHERE student_id = $1`, [STU])).toHaveLength(0);
     expect((await req(made.id)).state).toBe('pending');
   });
@@ -415,7 +415,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     const made = await teacher.createSettingRequest(T, { reqType: 'gpa_request', serId: SER_GPA, onDate: ON, studentId: STU, svcKey: 'quiz' });
     const out = await drawer.reviewRequest(made.id, BOSS, { decision: 'approve' }, false);
     await q(`UPDATE gpa_use SET state = 'ok', approved_by = $2, approved_at = now() WHERE student_id = $1`, [STU, BOSS]);
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     expect(await q(`SELECT id FROM gpa_use WHERE student_id = $1`, [STU])).toHaveLength(1);
 
     await q(`DELETE FROM gpa_use WHERE student_id = $1`, [STU]);
@@ -446,10 +446,10 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       [SER_CH, ON, T, JSON.stringify({ teacherId: OTHER })],
     );
     const id = Number(c.id);
-    await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+    await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
     expect(await logCount('CHREQ', id, 'apply')).toBe(1);
     expect(await logCount('chreq', id, 'apply')).toBe(0);
-    await expect(drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '늦었습니다' }))
+    await expect(drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '늦었습니다' }, true))
       .rejects.toMatchObject({ response: { code: 'CHREQ_NOT_PENDING' } });
     expect(await logCount('CHREQ', id, 'reject')).toBe(0);
   });
@@ -459,14 +459,14 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
   it('한 번만 — 되돌린 뒤 같은 결정으로 다시 처리하면 옛 토큰은 409 · 새 토큰만 통한다(요청)', async () => {
     const id = await openReq('tz_change', { from: 'Asia/Seoul', tz: 'America/New_York' });
     const first = await drawer.reviewRequest(id, BOSS, { decision: 'approve' }, true);
-    await drawer.undoApproval(BOSS, first.undoToken!, false);
+    await drawer.undoApproval(BOSS, first.undoToken!, false, true);
     const second = await drawer.reviewRequest(id, BOSS, { decision: 'approve' }, true);
     // 상태(approved · 같은 사람)만으로는 두 토큰을 못 가른다 — 옛 토큰이 묶인 감사 줄 뒤에 줄이 있다
-    await expect(drawer.undoApproval(BOSS, first.undoToken!, false)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+    await expect(drawer.undoApproval(BOSS, first.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     expect((await req(id)).state).toBe('approved');
     expect((await q<{ tz: string }>(`SELECT tz FROM staff WHERE id = $1`, [T]))[0].tz).toBe('America/New_York');
     expect(await logCount('REQ', id, 'undo')).toBe(1);
-    await expect(drawer.undoApproval(BOSS, second.undoToken!, false)).resolves.toMatchObject({ reverted: '시간대 되돌림' });
+    await expect(drawer.undoApproval(BOSS, second.undoToken!, false, true)).resolves.toMatchObject({ reverted: '시간대 되돌림' });
     expect(await logCount('REQ', id, 'undo')).toBe(2);
   });
 
@@ -476,12 +476,12 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       [SER_CH, ON, T],
     );
     const id = Number(c.id);
-    const first = await drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '대체 강사를 먼저' });
-    await drawer.undoApproval(BOSS, first.undoToken!, false);
-    const second = await drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '대체 강사를 먼저' });
-    await expect(drawer.undoApproval(BOSS, first.undoToken!, false)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+    const first = await drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '대체 강사를 먼저' }, true);
+    await drawer.undoApproval(BOSS, first.undoToken!, false, true);
+    const second = await drawer.reviewChangeRequest(id, BOSS, { decision: 'reject', reason: '대체 강사를 먼저' }, true);
+    await expect(drawer.undoApproval(BOSS, first.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     expect((await q<{ state: string }>(`SELECT state FROM chreq WHERE id = $1`, [id]))[0].state).toBe('rejected');
-    await expect(drawer.undoApproval(BOSS, second.undoToken!, false)).resolves.toMatchObject({ reverted: '상태만' });
+    await expect(drawer.undoApproval(BOSS, second.undoToken!, false, true)).resolves.toMatchObject({ reverted: '상태만' });
   });
 
   /* ── ⑧ 줌 계정 갈래 (W11 A' 후속) ────────────────────────────────────────── */
@@ -510,13 +510,13 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
 
     it('반영하면 토큰이 오고 · 되돌리면 앞 배정(Z1)으로 · 배정 때 생긴 예외 줄도 걷힌다 · 요청은 대기로', async () => {
       const id = await zoomReq();
-      const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+      const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
       expect(out.undoToken).toEqual(expect.any(String));
       expect(Date.parse(out.undoExpiresAt!)).toBeGreaterThan(Date.now());
       expect(await occZacc()).toBe(String(Z2));
       expect(await q(`SELECT id FROM exc WHERE ser_id = $1`, [SER_Z])).toHaveLength(1);
 
-      await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).resolves.toMatchObject({ target: 'chreq', reverted: '줌 계정 되돌림' });
+      await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ target: 'chreq', reverted: '줌 계정 되돌림' });
       expect(await occZacc()).toBe(String(Z1));
       expect(await q(`SELECT id FROM exc WHERE ser_id = $1`, [SER_Z])).toHaveLength(0);
       expect(await q<{ ser_id: string | null; zacc_id: string }>(
@@ -525,14 +525,14 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       expect((await q<{ state: string }>(`SELECT state FROM chreq WHERE id = $1`, [id]))[0].state).toBe('pending');
       expect(await logCount('CHREQ', id, 'undo')).toBe(1);
       // 같은 토큰 두 번은 없다
-      await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+      await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
     });
 
     it('그 사이 다른 배정이 있었으면 409 이고 배정 · 요청은 그대로다', async () => {
       const id = await zoomReq();
-      const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' });
+      const out = await drawer.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true);
       await zoom.assign(BOSS, { serId: SER_Z, onDate: ON, zaccId: Z1 });
-      await expect(drawer.undoApproval(BOSS, out.undoToken!, false)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
+      await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
       expect(await occZacc()).toBe(String(Z1));
       expect((await q<{ state: string }>(`SELECT state FROM chreq WHERE id = $1`, [id]))[0].state).toBe('approved');
       expect(await logCount('CHREQ', id, 'undo')).toBe(0);

@@ -566,6 +566,14 @@ export const isKnownApWord = (raw: string | null | undefined): boolean =>
   Object.values(AP_STATE_WORDS).some((ws) => ws.includes(String(raw ?? '').toLowerCase()));
 
 /**
+ * §20 변경 요청의 반영 · 반려 · 되돌리기는 **시간표를 바꾸는 쓰기**다 — 일정 쓰기(`/schedule` 쓰기 전부)와 같은 전체 편집 권한(`canCrudAll`)이
+ * 있어야 한다(P1 CROSS-CUT · 2026-09-29). 결재 권한(`canApprove`)만으로는 모자란다 — 사람별 예외로 결재 권한만 켠 강사가 남의 수업을 옮기고 ·
+ * 강사를 바꾸고 · 휴강시키던 옆문을 막는다. 쓰기의 403 과 §14 줄의 막힌 이유가 이 한 문장이다(D-R39).
+ */
+export const CHREQ_REVIEW_FORBIDDEN_MESSAGE =
+  '변경 요청은 시간표를 바꾸는 일이라 전체 편집 권한이 있어야 처리할 수 있습니다 — 결재 권한만으로는 처리하지 못합니다';
+
+/**
  * 공통 결재 다섯 갈래와 강사 리포트를 한 목록으로 묶는다.
  *
  * @param viewerId  「내가 올린 것」을 가르는 기준
@@ -573,12 +581,15 @@ export const isKnownApWord = (raw: string | null | undefined): boolean =>
  * @param canWage 시급을 다룰 수 있는가 — **시급 요청은 이것까지 있어야 승인된다**(S5).
  *   `reviewRequest` 가 403 `WAGE_REVIEW_FORBIDDEN` 로 막는데 `canAct` 가 그것을 몰라서
  *   단추가 선 채 눌러야만 거절당했다. 안 주면 예전처럼 **승인 권한만** 본다.
+ * @param canWriteSchedule 시간표를 쓸 수 있는가(`canCrudAll`) — **변경 요청은 이것까지 있어야 처리된다**(P1 CROSS-CUT).
+ *   `reviewChangeRequest` 가 403 `CHREQ_REVIEW_FORBIDDEN` 로 막는다. 안 주면 예전처럼 승인 권한만 본다(시급 층과 같은 규약).
  */
 export function apFlow(
   rows: ApRow[],
   viewerId: number,
   canApprove: boolean,
   canWage?: boolean,
+  canWriteSchedule?: boolean,
 ): ApFlow {
   const back: CategorizedApRow[] = [];
   const waiting: CategorizedApRow[] = [];
@@ -599,8 +610,9 @@ export function apFlow(
     /* **시급 요청은 한 층이 더 있다**(S5) — `reviewRequest` 가 `canWage` 없이 승인하면 403 을 낸다.
        인자를 안 준 호출자에게는 예전 그대로다(모르는 쪽으로 닫지 않는다 — 그러면 §75 가 통째로 잠긴다). */
     const needsWage = open && r.kind === 'req' && r.reqType === 'wage_change' && canWage === false;
-    r.canAct = open && !needsWage;
-    r.actBlockedReason = needsWage ? '시급을 다룰 권한이 필요합니다' : null;
+    const needsSchedule = open && r.kind === 'chreq' && canWriteSchedule === false;
+    r.canAct = open && !needsWage && !needsSchedule;
+    r.actBlockedReason = needsWage ? '시급을 다룰 권한이 필요합니다' : needsSchedule ? CHREQ_REVIEW_FORBIDDEN_MESSAGE : null;
     // 남의 결재는 승인 권한이 있을 때만 **목록에서 아예 뺀다.**
     // 감추기만 하면 「있다」는 사실이 배지 숫자로 새어 나간다 (D-R39).
     if (!isMine && !canApprove) continue;
