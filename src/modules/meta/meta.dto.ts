@@ -68,6 +68,13 @@ export class StudentBriefDto {
     description: '성별(선택 · N-83) — 관리자 §10 아바타에만 쓴다. 학생 명단(students)은 관리 화면에만 실리므로 강사에게 가지 않는다. 비어 있으면 null',
   })
   gender?: StuGender | null;
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 없으면 null. 판정은 서버 한 곳(lib/student-label)',
+  })
+  tag!: string | null;
+  @ApiProperty({ description: '고르기에 적는 이름 — 「이름 · 꼬리」(꼬리가 없으면 이름). 화면은 이 글을 그대로 쓴다 (D-R18)' })
+  label!: string;
 }
 
 /** 성별 코드표 한 줄 — 등록 확정 창의 선택지와 §10 아바타 글자 (N-83) */

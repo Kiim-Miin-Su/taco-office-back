@@ -20,8 +20,12 @@ import {
   ATTENDANCE_CANCEL_REASONS, ATTENDANCE_CANCEL_REASON_LABEL, DEDUCTIBLE_CANCEL_REASONS, PARENT_NOTICE_CANCEL_REASONS,
   CANCEL_TREATS, CANCEL_TREAT_LABEL, CANCEL_TREAT_SUB, PENALTY_RULE,
 } from '../../lib/rules';
+import { studentLabel, studentTagSql } from '../../lib/student-label';
 import { teacherPolicies } from '../../lib/teacher-policy';
 import { STU_GENDERS, STU_GENDER_LABEL, type MetaDto, type StuGender } from './meta.dto';
+
+/** 코드표 학생 한 줄 — 동명이인 꼬리(tag)를 SQL 이 붙여 온다 */
+type RosterRow = Pick<Stu, 'name' | 'grade' | 'school' | 'gender'> & { id: string | number; tag: string | null };
 
 @Injectable()
 export class MetaService {
@@ -47,7 +51,12 @@ export class MetaService {
       this.rooms.find({ where: { active: true }, order: { id: 'ASC' } }),
       this.zaccs.find({ where: { active: true }, order: { id: 'ASC' } }),
       this.staff.find({ where: { active: true }, order: { id: 'ASC' } }),
-      canSeeRoster ? this.students.find({ order: { id: 'ASC' } }) : Promise.resolve([] as Stu[]),
+      // 동명이인 꼬리(N-137)는 학생 전체에서 판정한다 — 조각은 lib/student-label 한 곳(청구서 · GPA 보드와 같은 식)
+      canSeeRoster
+        ? (this.students.query(
+          `SELECT s.id, s.name, s.grade, s.school, s.gender, ${studentTagSql('s')} AS tag FROM stu s ORDER BY s.id`,
+        ) as Promise<RosterRow[]>)
+        : Promise.resolve([] as RosterRow[]),
     ]);
     return {
       kinds: kinds.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, extra: k.extra === true })),
@@ -66,7 +75,8 @@ export class MetaService {
       }),
       // 성별(N-83)은 관리 화면의 §10 아바타 하나에만 쓴다 — 명단 자체가 관리 화면에만 실린다(canSeeRoster)
       students: students.map((s) => ({
-        id: Number(s.id), name: s.name, grade: s.grade, school: s.school, gender: (s.gender as StuGender | null) ?? null,
+        id: Number(s.id), name: s.name, grade: s.grade ?? null, school: s.school ?? null, gender: (s.gender as StuGender | null) ?? null,
+        tag: s.tag ?? null, label: studentLabel(s.name, s.tag),
       })),
       // 종류가 늘어도 화면은 그대로다 — 낱말이 한 곳에서만 온다 (D-R18)
       invTypes: INV_TYPES.map((key) => ({

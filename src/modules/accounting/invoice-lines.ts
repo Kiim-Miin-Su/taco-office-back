@@ -33,6 +33,7 @@
  * 세 토막의 합(`done + 남은 것`)은 `month` 와 정확히 같다 — 회귀가 그것을 증명한다.
  */
 import { drawnDateOf, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } from '../../lib/sql';
+import { studentTagSql } from '../../lib/student-label';
 
 export interface InvoiceLineRow {
   sub_key: string | null;
@@ -204,6 +205,8 @@ export interface BillingCandidate {
   studentId: number;
   studentName: string;
   grade: string | null;
+  /** 동명이인 꼬리(N-137) — lib/student-label */
+  studentTag: string | null;
   invType: LineInvType;
 }
 
@@ -216,7 +219,7 @@ export interface BillingCandidate {
  */
 export async function billingCandidates(m: Queryer, yearMonth: string): Promise<BillingCandidate[]> {
   const rows = (await m.query(
-    `SELECT DISTINCT st.id, st.name, st.grade,
+    `SELECT DISTINCT st.id, st.name, st.grade, ${studentTagSql('st')} AS tag,
             CASE WHEN ${lineKindScope('diag_intake', 'se.kind_key')} THEN 'diag_intake' ELSE 'tuition' END AS inv_type
        FROM ser_occ o
        JOIN ser se     ON se.id = o.ser_id
@@ -226,8 +229,8 @@ export async function billingCandidates(m: Queryer, yearMonth: string): Promise<
         AND NOT ${consultingCovered('o.ser_id', 'ss.student_id')}
       ORDER BY st.name, st.id, inv_type DESC`,
     [yearMonth],
-  )) as Array<{ id: string; name: string; grade: string | null; inv_type: LineInvType }>;
-  return rows.map((r) => ({ studentId: Number(r.id), studentName: r.name, grade: r.grade ?? null, invType: r.inv_type }));
+  )) as Array<{ id: string; name: string; grade: string | null; tag: string | null; inv_type: LineInvType }>;
+  return rows.map((r) => ({ studentId: Number(r.id), studentName: r.name, grade: r.grade ?? null, studentTag: r.tag ?? null, invType: r.inv_type }));
 }
 
 /** 줄의 합 — 「총액」을 두 곳에서 더하지 않는다 */

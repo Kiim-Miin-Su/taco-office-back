@@ -47,6 +47,9 @@ export class GpaStudentDto {
   @ApiProperty() studentId!: number;
   @ApiProperty() name!: string;
   @ApiPropertyOptional(S) grade?: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. lib/student-label 한 곳' })
+  tag!: string | null;
+  @ApiProperty({ description: '기록 창 학생 고르기에 적는 이름 — 「이름 · 꼬리」' }) label!: string;
   @ApiPropertyOptional({ ...S, description: '담당 코디네이터 이름 (배정 기준)' }) coordName?: string | null;
   @ApiProperty({ description: '이 사이클 배정량 (배정 없이 소비만 있으면 0)' }) alloc!: number;
   @ApiProperty({ description: '승인(ok) 소비 합' }) used!: number;

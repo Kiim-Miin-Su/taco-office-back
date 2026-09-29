@@ -130,6 +130,16 @@ d('§54 수업료 계산 (C65)', () => {
   });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
+  /* ── N-137 동명이인 꼬리 ─────────────────────────────────────────── */
+
+  it('N-137 — §54 줄의 꼬리는 홀로면 학년, 같은 이름이 생기면 학교까지 붙는다(lib/student-label 한 곳)', async () => {
+    for (const day of PAST) await occ(day);
+    expect((await row()).me).toMatchObject({ name: '수업료 학생', grade: 'G8', tag: 'G8' });
+    await q.query(`UPDATE stu SET school = '역삼중' WHERE id = $1`, [stuId]);
+    await q.query(`INSERT INTO stu (name, grade, school) VALUES ('수업료 학생','G8','채드윅')`);
+    expect((await row()).me).toMatchObject({ name: '수업료 학생', grade: 'G8', tag: 'G8 · 역삼중' });
+  });
+
   /* ── ① 청구서와 같은 금액 ─────────────────────────────────────────── */
 
   it('청구서와 **같은 금액**이 나온다 — 미리 본 값과 청구한 값이 갈리면 안 된다 (D-R22)', async () => {

@@ -17,6 +17,7 @@ import { GpaCycle } from '../../entities';
 import { addDays, todayKst } from '../../lib/kst';
 import { END_MIN, kstAt, serStuOn, START_MIN, writtenRows } from '../../lib/sql';
 import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
+import { studentLabel, studentTagSql } from '../../lib/student-label';
 import type {
   GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaLessonDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
 } from './gpa.dto';
@@ -132,7 +133,7 @@ export class GpaService {
 
     // 배정 ∪ 소비 학생 — 배정 없이 소비만 있어도 보드에 보인다 (숨기면 초과를 못 본다)
     const students = await this.q(
-      `SELECT st.id, st.name, st.grade, co.name AS coord_name,
+      `SELECT st.id, st.name, st.grade, ${studentTagSql('st')} AS tag, co.name AS coord_name,
               COALESCE(a.points, 0) AS alloc,
               COALESCE(u.used, 0) AS used,
               COALESCE(u.wait, 0) AS wait
@@ -152,6 +153,7 @@ export class GpaService {
       const remain = alloc - used - wait;
       return {
         studentId: Number(r.id), name: String(r.name), grade: (r.grade as string) ?? null,
+        tag: (r.tag as string | null) ?? null, label: studentLabel(String(r.name), r.tag as string | null),
         coordName: (r.coord_name as string) ?? null,
         alloc, used, wait, remain, over: remain < 0,
         svcs: svcsFor(Number(r.id)),
@@ -397,7 +399,7 @@ export class GpaService {
     return this.anyRepo.manager.transaction(async (em) => {
       const q = <T = R>(sql: string, p: unknown[] = []): Promise<T[]> => em.query(sql, p) as Promise<T[]>;
       await this.openCycle(dto.cycleId, em);
-      const [stu] = await q(`SELECT id, name, grade FROM stu WHERE id = $1`, [dto.studentId]);
+      const [stu] = await q(`SELECT st.id, st.name, st.grade, ${studentTagSql('st')} AS tag FROM stu st WHERE st.id = $1`, [dto.studentId]);
       if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
       await q(
         `INSERT INTO gpa_alloc (cycle_id, student_id, coord_id, points)
@@ -413,6 +415,7 @@ export class GpaService {
       const remain = dto.points - used - wait;
       return {
         studentId: Number(stu.id), name: String(stu.name), grade: (stu.grade as string) ?? null,
+        tag: (stu.tag as string | null) ?? null, label: studentLabel(String(stu.name), stu.tag as string | null),
         coordName: co?.name ?? null, alloc: dto.points, used, wait, remain, over: remain < 0,
         // 배정 저장 응답은 **그 한 줄**이다 — 카드 칩은 보드 조회가 만든다
         svcs: [],

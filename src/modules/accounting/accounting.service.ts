@@ -57,6 +57,7 @@ import type {
 import { fileUrlOf, storedFileRef } from '../files/files.service';
 import { ConsultingService } from '../consulting/consulting.service';
 import { lockPayRequestKey, priorPayForKey } from '../../lib/pay-request-key';
+import { studentTagSql } from '../../lib/student-label';
 
 
 /** 날짜 눈금의 시작일 — 주는 **월요일**에 건다 (§73 결재함과 같은 셈 · C67) */
@@ -269,7 +270,7 @@ const otherIncomeRank = (key: string): number => {
 };
 
 const INV_SELECT = `
-  SELECT i.id, i.student_id, s.name AS student_name, s.grade, i.year_month, i.title, i.inv_type,
+  SELECT i.id, i.student_id, s.name AS student_name, s.grade, ${studentTagSql('s')} AS student_tag, i.year_month, i.title, i.inv_type,
          i.amount, i.paid_amount, i.state,
          to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
          to_char(i.due_on,'YYYY-MM-DD') AS due_on,
@@ -414,7 +415,7 @@ export class AccountingService {
       ...voidGate,
       voidReason: (r.void_reason as string | null) ?? null,
       id: Number(r.id), studentId: Number(r.student_id), studentName: String(r.student_name),
-      grade: (r.grade as string | null) ?? null,
+      grade: (r.grade as string | null) ?? null, studentTag: (r.student_tag as string | null) ?? null,
       yearMonth: String(r.year_month), title: String(r.title),
       amount: money(r.amount), paidAmount: money(r.paid_amount), state: String(r.state),
       // 낱말은 서버가 만든다 — 화면이 코드값을 찍거나 제 코드표를 갖지 않는다 (D-R18)
@@ -1275,7 +1276,7 @@ export class AccountingService {
 
     /** 그 달에 회차가 하나라도 있는 학생만 — 이번 달 수업이 없는 학생은 줄을 만들지 않는다 */
     const students = (await this.inv.query(
-      `SELECT DISTINCT st.id, st.name, st.grade
+      `SELECT DISTINCT st.id, st.name, st.grade, ${studentTagSql('st')} AS tag
          FROM ser_occ o
          JOIN ser se     ON se.id = o.ser_id
          -- 수강 종료 뒤의 회차는 그 학생의 것이 아니다 (C94-c) — 그 달에 유효한 회차가 하나라도 있는 학생만
@@ -1288,7 +1289,7 @@ export class AccountingService {
           AND ${lineKindScope('tuition', 'se.kind_key')}
         ORDER BY st.name, st.id`,
       [month],
-    )) as Array<{ id: string; name: string; grade: string | null }>;
+    )) as Array<{ id: string; name: string; grade: string | null; tag: string | null }>;
 
     /**
      * 회차 한 줄 = 한 학생의 한 수업. 금액이 붙는 단위라 여기서 한 번만 읽는다.
@@ -1412,7 +1413,7 @@ export class AccountingService {
       doneAmount += done; carryAmount += carry;
       carriedInCount += got.sessions; carriedInAmount += got.amount;
       items.push({
-        studentId: id, name: s.name, grade: s.grade ?? null,
+        studentId: id, name: s.name, grade: s.grade ?? null, tag: s.tag ?? null,
         done: c.done, total: c.total,
         // 나누는 것도 서버다 — 화면이 다시 나누면 머리 칸과 갈린다 (D-R37)
         percent: c.total > 0 ? Math.round((c.done / c.total) * 100) : 0,
@@ -2179,7 +2180,7 @@ export class AccountingService {
   async invoiceBoard(canSeeAmounts: boolean, viewer: AcctViewer = NO_HIDDEN_VIEW): Promise<InvBoardDto> {
     const today = todayKst();
     const rows = (await this.inv.query(
-      `SELECT i.id, i.student_id, s.name AS student_name, s.grade,
+      `SELECT i.id, i.student_id, s.name AS student_name, s.grade, CASE WHEN s.id IS NULL THEN NULL ELSE ${studentTagSql('s')} END AS student_tag,
               i.inv_type, i.title, i.amount, i.paid_amount, i.state::text AS state,
               -- 지금 기한 — 분납이면 못 채운 가장 이른 회차의 예정일 (N-79 · §52 머리 「기한 지남」과 같은 조각).
               -- 다 채운 분납(완납)은 받을 회차가 없어 NULL 이다 — 카드에는 기한(= 마지막 회차 예정일)을 적는다(「기한 없음」이 아니다)
@@ -2190,7 +2191,7 @@ export class AccountingService {
         -- 맨 이름 due_on 은 출력 칸(지금 기한)을 가리킨다 — 카드의 「D-N」과 같은 날로 줄 세운다
         ORDER BY due_on NULLS LAST, i.id`,
     )) as Array<{
-      id: string; student_id: string; student_name: string | null; grade: string | null;
+      id: string; student_id: string; student_name: string | null; grade: string | null; student_tag: string | null;
       inv_type: string; title: string | null; amount: number; paid_amount: number;
       state: string; due_on: string | null;
     }>;
@@ -2212,7 +2213,7 @@ export class AccountingService {
       const overdueDays = owed && due && due < today ? daysBetween(due, today) : 0;
       return {
         invId: Number(r.id), studentId: Number(r.student_id),
-        studentName: r.student_name ?? '학생 없음', grade: r.grade ?? null,
+        studentName: r.student_name ?? '학생 없음', grade: r.grade ?? null, studentTag: r.student_tag ?? null,
         invType: r.inv_type, invTypeLabel: INV_TYPE_LABEL[r.inv_type] ?? r.inv_type,
         title: r.title ?? INV_TYPE_ROW[r.inv_type] ?? r.inv_type,
         stateLabel: INV_STATE_LABEL[r.state] ?? r.state,
@@ -2249,7 +2250,7 @@ export class AccountingService {
       const draft = await this.invoiceDraft(this.inv, t.studentId, t.studentName, candidateMonth, t.invType);
       if (!draft.blocked) candidateAmount += draft.total;
       candidates.push({
-        studentId: t.studentId, studentName: t.studentName, grade: t.grade,
+        studentId: t.studentId, studentName: t.studentName, grade: t.grade, studentTag: t.studentTag,
         yearMonth: candidateMonth, invType: t.invType, invTypeLabel: INV_TYPE_LABEL[t.invType] ?? t.invType,
         title: invoiceTitle(candidateMonth, t.invType),
         amount: canSeeAmounts && !draft.blocked ? draft.total : null,

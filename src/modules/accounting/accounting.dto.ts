@@ -64,6 +64,7 @@ export class InvoiceDto {
   @ApiProperty() studentId!: number;
   @ApiProperty() studentName!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)' }) studentTag!: string | null;
   @ApiProperty() yearMonth!: string;
   @ApiProperty() title!: string;
   @ApiProperty({ type: Number, nullable: true, description: '금액 — canMoney 가 아니면 null 로 내려간다 (D-R39)' }) amount!: number | null;
@@ -576,6 +577,7 @@ export class TuitionRowDto {
   @ApiProperty() studentId!: number;
   @ApiProperty() name!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)' }) tag!: string | null;
 
   /* 세는 것은 전부 서버다 (D-R37) — 화면이 회차를 세면 예외(EXC)를 빠뜨린다 */
   @ApiProperty({ description: '이번 달에 **이미 한** 수업 수' }) done!: number;
@@ -1148,6 +1150,7 @@ export class InvBoardCardDto {
   @ApiProperty() studentId!: number;
   @ApiProperty() studentName!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)' }) studentTag!: string | null;
   @ApiProperty({ description: '청구 종류 코드' }) invType!: string;
   @ApiProperty({ description: '종류 이름 — §53 카드의 배지 (D-R18)' }) invTypeLabel!: string;
   @ApiProperty() title!: string;
@@ -1172,6 +1175,7 @@ export class InvBoardCandidateDto {
   @ApiProperty() studentId!: number;
   @ApiProperty() studentName!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) grade?: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 화면은 학년 칩 대신 이 글을 적는다(lib/student-label 한 곳)' }) studentTag!: string | null;
   @ApiProperty({ description: '청구할 달 — YYYY-MM' }) yearMonth!: string;
   @ApiProperty({ description: '청구 종류 코드 — 수업료 · 진단고사 + 상담' }) invType!: string;
   @ApiProperty({ description: '종류 이름 (D-R18)' }) invTypeLabel!: string;
