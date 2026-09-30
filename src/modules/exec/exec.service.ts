@@ -247,7 +247,9 @@ export class ExecService {
       `SELECT (SELECT count(*) FROM plan p WHERE ${planWaitingWhere('p')} AND ${planVisibleWhere('p', '$3', '$4')})::int AS waiting,
               (SELECT count(*) FROM plan p WHERE ${planRunningWhere('p')} AND ${planVisibleWhere('p', '$3', '$4')})::int AS running,
               (SELECT count(*) FROM mtrec WHERE on_date BETWEEN $1::date AND $2::date)::int AS meetings,
-              (SELECT count(*) FROM todo WHERE NOT done)::int AS open_todos`,
+              (SELECT count(*) FROM todo WHERE NOT done)::int AS open_todos,
+              (SELECT count(*) FROM gpapack WHERE state = 'pending')::int AS packs_pending,
+              (SELECT count(*) FROM gpapack WHERE state = 'delivered')::int AS packs_delivered`,
       [from, to, ...planViewerParams(viewer)],
     );
     const [cons] = await this.q(
@@ -282,6 +284,7 @@ export class ExecService {
       ops: {
         waiting: Number(ops?.waiting ?? 0), running: Number(ops?.running ?? 0),
         meetings: Number(ops?.meetings ?? 0), openTodos: Number(ops?.open_todos ?? 0),
+        packsPending: Number(ops?.packs_pending ?? 0), packsDelivered: Number(ops?.packs_delivered ?? 0),
       },
       consulting: {
         locked: Number(cons?.locked ?? 0), paid: num(cons?.paid), contract: num(cons?.contract),

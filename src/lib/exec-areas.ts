@@ -273,7 +273,8 @@ export interface ExecAreaFacts {
     overdueCount: number; overdueSum: number | null;
   };
   mkt: { posts: number; channels: number; topChannel: string | null; topCount: number; comments: number };
-  ops: { waiting: number; running: number; meetings: number; openTodos: number };
+  /** packsPending · packsDelivered — §41 자료 요청(gpapack) 가운데 아직 수령 확인 전인 것 (E-57) */
+  ops: { waiting: number; running: number; meetings: number; openTodos: number; packsPending: number; packsDelivered: number };
   consulting: { locked: number; paid: number | null; contract: number | null; nextOn: string | null };
   complaint: { received: number; receivedNames: string[]; open: number };
   lesson: { lessons: number; missing: number; canceled: number; missingMarks: string[] };
@@ -349,6 +350,11 @@ export function execAreaDetails(kind: ExecPeriodKind, f: ExecAreaFacts): Record<
         tile('waiting', '결재 대기', o.waiting, '건', { sub: o.waiting > 0 ? '확인 필요' : null, alert: o.waiting > 0 }),
         tile('running', '진행 중 기획', o.running, '건', { sub: `${w} 회의 ${o.meetings}건` }),
         tile('todos', '안 끝난 할 일', o.openTodos, '건'),
+        /* E-57 「자료 요청 처리 → 대표 보고 운영 영역에 반영」 — 수령 확인 전의 자료 요청이 있을 때만 선다.
+           없는 날은 원본 §69 컷의 세 칸 그대로다. 배지 · 펼칠 줄(결재 대기 + 기한 지난 할 일)의 집합은 바꾸지 않는다(N-67) */
+        ...(o.packsPending + o.packsDelivered > 0
+          ? [tile('packs', '자료 요청', o.packsPending + o.packsDelivered, '건', { sub: `준비 중 ${o.packsPending} · 수령 대기 ${o.packsDelivered}` })]
+          : []),
       ],
     },
     consulting: {

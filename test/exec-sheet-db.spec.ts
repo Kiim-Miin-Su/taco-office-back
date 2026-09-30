@@ -31,7 +31,7 @@ import { assertScratch, TEST_URL } from './db';
 const cut69: ExecAreaFacts = {
   money: { inCount: 0, inSum: 0, unpaidCount: 5, unpaidSum: 8_550_000, overdueCount: 2, overdueSum: 3_000_000 },
   mkt: { posts: 0, channels: 0, topChannel: null, topCount: 0, comments: 0 },
-  ops: { waiting: 1, running: 2, meetings: 1, openTodos: 3 },
+  ops: { waiting: 1, running: 2, meetings: 1, openTodos: 3, packsPending: 0, packsDelivered: 0 },
   consulting: { locked: 1, paid: 400_000, contract: 1_700_000, nextOn: '2026-08-24' },
   complaint: { received: 0, receivedNames: [], open: 2 },
   lesson: { lessons: 20, missing: 17, canceled: 0, missingMarks: ['교재', '안내', '줌'] },
@@ -77,6 +77,17 @@ describe('§69~§71 시트 낱말 — 순수 판정 (lib/exec-areas)', () => {
     expect(d.ops.tiles.map((t) => [t.label, t.value, t.sub])).toEqual([
       ['결재 대기', 1, '확인 필요'], ['진행 중 기획', 2, '오늘 회의 1건'], ['안 끝난 할 일', 3, null],
     ]);
+    /*
+     * E-57 「자료 요청 처리 → 대표 보고 운영 영역에 반영」 — 끝나지 않은 자료 요청(준비 중 · 전달 완료 · 수령 확인 전)이 있으면
+     * 운영 카드에 넷째 칸이 선다. 없으면 컷의 세 칸 그대로다(원본 §69 컷에는 자료 요청 칸이 없다 — 없는 날의 모양).
+     * 배지(결재 대기 + 기한 지난 할 일)와 펼칠 줄은 그대로다 — 줄은 배지와 같은 집합이어야 한다(N-67).
+     */
+    const withPacks = execAreaDetails('day', { ...cut69, ops: { ...cut69.ops, packsPending: 2, packsDelivered: 1 } });
+    expect(withPacks.ops.tiles.map((t) => [t.key, t.label, t.value, t.sub])).toEqual([
+      ['waiting', '결재 대기', 1, '확인 필요'], ['running', '진행 중 기획', 2, '오늘 회의 1건'], ['todos', '안 끝난 할 일', 3, null],
+      ['packs', '자료 요청', 3, '준비 중 2 · 수령 대기 1'],
+    ]);
+    expect(withPacks.ops.headline).toBe(d.ops.headline);
     // 붉게 볼 칸도 서버가 정한다 — 컷의 분홍 칸들
     expect(d.money.tiles.map((t) => t.alert)).toEqual([false, true, true]);
     expect(d.mkt.tiles.find((t) => t.key === 'posts')!.alert).toBe(true);
