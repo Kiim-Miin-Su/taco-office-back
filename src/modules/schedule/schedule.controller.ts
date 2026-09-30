@@ -25,6 +25,20 @@ import { ScheduleWriteService } from './schedule.write.service';
 import { ScheduleAttendanceService } from './schedule.attendance.service';
 import { SchedulePauseService } from './schedule.pause.service';
 import { horizon } from './schedule.project';
+import { diffD } from '../../lib/recurrence';
+
+/** 두 날짜를 포함한 조회일 수. UI 분할 조회와 직접 API 호출이 같은 서버 상한을 따른다. */
+const SCHEDULE_QUERY_MAX_DAYS = 366;
+
+function assertScheduleQueryRange(from: string, to: string): void {
+  // IsCalendarDate DTO 검증 뒤 호출한다. ISO 날짜는 문자열 순서가 날짜 순서와 같다.
+  if (from > to) {
+    throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
+  }
+  if (diffD(to, from) >= SCHEDULE_QUERY_MAX_DAYS) {
+    throw new BadRequestException({ code: 'BAD_RANGE', message: '조회 기간은 시작일과 종료일을 포함해 최대 366일입니다' });
+  }
+}
 
 const missingOccurrenceResponse = {
   type: ApiErrorDto,
@@ -50,16 +64,15 @@ export class ScheduleController {
   ) {}
 
   @Get('occurrences')
-  @ApiOperation({ summary: '회차 목록 — 일간·주간·월간·학생별·선생님별이 모두 이것을 쓴다' })
+  @ApiOperation({ summary: '회차 목록 — 일간·주간·월간·학생별·선생님별이 모두 이것을 쓴다', description: '한 번에 조회하는 기간은 양 끝 날짜를 포함해 최대 366일이다.' })
   @ApiOkResponse({ type: OccurrenceListDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_RANGE: from 이 to 보다 뒤이거나 조회 기간이 366일 초과' })
   async list(
     @CurrentUser() user: RequestUser,
     @Query() query: OccurrenceQueryDto,
   ): Promise<OccurrenceListDto> {
     const { from, to, teacherId, studentId, roomId } = query;
-    if (from > to) {
-      throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
-    }
+    assertScheduleQueryRange(from, to);
 
     // 관리자 시간표 화면에 들어갈 수 없는 사람은 자기 수업만 본다. 화면과 서버가 같은
     // canAdminPage 결론을 써야 개인 화면인데 전체 회차가 내려가는 권한 조합이 생기지 않는다 (D-R39).
@@ -87,13 +100,11 @@ export class ScheduleController {
    * 로그인한 누구나 읽는다 — 날짜의 사실이고 권한으로 가를 값이 없다.
    */
   @Get('holidays')
-  @ApiOperation({ summary: '공휴일 이름표 — 기간 안의 날만 (표시 전용 · 일정을 막지 않는다)' })
+  @ApiOperation({ summary: '공휴일 이름표 — 기간 안의 날만 (표시 전용 · 일정을 막지 않는다)', description: '한 번에 조회하는 기간은 양 끝 날짜를 포함해 최대 366일이다.' })
   @ApiOkResponse({ type: HolidayListDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_RANGE: from 이 to 보다 뒤' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_RANGE: from 이 to 보다 뒤이거나 조회 기간이 366일 초과' })
   async holidays(@Query() query: ScheduleRangeQueryDto): Promise<HolidayListDto> {
-    if (query.from > query.to) {
-      throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
-    }
+    assertScheduleQueryRange(query.from, query.to);
     return { from: query.from, to: query.to, items: await this.svc.holidays(query.from, query.to) };
   }
 
@@ -104,13 +115,11 @@ export class ScheduleController {
    */
   @Get('unavailable')
   @Perm('canAdminPage')
-  @ApiOperation({ summary: '강사 불가 시간(관리자 읽기) — 「가능 시간」 겹쳐 보기 · 빈 시간 찾기' })
+  @ApiOperation({ summary: '강사 불가 시간(관리자 읽기) — 「가능 시간」 겹쳐 보기 · 빈 시간 찾기', description: '한 번에 조회하는 기간은 양 끝 날짜를 포함해 최대 366일이다.' })
   @ApiOkResponse({ type: ScheduleUnavListDto })
-  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_RANGE: from 이 to 보다 뒤' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_RANGE: from 이 to 보다 뒤이거나 조회 기간이 366일 초과' })
   async unavailable(@Query() query: ScheduleUnavQueryDto): Promise<ScheduleUnavListDto> {
-    if (query.from > query.to) {
-      throw new BadRequestException({ code: 'BAD_RANGE', message: 'from 이 to 보다 뒤입니다' });
-    }
+    assertScheduleQueryRange(query.from, query.to);
     const items = await this.svc.unavailable({ from: query.from, to: query.to, teacherId: query.teacherId });
     return { from: query.from, to: query.to, items };
   }

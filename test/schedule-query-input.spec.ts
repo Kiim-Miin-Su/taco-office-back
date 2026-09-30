@@ -25,13 +25,15 @@ describe('일정 조회/경로 → DTO → service 경계 (DB/인증은 통합 s
   let role = 'ceo';
   let perms: Record<string, boolean> = {};
   const list = jest.fn().mockResolvedValue([]);
+  const holidays = jest.fn().mockResolvedValue([]);
+  const unavailable = jest.fn().mockResolvedValue([]);
   const tracking = jest.fn().mockResolvedValue(null);
   const write = { patch: jest.fn().mockResolvedValue(result), remove: jest.fn().mockResolvedValue(result), roster: jest.fn().mockResolvedValue(result) };
   const attendance = { save: jest.fn().mockResolvedValue({ attendance: null }), clear: jest.fn().mockResolvedValue({ attendance: null }) };
   beforeAll(async () => {
     const mod = await Test.createTestingModule({ controllers: [ScheduleController], providers: [
       // N-142 — 목록은 읽기 직전의 기록 번호(version)를 함께 준다
-      { provide: ScheduleService, useValue: { list, tracking, logVersion: jest.fn().mockResolvedValue(7) } },
+      { provide: ScheduleService, useValue: { list, holidays, unavailable, tracking, logVersion: jest.fn().mockResolvedValue(7) } },
       { provide: ScheduleWriteService, useValue: write },
       { provide: ScheduleAttendanceService, useValue: attendance },
       { provide: SchedulePauseService, useValue: {} },
@@ -90,6 +92,30 @@ describe('일정 조회/경로 → DTO → service 경계 (DB/인증은 통합 s
     const res = await request(app.getHttpServer()).get('/schedule/occurrences').query({ from: '2026-09-12', to: date }).expect(400);
     expect(res.body.code).toBe('BAD_RANGE'); expect(list).not.toHaveBeenCalled();
   });
+  it.each([
+    ['/schedule/occurrences', list],
+    ['/schedule/holidays', holidays],
+    ['/schedule/unavailable', unavailable],
+  ])('%s는 366일 포함 범위까지 받고 367일은 service 전에 BAD_RANGE로 거절한다', async (path, service) => {
+    const from = '2026-01-01';
+    const to = '2027-01-01';
+    await request(app.getHttpServer()).get(path).query({ from, to }).expect(200);
+    expect(service).toHaveBeenCalledTimes(1);
+    jest.clearAllMocks();
+
+    const tooWide = await request(app.getHttpServer()).get(path)
+      .query({ from, to: '2027-01-02' }).expect(400);
+    expect(tooWide.body).toMatchObject({ code: 'BAD_RANGE' });
+    expect(service).not.toHaveBeenCalled();
+  });
+  it.each(['/schedule/occurrences', '/schedule/holidays', '/schedule/unavailable'])(
+    '%s 윤년의 366일도 받되 그 다음 날은 거절한다', async path => {
+      await request(app.getHttpServer()).get(path)
+        .query({ from: '2028-01-01', to: '2028-12-31' }).expect(200);
+      const tooWide = await request(app.getHttpServer()).get(path)
+        .query({ from: '2028-01-01', to: '2029-01-01' }).expect(400);
+      expect(tooWide.body).toMatchObject({ code: 'BAD_RANGE' });
+    });
   it('SER가 있어도 실제 회차가 없는 tracking 조회는 OCCURRENCE_NOT_FOUND다', async () => {
     const res = await request(app.getHttpServer()).get('/schedule/tracking')
       .query({ serId: 1, onDate: date }).expect(404);

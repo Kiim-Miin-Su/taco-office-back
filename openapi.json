@@ -1114,6 +1114,7 @@
     },
     "/schedule/occurrences": {
       "get": {
+        "description": "한 번에 조회하는 기간은 양 끝 날짜를 포함해 최대 366일이다.",
         "operationId": "ScheduleController_list",
         "parameters": [
           {
@@ -1182,7 +1183,7 @@
             }
           },
           "400": {
-            "description": "입력 오류. 일정 쓰기의 코드표·직원·강의실·학생 참조가 없으면 REFERENCE_NOT_FOUND. 최종 상속 시간 또는 일정 DB 시간 제약 위반은 BAD_RANGE. 저장 전체를 취소하며 {code,message}로 반환한다",
+            "description": "BAD_RANGE: from 이 to 보다 뒤이거나 조회 기간이 366일 초과",
             "content": {
               "application/json": {
                 "schema": {
@@ -1250,6 +1251,7 @@
     },
     "/schedule/holidays": {
       "get": {
+        "description": "한 번에 조회하는 기간은 양 끝 날짜를 포함해 최대 366일이다.",
         "operationId": "ScheduleController_holidays",
         "parameters": [
           {
@@ -1287,7 +1289,7 @@
             }
           },
           "400": {
-            "description": "BAD_RANGE: from 이 to 보다 뒤",
+            "description": "BAD_RANGE: from 이 to 보다 뒤이거나 조회 기간이 366일 초과",
             "content": {
               "application/json": {
                 "schema": {
@@ -1355,6 +1357,7 @@
     },
     "/schedule/unavailable": {
       "get": {
+        "description": "한 번에 조회하는 기간은 양 끝 날짜를 포함해 최대 366일이다.",
         "operationId": "ScheduleController_unavailable",
         "parameters": [
           {
@@ -1403,7 +1406,7 @@
             }
           },
           "400": {
-            "description": "BAD_RANGE: from 이 to 보다 뒤",
+            "description": "BAD_RANGE: from 이 to 보다 뒤이거나 조회 기간이 366일 초과",
             "content": {
               "application/json": {
                 "schema": {
