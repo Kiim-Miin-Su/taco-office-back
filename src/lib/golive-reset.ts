@@ -166,7 +166,7 @@ export function applyRefusal(args: GoLiveArgs, plan: GoLivePlan): string | null 
   if (!args.keepEmail) return '--keep-email=<남길 대표의 이메일> 이 필요합니다 — 활성 대표 계정 하나를 남깁니다';
   if (plan.keepEmailProblem) return plan.keepEmailProblem;
   if (!plan.keptCeo) return '남길 대표를 찾지 못했습니다';
-  if (plan.blockers.length > 0) return `남는 표가 지워질 줄을 가리켜 멈춥니다 — ${plan.blockers.join(' · ')}`;
+  if (plan.blockers.length > 0) return `운영 전환이 멈춥니다 — ${plan.blockers.join(' · ')}`;
   return null;
 }
 
@@ -255,6 +255,12 @@ export async function planGoLive(q: Queryable, keepEmail?: string | null): Promi
   const fixes = await keptFixes(q, classes, fks, notNull, keptCeo?.id ?? null);
   const blockers = fixes.filter((f) => f.action === 'abort')
     .map((f) => `${f.table}.${f.column} → ${f.refTable} ${f.rows}줄(비울 수 없는 칸)`);
+  // ST1-b2의 감사·기간 원장은 DELETE 불변이다. 행이 생긴 뒤의 시험자료 정리는 별도 정책 없이는 실행하지 않는다.
+  const auditRows = empty.find((e) => e.table === 'stu_profile_audit')?.rows ?? 0;
+  const periodRows = empty.find((e) => e.table === 'stu_profile_period')?.rows ?? 0;
+  if (auditRows > 0 || periodRows > 0) {
+    blockers.push(`학생 불변 이력 ${auditRows + periodRows}줄(감사 ${auditRows} · 기간 ${periodRows}) 자동 삭제 불가`);
+  }
 
   return {
     database: db, keep, empty, order,
@@ -276,7 +282,7 @@ export interface GoLiveResult {
 export async function applyGoLive(q: Queryable, keepEmail: string): Promise<GoLiveResult> {
   const plan = await planGoLive(q, keepEmail);
   if (plan.keepEmailProblem || !plan.keptCeo) throw new Error(plan.keepEmailProblem ?? '남길 대표를 찾지 못했습니다');
-  if (plan.blockers.length > 0) throw new Error(`남는 표가 지워질 줄을 가리켜 멈춥니다 — ${plan.blockers.join(' · ')}`);
+  if (plan.blockers.length > 0) throw new Error(`운영 전환이 멈춥니다 — ${plan.blockers.join(' · ')}`);
   const ceo = plan.keptCeo.id;
 
   // ① 남는 줄 정리 — 지우기 **전에** 한다. CASCADE 가 남는 표로 번지지 않게 가리키는 값을 먼저 끊는다

@@ -11,6 +11,7 @@
  * 설정 표에 잠깐 붙인 칸도 남지 않는다. 실제 스크립트(`npm run golive:reset`)는 사람이 자기 DB 에서만 돌린다.
  */
 import * as bcrypt from 'bcryptjs';
+import { createHash, randomUUID } from 'node:crypto';
 import { DataSource, type QueryRunner } from 'typeorm';
 import { INITIAL_PASSWORD } from '../src/lib/account-policy';
 import {
@@ -74,6 +75,16 @@ d('운영 전환 — 스크래치 DB 에서 한 트랜잭션으로 (끝에 되�
   const STU = 8876;
   const one = async <T = Record<string, unknown>>(sql: string, p: unknown[] = []) => ((await q.query(sql, p)) as T[])[0];
   const count = async (t: string) => Number((await one<{ n: string }>(`SELECT count(*)::bigint AS n FROM "${t}"`))!.n);
+  const fingerprint = async () => {
+    const tables = await q.query(`SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename`) as Array<{ tablename: string }>;
+    const rows: string[] = [];
+    for (const { tablename } of tables) {
+      const quoted = tablename.replaceAll('"', '""');
+      const [row] = await q.query(`SELECT md5(COALESCE(string_agg(t::text, E'\\n' ORDER BY t::text), '')) AS digest FROM "${quoted}" t`) as Array<{ digest: string }>;
+      rows.push(`${tablename}:${row.digest}`);
+    }
+    return createHash('sha256').update(rows.join('\n')).digest('hex');
+  };
 
   beforeAll(async () => {
     ds = new DataSource({ type: 'postgres', url: URL, synchronize: false, logging: false });
@@ -174,6 +185,39 @@ d('운영 전환 — 스크래치 DB 에서 한 트랜잭션으로 (끝에 되�
     await expect(applyGoLive(q, 'keep-ceo@t.kr')).rejects.toThrow(/멈춥니다/);
     expect(await count('stu')).toBeGreaterThanOrEqual(1);
     await q.query('ROLLBACK TO SAVEPOINT blocked');
+  });
+
+  it.each([false, true])('학생 불변 감사가 있으면 기간행 포함=%s 에서 계획부터 거절하고 전체 표가 그대로다', async (withPeriod) => {
+    await q.query('SAVEPOINT profile_history');
+    try {
+      await q.query(`INSERT INTO stu_profile_audit
+        (student_id, action, request_key, request_fingerprint, version_before, version_after, recorded_by)
+        VALUES ($1, 'static_patch', $2, $3, 0, 1, $4)`, [STU, randomUUID(), Buffer.alloc(32, 1), MGR]);
+      if (withPeriod) {
+        const [audit] = await q.query(`INSERT INTO stu_profile_audit
+          (student_id, action, field, request_key, request_fingerprint, version_before, version_after, recorded_by)
+          VALUES ($1, 'period_append', 'want', $2, $3, 1, 2, $4) RETURNING id`,
+        [STU, randomUUID(), Buffer.alloc(32, 2), MGR]) as Array<{ id: string }>;
+        await q.query(`INSERT INTO stu_profile_period
+          (student_id, field, valid_from, text_value, created_audit_id, recorded_by)
+          VALUES ($1, 'want', '2026-10-01', '격리 시험 이력', $2, $3)`, [STU, audit.id, MGR]);
+      }
+      await q.query('SET CONSTRAINTS stu_profile_audit_complete IMMEDIATE');
+      await q.query('SET CONSTRAINTS stu_profile_audit_complete DEFERRED');
+
+      const before = await fingerprint();
+      const plan = await planGoLive(q, 'keep-ceo@t.kr');
+      expect(plan.empty.find((e) => e.table === 'stu_profile_audit')?.rows).toBe(withPeriod ? 2 : 1);
+      expect(plan.empty.find((e) => e.table === 'stu_profile_period')?.rows).toBe(withPeriod ? 1 : 0);
+      expect(plan.blockers).toEqual([expect.stringMatching(/학생 불변 이력.*자동 삭제 불가/)]);
+      expect(applyRefusal(parseGoLiveArgs(['--apply', `--confirm=${plan.database}`, '--keep-email=keep-ceo@t.kr']), plan))
+        .toMatch(/학생 불변 이력/);
+      await expect(applyGoLive(q, 'keep-ceo@t.kr')).rejects.toThrow(/학생 불변 이력/);
+      expect(await fingerprint()).toBe(before);
+    } finally {
+      await q.query('ROLLBACK TO SAVEPOINT profile_history');
+      await q.query('RELEASE SAVEPOINT profile_history');
+    }
   });
 
   it('지우기 — 설정 표는 그대로 · 나머지는 0 · 계정은 남길 대표 하나 · 그 대표는 초기 비밀번호 + 첫 설정 · 남는 줄은 NULL/대표로 정리 · 흔적 한 줄', async () => {
