@@ -92,7 +92,7 @@ describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ code: 'INVALID', message: '잘못된 입력' });
   });
-  it('§75 OpenAPI는 DrawerDto의 exact 5종 전용 projection을 정적 타입으로 고정한다', () => {
+  it('§75 OpenAPI는 DrawerDto의 exact 6종(지출 포함 · H-83) 전용 projection을 정적 타입으로 고정한다', () => {
     const schemas = buildOpenApi(app).components?.schemas;
     const drawer = schemas?.DrawerDto;
     const item = schemas?.ApprovalFlowItemDto;
@@ -104,7 +104,7 @@ describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
     expect(drawer.properties?.approvalFlow).toMatchObject({
       allOf: [{ $ref: '#/components/schemas/ApprovalFlowDto' }],
     });
-    expect(item.properties?.kind).toMatchObject({ enum: ['rpt', 'plan', 'req', 'chreq', 'gpapack'] });
+    expect(item.properties?.kind).toMatchObject({ enum: ['rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense'] });
     expect(item.properties?.toName).toMatchObject({ enum: ['대표', '실장'] });
     expect(tile.properties?.toLabel).toMatchObject({ enum: ['대표에게', '실장에게'] });
   });

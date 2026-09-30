@@ -2027,7 +2027,7 @@
     },
     "/schedule/conflicts": {
       "get": {
-        "description": "막는 것은 ser_occ 의 EXCLUDE 이고 이 응답은 설명이다. 비어 있어도 저장을 건너뛰지 않는다. 강사·강의실·줌 중 준 자원만 본다 — 하나도 주지 않으면 빈 배열이다. freeLine 은 그 시각 비어 있는 강의실·줌 계정 이름 한 줄(각 최대 셋 · N-70)이다 — 누를 수 없고 미리 잡지 않는다.",
+        "description": "막는 것은 ser_occ 의 EXCLUDE 이고 이 응답은 설명이다. 비어 있어도 저장을 건너뛰지 않는다. 강사·강의실·줌 중 준 자원만 본다 — 하나도 주지 않으면 빈 배열이다. freeLine 은 그 시각 비어 있는 강의실·줌 계정 이름 한 줄(각 최대 셋 · N-70)이다 — 누를 수 없고 미리 잡지 않는다. altTimes 는 물은 자원이 date · alsoDates 모두에서 비는 같은 길이의 다른 시각(가까운 순 최대 셋 · A-06)이다 — 미리 잡지 않는다.",
         "operationId": "ScheduleController_conflicts",
         "parameters": [
           {
@@ -2101,6 +2101,19 @@
               "minimum": 1,
               "maximum": 9007199254740991,
               "type": "integer"
+            }
+          },
+          {
+            "name": "alsoDates",
+            "required": false,
+            "in": "query",
+            "description": "다른 시간 제안(altTimes)이 **함께 비어야 하는** 날짜 — 매주 월·수 규칙이면 첫 수를 준다(A-06). 겹침 목록(conflicts)은 여전히 date 하나만 본다. 같은 키를 되풀이해 보낸다(alsoDates=…&alsoDates=…)",
+            "schema": {
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         ],
@@ -3166,7 +3179,7 @@
     },
     "/schedule/{serId}": {
       "patch": {
-        "description": "같은 SER의 쓰기는 부모 행 잠금 획득 순서로 처리하며 최신 저장값으로 부분 변경을 검증한다. 생략한 필드는 보존하고 this의 null 시간·날짜는 원본 상속으로 되돌린다. SER/EXC 저장과 회차 투영은 한 transaction이다. 버전 충돌 검출/멱등 키 계약은 제공하지 않는다.",
+        "description": "같은 SER의 쓰기는 부모 행 잠금 획득 순서로 처리하며 최신 저장값으로 부분 변경을 검증한다. 생략한 필드는 보존하고 this의 null 시간·날짜는 원본 상속으로 되돌린다. SER/EXC 저장과 회차 투영은 한 transaction이다. 막는 버전 충돌 검출/멱등 키 계약은 제공하지 않는다 — 나중 저장이 반영된다. readVersion(목록의 version)을 주면 그 뒤 다른 사람이 같은 수업을 고친 마지막 기록을 overwrote 로 알려 준다(N-142).",
         "operationId": "ScheduleController_patch",
         "parameters": [
           {
@@ -13220,6 +13233,91 @@
         ]
       }
     },
+    "/books/{id}/holders": {
+      "get": {
+        "description": "끝나지 않은 배부(승인 대기 · 전달 대기 · 배부 완료)만, 학생 이름순. 판은 학생이 받은 판이다(배부는 받은 판에 묶인다). 서가의 지금 판 · 가장 나중 판을 함께 준다 — 교체는 판 단추(PATCH versions/:id/use)다.",
+        "operationId": "BooksController_holders",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookHoldersDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "교재 없음"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "기존 배부자 — 새 판을 올린 자리가 읽는다 (E-53)",
+        "tags": [
+          "books"
+        ]
+      }
+    },
     "/books/versions/{id}/use": {
       "patch": {
         "description": "시작일을 오늘로 당긴다. 이미 쓰고 있는 판은 다시 당기지 않는다(이력에 같은 일이 두 번 남는다).",
@@ -13995,6 +14093,170 @@
           }
         },
         "summary": "안내 작성 — 쓰면 보낼 준비가 된다 (§43)",
+        "tags": [
+          "guides"
+        ]
+      }
+    },
+    "/guides/{id}/class-diagnostics": {
+      "get": {
+        "description": "안내의 학생과 같은 반(같은 규칙 · 같은 날 · 같은 사유의 안내) 학생마다 최신 진단(DIAG) 한 줄 · 안내의 학생이 먼저 · 나머지는 이름 차례.",
+        "operationId": "GuidesController_classDiagnostics",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideClassDiagListDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "안내 없음"
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "반 진단 — 안내 작성 창의 학생별 진단 탭 (F-60 「진단 입력 탭이 인원수만큼」)",
+        "tags": [
+          "guides"
+        ]
+      },
+      "post": {
+        "description": "C61(「진단 리포트 작성 — 강사 가능 · 나머지 조회」)을 안내 작성 창에서 넓힌다 — 안내를 쓰는 사람(canAdminPage + canCrudAll)이 그 반 학생의 진단을 적는다. 강사 진단과 같은 표(DIAG · 쌓고 · 읽기는 늘 최신)다. 반 밖 학생이 하나라도 있으면 400 GUIDE_DIAG_NOT_CLASS · 현재 수준이 비면 409 EMPTY_BODY — 아무것도 쓰지 않는다.",
+        "operationId": "GuidesController_writeClassDiagnostics",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GuideClassDiagWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GuideClassDiagListDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "code GUIDE_DIAG_NOT_CLASS"
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "안내 없음"
+          },
+          "409": {
+            "description": "code EMPTY_BODY"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "반 진단 쓰기 — 탭마다 적은 진단을 한 번에 (F-60 · F-61 · 사용자 결정 2026-09-30 「탭에서 관리자도 입력」)",
         "tags": [
           "guides"
         ]
@@ -23257,6 +23519,11 @@
             "type": "string",
             "example": "2026-08-30"
           },
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "이 목록을 읽기 **직전**의 변경 기록 번호(LOG 의 마지막 id) — 수정(PATCH)에 readVersion 으로 돌려주면 그 뒤 남이 같은 수업을 고쳤는지 서버가 알려 준다(N-142 · overwrote). 막지 않는다 — 나중 저장이 반영된다"
+          },
           "items": {
             "type": "array",
             "items": {
@@ -23267,6 +23534,7 @@
         "required": [
           "from",
           "to",
+          "version",
           "items"
         ]
       },
@@ -23957,6 +24225,25 @@
           "with"
         ]
       },
+      "AltTimeDto": {
+        "type": "object",
+        "properties": {
+          "startMin": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1439
+          },
+          "endMin": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1440
+          }
+        },
+        "required": [
+          "startMin",
+          "endMin"
+        ]
+      },
       "ConflictPreviewDto": {
         "type": "object",
         "properties": {
@@ -23971,11 +24258,19 @@
             "type": "string",
             "nullable": true,
             "description": "그 시각 비어 있는 강의실 · 줌 계정 이름 한 줄(각 최대 셋 · N-70). 물은 자원 종류(roomId · zaccId)만 적고, 없으면 null. 누를 수 없고 미리 잡지 않는다 — 다시 저장해야 하며 그 사이 남이 잡을 수 있다"
+          },
+          "altTimes": {
+            "description": "물은 자원(강사 · 강의실 · 줌)이 date 와 alsoDates 모두에서 비어 있는 같은 길이의 다른 시각 — 가까운 순서 최대 셋 · 09:00~22:00 · 30분 간격 · 강사의 날짜 있는 불가 시간은 피한다(A-06). 미리 잡지 않는다 — 다시 저장해야 하며 그 사이 남이 잡을 수 있다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AltTimeDto"
+            }
           }
         },
         "required": [
           "conflicts",
-          "freeLine"
+          "freeLine",
+          "altTimes"
         ]
       },
       "HorizonDto": {
@@ -24227,6 +24522,25 @@
           "otherEndMin"
         ]
       },
+      "OverwroteDto": {
+        "type": "object",
+        "properties": {
+          "byName": {
+            "type": "string",
+            "nullable": true,
+            "description": "고친 사람 이름 — 없는 계정이면 null"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "고친 때 (KST 오프셋)"
+          }
+        },
+        "required": [
+          "byName",
+          "at"
+        ]
+      },
       "WriteResultDto": {
         "type": "object",
         "properties": {
@@ -24276,6 +24590,16 @@
             "items": {
               "$ref": "#/components/schemas/StudentOverlapDto"
             }
+          },
+          "overwrote": {
+            "nullable": true,
+            "description": "수정(PATCH)에 readVersion 을 줬고, 그 뒤 **다른 사람이** 같은 수업을 고친 기록이 있으면 그 마지막 한 건 — 이 저장이 그 내용을 덮어썼다(N-142 「나중 저장이 반영된다 · 충돌 시 안내」). 다른 쓰기와 readVersion 없는 수정은 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OverwroteDto"
+              }
+            ]
           }
         },
         "required": [
@@ -24526,6 +24850,16 @@
               "$ref": "#/components/schemas/StudentOverlapDto"
             }
           },
+          "overwrote": {
+            "nullable": true,
+            "description": "수정(PATCH)에 readVersion 을 줬고, 그 뒤 **다른 사람이** 같은 수업을 고친 기록이 있으면 그 마지막 한 건 — 이 저장이 그 내용을 덮어썼다(N-142 「나중 저장이 반영된다 · 충돌 시 안내」). 다른 쓰기와 readVersion 없는 수정은 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OverwroteDto"
+              }
+            ]
+          },
           "count": {
             "type": "number",
             "description": "이번에 휴강 처리한 회차 수"
@@ -24654,6 +24988,11 @@
       "OccurrencePatchDto": {
         "type": "object",
         "properties": {
+          "readVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "화면이 읽은 목록의 version(N-142). 주면 그 뒤 **다른 사람이** 같은 수업을 고친 기록이 있는지 보고 결과의 overwrote 에 싣는다. 막지 않는다 — 나중 저장이 반영되고, 덮어쓴 사실만 알린다. 안 주면 보지 않는다"
+          },
           "scope": {
             "type": "string",
             "enum": [
@@ -24930,6 +25269,16 @@
             "items": {
               "$ref": "#/components/schemas/StudentOverlapDto"
             }
+          },
+          "overwrote": {
+            "nullable": true,
+            "description": "수정(PATCH)에 readVersion 을 줬고, 그 뒤 **다른 사람이** 같은 수업을 고친 기록이 있으면 그 마지막 한 건 — 이 저장이 그 내용을 덮어썼다(N-142 「나중 저장이 반영된다 · 충돌 시 안내」). 다른 쓰기와 readVersion 없는 수정은 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OverwroteDto"
+              }
+            ]
           },
           "count": {
             "type": "number",
@@ -26883,6 +27232,66 @@
           "count"
         ]
       },
+      "InvoiceFamilyStudentDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "studentId",
+          "name"
+        ]
+      },
+      "InvoiceFamilyDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "묶음 열쇠 — 「가장 작은 학생 번호:청구 달」"
+          },
+          "yearMonth": {
+            "type": "string",
+            "example": "2026-10"
+          },
+          "students": {
+            "description": "이름 차례",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceFamilyStudentDto"
+            }
+          },
+          "invoiceIds": {
+            "description": "합친 청구서(취소 뺀) — 청구서는 각각 그대로다",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true,
+            "description": "청구 합계 — 금액을 볼 수 없는 줄이 하나라도 있으면 null(0 을 짓지 않는다)"
+          },
+          "paidAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "받은 돈 합계 — 같은 규칙"
+          }
+        },
+        "required": [
+          "key",
+          "yearMonth",
+          "students",
+          "invoiceIds",
+          "amount",
+          "paidAmount"
+        ]
+      },
       "AccountingDto": {
         "type": "object",
         "properties": {
@@ -26934,6 +27343,13 @@
             "items": {
               "$ref": "#/components/schemas/PayCategoryDto"
             }
+          },
+          "families": {
+            "description": "A-13 형제 합산 보기 — 같은 달 · 같은 보호자 연락처(lib/family)로 묶인 둘 이상 학생의 청구서 묶음 · 합계는 서버가 낸다. 없으면 빈 배열",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceFamilyDto"
+            }
           }
         },
         "required": [
@@ -26944,7 +27360,8 @@
           "expenses",
           "expenseTotals",
           "expenseCategories",
-          "payCategories"
+          "payCategories",
+          "families"
         ]
       },
       "TuitionRowDto": {
@@ -35734,6 +36151,81 @@
           "inUse"
         ]
       },
+      "BookHolderDto": {
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "edition": {
+            "type": "string",
+            "nullable": true,
+            "description": "그 학생이 받은 판 — 배부는 받은 판에 묶인다(서가의 지금 판이 바뀌어도 그대로)"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "wait",
+              "auto",
+              "ok"
+            ]
+          },
+          "stateLabel": {
+            "type": "string"
+          },
+          "issuedOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          }
+        },
+        "required": [
+          "issueId",
+          "studentId",
+          "studentName",
+          "state",
+          "stateLabel"
+        ]
+      },
+      "BookHoldersDto": {
+        "type": "object",
+        "properties": {
+          "libId": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "edition": {
+            "type": "string",
+            "nullable": true,
+            "description": "서가의 지금 판"
+          },
+          "latestEdition": {
+            "type": "string",
+            "nullable": true,
+            "description": "가장 나중 판 — 지금 판과 다르면 서가 카드의 판 단추로 바꿀 수 있다"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookHolderDto"
+            }
+          }
+        },
+        "required": [
+          "libId",
+          "title",
+          "items"
+        ]
+      },
       "GuideLadderStepDto": {
         "type": "object",
         "properties": {
@@ -36967,6 +37459,97 @@
           "body"
         ]
       },
+      "GuideClassDiagDto": {
+        "type": "object",
+        "properties": {
+          "guideId": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "diagnostic": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GuideDiagnosticDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "guideId",
+          "studentId"
+        ]
+      },
+      "GuideClassDiagListDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "안내의 학생이 먼저 · 나머지는 이름 차례",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideClassDiagDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "GuideClassDiagWriteItemDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "levelSummary": {
+            "type": "string",
+            "description": "현재 수준 — 비면 409 EMPTY_BODY",
+            "maxLength": 2000
+          },
+          "strengths": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "weaknesses": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "curriculum": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "studentId",
+          "levelSummary"
+        ]
+      },
+      "GuideClassDiagWriteDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "같은 반 학생만 — 반 밖 학생이 하나라도 있으면 400 · 아무것도 쓰지 않는다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuideClassDiagWriteItemDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
       "GuideCopyDto": {
         "type": "object",
         "properties": {
@@ -38155,6 +38738,21 @@
             "type": "string",
             "description": "template(§29 기본 항목) | manual(원문 §31 「항목 수정」으로 담당이 더한 것 · N-18-a)"
           },
+          "dueOn": {
+            "type": "string",
+            "nullable": true,
+            "format": "date",
+            "description": "기한 — 없으면 null"
+          },
+          "dueLabel": {
+            "type": "string",
+            "nullable": true,
+            "description": "「D-3」 · 「D-day」 · 「D+2」 — 기한 없음 · 끝낸 항목은 null"
+          },
+          "dueOverdue": {
+            "type": "boolean",
+            "description": "기한이 지났고 아직 안 끝냈다"
+          },
           "files": {
             "maxItems": 6,
             "description": "항목 파일 — 항목마다 최대 6개 · 계약 파일 10개와 따로 센다(N-63). role 은 item",
@@ -38183,6 +38781,7 @@
           "required",
           "done",
           "source",
+          "dueOverdue",
           "files",
           "canAddFile",
           "canRename",
@@ -38479,6 +39078,13 @@
           "required": {
             "type": "boolean",
             "description": "필수 — 켜면 끝내야 종료할 수 있다(N-18)"
+          },
+          "dueOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "기한 — 비우면 기한 없음 (I-94)"
           }
         },
         "required": [
@@ -38503,6 +39109,27 @@
         "required": [
           "id",
           "label"
+        ]
+      },
+      "ConsItemDueDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "dueOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "null 이면 기한을 지운다"
+          }
+        },
+        "required": [
+          "id",
+          "dueOn"
         ]
       },
       "ConsItemsEditDto": {
@@ -38532,6 +39159,14 @@
             "uniqueItems": true,
             "description": "뺄 항목 id",
             "type": "array"
+          },
+          "due": {
+            "maxItems": 30,
+            "description": "기한을 적거나 지울 항목 — 끝낸 항목은 이름처럼 바꾸지 않는다 (I-94)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsItemDueDto"
+            }
           }
         }
       },
@@ -39071,6 +39706,27 @@
           "todoId"
         ]
       },
+      "ConsSessionBusyDto": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "lines": {
+            "description": "겹치는 일정 — 「15:00–16:00 수업 이름」 (시각 순)",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "date",
+          "lines"
+        ]
+      },
       "ConsSessionsResultDto": {
         "type": "object",
         "properties": {
@@ -39133,6 +39789,13 @@
           "notified": {
             "type": "boolean",
             "description": "담당에게 알림을 보냈는가 (돌린 사람 본인이면 false)"
+          },
+          "busy": {
+            "description": "I-91 「겹침 검사가 먼저 돈다 · 담당자가 그 시간에 다른 일정 있으면 주황 점」 — **미리보기만** 거절 대신 날짜마다 알리고 그 날짜는 rows 에서 뺀다. 확정(쓰기)은 여전히 EXCLUDE 가 409 로 막으므로 늘 빈 배열이다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsSessionBusyDto"
+            }
           }
         },
         "required": [
@@ -39149,7 +39812,8 @@
           "sessions",
           "overContract",
           "unavailable",
-          "notified"
+          "notified",
+          "busy"
         ]
       },
       "ConsSessionWriteDto": {
@@ -43002,7 +43666,8 @@
               "plan",
               "req",
               "chreq",
-              "gpapack"
+              "gpapack",
+              "expense"
             ]
           },
           "kindLabel": {
@@ -43045,7 +43710,8 @@
               "plan",
               "req",
               "chreq",
-              "gpapack"
+              "gpapack",
+              "expense"
             ]
           },
           "kindLabel": {
@@ -44855,6 +45521,32 @@
           "createdAt"
         ]
       },
+      "GuardianSiblingDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "via": {
+            "type": "string",
+            "description": "이 학생 쪽에서 그 연락처를 가진 보호자 이름 — 누구로 묶였나"
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName",
+          "via"
+        ]
+      },
       "GuardianListDto": {
         "type": "object",
         "properties": {
@@ -44872,12 +45564,20 @@
             "items": {
               "$ref": "#/components/schemas/GuardianDto"
             }
+          },
+          "siblings": {
+            "description": "A-13 「학부모 연락처로 묶여 보인다」 — 사용 중인 보호자의 휴대폰 · 이메일이 같은 다른 학생(한 단계) · 이름 차례. 없으면 빈 배열",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GuardianSiblingDto"
+            }
           }
         },
         "required": [
           "studentId",
           "studentName",
-          "guardians"
+          "guardians",
+          "siblings"
         ]
       },
       "GuardianCreateDto": {
