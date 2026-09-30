@@ -66,6 +66,7 @@ export const SEEDED_TABLES = [
   'plan_pick', 'exec_area_owner',
   // DQ3 — 학생 보호자 (가짜 연락처만)
   'guardian',
+  'guardian_contact',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
   'gtpl', 'vers', 'hist', 'file', 'stu_pause', 'month_close',
   // W11 M2 — 정산 근거 줄 · 가산 규칙 · 회계 비공개 스위치 · 인수인계 메모 (N-36 · N-93 · N-94) — 시드는 안 넣는다(규칙 · 스위치는 대표가 정한다)
@@ -359,6 +360,21 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       lead_id: num((t as { leadId?: number }).leadId), care: (t as { care?: string }).care ?? null })));
     // 보호자 (DQ3) — 만든 사람은 관리자(2). 발송 원장은 비워 둔다
     await add('guardian', GUARDIANS.map((g) => ({ student_id: g.studentId, name: g.name, relation: g.relation, email: g.email, phone: g.phone, receive_email: g.receiveEmail, receive_sms: g.receiveSms, is_primary: g.isPrimary, created_by: 2 })));
+    // 기존 scalar를 사용하는 시드도 선택 연락처를 갖는다. 이 가짜 fixture의 연락처는 scalar 복사본이며 실제 작성자를 추정하지 않는다.
+    const seededGuardians = await q.query(
+      `SELECT id, student_id, name, email, phone FROM guardian WHERE created_by = 2 AND student_id = ANY($1::bigint[])`,
+      [[...new Set(GUARDIANS.map((g) => g.studentId))]],
+    ) as Array<{ id: string; student_id: string; name: string; email: string | null; phone: string | null }>;
+    const guardianContacts: Record<string, unknown>[] = [];
+    for (const fixture of GUARDIANS) {
+      const matches = seededGuardians.filter((g) => Number(g.student_id) === fixture.studentId && g.name === fixture.name
+        && g.email === fixture.email && g.phone === fixture.phone);
+      if (matches.length !== 1) throw new Error(`seed guardian contact owner is not unique: ${fixture.studentId} / ${fixture.name}`);
+      const owner = Number(matches[0].id);
+      if (fixture.email !== null) guardianContacts.push({ guardian_id: owner, kind: 'email', value: fixture.email, is_delivery_selected: true, origin: 'legacy_copy', created_by: null });
+      if (fixture.phone !== null) guardianContacts.push({ guardian_id: owner, kind: 'phone', value: fixture.phone, is_delivery_selected: true, origin: 'legacy_copy', created_by: null });
+    }
+    await add('guardian_contact', guardianContacts);
 
     // 손으로 넣은 id 뒤로 시퀀스를 밀어 둔다 — 안 하면 다음 INSERT 가 충돌한다
     for (const t of ['room', 'zacc', 'staff', 'stu', 'lead', 'ser', 'lib', 'file', 'vers', 'gpapack', 'inv', 'cons', 'plan', 'mtrec', 'gpa_cycle', 'mkt', 'mfb']) {

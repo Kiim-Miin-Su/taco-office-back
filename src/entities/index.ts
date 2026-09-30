@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-/** 엔티티 색인 — dbml v4.59 에서 생성·기존 수동 metadata를 보존하며 보강했습니다. */
+/** 엔티티 색인 — 현행 ERD·migration과 대조하며 생성된 매핑과 수동 metadata를 함께 보존합니다. */
 export * from './enums';
 export * from './att.entity';
 export * from './autorep.entity';
@@ -98,6 +98,7 @@ export * from './wrep.entity';
 export * from './stu-pause.entity';
 export * from './month-close.entity';
 export * from './guardian.entity';
+export * from './guardian-contact.entity';
 export * from './guardian-send.entity';
 export * from './holiday.entity';
 export * from './auth-code.entity';
@@ -114,6 +115,7 @@ import {
   StuPause,
   MonthClose,
   Guardian,
+  GuardianContact,
   GuardianSend,
   Holiday,
   AuthCode,
@@ -220,6 +222,7 @@ export const ENTITIES = [
   MonthClose,
   // DQ3 (2026-09-25) — 보호자와 보호자별 발송 원장
   Guardian,
+  GuardianContact,
   GuardianSend,
   Holiday,
   // W8 (2026-09-26) — 첫 설정 이메일 · 휴대폰 인증 코드

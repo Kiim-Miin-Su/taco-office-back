@@ -133,6 +133,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     }
     if (ids.length) {
       await q(`DELETE FROM guide WHERE student_id = ANY($1)`, [ids]);
+      await q(`DELETE FROM guardian_contact WHERE guardian_id IN (SELECT id FROM guardian WHERE student_id = ANY($1))`, [ids]);
       await q(`DELETE FROM guardian WHERE student_id = ANY($1)`, [ids]);
       await q(`DELETE FROM issue WHERE student_id = ANY($1)`, [ids]);
       await q(`DELETE FROM pay WHERE student_id = ANY($1) OR inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1))`, [ids]);
@@ -389,6 +390,10 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
       name: '등록P 어머니', relation: '어머니', phone: '01055556666', email: null,
       // 받는 채널은 「+ 보호자 추가」의 기본과 같다 — 문자 받기는 사람이 켠다(발송 대상이 조용히 늘지 않는다)
       receive_sms: false, receive_email: false, is_primary: true, active: true, created_by: String(ADMIN),
+    }]);
+    expect(await q(`SELECT kind, value, is_delivery_selected, origin, created_by FROM guardian_contact
+      WHERE guardian_id = (SELECT id FROM guardian WHERE student_id = $1)`, [r.studentId])).toEqual([{
+      kind: 'phone', value: '01055556666', is_delivery_selected: true, origin: 'user', created_by: String(ADMIN),
     }]);
     // 보호자 쓰기와 같은 함수 — GUARDIAN create LOG 도 가린 번호로 남는다
     const [glog] = await q<{ after: Record<string, unknown> }>(

@@ -128,6 +128,18 @@ d('시드 — 화면이 보는 값이 맞는가', () => {
     expect(Number((await one(`SELECT count(*)::text AS n FROM sub`)).n)).toBe(21);
   });
 
+  it('ST1-b3a: 시드 보호자는 기존 주소와 같은 선택 연락처를 가지며 발송 동의는 변하지 않는다', async () => {
+    const mismatch = await one(`SELECT count(*)::text AS n FROM guardian g
+      WHERE (g.email IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM guardian_contact c WHERE c.guardian_id=g.id AND c.kind='email'
+          AND c.value=g.email AND c.active AND c.is_delivery_selected))
+       OR (g.phone IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM guardian_contact c WHERE c.guardian_id=g.id AND c.kind='phone'
+          AND c.value=g.phone AND c.active AND c.is_delivery_selected))`);
+    expect(Number(mismatch.n)).toBe(0);
+    expect(Number((await one(`SELECT count(*)::text AS n FROM guardian_contact`)).n)).toBeGreaterThan(0);
+  });
+
   /**
    * 표와 규칙이 **다른 낱말**을 쓰고 있었다.
    *   rep_state_t = na · plan · none · draft · wait · ok · rej

@@ -22,6 +22,7 @@
  * 발송 뒤 커밋이 실패하면 나간 메시지의 원장이 사라질 수 있다 — 그 창은 INSERT 몇 줄뿐이라 좁게 둔다.
  */
 import { familyLinks } from '../../lib/family';
+import { syncLegacyGuardianContacts } from '../../lib/guardian-contact-bridge';
 import {
   BadRequestException, ConflictException, Inject, Injectable, NotFoundException,
 } from '@nestjs/common';
@@ -180,6 +181,7 @@ export class GuardiansService {
         [id, dto.name ?? before.name, dto.relation === undefined ? before.relation : dto.relation,
           email, phone, receiveEmail, receiveSms, isPrimary],
       ));
+      await syncLegacyGuardianContacts(q, id, before, { email, phone }, actorId);
       await writeLog(q, actorId, 'GUARDIAN', id, before.active ? 'update' : 'reactivate', snapshot(before), snapshot(after));
       return toDto(after);
     });
@@ -436,6 +438,7 @@ export async function createGuardianWithin(q: QueryRunner, studentId: number, dt
      RETURNING ${GUARDIAN_COLS}`,
     [studentId, dto.name, dto.relation ?? null, email, phone, receiveEmail, receiveSms, isPrimary, actorId],
   ) as GuardianRow[];
+  await syncLegacyGuardianContacts(q, Number(row.id), null, { email, phone }, actorId);
   await writeLog(q, actorId, 'GUARDIAN', Number(row.id), 'create', null, snapshot(row));
   return toDto(row);
 }

@@ -78,6 +78,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
     await q(`DELETE FROM noti WHERE to_id = ANY($1::bigint[]) OR from_id = ANY($1::bigint[])`, [STAFF]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1::bigint[])`, [STAFF]);
     await q(`DELETE FROM guardian_send WHERE student_id = ANY($1::bigint[])`, [STU]);
+    await q(`DELETE FROM guardian_contact WHERE guardian_id IN (SELECT id FROM guardian WHERE student_id = ANY($1::bigint[]))`, [STU]);
     await q(`DELETE FROM guardian WHERE student_id = ANY($1::bigint[])`, [STU]);
     await q(`DELETE FROM pnoti WHERE student_id = ANY($1::bigint[])`, [STU]);
     await q(`DELETE FROM pay WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1::bigint[]) OR cs_id = ANY($2::bigint[]))`, [STU, cons]);

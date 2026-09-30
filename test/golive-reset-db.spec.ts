@@ -145,6 +145,7 @@ d('운영 전환 — 스크래치 DB 에서 한 트랜잭션으로 (끝에 되�
       expect([e.child, pos.get(e.child)! < pos.get(e.parent)!]).toEqual([e.child, true]);
     }
     expect(plan.order).toContain('staff');
+    expect(plan.order.indexOf('guardian_contact')).toBeLessThan(plan.order.indexOf('guardian'));
     expect(plan.order).not.toContain('migrations');
     for (const k of GOLIVE_KEEP_TABLES) expect(plan.order).not.toContain(k);
   });

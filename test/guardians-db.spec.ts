@@ -29,6 +29,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
+import * as contactBridge from '../src/lib/guardian-contact-bridge';
 import { SENDER } from '../src/modules/notify/sender';
 import { FakeSender } from './fake-sender';
 import { blockedBy, DEV_URL } from './db';
@@ -53,6 +54,7 @@ d('보호자 · 선택 발송 (DQ3 · N-42)', () => {
 
   const cleanRows = async () => {
     await q(`DELETE FROM guardian_send WHERE student_id = ANY($1)`, [[STU_A, STU_B]]);
+    await q(`DELETE FROM guardian_contact WHERE guardian_id IN (SELECT id FROM guardian WHERE student_id = ANY($1))`, [[STU_A, STU_B]]);
     await q(`DELETE FROM guardian WHERE student_id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`DELETE FROM log WHERE actor_id = $1`, [CEO]);
@@ -167,6 +169,57 @@ d('보호자 · 선택 발송 (DQ3 · N-42)', () => {
       expect(l.body).not.toContain('01000000002');
     }
     expect(logs[0].body).toContain('mo***@example.com');
+  });
+
+  it('ST1-b3a: 기존 보호자 입력의 선택 주소·동의를 연락처 행에 별도로 보존한다', async () => {
+    const made = await addGuardian(STU_A, {
+      name: '브리지 보호자', email: 'bridge@example.com', phone: '010-4321-8765', receiveEmail: false, receiveSms: true,
+    }).expect(201);
+    const contacts = () => q<{ kind: string; value: string; active: boolean; is_delivery_selected: boolean; origin: string; created_by: string }>(
+      `SELECT kind, value, active, is_delivery_selected, origin, created_by
+         FROM guardian_contact WHERE guardian_id = $1 ORDER BY id`, [made.body.id],
+    );
+    expect(await contacts()).toEqual([
+      { kind: 'email', value: 'bridge@example.com', active: true, is_delivery_selected: true, origin: 'user', created_by: String(CEO) },
+      { kind: 'phone', value: '01043218765', active: true, is_delivery_selected: true, origin: 'user', created_by: String(CEO) },
+    ]);
+    const patched = await api('patch', `/guardians/${made.body.id}`).send({ email: 'next@example.com', phone: null }).expect(200);
+    expect(patched.body).toMatchObject({ email: 'next@example.com', phone: null, receiveEmail: false, receiveSms: false });
+    expect(await contacts()).toEqual([
+      { kind: 'email', value: 'bridge@example.com', active: false, is_delivery_selected: false, origin: 'user', created_by: String(CEO) },
+      { kind: 'phone', value: '01043218765', active: false, is_delivery_selected: false, origin: 'user', created_by: String(CEO) },
+      { kind: 'email', value: 'next@example.com', active: true, is_delivery_selected: true, origin: 'user', created_by: String(CEO) },
+    ]);
+    await api('patch', `/guardians/${made.body.id}`).send({ email: 'next@example.com' }).expect(200);
+    expect(await contacts()).toHaveLength(3); // 같은 주소는 선택/과거 행을 다시 만들지 않는다
+    await api('patch', `/guardians/${made.body.id}`).send({ email: 'last@example.com' }).expect(200);
+    expect(await contacts()).toEqual([
+      { kind: 'email', value: 'bridge@example.com', active: false, is_delivery_selected: false, origin: 'user', created_by: String(CEO) },
+      { kind: 'phone', value: '01043218765', active: false, is_delivery_selected: false, origin: 'user', created_by: String(CEO) },
+      { kind: 'email', value: 'next@example.com', active: false, is_delivery_selected: false, origin: 'user', created_by: String(CEO) },
+      { kind: 'email', value: 'last@example.com', active: true, is_delivery_selected: true, origin: 'user', created_by: String(CEO) },
+    ]);
+  });
+
+  it('ST1-b3a: 연락처 기록 후 실패하면 보호자 본문·연락처·LOG를 함께 롤백한다', async () => {
+    const made = await addGuardian(STU_A, { name: '롤백 보호자', email: 'before@example.com' }).expect(201);
+    const guardian = () => q(`SELECT id, email, phone, receive_email, receive_sms FROM guardian WHERE id = $1`, [made.body.id]);
+    const contacts = () => q(`SELECT id, kind, value, active, is_delivery_selected, origin, created_by
+      FROM guardian_contact WHERE guardian_id = $1 ORDER BY id`, [made.body.id]);
+    const logs = () => q(`SELECT id, action, before, after FROM log
+      WHERE actor_id = $1 AND entity = 'GUARDIAN' AND entity_id = $2 ORDER BY id`, [CEO, made.body.id]);
+    const before = { guardian: await guardian(), contacts: await contacts(), logs: await logs() };
+    const original = contactBridge.syncLegacyGuardianContacts;
+    const fault = jest.spyOn(contactBridge, 'syncLegacyGuardianContacts').mockImplementation(async (...args) => {
+      await original(...args);
+      throw new Error('ST1-b3a rollback probe after child write');
+    });
+    try {
+      await api('patch', `/guardians/${made.body.id}`).send({ email: 'after@example.com' }).expect(500);
+    } finally {
+      fault.mockRestore();
+    }
+    expect({ guardian: await guardian(), contacts: await contacts(), logs: await logs() }).toEqual(before);
   });
 
   it('② 대표는 학생당 하나 — 새 대표가 서면 전 대표가 내려가고, DB 가 직접 SQL 도 막는다', async () => {
