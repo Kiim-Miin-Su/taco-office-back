@@ -315,6 +315,112 @@ export class MemberDto {
   perms?: MemberPermDto[] | null;
 }
 
+/** 관리자 강사 탭 — 기존 STAFF의 실제 컬럼만 조회한다. 영문명은 신규 등록 스키마 이관 전까지 null. */
+export class StaffDirectoryQueryDto {
+  @ApiPropertyOptional({ type: Number, minimum: 1, default: 1 })
+  @IsOptional() @ToHttpInteger() @IsInt() @Min(1) @Max(100_000)
+  page?: number;
+
+  @ApiPropertyOptional({ enum: ['all', 'active', 'inactive'], default: 'all' })
+  @IsOptional() @IsIn(['all', 'active', 'inactive'])
+  state?: 'all' | 'active' | 'inactive';
+
+  @ApiPropertyOptional({ type: String, maxLength: 80, description: '이름 부분 검색. 학생·연락처·로그인 아이디는 검색하지 않는다' })
+  @IsOptional() @IsString() @MaxLength(80)
+  search?: string;
+}
+
+export class StaffDirectoryRowDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+  @ApiProperty({ type: String, nullable: true, description: 'STAFF 영문명 컬럼 이관 전까지 null' }) englishName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) title!: string | null;
+  @ApiProperty() active!: boolean;
+  @ApiProperty({ type: String, nullable: true }) hiredOn!: string | null;
+  @ApiProperty({ description: 'KST ISO timestamp. 최신 등록 순 정렬 기준은 DB created_at DESC, id DESC' }) createdAt!: string;
+}
+
+export class StaffDirectoryDto {
+  @ApiProperty({ type: [StaffDirectoryRowDto] }) items!: StaffDirectoryRowDto[];
+  @ApiProperty() page!: number;
+  @ApiProperty() pageSize!: number;
+  @ApiProperty() total!: number;
+}
+
+export class StaffDirectoryDetailQueryDto {
+  @ApiPropertyOptional({ type: String, maxLength: 256, description: '감사 이력 다음 페이지: 직전 응답 nextCursor(at+id 불투명 커서)' })
+  @IsOptional() @IsString() @MaxLength(256) @Matches(/^[A-Za-z0-9_-]+$/)
+  cursor?: string;
+}
+
+export class StaffDirectoryProfileDto extends StaffDirectoryRowDto {
+  @ApiProperty({ type: String, nullable: true }) email!: string | null;
+  @ApiProperty({ type: String, nullable: true }) phone!: string | null;
+  @ApiProperty({ type: String, nullable: true }) timezone!: string | null;
+}
+
+export class StaffDirectoryWageDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() fromDate!: string;
+  @ApiProperty({ type: Number, nullable: true, description: 'canWage와 비공개 정책을 통과한 경우만 금액' }) rate!: number | null;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty({ type: String, nullable: true }) approvedByName!: string | null;
+  @ApiProperty() createdAt!: string;
+}
+
+export class StaffDirectoryPayoutDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() yearMonth!: string;
+  @ApiProperty() state!: string;
+  @ApiProperty({ type: Number, nullable: true, description: 'canWage와 비공개 정책을 통과한 경우만 실지급액' }) net!: number | null;
+  @ApiProperty({ type: String, nullable: true }) confirmedByName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) confirmedAt!: string | null;
+}
+
+export class StaffDirectoryAssignmentDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() kindName!: string;
+  @ApiProperty({ type: String, nullable: true }) subjectName!: string | null;
+  @ApiProperty({ type: [String], description: '현재 수업 규칙 명단. 과거 교체 전 명단을 뜻하지 않는다' }) studentNames!: string[];
+  @ApiProperty() fromDate!: string;
+  @ApiProperty({ type: String, nullable: true }) toDate!: string | null;
+}
+
+export class StaffDirectoryReportDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() onDate!: string;
+  @ApiProperty() kindName!: string;
+  @ApiProperty({ type: String, nullable: true }) subjectName!: string | null;
+  @ApiProperty({ type: [String] }) studentNames!: string[];
+}
+
+export class StaffDirectoryAuditChangeDto {
+  @ApiProperty() field!: string;
+  @ApiProperty({ type: String, nullable: true }) before!: string | null;
+  @ApiProperty({ type: String, nullable: true }) after!: string | null;
+}
+
+export class StaffDirectoryAuditDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() action!: string;
+  @ApiProperty({ description: '서버가 지은 감사 행동 이름' }) actionLabel!: string;
+  @ApiProperty({ type: String, nullable: true }) actorName!: string | null;
+  @ApiProperty() at!: string;
+  @ApiProperty({ type: [StaffDirectoryAuditChangeDto], description: '안전한 일반 필드만 이전→이후 값 노출. 연락처·인증·권한·급여는 값 없이 변경 사실만 표시' }) changes!: StaffDirectoryAuditChangeDto[];
+  @ApiProperty({ type: [String], description: '값을 공개하지 않는 변경 필드의 이름' }) privateFields!: string[];
+}
+
+export class StaffDirectoryDetailDto {
+  @ApiProperty({ type: StaffDirectoryProfileDto }) profile!: StaffDirectoryProfileDto;
+  @ApiProperty() wageAccess!: boolean;
+  @ApiProperty({ type: [StaffDirectoryWageDto] }) wages!: StaffDirectoryWageDto[];
+  @ApiProperty({ type: [StaffDirectoryPayoutDto] }) payouts!: StaffDirectoryPayoutDto[];
+  @ApiProperty({ type: [StaffDirectoryAssignmentDto] }) assignments!: StaffDirectoryAssignmentDto[];
+  @ApiProperty({ type: [StaffDirectoryReportDto] }) reports!: StaffDirectoryReportDto[];
+  @ApiProperty({ type: [StaffDirectoryAuditDto] }) audit!: StaffDirectoryAuditDto[];
+  @ApiProperty({ type: String, nullable: true }) nextCursor!: string | null;
+}
+
 /** 권한 예외 한 칸 — 켬(true) · 끔(false) · 역할 따름(null) */
 export class MemberPermDto {
   @ApiProperty({ enum: ['canMoney', 'canWage', 'canApprove', 'canHide', 'canGpaPack'] }) key!: string;

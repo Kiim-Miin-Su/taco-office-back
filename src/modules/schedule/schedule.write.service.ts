@@ -59,6 +59,13 @@ function cancelArgs(dto: { cancelKind?: AttendanceCancelReason; cancelTreat?: Ca
   return { kind: dto.cancelKind as string, treat: (dto.cancelTreat ?? 'carry') as string, memo: dto.memo?.trim() || null };
 }
 
+/** 생성과 수정은 같은 방식/강의실 계약을 잠금 전에 확인한다 (N-56). */
+function assertModeRoom(dto: { mode?: string; roomId?: number | null }): void {
+  if (dto.mode === 'online' && dto.roomId !== undefined && dto.roomId !== null) {
+    throw new BadRequestException({ code: 'MODE_ROOM_ONLINE', message: '온라인 수업에는 강의실을 두지 않습니다' });
+  }
+}
+
 /**
  * 휴강 알림 두 건 (테스트 시나리오 M-125) — 같은 트랜잭션에서 남긴다 (D-R43).
  *   ① 「{과목} 결강 — {학생들} → 스케줄」   그 회차의 강사와 관리자 전원(본인 제외)
@@ -562,6 +569,7 @@ export class ScheduleWriteService {
   }
 
   async create(dto: OccurrenceCreateDto, actorId?: number, outer?: QueryRunner): Promise<WriteResultDto> {
+    assertModeRoom(dto);
     if (!isIsoDate(dto.fromDate) || (dto.toDate != null && !isIsoDate(dto.toDate))) {
       throw new BadRequestException({ code: 'BAD_RANGE', message: '시작일·종료일은 실제 YYYY-MM-DD 날짜여야 합니다' });
     }
@@ -733,9 +741,7 @@ export class ScheduleWriteService {
         message: '줌 계정은 온라인으로 바꿀 때 함께 보냅니다 — 이미 온라인인 수업의 계정은 줌 계정 화면에서 바꿉니다',
       });
     }
-    if (dto.mode === 'online' && dto.roomId !== undefined && dto.roomId !== null) {
-      throw new BadRequestException({ code: 'MODE_ROOM_ONLINE', message: '온라인 수업에는 강의실을 두지 않습니다' });
-    }
+    assertModeRoom(dto);
     /*
      * N-142 「같은 시간에 두 사람이 수정 — 나중 저장이 반영된다 · 충돌 시 안내」 — 막지 않는다. 같은 SER 쓰기는 부모 잠금으로
      * 줄을 서므로(D-R43) **잠금을 잡은 뒤** 읽으면, 내가 읽은 뒤(readVersion) 먼저 커밋한 남의 쓰기가 전부 보인다.

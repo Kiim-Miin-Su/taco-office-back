@@ -32,7 +32,7 @@ import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest 
 import { ZoomService } from '../zoom/zoom.service';
 import { NOTI_CATEGORIES, NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
 import { groupByRole, roleLabel } from '../../lib/role-words';
-import { START_MIN, END_MIN, effectiveModeOf, kstAt, kstDateOf, writtenRows } from '../../lib/sql';
+import { START_MIN, END_MIN, effectiveModeOf, kstAt, kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
 import { TODO_KEEP_ON_CLEAR, TODO_KEEP_REASON, todoClearable, todoGo, todoSourceLabel } from '../../lib/todo';
 import { continueLeadCare } from '../ops/lead-care';
 import { KST, isIsoDate, overdueDays, todayKst } from '../../lib/kst';
@@ -53,6 +53,8 @@ import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
 import { STAFF_CREATE_ROLES } from './drawer.dto';
 import type {
   ApprovalUndoResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
+  StaffDirectoryAssignmentDto, StaffDirectoryAuditDto, StaffDirectoryDetailDto, StaffDirectoryDto, StaffDirectoryPayoutDto,
+  StaffDirectoryQueryDto, StaffDirectoryReportDto, StaffDirectoryWageDto,
   StaffCreateDto, StaffPatchDto, TodoCreateDto, TodoPatchDto,
 } from './drawer.dto';
 import { scheduleHistoryLine } from '../../lib/schedule-history';
@@ -65,6 +67,67 @@ const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
 const staffNotFound = () => new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
+
+/** LOG.before/after는 여러 쓰기 경로가 남긴 JSON이다. 조회는 안전한 칸만 허용한다. */
+const STAFF_AUDIT_PUBLIC: Record<string, string> = {
+  name: '이름', role: '역할', title: '직함', tz: '시간대', hiredOn: '입사일', active: '사용 상태',
+};
+const STAFF_AUDIT_PRIVATE: Record<string, string> = {
+  email: '이메일', phone: '연락처', loginId: '로그인 아이디',
+  wageRate: '급여', wageFrom: '급여 적용일', password: '인증 정보', passwordHash: '인증 정보',
+  mustChangeCredentials: '인증 상태', credentialsChangedAt: '인증 상태',
+  canMoney: '권한', canWage: '권한', canApprove: '권한', canHide: '권한', canGpaPack: '권한',
+  teacherId: '담당 수업', serIds: '담당 수업', newSerIds: '담당 수업', guideIds: '담당 수업',
+};
+const STAFF_AUDIT_ACTION: Record<string, string> = {
+  create: '등록', update: '정보 수정', activate: '사용 재개', deactivate: '사용 중지',
+  password_reset: '비밀번호 초기화', password_recover: '비밀번호 복구', onboarding: '첫 설정',
+  perms: '권한 변경', 'teacher-change': '담당 강사 교체', delete: '삭제', golive_reset: '운영 초기화',
+};
+const staffAuditObject = (value: unknown): Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const staffAuditValue = (value: unknown): string | null =>
+  value === null || value === undefined ? null
+    : typeof value === 'string' || typeof value === 'boolean' || typeof value === 'number' ? String(value).slice(0, 120) : null;
+function staffAuditRow(r: R): StaffDirectoryAuditDto {
+  const before = staffAuditObject(r.before);
+  const after = staffAuditObject(r.after);
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+  const publicKeys = keys.filter((key) => Object.prototype.hasOwnProperty.call(STAFF_AUDIT_PUBLIC, key));
+  return {
+    id: Number(r.id), action: String(r.action),
+    actionLabel: Object.prototype.hasOwnProperty.call(STAFF_AUDIT_ACTION, String(r.action))
+      ? STAFF_AUDIT_ACTION[String(r.action)] : '기타 변경',
+    actorName: str(r.actor_name), at: String(r.at),
+    changes: publicKeys.map((key) => ({
+      field: STAFF_AUDIT_PUBLIC[key], before: staffAuditValue(before[key]), after: staffAuditValue(after[key]),
+    })),
+    privateFields: [...new Set(keys.filter((key) => !Object.prototype.hasOwnProperty.call(STAFF_AUDIT_PUBLIC, key))
+      .map((key) => Object.prototype.hasOwnProperty.call(STAFF_AUDIT_PRIVATE, key) ? STAFF_AUDIT_PRIVATE[key] : '기타 변경'))],
+  };
+}
+type StaffAuditCursor = { t: string; i: number };
+function parseStaffAuditCursor(raw?: string): StaffAuditCursor | null {
+  if (!raw) return null;
+  try {
+    const text = Buffer.from(raw, 'base64url').toString('utf8');
+    if (Buffer.from(text).toString('base64url') !== raw) throw new Error('noncanonical');
+    const value = JSON.parse(text) as Partial<StaffAuditCursor>;
+    const date = typeof value?.t === 'string' ? new Date(value.t) : null;
+    // JS는 2월 31일 같은 시각을 3월로 정규화할 수 있다. 실제 입력의 밀리초까지 왕복 확인하고
+    // 남은 마이크로초 세 자리는 원문 그대로 PostgreSQL에 넘긴다(커서 동률 누락 방지).
+    const roundTrip = date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+    if (!value || typeof value.t !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value.t)
+      || value.t.slice(0, 4) === '0000' || roundTrip !== `${value.t.slice(0, 23)}Z`
+      || !Number.isSafeInteger(value.i) || value.i! < 1) throw new Error('invalid');
+    return { t: value.t, i: value.i! };
+  } catch {
+    throw new BadRequestException({ code: 'STAFF_AUDIT_CURSOR_INVALID', message: '강사 이력 커서가 올바르지 않습니다' });
+  }
+}
+function staffAuditCursor(r: R): string {
+  return Buffer.from(JSON.stringify({ t: String(r.cursor_at), i: Number(r.id) })).toString('base64url');
+}
 const staffLoginIdTaken = () => new ConflictException({
   code: 'STAFF_LOGIN_ID_TAKEN', message: '그 아이디는 이미 쓰고 있습니다 — 다른 아이디를 정해 주세요(대소문자만 다른 아이디도 같은 아이디입니다)',
 });
@@ -185,6 +248,127 @@ export class DrawerService {
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
     return this.anyRepo.query(sql, p) as Promise<T[]>;
+  }
+
+  /** 관리자 강사 목록 — 등록 시각과 id로 안정 정렬. 기존 서랍의 활성/ID 정렬과 분리된 화면 요구다. */
+  async staffDirectory(q: StaffDirectoryQueryDto): Promise<StaffDirectoryDto> {
+    const page = q.page ?? 1;
+    const pageSize = 10;
+    const state = q.state ?? 'all';
+    const search = q.search?.trim() ?? '';
+    const where = `s.role = 'teacher' AND ($1::text = 'all' OR s.active = ($1::text = 'active'))
+      AND ($2::text = '' OR position(lower($2::text) in lower(s.name)) > 0)`;
+    const rows = await this.q(
+      `WITH total AS (SELECT count(*)::text AS total FROM staff s WHERE ${where}),
+        page_rows AS (
+          SELECT s.id, s.name, s.title, s.active, to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
+                 ${kstAt('s.created_at')} AS created_at, s.created_at AS sort_at
+            FROM staff s WHERE ${where}
+           ORDER BY s.created_at DESC, s.id DESC LIMIT $3 OFFSET $4
+        )
+       SELECT total.total, page_rows.* FROM total LEFT JOIN page_rows ON true
+        ORDER BY page_rows.sort_at DESC NULLS LAST, page_rows.id DESC NULLS LAST`,
+      [state, search, pageSize, (page - 1) * pageSize],
+    );
+    return {
+      items: rows.filter((r) => r.id !== null).map((r) => ({
+        id: Number(r.id), name: String(r.name), englishName: null, title: str(r.title), active: r.active === true,
+        hiredOn: str(r.hired_on), createdAt: String(r.created_at),
+      })),
+      page, pageSize, total: Number(rows[0].total),
+    };
+  }
+
+  /** 관리자 강사 상세. 각 목록은 실제 원천을 제목 그대로 표현한다: 현재 배정, 작성된 리포트, STAFF 감사. */
+  async staffDirectoryDetail(
+    id: number, viewerId: number, canWage: boolean, canHide: boolean, cursorRaw?: string,
+  ): Promise<StaffDirectoryDetailDto> {
+    const cursor = parseStaffAuditCursor(cursorRaw);
+    const [staff] = await this.q(
+      `SELECT s.id, s.name, s.email, s.phone, s.title, s.tz, s.active,
+              to_char(s.hired_on,'YYYY-MM-DD') AS hired_on, ${kstAt('s.created_at')} AS created_at
+         FROM staff s WHERE s.id = $1 AND s.role = 'teacher'`, [id],
+    );
+    if (!staff) throw staffNotFound();
+
+    // 비공개가 켜지면 금액과 사유는 서버에서 지운 뒤 응답한다. canWage 없으면 관련 행도 읽지 않는다.
+    const wagePrivate = canWage && !canHide
+      ? (await readAcctPrivacy({ query: (sql: string, p?: unknown[]) => this.q(sql, p ?? []) })).wage.private
+      : false;
+    const showPay = lineAmountVisible(canWage, wagePrivate, canHide, viewerId === id);
+    const wageRows = canWage ? await this.q(
+      `SELECT w.id, w.rate, w.reason, to_char(w.from_date,'YYYY-MM-DD') AS from_date,
+              a.name AS approved_by_name, ${kstAt('w.created_at')} AS created_at
+         FROM wage w LEFT JOIN staff a ON a.id = w.approved_by
+        WHERE w.staff_id = $1 ORDER BY w.from_date DESC, w.id DESC`, [id],
+    ) : [];
+    const payoutRows = canWage ? await this.q(
+      `SELECT p.id, p.year_month, p.state, p.net, c.name AS confirmed_by_name,
+              CASE WHEN p.confirmed_at IS NOT NULL THEN ${kstAt('p.confirmed_at')} END AS confirmed_at
+         FROM payout p LEFT JOIN staff c ON c.id = p.confirmed_by
+        WHERE p.staff_id = $1 ORDER BY p.year_month DESC, p.id DESC`, [id],
+    ) : [];
+    const assignments = await this.q(
+      `SELECT s.id, k.name AS kind_name, sb.name AS subject_name,
+              COALESCE(array_agg(DISTINCT st.name) FILTER (WHERE st.id IS NOT NULL), ARRAY[]::varchar[]) AS student_names,
+              to_char(s.from_date,'YYYY-MM-DD') AS from_date, to_char(s.to_date,'YYYY-MM-DD') AS to_date
+         FROM ser s JOIN kind k ON k.key = s.kind_key
+         LEFT JOIN sub sb ON sb.key = s.sub_key
+         LEFT JOIN ser_stu ss ON ss.ser_id = s.id AND ${serStuOn('ss', '$2::date')}
+        LEFT JOIN stu st ON st.id = ss.student_id
+        WHERE s.teacher_id = $1
+          AND s.from_date <= $2::date
+          AND (s.to_date IS NULL OR s.to_date >= $2::date)
+        GROUP BY s.id, k.name, sb.name
+        ORDER BY s.from_date DESC, s.id DESC`, [id, todayKst()],
+    );
+    const reports = await this.q(
+      `SELECT r.id, to_char(r.on_date,'YYYY-MM-DD') AS on_date,
+              COALESCE(k.name, '기타') AS kind_name, sb.name AS subject_name,
+              COALESCE(array_agg(DISTINCT st.name) FILTER (WHERE st.id IS NOT NULL), ARRAY[]::varchar[]) AS student_names
+         FROM rep r JOIN ser s ON s.id = r.ser_id
+         LEFT JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
+         LEFT JOIN sub sb ON sb.key = s.sub_key
+         LEFT JOIN rep_stu rs ON rs.rep_id = r.id LEFT JOIN stu st ON st.id = rs.student_id
+        WHERE r.teacher_id = $1 GROUP BY r.id, k.name, sb.name
+        ORDER BY r.on_date DESC, r.id DESC`, [id],
+    );
+    const auditRows = await this.q(
+      `SELECT l.id, l.action, l.before, l.after, a.name AS actor_name, ${kstAt('l.at')} AS at,
+              to_char(l.at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_at
+         FROM log l LEFT JOIN staff a ON a.id = l.actor_id
+        WHERE l.entity = 'STAFF' AND l.entity_id = $1
+          AND ($2::timestamptz IS NULL OR (l.at, l.id) < ($2::timestamptz, $3::bigint))
+        ORDER BY l.at DESC, l.id DESC LIMIT 51`, [id, cursor?.t ?? null, cursor?.i ?? null],
+    );
+    const hasMore = auditRows.length > 50;
+    const auditPage = auditRows.slice(0, 50);
+    const audit = auditPage.map(staffAuditRow);
+    return {
+      profile: {
+        id: Number(staff.id), name: String(staff.name), englishName: null, title: str(staff.title),
+        active: staff.active === true, hiredOn: str(staff.hired_on), createdAt: String(staff.created_at),
+        email: str(staff.email), phone: str(staff.phone), timezone: str(staff.tz),
+      },
+      wageAccess: canWage,
+      wages: wageRows.map((r): StaffDirectoryWageDto => ({
+        id: Number(r.id), fromDate: String(r.from_date), rate: showPay ? Number(r.rate) : null,
+        reason: showPay ? str(r.reason) : null, approvedByName: str(r.approved_by_name), createdAt: String(r.created_at),
+      })),
+      payouts: payoutRows.map((r): StaffDirectoryPayoutDto => ({
+        id: Number(r.id), yearMonth: String(r.year_month), state: String(r.state), net: showPay ? Number(r.net) : null,
+        confirmedByName: str(r.confirmed_by_name), confirmedAt: str(r.confirmed_at),
+      })),
+      assignments: assignments.map((r): StaffDirectoryAssignmentDto => ({
+        id: Number(r.id), kindName: String(r.kind_name), subjectName: str(r.subject_name),
+        studentNames: r.student_names as string[], fromDate: String(r.from_date), toDate: str(r.to_date),
+      })),
+      reports: reports.map((r): StaffDirectoryReportDto => ({
+        id: Number(r.id), onDate: String(r.on_date), kindName: String(r.kind_name),
+        subjectName: str(r.subject_name), studentNames: r.student_names as string[],
+      })),
+      audit, nextCursor: hasMore && auditPage.length > 0 ? staffAuditCursor(auditPage[auditPage.length - 1]) : null,
+    };
   }
 
   /**

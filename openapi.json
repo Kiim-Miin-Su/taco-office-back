@@ -19634,6 +19634,228 @@
         ]
       }
     },
+    "/drawer/staff-directory": {
+      "get": {
+        "description": "STAFF.role=teacher만 조회한다. 영문명 등 신규 인적 필드는 스키마 이관 전 null이다.",
+        "operationId": "DrawerController_staffDirectory",
+        "parameters": [
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "default": 1,
+              "type": "number"
+            }
+          },
+          {
+            "name": "state",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "default": "all",
+              "type": "string",
+              "enum": [
+                "all",
+                "active",
+                "inactive"
+              ]
+            }
+          },
+          {
+            "name": "search",
+            "required": false,
+            "in": "query",
+            "description": "이름 부분 검색. 학생·연락처·로그인 아이디는 검색하지 않는다",
+            "schema": {
+              "maxLength": 80,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffDirectoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "관리자 강사 탭 — 등록일 최신순, 검색·상태·10명 페이지",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/staff-directory/{id}": {
+      "get": {
+        "description": "시급·정산은 canWage 및 비공개 설정을 서버에서 적용한다. 감사 원문 JSON은 반환하지 않는다. 과거 전체 CRUD를 기록하지 않은 원천은 이 응답에서 만들어 내지 않는다.",
+        "operationId": "DrawerController_staffDirectoryDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "in": "query",
+            "description": "감사 이력 다음 페이지: 직전 응답 nextCursor(at+id 불투명 커서)",
+            "schema": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffDirectoryDetailDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "관리자 강사 상세 — 기존 인적 정보·시급/정산·배정·리포트·STAFF 감사 이력",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
     "/drawer/staff": {
       "post": {
         "description": "이름 · 아이디(형식 자유 · 띄어쓰기 없음 · 대소문자 무시 유일) · 임시 비밀번호 · 이메일(선택 · 유일) · 역할 둘 · 직함 · 시간대(tzg) · 휴대폰 · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). **아이디와 임시 비밀번호는 매니저가 정한다**(W10) — 비밀번호는 해시로만 저장하고 응답 · 기록에 싣지 않는다. 첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 건다. 대표·관리자 계정은 이 길로 만들지 않는다.",
@@ -22157,6 +22379,213 @@
         "summary": "보호자 사용 중지 — 지우지 않는다(발송 원장이 가리킨다). 대표였으면 대표도 내려간다",
         "tags": [
           "guardians"
+        ]
+      }
+    },
+    "/students": {
+      "get": {
+        "operationId": "StudentsController_list",
+        "parameters": [
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "현재 STU 이름·학교·학년의 literal 부분 검색. 미전환 LEAD 검색은 아직 포함하지 않는다.",
+            "schema": {
+              "maxLength": 80,
+              "type": "string"
+            }
+          },
+          {
+            "name": "grade",
+            "required": false,
+            "in": "query",
+            "description": "현행 STU.grade의 정확한 값. 교육체계별 학년 카탈로그는 후속 계약이다.",
+            "schema": {
+              "maxLength": 10,
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 1000000,
+              "default": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentDirectoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 DB 최신 생성 순 목록 — 현행 STU만, 기본10명. LEAD 통합/재원상태/국가는 후속.",
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/students/{id}": {
+      "get": {
+        "operationId": "StudentsController_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentReadDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 현재 정보·보호자 요약·수강 사실·기존 연결 감사 metadata. 전체 변경 이력 아님.",
+        "tags": [
+          "students"
         ]
       }
     }
@@ -44596,6 +45025,386 @@
           "myExpenses"
         ]
       },
+      "StaffDirectoryRowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "englishName": {
+            "type": "string",
+            "nullable": true,
+            "description": "STAFF 영문명 컬럼 이관 전까지 null"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "hiredOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "KST ISO timestamp. 최신 등록 순 정렬 기준은 DB created_at DESC, id DESC"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "englishName",
+          "title",
+          "active",
+          "hiredOn",
+          "createdAt"
+        ]
+      },
+      "StaffDirectoryDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffDirectoryRowDto"
+            }
+          },
+          "page": {
+            "type": "number"
+          },
+          "pageSize": {
+            "type": "number"
+          },
+          "total": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "pageSize",
+          "total"
+        ]
+      },
+      "StaffDirectoryProfileDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "englishName": {
+            "type": "string",
+            "nullable": true,
+            "description": "STAFF 영문명 컬럼 이관 전까지 null"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "hiredOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "KST ISO timestamp. 최신 등록 순 정렬 기준은 DB created_at DESC, id DESC"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "timezone": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "englishName",
+          "title",
+          "active",
+          "hiredOn",
+          "createdAt",
+          "email",
+          "phone",
+          "timezone"
+        ]
+      },
+      "StaffDirectoryWageDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "fromDate": {
+            "type": "string"
+          },
+          "rate": {
+            "type": "number",
+            "nullable": true,
+            "description": "canWage와 비공개 정책을 통과한 경우만 금액"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "approvedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "fromDate",
+          "rate",
+          "reason",
+          "approvedByName",
+          "createdAt"
+        ]
+      },
+      "StaffDirectoryPayoutDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "yearMonth": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "net": {
+            "type": "number",
+            "nullable": true,
+            "description": "canWage와 비공개 정책을 통과한 경우만 실지급액"
+          },
+          "confirmedByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "confirmedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "yearMonth",
+          "state",
+          "net",
+          "confirmedByName",
+          "confirmedAt"
+        ]
+      },
+      "StaffDirectoryAssignmentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "kindName": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentNames": {
+            "description": "현재 수업 규칙 명단. 과거 교체 전 명단을 뜻하지 않는다",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "fromDate": {
+            "type": "string"
+          },
+          "toDate": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "kindName",
+          "subjectName",
+          "studentNames",
+          "fromDate",
+          "toDate"
+        ]
+      },
+      "StaffDirectoryReportDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "kindName": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "onDate",
+          "kindName",
+          "subjectName",
+          "studentNames"
+        ]
+      },
+      "StaffDirectoryAuditChangeDto": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "before": {
+            "type": "string",
+            "nullable": true
+          },
+          "after": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "field",
+          "before",
+          "after"
+        ]
+      },
+      "StaffDirectoryAuditDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string"
+          },
+          "actionLabel": {
+            "type": "string",
+            "description": "서버가 지은 감사 행동 이름"
+          },
+          "actorName": {
+            "type": "string",
+            "nullable": true
+          },
+          "at": {
+            "type": "string"
+          },
+          "changes": {
+            "description": "안전한 일반 필드만 이전→이후 값 노출. 연락처·인증·권한·급여는 값 없이 변경 사실만 표시",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffDirectoryAuditChangeDto"
+            }
+          },
+          "privateFields": {
+            "description": "값을 공개하지 않는 변경 필드의 이름",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "actionLabel",
+          "actorName",
+          "at",
+          "changes",
+          "privateFields"
+        ]
+      },
+      "StaffDirectoryDetailDto": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/StaffDirectoryProfileDto"
+          },
+          "wageAccess": {
+            "type": "boolean"
+          },
+          "wages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffDirectoryWageDto"
+            }
+          },
+          "payouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffDirectoryPayoutDto"
+            }
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffDirectoryAssignmentDto"
+            }
+          },
+          "reports": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffDirectoryReportDto"
+            }
+          },
+          "audit": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffDirectoryAuditDto"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "profile",
+          "wageAccess",
+          "wages",
+          "payouts",
+          "assignments",
+          "reports",
+          "audit",
+          "nextCursor"
+        ]
+      },
       "StaffCreateDto": {
         "type": "object",
         "properties": {
@@ -45959,6 +46768,345 @@
             "description": "true 만 받는다 — 다시 쓰기. 중지는 DELETE"
           }
         }
+      },
+      "StudentDirectoryRowDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "school": {
+            "type": "string",
+            "nullable": true
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "female",
+              "male"
+            ],
+            "nullable": true,
+            "description": "성별(선택 · N-83) — 관리자 §10 아바타에만 쓴다. 학생 명단(students)은 관리 화면에만 실리므로 강사에게 가지 않는다. 비어 있으면 null"
+          },
+          "tag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 없으면 null. 판정은 서버 한 곳(lib/student-label)"
+          },
+          "label": {
+            "type": "string",
+            "description": "고르기에 적는 이름 — 「이름 · 꼬리」(꼬리가 없으면 이름). 화면은 이 글을 그대로 쓴다 (D-R18)"
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "STU.created_at 그대로(KST). 등록 확정/첫 수업 시각으로 추정하지 않는다."
+          },
+          "genderLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "guardianNames": {
+            "description": "현재 활성 보호자 이름. 연락처/납부 정보는 포함하지 않는다.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tag",
+          "label",
+          "createdAt",
+          "genderLabel",
+          "guardianNames"
+        ]
+      },
+      "StudentDirectoryDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentDirectoryRowDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "pageSize": {
+            "type": "number",
+            "description": "한 페이지10명"
+          },
+          "grades": {
+            "description": "현재 학생 DB의 학년 값. 검색 결과와 별개이며 미상값을 만들지 않는다.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize",
+          "grades"
+        ]
+      },
+      "StudentGuardianSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "name": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "isPrimary": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "relation",
+          "active",
+          "isPrimary"
+        ]
+      },
+      "StudentEnrollmentSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "kindName": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true
+          },
+          "startedOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "endedOn": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "kindName",
+          "subjectName",
+          "sessions",
+          "startedOn",
+          "endedOn"
+        ]
+      },
+      "StudentAuditSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "STU",
+              "LEAD",
+              "GUARDIAN"
+            ],
+            "description": "직접 학생 또는 명시적 student_id FK로 연결된 기존 LOG만"
+          },
+          "entityId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "action": {
+            "type": "string"
+          },
+          "actionLabel": {
+            "type": "string"
+          },
+          "actorId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "actorName": {
+            "type": "string",
+            "nullable": true,
+            "description": "LOG.actor_id에 연결된 현재 STAFF 표시 이름. 당시 이름을 복원하지 않는다."
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "entity",
+          "entityId",
+          "action",
+          "actionLabel",
+          "actorId",
+          "actorName",
+          "at"
+        ]
+      },
+      "StudentReadDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "school": {
+            "type": "string",
+            "nullable": true
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "female",
+              "male"
+            ],
+            "nullable": true,
+            "description": "성별(선택 · N-83) — 관리자 §10 아바타에만 쓴다. 학생 명단(students)은 관리 화면에만 실리므로 강사에게 가지 않는다. 비어 있으면 null"
+          },
+          "tag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 없으면 null. 판정은 서버 한 곳(lib/student-label)"
+          },
+          "label": {
+            "type": "string",
+            "description": "고르기에 적는 이름 — 「이름 · 꼬리」(꼬리가 없으면 이름). 화면은 이 글을 그대로 쓴다 (D-R18)"
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "STU.created_at 그대로(KST). 등록 확정/첫 수업 시각으로 추정하지 않는다."
+          },
+          "genderLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "guardianNames": {
+            "description": "현재 활성 보호자 이름. 연락처/납부 정보는 포함하지 않는다.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "startedOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "기존 STU.started_on. 학생 생성 시각과 다르다."
+          },
+          "targetExam": {
+            "type": "string",
+            "nullable": true
+          },
+          "guidance": {
+            "type": "string",
+            "nullable": true
+          },
+          "lang": {
+            "type": "string",
+            "nullable": true
+          },
+          "guardians": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentGuardianSummaryDto"
+            }
+          },
+          "guardianTotal": {
+            "type": "number"
+          },
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentEnrollmentSummaryDto"
+            }
+          },
+          "enrollmentTotal": {
+            "type": "number"
+          },
+          "history": {
+            "description": "직접 학생/현재 연결 상담/보호자의 기존 감사 metadata 최근50건. 전체 CRUD/변경값/학교·학년 기간 이력이 아니다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentAuditSummaryDto"
+            }
+          },
+          "historyTotal": {
+            "type": "number"
+          },
+          "historyLimit": {
+            "type": "number",
+            "description": "보호자/수강/감사 각 최대50건"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tag",
+          "label",
+          "createdAt",
+          "genderLabel",
+          "guardianNames",
+          "startedOn",
+          "targetExam",
+          "guidance",
+          "lang",
+          "guardians",
+          "guardianTotal",
+          "enrollments",
+          "enrollmentTotal",
+          "history",
+          "historyTotal",
+          "historyLimit"
+        ]
       }
     }
   },

@@ -36,6 +36,7 @@ import { NotifyModule } from './modules/notify/notify.module';
 import { ZoomModule } from './modules/zoom/zoom.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { GuardiansModule } from './modules/guardians/guardians.module';
+import { StudentsModule } from './modules/students/students.module';
 
 @Module({
   imports: [
@@ -109,6 +110,8 @@ import { GuardiansModule } from './modules/guardians/guardians.module';
     CatalogModule,
     // 학생 보호자와 선택 발송 — DQ3 대표 답변 2026-09-25 (메일·SENS 만 · N-42)
     GuardiansModule,
+    // UX-C1 학생 독립 목록·상세 — 기존 STU 읽기, 신규 등록/기간 이력은 별도 청크다.
+    StudentsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -30,6 +30,7 @@ import {
   ApprovalUndoDto, ApprovalUndoResultDto,
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
   ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto, ScheduleHistoryDto, ScheduleHistoryQueryDto,
+  StaffDirectoryDetailDto, StaffDirectoryDetailQueryDto, StaffDirectoryDto, StaffDirectoryQueryDto,
   StaffActiveDto, StaffCreateDto, StaffParamsDto, StaffPasswordResetDto, StaffPatchDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
   TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
@@ -79,6 +80,26 @@ export class DrawerController {
   }
 
   /* ══ §17 구성원 (C97 · 테스트 시나리오 D-41) · 사용자 표 CRUD (W8 · 대표 지시 2026-09-26) ═══════════ */
+
+  @Get('staff-directory')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '관리자 강사 탭 — 등록일 최신순, 검색·상태·10명 페이지', description: 'STAFF.role=teacher만 조회한다. 영문명 등 신규 인적 필드는 스키마 이관 전 null이다.' })
+  @ApiOkResponse({ type: StaffDirectoryDto })
+  staffDirectory(@Query() q: StaffDirectoryQueryDto): Promise<StaffDirectoryDto> {
+    return this.svc.staffDirectory(q);
+  }
+
+  @Get('staff-directory/:id')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '관리자 강사 상세 — 기존 인적 정보·시급/정산·배정·리포트·STAFF 감사 이력', description: '시급·정산은 canWage 및 비공개 설정을 서버에서 적용한다. 감사 원문 JSON은 반환하지 않는다. 과거 전체 CRUD를 기록하지 않은 원천은 이 응답에서 만들어 내지 않는다.' })
+  @ApiOkResponse({ type: StaffDirectoryDetailDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  staffDirectoryDetail(
+    @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Query() q: StaffDirectoryDetailQueryDto,
+  ): Promise<StaffDirectoryDetailDto> {
+    const g = this.gate(user);
+    return this.svc.staffDirectoryDetail(p.id, user.id, g.canWage, g.canHide, q.cursor);
+  }
 
   @Post('staff')
   @Perm('canAdminPage', 'canCrudAll')

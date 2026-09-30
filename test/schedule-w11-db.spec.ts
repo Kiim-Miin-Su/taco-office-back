@@ -203,6 +203,35 @@ d('W11 스케줄 — 방식 전환 · 회차 메모 · 학생 겹침 · 빈 자�
 
   /* ── N-56 ─────────────────────────────────────────────────────────────── */
 
+  it.each([false, true])('N-56 생성도 온라인+강의실을 400으로 거절한다 — 점유=%s · DB 변경 없음', async (occupied) => {
+    if (occupied) await makeSer();
+    const snapshot = () => q(`SELECT
+      (SELECT count(*) FROM ser) AS ser,
+      (SELECT count(*) FROM ser_occ) AS occurrence,
+      (SELECT count(*) FROM ser_stu) AS roster,
+      (SELECT count(*) FROM log) AS audit,
+      (SELECT count(*) FROM noti) AS notification`);
+    const before = await snapshot();
+    const res = await api('post', '/schedule').send({
+      kindKey: KIND, mode: 'online', fromDate: MON, toDate: MON, rrule: 'ONCE',
+      startMin: 600, endMin: 660, roomId: ROOM_A, studentIds: [STU_A],
+    }).expect(400);
+    expect(res.body.code).toBe('MODE_ROOM_ONLINE');
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('N-56 강의실을 비운 온라인 생성은 대면 수업과 같은 시간에도 저장·조회·투영된다', async () => {
+    const offline = await makeSer();
+    const online = await makeSer({ mode: 'online', roomId: null, teacherId: T2, studentIds: [] });
+    expect(await q(`SELECT mode::text AS mode, room_id FROM ser WHERE id = $1`, [online.id]))
+      .toEqual([{ mode: 'online', room_id: null }]);
+    expect(await occAt(online.id, MON)).toMatchObject({ room_id: null });
+    expect(await occAt(offline.id, MON)).toMatchObject({ room_id: String(ROOM_A) });
+    const list = await api('get', `/schedule/occurrences?from=${MON}&to=${MON}`).expect(200);
+    expect((list.body.items as Array<Record<string, unknown>>).find((o) => o.serId === online.id))
+      .toMatchObject({ mode: 'online', roomId: null });
+  });
+
   it('N-56 이번만 온라인 → 강의실 비움 · EXC 대상 줌 배정 · 투영 · 목록 · 문장 — 다시 현장으로 돌리면 전부 되돌아간다', async () => {
     const { id } = await makeSer();
     const on = await api('patch', `/schedule/${id}`).send({ scope: 'this', onDate: MON, mode: 'online', zaccId: Z1 }).expect(200);
