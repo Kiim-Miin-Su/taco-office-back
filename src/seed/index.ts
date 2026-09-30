@@ -47,6 +47,9 @@ export const SEEDED_TABLES = [
   'stu', 'enr', 'lead',
   // ST1-b1 사용자가 추가한 학교만 reset. 국가/시간대/학년은 공유 사전이라 truncate하지 않는다.
   'school',
+  // ST1-b2 기간·감사: dev --reset은 STU와 함께 두 원장을 명시적으로만 초기화한다.
+  // 운영 전환 reset과 무관하다. 여기서 빠져도 STU TRUNCATE CASCADE가 조용히 지우므로 목록에 드러낸다.
+  'stu_profile_audit', 'stu_profile_period',
   // 줌 배정 정본(`zassign`)은 온라인 규칙에 시드가 넣는다(N-49 · W11) — 회차의 계정(`ser_occ.zacc_id`)은 그 투영이다
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'zassign', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',

@@ -104,6 +104,10 @@ describe('ST1-b1 공용 국가·학년·학교 사전', () => {
     const name = `ST1-b1-${randomUUID()}`;
     const [{ n: existing }] = await ds.query(`SELECT count(*)::int AS n FROM school`) as Array<{ n: number }>;
     expect(existing).toBe(0); // 이후 TRUNCATE는 이 disposable scratch의 우리 행만 대상으로 한다.
+    const [{ n: periods }] = await ds.query(`SELECT count(*)::int AS n FROM stu_profile_period`) as Array<{ n: number }>;
+    expect(periods).toBe(0); // ST1-b2의 SCHOOL FK 때문에 두 표를 명시적으로만 초기화한다.
+    const [{ n: audits }] = await ds.query(`SELECT count(*)::int AS n FROM stu_profile_audit`) as Array<{ n: number }>;
+    expect(audits).toBe(0); // 청크 경합 시험은 이미 기록된 학생 이력과 함께 돌리지 않는다.
     const [{ id: actor }] = await ds.query(`INSERT INTO staff(name,login_id,role) VALUES ('학교 경합 시험자',$1,'admin') RETURNING id`, [`st1b1-${randomUUID()}`]) as Array<{ id: string }>;
     try {
       const rows = await Promise.all([1, 2].map(() => ds.query(
@@ -115,7 +119,7 @@ describe('ST1-b1 공용 국가·학년·학교 사전', () => {
       expect(n).toBe(1);
     } finally {
       // 제품 hard DELETE guard를 우회하지 않는다. disposable scratch의 유일한 학교만 reset한다.
-      await ds.query(`TRUNCATE school RESTART IDENTITY`);
+      await ds.query(`TRUNCATE stu_profile_period, school RESTART IDENTITY`);
       await ds.query(`DELETE FROM staff WHERE id=$1`, [actor]);
     }
   });

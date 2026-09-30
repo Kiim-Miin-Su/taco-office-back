@@ -51,4 +51,8 @@ export class Stu {
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
+
+  /** ST1-b2 감사가 학생 row lock 아래 전진시킨다. 기존 scalar는 기간값으로 이관하지 않는다. */
+  @Column({ type: 'bigint', default: 0 })
+  profileVersion: string;
 }
