@@ -6,7 +6,8 @@
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BadRequestException } from '@nestjs/common';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { Type } from 'class-transformer';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { GUIDE_FACT_KEYS_TEACHER_CHANGE, type GuideFactKey } from '../../lib/guide-body';
 import { LeadDiagDto } from '../ops/lead-diag.dto';
@@ -281,6 +282,36 @@ export class GuideDiagnosticDto {
   @ApiPropertyOptional(S) weaknesses?: string | null;
   @ApiPropertyOptional(S) curriculum?: string | null;
   @ApiProperty() createdAt!: string;
+}
+
+/**
+ * F-60 「진단 입력 탭이 인원수만큼」 — 안내의 학생과 같은 반(같은 규칙 · 같은 날 · 같은 사유의 안내) 학생 한 줄.
+ * 진단은 DIAG 의 최신 한 줄이다(쌓고 · 읽기는 늘 최신 · 강사 진단과 같은 표).
+ */
+export class GuideClassDiagDto {
+  @ApiProperty() guideId!: number;
+  @ApiProperty() studentId!: number;
+  @ApiPropertyOptional(S) studentName?: string | null;
+  @ApiPropertyOptional({ type: GuideDiagnosticDto, nullable: true }) diagnostic!: GuideDiagnosticDto | null;
+}
+
+export class GuideClassDiagListDto {
+  @ApiProperty({ type: [GuideClassDiagDto], description: '안내의 학생이 먼저 · 나머지는 이름 차례' }) items!: GuideClassDiagDto[];
+}
+
+/** 반 진단 한 학생 — 강사 진단 쓰기(TeacherDiagCreateDto)와 같은 칸 · 같은 길이 */
+export class GuideClassDiagWriteItemDto {
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId!: number;
+  @ApiProperty({ description: '현재 수준 — 비면 409 EMPTY_BODY', maxLength: 2000 }) @IsString() @MaxLength(2000) levelSummary!: string;
+  @ApiPropertyOptional({ maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) strengths?: string;
+  @ApiPropertyOptional({ maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) weaknesses?: string;
+  @ApiPropertyOptional({ maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) curriculum?: string;
+}
+
+export class GuideClassDiagWriteDto {
+  @ApiProperty({ type: [GuideClassDiagWriteItemDto], minItems: 1, maxItems: 50, description: '같은 반 학생만 — 반 밖 학생이 하나라도 있으면 400 · 아무것도 쓰지 않는다' })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(50) @ValidateNested({ each: true }) @Type(() => GuideClassDiagWriteItemDto)
+  items!: GuideClassDiagWriteItemDto[];
 }
 
 export class GuideStudentDto {

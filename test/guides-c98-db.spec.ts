@@ -102,6 +102,39 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
     expect(on.deliveryCapabilities).toEqual({ parentExternal: true, teacherExternal: false, reason: null });
   });
 
+  /* ── F-60 「진단 입력 탭이 인원수만큼」 · F-61 진단 복사 (사용자 결정 2026-09-30 「탭에서 관리자도 입력」 · C61 넓힘) ─── */
+
+  it('F-60 반 진단 — 안내의 학생과 같은 반 학생이 한 줄씩(본인 먼저) · 최신 진단 · 관리자가 여러 학생에게 한 번에 적고 반 밖 학생은 400', async () => {
+    const own = await draftOf(students[1]!);
+    const empty = await svc().classDiagnostics(own);
+    expect(empty.items.map((x) => [x.studentId, x.diagnostic])).toEqual([
+      [students[1], null], [students[2], null], [students[0], null],
+    ]);
+    expect(empty.items[0]!.studentName).toBe('이하린');
+    // F-61 — 첫 학생의 진단을 나머지에게 같은 값으로 · 한 명만 다르게 고쳐서 한 번에 보낸다
+    const same = { levelSummary: '문단 요지 파악은 되나 추론 문항 약함', strengths: '어휘', weaknesses: '추론', curriculum: 'SAT Reading 추론 8주' };
+    const wrote = await svc().writeClassDiagnostics(manager, own, { items: [
+      { studentId: students[1]!, ...same },
+      { studentId: students[2]!, ...same, weaknesses: '시간 배분' },
+      { studentId: students[0]!, ...same },
+    ] });
+    expect(wrote.items.map((x) => [x.studentId, x.diagnostic?.levelSummary, x.diagnostic?.weaknesses])).toEqual([
+      [students[1], same.levelSummary, '추론'], [students[2], same.levelSummary, '시간 배분'], [students[0], same.levelSummary, '추론'],
+    ]);
+    const rows = await q.query(`SELECT student_id, ser_id, created_by FROM diag WHERE student_id = ANY($1::bigint[]) ORDER BY student_id`, [students]);
+    expect(rows.map((r: { ser_id: string; created_by: string }) => [Number(r.ser_id), Number(r.created_by)])).toEqual([
+      [serId, manager], [serId, manager], [serId, manager],
+    ]);
+    // 반 밖 학생은 400 · 아무것도 쓰지 않는다 · 현재 수준이 비면 409
+    const other = (await q.query(`INSERT INTO stu (name) VALUES ('반밖학생') RETURNING id`))[0].id as string;
+    await expect(svc().writeClassDiagnostics(manager, own, { items: [{ studentId: students[1]!, ...same }, { studentId: Number(other), ...same }] }))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'GUIDE_DIAG_NOT_CLASS' }) });
+    await expect(svc().writeClassDiagnostics(manager, own, { items: [{ studentId: students[1]!, levelSummary: '   ' }] }))
+      .rejects.toMatchObject({ response: expect.objectContaining({ code: 'EMPTY_BODY' }) });
+    const [{ n }] = await q.query(`SELECT count(*)::int AS n FROM diag WHERE student_id = ANY($1::bigint[])`, [students]);
+    expect(n).toBe(3);
+  });
+
   /* ── F-60 자동 채움 ─────────────────────────────────────────────────────── */
 
   it('F-60 초안은 일곱 칸을 채워 오고 저장하지는 않는다 — 교재가 없는 학생은 왜 없는지를 적는다', async () => {

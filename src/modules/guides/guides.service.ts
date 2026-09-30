@@ -16,7 +16,7 @@ import { bookLevelShown, issueActiveSql } from '../../lib/book';
 import { SENDER, type Sender } from '../notify/sender';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
-  GuideBodyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDayDto, GuideHistoryDto,
+  GuideBodyDto, GuideClassDiagListDto, GuideClassDiagWriteDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDayDto, GuideHistoryDto,
   GuideHistoryEventDto, GuideHistoryQueryDto,
   GuideHistorySpan, GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
   PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeBatchInfoDto, ZoomNoticeBatchResultDto, ZoomNoticeBatchRowDto,
@@ -752,6 +752,86 @@ export class GuidesService {
    * 남고 그 말이 학부모에게 나간다. 원본이 자기 머리말로 시작할 때만 앞자락을 갈아 끼우고,
    * 사람이 머리말까지 고쳐 써서 앞자락이 안 맞으면 그대로 옮기며 `headReplaced:false` 로 알린다.
    */
+  /* ══ F-60 「진단 입력 탭이 인원수만큼」 · F-61 진단 복사 ════════════════════════════════════════════
+   * 사용자 결정 2026-09-30 「탭에서 관리자도 입력」 — C61(「진단 리포트 작성 — 강사 가능 · 나머지 조회」)을 안내 작성 창에서 넓힌다.
+   * 같은 표(DIAG · 쌓고 · 읽기는 늘 최신 한 줄)에 적는다 — 강사 진단과 두 벌로 가르지 않는다. 쓰는 사람은 안내를 쓰는 사람과 같은
+   * 권한(canAdminPage + canCrudAll · 컨트롤러)이고, 받는 학생은 그 안내의 반(같은 규칙 · 같은 날 · 같은 사유의 안내)뿐이다.
+   */
+  private async classOf(run: (sql: string, p: unknown[]) => Promise<R[]>, id: number): Promise<Array<{ guideId: number; studentId: number; studentName: string | null; serId: number | null }>> {
+    const rows = await run(
+      `SELECT cg.id AS guide_id, cg.student_id, st.name AS student_name, g.ser_id
+         FROM guide g
+         JOIN guide cg ON cg.id = g.id OR (cg.ser_id = g.ser_id AND cg.event_on = g.event_on AND cg.reason = g.reason)
+         LEFT JOIN stu st ON st.id = cg.student_id
+        WHERE g.id = $1
+        ORDER BY (cg.id = g.id) DESC, st.name, cg.id`,
+      [id],
+    );
+    if (!rows.length) throw new NotFoundException('안내를 찾을 수 없습니다');
+    return rows.map((r) => ({
+      guideId: Number(r.guide_id), studentId: Number(r.student_id), studentName: (r.student_name as string) ?? null,
+      serId: r.ser_id == null ? null : Number(r.ser_id),
+    }));
+  }
+
+  private async classDiagRows(run: (sql: string, p: unknown[]) => Promise<R[]>, id: number): Promise<GuideClassDiagListDto> {
+    const members = await this.classOf(run, id);
+    const diags = await run(
+      `SELECT DISTINCT ON (d.student_id) d.id, d.student_id, d.level_summary, d.strengths, d.weaknesses, d.curriculum,
+              ${kstAt('d.created_at')} AS created_at
+         FROM diag d WHERE d.student_id = ANY($1::bigint[])
+        ORDER BY d.student_id, d.created_at DESC, d.id DESC`,
+      [members.map((x) => x.studentId)],
+    );
+    return {
+      items: members.map((x) => {
+        const d = diags.find((row) => Number(row.student_id) === x.studentId);
+        return {
+          guideId: x.guideId, studentId: x.studentId, studentName: x.studentName,
+          diagnostic: d ? {
+            id: Number(d.id), levelSummary: String(d.level_summary),
+            strengths: (d.strengths as string) ?? null, weaknesses: (d.weaknesses as string) ?? null,
+            curriculum: (d.curriculum as string) ?? null, createdAt: String(d.created_at),
+          } : null,
+        };
+      }),
+    };
+  }
+
+  /** 반 진단 읽기 — 안내의 학생이 먼저 · 나머지는 이름 차례 · 최신 진단 한 줄씩 */
+  classDiagnostics(id: number): Promise<GuideClassDiagListDto> {
+    return this.classDiagRows((sql, p) => this.q(sql, p), id);
+  }
+
+  /**
+   * 반 진단 쓰기 — 여러 학생을 한 트랜잭션에 적는다(F-61 「이 내용을 나머지 2명에게 복사」 뒤 각자 고친 값 그대로).
+   * 반 밖 학생이 하나라도 있으면 400 GUIDE_DIAG_NOT_CLASS · 현재 수준이 비면 409 EMPTY_BODY(강사 진단과 같은 코드) — 아무것도 쓰지 않는다.
+   * 회차 맥락(ser_id)은 그 안내의 수업이다. 흔적은 DIAG 행 자체(created_by · created_at)다 — 강사 진단과 같다.
+   */
+  async writeClassDiagnostics(userId: number, id: number, dto: GuideClassDiagWriteDto): Promise<GuideClassDiagListDto> {
+    return this.anyRepo.manager.transaction(async (m) => {
+      const run = (sql: string, p: unknown[]) => m.query(sql, p) as Promise<R[]>;
+      const members = await this.classOf(run, id);
+      const inClass = new Set(members.map((x) => x.studentId));
+      if (dto.items.some((x) => !inClass.has(x.studentId))) {
+        throw new BadRequestException({ code: 'GUIDE_DIAG_NOT_CLASS', message: '이 안내의 반 학생이 아닌 학생이 있습니다 — 아무것도 적지 않았습니다' });
+      }
+      const trimmed = (v: string | undefined): string | null => { const t = v?.trim(); return t ? t : null; };
+      for (const x of dto.items) {
+        if (!x.levelSummary.trim()) throw new ConflictException({ code: 'EMPTY_BODY', message: '현재 수준을 적어 주세요' });
+      }
+      const serId = members[0]!.serId;
+      for (const x of dto.items) {
+        await m.query(
+          `INSERT INTO diag (student_id, ser_id, level_summary, strengths, weaknesses, curriculum, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [x.studentId, serId, x.levelSummary.trim(), trimmed(x.strengths), trimmed(x.weaknesses), trimmed(x.curriculum), userId],
+        );
+      }
+      return this.classDiagRows(run, id);
+    });
+  }
+
   async copyBody(userId: number, id: number, viewer?: RequestUser, targetIds?: number[]): Promise<GuideCopyResultDto> {
     const copiedIds: number[] = [];
     const skipped: GuideCopyResultDto['skipped'] = [];

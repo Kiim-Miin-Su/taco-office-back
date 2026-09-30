@@ -9,7 +9,7 @@ import { ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
-  GuideActionDto, GuideActionParamsDto, GuideBodyDto, GuideCopyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideActionDto, GuideActionParamsDto, GuideBodyDto, GuideClassDiagListDto, GuideClassDiagWriteDto, GuideCopyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
   GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto, ZoomNoticeBatchResultDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { GuidesService } from './guides.service';
@@ -108,6 +108,37 @@ export class GuidesController {
     @Body() dto: GuideBodyDto,
   ): Promise<GuideDto> {
     return this.svc.writeBody(user.id, id, dto, user);
+  }
+
+  @Get(':id/class-diagnostics')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '반 진단 — 안내 작성 창의 학생별 진단 탭 (F-60 「진단 입력 탭이 인원수만큼」)',
+    description: '안내의 학생과 같은 반(같은 규칙 · 같은 날 · 같은 사유의 안내) 학생마다 최신 진단(DIAG) 한 줄 · 안내의 학생이 먼저 · 나머지는 이름 차례.',
+  })
+  @ApiOkResponse({ type: GuideClassDiagListDto })
+  @ApiNotFoundResponse({ description: '안내 없음' })
+  async classDiagnostics(@Param('id', ParseIntPipe) id: number): Promise<GuideClassDiagListDto> {
+    return this.svc.classDiagnostics(id);
+  }
+
+  @Post(':id/class-diagnostics')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '반 진단 쓰기 — 탭마다 적은 진단을 한 번에 (F-60 · F-61 · 사용자 결정 2026-09-30 「탭에서 관리자도 입력」)',
+    description: 'C61(「진단 리포트 작성 — 강사 가능 · 나머지 조회」)을 안내 작성 창에서 넓힌다 — 안내를 쓰는 사람(canAdminPage + canCrudAll)이 그 반 학생의 진단을 적는다. '
+      + '강사 진단과 같은 표(DIAG · 쌓고 · 읽기는 늘 최신)다. 반 밖 학생이 하나라도 있으면 400 GUIDE_DIAG_NOT_CLASS · 현재 수준이 비면 409 EMPTY_BODY — 아무것도 쓰지 않는다.',
+  })
+  @ApiCreatedResponse({ type: GuideClassDiagListDto })
+  @ApiBadRequestResponse({ description: 'code GUIDE_DIAG_NOT_CLASS' })
+  @ApiConflictResponse({ description: 'code EMPTY_BODY' })
+  @ApiNotFoundResponse({ description: '안내 없음' })
+  async writeClassDiagnostics(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: GuideClassDiagWriteDto,
+  ): Promise<GuideClassDiagListDto> {
+    return this.svc.writeClassDiagnostics(user.id, id, dto);
   }
 
   @Post(':id/copy')
