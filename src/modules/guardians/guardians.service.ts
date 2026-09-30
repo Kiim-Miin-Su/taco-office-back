@@ -21,6 +21,7 @@
  * 원장을 돌려받는다(더블클릭·재시도가 두 번 보내지 않는다). 대가: 외부 발송이 끝날 때까지 연결 하나를 쥔다.
  * 발송 뒤 커밋이 실패하면 나간 메시지의 원장이 사라질 수 있다 — 그 창은 INSERT 몇 줄뿐이라 좁게 둔다.
  */
+import { familyLinks } from '../../lib/family';
 import {
   BadRequestException, ConflictException, Inject, Injectable, NotFoundException,
 } from '@nestjs/common';
@@ -147,7 +148,9 @@ export class GuardiansService {
         ORDER BY active DESC, is_primary DESC, name, id`,
       [studentId],
     ) as GuardianRow[];
-    return { studentId, studentName: student.name, guardians: rows.map(toDto) };
+    // A-13 — 같은 연락처로 묶인 형제(저장하지 않고 읽을 때 잇는다 · 회계 형제 묶음과 같은 함수)
+    const links = await familyLinks((sql, p) => this.ds.query(sql, p) as Promise<unknown[]>, [studentId]);
+    return { studentId, studentName: student.name, guardians: rows.map(toDto), siblings: links.get(studentId) ?? [] };
   }
 
   async create(studentId: number, dto: GuardianCreateDto, actorId: number): Promise<GuardianDto> {

@@ -4,6 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
+import { familyLinks } from '../../lib/family';
 import {
   BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException,
   UnprocessableEntityException,
@@ -542,7 +543,49 @@ export class AccountingService {
       summary: await this.moneySummary(canSeeAmounts, today),
       invoices, payments, payouts, expenses, expenseTotals, payCategories,
       expenseCategories: EXPENSE_CATEGORIES.map((key) => ({ key, label: EXPENSE_CATEGORY_LABEL[key] ?? key })),
+      families: await this.invoiceFamilies(invoices),
     };
+  }
+
+  /**
+   * A-13 형제 합산 보기 — 청구서 목록(이미 권한대로 가린 값)에서 같은 달 · 같은 연락처로 묶인 학생들의 청구서를 모은다.
+   * 묶음은 lib/family(보호자 연락처 한 단계)를 이어 붙인 덩어리다 — 형 · 동생 · 막내가 한 연락처를 두 줄로 나눠 가져도 한 묶음이다.
+   * 합계는 여기서 낸다(화면이 더하지 않는다 · D-R37). 가린 금액(null)이 하나라도 있으면 합계도 null 이다(D-R39).
+   */
+  private async invoiceFamilies(invoices: InvoiceDto[]): Promise<AccountingDto['families']> {
+    const live = invoices.filter((i) => i.state !== 'void');
+    const ids = [...new Set(live.map((i) => i.studentId))];
+    const links = await familyLinks((sql, p) => this.inv.query(sql, p) as Promise<unknown[]>, ids);
+    // 이어진 학생을 한 덩어리로 — 가장 작은 번호가 대표다
+    const root = new Map<number, number>(ids.map((id) => [id, id]));
+    const find = (x: number): number => { let r = x; while (root.get(r) !== r) r = root.get(r)!; root.set(x, r); return r; };
+    for (const [me, sibs] of links) {
+      for (const sib of sibs) {
+        if (!root.has(sib.studentId)) continue;
+        const a = find(me); const b = find(sib.studentId);
+        if (a !== b) root.set(Math.max(a, b), Math.min(a, b));
+      }
+    }
+    const groups = new Map<string, InvoiceDto[]>();
+    for (const inv of live) {
+      const key = `${find(inv.studentId)}:${inv.yearMonth}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(inv);
+    }
+    const sum = (xs: Array<number | null | undefined>): number | null =>
+      (xs.some((x) => x === null || x === undefined) ? null : xs.reduce<number>((a, x) => a + Number(x), 0));
+    return [...groups.entries()]
+      .filter(([, list]) => new Set(list.map((i) => i.studentId)).size >= 2)
+      .map(([key, list]) => {
+        const students = [...new Map(list.map((i) => [i.studentId, i.studentName ?? `#${i.studentId}`])).entries()]
+          .map(([studentId, name]) => ({ studentId, name }))
+          .sort((a, b) => a.name.localeCompare(b.name, 'ko') || a.studentId - b.studentId);
+        return {
+          key, yearMonth: list[0]!.yearMonth, students, invoiceIds: list.map((i) => i.id).sort((a, b) => a - b),
+          amount: sum(list.map((i) => i.amount)), paidAmount: sum(list.map((i) => i.paidAmount)),
+        };
+      })
+      .sort((a, b) => (a.yearMonth < b.yearMonth ? 1 : a.yearMonth > b.yearMonth ? -1 : a.key.localeCompare(b.key)));
   }
 
   /**

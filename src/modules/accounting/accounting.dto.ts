@@ -548,6 +548,25 @@ export class ExpenseCategoryDto {
   @ApiProperty() label!: string;
 }
 
+/** A-13 형제 묶음의 학생 한 명 */
+export class InvoiceFamilyStudentDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() name!: string;
+}
+
+/**
+ * A-13 「청구서는 각각 나오거나 합산을 고를 수 있다」 — 사용자 결정 2026-09-30 「묶음 표시 + 합산 보기」.
+ * 청구서는 학생마다 그대로다(청구 · 수납 모델 변경 없음). 같은 달 · 같은 연락처로 묶인 형제의 청구서를 **보기로만** 합친다.
+ */
+export class InvoiceFamilyDto {
+  @ApiProperty({ description: '묶음 열쇠 — 「가장 작은 학생 번호:청구 달」' }) key!: string;
+  @ApiProperty({ example: '2026-10' }) yearMonth!: string;
+  @ApiProperty({ type: [InvoiceFamilyStudentDto], description: '이름 차례' }) students!: InvoiceFamilyStudentDto[];
+  @ApiProperty({ type: [Number], description: '합친 청구서(취소 뺀) — 청구서는 각각 그대로다' }) invoiceIds!: number[];
+  @ApiProperty({ type: Number, nullable: true, description: '청구 합계 — 금액을 볼 수 없는 줄이 하나라도 있으면 null(0 을 짓지 않는다)' }) amount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '받은 돈 합계 — 같은 규칙' }) paidAmount!: number | null;
+}
+
 export class AccountingDto {
   @ApiProperty({ type: MoneySummaryDto }) summary!: MoneySummaryDto;
   @ApiProperty({ type: [InvoiceDto] }) invoices!: InvoiceDto[];
@@ -561,6 +580,11 @@ export class AccountingDto {
     description: '§55 분류 칩 여섯 — **건수가 0이어도 선다**(분류는 어휘이지 데이터가 아니다). 화면이 세지 않는다 (D-R37)',
   })
   payCategories!: PayCategoryDto[];
+  @ApiProperty({
+    type: [InvoiceFamilyDto],
+    description: 'A-13 형제 합산 보기 — 같은 달 · 같은 보호자 연락처(lib/family)로 묶인 둘 이상 학생의 청구서 묶음 · 합계는 서버가 낸다. 없으면 빈 배열',
+  })
+  families!: InvoiceFamilyDto[];
 }
 
 /* ══ §54 수업료 계산 (C65) ═══════════════════════════════════════════════

@@ -77,11 +77,24 @@ export class GuardianDto {
   @ApiProperty({ format: 'date-time' }) createdAt!: string;
 }
 
+/** A-13 — 같은 연락처의 보호자를 가진 다른 학생(형제) 한 줄 · 저장하지 않고 읽을 때 잇는다(lib/family) */
+export class GuardianSiblingDto {
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiPropertyOptional({ ...S }) grade?: string | null;
+  @ApiProperty({ description: '이 학생 쪽에서 그 연락처를 가진 보호자 이름 — 누구로 묶였나' }) via!: string;
+}
+
 export class GuardianListDto {
   @ApiProperty(ID_SCHEMA) studentId!: number;
   @ApiProperty() studentName!: string;
   @ApiProperty({ type: [GuardianDto], description: '사용 중인 보호자가 먼저(대표 → 이름), 사용 중지는 뒤' })
   guardians!: GuardianDto[];
+  @ApiProperty({
+    type: [GuardianSiblingDto],
+    description: 'A-13 「학부모 연락처로 묶여 보인다」 — 사용 중인 보호자의 휴대폰 · 이메일이 같은 다른 학생(한 단계) · 이름 차례. 없으면 빈 배열',
+  })
+  siblings!: GuardianSiblingDto[];
 }
 
 /** 채널 하나가 지금 보낼 수 있는가 — 화면이 칩을 잠그고 까닭을 붙인다 */
