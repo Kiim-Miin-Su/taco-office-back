@@ -25,6 +25,7 @@
     "schema:check": "ts-node -P tsconfig.json scripts/schema-check.ts",
     "write:coverage": "ts-node -P tsconfig.json scripts/write-coverage.ts",
     "invoice:reprice": "ts-node -P tsconfig.json scripts/invoice-reprice.ts",
+    "guardian:reconcile": "ts-node -P tsconfig.json scripts/guardian-contact-reconcile.ts",
     "migration:deploy": "ts-node -P tsconfig.json scripts/deploy-check.ts --run",
     "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts",
     "golive:reset": "ts-node -P tsconfig.json scripts/golive-reset.ts"

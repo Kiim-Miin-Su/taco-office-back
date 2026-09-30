@@ -10,8 +10,8 @@ export interface LegacyGuardianContacts { email: string | null; phone: string | 
 
 /** 호출자는 STU → GUARDIAN 순서로 잠근 상태여야 한다. 이전 행은 지우지 않고 선택 해제·비활성으로 보존한다. */
 export async function syncLegacyGuardianContacts(
-  q: QueryRunner, guardianId: number, before: LegacyGuardianContacts | null,
-  after: LegacyGuardianContacts, actorId: number,
+  q: QueryRunner, guardianId: number | string, before: LegacyGuardianContacts | null,
+  after: LegacyGuardianContacts, actorId: number | null,
 ): Promise<void> {
   for (const kind of ['email', 'phone'] as const) {
     const value = after[kind];
@@ -37,6 +37,7 @@ export async function syncLegacyGuardianContacts(
     if (value === null) continue;
     // 옛 writer가 남겨 아직 child가 없는 주소는 작성자를 추정하지 않는다.
     const isNewInput = before === null || previousValue !== value;
+    if (isNewInput && actorId === null) throw new Error('새 사용자 연락처에는 작성자가 필요합니다');
     await q.query(
       `INSERT INTO guardian_contact(guardian_id,kind,value,is_delivery_selected,origin,created_by)
        VALUES ($1,$2,$3,true,$4,$5)`,
