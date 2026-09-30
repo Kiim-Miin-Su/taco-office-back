@@ -20,13 +20,23 @@ export async function syncLegacyGuardianContacts(
         WHERE guardian_id = $1 AND kind = $2 AND is_delivery_selected FOR UPDATE`,
       [guardianId, kind],
     ) as Array<{ id: string; value: string }>;
+    const previousValue = before?.[kind] ?? null;
+    // 구형 writer는 scalar만 바꿨을 수 있다. 신형 수정이 그 값을 덮기 전에 관찰된 이전 값을 이력으로 남긴다.
+    // 실제 변경 시각/작성자는 알 수 없으므로 발견 시각의 legacy_copy로만 기록한다.
+    if (previousValue !== null && previousValue !== value && selected?.value !== previousValue) {
+      await q.query(
+        `INSERT INTO guardian_contact(guardian_id,kind,value,active,is_delivery_selected,origin)
+         VALUES ($1,$2,$3,false,false,'legacy_copy')`,
+        [guardianId, kind, previousValue],
+      );
+    }
     if (selected?.value === value) continue;
     if (selected) {
       await q.query(`UPDATE guardian_contact SET is_delivery_selected = false, active = false WHERE id = $1`, [selected.id]);
     }
     if (value === null) continue;
     // 옛 writer가 남겨 아직 child가 없는 주소는 작성자를 추정하지 않는다.
-    const isNewInput = before === null || before[kind] !== value;
+    const isNewInput = before === null || previousValue !== value;
     await q.query(
       `INSERT INTO guardian_contact(guardian_id,kind,value,is_delivery_selected,origin,created_by)
        VALUES ($1,$2,$3,true,$4,$5)`,

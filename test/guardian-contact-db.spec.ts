@@ -160,4 +160,62 @@ describe('ST1-b3a guardian contact additive bridge', () => {
     ]);
     await expect(migration.down(q)).rejects.toThrow(/would lose data/);
   });
+
+  it('구버전 A→B 뒤 신형 B→C 수정은 관찰한 B도 작성자 미상 이력으로 보존한다', async () => {
+    const id = await guardian('a@example.com', null, false, false);
+    await q.query(`INSERT INTO guardian_contact(guardian_id,kind,value,is_delivery_selected,origin)
+      VALUES ($1,'email','a@example.com',true,'legacy_copy')`, [id]);
+    // 구버전 인스턴스는 scalar만 변경한다. 신형 patch는 UPDATE 전 B를 읽은 뒤 C를 저장한다.
+    await q.query(`UPDATE guardian SET email='b@example.com' WHERE id=$1`, [id]);
+    await q.query(`UPDATE guardian SET email='c@example.com' WHERE id=$1`, [id]);
+    await syncLegacyGuardianContacts(q, Number(id),
+      { email: 'b@example.com', phone: null }, { email: 'c@example.com', phone: null }, Number(actor));
+    expect(await q.query(`SELECT value,active,is_delivery_selected,origin,created_by
+      FROM guardian_contact WHERE guardian_id=$1 ORDER BY id`, [id])).toEqual([
+      { value: 'a@example.com', active: false, is_delivery_selected: false, origin: 'legacy_copy', created_by: null },
+      { value: 'b@example.com', active: false, is_delivery_selected: false, origin: 'legacy_copy', created_by: null },
+      { value: 'c@example.com', active: true, is_delivery_selected: true, origin: 'user', created_by: actor },
+    ]);
+  });
+
+  it('구버전 A→B 뒤 신형이 A로 되돌려도 조기 반환 전에 B를 보존한다', async () => {
+    const id = await guardian('a@example.com', null, false, false);
+    await q.query(`INSERT INTO guardian_contact(guardian_id,kind,value,is_delivery_selected,origin)
+      VALUES ($1,'email','a@example.com',true,'legacy_copy')`, [id]);
+    await q.query(`UPDATE guardian SET email='b@example.com' WHERE id=$1`, [id]);
+    await q.query(`UPDATE guardian SET email='a@example.com' WHERE id=$1`, [id]);
+    await syncLegacyGuardianContacts(q, Number(id),
+      { email: 'b@example.com', phone: null }, { email: 'a@example.com', phone: null }, Number(actor));
+    expect(await q.query(`SELECT value,active,is_delivery_selected,origin,created_by
+      FROM guardian_contact WHERE guardian_id=$1 ORDER BY id`, [id])).toEqual([
+      { value: 'a@example.com', active: true, is_delivery_selected: true, origin: 'legacy_copy', created_by: null },
+      { value: 'b@example.com', active: false, is_delivery_selected: false, origin: 'legacy_copy', created_by: null },
+    ]);
+  });
+
+  it('구버전이 만든 child 없는 보호자를 수정할 때도 기존 주소를 보존한다', async () => {
+    const id = await guardian('b@example.com', null, false, false);
+    await q.query(`UPDATE guardian SET email='c@example.com' WHERE id=$1`, [id]);
+    await syncLegacyGuardianContacts(q, Number(id),
+      { email: 'b@example.com', phone: null }, { email: 'c@example.com', phone: null }, Number(actor));
+    expect(await q.query(`SELECT value,active,is_delivery_selected,origin,created_by
+      FROM guardian_contact WHERE guardian_id=$1 ORDER BY id`, [id])).toEqual([
+      { value: 'b@example.com', active: false, is_delivery_selected: false, origin: 'legacy_copy', created_by: null },
+      { value: 'c@example.com', active: true, is_delivery_selected: true, origin: 'user', created_by: actor },
+    ]);
+  });
+
+  it('구버전 B를 그대로 저장하면 bridge가 B를 선택하고 비활성 중복은 만들지 않는다', async () => {
+    const id = await guardian('a@example.com', null, false, false);
+    await q.query(`INSERT INTO guardian_contact(guardian_id,kind,value,is_delivery_selected,origin)
+      VALUES ($1,'email','a@example.com',true,'legacy_copy')`, [id]);
+    await q.query(`UPDATE guardian SET email='b@example.com' WHERE id=$1`, [id]);
+    await syncLegacyGuardianContacts(q, Number(id),
+      { email: 'b@example.com', phone: null }, { email: 'b@example.com', phone: null }, Number(actor));
+    expect(await q.query(`SELECT value,active,is_delivery_selected,origin,created_by
+      FROM guardian_contact WHERE guardian_id=$1 ORDER BY id`, [id])).toEqual([
+      { value: 'a@example.com', active: false, is_delivery_selected: false, origin: 'legacy_copy', created_by: null },
+      { value: 'b@example.com', active: true, is_delivery_selected: true, origin: 'legacy_copy', created_by: null },
+    ]);
+  });
 });
