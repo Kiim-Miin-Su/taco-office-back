@@ -737,4 +737,47 @@ d('W11 스케줄 — 방식 전환 · 회차 메모 · 학생 겹침 · 빈 자�
     expect(row.state).toBe('approved');
     expect(await startOf(lesson.id)).toBe('14:00');
   });
+
+  /* ── N-142 「같은 시간에 두 사람이 수정 — 나중 저장이 반영된다 · 충돌 시 안내」 (사용자 결정 2026-09-30 · 막지 않고 알린다) ── */
+  it('N-142 두 사람이 같은 목록을 읽고 고치면 나중 저장이 반영되고, 읽은 뒤 남이 고친 것을 덮어썼다고 알린다 · 새로 읽었거나 readVersion 이 없으면 알리지 않는다', async () => {
+    const ADMIN2 = 989;
+    await q(`DELETE FROM log WHERE actor_id = $1`, [ADMIN2]);
+    await q(`DELETE FROM staff WHERE id = $1`, [ADMIN2]);
+    await q(`INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,'W11관리자','w11-a2@t.kr','admin',$2,true)`,
+      [ADMIN2, await bcrypt.hash(PW, 4)]);
+    try {
+      const adminToken = (await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
+        .send({ loginId: 'w11-a2@t.kr', password: PW }).expect(201)).body.accessToken as string;
+      const { id } = await makeSer();
+      // 두 사람이 같은 목록을 읽었다 — 목록은 읽기 직전의 기록 번호를 준다
+      const read = await api('get', `/schedule/occurrences?from=${MON}&to=${MON}`).expect(200);
+      const v = read.body.version as number;
+      expect(Number.isInteger(v)).toBe(true);
+      // 관리자가 먼저 고친다 — 읽은 뒤 남의 기록이 없다
+      const first = await api('patch', `/schedule/${id}`, adminToken)
+        .send({ scope: 'all', onDate: MON, startMin: 630, endMin: 690, readVersion: v }).expect(200);
+      expect(first.body.overwrote).toBeNull();
+      // 대표가 옛 목록으로 저장 — 막지 않는다. 나중 저장이 반영되고, 관리자의 수정을 덮어썼다고 알린다
+      const second = await api('patch', `/schedule/${id}`)
+        .send({ scope: 'all', onDate: MON, startMin: 660, endMin: 720, readVersion: v }).expect(200);
+      expect(second.body.overwrote).toEqual({ byName: 'W11관리자', at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+09:00$/) });
+      expect(await startOf(id)).toBe('11:00');
+      // 새로 읽고 고치면 알릴 것이 없다 · 자기 쓰기는 세지 않는다
+      const v2 = (await api('get', `/schedule/occurrences?from=${MON}&to=${MON}`).expect(200)).body.version as number;
+      expect(v2).toBeGreaterThan(v);
+      const third = await api('patch', `/schedule/${id}`)
+        .send({ scope: 'all', onDate: MON, startMin: 690, endMin: 750, readVersion: v2 }).expect(200);
+      expect(third.body.overwrote).toBeNull();
+      // readVersion 을 안 주면 보지 않는다(옛 화면 · 다른 경로)
+      const fourth = await api('patch', `/schedule/${id}`, adminToken)
+        .send({ scope: 'all', onDate: MON, startMin: 600, endMin: 660 }).expect(200);
+      expect(fourth.body.overwrote).toBeNull();
+      expect(await startOf(id)).toBe('10:00');
+      await api('patch', `/schedule/${id}`).send({ scope: 'all', onDate: MON, startMin: 600, endMin: 660, readVersion: -1 }).expect(400);
+    } finally {
+      await q(`DELETE FROM log WHERE actor_id = $1`, [ADMIN2]);
+      await q(`DELETE FROM noti WHERE to_id = $1 OR from_id = $1`, [ADMIN2]);
+      await q(`DELETE FROM staff WHERE id = $1`, [ADMIN2]);
+    }
+  });
 });

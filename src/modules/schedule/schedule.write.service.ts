@@ -150,6 +150,9 @@ async function prepareDayCancelParentNotices(
     DAY_CANCEL_NOTICE_PREFIX,
     `${date} 학원 전체 휴원 안내 (${reason})`,
     '이날 수업은 모두 휴강하며 수업료는 차감하지 않고 이월합니다.',
+    // C-33 「보강 안내가 만들어진다」 — 그날 전체는 보강을 한꺼번에 잡지 않는다(MAKEUP_NOT_BULK · 회차마다 날짜가 다르다).
+    // 그래서 이 안내가 보강의 길을 말한다. 날짜를 약속하지 않는다 — 보강은 회차마다 휴강 창에서 잡고 그 안내(C-34)가 따로 선다
+    '보강이 필요한 수업은 담당 선생님과 날짜를 정해 따로 안내드립니다.',
     memo ? `사유: ${memo}` : null,
   ].filter((line): line is string => line !== null).join('\n');
   const activeRoster = `SELECT ss.student_id, min(o.ser_id)::bigint AS ser_id
@@ -733,8 +736,24 @@ export class ScheduleWriteService {
     if (dto.mode === 'online' && dto.roomId !== undefined && dto.roomId !== null) {
       throw new BadRequestException({ code: 'MODE_ROOM_ONLINE', message: '온라인 수업에는 강의실을 두지 않습니다' });
     }
+    /*
+     * N-142 「같은 시간에 두 사람이 수정 — 나중 저장이 반영된다 · 충돌 시 안내」 — 막지 않는다. 같은 SER 쓰기는 부모 잠금으로
+     * 줄을 서므로(D-R43) **잠금을 잡은 뒤** 읽으면, 내가 읽은 뒤(readVersion) 먼저 커밋한 남의 쓰기가 전부 보인다.
+     * 그 마지막 한 줄을 결과에 싣는다 — 화면이 「○○님이 고친 내용을 덮어썼습니다」라 알린다. 같은 사람의 다른 탭은 세지 않는다.
+     */
+    let overwrote: WriteResultDto['overwrote'] = null;
     return this.tx('schedule.patch', [serId], async (before, q) => {
       const ser = this.requireOccurrence(before, serId, dto.onDate);
+      if (dto.readVersion !== undefined && actorId !== undefined) {
+        const [other] = (await q.query(
+          `SELECT st.name, ${kstAt('l.at')} AS at
+             FROM log l LEFT JOIN staff st ON st.id = l.actor_id
+            WHERE l.id > $1 AND l.entity = 'SER' AND l.entity_id = $2 AND l.actor_id <> $3
+            ORDER BY l.id DESC LIMIT 1`,
+          [dto.readVersion, serId, actorId],
+        )) as Array<{ name: string | null; at: string }>;
+        if (other) overwrote = { byName: other.name ?? null, at: other.at };
+      }
       const hasSeriesPatch = dto.kindKey !== undefined || dto.subKey !== undefined || dto.title !== undefined ||
         dto.rrule !== undefined || dto.toDate !== undefined;
       if (hasSeriesPatch && dto.scope === 'this' && parseRule(ser.rrule).freq !== 'ONCE') {
@@ -816,7 +835,14 @@ export class ScheduleWriteService {
         throw new BadRequestException({ code: 'BAD_RANGE', message: '반복 종료일이 시작일보다 앞설 수 없습니다' });
       }
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, { enrich: this.withInside(inside), actorId, outer, overlaps: true });
+    }, {
+      enrich: async (q, fresh, base) => {
+        const inner = this.withInside(inside);
+        const r = inner ? await inner(q, fresh, base) : base;
+        return { ...r, overwrote };
+      },
+      actorId, outer, overlaps: true,
+    });
   }
 
   /** `inside` 를 `tx` 의 커밋 직전 자리(enrich)에 끼운다. 결과는 바꾸지 않는다. */

@@ -190,6 +190,46 @@ d('줌 배정 — 정본은 ZASSIGN, ser_occ 는 투영이다 (C48)', () => {
     expect(n).toBeGreaterThan(0);
   });
 
+  /* ── B-27 · N-134 — 막는 것은 그대로 EXCLUDE, 거절 문장이 할 수 있는 일을 말한다 ── */
+  it('겹쳐서 막히면 그 시각 비어 있는 다른 계정을 문장에 적는다 — 코드는 RESOURCE_CONFLICT 그대로 (B-27)', async () => {
+    const a = await svc().create(ME, { label: 'TEST-B27A', loginEmail: 'b27a@tn.kr', joinUrl: 'https://zoom.us/j/27' });
+    const b = await svc().create(ME, { label: 'TEST-B27B', loginEmail: 'b27b@tn.kr', joinUrl: 'https://zoom.us/j/28' });
+    await q.query(`UPDATE zacc SET active = false WHERE id <> ALL($1::bigint[])`, [[a.id, b.id]]);
+    const s1 = await makeSer('reading-lab');
+    const s2 = await makeSer('vocabulary');
+    await svc().assign(ME, { serId: s2, zaccId: null }); // 회차를 투영해 둔다(실제로는 시간표 쓰기가 만든다)
+    await svc().assign(ME, { serId: s1, zaccId: a.id });
+    await expect(svc().assign(ME, { serId: s2, zaccId: a.id })).rejects.toMatchObject({
+      response: { code: 'RESOURCE_CONFLICT', message: expect.stringContaining('그 시각 비어 있는 다른 계정: TEST-B27B') },
+    });
+    // 제안은 미리 잡지 않는다 — 막힌 수업에는 아무 계정도 붙지 않았다
+    const [{ n }] = (await q.query(`SELECT count(*)::int AS n FROM ser_occ WHERE ser_id = $1 AND zacc_id IS NOT NULL`, [s2])) as { n: number }[];
+    expect(n).toBe(0);
+  });
+
+  it('비어 있는 계정이 없으면 시간 조정 또는 계정 추가를 제안한다 — 회차 하나면 계정이 비는 시각을 붙인다 (N-134)', async () => {
+    const a = await svc().create(ME, { label: 'TEST-N134A', loginEmail: 'n134a@tn.kr', joinUrl: 'https://zoom.us/j/134' });
+    const b = await svc().create(ME, { label: 'TEST-N134B', loginEmail: 'n134b@tn.kr', joinUrl: 'https://zoom.us/j/135' });
+    await q.query(`UPDATE zacc SET active = false WHERE id <> ALL($1::bigint[])`, [[a.id, b.id]]);
+    const s1 = await makeSer('reading-lab');
+    const s2 = await makeSer('vocabulary');
+    const s3 = await makeSer('writing');
+    await svc().assign(ME, { serId: s3, zaccId: null }); // 회차를 투영해 둔다(실제로는 시간표 쓰기가 만든다)
+    await svc().assign(ME, { serId: s1, zaccId: a.id });
+    await svc().assign(ME, { serId: s2, zaccId: b.id });
+    // 규칙 전체(회차 넷) — 시각은 붙이지 않고 두 길만 말한다
+    await expect(svc().assign(ME, { serId: s3, zaccId: a.id })).rejects.toMatchObject({
+      response: { code: 'RESOURCE_CONFLICT', message: expect.stringMatching(/비어 있는 다른 계정이 없습니다\. 수업 시간을 옮기거나 줌 계정을 추가해 주세요$/) },
+    });
+    // 회차 하나 — 10:00~11:00 은 두 계정 모두 찼다. 계정이 비는 가장 가까운 시각을 붙인다
+    const [{ d: day }] = (await q.query(
+      `SELECT to_char(on_date,'YYYY-MM-DD') AS d FROM ser_occ WHERE ser_id = $1 ORDER BY on_date DESC LIMIT 1`, [s3],
+    )) as { d: string }[];
+    await expect(svc().assign(ME, { serId: s3, onDate: day, zaccId: a.id })).rejects.toMatchObject({
+      response: { code: 'RESOURCE_CONFLICT', message: expect.stringContaining('수업 시간을 옮기거나(계정이 비는 시간: 09:00–10:00 · 11:00–12:00 · 11:30–12:30) 줌 계정을 추가해 주세요') },
+    });
+  });
+
   it('꺼 둔 계정은 새로 배정하지 않는다 — 이미 붙은 회차는 건드리지 않는다', async () => {
     const acc = await svc().create(ME, { label: 'TEST-H', loginEmail: 'h@tn.kr', joinUrl: 'https://zoom.us/j/9' });
     await svc().patch(ME, acc.id, { active: false });

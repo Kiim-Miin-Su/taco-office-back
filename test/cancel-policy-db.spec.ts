@@ -346,6 +346,8 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
       && notice.body.includes(a.from)
       && notice.body.includes('공휴일')
       && notice.body.includes('차감하지 않고 이월')
+      // C-33 「보강 안내가 만들어진다」 — 그날 전체는 보강을 한꺼번에 잡지 않는다(MAKEUP_NOT_BULK). 안내가 보강의 길을 말한다
+      && notice.body.includes('보강이 필요한 수업은 담당 선생님과 날짜를 정해 따로 안내드립니다')
     ))).toBe(true);
 
     // 응답을 잃고 같은 요청을 다시 보내도 안내 준비행을 새로 만들지 않고 기존 행을 복구해 돌려준다.

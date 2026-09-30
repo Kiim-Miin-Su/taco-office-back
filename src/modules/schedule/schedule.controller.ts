@@ -69,6 +69,8 @@ export class ScheduleController {
       && hasPerm(user.role, 'canCrudAttendance', user.perms);
     const forced = canAll ? undefined : user.id;
 
+    // N-142 — 목록을 읽기 **직전**의 기록 번호. 뒤에 읽으면 그 사이 남의 쓰기를 「봤다」고 잘못 셀 수 있다
+    const version = await this.svc.logVersion();
     const items = await this.svc.list({
       from,
       to,
@@ -77,7 +79,7 @@ export class ScheduleController {
       roomId,
       canCrudAttendance,
     });
-    return { from, to, items };
+    return { from, to, version, items };
   }
 
   /**
@@ -230,7 +232,8 @@ export class ScheduleController {
     summary: '겹침 미리보기 — 무엇과·누구와 겹치는가',
     description: '막는 것은 ser_occ 의 EXCLUDE 이고 이 응답은 설명이다. 비어 있어도 저장을 건너뛰지 않는다. '
       + '강사·강의실·줌 중 준 자원만 본다 — 하나도 주지 않으면 빈 배열이다. '
-      + 'freeLine 은 그 시각 비어 있는 강의실·줌 계정 이름 한 줄(각 최대 셋 · N-70)이다 — 누를 수 없고 미리 잡지 않는다.',
+      + 'freeLine 은 그 시각 비어 있는 강의실·줌 계정 이름 한 줄(각 최대 셋 · N-70)이다 — 누를 수 없고 미리 잡지 않는다. '
+      + 'altTimes 는 물은 자원이 date · alsoDates 모두에서 비는 같은 길이의 다른 시각(가까운 순 최대 셋 · A-06)이다 — 미리 잡지 않는다.',
   })
   @ApiOkResponse({ type: ConflictPreviewDto })
   async conflicts(@Query() query: ConflictQueryDto): Promise<ConflictPreviewDto> {
@@ -247,8 +250,11 @@ export class ScheduleController {
       zaccId: query.zaccId ?? null,
       exceptSerId: query.exceptSerId ?? null,
     };
-    const [conflicts, freeLine] = await Promise.all([this.svc.conflicts(probe), this.svc.freeLine(probe)]);
-    return { conflicts, freeLine };
+    const [conflicts, freeLine, altTimes] = await Promise.all([
+      this.svc.conflicts(probe), this.svc.freeLine(probe),
+      this.svc.altTimes({ ...probe, dates: [query.date, ...(query.alsoDates ?? [])] }),
+    ]);
+    return { conflicts, freeLine, altTimes };
   }
 
   @Get('horizon')
@@ -392,7 +398,8 @@ export class ScheduleController {
     summary: '수업 고치기 — scope 로 이번만·향후·모두를 가른다 (D-R16)',
     description: '같은 SER의 쓰기는 부모 행 잠금 획득 순서로 처리하며 최신 저장값으로 부분 변경을 검증한다. '
       + '생략한 필드는 보존하고 this의 null 시간·날짜는 원본 상속으로 되돌린다. '
-      + 'SER/EXC 저장과 회차 투영은 한 transaction이다. 버전 충돌 검출/멱등 키 계약은 제공하지 않는다.',
+      + 'SER/EXC 저장과 회차 투영은 한 transaction이다. 막는 버전 충돌 검출/멱등 키 계약은 제공하지 않는다 — 나중 저장이 반영된다. '
+      + 'readVersion(목록의 version)을 주면 그 뒤 다른 사람이 같은 수업을 고친 마지막 기록을 overwrote 로 알려 준다(N-142).',
   })
   @ApiOkResponse({ type: WriteResultDto })
   @ApiConflictResponse({ type: ApiErrorDto, description: `SERIES_HAS_REPORTS | SERIES_HAS_EXCEPTIONS — 종류·반복 규칙 변경으로 연결된 리포트·회차 예외가 고아가 되는 것을 막는다 | ${scheduleWriteConflict}` })

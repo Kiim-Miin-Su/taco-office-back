@@ -13,6 +13,8 @@ import { nowHourKst, todayKst } from '../../lib/kst';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { sealSecret, secretKeyFrom, SECRET_BOX_HEADER_BYTES } from '../../lib/secret-box';
 import { audit } from '../../lib/audit';
+import { altTimes, altTimesText } from '../../lib/alt-times';
+import { END_MIN, kstDateOf, START_MIN } from '../../lib/sql';
 import { maskEmail } from '../notify/sender';
 import { loadState } from '../schedule/schedule.state.repo';
 import { assertZaccAssignable } from '../schedule/schedule.references';
@@ -195,7 +197,67 @@ export class ZoomService {
    * 겹침은 마지막에 `ser_occ` 의 EXCLUDE 가 막고, 그때 트랜잭션이 통째로 되돌아간다.
    */
   async assign(userId: number, dto: ZoomAssignDto): Promise<ZoomAssignResultDto> {
-    return this.zaccs.manager.transaction((m) => this.assignIn(m, userId, dto));
+    try {
+      return await this.zaccs.manager.transaction((m) => this.assignIn(m, userId, dto));
+    } catch (e) {
+      // 막은 것은 EXCLUDE 다(ApiErrorFilter 의 RESOURCE_CONFLICT). 트랜잭션이 되돌아간 뒤 **무엇을 할 수 있는지**만 보탠다 (B-27 · N-134)
+      const pg = (e as { driverError?: { code?: string; constraint?: string }; code?: string; constraint?: string }) ?? {};
+      const code = pg.driverError?.code ?? pg.code;
+      const constraint = pg.driverError?.constraint ?? pg.constraint;
+      if (dto.zaccId != null && code === '23P01' && (constraint === undefined || constraint === 'ser_occ_zoom_no_overlap')) {
+        throw await this.zoomConflict(dto.serId, dto.onDate ?? null, dto.zaccId);
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * 줌 계정 겹침 거절의 제안 (테스트 시나리오 B-27 「비어 있는 다른 계정을 제안」 · N-134 「시간 조정 또는 계정 추가를 제안」).
+   *
+   * 「비어 있다」는 N-70 freeLine · §21 「지금 가능」과 같은 판정이다 — 쓰는 계정(active) 가운데 그 수업의 회차(이 요청이
+   * 붙이려던 회차들) 어느 것과도 다른 수업이 겹치지 않는 것. 없으면 계정을 늘리거나 시간을 옮기라고 말하고, 회차가 하나면
+   * 그날 강사 · 강의실 · 쓸 수 있는 계정이 함께 비는 시각을 붙인다(lib/alt-times · A-06 과 같은 계산).
+   * **미리 잡지 않는다** — 다시 배정해야 하며 그 사이 남이 잡을 수 있다. 코드는 그대로 RESOURCE_CONFLICT 이고 제안은 문장에만 싣는다
+   * (ApiErrorFilter 가 code · message 둘만 내보낸다 — 배정 창은 서버 문장을 그대로 보인다).
+   */
+  private async zoomConflict(serId: number, onDate: string | null, zaccId: number): Promise<ConflictException> {
+    const run = (sql: string, p: unknown[]) => this.zaccs.manager.query(sql, p) as Promise<unknown[]>;
+    const free = (await run(
+      `WITH t AS (SELECT o.span FROM ser_occ o
+                   WHERE o.ser_id = $1 AND NOT o.canceled AND ($2::date IS NULL OR o.on_date = $2::date))
+       SELECT z.id, z.label FROM zacc z
+        WHERE z.active AND z.id <> $3
+          AND NOT EXISTS (SELECT 1 FROM t JOIN ser_occ o
+                            ON o.zacc_id = z.id AND NOT o.canceled AND o.ser_id <> $1 AND o.span && t.span)
+        ORDER BY z.id LIMIT 3`,
+      [serId, onDate, zaccId],
+    )) as Array<{ id: string; label: string }>;
+    const base = '같은 시간에 이 줌 계정이 이미 다른 수업에 잡혀 있습니다';
+    if (free.length) {
+      return new ConflictException({
+        code: 'RESOURCE_CONFLICT',
+        message: `${base} — 그 시각 비어 있는 다른 계정: ${free.map((z) => z.label).join(' · ')}`,
+      });
+    }
+    const occs = (await run(
+      `SELECT to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS d, ${START_MIN} AS s, ${END_MIN} AS e, o.teacher_id, o.room_id
+         FROM ser_occ o
+        WHERE o.ser_id = $1 AND NOT o.canceled AND ($2::date IS NULL OR o.on_date = $2::date)
+        ORDER BY lower(o.span) LIMIT 2`,
+      [serId, onDate],
+    )) as Array<{ d: string; s: number | string; e: number | string; teacher_id: string | null; room_id: string | null }>;
+    const one = occs.length === 1 ? occs[0]! : null;
+    const times = one
+      ? await altTimes(run, {
+        dates: [one.d], startMin: Number(one.s), endMin: Number(one.e), anyZoom: true, exceptSerId: serId,
+        teacherId: one.teacher_id == null ? null : Number(one.teacher_id), roomId: one.room_id == null ? null : Number(one.room_id),
+      })
+      : [];
+    const move = times.length ? `수업 시간을 옮기거나(계정이 비는 시간: ${altTimesText(times)})` : '수업 시간을 옮기거나';
+    return new ConflictException({
+      code: 'RESOURCE_CONFLICT',
+      message: `${base} — 그 시각 비어 있는 다른 계정이 없습니다. ${move} 줌 계정을 추가해 주세요`,
+    });
   }
 
   /**

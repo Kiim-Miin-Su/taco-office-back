@@ -25,6 +25,7 @@ import { nowMinKst, todayKst } from '../../lib/kst';
 import { progressPercent } from '../../lib/book';
 import { CANCEL_NOTICE_LIKE, cancelNoticeTitle } from '../../lib/cancel-notice';
 import { KIND_GROUPS, kindGroupLabel } from '../../lib/catalog-words';
+import { altTimes } from '../../lib/alt-times';
 
 export interface OccQuery extends OccurrenceQueryDto {
   canCrudAttendance?: boolean;
@@ -512,6 +513,23 @@ export class ScheduleService {
         : '그 시각 비어 있는 다른 줌 계정이 없습니다');
     }
     return parts.length ? parts.join(' / ') : null;
+  }
+
+  /** N-142 — 지금의 변경 기록 번호(LOG 마지막 id). 목록의 version 이고, 수정이 readVersion 으로 돌려준다 */
+  async logVersion(): Promise<number> {
+    const [row] = await this.q<{ v: string | number | null }>(`SELECT max(id) AS v FROM log`);
+    return Number(row?.v ?? 0);
+  }
+
+  /**
+   * 409 뒤 「다른 시간 제안」(테스트 시나리오 A-06) — 물은 자원이 준 날짜 모두에서 비는 같은 길이의 다른 시각.
+   * 계산은 lib/alt-times 한 벌이다(줌 배정 거절의 시간 조정 제안 · N-134 와 같은 SQL). 미리 잡지 않는다.
+   */
+  altTimes(q: {
+    dates: string[]; startMin: number; endMin: number;
+    teacherId?: number | null; roomId?: number | null; zaccId?: number | null; exceptSerId?: number | null;
+  }): Promise<Array<{ startMin: number; endMin: number }>> {
+    return altTimes((sql, p) => this.q(sql, p), q);
   }
 
   /**

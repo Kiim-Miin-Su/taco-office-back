@@ -30,7 +30,8 @@ describe('일정 조회/경로 → DTO → service 경계 (DB/인증은 통합 s
   const attendance = { save: jest.fn().mockResolvedValue({ attendance: null }), clear: jest.fn().mockResolvedValue({ attendance: null }) };
   beforeAll(async () => {
     const mod = await Test.createTestingModule({ controllers: [ScheduleController], providers: [
-      { provide: ScheduleService, useValue: { list, tracking } },
+      // N-142 — 목록은 읽기 직전의 기록 번호(version)를 함께 준다
+      { provide: ScheduleService, useValue: { list, tracking, logVersion: jest.fn().mockResolvedValue(7) } },
       { provide: ScheduleWriteService, useValue: write },
       { provide: ScheduleAttendanceService, useValue: attendance },
       { provide: SchedulePauseService, useValue: {} },
@@ -60,7 +61,7 @@ describe('일정 조회/경로 → DTO → service 경계 (DB/인증은 통합 s
   });
   it('정상 query5필드는 숫자 ID로 service에 전달하고 날짜 응답을 보존한다', async () => {
     await request(app.getHttpServer()).get('/schedule/occurrences')
-      .query({ ...range, teacherId: 1, studentId: 2, roomId: 3 }).expect(200).expect({ ...range, items: [] });
+      .query({ ...range, teacherId: 1, studentId: 2, roomId: 3 }).expect(200).expect({ ...range, version: 7, items: [] });
     expect(list).toHaveBeenCalledWith({ ...range, teacherId: 1, studentId: 2, roomId: 3, canCrudAttendance: true });
   });
   it('선택 필터 생략·윤년 날짜·안전 정수 상한을 허용한다', async () => {

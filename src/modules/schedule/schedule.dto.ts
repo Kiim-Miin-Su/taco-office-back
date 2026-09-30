@@ -149,6 +149,12 @@ export class OccurrenceDto {
 export class OccurrenceListDto {
   @ApiProperty({ example: '2026-08-24' }) from!: string;
   @ApiProperty({ example: '2026-08-30' }) to!: string;
+  @ApiProperty({
+    type: 'integer', minimum: 0,
+    description: '이 목록을 읽기 **직전**의 변경 기록 번호(LOG 의 마지막 id) — 수정(PATCH)에 readVersion 으로 돌려주면 그 뒤 남이 '
+      + '같은 수업을 고쳤는지 서버가 알려 준다(N-142 · overwrote). 막지 않는다 — 나중 저장이 반영된다',
+  })
+  version!: number;
   @ApiProperty({ type: [OccurrenceDto] }) items!: OccurrenceDto[];
 }
 
@@ -156,7 +162,7 @@ export class OccurrenceListDto {
    저장은 **자원 + scope** 한 형태로만 받는다. 엔드포인트를 동작마다 만들면
    같은 3범위 판정이 여러 곳에 흩어진다 (D-R16 · D-R21).                     */
 
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsDefined, IsIn, IsInt, IsObject, IsOptional, IsString,
   Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
@@ -322,6 +328,14 @@ export class AttendanceMutationResultDto {
 export const SCOPES = ['this', 'future', 'all'] as const;
 
 export class OccurrencePatchDto {
+  @ApiPropertyOptional({
+    type: 'integer', minimum: 0,
+    description: '화면이 읽은 목록의 version(N-142). 주면 그 뒤 **다른 사람이** 같은 수업을 고친 기록이 있는지 보고 결과의 overwrote 에 싣는다. '
+      + '막지 않는다 — 나중 저장이 반영되고, 덮어쓴 사실만 알린다. 안 주면 보지 않는다',
+  })
+  @IsOptional() @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER)
+  readVersion?: number;
+
   @ApiProperty({ enum: SCOPES, description: '이번만 · 향후 · 모두 (D-R16). 첫 회차의 future 는 all 로 강등된다 (D-R17)' })
   @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';
@@ -645,6 +659,19 @@ export class WriteResultDto {
       + '나머지 쓰기는 빈 배열이다. 오늘 이후 · 취소 아닌 것만, 최대 10줄',
   })
   studentOverlaps!: StudentOverlapDto[];
+
+  @ApiPropertyOptional({
+    type: () => OverwroteDto, nullable: true,
+    description: '수정(PATCH)에 readVersion 을 줬고, 그 뒤 **다른 사람이** 같은 수업을 고친 기록이 있으면 그 마지막 한 건 — '
+      + '이 저장이 그 내용을 덮어썼다(N-142 「나중 저장이 반영된다 · 충돌 시 안내」). 다른 쓰기와 readVersion 없는 수정은 null',
+  })
+  overwrote?: OverwroteDto | null;
+}
+
+/** N-142 — 내가 읽은 뒤 같은 수업을 먼저 고친 사람 · 때 (LOG 한 줄) */
+export class OverwroteDto {
+  @ApiProperty({ type: String, nullable: true, description: '고친 사람 이름 — 없는 계정이면 null' }) byName!: string | null;
+  @ApiProperty({ type: String, format: 'date-time', description: '고친 때 (KST 오프셋)' }) at!: string;
 }
 
 /** 학원 사유 휴강(전일 휴원 N-133 · 한 회차 학원 사정 휴강 C-32) 뒤 보호자 선택 발송으로 넘기는 학생별 준비행 (DQ3) */
@@ -912,6 +939,22 @@ export class ConflictQueryDto {
   @ApiPropertyOptional({ ...ID_SCHEMA, description: '자기 자신과는 겹치지 않는다 — 옮기는 회차의 SER' })
   @ValidateIf((_object, value) => value !== undefined)
   @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) exceptSerId?: number;
+
+  @ApiPropertyOptional({
+    type: [String], maxItems: 6,
+    description: '다른 시간 제안(altTimes)이 **함께 비어야 하는** 날짜 — 매주 월·수 규칙이면 첫 수를 준다(A-06). '
+      + '겹침 목록(conflicts)은 여전히 date 하나만 본다. 같은 키를 되풀이해 보낸다(alsoDates=…&alsoDates=…)',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => (value === undefined ? undefined : Array.isArray(value) ? value : [value]), { toClassOnly: true })
+  @IsArray() @ArrayMaxSize(6) @IsCalendarDate({ each: true })
+  alsoDates?: string[];
+}
+
+/** 다른 시간 제안 한 칸 — 같은 날짜(들) · 같은 길이 (A-06 · N-134) */
+export class AltTimeDto {
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 1439 }) startMin!: number;
+  @ApiProperty({ type: 'integer', minimum: 1, maximum: 1440 }) endMin!: number;
 }
 
 export class ConflictPreviewDto {
@@ -924,6 +967,13 @@ export class ConflictPreviewDto {
       + '없으면 null. 누를 수 없고 미리 잡지 않는다 — 다시 저장해야 하며 그 사이 남이 잡을 수 있다',
   })
   freeLine!: string | null;
+
+  @ApiProperty({
+    type: [AltTimeDto],
+    description: '물은 자원(강사 · 강의실 · 줌)이 date 와 alsoDates 모두에서 비어 있는 같은 길이의 다른 시각 — 가까운 순서 최대 셋 · '
+      + '09:00~22:00 · 30분 간격 · 강사의 날짜 있는 불가 시간은 피한다(A-06). 미리 잡지 않는다 — 다시 저장해야 하며 그 사이 남이 잡을 수 있다',
+  })
+  altTimes!: AltTimeDto[];
 }
 
 /** §11 선생님별 개인 도구줄 「안내 N」 (N-100 · W11) */
