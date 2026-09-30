@@ -162,6 +162,30 @@ describe('문자 길이는 바이트로 잰다 · 제한 시간을 건다 (보�
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  /*
+   * all160 부분 구현(2026-09-30) — 로컬 문자 받는 곳(QA). SENS_BASE_URL 은 **운영이 아닐 때 · 루프백 주소일 때만** 따른다.
+   * 운영(NODE_ENV=production)이나 밖의 주소면 늘 진짜 SENS 로 간다 — 서명 키를 실은 요청이 엉뚱한 곳으로 새지 않게.
+   */
+  it('SENS_BASE_URL 은 운영이 아니고 루프백일 때만 따른다 — 운영 · 바깥 주소 · 모양이 틀린 값은 진짜 SENS', async () => {
+    const env = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'test';
+      await cfg({ ...FULL, SENS_BASE_URL: 'http://127.0.0.1:2626/' }).send({ channel: 'sms', to: '01012345678', body: 'x' });
+      expect(String(fetchSpy.mock.calls.at(-1)![0])).toBe('http://127.0.0.1:2626/sms/v2/services/svc/messages');
+      await cfg({ ...FULL, SENS_BASE_URL: 'http://localhost:2626' }).send({ channel: 'sms', to: '01012345678', body: 'x' });
+      expect(String(fetchSpy.mock.calls.at(-1)![0])).toBe('http://localhost:2626/sms/v2/services/svc/messages');
+      for (const bad of ['https://evil.example.com', 'http://10.0.0.5:2626', 'not a url', 'ftp://127.0.0.1/']) {
+        await cfg({ ...FULL, SENS_BASE_URL: bad }).send({ channel: 'sms', to: '01012345678', body: 'x' });
+        expect(String(fetchSpy.mock.calls.at(-1)![0])).toBe('https://sens.apigw.ntruss.com/sms/v2/services/svc/messages');
+      }
+      process.env.NODE_ENV = 'production';
+      await cfg({ ...FULL, SENS_BASE_URL: 'http://127.0.0.1:2626' }).send({ channel: 'sms', to: '01012345678', body: 'x' });
+      expect(String(fetchSpy.mock.calls.at(-1)![0])).toBe('https://sens.apigw.ntruss.com/sms/v2/services/svc/messages');
+    } finally {
+      process.env.NODE_ENV = env;
+    }
+  });
+
   it('SENS 요청에 제한 시간(AbortSignal)을 싣는다', async () => {
     await cfg(FULL).send({ channel: 'sms', to: '01012345678', body: 'x' });
     expect(fetchSpy.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);

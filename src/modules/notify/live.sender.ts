@@ -14,6 +14,24 @@ import {
   type SendChannel, type Sender, type SendRequest, type SendResult,
 } from './sender';
 
+/** 진짜 SENS 주소 — 운영은 언제나 이 주소다 */
+export const SENS_ORIGIN = 'https://sens.apigw.ntruss.com';
+
+/**
+ * 로컬 문자 받는 곳(QA 싱크) — `SENS_BASE_URL` 은 **운영이 아닐 때(NODE_ENV≠production) · 루프백 주소(127.0.0.1 · localhost · ::1)일 때만**
+ * 따른다(all160 부분 구현 2026-09-30 · G-73 · H-76 · N-133 을 보낸 척 없이 끝까지 잰다). 그 밖에는 늘 진짜 SENS 다 —
+ * 서명 키를 실은 요청이 설정 실수로 밖의 주소로 새지 않게. 메일은 원래부터 `SMTP_HOST` 로 받는 곳을 고른다.
+ */
+export function sensOrigin(override: string | undefined, nodeEnv: string | undefined): string {
+  if (!override || nodeEnv === 'production') return SENS_ORIGIN;
+  try {
+    const u = new URL(override);
+    const loopback = ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname);
+    if ((u.protocol === 'http:' || u.protocol === 'https:') && loopback) return u.origin;
+  } catch { /* 모양이 틀리면 진짜 주소 */ }
+  return SENS_ORIGIN;
+}
+
 /** 채널 하나의 공급자 구현 — 설정이 있는가 · 보낸다 */
 interface ChannelAdapter {
   ready(): boolean;
@@ -122,7 +140,7 @@ export class LiveSender implements Sender {
       .update(`POST ${url}\n${ts}\n${s.accessKey}`)
       .digest('base64');
     try {
-      const res = await fetch(`https://sens.apigw.ntruss.com${url}`, {
+      const res = await fetch(`${sensOrigin(this.cfg.get<string>('SENS_BASE_URL'), process.env.NODE_ENV)}${url}`, {
         method: 'POST',
         signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
         headers: {
