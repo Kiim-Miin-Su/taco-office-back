@@ -50,8 +50,8 @@ npm run dev                          # http://localhost:3001/api/docs
 | `npm test` | `.env.local`도 읽음. DB 테스트는 `DATABASE_URL`/`TEST_DATABASE_URL` 대상 확인 필수; 미설정 skip은 검증 통과가 아님 |
 | `npm run typecheck` · `npm run lint` | 타입 · 린트 |
 | `npm run migration:run` · `migration:revert` | 스키마 |
-| `npm run openapi:gen` | `openapi.json` 갱신 — **DTO 를 고쳤으면 같은 커밋에** |
-| `npm run openapi:check` | 생성물이 DTO 와 같은지 (CI) |
+| `DATABASE_URL=... npm run openapi:gen` | `openapi.json` 갱신 — **DTO 를 고쳤으면 같은 커밋에**. 명시한 DB 에 연결함 |
+| `DATABASE_URL=... npm run openapi:check` | 생성물이 DTO 와 같은지 (CI). `.env.local` 의 암묵적 DB 대상은 사용하지 않음 |
 | `bash scripts/entities-gen.sh` | 레거시 생성기. 현재 수기 CHECK/타입 보강을 덮을 수 있어 무차별 재생성 금지 |
 
 ## 생성물과 스키마

@@ -14,13 +14,18 @@ import 'reflect-metadata';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { NestFactory } from '@nestjs/core';
-import { AppModule } from '../src/app.module';
 import { buildOpenApi } from '../src/openapi';
 
 const OUT = join(__dirname, '..', 'openapi.json');
 
 async function main() {
   const check = process.argv.includes('--check');
+  // 계약 검사는 AppModule 을 띄우므로 DB 에 연결한다. 암묵적인 .env.local 값으로
+  // 운영 DB 를 조회하지 않도록, import(=data-source 초기화) 전에 대상을 명시시킨다.
+  if (!process.env.DATABASE_URL?.trim()) {
+    throw new Error('DATABASE_URL 을 셸에 명시하세요 — OpenAPI 검사도 DB 에 연결합니다.');
+  }
+  const { AppModule } = await import('../src/app.module');
   /*
    * `abortOnError` 를 끈다. 기본값이면 **Nest 가 스스로 프로세스를 죽인다** —
    * 던지지 않으므로 아래 catch 가 돌지 못하고, 실패가 종료 코드 1 로만 남는다.
@@ -86,7 +91,7 @@ async function main() {
 main().catch((e: unknown) => {
   const msg = (e as Error).message;
   console.error(`\n✗ openapi.json 을 만들지 못했습니다 — ${msg}`);
-  if (/ECONNREFUSED|connect|password|database/i.test(msg)) {
+  if (!msg.startsWith('DATABASE_URL 을 셸에 명시하세요') && /ECONNREFUSED|connect|password|database/i.test(msg)) {
     console.error('  DB 에 못 붙었습니다. AppModule 을 띄우려면 DB 가 떠 있어야 합니다.');
   }
   console.error('  openapi.json 은 **고치지 않았습니다** — 옛 내용 그대로입니다.\n');
