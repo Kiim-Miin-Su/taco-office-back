@@ -167,6 +167,26 @@ export class BookVersionDto {
   @ApiProperty({ description: '지금 쓰는 판인가 — 판단은 서버가 한다' }) inUse!: boolean;
 }
 
+/** E-53 새 판을 올린 자리의 기존 배부자 한 줄 — 받은 판(ISSUE.vers_id)과 상태 낱말은 서버가 적는다 */
+export class BookHolderDto {
+  @ApiProperty() issueId!: number;
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiPropertyOptional({ ...S, description: '그 학생이 받은 판 — 배부는 받은 판에 묶인다(서가의 지금 판이 바뀌어도 그대로)' }) edition?: string | null;
+  @ApiProperty({ enum: ['wait', 'auto', 'ok'] }) state!: string;
+  @ApiProperty() stateLabel!: string;
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true }) issuedOn?: string | null;
+}
+
+/** E-53 「기존 배부자 목록이 표시된다」 — 끝나지 않은 배부(승인 대기 · 전달 대기 · 배부 완료)만, 학생 이름순 */
+export class BookHoldersDto {
+  @ApiProperty() libId!: number;
+  @ApiProperty() title!: string;
+  @ApiPropertyOptional({ ...S, description: '서가의 지금 판' }) edition?: string | null;
+  @ApiPropertyOptional({ ...S, description: '가장 나중 판 — 지금 판과 다르면 서가 카드의 판 단추로 바꿀 수 있다' }) latestEdition?: string | null;
+  @ApiProperty({ type: [BookHolderDto] }) items!: BookHolderDto[];
+}
+
 /** §40 교재 이력 한 줄 — **쓰는 화면이 없다.** 다른 쓰기의 부수효과로 쌓인다 */
 export class BookHistoryRowDto {
   @ApiProperty() id!: number;

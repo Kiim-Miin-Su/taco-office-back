@@ -100,6 +100,31 @@ d('§39 판 · §40 이력 (C52)', () => {
     expect(after).toMatchObject({ edition: 'v2026.08', latestEdition: 'v2026.08', hasNewer: false });
   });
 
+  /*
+   * E-53 「기존 배부자 목록이 표시된다 · 교체 여부를 고를 수 있다」 — 새 판을 올린 자리가 그 교재를 **지금 가진** 학생을 읽는다.
+   * 배부는 받은 판에 묶인다(ISSUE.vers_id) — 목록은 학생마다 받은 판을 적고, 끝난 배부(회수 · 취소 · 반려)는 빼며, 판단은 서버다.
+   */
+  it('기존 배부자 — 끝나지 않은 배부만 학생 이름순 · 받은 판과 상태 낱말을 서버가 준다 (E-53)', async () => {
+    const v1 = await svc().addVersion(81, libId, { edition: 'v2026.03', fromDate: day(-30) });
+    const stus = (await q.query(
+      `INSERT INTO stu (name, grade) VALUES ('판배부다','10'), ('판배부가','11'), ('판배부나','9') RETURNING id, name`,
+    )) as Array<{ id: string; name: string }>;
+    const idOf = (n: string) => Number(stus.find((x) => x.name === n)!.id);
+    await q.query(
+      `INSERT INTO issue (lib_id, vers_id, student_id, issued_on, state, returned_on) VALUES
+         ($1, $2, $3, $6::date, 'ok', NULL), ($1, $2, $4, NULL, 'wait', NULL), ($1, $2, $5, $6::date, 'returned', $7::date)`,
+      [libId, v1.id, idOf('판배부다'), idOf('판배부가'), idOf('판배부나'), day(-10), day(-2)],
+    );
+    await svc().addVersion(81, libId, { edition: 'v2026.09', fromDate: day(+1) });
+    const h = await svc().holders(libId);
+    expect(h).toMatchObject({ libId, title: '판 시험 교재', edition: 'v2026.03', latestEdition: 'v2026.09' });
+    expect(h.items.map((x) => [x.studentName, x.edition, x.state, x.stateLabel, x.issuedOn])).toEqual([
+      ['판배부가', 'v2026.03', 'wait', '승인 대기', null],
+      ['판배부다', 'v2026.03', 'ok', '배부 완료', day(-10)],
+    ]);
+    await expect(svc().holders(99999999)).rejects.toMatchObject({ status: 404 });
+  });
+
   it('효력일이 같은 판도 명시적으로 고른 판 하나가 현재가 된다', async () => {
     const first = await svc().addVersion(81, libId, { edition: 'v1', fromDate: todayKst() });
     const second = await svc().addVersion(81, libId, { edition: 'v2', fromDate: todayKst() });

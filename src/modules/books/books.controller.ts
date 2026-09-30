@@ -9,7 +9,7 @@ import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotF
 import {
   BookHistoryDto, BookHistoryQueryDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto, BookIssueProgressDto,
   BookIssueReturnDto, BookIssueTransitionDto, BookPackDto, BookPackPatchDto, BookPacksDto, BookPackWriteDto,
-  BookPatchDto, BookShelfQueryDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto, BookWriteResultDto,
+  BookHoldersDto, BookPatchDto, BookShelfQueryDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto, BookWriteResultDto,
 } from './books.dto';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
@@ -173,6 +173,18 @@ export class BooksController {
     @Body() dto: BookVersionCreateDto,
   ): Promise<BookVersionDto> {
     return this.svc.addVersion(user.id, id, dto);
+  }
+
+  @Get(':id/holders')
+  @ApiOperation({
+    summary: '기존 배부자 — 새 판을 올린 자리가 읽는다 (E-53)',
+    description: '끝나지 않은 배부(승인 대기 · 전달 대기 · 배부 완료)만, 학생 이름순. 판은 학생이 받은 판이다(배부는 받은 판에 묶인다). '
+      + '서가의 지금 판 · 가장 나중 판을 함께 준다 — 교체는 판 단추(PATCH versions/:id/use)다.',
+  })
+  @ApiOkResponse({ type: BookHoldersDto })
+  @ApiNotFoundResponse({ description: '교재 없음' })
+  async holders(@Param('id', ParseIntPipe) id: number): Promise<BookHoldersDto> {
+    return this.svc.holders(id);
   }
 
   @Patch('versions/:id/use')

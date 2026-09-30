@@ -19,7 +19,7 @@ import {
   progressIssue, progressPercent, type IssueState, type IssueTransitionState, type PackState, type PackType,
 } from '../../lib/book';
 import type {
-  BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto,
+  BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookHoldersDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto,
   BookPackDto, BookPackPatchDto, BookPacksDto, BookPackWriteDto,
   BookPatchDto, BookShelfQueryDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto,
 } from './books.dto';
@@ -82,6 +82,19 @@ function packReceiveAllowed(state: string, coordinatorId: unknown, viewer: PackV
   return Number(coordinatorId) === viewer.id || (isRole(viewer.role) && canCeoReceivePack(viewer.role));
 }
 
+/**
+ * 교재 한 권(`l`)의 **지금 판(cur)** 과 **가장 나중 판(top)** — 서가(§39)와 기존 배부자(E-53)가 같은 판정을 쓴다.
+ * 지금 판은 시작일이 오늘(`$1`) 이하인 것 중 가장 나중 것, 가장 나중 판은 시작일과 상관없이 제일 나중 것이다.
+ */
+const VERS_CUR_TOP_SQL = `LEFT JOIN LATERAL (
+           SELECT v.id, v.edition, v.file_url, v.se_file_id, v.te_file_id FROM vers v
+            WHERE v.lib_id = l.id AND (v.from_date IS NULL OR v.from_date <= $1::date)
+            ORDER BY v.from_date DESC NULLS LAST, v.activated_at DESC, v.id DESC LIMIT 1) cur ON true
+         LEFT JOIN LATERAL (
+           SELECT v.id, v.edition FROM vers v
+            WHERE v.lib_id = l.id
+            ORDER BY v.from_date DESC NULLS LAST, v.id DESC LIMIT 1) top ON true`;
+
 @Injectable()
 export class BooksService {
   constructor(@InjectRepository(Lead) private readonly anyRepo: Repository<Lead>) {}
@@ -115,14 +128,7 @@ export class BooksService {
          LEFT JOIN sub s ON s.key = l.sub_key
          LEFT JOIN book_subject bs ON bs.key = l.book_subject_key
          LEFT JOIN book_category bc ON bc.key = l.book_category_key
-         LEFT JOIN LATERAL (
-           SELECT v.id, v.edition, v.file_url, v.se_file_id, v.te_file_id FROM vers v
-            WHERE v.lib_id = l.id AND (v.from_date IS NULL OR v.from_date <= $1::date)
-            ORDER BY v.from_date DESC NULLS LAST, v.activated_at DESC, v.id DESC LIMIT 1) cur ON true
-         LEFT JOIN LATERAL (
-           SELECT v.id, v.edition FROM vers v
-            WHERE v.lib_id = l.id
-            ORDER BY v.from_date DESC NULLS LAST, v.id DESC LIMIT 1) top ON true
+         ${VERS_CUR_TOP_SQL}
         ORDER BY bs.sort NULLS LAST, bc.sort NULLS LAST, l.code`,
       [todayKst()],
     );
@@ -429,6 +435,36 @@ export class BooksService {
    *
    * **이미 쓰고 있는 판은 다시 당기지 않는다** — 이력에 같은 일이 두 번 남는다.
    */
+  /**
+   * E-53 「기존 배부자 목록이 표시된다」 — 새 판을 올린 자리(판 올리기 창)가 읽는다. 끝나지 않은 배부(승인 대기 · 전달 대기 ·
+   * 배부 완료 — issueActiveSql)만, 학생 이름순. 판은 **학생이 받은 판**(ISSUE.vers_id)이다 — 서가의 지금 판이 바뀌어도 이미 준 책은 그대로다.
+   * 「교체 여부를 고를 수 있다」는 서가의 판 단추(useVersion)다 — 여기서는 누가 옛 판을 들고 있는지만 말한다.
+   */
+  async holders(libId: number): Promise<BookHoldersDto> {
+    const [lib] = await this.q(
+      `SELECT l.id, l.title, cur.edition, top.edition AS latest_edition FROM lib l ${VERS_CUR_TOP_SQL} WHERE l.id = $2`,
+      [todayKst(), libId],
+    );
+    if (!lib) throw new NotFoundException('교재를 찾을 수 없습니다');
+    const rows = await this.q(
+      `SELECT i.id, i.student_id, st.name AS student_name, v.edition, i.state, to_char(i.issued_on, 'YYYY-MM-DD') AS issued_on
+         FROM issue i JOIN stu st ON st.id = i.student_id LEFT JOIN vers v ON v.id = i.vers_id
+        WHERE i.lib_id = $1 AND ${issueActiveSql('i')}
+        ORDER BY st.name, i.id`,
+      [libId],
+    );
+    return {
+      libId: Number(lib.id), title: String(lib.title),
+      edition: (lib.edition as string | null) ?? null, latestEdition: (lib.latest_edition as string | null) ?? null,
+      items: rows.map((r) => ({
+        issueId: Number(r.id), studentId: Number(r.student_id), studentName: String(r.student_name),
+        edition: (r.edition as string | null) ?? null, state: String(r.state),
+        stateLabel: ISSUE_STATE_LABEL[r.state as IssueState] ?? String(r.state),
+        issuedOn: (r.issued_on as string | null) ?? null,
+      })),
+    };
+  }
+
   async useVersion(userId: number, versId: number): Promise<BookVersionDto> {
     const today = todayKst();
     return this.anyRepo.manager.transaction(async (m: EntityManager) => {
