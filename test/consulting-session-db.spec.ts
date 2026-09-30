@@ -304,6 +304,17 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
     expect(await count(`SELECT count(*)::int AS n FROM cons_sess WHERE cons_id = $1`, [consC])).toBe(before);
     expect(await count(`SELECT count(*)::int AS n FROM todo WHERE cons_id = $1`, [consC])).toBe(2);
     expect(await count(`SELECT count(*)::int AS n FROM ser WHERE teacher_id = $1 AND from_date = $2::date`, [OWNER, plus(TODAY, 9)])).toBe(0);
+    /*
+     * I-91 「겹침 검사가 먼저 돈다 · 담당자가 그 시간에 다른 일정 있으면 주황 점 표시」 — 미리보기는 거절하지 않고 **날짜마다**
+     * 담당의 다른 일정을 알린다(busy). 겹친 날짜는 미리 세우지 않고 나머지 날짜는 그대로 보인다. 확정은 여전히 EXCLUDE 가 막는다(위 409).
+     */
+    const pre = (await api('post', `/consulting/${consC}/sessions/preview`).send({ dates: [plus(TODAY, 9), F3], startMin: 900, endMin: 960 }).expect(201)).body;
+    expect(pre.busy).toEqual([{ date: F3, lines: ['15:00–16:00 겹침 표본'] }]);
+    expect(pre.rows.map((x: { date: string }) => x.date)).toEqual([plus(TODAY, 9)]);
+    // 겹침이 없으면 빈 배열 · 실제 잡기의 결과에도 빈 배열
+    const clean = (await api('post', `/consulting/${consC}/sessions/preview`).send({ dates: [plus(TODAY, 9)], startMin: 900, endMin: 960 }).expect(201)).body;
+    expect(clean.busy).toEqual([]);
+    expect(await count(`SELECT count(*)::int AS n FROM cons_sess WHERE cons_id = $1`, [consC])).toBe(before);
     // 담당을 남으로 — 활동 중이 아닌 사람은 400 · 없는 사람 404
     await q(`UPDATE staff SET active = false WHERE id = $1`, [TEACHER]);
     expect((await api('post', `/consulting/${consC}/sessions`).send({ dates: [plus(TODAY, 11)], startMin: 900, endMin: 960, staffId: TEACHER }).expect(400)).body.code).toBe('STAFF_INACTIVE');

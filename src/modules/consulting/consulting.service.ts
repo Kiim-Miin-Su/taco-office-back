@@ -31,7 +31,7 @@ import {
   CONSULTING_CONTRACT_STEPS, CONSULTING_CONTRACT_STEP_SUB,
   CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB,
   CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
-  consItemEditIssue, consPaidSql,
+  consItemDue, consItemEditIssue, consPaidSql,
   consSessDoneSql, consShareChipLabel, consShareLabel, consShareMeaning, consultingAgeDays, consultingArchiveIssue,
   consultingCloseIssue, consultingContractStepLabel, consultingExceptionCloseIssue, consultingRecordIssue,
   consultingRequesterWords, consultingTypeLabel, consultingTypeWords,
@@ -49,7 +49,7 @@ type R = Record<string, unknown>;
  * §31 진행 항목 한 줄 — SELECT 와 매핑이 **여기 하나**다. 목록 · 학생별 · 항목 체크 응답이 같은 칸을 읽는다
  * (셋이 따로 적고 있어 처리 시각(31-04)을 한 곳에만 더하면 나머지가 낡았다 · D-R22).
  */
-const CONS_ITEM_SELECT = `SELECT i.id, i.cons_id, i.seq, i.label, i.required, i.done, i.source,
+const CONS_ITEM_SELECT = `SELECT i.id, i.cons_id, i.seq, i.label, i.required, i.done, i.source, to_char(i.due_on,'YYYY-MM-DD') AS due_on,
               to_char(${kstDateOf('i.done_at')},'YYYY-MM-DD') AS done_on,
               CASE WHEN i.done_at IS NULL THEN NULL ELSE ${kstAt('i.done_at')} END AS done_at_text,
               s.name AS done_by_name
@@ -66,6 +66,9 @@ function consItemDto(r: R, files: ConsultingFileDto[], stage: string): ConsItemD
     required: r.required === true, done: r.done === true, source: String(r.source),
     doneBy: (r.done_by_name as string) ?? null, doneOn: (r.done_on as string) ?? null,
     doneAt: (r.done_at_text as string) ?? null,
+    // I-94 — 기한과 D-day(오늘 KST로 센다 · 끝낸 항목은 말하지 않는다)
+    dueOn: (r.due_on as string) ?? null,
+    ...consItemDue((r.due_on as string) ?? null, r.done === true, todayKst()),
     files,
     canAddFile: consItemEditIssue('file', facts) === null,
     canRename: consItemEditIssue('rename', facts) === null,
@@ -1023,10 +1026,16 @@ export class ConsultingService {
     const add = dto.add ?? [];
     const rename = dto.rename ?? [];
     const remove = dto.remove ?? [];
-    if (add.length + rename.length + remove.length === 0) {
+    const due = dto.due ?? [];
+    if (add.length + rename.length + remove.length + due.length === 0) {
       throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 항목이 없습니다' });
     }
+    // 기한은 이름과 한 줄에 함께 바꿀 수 있다 — 빼는 항목의 기한 · 같은 항목 기한 두 번은 막는다
     const touched = [...rename.map((x) => x.id), ...remove];
+    const dueIds = due.map((x) => x.id);
+    if (new Set(dueIds).size !== dueIds.length || dueIds.some((id) => remove.includes(id))) {
+      throw new BadRequestException({ code: 'CONS_ITEM_OP_DUPLICATE', message: '한 항목을 한 번에 두 번 바꿀 수 없습니다' });
+    }
     if (new Set(touched).size !== touched.length) {
       throw new BadRequestException({ code: 'CONS_ITEM_OP_DUPLICATE', message: '한 항목을 한 번에 두 번 바꿀 수 없습니다' });
     }
@@ -1040,17 +1049,17 @@ export class ConsultingService {
       const stage = String(c.stage);
       if (stage === 'done') throw new ConflictException({ code: 'ITEM_LOCKED', message: '종료된 컨설팅의 항목은 바꿀 수 없습니다' });
       const beforeRows = (await m.query(
-        `SELECT i.id, i.seq, i.label, i.required, i.done, i.source,
+        `SELECT i.id, i.seq, i.label, i.required, i.done, i.source, to_char(i.due_on,'YYYY-MM-DD') AS due_on,
                 (SELECT count(*)::int FROM cons_file cf WHERE cf.item_id = i.id) AS files
            FROM cons_item i WHERE i.cons_id = $1 ORDER BY i.seq FOR UPDATE OF i`, [consId],
-      )) as Array<{ id: string; seq: number; label: string; required: boolean; done: boolean; source: string; files: number }>;
+      )) as Array<{ id: string; seq: number; label: string; required: boolean; done: boolean; source: string; due_on: string | null; files: number }>;
       const byId = new Map(beforeRows.map((r) => [Number(r.id), r]));
       const snapshot = (rows: typeof beforeRows) => rows.map((r) => ({
-        id: Number(r.id), seq: Number(r.seq), label: r.label, required: r.required, done: r.done, source: r.source,
+        id: Number(r.id), seq: Number(r.seq), label: r.label, required: r.required, done: r.done, source: r.source, dueOn: r.due_on ?? null,
       }));
 
       // 판정 먼저 — 한 줄이라도 막히면 아무것도 쓰지 않는다
-      for (const id of touched) {
+      for (const id of [...touched, ...dueIds]) {
         if (!byId.has(id)) throw new NotFoundException({ code: 'CONS_ITEM_NOT_FOUND', message: '항목을 찾을 수 없습니다' });
       }
       const facts = (id: number) => {
@@ -1065,8 +1074,13 @@ export class ConsultingService {
         const issue = consItemEditIssue('remove', facts(id));
         if (issue) throw new ConflictException(issue);
       }
+      // 기한은 이름과 같은 판정이다 — 끝낸 항목의 기한은 「누가 언제 끝냈다」와 함께 굳는다 (I-94)
+      for (const x of due) {
+        const issue = consItemEditIssue('rename', facts(x.id));
+        if (issue) throw new ConflictException(issue);
+      }
       const renamed = new Map(rename.map((x) => [x.id, label(x.label)]));
-      const added = add.map((x) => ({ label: label(x.label), required: x.required === true }));
+      const added = add.map((x) => ({ label: label(x.label), required: x.required === true, dueOn: x.dueOn ?? null }));
       const finalLabels = [
         ...beforeRows.filter((r) => !remove.includes(Number(r.id))).map((r) => renamed.get(Number(r.id)) ?? r.label),
         ...added.map((x) => x.label),
@@ -1087,18 +1101,23 @@ export class ConsultingService {
         await m.query(`UPDATE cons_item SET label = $3 WHERE id = $1 AND cons_id = $2`, [id, consId, text]);
         await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'item_renamed',$2,$3)`, [consId, id, viewerId]);
       }
+      // 기한 — 흔적은 감사 원장(앞뒤 목록의 dueOn)만이다. 활동 원장 낱말(cons_event_type_check)은 늘리지 않는다 (I-94)
+      for (const x of due) {
+        if ((byId.get(x.id)!.due_on ?? null) === x.dueOn) continue;
+        await m.query(`UPDATE cons_item SET due_on = $3::date WHERE id = $1 AND cons_id = $2`, [x.id, consId, x.dueOn]);
+      }
       let seq = beforeRows.reduce((n, r) => Math.max(n, Number(r.seq)), 0);
       for (const x of added) {
         seq += 1;
         const [row] = (await m.query(
-          `INSERT INTO cons_item (cons_id,seq,label,required,done,source) VALUES ($1,$2,$3,$4,false,'manual') RETURNING id`,
-          [consId, seq, x.label, x.required],
+          `INSERT INTO cons_item (cons_id,seq,label,required,done,source,due_on) VALUES ($1,$2,$3,$4,false,'manual',$5::date) RETURNING id`,
+          [consId, seq, x.label, x.required, x.dueOn],
         )) as Array<{ id: string }>;
         await m.query(`INSERT INTO cons_event (cons_id,event_type,ref_id,by_id) VALUES ($1,'item_added',$2,$3)`, [consId, row.id, viewerId]);
       }
 
       const afterRows = (await m.query(
-        `SELECT i.id, i.seq, i.label, i.required, i.done, i.source, 0 AS files FROM cons_item i WHERE i.cons_id = $1 ORDER BY i.seq`, [consId],
+        `SELECT i.id, i.seq, i.label, i.required, i.done, i.source, to_char(i.due_on,'YYYY-MM-DD') AS due_on, 0 AS files FROM cons_item i WHERE i.cons_id = $1 ORDER BY i.seq`, [consId],
       )) as typeof beforeRows;
       await audit(m, 'consulting.items', {
         actorId: viewerId, entityId: consId, before: { items: snapshot(beforeRows) }, after: { items: snapshot(afterRows) },

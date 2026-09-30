@@ -6,6 +6,7 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
+// TBO-54 부분 구현 I-94 (2026-09-30 · v4.58): CONS_ITEM 칸 하나 — due_on date NULL 허용(기한 · 없으면 기한 없음). 테스트 시나리오 I-94 「기한이 있으면 D-day 표시」 — 원문 §31 항목 줄에 기한 입력이 없어 화면이 「기한 없음」이라 적어 왔다(사용자 지시 2026-09-30 「부분 구현 · 권고안으로 진행」). 「항목 수정」(PATCH /consulting/{id}/items)이 더할 때(add.dueOn) · 따로(due) 적고 지운다 · 끝낸 항목은 이름처럼 바꾸지 않는다(CONS_ITEM_DONE). D-day 낱말 · 지남은 저장하지 않고 읽을 때 서버가 오늘(KST)로 센다. 흔적은 감사 원장(consulting.items 앞뒤 목록에 dueOn)만 — CONS_EVENT 낱말은 늘리지 않는다. 옛 행 NULL(N-25) · migration 1765500000000 · down 은 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
 // TBO-54 일부 구현 A-01 (2026-09-29 · v4.57): LEAD 칸 셋 — parent_relation varchar(20) · parent_phone varchar(11)(숫자만 · lead_parent_phone_digits CHECK = GUARDIAN.phone 과 같은 모양 ^0[0-9]{9,10}$) · want varchar(120). 테스트 시나리오 A-01 「③ 학부모 어머니 · 연락처 010-1234-5678 ⑤ 원하는 것」 — 전에는 셋이 첫 접촉 한 줄(LEAD_TOUCH 자유 글)에 섞였다. 등록 확정(A-05)이 연락처를 그 학생의 보호자(GUARDIAN · 받는 채널 꺼짐 = 「+ 보호자 추가」 기본 · 같은 번호가 이미 있으면 잇지 않음)로 잇는다. LOG 는 가린 번호만. 옛 행 NULL(접촉 글에서 번호를 뽑지 않는다 · N-25) · migration 1765400000000 · down 은 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
 // TBO-54 운영 전 결정 N-132 (2026-09-29 · v4.56): PAY · CONS_PAY 칸 하나씩 — request_key uuid NULL 허용 + 부분 유니크 pay_request_key_once · cons_pay_request_key_once(WHERE request_key IS NOT NULL). 같은 부분 입금이 재시도 · 더블클릭 · 두 창으로 두 줄이 되던 것을 리포트 발송(rsend.request_key) · 보호자 발송과 같은 규약으로 막는다 — 같은 키 · 같은 내용은 앞선 줄로 수렴(권고 잠금 안 판정) · 같은 키 · 다른 내용이나 지운 줄의 키는 409 PAY_REQUEST_KEY_REUSED. 옛 행 NULL(N-25) · migration 1765300000000 · down 은 키가 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
 // TBO-54 코드 리뷰 후속 CR-BE-03 (2026-09-28 · v4.55): PDFLOG 칸 하나 — sha256 varchar(64) NULL 허용 + pdflog_sha256_hex CHECK(^[0-9a-f]{64}$) · 보존한 리포트 PNG 한 장의 바이트 지문. 발송 requestKey 멱등 판정이 학생·날짜·리포트 집합·본문에 더해 장마다 이 값까지 대조한다(같은 키·다른 바이트 → 409 REPORT_DELIVERY_REQUEST_KEY_REUSED). 옛 행 NULL(되짚어 해시할 원본이 없다 · N-25 · 그 장의 바이트 대조만 생략) · 재발송은 원본 행의 값을 복사 · migration 1765200000000 · down 은 지문이 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
@@ -719,6 +720,7 @@ Table CONS_ITEM {
   done       boolean     [not null, default: false]
   done_by    bigint      [ref: > STAFF.id]
   done_at    timestamptz
+  due_on     date        [note: '기한 — 없으면 NULL(v4.58 · I-94). D-day 는 저장하지 않고 서버가 오늘(KST)로 센다 · 끝낸 항목은 기한을 말하지 않는다']
   source     varchar(10) [not null, default: 'template', note: "template=§29 자동 생성분 · manual=「항목 수정」으로 담당이 더한 항목(v4.54 · W11 · N-18-a DQ5 대안 · PATCH /consulting/{id}/items) — cons_item_source_check"]
   created_at timestamptz [not null, default: `now()`]
 

@@ -8,7 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID,
-  Matches, Max, MaxLength, Min, MinLength, ValidateBy, ValidateNested,
+  Matches, Max, MaxLength, Min, MinLength, ValidateBy, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { UnavWarnDto } from '../schedule/schedule.dto';
@@ -78,6 +78,10 @@ export class ConsItemDto {
   @ApiPropertyOptional({ ...S, description: '처리 시각 KST(YYYY-MM-DDTHH:MI:SS+09:00) — 원본 §31 「2026-07-22 14:00 · 김범준」의 시각 (31-04). 미완료면 null' })
   doneAt?: string | null;
   @ApiProperty({ description: 'template(§29 기본 항목) | manual(원문 §31 「항목 수정」으로 담당이 더한 것 · N-18-a)' }) source!: string;
+  /* ── I-94 「기한이 있으면 D-day 표시」 — 낱말 · 지남은 서버가 오늘(KST)로 센다 · 끝낸 항목은 말하지 않는다 ── */
+  @ApiPropertyOptional({ ...S, format: 'date', description: '기한 — 없으면 null' }) dueOn?: string | null;
+  @ApiPropertyOptional({ ...S, description: '「D-3」 · 「D-day」 · 「D+2」 — 기한 없음 · 끝낸 항목은 null' }) dueLabel?: string | null;
+  @ApiProperty({ description: '기한이 지났고 아직 안 끝냈다' }) dueOverdue!: boolean;
   /* ── W11 · 원문 §31 항목 줄의 「파일」과 「항목 수정」 (N-63 · N-18-a) — 서는지는 서버가 정한다(consItemEditIssue) ── */
   @ApiProperty({
     type: () => [ConsultingFileDto], maxItems: CONS_ITEM_FILE_MAX,
@@ -96,6 +100,15 @@ export class ConsItemAddDto {
   @IsString() @MinLength(1) @MaxLength(80) label!: string;
   @ApiProperty({ description: '필수 — 켜면 끝내야 종료할 수 있다(N-18)' })
   @IsBoolean() required!: boolean;
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '기한 — 비우면 기한 없음 (I-94)' })
+  @IsOptional() @IsCalendarDate() dueOn?: string | null;
+}
+
+/** 「항목 수정」 — 기한을 적거나(날짜) 지울(null) 항목 한 줄 (I-94) */
+export class ConsItemDueDto {
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) id!: number;
+  @ApiProperty({ ...DATE_SCHEMA, nullable: true, description: 'null 이면 기한을 지운다' })
+  @ValidateIf((_o, v) => v !== null) @IsCalendarDate() dueOn!: string | null;
 }
 
 /** 「항목 수정」 — 이름 바꿀 항목 한 줄 */
@@ -120,6 +133,10 @@ export class ConsItemsEditDto {
   @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, maxItems: CONS_ITEM_MAX, uniqueItems: true, description: '뺄 항목 id' })
   @IsOptional() @IsArray() @ArrayMaxSize(CONS_ITEM_MAX) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true }) @Max(Number.MAX_SAFE_INTEGER, { each: true })
   remove?: number[];
+
+  @ApiPropertyOptional({ type: [ConsItemDueDto], maxItems: CONS_ITEM_MAX, description: '기한을 적거나 지울 항목 — 끝낸 항목은 이름처럼 바꾸지 않는다 (I-94)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(CONS_ITEM_MAX) @ValidateNested({ each: true }) @Type(() => ConsItemDueDto)
+  due?: ConsItemDueDto[];
 }
 
 export class ConsItemToggleDto {
@@ -590,6 +607,12 @@ export class ConsSessionPlanRowDto {
   @ApiProperty(N) todoId!: number | null;
 }
 
+/** I-91 — 새로 만들 날짜에 담당(또는 강의실)의 다른 일정이 있다 · 미리보기에서만 (주황 점) */
+export class ConsSessionBusyDto {
+  @ApiProperty({ ...DATE_SCHEMA }) date!: string;
+  @ApiProperty({ type: [String], description: '겹치는 일정 — 「15:00–16:00 수업 이름」 (시각 순)' }) lines!: string[];
+}
+
 export class ConsSessionsResultDto {
   @ApiProperty({ description: 'true 면 아무것도 쓰지 않았다' }) preview!: boolean;
   @ApiProperty() consId!: number;
@@ -605,6 +628,12 @@ export class ConsSessionsResultDto {
   @ApiProperty({ description: '약정 회차를 넘겼는가 — 막지 않고 말한다 (seq ≤ sessions 규칙은 미확정 · N-18)' }) overContract!: boolean;
   @ApiProperty({ type: [UnavWarnDto], description: '새 회차가 담당의 불가 시간 위에 놓였으면 (C84-c 와 같은 알림)' }) unavailable!: UnavWarnDto[];
   @ApiProperty({ description: '담당에게 알림을 보냈는가 (돌린 사람 본인이면 false)' }) notified!: boolean;
+  @ApiProperty({
+    type: [ConsSessionBusyDto],
+    description: 'I-91 「겹침 검사가 먼저 돈다 · 담당자가 그 시간에 다른 일정 있으면 주황 점」 — **미리보기만** 거절 대신 날짜마다 알리고 그 날짜는 rows 에서 뺀다. '
+      + '확정(쓰기)은 여전히 EXCLUDE 가 409 로 막으므로 늘 빈 배열이다',
+  })
+  busy!: ConsSessionBusyDto[];
 }
 
 /** 예외 종료 — 사유는 필수다(DQ6 권장안). 승인은 이 요청을 보낸 권한자다(서버가 권한을 본다) */

@@ -454,6 +454,37 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
       expect(n).toBe(1);
     });
 
+    /*
+     * I-94 「기한이 있으면 D-day 표시」 — 항목에 기한 칸(due_on · 없으면 NULL)이 생겼다. 「항목 수정」이 더할 때 · 따로(due) 적고 지운다.
+     * D-day 낱말과 지남은 서버가 적는다(오늘 KST 기준 · 끝낸 항목은 기한을 말하지 않는다). 끝낸 항목의 기한은 이름처럼 바꾸지 않는다.
+     */
+    it('기한 — 더할 때 · 따로 적고 지운다 · D-day 와 지남은 서버가 적는다 · 끝낸 항목은 409 · 감사 원장에 앞뒤 기한 (I-94)', async () => {
+      const id = await setup();
+      const ids = await itemIds(id);
+      const res = await api('patch', `/consulting/${id}/items`).send({
+        due: [{ id: ids['지원서 작성'], dueOn: plus(TODAY, 3) }, { id: ids['추가 메모'], dueOn: plus(TODAY, -2) }],
+        add: [{ label: '면접 준비', required: false, dueOn: TODAY }],
+      }).expect(200);
+      const by = Object.fromEntries((res.body as Row[]).map((r) => [r.label, r]));
+      expect(by['지원서 작성']).toMatchObject({ dueOn: plus(TODAY, 3), dueLabel: 'D-3', dueOverdue: false });
+      expect(by['추가 메모']).toMatchObject({ dueOn: plus(TODAY, -2), dueLabel: 'D+2', dueOverdue: true });
+      expect(by['면접 준비']).toMatchObject({ dueOn: TODAY, dueLabel: 'D-day', dueOverdue: false });
+      expect(by['재학 증명서']).toMatchObject({ dueOn: null, dueLabel: null, dueOverdue: false });
+      const done = await api('patch', `/consulting/${id}/items`).send({ due: [{ id: ids['재학 증명서'], dueOn: plus(TODAY, 1) }] }).expect(409);
+      expect(done.body.code).toBe('CONS_ITEM_DONE');
+      const cleared = await api('patch', `/consulting/${id}/items`).send({ due: [{ id: ids['지원서 작성'], dueOn: null }] }).expect(200);
+      expect((cleared.body as Row[]).find((r) => r.label === '지원서 작성')).toMatchObject({ dueOn: null, dueLabel: null });
+      const logs = await auditRows(id, 'items');
+      expect(logs).toHaveLength(2);
+      const beforeDue = ((logs[1]!.before as { items: Array<{ label: string; dueOn: string | null }> }).items).find((x) => x.label === '지원서 작성');
+      expect(beforeDue?.dueOn).toBe(plus(TODAY, 3));
+      // 끝내면 기한을 말하지 않는다
+      await api('patch', `/consulting/${id}/items/${ids['추가 메모']}`).send({ done: true }).expect(200);
+      const after = (await listItem(id)).items as Row[];
+      expect(after.find((r) => r.label === '추가 메모')).toMatchObject({ dueOn: plus(TODAY, -2), dueLabel: null, dueOverdue: false });
+      await api('patch', `/consulting/${id}/items`).send({ due: [{ id: ids['지원서 작성'], dueOn: '2026-02-30' }] }).expect(400);
+    });
+
     it('같은 이름 400 · 빈 요청 409 · 한 항목 두 번 400 · 없는 항목 404 · 종료된 건 409 · 강사 403', async () => {
       const id = await setup();
       const ids = await itemIds(id);

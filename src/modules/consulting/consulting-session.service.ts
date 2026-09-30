@@ -23,7 +23,7 @@ import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { audit } from '../../lib/audit';
 import { todayKst } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
-import { END_MIN, START_MIN, kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
+import { END_MIN, START_MIN, kstDateOf, serStuOn, spanOf, writtenRows } from '../../lib/sql';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import type { ConsCloseDto, ConsCloseResultDto, ConsSessionCreateDto, ConsSessionPlanRowDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsultingSessionDto } from './consulting.dto';
@@ -112,6 +112,7 @@ export class ConsultingSessionService {
       let seq = Number(next);
       const rows: ConsSessionPlanRowDto[] = [];
       const unavailable: UnavWarnDto[] = [];
+      const busy: ConsSessionsResultDto['busy'] = [];
       let created = 0;
       let linked = 0;
       for (const date of dates) {
@@ -134,6 +135,23 @@ export class ConsultingSessionService {
         } else {
           if (dto.startMin == null || dto.endMin == null) {
             throw new BadRequestException({ code: 'CONS_SESSION_TIME_REQUIRED', message: `${md(date)} 에는 ${staff.name} 의 컨설팅 회차가 시간표에 없습니다 — 시각을 적어야 새 회차를 만듭니다` });
+          }
+          /* I-91 「겹침 검사가 먼저 돈다 · 주황 점」 — 미리보기는 만들기 전에 그 날짜 · 시각의 담당(강의실) 일정을 본다. 겹침의 정의는
+             EXCLUDE 와 같은 span && 다. 겹치면 거절 대신 날짜마다 알리고 그 날짜는 세우지 않는다(나머지는 그대로 보인다).
+             확정은 이 검사를 믿지 않는다 — 그 사이 남이 잡을 수 있어 아래 create 가 EXCLUDE 로 다시 판정한다(409) */
+          if (preview) {
+            const hits = (await m.query(
+              `SELECT ${START_MIN} AS s, ${END_MIN} AS e, COALESCE(NULLIF(s.title, ''), k.name) AS title
+                 FROM ser_occ o JOIN ser s ON s.id = o.ser_id LEFT JOIN kind k ON k.key = s.kind_key
+                WHERE NOT o.canceled AND o.span && ${spanOf('$1', '$2', '$3')}
+                  AND (o.teacher_id = $4 OR ($5::bigint IS NOT NULL AND o.room_id = $5))
+                ORDER BY lower(o.span), o.ser_id`,
+              [date, dto.startMin, dto.endMin, staff.id, dto.roomId ?? null],
+            )) as Array<{ s: number | string; e: number | string; title: string | null }>;
+            if (hits.length) {
+              busy.push({ date, lines: hits.map((h) => `${hhmm(Number(h.s))}–${hhmm(Number(h.e))} ${h.title ?? '일정'}`) });
+              continue;
+            }
           }
           try {
             const written = await this.schedule.create({
@@ -171,7 +189,8 @@ export class ConsultingSessionService {
       }
       /* 담당이 남이면 한 건 — 첫 날짜의 시간표로 간다 */
       let notified = false;
-      if (staff.id !== viewerId) {
+      // 미리보기에서 날짜가 모두 겹치면(busy) 세운 회차가 없다 — 알릴 것도 없다
+      if (staff.id !== viewerId && rows.length) {
         const first = rows[0]!;
         const noti = (await m.query(
           `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, $4, 'schedule', $5) RETURNING id`,
@@ -188,7 +207,7 @@ export class ConsultingSessionService {
         preview, consId, staffId: staff.id, staffName: staff.name, studentNames, rows, created, linked,
         sessionsDone: Number(counts?.done ?? 0), sessionsPlanned: Number(counts?.planned ?? 0), sessions,
         overContract: sessions !== null && seq - 1 > sessions,
-        unavailable, notified,
+        unavailable, notified, busy,
       };
     });
   }

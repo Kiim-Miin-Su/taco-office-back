@@ -339,6 +339,17 @@ export function consItemEditIssue(op: 'rename' | 'remove' | 'file', i: ConsItemF
   return null;
 }
 
+/**
+ * I-94 「기한이 있으면 D-day 표시」 — 항목 기한의 낱말과 지남. **저장하지 않는다** — 날마다 바뀌므로 읽을 때 오늘(KST)로 센다.
+ * 끝낸 항목 · 기한 없는 항목은 말하지 않는다(null · 지남 아님). 낱말은 「D-3」 · 「D-day」 · 「D+2」(지난 날 수).
+ */
+export function consItemDue(dueOn: string | null, done: boolean, today: string): { dueLabel: string | null; dueOverdue: boolean } {
+  if (done || !dueOn) return { dueLabel: null, dueOverdue: false };
+  const days = Math.round((Date.parse(`${dueOn}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  if (days === 0) return { dueLabel: 'D-day', dueOverdue: false };
+  return days > 0 ? { dueLabel: `D-${days}`, dueOverdue: false } : { dueLabel: `D+${-days}`, dueOverdue: true };
+}
+
 export interface ConsultingArchiveInput {
   /** `cons_pay` 줄 수 */
   payments: number;

@@ -39,6 +39,10 @@ export class ConsItem {
   @Column({ type: 'timestamptz', nullable: true })
   doneAt: Date | null;
 
+  /** 기한 — 없으면 NULL(I-94 · migration 1765500000000). D-day 는 저장하지 않고 서버가 오늘(KST)로 센다 */
+  @Column({ type: 'date', nullable: true })
+  dueOn: string | null;
+
   /** template = §29 자동 생성분 · manual = §31 「항목 수정」으로 담당이 더한 것 (N-18-a DQ5 대안 · W11) */
   @Column({ type: 'varchar', length: 10, default: 'template' })
   source: string;
