@@ -20,6 +20,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { isKnownApWord } from '../src/lib/approval';
@@ -48,7 +49,10 @@ describe('변경 요청 회차 소유권 — DB 독립', () => {
     const svc = {
       occOf: jest.fn().mockResolvedValue({ ...base, teacherId }),
       activeChangeTargetExists: jest.fn().mockResolvedValue(true),
-      createChangeReq: jest.fn().mockResolvedValue(200),
+      createChangeReq: jest.fn().mockImplementation(async (_byId, _d, preflight: () => Promise<unknown[]>) => {
+        const conflicts = await preflight();
+        return { id: conflicts.length ? null : 200, conflicts };
+      }),
     };
     const sched = { conflicts: jest.fn().mockResolvedValue([]) };
     const controller = new DrawerController(
@@ -65,13 +69,13 @@ describe('변경 요청 회차 소유권 — DB 독립', () => {
     });
     expect(svc.activeChangeTargetExists).not.toHaveBeenCalled();
     expect(sched.conflicts).not.toHaveBeenCalled();
-    expect(svc.createChangeReq).not.toHaveBeenCalled();
+    expect(svc.createChangeReq).toHaveBeenCalledTimes(1);
   });
 
   it.each(commands)('본인 회차 $reqType 요청은 기존 경로로 저장한다', async (command) => {
     const { controller, svc } = setup();
     await expect(controller.createChangeReq(viewer, command)).resolves.toEqual({ id: 200, conflicts: [] });
-    expect(svc.createChangeReq).toHaveBeenCalledWith(viewer.id, expect.objectContaining(occurrence));
+    expect(svc.createChangeReq).toHaveBeenCalledWith(viewer.id, expect.objectContaining(occurrence), expect.any(Function));
   });
 
   it.each(['manager', 'admin', 'ceo'])('%s는 다른 강사의 회차도 요청할 수 있다', async (role) => {
@@ -87,14 +91,14 @@ describe('변경 요청 회차 소유권 — DB 독립', () => {
     await expect(controller.createChangeReq(viewer, commands[0])).rejects.toMatchObject({
       response: { code: 'OCCURRENCE_NOT_FOUND' },
     });
-    expect(svc.createChangeReq).not.toHaveBeenCalled();
+    expect(svc.createChangeReq).toHaveBeenCalledTimes(1);
   });
 
   it('승인 예외 권한은 다른 강사 회차의 변경 요청 권한이 아니다', async () => {
     const { controller, svc } = setup(999);
     await expect(controller.createChangeReq({ ...viewer, perms: { canApprove: true } }, commands[0]))
       .rejects.toMatchObject({ response: { code: 'OCCURRENCE_NOT_FOUND' } });
-    expect(svc.createChangeReq).not.toHaveBeenCalled();
+    expect(svc.createChangeReq).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -575,6 +579,88 @@ d('우측 서랍 — §14~§21', () => {
     expect(row.state).toBe('pending');            // 자동 승인 없음
     expect(row).toMatchObject(occurrence);
     expect(row.reason).toBe('가'.repeat(500));    // 길이 판정과 저장 모두 trim 뒤 한 번만
+  });
+
+  it('§19 같은 요청키의 응답 유실 재시도는 기존 id를 돌리고 다른 본문·작성자는 409다', async () => {
+    const occurrence = await firstOccurrence();
+    const requestKey = randomUUID();
+    const body = { ...occurrence, reqType: 'cancel', reason: '재시도 방어', requestKey };
+    const post = (email: string, value: object) => request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(email)).send(value);
+
+    const first = await post(TEACHER, body).expect(201);
+    const replay = await post(TEACHER, { ...body, requestKey: requestKey.toUpperCase(), reason: '  재시도 방어  ', applyAll: false }).expect(201);
+    expect(replay.body).toEqual(first.body);
+    expect((await post(TEACHER, { ...body, reason: '다른 내용' }).expect(409)).body.code)
+      .toBe('CHREQ_REQUEST_KEY_REUSED');
+    expect((await post(MANAGER, body).expect(409)).body.code).toBe('CHREQ_REQUEST_KEY_REUSED');
+    const [{ n }] = await ds.query('SELECT count(*)::int AS n FROM chreq WHERE request_key=$1', [requestKey]);
+    expect(n).toBe(1);
+
+    // 첫 201이 사라진 뒤 회차 담당자가 바뀌어도 같은 작성자의 replay는 새 권한 검사보다 앞선다.
+    await ds.query('UPDATE ser_occ SET teacher_id=NULL WHERE ser_id=$1 AND on_date=$2', [occurrence.serId, occurrence.onDate]);
+    try {
+      expect((await post(TEACHER, body).expect(201)).body.id).toBe(first.body.id);
+    } finally {
+      await ds.query('UPDATE ser_occ SET teacher_id=$1 WHERE ser_id=$2 AND on_date=$3', [T, occurrence.serId, occurrence.onDate]);
+    }
+  });
+
+  it('§19 같은 요청키의 두 연결은 한 행으로 직렬화되고 DB 유니크가 직접 중복 INSERT도 막는다', async () => {
+    const occurrence = await firstOccurrence();
+    const requestKey = randomUUID();
+    const body = { ...occurrence, reqType: 'cancel', reason: '동시 제출', requestKey };
+    const requests = Array.from({ length: 2 }, () => request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(TEACHER)).send(body).expect(201));
+    const responses = await Promise.all(requests);
+    expect(responses[0].body.id).toBe(responses[1].body.id);
+    const [{ n }] = await ds.query('SELECT count(*)::int AS n FROM chreq WHERE request_key=$1', [requestKey]);
+    expect(n).toBe(1);
+    await expect(ds.query(
+      `INSERT INTO chreq (ser_id,on_date,req_type,payload,reason,by_id,request_key)
+       VALUES ($1,$2,'cancel','{}'::jsonb,'직접 중복',$3,$4)`,
+      [occurrence.serId, occurrence.onDate, T, requestKey],
+    )).rejects.toMatchObject({ code: '23505', constraint: 'chreq_request_key_once' });
+  });
+
+  it('§19 검증 실패는 요청키를 소비하지 않아, 같은 본문으로 자원을 고친 뒤 재시도할 수 있다', async () => {
+    const occurrence = await firstOccurrence();
+    const requestKey = randomUUID();
+    const teacherId = 9_999_000 + process.pid % 900;
+    const body = { ...occurrence, reqType: 'teacher', teacherId, reason: '강사 등록 후 다시 요청', requestKey };
+    const post = () => request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(TEACHER)).send(body);
+    expect((await post().expect(404)).body.code).toBe('CHANGE_TARGET_NOT_FOUND');
+    const [{ n: before }] = await ds.query('SELECT count(*)::int AS n FROM chreq WHERE request_key=$1', [requestKey]);
+    expect(before).toBe(0);
+    await ds.query(
+      `INSERT INTO staff (id,name,email,login_id,role,active)
+       VALUES ($1,'새 강사',$2,$2,'teacher',true)`,
+      [teacherId, `drawer-retry-${teacherId}@t.kr`],
+    );
+    try {
+      const created = await post().expect(201);
+      expect(created.body.id).toEqual(expect.any(Number));
+      const [{ n: after }] = await ds.query('SELECT count(*)::int AS n FROM chreq WHERE request_key=$1', [requestKey]);
+      expect(after).toBe(1);
+    } finally {
+      await ds.query('DELETE FROM chreq WHERE request_key=$1', [requestKey]);
+      await ds.query('DELETE FROM staff WHERE id=$1', [teacherId]);
+    }
+  });
+
+  it('§19 잘못된 요청키는 저장 전에 400으로 거절하고 구버전 무키 본문은 계속 받는다', async () => {
+    const occurrence = await firstOccurrence();
+    for (const requestKey of [null, 'wrong-key']) {
+      await request(app.getHttpServer())
+        .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
+        .send({ ...occurrence, reqType: 'cancel', reason: '키 검사', requestKey }).expect(400);
+    }
+    const legacy = await request(app.getHttpServer())
+      .post('/drawer/change-requests').set('Authorization', auth(TEACHER))
+      .send({ ...occurrence, reqType: 'cancel', reason: '옛 화면 호환' }).expect(201);
+    const [saved] = await ds.query('SELECT request_key FROM chreq WHERE id=$1', [legacy.body.id]);
+    expect(saved.request_key).toBeNull();
   });
 
   it('§19 DB도 임의 payload를 직접 넣지 못하게 막는다', async () => {

@@ -21195,6 +21195,7 @@
     },
     "/drawer/change-requests": {
       "post": {
+        "description": "requestKey를 보낸 새 화면은 같은 작성자·정규화된 본문의 재시도에 기존 id를 받는다. 다른 작성자·본문에 같은 키를 쓰면 409다. 기존 무키 화면은 배포 호환을 위해 받는다.",
         "operationId": "DrawerController_createChangeReq",
         "parameters": [],
         "requestBody": {
@@ -21275,7 +21276,7 @@
             }
           },
           "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "CHREQ_REQUEST_KEY_REUSED — 같은 요청키의 작성자 또는 내용이 다르다",
             "content": {
               "application/json": {
                 "schema": {
@@ -43678,6 +43679,11 @@
       "TimeMoveChangeReqDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
           "serId": {
             "type": "number",
             "minimum": 1,
@@ -43726,6 +43732,11 @@
       "TeacherChangeReqDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
           "serId": {
             "type": "number",
             "minimum": 1,
@@ -43767,6 +43778,11 @@
       "RoomChangeReqDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
           "serId": {
             "type": "number",
             "minimum": 1,
@@ -43808,6 +43824,11 @@
       "ZoomChangeReqDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
           "serId": {
             "type": "number",
             "minimum": 1,
@@ -43850,6 +43871,11 @@
       "CancelChangeReqDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
           "serId": {
             "type": "number",
             "minimum": 1,

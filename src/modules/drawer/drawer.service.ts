@@ -52,11 +52,12 @@ import { GpaService } from '../gpa/gpa.service';
 import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
 import { STAFF_CREATE_ROLES } from './drawer.dto';
 import type {
-  ApprovalUndoResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
+  ApprovalUndoResultDto, ChangeReqResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
   StaffDirectoryAssignmentDto, StaffDirectoryAuditDto, StaffDirectoryDetailDto, StaffDirectoryDto, StaffDirectoryPayoutDto,
   StaffDirectoryQueryDto, StaffDirectoryReportDto, StaffDirectoryWageDto,
   StaffCreateDto, StaffPatchDto, TodoCreateDto, TodoPatchDto,
 } from './drawer.dto';
+import type { ConflictRowDto } from '../schedule/schedule.dto';
 import { scheduleHistoryLine } from '../../lib/schedule-history';
 import { issueApprovalUndo, readApprovalUndo, type ApprovalUndoPayload, type ReqUndoEffect } from './approval-undo';
 import bcrypt from 'bcryptjs';
@@ -1987,25 +1988,53 @@ export class DrawerService {
     };
   }
 
-  /** §19 변경 요청 넣기 — 겹침 판정은 부르는 쪽(컨트롤러)이 스케줄에서 받아 온다 */
-  async createChangeReq(byId: number, d: NormalizedChangeRequest): Promise<number> {
-    const rows = await this.q<{ id: string }>(
+  /** §19 변경 요청 넣기 — 같은 키의 재시도는 변동 가능한 회차·자원 검사보다 먼저 기존 id로 수렴한다. */
+  async createChangeReq(
+    byId: number,
+    d: NormalizedChangeRequest,
+    preflight: (manager?: EntityManager) => Promise<ConflictRowDto[]>,
+  ): Promise<ChangeReqResultDto> {
+    const make = async (manager?: EntityManager): Promise<ChangeReqResultDto> => {
+      const conflicts = await preflight(manager);
+      if (conflicts.length) return { id: null, conflicts };
       // 상태는 **적지 않는다** — 표의 기본값('pending')이 낱말의 출처다.
-      // 여기에 낱말을 다시 적으면 기본값이 바뀌는 날 두 곳이 갈린다.
-      `INSERT INTO chreq (ser_id, on_date, req_type, payload, reason, by_id, apply_all)
-       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7) RETURNING id`,
-      [d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, byId, d.applyAll],
-    );
-    return Number(rows[0].id);
+      const sql = `INSERT INTO chreq (ser_id, on_date, req_type, payload, reason, by_id, apply_all, request_key)
+                   VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8) RETURNING id`;
+      const params = [d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, byId, d.applyAll, d.requestKey ?? null];
+      const rows = (manager ? await manager.query(sql, params) : await this.q<{ id: string }>(sql, params)) as Array<{ id: string }>;
+      return { id: Number(rows[0].id), conflicts: [] };
+    };
+
+    // 구버전 화면과 직접 API 호출은 당분간 키를 안 보내도 된다. 배포 중 프런트/백 순서가 갈려도 400이 되지 않는다.
+    if (!d.requestKey) return make();
+
+    return this.anyRepo.manager.transaction(async (manager) => {
+      // 같은 키의 두 연결을 한 줄로 세운다. 잠금·기존행 검사·preflight·INSERT가 같은 연결이다.
+      // preflight의 회차·자원·겹침 조회도 manager를 받는다(서버리스 풀 1개에서 별도 연결 대기 금지).
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [d.requestKey]);
+      const [prior] = (await manager.query(
+        `SELECT id,
+                (by_id = $2::bigint AND ser_id = $3::bigint AND on_date = $4::date
+                 AND req_type = $5 AND payload = $6::jsonb AND reason = $7 AND apply_all = $8) AS same
+           FROM chreq WHERE request_key = $1::uuid`,
+        [d.requestKey, byId, d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, d.applyAll],
+      )) as Array<{ id: string; same: boolean }>;
+      if (prior) {
+        if (!prior.same) throw new ConflictException({
+          code: 'CHREQ_REQUEST_KEY_REUSED',
+          message: '같은 요청 키로 다른 변경 요청이 이미 접수되었습니다',
+        });
+        return { id: Number(prior.id), conflicts: [] };
+      }
+      return make(manager);
+    });
   }
 
   /** JSONB 대상 id는 FK로 보호할 수 없으므로 허용된 표만 여기서 조회한다. */
-  async activeChangeTargetExists(kind: 'teacher' | 'room' | 'zoom', id: number): Promise<boolean> {
+  async activeChangeTargetExists(kind: 'teacher' | 'room' | 'zoom', id: number, manager?: EntityManager): Promise<boolean> {
     const table = { teacher: 'staff', room: 'room', zoom: 'zacc' }[kind];
-    const rows = await this.q<{ found: boolean }>(
-      `SELECT EXISTS (SELECT 1 FROM ${table} WHERE id=$1 AND active) AS found`,
-      [id],
-    );
+    const sql = `SELECT EXISTS (SELECT 1 FROM ${table} WHERE id=$1 AND active) AS found`;
+    const rows = (manager ? await manager.query(sql, [id]) : await this.q<{ found: boolean }>(sql, [id])) as Array<{ found: boolean }>;
     return rows[0]?.found === true;
   }
 
@@ -2016,17 +2045,15 @@ export class DrawerService {
    * 자리를 보는 일이므로 그 회차가 놓인 KST 날짜(`date`)를 함께 준다 — 스케줄 `conflicts()` 가 받는 날이
    * 그것이다(C84-b 가 적어 둔 키 ↔ 달력 구분 · README 7-3 「변경 요청 겹침 미리보기」 관찰).
    */
-  async occOf(serId: number, onDate: string): Promise<{
+  async occOf(serId: number, onDate: string, manager?: EntityManager): Promise<{
     startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null;
     date: string;
   } | null> {
-    const rows = await this.q(
-      `SELECT ${START_MIN} AS start_min, ${END_MIN} AS end_min,
+    const sql = `SELECT ${START_MIN} AS start_min, ${END_MIN} AS end_min,
               o.teacher_id, o.room_id, o.zacc_id,
               to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS placed_on
-         FROM ser_occ o WHERE o.ser_id = $1 AND o.on_date = $2 LIMIT 1`,
-      [serId, onDate],
-    );
+         FROM ser_occ o WHERE o.ser_id = $1 AND o.on_date = $2 LIMIT 1`;
+    const rows = manager ? await manager.query(sql, [serId, onDate]) : await this.q(sql, [serId, onDate]);
     if (rows.length === 0) return null;
     const r = rows[0];
     return {

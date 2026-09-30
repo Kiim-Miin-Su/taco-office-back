@@ -6,6 +6,7 @@
 
 import { lessonTimeIssue } from './recurrence';
 import { isIsoDate } from './kst';
+import { isUUID } from 'class-validator';
 
 /** CHREQ.req_type과 API가 공유하는 유일한 종류 목록. */
 export const CHREQ_TYPES = ['time_move', 'teacher', 'room', 'cancel'] as const;
@@ -14,6 +15,7 @@ export const isChreqType = (value: unknown): value is ChreqType =>
   typeof value === 'string' && (CHREQ_TYPES as readonly string[]).includes(value);
 
 export interface ChangeRequestInput {
+  requestKey?: unknown;
   reqType: unknown;
   serId?: unknown;
   onDate?: unknown;
@@ -27,6 +29,7 @@ export interface ChangeRequestInput {
 }
 
 interface ChangeRequestTarget {
+  requestKey?: string;
   serId: number;
   onDate: string;
   reason: string;
@@ -109,6 +112,9 @@ function fail(code: string, message: string): ChangeRequestNormalization {
  * DTO, 충돌 미리보기, INSERT가 서로 payload를 다시 해석하지 않도록 이 함수만 사용한다.
  */
 export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequestNormalization {
+  if (input.requestKey !== undefined && (typeof input.requestKey !== 'string' || !isUUID(input.requestKey))) {
+    return fail('CHANGE_REQUEST_KEY_INVALID', '요청 키가 올바르지 않습니다');
+  }
   if (!isChreqType(input.reqType)) {
     return fail('BAD_CHANGE_TYPE', '지원하지 않는 변경 요청 종류입니다');
   }
@@ -133,6 +139,8 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
   }
 
   const target = {
+    // PostgreSQL uuid 비교는 대소문자를 무시한다. 잠금 키도 같은 표기로 맞춰야 동시 replay가 한 줄에 선다.
+    ...(typeof input.requestKey === 'string' ? { requestKey: input.requestKey.toLowerCase() } : {}),
     serId: input.serId,
     onDate: input.onDate,
     reason,

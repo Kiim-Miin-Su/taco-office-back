@@ -6,7 +6,7 @@
 
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { SerOcc } from '../../entities';
 import {
   ATTENDANCE_CANCEL_REASON_LABEL, CANCEL_TREAT_LABEL, GUIDE_DONE_DB, REPORT_WRITTEN_DB, guideLabel,
@@ -429,7 +429,7 @@ export class ScheduleService {
     onDate: string; startMin: number; endMin: number;
     teacherId?: number | null; roomId?: number | null; zaccId?: number | null;
     exceptSerId?: number | null;
-  }): Promise<Array<{ serId: number; onDate: string; startMin: number; endMin: number; title: string | null; with: 'teacher' | 'room' | 'zoom'; whoName: string | null }>> {
+  }, manager?: EntityManager): Promise<Array<{ serId: number; onDate: string; startMin: number; endMin: number; title: string | null; with: 'teacher' | 'room' | 'zoom'; whoName: string | null }>> {
     const who: Array<['teacher' | 'room' | 'zoom', string, number]> = [];
     if (q.teacherId) who.push(['teacher', 'o.teacher_id', q.teacherId]);
     if (q.roomId) who.push(['room', 'o.room_id', q.roomId]);
@@ -438,7 +438,9 @@ export class ScheduleService {
 
     const out: Array<{ serId: number; onDate: string; startMin: number; endMin: number; title: string | null; with: 'teacher' | 'room' | 'zoom'; whoName: string | null }> = [];
     for (const [label, col, id] of who) {
-      const rows = (await this.occ.query(
+      // §19 요청키 재시도 트랜잭션에서는 같은 연결을 쓴다. 서버리스 풀 크기 1에서
+      // 별도 연결을 기다리면 잠금만 쥔 채 멈출 수 있다.
+      const rows = (await (manager ?? this.occ).query(
         // 겹침의 정의는 **DB 의 EXCLUDE 와 같은 것**을 쓴다 (`span &&`).
         // 분으로 되돌려 비교하면 자정을 넘는 회차에서 둘의 답이 갈린다.
         `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,

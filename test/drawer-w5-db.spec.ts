@@ -66,7 +66,10 @@ describe('① 변경 요청 겹침 미리보기 — 실제로 놓인 날을 본�
         startMin: 540, endMin: 600, teacherId: TEACHER, roomId: null, zaccId: null, date: '2026-09-08',
       }),
       activeChangeTargetExists: jest.fn().mockResolvedValue(true),
-      createChangeReq: jest.fn().mockResolvedValue(300),
+      createChangeReq: jest.fn().mockImplementation(async (_byId, _d, preflight: () => Promise<unknown[]>) => {
+        const conflicts = await preflight();
+        return { id: conflicts.length ? null : 300, conflicts };
+      }),
     };
     const sched = { conflicts: jest.fn().mockResolvedValue([]) };
     const controller = new DrawerController(svc as unknown as DrawerService, sched as unknown as ScheduleService);
@@ -77,9 +80,9 @@ describe('① 변경 요청 겹침 미리보기 — 실제로 놓인 날을 본�
 
     expect(sched.conflicts).toHaveBeenCalledWith(expect.objectContaining({
       onDate: '2026-09-08', startMin: 600, endMin: 660, exceptSerId: 100,
-    }));
+    }), undefined);
     // 저장하는 키는 그대로 규칙의 날이다 — 반영(patch)이 EXC 를 그 키로 찾는다
-    expect(svc.createChangeReq).toHaveBeenCalledWith(HEAD, expect.objectContaining({ serId: 100, onDate: '2026-09-07' }));
+    expect(svc.createChangeReq).toHaveBeenCalledWith(HEAD, expect.objectContaining({ serId: 100, onDate: '2026-09-07' }), expect.any(Function));
   });
 });
 

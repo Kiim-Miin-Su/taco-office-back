@@ -63,4 +63,16 @@ describe('변경 요청 종류별 계약', () => {
       ...target, reqType: 'cancel', reason: ` ${'가'.repeat(500)} `,
     })).toMatchObject({ ok: true, value: { reason: '가'.repeat(500) } });
   });
+
+  it('재시도 키는 선택 입력이지만 보내면 UUID만 받고 정규화된 본문과 함께 넘긴다', () => {
+    const key = '00000000-0000-4000-8000-000000000123';
+    expect(normalizeChangeRequest({ ...target, reqType: 'cancel', requestKey: key }))
+      .toMatchObject({ ok: true, value: { requestKey: key, reason: '수업 사정', payload: {} } });
+    expect(normalizeChangeRequest({ ...target, reqType: 'cancel', requestKey: key.toUpperCase() }))
+      .toMatchObject({ ok: true, value: { requestKey: key } });
+    for (const requestKey of [null, '', 'not-a-uuid']) {
+      expect(normalizeChangeRequest({ ...target, reqType: 'cancel', requestKey }))
+        .toMatchObject({ ok: false, issue: { code: 'CHANGE_REQUEST_KEY_INVALID' } });
+    }
+  });
 });

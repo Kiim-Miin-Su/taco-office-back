@@ -15,7 +15,7 @@ import {
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, ArrayUnique, IsArray, IsBoolean, IsEmail, IsIn, IsInt, IsObject, IsOptional,
-  IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
+  IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
@@ -824,6 +824,10 @@ export class TodoClearDto {
 
 /** 종류별 Swagger 모델이 공유하는 회차 대상. 실제 검증도 ChangeReqCreateDto가 같은 필드를 쓴다. */
 export class ChangeReqTargetDto {
+  @ApiPropertyOptional({ format: 'uuid', description: '같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다' })
+  @ValidateIf((_, value: unknown) => value !== undefined) @IsUUID()
+  requestKey?: string;
+
   @ApiProperty({ minimum: 1, description: '변경할 수업 규칙 id' })
   @IsInt() @Min(1)
   serId!: number;

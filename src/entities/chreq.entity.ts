@@ -5,7 +5,7 @@
  */
 
 /**
- * CHREQ — docs/contracts/db/erd.dbml v4.7 에서 생성했습니다.
+ * CHREQ — docs/contracts/db/erd.dbml v4.7 기반; requestKey는 v4.61 계약입니다.
  *
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
@@ -39,6 +39,10 @@ export class Chreq {
 
   @Column({ type: 'bigint' })
   byId: number;
+
+  /** 같은 제출의 재시도 키. 옛 행은 NULL이며 DB 부분 유니크가 중복을 막는다. */
+  @Column({ type: 'uuid', nullable: true })
+  requestKey: string | null;
 
   /** 반려 사유 — 반려 시 필수 (D-R13). 신청 사유(reason)를 덮어쓰지 않는다 */
   @Column({ type: 'text', nullable: true })

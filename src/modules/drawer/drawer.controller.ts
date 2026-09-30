@@ -22,6 +22,7 @@ import {
   ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
+import type { EntityManager } from 'typeorm';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import { approvalFlowScope, canCeoSetPermOverride, Perm, hasPerm, isRole, permsOf, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
@@ -331,6 +332,7 @@ export class DrawerController {
   @Post('change-requests')
   @ApiOperation({
     summary: '§19 변경 요청 넣기 — 겹치면 **누구와** 겹치는지 돌려주고 넣지 않는다',
+    description: 'requestKey를 보낸 새 화면은 같은 작성자·정규화된 본문의 재시도에 기존 id를 받는다. 다른 작성자·본문에 같은 키를 쓰면 409다. 기존 무키 화면은 배포 호환을 위해 받는다.',
   })
   @ApiBody({
     schema: {
@@ -340,6 +342,7 @@ export class DrawerController {
     },
   })
   @ApiCreatedResponse({ type: ChangeReqResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'CHREQ_REQUEST_KEY_REUSED — 같은 요청키의 작성자 또는 내용이 다르다' })
   async createChangeReq(
     @CurrentUser() user: RequestUser,
     @Body() dto: ChangeReqCreateDto,
@@ -351,31 +354,29 @@ export class DrawerController {
     const change = normalized.value;
 
     const { canSeeAll } = this.gate(user);
-    const base = await this.svc.occOf(change.serId, change.onDate);
-    // 목록과 같은 경계: 강사는 본인 회차만 요청한다. 타인/미지정 회차는 존재도 공개하지 않는다.
-    // 자원 조회·충돌 설명보다 먼저 검사해 다른 수업의 정보가 응답에 섞이지 않게 한다.
-    if (!base || (!canSeeAll && base.teacherId !== user.id)) {
-      throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '변경할 회차를 찾을 수 없습니다' });
-    }
+    return this.svc.createChangeReq(user.id, change, async (manager) => {
+      const base = await this.svc.occOf(change.serId, change.onDate, manager);
+      // 목록과 같은 경계: 강사는 본인 회차만 요청한다. 타인/미지정 회차는 존재도 공개하지 않는다.
+      // 자원 조회·충돌 설명보다 먼저 검사해 다른 수업의 정보가 응답에 섞이지 않게 한다.
+      if (!base || (!canSeeAll && base.teacherId !== user.id)) {
+        throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '변경할 회차를 찾을 수 없습니다' });
+      }
 
-    // JSONB 안의 id에는 FK를 걸 수 없으므로 저장 직전에 실제 활성 자원을 확인한다.
-    const target = change.reqType === 'teacher'
-      ? { kind: 'teacher' as const, id: change.payload.teacherId }
-      : change.reqType === 'room' && 'roomId' in change.payload
-        ? { kind: 'room' as const, id: change.payload.roomId }
-        : change.reqType === 'room' && 'zaccId' in change.payload
-          ? { kind: 'zoom' as const, id: change.payload.zaccId }
-          : null;
-    if (target && !(await this.svc.activeChangeTargetExists(target.kind, target.id))) {
-      throw new NotFoundException({ code: 'CHANGE_TARGET_NOT_FOUND', message: '바꿀 자원을 찾을 수 없습니다' });
-    }
+      // JSONB 안의 id에는 FK를 걸 수 없으므로 저장 직전에 실제 활성 자원을 확인한다.
+      const target = change.reqType === 'teacher'
+        ? { kind: 'teacher' as const, id: change.payload.teacherId }
+        : change.reqType === 'room' && 'roomId' in change.payload
+          ? { kind: 'room' as const, id: change.payload.roomId }
+          : change.reqType === 'room' && 'zaccId' in change.payload
+            ? { kind: 'zoom' as const, id: change.payload.zaccId }
+            : null;
+      if (target && !(await this.svc.activeChangeTargetExists(target.kind, target.id, manager))) {
+        throw new NotFoundException({ code: 'CHANGE_TARGET_NOT_FOUND', message: '바꿀 자원을 찾을 수 없습니다' });
+      }
 
-    // 시간·강사·강의실을 바꾸는 요청만 겹침을 본다. 취소는 자리를 비우는 쪽이라 겹칠 수 없다.
-    const conflicts = await this.previewConflicts(change, base);
-    if (conflicts.length > 0) return { id: null, conflicts };
-
-    const id = await this.svc.createChangeReq(user.id, change);
-    return { id, conflicts: [] };
+      // 시간·강사·강의실을 바꾸는 요청만 겹침을 본다. 취소는 자리를 비우는 쪽이라 겹칠 수 없다.
+      return this.previewConflicts(change, base, manager);
+    });
   }
 
   /**
@@ -390,6 +391,7 @@ export class DrawerController {
       startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null;
       date: string;
     },
+    manager?: EntityManager,
   ) {
     if (dto.reqType === 'cancel') return [];
 
@@ -415,6 +417,6 @@ export class DrawerController {
       zaccId,
       // 자기 자신과는 겹치지 않는다
       exceptSerId: dto.serId,
-    });
+    }, manager);
   }
 }
