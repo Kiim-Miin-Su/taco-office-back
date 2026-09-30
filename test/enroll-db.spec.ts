@@ -48,7 +48,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
    */
   const ADMIN = 963;
   const STU_EXISTING = 9961; // 이미 있는 「등록A · 10 · 테스트고」
-  const LEADS = { hold: 8801, first: 8802, same: 8803, failed: 8804, norate: 8805, parent: 8806, parentDup: 8807, titleless: 8808 };
+  const LEADS = { hold: 8801, first: 8802, same: 8803, failed: 8804, norate: 8805, parent: 8806, parentDup: 8807, titleless: 8808, sibling: 8809 };
   const KIND = 'en_kind';
   const KIND_NORATE = 'en_norate';
   const SUB = 'en-sub';
@@ -117,7 +117,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
   });
 
   async function cleanup() {
-    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록D','등록E','등록F','등록P','등록T')`, [STU_EXISTING]);
+    const stus = await q<{ id: string }>(`SELECT id FROM stu WHERE id = $1 OR name IN ('등록A','등록B','등록C','등록D','등록E','등록F','등록P','등록T','등록S')`, [STU_EXISTING]);
     const ids = stus.map((s) => Number(s.id));
     const sers = await q<{ id: string }>(`SELECT DISTINCT ser_id AS id FROM ser_stu WHERE student_id = ANY($1) UNION SELECT id FROM ser WHERE kind_key = ANY($2)`, [ids, [KIND, KIND_NORATE]]);
     const serIds = sers.map((s) => Number(s.id));
@@ -286,10 +286,48 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(await q(`SELECT 1 FROM log WHERE entity = 'LEAD' AND entity_id = $1`, [LEADS.first])).toEqual([]);
 
     // 실제 등록 — 미리 본 것과 같은 첫 수업일·불가 시간 경고
-    const real = await api('post', `/ops/leads/${LEADS.first}/enroll`).send({ startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:WE', startMin: 690, endMin: 750 })] }).expect(201);
+    const real = await api('post', `/ops/leads/${LEADS.first}/enroll`).send({ startedOn: START, dueOn: DUE, memo: '어머님과 통화 — 수요일만 가능', lines: [line({ rrule: 'WEEKLY:WE', startMin: 690, endMin: 750 })] }).expect(201);
     expect(real.body.series[0].firstLessonOn).toBe(FIRST_WED);
     expect(real.body.unavailable).toHaveLength(1);
     expect(real.body.preview).toBe(false);
+
+    // A-07 「확정 시 그 강사에게 조율 알림이 간다」 — 보통 등록 알림과 따로, 걸친 날짜 · 시각 · 적어 둔 사유 · 등록 메모를 싣는다
+    const coord = await q<{ title: string; body: string; link: string }>(
+      `SELECT title, body, link FROM noti WHERE to_id = $1 AND from_id = $2 AND title = $3`, [TEACHER, ADMIN, NOTI_TITLE.unavCoord],
+    );
+    expect(coord).toHaveLength(1);
+    expect(coord[0]!.body).toContain('등록C');
+    expect(coord[0]!.body).toContain(`${+FIRST_WED.slice(5, 7)}/${+FIRST_WED.slice(8, 10)} 11:30–12:30`);
+    expect(coord[0]!.body).toContain('병원');
+    expect(coord[0]!.body).toContain('어머님과 통화 — 수요일만 가능');
+    expect(coord[0]!.link).toBe(`/schedule?date=${FIRST_WED}`);
+    // 미리보기는 알림을 남기지 않았다(위) — 등록 한 번에 조율 알림도 한 건이다
+  });
+
+  /* ── A-06 「다른 시간을 제안한다」 — 409 뒤 설명이 같은 강사 · 모든 날짜에서 비는 같은 길이의 시각을 준다 ── */
+  it('겹침 설명(GET /schedule/conflicts)은 같은 강사가 date · alsoDates 모두에서 비는 같은 길이의 다른 시각을 가까운 순으로 준다 · 불가 시간은 피한다 (A-06)', async () => {
+    // 등록강사: 월·수 10:00~11:00 (첫 시험) · 첫 수 11:30~12:30 (위 시험) · 첫 수 11:00~12:00 불가 시간
+    const probe = await api('get', `/schedule/conflicts?date=${FIRST_MON}&alsoDates=${FIRST_WED}&startMin=600&endMin=660&teacherId=${TEACHER}`).expect(200);
+    expect(probe.body.conflicts.length).toBeGreaterThan(0);
+    const alts = probe.body.altTimes as Array<{ startMin: number; endMin: number }>;
+    expect(alts.length).toBeGreaterThan(0);
+    expect(alts.length).toBeLessThanOrEqual(3);
+    // 모두 한 시간이고 원래 시각이 아니며 09:00~22:00 안이다
+    for (const a of alts) {
+      expect(a.endMin - a.startMin).toBe(60);
+      expect(a.startMin).not.toBe(600);
+      expect(a.startMin).toBeGreaterThanOrEqual(540);
+      expect(a.endMin).toBeLessThanOrEqual(1320);
+    }
+    // 수요일의 수업(11:30~12:30) · 불가 시간(11:00~12:00)과 겹치는 시각은 제안하지 않는다
+    expect(alts.some((a) => a.startMin < 750 && 660 < a.endMin)).toBe(false);
+    // 가장 가까운 것부터 — 첫 제안은 09:00(월·수 모두 비고 원래 시각에서 60분)
+    expect(alts[0]).toEqual({ startMin: 540, endMin: 600 });
+    // 같은 키를 되풀이하면 배열로 읽는다(화면이 보내는 모양 — 대괄호 없음) · 한 날짜를 더해도 제안은 모든 날짜에서 빈다
+    const twice = await api('get', `/schedule/conflicts?date=${FIRST_MON}&alsoDates=${FIRST_WED}&alsoDates=${FIRST_WED}&startMin=600&endMin=660&teacherId=${TEACHER}`).expect(200);
+    expect(twice.body.altTimes).toEqual(probe.body.altTimes);
+    // 날짜 배열이 아닌 값은 400
+    await api('get', `/schedule/conflicts?date=${FIRST_MON}&alsoDates=2026-02-30&startMin=600&endMin=660&teacherId=${TEACHER}`).expect(400);
   });
 
   /* ── A-06 · 제목 없이 등록한 수업의 이름 (all160 실브라우저 QA 2026-09-29) ─────────────── */
@@ -364,6 +402,41 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     const [log] = await q<{ after: Record<string, unknown> }>(`SELECT after FROM log WHERE entity = 'LEAD' AND entity_id = $1 AND action = 'enroll'`, [LEADS.parent]);
     expect(log.after.guardianCarried).toEqual({ name: '등록P 어머니', relation: '어머니', phone: '010-****-6666' });
     expect(JSON.stringify(log.after)).not.toContain('01055556666');
+  });
+
+  /*
+   * A-13 「형제 둘이 같이 등록 — 학부모 연락처로 묶여 보인다 · 청구서는 각각 나오거나 합산을 고를 수 있다」
+   * (사용자 결정 2026-09-30 「묶음 표시 + 합산 보기」 — 청구 · 수납 모델은 그대로다). 같은 연락처의 보호자를 가진 학생이
+   * 보호자 목록에 형제로 서고, 회계 응답은 그 달 형제 청구서 묶음(서버 합계 · 금액 권한 없으면 null)을 함께 준다.
+   */
+  it('A-13 같은 연락처로 등록한 형제 — 두 학생 · 청구서 각각 · 보호자 목록에 서로 형제로 · 회계는 그 달 형제 묶음과 합계를 준다', async () => {
+    await q(
+      `INSERT INTO lead (id, name, school, stage, owner_id, parent_relation, parent_phone) VALUES ($1,'등록S','연락고','first',$2,'어머니','01055556666')`,
+      [LEADS.sibling, ADMIN],
+    );
+    const p = await q<{ id: string }>(`SELECT id FROM stu WHERE name = '등록P'`);
+    const sib = (await api('post', `/ops/leads/${LEADS.sibling}/enroll`).send({
+      startedOn: START, dueOn: DUE, lines: [line({ rrule: 'WEEKLY:TH', startMin: 900, endMin: 960 })],
+    }).expect(201)).body;
+    const pId = Number(p[0]!.id);
+    expect(sib.studentId).not.toBe(pId);
+    const gP = (await api('get', `/students/${pId}/guardians`).expect(200)).body;
+    const gS = (await api('get', `/students/${sib.studentId}/guardians`).expect(200)).body;
+    expect(gP.siblings).toEqual([expect.objectContaining({ studentId: sib.studentId, studentName: '등록S', via: '등록P 어머니' })]);
+    expect(gS.siblings).toEqual([expect.objectContaining({ studentId: pId, studentName: '등록P', via: '등록S 어머니' })]);
+    // 회계 — 청구서는 각각 그대로 · 그 달 형제 묶음은 서버가 센다(금액 권한이 있으면 합계)
+    const ceoToken = (await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
+      .send({ loginId: 'en-ceo@t.kr', password: PW }).expect(201)).body.accessToken as string;
+    const acct = (await api('get', '/accounting', ceoToken).expect(200)).body;
+    const invs = (acct.invoices as Array<{ id: number; studentId: number; yearMonth: string; amount: number | null; state: string }>)
+      .filter((i) => [pId, sib.studentId].includes(i.studentId) && i.state !== 'void');
+    expect(new Set(invs.map((i) => i.studentId)).size).toBe(2);
+    const fam = (acct.families as Array<{ yearMonth: string; students: Array<{ studentId: number; name: string }>; invoiceIds: number[]; amount: number | null }>)
+      .find((f) => f.students.some((x) => x.studentId === pId));
+    expect(fam).toMatchObject({ yearMonth: NEXT });
+    expect(fam!.students.map((x) => x.name).sort()).toEqual(['등록P', '등록S']);
+    expect([...fam!.invoiceIds].sort()).toEqual(invs.filter((i) => i.yearMonth === NEXT).map((i) => i.id).sort());
+    expect(fam!.amount).toBe(invs.filter((i) => i.yearMonth === NEXT).reduce((sum, i) => sum + Number(i.amount), 0));
   });
 
   it('A-01 같은 번호의 보호자가 이미 있으면(사용 중지한 줄이어도) 잇지 않는다 — 기존 학생에 붙이는 등록', async () => {

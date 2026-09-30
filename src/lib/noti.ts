@@ -139,6 +139,8 @@ export const NOTI_TITLE = {
   suggestionReply: '건의 답변',
   enrollNewStudent: '새 학생 등록',
   enrollConfirmed: '등록 확정',
+  // A-07 — 강사가 적어 낸 불가 시간 위에 수업이 잡혔다(막지 않는다 · C84-c) → 그 강사에게 조율을 부탁한다
+  unavCoord: '불가 시간 조율',
   // 대표 보고
   execSubmitted: '대표 보고 올라옴',
   // W11 운영 · 대표 보고 (O) — §66 「안내 보내기」(N-32) · §73 결재 결과를 올린 사람에게(N-97)

@@ -245,6 +245,26 @@ export class LeadEnrollService {
       )) as Array<{ id: string }>;
       notifiedTeachers += rows.length;
     }
+    /* A-07 「확정 시 그 강사에게 조율 알림이 간다」 — 불가 시간 겹침은 막지 않는다(C84-c · 경고만). 대신 걸친 강사에게
+       **따로** 한 건: 걸친 날짜 · 시각 · 강사가 적은 사유 · 등록 메모(조율 내용). 보통 등록 알림과 섞으면 「새 학생」 줄에 묻힌다.
+       본인이 잡았으면 보내지 않는다(위 알림과 같은 규칙). 미리보기는 같은 트랜잭션을 되돌리므로 남지 않는다. */
+    const hm = (m0: number) => `${String(Math.floor(m0 / 60)).padStart(2, '0')}:${String(m0 % 60).padStart(2, '0')}`;
+    for (const teacherId of [...new Set(unavailable.map((u) => u.teacherId))].filter((id) => id !== userId)) {
+      const hits = unavailable.filter((u) => u.teacherId === teacherId).sort((a, b) => a.date.localeCompare(b.date) || a.startMin - b.startMin);
+      const lessonOf = (u: UnavWarnDto) => series.find((s) => s.serId === u.serId);
+      const shown = hits.slice(0, 3).map((u) => {
+        const s = lessonOf(u);
+        return `${md(u.date)} ${s ? `${hm(s.startMin)}–${hm(s.endMin)}` : ''}`.trim() + ` (적어 둔 불가: ${u.reason})`;
+      });
+      const more = hits.length > 3 ? ` 외 ${hits.length - 3}회` : '';
+      const memo = dto.memo?.trim();
+      await m.query(
+        `INSERT INTO noti (to_id, from_id, body, link, category, title) SELECT $1, $2, $3, $4, 'schedule', $5 FROM staff WHERE id = $1 AND active`,
+        [teacherId, userId,
+          `불가 시간에 수업이 잡혔습니다 — ${studentName} · ${shown.join(' / ')}${more}${memo ? ` · 조율 메모: ${memo}` : ''} — 가능 여부를 알려 주세요`,
+          `/schedule?date=${hits[0]!.date}`, NOTI_TITLE.unavCoord],
+      );
+    }
     const staffRows = (await m.query(
       `INSERT INTO noti (to_id, from_id, body, link, category, title)
        SELECT id, $1, $2, '/ops', 'etc', $3 FROM staff WHERE active AND role <> 'teacher' AND id <> $1 RETURNING id`,
