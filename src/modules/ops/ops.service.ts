@@ -2596,33 +2596,34 @@ export class OpsService {
    * 둘을 **한 트랜잭션**에서 한다. 밖에서 알림을 보내면 할 일은 안 만들어졌는데 알림만 가서
    * 받은 사람이 자기 목록에서 그것을 찾지 못한다 (D-R43).
    *
-   * **받는 사람은 활성 구성원이어야 한다**(S4). 여기만 `AND active` 가 없어 **그만둔 사람에게 할 일이
-   * 배정됐다** — 이 파일의 다른 모든 자리(기획 담당·컴플레인 담당·상담 담당)는 `activeStaff` 를 쓴다.
-   * 그러면 §64 운영 할 일에 아무도 안 하는 줄이 서고 알림은 아무도 안 읽는 수신함으로 간다.
-   * 참석자 쪽은 이미 막고 있었다 (`INSERT INTO mtattd … WHERE id = $2 AND active`).
+   * **활성 참석자에게만 배정한다**(N-124). 참석 여부는 MTATTD의 소속이고 confirmed 응답값이 아니다.
+   * 구성원·참석자 행을 쓰기와 같은 트랜잭션에서 잠가 비활성화/참석자 삭제가 먼저면 그 결과를 보고 거절한다.
+   * 잠금 없는 active 확인만으로는 확인 직후 비활성화가 커밋될 수 있다(CR-BE-04 · lockActiveStaff 재사용).
    */
   async assignMeetingTask(viewerId: number, id: number, dto: MeetingTaskCreateDto): Promise<MeetingDetailDto> {
-    const [m] = await this.q(`SELECT id, title, mt_type FROM mtrec WHERE id = $1`, [id]);
-    if (!m) throw new NotFoundException('회의가 없습니다');
-    const to = await this.activeStaff(dto.toId);
-
-    const name = (m.title as string) ?? mtTypeLabel(String(m.mt_type));
     await this.lead.manager.transaction(async (em) => {
+      const [m] = (await em.query(`SELECT id, title, mt_type FROM mtrec WHERE id = $1 FOR SHARE`, [id])) as R[];
+      if (!m) throw new NotFoundException('회의가 없습니다');
+      const to = await lockActiveStaff(em, dto.toId);
+      if (!to) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
+      const [attendee] = (await em.query(
+        `SELECT s.role::text AS role FROM mtattd a JOIN staff s ON s.id = a.staff_id
+          WHERE a.mt_id = $1 AND a.staff_id = $2 FOR SHARE OF a`, [id, dto.toId],
+      )) as Array<{ role: string }>;
+      if (!attendee) {
+        throw new ForbiddenException({ code: 'MEETING_TASK_NOT_ATTENDEE', message: '회의 참석자에게만 할 일을 배정할 수 있습니다' });
+      }
+      const name = (m.title as string) ?? mtTypeLabel(String(m.mt_type));
       await em.query(
         `INSERT INTO todo (title, from_id, to_id, due_on, done, src, mt_id)
          VALUES ($1, $2, $3, $4, false, 'meeting', $5)`,
         [dto.title.trim(), viewerId, dto.toId, dto.dueOn ?? null, id],
       );
       if (to.id !== viewerId) {
-        // 강사 담당자는 운영 할 일 화면을 못 연다 — 참석자면 그 회의 창(③ 할 일)으로, 아니면 링크 없이 (W11 A' 후속 · lib/meeting-link)
-        const [who] = (await em.query(
-          `SELECT s.role::text AS role, EXISTS (SELECT 1 FROM mtattd a WHERE a.mt_id = $2 AND a.staff_id = s.id) AS attendee
-             FROM staff s WHERE s.id = $1`,
-          [dto.toId, id],
-        )) as Array<{ role: string; attendee: boolean }>;
+        // 강사는 본인에게 열린 회의 창(③ 할 일), 관리자는 운영 할 일로 간다. 소속은 위 잠금에서 확인했다.
         await em.query(
           `INSERT INTO noti (to_id, from_id, body, link, category, title) VALUES ($1, $2, $3, $4, 'request', $5)`,
-          [dto.toId, viewerId, `회의 할 일 — ${name}`, meetingNotiLink(who?.role ?? '', id, '/ops?tab=todo', who?.attendee === true), NOTI_TITLE.meetingTodo],
+          [dto.toId, viewerId, `회의 할 일 — ${name}`, meetingNotiLink(attendee.role, id, '/ops?tab=todo', true), NOTI_TITLE.meetingTodo],
         );
       }
     });

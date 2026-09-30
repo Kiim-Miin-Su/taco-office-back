@@ -280,12 +280,14 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
       `INSERT INTO mtrec (mt_type, title, on_date) VALUES ('general','옆문 회의', CURRENT_DATE) RETURNING id`,
     );
     mtId = Number(made.id);
+    // N-124 이후 이 테스트도 참석자를 배정한다 — 비활성 여부와 참석 여부는 별도 조건이다.
+    await q(`INSERT INTO mtattd (mt_id,staff_id) VALUES ($1,$2),($1,$3)`, [mtId, TEACHER, RETIRED]);
 
     await api('post', `/ops/meetings/${mtId}/todos`, ceo).send({ title: '그만둔 사람에게', toId: RETIRED }).expect(404);
     expect(await q(`SELECT id FROM todo WHERE mt_id = $1`, [mtId])).toEqual([]);
     expect(await q(`SELECT id FROM noti WHERE to_id = $1`, [RETIRED])).toEqual([]);
 
-    // 활성 구성원에게는 그대로 간다 — 할 일과 알림이 한 트랜잭션이다 (D-R43)
+    // 활성 참석자에게는 그대로 간다 — 할 일과 알림이 한 트랜잭션이다 (D-R43)
     const ok = await api('post', `/ops/meetings/${mtId}/todos`, ceo).send({ title: '활성에게', toId: TEACHER }).expect(201);
     expect(ok.body.tasks.map((t: { title: string }) => t.title)).toEqual(['활성에게']);
     expect((await q(`SELECT id FROM noti WHERE to_id = $1`, [TEACHER])).length).toBe(1);

@@ -574,9 +574,10 @@ export class OpsController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '할 일 배정 — TODO 와 담당자 알림을 한 트랜잭션에서 (원문 §66 연동)',
-    description: '밖에서 알림을 보내면 할 일은 안 만들어졌는데 알림만 가서 받은 사람이 자기 목록에서 그것을 못 찾는다 (D-R43).',
+    description: '활성 참석자에게만 배정한다(N-124). 참석 응답(confirmed)과 무관하며 활성·참석 확인과 TODO·NOTI 저장은 같은 트랜잭션이다(D-R43).',
   })
   @ApiCreatedResponse({ type: MeetingDetailDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'MEETING_TASK_NOT_ATTENDEE — 담당자가 회의 참석자 목록에 없음' })
   @ApiNotFoundResponse({ description: '회의 없음 · 담당자 없음' })
   async assignMeetingTask(
     @CurrentUser() user: RequestUser,

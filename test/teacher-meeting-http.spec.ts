@@ -13,7 +13,7 @@
  *      할 일은 **자기에게 온 것만** 체크 칸이 선다(canToggle) — 체크 쓰기(`PATCH /drawer/todos/:id`)의 판정과 같다
  *   ③ 참석 응답은 된다 · 속기록 · 안내 · 할 일 배정은 403 · 참석자가 아닌 강사는 404
  *   ④ 회의 할 일을 강사에게 배정하면 그 알림도 강사가 열 수 있는 자리(`/teacher?meeting=N`)로 간다 ·
- *      참석자가 아닌 강사는 그 회의를 못 읽으므로 링크 없이(알림 글만)
+ *      N-124: 활성 참석자만 배정한다 — 비참석자·비활성은 할 일과 알림을 남기지 않는다
  *
  * 이 스위트 전용 staff 9811~9814 · 회의 한 건(만들고 지운다).
  */
@@ -137,14 +137,106 @@ d('강사 참석자의 회의 상세 — 알림 링크는 받는 사람이 열 �
     await api('post', `/ops/meetings/${meetingId}/attend`, tokens.teacher2).send({ confirmed: true }).expect(404);
   });
 
-  it('④ 회의 할 일을 강사에게 배정하면 그 알림도 강사가 열 수 있는 자리로 간다 · 매니저는 운영 할 일로 · 참석자가 아닌 강사는 링크 없이', async () => {
+  it('④ 회의 할 일을 강사에게 배정하면 그 알림도 강사가 열 수 있는 자리로 간다 · 매니저는 운영 할 일로', async () => {
     await q(`DELETE FROM noti WHERE to_id = ANY($1)`, [[TEACHER, MGR2, TEACHER2]]);
     await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr).send({ title: '자료 올리기', toId: TEACHER }).expect(201);
     await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr).send({ title: '예산 확인', toId: MGR2 }).expect(201);
     expect(await linksTo(TEACHER)).toEqual([`/teacher?meeting=${meetingId}`]);
     expect(await linksTo(MGR2)).toEqual(['/ops?tab=todo']);
-    // 참석자가 아닌 강사는 그 회의를 읽을 수 없다(③ 404) — 열리지 않는 자리로 보내지 않고 알림 글만 남긴다
-    await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr).send({ title: '교재 확인', toId: TEACHER2 }).expect(201);
-    expect(await q(`SELECT link FROM noti WHERE to_id = $1`, [TEACHER2])).toEqual([{ link: null }]);
   });
+
+  it('N-124 비참석 강사의 직접 배정은 403이며 TODO·NOTI가 그대로다', async () => {
+    const before = await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId]);
+    const notices = await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [TEACHER2]);
+    const rejected = await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr)
+      .send({ title: '교재 확인', toId: TEACHER2 }).expect(403);
+    expect(rejected.body.code).toBe('MEETING_TASK_NOT_ATTENDEE');
+    expect(await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId])).toEqual(before);
+    expect(await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [TEACHER2])).toEqual(notices);
+  });
+
+  it('N-124 매니저도 비참석자이면 직접 배정이 거절된다', async () => {
+    await q(`DELETE FROM mtattd WHERE mt_id=$1 AND staff_id=$2`, [meetingId, MGR2]);
+    try {
+      const before = await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId]);
+      const notices = await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [MGR2]);
+      const rejected = await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr)
+        .send({ title: '비참석 매니저', toId: MGR2 }).expect(403);
+      expect(rejected.body.code).toBe('MEETING_TASK_NOT_ATTENDEE');
+      expect(await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId])).toEqual(before);
+      expect(await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [MGR2])).toEqual(notices);
+    } finally {
+      await q(`INSERT INTO mtattd (mt_id,staff_id,confirmed) VALUES ($1,$2,NULL)`, [meetingId, MGR2]);
+    }
+  });
+
+  it.each([null, false, true])('N-124 활성 참석자는 confirmed=%s여도 배정·다시 읽기가 된다', async (confirmed) => {
+    await q(`UPDATE mtattd SET confirmed=$3 WHERE mt_id=$1 AND staff_id=$2`, [meetingId, TEACHER, confirmed]);
+    const title = `참석 응답 ${String(confirmed)}`;
+    const made = await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr)
+      .send({ title, toId: TEACHER, dueOn: '2026-12-02' }).expect(201);
+    const task = (made.body.tasks as Array<{ id: number; title: string }>).find((t) => t.title === title)!;
+    expect(task).toBeDefined();
+    expect((await q(`SELECT to_id,due_on::text FROM todo WHERE id=$1`, [task.id]))[0])
+      .toEqual({ to_id: String(TEACHER), due_on: '2026-12-02' });
+    const readback = await api('get', `/ops/meetings/${meetingId}`, tokens.teacher).expect(200);
+    expect(readback.body.tasks).toEqual(expect.arrayContaining([expect.objectContaining({ id: task.id, title, canToggle: true })]));
+  });
+
+  it('N-124 비활성 참석자는 meta 후보에서 빠지고 직접 배정도 404·무변경이다', async () => {
+    await q(`UPDATE staff SET active=false WHERE id=$1`, [TEACHER]);
+    try {
+      const meta = await api('get', '/meta', tokens.mgr).expect(200);
+      expect((meta.body.staff as Array<{ id: number }>).some((s) => s.id === TEACHER)).toBe(false);
+      const before = await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId]);
+      const notices = await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [TEACHER]);
+      const rejected = await api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr)
+        .send({ title: '비활성 참석자', toId: TEACHER }).expect(404);
+      expect(rejected.body.code).toBe('STAFF_NOT_FOUND');
+      expect(await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId])).toEqual(before);
+      expect(await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [TEACHER])).toEqual(notices);
+    } finally {
+      await q(`UPDATE staff SET active=true WHERE id=$1`, [TEACHER]);
+    }
+  });
+
+  it.each(['deactivate', 'remove-attendee'] as const)(
+    'N-124 %s가 먼저 잠그면 배정은 커밋을 기다린 뒤 거절하고 TODO·NOTI가 그대로다', async (change) => {
+      const before = await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId]);
+      const notices = await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [TEACHER]);
+      const blocker = ds.createQueryRunner();
+      await blocker.connect();
+      await blocker.startTransaction();
+      const [{ pid }] = await blocker.query(`SELECT pg_backend_pid() AS pid`) as Array<{ pid: number }>;
+      let pending: Promise<request.Response> | undefined;
+      try {
+        if (change === 'deactivate') await blocker.query(`UPDATE staff SET active=false WHERE id=$1`, [TEACHER]);
+        else await blocker.query(`DELETE FROM mtattd WHERE mt_id=$1 AND staff_id=$2`, [meetingId, TEACHER]);
+        let settled = false;
+        pending = api('post', `/ops/meetings/${meetingId}/todos`, tokens.mgr)
+          .send({ title: `경쟁 ${change}`, toId: TEACHER }).then((r) => { settled = true; return r; });
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting && !settled; i++) {
+          [{ waiting }] = await q<{ waiting: boolean }>(
+            `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))) AS waiting`, [pid],
+          );
+          if (!waiting) await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(waiting).toBe(true);
+        expect(await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId])).toEqual(before);
+        await blocker.commitTransaction();
+        const rejected = await pending;
+        expect(rejected.status).toBe(change === 'deactivate' ? 404 : 403);
+        expect(rejected.body.code).toBe(change === 'deactivate' ? 'STAFF_NOT_FOUND' : 'MEETING_TASK_NOT_ATTENDEE');
+        expect(await q(`SELECT id FROM todo WHERE mt_id=$1 ORDER BY id`, [meetingId])).toEqual(before);
+        expect(await q(`SELECT id FROM noti WHERE to_id=$1 ORDER BY id`, [TEACHER])).toEqual(notices);
+      } finally {
+        if (blocker.isTransactionActive) await blocker.rollbackTransaction();
+        await blocker.release();
+        await pending;
+        await q(`UPDATE staff SET active=true WHERE id=$1`, [TEACHER]);
+        await q(`INSERT INTO mtattd (mt_id,staff_id,confirmed) VALUES ($1,$2,NULL) ON CONFLICT DO NOTHING`, [meetingId, TEACHER]);
+      }
+    },
+  );
 });
