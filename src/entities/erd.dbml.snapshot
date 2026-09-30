@@ -6,7 +6,10 @@
 
 // ============================================================================
 // TACO ERP — 통합 ERD
-// TBO-54 부분 구현 I-94 (2026-09-30 · v4.58): CONS_ITEM 칸 하나 — due_on date NULL 허용(기한 · 없으면 기한 없음). 테스트 시나리오 I-94 「기한이 있으면 D-day 표시」 — 원문 §31 항목 줄에 기한 입력이 없어 화면이 「기한 없음」이라 적어 왔다(사용자 지시 2026-09-30 「부분 구현 · 권고안으로 진행」). 「항목 수정」(PATCH /consulting/{id}/items)이 더할 때(add.dueOn) · 따로(due) 적고 지운다 · 끝낸 항목은 이름처럼 바꾸지 않는다(CONS_ITEM_DONE). D-day 낱말 · 지남은 저장하지 않고 읽을 때 서버가 오늘(KST)로 센다. 흔적은 감사 원장(consulting.items 앞뒤 목록에 dueOn)만 — CONS_EVENT 낱말은 늘리지 않는다. 옛 행 NULL(N-25) · migration 1765500000000 · down 은 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
+// 2026-09-30 신규 학생 등록/기간 이력 요구는 student-registration-target.dbml 및 ../../spec/STUDENT-REGISTRATION-2026-09-30.md에 먼저 설계했다.
+// ST1-b1은 공용 사전 COUNTRY · COUNTRY_TIMEZONE · EDUCATION_GRADE · SCHOOL 네 표만 migration 1765600000000에 맞춰 적용한다(v4.59/95표). 학생 기간·보호자 연락처·학교 재학 이력·등록 writer는 아직 목표 DBML에만 있다. 이 ERD 변경은 운영 DB 적용 증거가 아니다.
+// TBO-54 ST1-b1 (2026-09-30 · v4.59): 국가30/교육학년46/시간대 IANA/학교 identity 사전 네 표. 국가·학교 표시명 추정 이관0, legacy STU.school/grade 및 TZG·전화 국가 그대로. COUNTRY_TIMEZONE 대표 부분 유일, EDUCATION_GRADE 명시 조합 CHECK, SCHOOL generated key+NULL 국가 합성 유일·resolve_school 경합 수렴·비활성 거절, 4표 hard-delete guard. migration 1765600000000 · 운영 적용/새 등록 DTO·UI는 별도.
+// TBO-54 all160 부분 구현 I-94 (2026-09-30 · v4.58): CONS_ITEM.due_on date — 컨설팅 항목의 기한(NULL 허용 · 기한 없는 항목이 기본). 테스트 시나리오 I-94 「기한이 있으면 D-day 표시」 — 원문 §31 항목 줄에는 기한 입력이 없어 화면이 「기한 없음」이라 적어 왔다. 「항목 수정」(PATCH /consulting/{id}/items)이 기한을 적고 지운다. D-day 낱말(D-3 · D-day · D+2)과 지남은 저장하지 않고 읽을 때 서버가 오늘(KST)로 센다. 옛 행 NULL(추정해 채우지 않는다 · N-25) · migration 1765500000000 · down 은 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
 // TBO-54 일부 구현 A-01 (2026-09-29 · v4.57): LEAD 칸 셋 — parent_relation varchar(20) · parent_phone varchar(11)(숫자만 · lead_parent_phone_digits CHECK = GUARDIAN.phone 과 같은 모양 ^0[0-9]{9,10}$) · want varchar(120). 테스트 시나리오 A-01 「③ 학부모 어머니 · 연락처 010-1234-5678 ⑤ 원하는 것」 — 전에는 셋이 첫 접촉 한 줄(LEAD_TOUCH 자유 글)에 섞였다. 등록 확정(A-05)이 연락처를 그 학생의 보호자(GUARDIAN · 받는 채널 꺼짐 = 「+ 보호자 추가」 기본 · 같은 번호가 이미 있으면 잇지 않음)로 잇는다. LOG 는 가린 번호만. 옛 행 NULL(접촉 글에서 번호를 뽑지 않는다 · N-25) · migration 1765400000000 · down 은 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
 // TBO-54 운영 전 결정 N-132 (2026-09-29 · v4.56): PAY · CONS_PAY 칸 하나씩 — request_key uuid NULL 허용 + 부분 유니크 pay_request_key_once · cons_pay_request_key_once(WHERE request_key IS NOT NULL). 같은 부분 입금이 재시도 · 더블클릭 · 두 창으로 두 줄이 되던 것을 리포트 발송(rsend.request_key) · 보호자 발송과 같은 규약으로 막는다 — 같은 키 · 같은 내용은 앞선 줄로 수렴(권고 잠금 안 판정) · 같은 키 · 다른 내용이나 지운 줄의 키는 409 PAY_REQUEST_KEY_REUSED. 옛 행 NULL(N-25) · migration 1765300000000 · down 은 키가 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
 // TBO-54 코드 리뷰 후속 CR-BE-03 (2026-09-28 · v4.55): PDFLOG 칸 하나 — sha256 varchar(64) NULL 허용 + pdflog_sha256_hex CHECK(^[0-9a-f]{64}$) · 보존한 리포트 PNG 한 장의 바이트 지문. 발송 requestKey 멱등 판정이 학생·날짜·리포트 집합·본문에 더해 장마다 이 값까지 대조한다(같은 키·다른 바이트 → 409 REPORT_DELIVERY_REQUEST_KEY_REUSED). 옛 행 NULL(되짚어 해시할 원본이 없다 · N-25 · 그 장의 바이트 대조만 생략) · 재발송은 원본 행의 값을 복사 · migration 1765200000000 · down 은 지문이 채워진 행이 있으면 멈춘다. 표 수 91 그대로.
@@ -70,7 +73,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.57 (2026-09-29) — v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
+// version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
 //           docs/spec/MERGE-2026-08-26.md · MERGE-2026-08-27.md  (어느 쪽을 왜 골랐는지)
@@ -270,6 +273,65 @@ Table STU {
   gender      varchar(6)  [note: 'v4.54 · W11 N-83 선택 칸 — female | male (stu_gender_words CHECK · NULL 허용). 옛 학생 NULL — 추정 보정 0 (N-25). 관리자 §10 아바타에만 쓰고 학부모 · 외부 출력(리포트 · 안내 · 보호자 발송 · PNG)에 싣지 않는다. 등록 확정이 새 학생을 만들 때만 받는다 · 낱말은 GET /meta genders · migration 1764110000000']
   created_at  timestamptz [not null, default: `now()`]
   Note: '시드 19명. 코디네이터와 공유. 포인트·청구는 강사에게 노출하지 않는다.'
+}
+
+Table COUNTRY {
+  code       char(2)     [pk, note: 'ISO alpha-2 국가/지역 코드. country_code_format CHECK']
+  name_ko    varchar(60)[not null]
+  name_en    varchar(80)[not null]
+  sort       smallint    [not null]
+  active     boolean     [not null, default: true]
+  Note: 'v4.59 · ST1-b1 · migration 1765600000000. 고정 30코드 seed; name 공백/정렬 음수 CHECK·hard DELETE 거절. 기존 전화 국가/시간대 TZG를 대체하지 않으며 사용자가 바꾼 표시명을 seed 재실행이 덮지 않는다.'
+}
+
+Table COUNTRY_TIMEZONE {
+  country_code     char(2)     [not null, ref: > COUNTRY.code]
+  timezone         varchar(64)[not null]
+  label_ko         varchar(80)[not null]
+  is_representative boolean    [not null, default: false]
+  active           boolean     [not null, default: true]
+  indexes {
+    (country_code, timezone) [pk]
+  }
+  Note: 'v4.59 · ST1-b1. IANA zone은 check_country_timezone_iana trigger로 검증. country_timezone_representative UNIQUE(country_code) WHERE active AND is_representative. 복수 zone 국가를 대표 하나로 축약·자동 선택하지 않는다. hard DELETE 거절.'
+}
+
+Table EDUCATION_GRADE {
+  education_system varchar(5) [not null, note: 'US/GB/KR/OTHER · 거주 국가와 독립']
+  code             varchar(16)[not null, note: 'US G1~G12, GB Yr1~Yr13, KR E/M/H, OTHER repeat 등 명시 46조합']
+  label_ko         varchar(30)[not null]
+  sort             smallint    [not null]
+  active           boolean     [not null, default: true]
+  indexes {
+    (education_system, code) [pk]
+    (education_system, sort) [unique]
+  }
+  Note: 'v4.59 · ST1-b1. education_grade_code_allowed는 두 컬럼 허용 조합을 명시 CHECK, sort>=0·label 공백 금지, hard DELETE 거절. 신규 학생 기간 학년 FK/화면 선택은 후속 ST 청크다.'
+}
+
+Table SCHOOL {
+  id           bigserial   [pk]
+  name         varchar(120)[not null]
+  country_code char(2)     [ref: > COUNTRY.code]
+  region       varchar(80)
+  campus       varchar(120)
+  name_key     text        [not null, note: 'GENERATED ALWAYS AS normalize_school_identity(name) STORED · client 입력 금지']
+  region_key   text        [not null, note: 'GENERATED ALWAYS AS normalize_school_identity(coalesce(region, 빈 문자열)) STORED']
+  campus_key   text        [not null, note: 'GENERATED ALWAYS AS normalize_school_identity(coalesce(campus, 빈 문자열)) STORED']
+  active       boolean     [not null, default: true]
+  created_by   bigint      [ref: > STAFF.id, note: '신규 사용자 추가는 실제 actor; legacy/import NULL은 미상']
+  created_at   timestamptz [not null, default: `now()`]
+  indexes {
+    (name_key) [name: 'school_name_search']
+    (country_code) [name: 'school_country']
+  }
+  Note: '''
+  v4.59 · ST1-b1. 표시 이름·지역·캠퍼스는 입력 표기(공백만 정리)를 보존하고 identity는 NFC+소문자+공백 정리.
+  school_identity UNIQUE(name_key, COALESCE(country_code::text,''), region_key, campus_key)는 국가 NULL도 한 identity로 묶는다.
+  resolve_school(p_name,p_country,p_region,p_campus,p_actor)는 동시 동일 학교를 같은 ID로 수렴하고 비활성 identity 재사용을 거절한다.
+  school_display_normalize/학교 이름·key 길이 CHECK와 hard DELETE guard를 migration이 만든다. 기존 STU.school 자유 문자열은 추정 연결하지 않는다.
+  학생 재학기간 FK·사전 조회/수정 API·UI는 아직 미구현이다.
+  '''
 }
 
 Table LEAD {
@@ -720,7 +782,7 @@ Table CONS_ITEM {
   done       boolean     [not null, default: false]
   done_by    bigint      [ref: > STAFF.id]
   done_at    timestamptz
-  due_on     date        [note: '기한 — 없으면 NULL(v4.58 · I-94). D-day 는 저장하지 않고 서버가 오늘(KST)로 센다 · 끝낸 항목은 기한을 말하지 않는다']
+  due_on     date        [note: 'v4.58 · I-94 항목 기한(선택 · NULL = 기한 없음). 「항목 수정」이 적고 지운다 · D-day 와 지남은 저장하지 않고 서버가 오늘(KST)로 센다(ConsItemDto.dueLabel · dueOverdue). 옛 행 NULL(N-25) · migration 1765500000000']
   source     varchar(10) [not null, default: 'template', note: "template=§29 자동 생성분 · manual=「항목 수정」으로 담당이 더한 항목(v4.54 · W11 · N-18-a DQ5 대안 · PATCH /consulting/{id}/items) — cons_item_source_check"]
   created_at timestamptz [not null, default: `now()`]
 

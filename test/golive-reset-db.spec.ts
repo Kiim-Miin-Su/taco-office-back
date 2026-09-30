@@ -23,13 +23,13 @@ const fk = (table: string, refTable: string, notNull = false): FkEdge => ({ tabl
 
 describe('운영 전환 — 순수 판정', () => {
   it('설정 표는 남기고 migrations 는 안 건드리며 staff 는 일부 · 나머지는 전부 비운다(새 표는 저절로 비움 쪽)', () => {
-    const c = classifyTables(['stu', 'kind', 'staff', 'migrations', 'tzg', 'brand_new_table', 'log']);
-    expect(c.keep).toEqual(['kind', 'tzg']);
+    const c = classifyTables(['stu', 'kind', 'staff', 'migrations', 'tzg', 'brand_new_table', 'log', 'country', 'country_timezone', 'education_grade', 'school']);
+    expect(c.keep).toEqual(['country', 'country_timezone', 'education_grade', 'kind', 'school', 'tzg']);
     expect(c.untouched).toEqual(['migrations']);
     expect(c.partial).toEqual(['staff']);
     expect(c.empty).toEqual(['brand_new_table', 'log', 'stu']);
     // 교재 분류 코드표 둘은 migration 이 넣는 설정이다 — 비우면 운영에서 교재를 분류할 수 없다 (W11 N-47)
-    expect(GOLIVE_KEEP_TABLES).toEqual(['kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl', 'book_subject', 'book_category', 'acct_privacy']);
+    expect(GOLIVE_KEEP_TABLES).toEqual(['kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl', 'book_subject', 'book_category', 'acct_privacy', 'country', 'country_timezone', 'education_grade', 'school']);
   });
 
   it('지우는 순서는 가리키는 표가 먼저 · 자기 참조는 무시 · 서로 가리키면 순서를 지어내지 않고 던진다', () => {
@@ -81,6 +81,8 @@ d('운영 전환 — 스크래치 DB 에서 한 트랜잭션으로 (끝에 되�
     q = ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
+    // student-catalog 경합 시험의 SCHOOL TRUNCATE와 이 rollback fixture를 직렬화한다.
+    await q.query('SELECT pg_advisory_xact_lock(20260930, 560)');
     const hash = await bcrypt.hash('fixture-1234', 4);
     await q.query(
       `INSERT INTO staff (id, name, email, phone, role, password_hash, active, phone_verified, email_verified) VALUES
@@ -94,6 +96,7 @@ d('운영 전환 — 스크래치 DB 에서 한 트랜잭션으로 (끝에 되�
     await q.query(`INSERT INTO tzg (id, name, tz) VALUES (8871,'시험 시간대','Asia/Seoul') ON CONFLICT (id) DO NOTHING`);
     await q.query(`INSERT INTO holiday (on_date, name) VALUES ('2031-01-01','시험 휴일') ON CONFLICT DO NOTHING`);
     await q.query(`INSERT INTO stu (id, name, grade) VALUES ($1,'시험학생','10')`, [STU]);
+    await q.query(`SELECT resolve_school('운영 전환 시험 학교','KR',NULL,NULL,$1)`, [MGR]);
     await q.query(`INSERT INTO wage (staff_id, rate, from_date, reason) VALUES ($1, 40000, '2026-01-01', '시험')`, [T]);
     await q.query(`INSERT INTO todo (title, from_id, to_id, src) VALUES ('시험 할 일', $1, $2, 'manual')`, [MGR, T]);
     await q.query(`INSERT INTO noti (to_id, from_id, body) VALUES ($1, $2, '시험 알림')`, [T, MGR]);
@@ -144,6 +147,8 @@ d('운영 전환 — 스크래치 DB 에서 한 트랜잭션으로 (끝에 되�
     expect(plan.activeCeos.map((c) => c.id)).not.toContain(CEO_OFF);
     expect(JSON.stringify(plan.activeCeos)).not.toMatch(/keep-ceo@t\.kr/i);
     expect(plan.empty.find((e) => e.table === 'wage')!.rows).toBeGreaterThanOrEqual(1);
+    expect(plan.keep.find((e) => e.table === 'school')!.rows).toBe(1);
+    expect(plan.keep.find((e) => e.table === 'country')!.rows).toBe(30);
   });
 
   it('남길 대표는 활성 대표여야 한다 — 그만둔 대표 · 매니저 · 없는 이메일은 막히고 아무것도 안 바뀐다', async () => {
@@ -197,6 +202,7 @@ d('운영 전환 — 스크래치 DB 에서 한 트랜잭션으로 (끝에 되�
     expect(staff[0].credentials_changed_at).not.toBeNull();
     expect(await bcrypt.compare(INITIAL_PASSWORD, String(staff[0].password_hash))).toBe(true);
     expect(await one(`SELECT w8b_owner FROM gtpl WHERE id = 8871`)).toEqual({ w8b_owner: null });
+    expect(await one(`SELECT name,created_by FROM school WHERE name='운영 전환 시험 학교'`)).toEqual({ name: '운영 전환 시험 학교', created_by: null });
     expect(Number((await one<{ w8b_by: string }>(`SELECT w8b_by FROM room WHERE id = 8871`))!.w8b_by)).toBe(CEO);
     const log = await one<{ actor_id: string; action: string; after: Record<string, unknown> }>(`SELECT actor_id, action, after FROM log`);
     expect(log).toMatchObject({ action: 'golive_reset' });

@@ -6,8 +6,7 @@
 
 # docs/contracts/db/erd.dbml → src/entities/*.entity.ts
 #
-# 손으로 62표를 옮기면 반드시 어긋난다. dbml 이 정본이므로 여기서 읽어 만든다.
-# GPA 4표는 N-13 결정 대기라 제외한다 (규칙 P-1).
+# dbml 이 정본이다. 기존 entity에는 수동 보강 metadata가 있으므로 전체 재생성 전 diff를 검토한다.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DBML="${1:-$HERE/../../taco-office/docs/contracts/db/erd.dbml}"

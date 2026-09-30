@@ -3,16 +3,16 @@
 # 책임/재사용: 검사/생성/실행 도구의 책임만 소유한다. 대상 경로와 실행 권한을 확인하고 실패를 성공으로 기록하지 않는다.
 # 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
 
-"""erd.dbml → TypeORM 엔티티 + 마이그레이션.
+"""erd.dbml → TypeORM 엔티티 생성용 구조.
 
-손으로 62표를 옮기면 반드시 어긋난다. dbml 이 정본이므로 여기서 읽어 만든다.
-GPA 4표는 N-13 결정 대기라 제외한다 (규칙 P-1).
+dbml 이 정본이며 GPA 4표도 현재 엔티티·실 DB에 포함된다.
 """
 import io, re, json, os
 
 SRC = io.open('/tmp/erd.dbml', encoding='utf-8').read()
 
-SKIP = {'GPASVC', 'GPA_CYCLE', 'GPA_ALLOC', 'GPA_USE'}   # N-13 대기
+# 현행 ERD의 GPA 4표도 운영 entity/index에 등록돼 있다. 제외하면 재생성 시 사라진다.
+SKIP = set()
 
 # ── enum 수집
 enums = {}
@@ -53,6 +53,7 @@ TYPE_MAP = [
     (r'^timestamptz$',     ('timestamptz', 'Date',   None)),
     (r'^tstzrange$',       ('tstzrange',   'string', None)),
     (r'^bytea$',           ('bytea',       'Buffer', None)),
+    (r'^uuid$',            ('uuid',        'string', None)),
     (r'^numeric\((\d+),(\d+)\)$', ('numeric', 'string', 'numeric')),
     (r'^varchar\((\d+)\)$',('varchar',     'string', 'len')),
     (r'^char\((\d+)\)$',   ('char',        'string', 'len')),
@@ -60,7 +61,7 @@ TYPE_MAP = [
 
 # 줄바꿈을 삼키지 않도록 [ \t] 만 쓴다. \s 를 쓰면 앞 컬럼 매치가 다음 줄의 들여쓰기까지
 # 먹어 버려서 그 다음 컬럼이 통째로 사라진다 (STAFF.role 이 실제로 그렇게 빠졌다).
-COL_RE = re.compile(r'(?<![\w.])([a-z_][a-z0-9_]*)[ \t]+(bigserial|serial|bigint|int|smallint|boolean|text|jsonb|date|timestamptz|numeric\(\d+,\d+\)|varchar\(\d+\)|char\(\d+\)|tstzrange|bytea|\w+_t)[ \t]*(\[[^\]]*\])?')
+COL_RE = re.compile(r'(?<![\w.])([a-z_][a-z0-9_]*)[ \t]+(bigserial|serial|bigint|int|smallint|boolean|text|jsonb|date|timestamptz|numeric\(\d+,\d+\)|varchar\(\d+\)|char\(\d+\)|tstzrange|bytea|uuid|\w+_t)[ \t]*(\[[^\]]*\])?')
 
 DROPPED = []
 

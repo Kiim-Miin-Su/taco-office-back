@@ -40,6 +40,9 @@ def col_decorator(c, table, is_pk=False):
     # PK 는 nullable 일 수 없다 — dbml 에 not null 이 안 적혀 있어도 PK 면 강제한다
     if not c['notnull'] and not is_pk: o.append('nullable: true')
     if c['unique']: o.append('unique: true')
+    if c['note'] and 'GENERATED ALWAYS' in c['note']:
+        # PostgreSQL STORED computed keys are read-only in application writes.
+        o.extend(['insert: false', 'update: false'])
     d = c['default']
     if d:
         if d.startswith('`'):
@@ -92,7 +95,14 @@ for t in T:
     if any(c['name'] not in pk_names_pre and c['kind'] != 'pk-gen' for c in cols):
         imports.append('Column')
 
-    L = []
+    L = [
+        '/** @file-guide',
+        f' * 목적: {file_of(t)} — {table} 테이블 ORM 매핑 (entity)',
+        ' * 책임/재사용: DB 레코드 매핑만 소유한다. DBML·migration·생성기 metadata를 함께 대조한다.',
+        ' * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md',
+        ' */',
+        '',
+    ]
     L.append('/**')
     L.append(f' * {table} — docs/contracts/db/erd.dbml {VER} 에서 생성했습니다.')
     L.append(' *')
@@ -128,7 +138,16 @@ for t in T:
     io.open(os.path.join(OUT, file_of(t)), 'w', encoding='utf-8').write('\n'.join(L))
     index.append((cls, file_of(t)[:-3]))
 
-ix = [f"/** 엔티티 색인 — dbml {VER} 에서 생성했습니다. 손으로 고치지 마세요. */", "export * from './enums';"]
+ix = [
+    '/** @file-guide',
+    ' * 목적: index.ts — ENTITIES (entity)',
+    ' * 책임/재사용: DB 레코드 매핑만 소유한다. DBML·migration·생성기 metadata를 함께 대조한다.',
+    ' * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md',
+    ' */',
+    '',
+    f"/** 엔티티 색인 — dbml {VER} 에서 생성했습니다. 손으로 고치지 마세요. */",
+    "export * from './enums';",
+]
 for cls, f in sorted(index):
     ix.append(f"export * from './{f}';")
 ix.append('')
@@ -137,7 +156,7 @@ for cls, _ in sorted(index):
     ix.append(f'  {cls},')
 ix.append("} from './index';")
 ix.append('')
-ix.append('/** DataSource 에 넘길 목록. GPA 4표는 N-13 결정 대기라 빠져 있습니다. */')
+ix.append('/** DataSource 에 넘길 목록. 현행 ERD 95표를 모두 포함한다. */')
 ix.append('export const ENTITIES = [')
 for cls, _ in sorted(index):
     ix.append(f'  {cls},')

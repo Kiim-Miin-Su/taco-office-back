@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-/** 엔티티 색인 — dbml v4.9 에서 생성했습니다. 손으로 고치지 마세요. */
+/** 엔티티 색인 — dbml v4.59 에서 생성·기존 수동 metadata를 보존하며 보강했습니다. */
 export * from './enums';
 export * from './att.entity';
 export * from './autorep.entity';
@@ -20,6 +20,11 @@ export * from './cons-sess.entity';
 export * from './cons-stu.entity';
 export * from './cpl.entity';
 export * from './cons-pay.entity';
+// ST1-b1 (2026-09-30) — 학생/구성원 공용 국가·시간대·학년·학교 사전
+export * from './country.entity';
+export * from './country-timezone.entity';
+export * from './education-grade.entity';
+export * from './school.entity';
 export * from './diag.entity';
 export * from './enr.entity';
 export * from './exc.entity';
@@ -122,12 +127,17 @@ import {
   ConsPick,
   ConsSess,
   ConsStu,
+  ConsPay,
+  Country,
+  CountryTimezone,
   Cpl,
   Diag,
+  EducationGrade,
   Enr,
   Exc,
   ExcStuOut,
   Expense,
+  FileRow,
   GpaAlloc,
   GpaCycle,
   GpaUse,
@@ -174,6 +184,7 @@ import {
   Room,
   Rpt,
   Rsend,
+  School,
   Ser,
   SerOcc,
   SerStu,
@@ -193,8 +204,13 @@ import {
   Zlog,
 } from './index';
 
-/** DataSource 에 넘길 목록. GPA 4표는 N-13 채택(2026-09-12 §4-17)으로 C34 에서 합류했다. */
+/** DataSource 에 넘길 목록. 현행 ERD 95표, 기존 GPA 4표 포함. */
 export const ENTITIES = [
+  // ST1-b1 공유 사전4표. 현행 ERD→생성기 출력과 대조했고 나머지 엔티티의 수동 metadata는 유지한다.
+  Country,
+  CountryTimezone,
+  EducationGrade,
+  School,
   Carry,
   StuPause,
   MonthClose,
@@ -218,12 +234,15 @@ export const ENTITIES = [
   ConsPick,
   ConsSess,
   ConsStu,
+  // 기존 두 영속 표가 ENTITIES에서 빠져 schema:check가 검수하지 못하던 범위를 닫는다.
+  ConsPay,
   Cpl,
   Diag,
   Enr,
   Exc,
   ExcStuOut,
   Expense,
+  FileRow,
   GpaAlloc,
   GpaCycle,
   GpaUse,

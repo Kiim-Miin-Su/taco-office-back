@@ -29,6 +29,7 @@ import { GUARDIANS } from './guardians';
 import { seedReportSends } from './report-sends';
 import { REQS, CHREQS, GPAPACKS, NOTIS, CONSULTINGS, CONS_PICKS, CONS_SESSIONS, MKTS, MFBS, PLANS, MEETINGS, COMPLAINTS, SUGGESTIONS, REPORTS, TODOS , CONS_ITEMS, CONS_PAYS, DIAGS, GPASVCS, GPA_CYCLES, GPA_ALLOCS, GPA_USES } from './ops';
 import { LEAD_CARE_FIRST } from './ops';
+import { seedStudentCatalogV1 } from '../migrations/data/student-catalog-v1';
 
 /**
  * `--reset` 이 비우는 표 — 넣을 때의 이 순서를 **역순으로** 지운다.
@@ -44,6 +45,8 @@ import { LEAD_CARE_FIRST } from './ops';
 export const SEEDED_TABLES = [
   'kind', 'sub', 'room', 'zacc', 'tzg', 'staff', 'wage', 'rate', 'sturate',
   'stu', 'enr', 'lead',
+  // ST1-b1 사용자가 추가한 학교만 reset. 국가/시간대/학년은 공유 사전이라 truncate하지 않는다.
+  'school',
   // 줌 배정 정본(`zassign`)은 온라인 규칙에 시드가 넣는다(N-49 · W11) — 회차의 계정(`ser_occ.zacc_id`)은 그 투영이다
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'zassign', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
@@ -109,6 +112,13 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
       const list = [...SEEDED_TABLES].reverse().map((t) => `"${t}"`).join(', ');
       await q.query(`TRUNCATE ${list} RESTART IDENTITY CASCADE`);
     }
+
+    // migration에도 든 버전 고정 기본 사전. 기존 표시명·활성 상태·sort는 절대 덮지 않는다.
+    // 새 학교는 가짜로 만들지 않는다(legacy STU.school의 동일성/재학 날짜는 미상).
+    const catalog = await seedStudentCatalogV1(q);
+    done.push({ table: 'country', rows: catalog.country });
+    done.push({ table: 'country_timezone', rows: catalog.countryTimezone });
+    done.push({ table: 'education_grade', rows: catalog.educationGrade });
 
     // ── 기준 정보
     await add('kind', KINDS.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, rep_form: k.repForm, sort: k.sort })));
