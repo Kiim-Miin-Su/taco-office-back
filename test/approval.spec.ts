@@ -120,11 +120,11 @@ describe('apFlow — 세 묶음', () => {
     expect(f.waiting.map((r) => r.id)).toEqual([2, 1]);
   });
 
-  it('공통 결재 다섯 갈래와 강사 리포트가 정규화된다 — 빠진 갈래가 없다 (D-R26·D-R34)', () => {
+  it('공통 결재 여섯 갈래(지출 포함 · H-83)와 강사 리포트가 정규화된다 — 빠진 갈래가 없다 (D-R26·D-R34)', () => {
     const f = apFlow([], ME, true);
     // 한동안 gpapack 이 「표가 없다」로 빠져 있었는데 표는 처음부터 있었다
     expect(f.missingKinds).toEqual([]);
-    expect(AP_KINDS).toEqual(['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing']);
+    expect(AP_KINDS).toEqual(['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense', 'suggestion', 'missing']);
     expect(AP_KINDS_MISSING.every((k) => (AP_KINDS as readonly string[]).includes(k))).toBe(true);
   });
 
@@ -168,9 +168,11 @@ describe('apSentence — 누가 누구에게', () => {
   });
 });
 
-describe('§75 approvalFlowProjection — exact 5종·수신자·역할 투영', () => {
+describe('§75 approvalFlowProjection — exact 6종(지출 포함 · H-83 · N-64 번복)·수신자·역할 투영', () => {
   const rows: ApRow[] = [
     row({ id: 1, kind: 'rpt', byId: null, byName: null, go: '/exec?view=day&date=2026-09-14&rpt=1' }),
+    row({ id: 10, kind: 'expense', byId: OTHER, go: '/accounting?tab=out' }),
+    row({ id: 11, kind: 'expense', byId: ME, state: 'back', why: '영수증 첨부 필요', go: '/schedule?myExpense=11' }),
     row({ id: 2, kind: 'plan', byId: OTHER, state: 'back', why: '근거 부족' }),
     row({ id: 3, kind: 'req', byId: OTHER }),
     row({ id: 4, kind: 'chreq', byId: OTHER }),
@@ -189,9 +191,14 @@ describe('§75 approvalFlowProjection — exact 5종·수신자·역할 투영',
       ['req', '강사 요청', '실장에게', 1],
       ['chreq', '변경 요청', '실장에게', 1],
       ['gpapack', '자료 요청', '실장에게', 0],
+      ['expense', '지출 결재', '대표에게', 1],
     ]);
     expect(flow.total).toBe(flow.waiting.length);
-    expect(flow.back).toEqual([expect.objectContaining({ id: 9, state: 'back', why: '내 기획 보완' })]);
+    // 되돌아온 것 — 내 기획 · 내 지출(H-84 「결재 흐름 되돌아온 것에 붉게」 · 사유 그대로)
+    expect(flow.back.map((b) => [b.kind, b.id, b.why])).toEqual(expect.arrayContaining([
+      ['plan', 9, '내 기획 보완'], ['expense', 11, '영수증 첨부 필요'],
+    ]));
+    expect(flow.back).toHaveLength(2);
     expect(flow.mine).toEqual([expect.objectContaining({ id: 5, state: 'mine' })]);
     expect(flow.waiting.find((item) => item.id === 1)).toMatchObject({
       byName: '알 수 없음', to: 'ceo', toName: '대표', toLabel: '대표에게',
@@ -205,7 +212,8 @@ describe('§75 approvalFlowProjection — exact 5종·수신자·역할 투영',
     expect(flow.waiting.map((item) => item.kind)).toEqual(['req', 'chreq']);
     expect(flow.total).toBe(2);
     expect(flow.tiles.find((tile) => tile.kind === 'rpt')?.count).toBe(0);
-    expect(flow.back).toEqual([expect.objectContaining({ id: 9 })]);
+    expect(flow.tiles.find((tile) => tile.kind === 'expense')?.count).toBe(0);
+    expect(flow.back.map((b) => b.id)).toEqual(expect.arrayContaining([9, 11]));
   });
 
   it('강사 projection은 트리거·타일·행·건수가 모두 0이다', () => {

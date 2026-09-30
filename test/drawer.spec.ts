@@ -113,8 +113,10 @@ describe('§75 역할별 projection 위임 — DB 독립', () => {
     // W8 — 일곱째 인자 canManageStaff(canAdminPage + canCrudAll): 줄 단추(수정·초기화·사용 중지·삭제)는 이 값으로만 켜진다
     // N-68 — 여덟째 인자 canSetPerms: 권한 예외 토글은 대표 판정(canCeoSetPermOverride · P1 동안 강사 외 전부)으로만 선다
     // N-94 — 아홉째 인자 canHide: 시급 비공개가 켜지면 이 값이 없는 사람에게 남의 지금 시급이 가려진다(P1 동안 강사 외 전부)
+    // H-83 — 열째 인자 canMoney: §75 지출 갈래에 남의 지출 줄을 싣는가(지출 심사의 @Perm('canMoney') 과 같다 · 강사 외 전부)
     expect(svc.all).toHaveBeenCalledWith(
       1, role !== 'teacher', role !== 'teacher', false, scope, role !== 'teacher', role !== 'teacher', role !== 'teacher', role !== 'teacher',
+      role !== 'teacher',
     );
   });
 });
@@ -303,11 +305,11 @@ d('우측 서랍 — §14~§21', () => {
    * **실장에게 오는 것만 보던 화면이 대표에게 오는 것(RPT·PLAN)까지 본다.**
    * 타일 다섯과 deep link 규약은 그대로라 거기만 계속 센다.
    */
-  it('§75 매니저 projection은 exact 5종 타일·deep link를 내리고, 이제 대표 수신분까지 본다', async () => {
+  it('§75 매니저 projection은 exact 6종(지출 포함 · H-83) 타일·deep link를 내리고, 이제 대표 수신분까지 본다', async () => {
     const { approvalFlow: flow } = (await get('/drawer', MANAGER).expect(200)).body;
     expect(flow.canView).toBe(true);
     expect(flow.tiles.map((tile: { kind: string }) => tile.kind))
-      .toEqual(['rpt', 'plan', 'req', 'chreq', 'gpapack']);
+      .toEqual(['rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense']);
     expect(flow.total).toBe(flow.waiting.length);
     expect(flow.backCount).toBe(flow.back.length);
     // 수신처는 여전히 갈래가 정한다(rpt·plan 은 대표에게) — 달라진 것은 **누가 그것을 보는가**다

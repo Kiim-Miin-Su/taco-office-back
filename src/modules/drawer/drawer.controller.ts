@@ -60,6 +60,8 @@ export class DrawerController {
       canWage: role !== null && hasPerm(role, 'canWage', user.perms),
       // 시급 비공개(N-94 · W11 M2)를 지나는가 — 회계 정산 줄 · 시급 이력과 같은 비공개 열람 판정
       canHide: role !== null && hasPerm(role, 'canHide', user.perms),
+      // §75 지출 갈래(H-83) — 남의 지출 줄은 지출 심사(POST accounting/expenses/:id/review 의 @Perm('canMoney'))를 할 수 있는 사람에게만
+      canMoney: role !== null && hasPerm(role, 'canMoney', user.perms),
       approvalFlowScope: role === null ? 'none' as const : approvalFlowScope(role, user.perms),
       // N-68 — 사람별 권한 예외를 적는 입력은 대표 판정으로만 연다 · 켤 수 있는 한도는 보는 사람의 결론 권한
       canSetPerms: role !== null && canCeoSetPermOverride(role),
@@ -71,9 +73,9 @@ export class DrawerController {
   @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 승인함/결재 흐름 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
   all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
-    const { canApprove, canSeeAll, canWage, canManageStaff, canSetPerms, canHide, approvalFlowScope: flowScope } = this.gate(user);
+    const { canApprove, canSeeAll, canWage, canManageStaff, canSetPerms, canHide, canMoney, approvalFlowScope: flowScope } = this.gate(user);
     // notiWindow=all 은 **보여 주는 범위**만 넓힌다 — 지운 적이 없으므로 예전 것이 그대로 나온다 (N-7 · D-16)
-    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage, canManageStaff, canSetPerms, canHide);
+    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage, canManageStaff, canSetPerms, canHide, canMoney);
   }
 
   /* ══ §17 구성원 (C97 · 테스트 시나리오 D-41) · 사용자 표 CRUD (W8 · 대표 지시 2026-09-26) ═══════════ */

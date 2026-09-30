@@ -243,6 +243,43 @@ d('W11 P — 사람별 권한 예외 · §76 권한 표 · 내 지출 신청 · 
     await api('patch', `/drawer/staff/${MGR}`).send({ perms: { canMoney: null } }).expect(200);
   });
 
+  /* ── H-83 · H-84 — §75 결재 흐름의 지출 갈래 (사용자 결정 2026-09-30 · N-64 번복) ─────────────────── */
+
+  it('§75 지출 갈래 — 올린 지출은 대표 흐름의 「지출 결재 → 대표에게」에 서고, 반려되면 올린 사람의 「되돌아온 것」에 사유와 함께 · 회계 권한이 없으면 남의 줄은 없다 (H-83 · H-84)', async () => {
+    await api('patch', `/drawer/staff/${MGR}`).send({ perms: { canMoney: false } }).expect(200);
+    try {
+      const made = await api('post', '/accounting/expenses', tokens.mgr)
+        .send({ spendOn: '2026-09-22', category: 'book', requestedAmount: 350000, purpose: 'pp 교재 구입' }).expect(201);
+      const id = made.body.id as number;
+      const flowOf = async (token?: string) => (await api('get', '/drawer', token).expect(200)).body.approvalFlow as {
+        tiles: Array<{ kind: string; count: number; toLabel: string }>;
+        waiting: Array<{ kind: string; id: number; go: string; title: string }>;
+        back: Array<{ kind: string; id: number; why: string | null; go: string }>;
+        mine: Array<{ kind: string; id: number }>;
+      };
+      // 대표 — 결재 흐름에 집계(H-83 「결재 흐름에 집계」) · 원본은 회계 「나간 돈」 · 금액은 줄에 없다
+      const ceoFlow = await flowOf();
+      expect(ceoFlow.tiles.find((t) => t.kind === 'expense')).toMatchObject({ toLabel: '대표에게' });
+      expect(ceoFlow.tiles.find((t) => t.kind === 'expense')!.count).toBeGreaterThanOrEqual(1);
+      const row = ceoFlow.waiting.find((w) => w.kind === 'expense' && w.id === id)!;
+      expect(row).toMatchObject({ go: '/accounting?tab=out', title: expect.stringContaining('pp 교재 구입') });
+      expect(JSON.stringify(row)).not.toContain('350');
+      // 올린 사람 — 「내가 올린 것」에 선다 · 회계 권한이 없어 남의 지출 줄은 없다
+      const mgrFlow = await flowOf(tokens.mgr);
+      expect(mgrFlow.mine.some((m) => m.kind === 'expense' && m.id === id)).toBe(true);
+      expect([...mgrFlow.waiting, ...mgrFlow.back].filter((w) => w.kind === 'expense')).toEqual([]);
+      // 반려 — 올린 사람의 「되돌아온 것」에 사유와 함께(H-84) · 누르면 서랍 「내 지출 신청」
+      await api('post', `/accounting/expenses/${id}/review`).send({ decision: 'reject', reason: '영수증 첨부 필요' }).expect(201);
+      const back = (await flowOf(tokens.mgr)).back.find((b) => b.kind === 'expense' && b.id === id);
+      expect(back).toMatchObject({ why: '영수증 첨부 필요', go: `/schedule?myExpense=${id}` });
+      expect((await flowOf()).waiting.some((w) => w.kind === 'expense' && w.id === id)).toBe(false);
+      // 강사는 §75 자체가 없다
+      expect((await flowOf(tokens.teacher)).tiles).toEqual([]);
+    } finally {
+      await api('patch', `/drawer/staff/${MGR}`).send({ perms: { canMoney: null } }).expect(200);
+    }
+  });
+
   /* ── N-99 강사 「GPA 회차 요청」 창 ─────────────────────────────────────── */
 
   it('「GPA 회차 요청」 창은 강사 전용이다 — 서비스 규정과 고를 회차 두 벌 · 관리 화면 사람은 403', async () => {

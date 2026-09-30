@@ -49,6 +49,7 @@ import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { loadState } from '../schedule/schedule.state.repo';
 import { issueScheduleUndoStep } from '../schedule/schedule.undo';
 import { GpaService } from '../gpa/gpa.service';
+import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
 import { STAFF_CREATE_ROLES } from './drawer.dto';
 import type {
   ApprovalUndoResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
@@ -190,7 +191,7 @@ export class DrawerService {
    * §14 리포트·건의·빠진 것과 §75 결재 갈래를 읽어 공통 ApRow 한 모양으로 만든다.
    * 지정 공개 기획(N-72)은 **여기서 거른다** — 보는 사람에게 안 보이는 기획은 줄이 되지 않는다(두 투영이 같은 줄을 본다 · W11 A' 후속).
    */
-  private async approvalRows(viewerId: number, flowScope: ApprovalFlowScope): Promise<ApRow[]> {
+  private async approvalRows(viewerId: number, flowScope: ApprovalFlowScope, canMoney = false): Promise<ApRow[]> {
     const rows: ApRow[] = [];
 
     // §14의 강사 리포트 전건 큐. 대표 보고(RPT)와 수업 리포트(REP)는 다른 표다.
@@ -398,6 +399,37 @@ export class DrawerService {
       });
     }
 
+    /*
+     * §75 여섯째 갈래 「지출 결재 → 대표에게」 (H-83 · H-84 · 사용자 결정 2026-09-30 — N-64 번복).
+     * 결재 · 반려는 회계 「나간 돈」(canMoney)이 하고 여기서는 이동만 한다(D-R27 · applicable false).
+     * **누가 보는가**: 지출을 심사할 수 있는 사람(canMoney — 쓰기의 @Perm 과 같다)은 전부, 그 밖의 사람은 **자기가 올린 것만**
+     * (되돌아온 것 · 내가 올린 것) — 남의 지출 줄이 서랍 응답에 새지 않게 SQL 에서 거른다(D-R39). 금액은 줄에 싣지 않는다.
+     * 올린 사람은 실제로 올린 사람(filed_by)이고, 옛 줄(NULL · N-25)은 신청자(requester_id)다. 반려 사유는 expense.reason 이다.
+     */
+    for (const r of await this.q(
+      `SELECT e.id, e.category, e.merchant, e.purpose, e.state, e.reason, to_char(e.spend_on,'MM-DD') AS spend_on,
+              COALESCE(e.filed_by, e.requester_id) AS by_id, b.name AS by_name,
+              ${kstAt(`COALESCE(e.reviewed_at, e.created_at)`)} AS at
+         FROM expense e
+         LEFT JOIN staff b ON b.id = COALESCE(e.filed_by, e.requester_id)
+        WHERE e.state IN ('pending','rejected','approved')
+          AND ($2::boolean OR COALESCE(e.filed_by, e.requester_id) = $1)`,
+      [viewerId, canMoney],
+    )) {
+      const own = num(r.by_id) === viewerId;
+      const state = toApState(str(r.state));
+      rows.push({
+        kind: 'expense', id: Number(r.id),
+        title: `${labelOf(EXPENSE_CATEGORY_LABEL, String(r.category))} 지출${str(r.purpose) ? ` · ${String(r.purpose)}` : ''}`,
+        sub: [str(r.merchant), r.spend_on ? `쓴 날 ${String(r.spend_on)}` : null].filter(Boolean).join(' · ') || null,
+        byId: num(r.by_id), byName: str(r.by_name), at: String(r.at),
+        state, why: state === 'back' ? str(r.reason) : null,
+        // 올린 사람은 서랍 「내 지출 신청」(변경 요청 칸)으로 · 심사하는 사람은 회계 「나간 돈 › 지출」로
+        go: own && !canMoney ? `/schedule?myExpense=${Number(r.id)}` : '/accounting?tab=out',
+        applicable: false,
+      });
+    }
+
     return rows;
   }
 
@@ -417,8 +449,10 @@ export class DrawerService {
      * 컨트롤러는 늘 실제 값을 넘긴다 — 기본값 true 는 스위치를 모르는 옛 호출(시험)이 전과 같은 값을 받게 하려는 것이다.
      */
     canHide = true,
+    /** 지출을 심사할 수 있는가 — §75 지출 갈래(H-83)에서 남의 지출 줄을 싣는 판정 · 쓰기(POST expenses/:id/review)의 @Perm('canMoney') 과 같다 */
+    canMoney = false,
   ): Promise<DrawerDto> {
-    const approvalRows = await this.approvalRows(viewerId, flowScope);
+    const approvalRows = await this.approvalRows(viewerId, flowScope, canMoney);
     // 변경 요청 줄은 시간표를 쓸 수 있어야 단추가 선다 — 쓰기(reviewChangeRequest)와 같은 판정 (P1 CROSS-CUT · D-R39)
     const approvals = apFlow(approvalRows, viewerId, canApprove, canWage, canSeeAll);
     const approvalFlow = approvalFlowProjection(approvalRows, viewerId, flowScope);

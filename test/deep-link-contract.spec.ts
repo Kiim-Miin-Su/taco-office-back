@@ -20,7 +20,7 @@ import { join } from 'path';
 /** 경로 → 그 화면이 읽는 질의 키 (front `src/app/**\/page.tsx`) */
 const FRONT: Record<string, readonly string[]> = {
   '/ops': ['tab', 'plan', 'request', 'meeting', 'cpl', 'view'],
-  '/schedule': ['date', 'serId', 'onDate', 'changeRequest', 'studentId'],
+  '/schedule': ['date', 'serId', 'onDate', 'changeRequest', 'studentId', 'myExpense'], // myExpense — §75 지출 갈래의 되돌아온 것(H-84) → 서랍 「내 지출 신청」
   '/reports': ['section', 'review', 'serId', 'onDate'],
   '/accounting': ['tab', 'month', 'invId'],
   '/books': ['tab', 'pack'],

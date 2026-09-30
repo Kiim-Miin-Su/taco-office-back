@@ -111,22 +111,28 @@ export function selfApprovalSqlGuard(
     : 'TRUE';
 }
 
-/** §75 공통 다섯 갈래 + §14 강사 리포트 (D-R26 · D-R34) */
-export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing'] as const;
+/** §75 공통 여섯 갈래(지출 포함 · H-83) + §14 강사 리포트 (D-R26 · D-R34) */
+export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense', 'suggestion', 'missing'] as const;
 export type ApKind = (typeof AP_KINDS)[number];
 
-/** §75 중앙 결재 흐름의 정확한 다섯 갈래. §14 REP·건의·누락은 섞지 않는다. */
-export const APPROVAL_FLOW_KINDS = ['rpt', 'plan', 'req', 'chreq', 'gpapack'] as const;
+/**
+ * §75 중앙 결재 흐름의 갈래. §14 REP·건의·누락은 섞지 않는다.
+ *
+ * **지출(expense)이 여섯째다** — 사용자 결정 2026-09-30 「H-83 · H-84 지출 갈래 추가」가 N-64(「§75 지금대로」)를 뒤집었다.
+ * 테스트 시나리오 H-83 「결재 흐름에 집계」 · H-84 「결재 흐름 되돌아온 것에 붉게 표시」. 결재 · 반려는 여전히 회계 「나간 돈」
+ * (POST /accounting/expenses/:id/review · canMoney)가 하고 §75 는 이동만 한다(D-R27). §14 승인 대기함에는 넣지 않는다(AP_INBOX_KINDS).
+ */
+export const APPROVAL_FLOW_KINDS = ['rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense'] as const;
 export type ApprovalFlowKind = (typeof APPROVAL_FLOW_KINDS)[number];
 export const APPROVAL_FLOW_RECIPIENTS = ['ceo', 'head'] as const;
 export type ApprovalFlowRecipient = (typeof APPROVAL_FLOW_RECIPIENTS)[number];
 
 export const APPROVAL_FLOW_KIND_LABEL: Record<ApprovalFlowKind, string> = {
-  rpt: '대표 보고', plan: '기획 결재', req: '강사 요청', chreq: '변경 요청', gpapack: '자료 요청',
+  rpt: '대표 보고', plan: '기획 결재', req: '강사 요청', chreq: '변경 요청', gpapack: '자료 요청', expense: '지출 결재',
 };
 
 export const APPROVAL_FLOW_RECIPIENT: Record<ApprovalFlowKind, ApprovalFlowRecipient> = {
-  rpt: 'ceo', plan: 'ceo', req: 'head', chreq: 'head', gpapack: 'head',
+  rpt: 'ceo', plan: 'ceo', req: 'head', chreq: 'head', gpapack: 'head', expense: 'ceo',
 };
 
 export const APPROVAL_FLOW_RECIPIENT_NAMES = ['대표', '실장'] as const;
@@ -154,6 +160,7 @@ export const AP_KIND_LABEL: Record<ApKind, string> = {
   req: '요청',
   chreq: '변경 요청',
   gpapack: '자료 요청',
+  expense: '지출',
   suggestion: '건의 사항',
   missing: '빠진 것',
 };
