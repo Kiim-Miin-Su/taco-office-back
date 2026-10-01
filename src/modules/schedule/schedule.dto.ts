@@ -364,6 +364,10 @@ export class OccurrencePatchDto {
   @IsOptional() @IsCalendarDate()
   date?: string | null;
 
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '학생 개인 표 이동 안전 조건: 저장 시점 원본 회차에도 이 학생이 있어야 한다' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) requiredStudentId?: number;
+
   @ApiPropertyOptional({ minLength: 1, maxLength: SCHEDULE_INPUT_LIMITS.kindKey, description: 'SER 종류. 반복 수업은 future/all 범위에서만 변경' })
   @ValidateIf((_object, value) => value !== undefined)
   @IsString() @MinLength(1) @MaxLength(SCHEDULE_INPUT_LIMITS.kindKey)
@@ -456,6 +460,12 @@ export class OccurrenceRefDto {
   @ApiProperty({ ...DATE_SCHEMA, description: '규칙상 원래 날짜 — EXC 키' }) @IsCalendarDate() onDate!: string;
 }
 
+/** 학생 A의 개인 표에서 B의 개인 표로 복사할 때 새 SER 명단만 A→B로 바꾼다. */
+export class StudentReplacementDto {
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) fromStudentId!: number;
+  @ApiProperty(ID_SCHEMA) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) toStudentId!: number;
+}
+
 /** Ctrl+드래그와 Ctrl/⌘+C/X/V가 공유하는 일괄 복제 계약 (D-R19). */
 export class OccurrencePasteDto {
   @ApiProperty({ type: [OccurrenceRefDto], minItems: 1, maxItems: PASTE_MAX })
@@ -475,6 +485,15 @@ export class OccurrencePasteDto {
 
   @ApiPropertyOptional({ ...ID_SCHEMA, nullable: true, description: '대상 강의실 축이면 덮어쓴다' })
   @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) roomId?: number | null;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '학생별 표의 안전 조건: 원본 각 회차에 이 학생이 저장 시점에도 있어야 한다. 명단을 바꾸지는 않는다' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) requiredStudentId?: number;
+
+  @ApiPropertyOptional({ type: StudentReplacementDto, description: '새 SER의 유효 명단에서 출발 학생 한 명만 대상 학생으로 바꾼다. 원본은 보존한다. cut=true와 함께 사용할 수 없다' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsObject() @ValidateNested() @Type(() => StudentReplacementDto)
+  studentReplacement?: StudentReplacementDto;
 
   @ApiPropertyOptional({ default: false, description: 'true면 붙여넣기 성공과 같은 트랜잭션에서 원본 회차를 취소한다' })
   @ValidateIf((_object, value) => value !== undefined) @IsBoolean() cut?: boolean;
@@ -506,6 +525,10 @@ export class OccurrenceMoveDto {
 
   @ApiProperty({ enum: SCOPES }) @IsIn(SCOPES as unknown as string[])
   scope!: 'this' | 'future' | 'all';
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: '학생 개인 표 이동 안전 조건: 모든 원본 회차에 이 학생이 저장 시점에도 있어야 한다' })
+  @ValidateIf((_object, value) => value !== undefined)
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) requiredStudentId?: number;
 }
 
 /**

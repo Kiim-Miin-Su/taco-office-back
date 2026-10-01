@@ -228,6 +228,28 @@ const base = (): State => ({
        '모두 → 창 전체가 같은 일수만큼 평행 이동');
   });
 
+  it('7-b. 복사는 원본 규칙의 과거 명단이 아니라 그 회차의 유효 학생만 담는다', () => {
+    const s = base();
+    s.SER_STU[0].toDate = '2026-08-17';
+    const source = must(R.occ('2026-08-19', s).find((o) => o.serId === 1));
+    const copied = R.copyPayload(s, source);
+    expect(copied.students).toEqual([102]);
+    const result = R.applyPaste(s, { items: copied, targetDate: '2026-09-01', targetMin: 600, scope: 'this' });
+    const made = result.SER[result.SER.length - 1];
+    expect(result.SER_STU.filter((row) => row.serId === made.id).map((row) => row.studentId)).toEqual([102]);
+  });
+
+  it('7-c. 학생 교체 복사는 유효 원본의 한 명만 바꾸고 그룹 동료·원본은 보존하며 중복을 없앤다', () => {
+    const s = base();
+    const source = must(R.occ('2026-08-19', s).find((o) => o.serId === 1));
+    const copied = R.copyMany(s, [source], { fromStudentId: 101, toStudentId: 102 });
+    expect(copied[0].students).toEqual([102]);
+    const pasted = R.applyPaste(s, { items: copied, targetDate: '2026-09-01', targetMin: 600, scope: 'this' });
+    const made = pasted.SER[pasted.SER.length - 1];
+    expect(R.rosterAt(pasted, made.id, '2026-09-01')).toEqual([102]);
+    expect(R.rosterAt(pasted, 1, '2026-08-19')).toEqual([101, 102]);
+  });
+
 
 /* ── 8. 다중 복사 — 상대 간격 유지 (5.2) ──────────────────────────────── */
   it('8. 다중 복사 — 간격 유지', () => {

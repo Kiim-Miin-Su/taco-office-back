@@ -25071,6 +25071,25 @@
           "onDate"
         ]
       },
+      "StudentReplacementDto": {
+        "type": "object",
+        "properties": {
+          "fromStudentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "toStudentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "fromStudentId",
+          "toStudentId"
+        ]
+      },
       "OccurrencePasteDto": {
         "type": "object",
         "properties": {
@@ -25114,6 +25133,20 @@
             "maximum": 9007199254740991,
             "nullable": true,
             "description": "대상 강의실 축이면 덮어쓴다"
+          },
+          "requiredStudentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "학생별 표의 안전 조건: 원본 각 회차에 이 학생이 저장 시점에도 있어야 한다. 명단을 바꾸지는 않는다"
+          },
+          "studentReplacement": {
+            "description": "새 SER의 유효 명단에서 출발 학생 한 명만 대상 학생으로 바꾼다. 원본은 보존한다. cut=true와 함께 사용할 수 없다",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StudentReplacementDto"
+              }
+            ]
           },
           "cut": {
             "type": "boolean",
@@ -25187,6 +25220,12 @@
               "future",
               "all"
             ]
+          },
+          "requiredStudentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "학생 개인 표 이동 안전 조건: 모든 원본 회차에 이 학생이 저장 시점에도 있어야 한다"
           }
         },
         "required": [
@@ -25472,6 +25511,12 @@
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
             "nullable": true,
             "description": "다른 날로 옮길 때만"
+          },
+          "requiredStudentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "학생 개인 표 이동 안전 조건: 저장 시점 원본 회차에도 이 학생이 있어야 한다"
           },
           "kindKey": {
             "type": "string",

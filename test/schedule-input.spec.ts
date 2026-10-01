@@ -119,6 +119,33 @@ describe('스케줄 CRUD 입력 형식', () => {
     await expect(parse(OccurrencePasteDto, { ...paste, cut: null })).rejects.toMatchObject({ status: 400 });
     for (const cut of [false, true]) await expect(parse(OccurrencePasteDto, { ...paste, cut })).resolves.toMatchObject({ cut });
   });
+  it('학생 표 붙여넣기 조건은 양의 정수 한 명만 허용한다', async () => {
+    for (const requiredStudentId of [null, 0, -1, 1.5, '1']) {
+      await expect(parse(OccurrencePasteDto, { ...paste, requiredStudentId }))
+        .rejects.toMatchObject({ status: 400 });
+    }
+    await expect(parse(OccurrencePasteDto, { ...paste, requiredStudentId: 1 }))
+      .resolves.toMatchObject({ requiredStudentId: 1 });
+  });
+  it('학생 교체는 중첩 객체의 출발·도착 학생 ID 둘 다 검증한다', async () => {
+    for (const studentReplacement of [null, [], {}, { fromStudentId: 1 }, { toStudentId: 2 },
+      { fromStudentId: '1', toStudentId: 2 }, { fromStudentId: 1, toStudentId: 0 },
+      { fromStudentId: 1, toStudentId: 2, ignored: 3 }]) {
+      await expect(parse(OccurrencePasteDto, { ...paste, studentReplacement }))
+        .rejects.toMatchObject({ status: 400 });
+    }
+    await expect(parse(OccurrencePasteDto, { ...paste,
+      studentReplacement: { fromStudentId: 1, toStudentId: 2 },
+    })).resolves.toMatchObject({ studentReplacement: { fromStudentId: 1, toStudentId: 2 } });
+  });
+  it('학생 표 이동 조건은 단건 PATCH와 다중 MOVE 모두 양의 정수만 허용한다', async () => {
+    for (const [dto, body] of [[OccurrencePatchDto, patch], [OccurrenceMoveDto, { items: [item], scope: 'this' }]] as const) {
+      for (const requiredStudentId of [null, 0, -1, 1.5, '1']) {
+        await expect(parse(dto, { ...body, requiredStudentId })).rejects.toMatchObject({ status: 400 });
+      }
+      await expect(parse(dto, { ...body, requiredStudentId: 1 })).resolves.toMatchObject({ requiredStudentId: 1 });
+    }
+  });
   it('날짜 공용 함수는 잘못된 원시값과 JS 날짜 보정을 거절한다', () => {
     for (const value of [undefined, null, 20260911, '', '0000-01-01', '2026-02-29', '1900-02-29']) {
       expect(isIsoDate(value)).toBe(false);
@@ -189,6 +216,15 @@ describe('스케줄 OpenAPI/실제 HTTP 경계 (권한/DB 검증은 별도)', ()
     });
     expect(schemas.OccurrenceMoveItemDto).toMatchObject({ required: expect.arrayContaining(['source']) });
     expect(schemas.OccurrencePasteDto).toMatchObject({ properties: { sources: { minItems: 1, maxItems: 50 } } });
+    expect(schemas.OccurrencePasteDto).toMatchObject({ properties: {
+      requiredStudentId: { type: 'integer', minimum: 1 },
+      studentReplacement: { allOf: [{ $ref: '#/components/schemas/StudentReplacementDto' }] },
+    } });
+    expect(schemas.StudentReplacementDto).toMatchObject({ required: ['fromStudentId', 'toStudentId'], properties: {
+      fromStudentId: { type: 'integer', minimum: 1 }, toStudentId: { type: 'integer', minimum: 1 },
+    } });
+    expect(schemas.OccurrencePatchDto).toMatchObject({ properties: { requiredStudentId: { type: 'integer', minimum: 1 } } });
+    expect(schemas.OccurrenceMoveDto).toMatchObject({ properties: { requiredStudentId: { type: 'integer', minimum: 1 } } });
   });
   it('실 HTTP에서도 형식 오류는 쓰기 service 진입 전에 400으로 거절한다', async () => {
     write.create.mockClear();

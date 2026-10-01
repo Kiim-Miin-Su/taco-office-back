@@ -66,6 +66,19 @@ function assertModeRoom(dto: { mode?: string; roomId?: number | null }): void {
   }
 }
 
+/** 같은 SER 잠금 뒤 읽은 규칙 날짜 명단으로만 학생 개인 표의 붙여넣기·이동 전제조건을 판정한다. */
+function requireCurrentStudent(
+  before: State, source: { serId: number; onDate: string }, studentId: number,
+  code: 'PASTE_STUDENT_CHANGED' | 'MOVE_STUDENT_CHANGED',
+): void {
+  if (!rosterAt(before, source.serId, source.onDate).includes(studentId)) {
+    throw new ConflictException({
+      code,
+      message: '원본 회차의 학생 명단이 바뀌었습니다. 다시 읽고 학생 표를 확인해 주세요',
+    });
+  }
+}
+
 /**
  * 휴강 알림 두 건 (테스트 시나리오 M-125) — 같은 트랜잭션에서 남긴다 (D-R43).
  *   ① 「{과목} 결강 — {학생들} → 스케줄」   그 회차의 강사와 관리자 전원(본인 제외)
@@ -608,6 +621,13 @@ export class ScheduleWriteService {
    * 원본 참조를 occ()로 다시 풀어 copyMany() → applyPaste() 순서로만 새 SER를 만든다.
    */
   async paste(dto: OccurrencePasteDto, actorId?: number): Promise<WriteResultDto> {
+    if (dto.studentReplacement && (dto.studentReplacement.fromStudentId === dto.studentReplacement.toStudentId ||
+        dto.requiredStudentId !== undefined || dto.cut === true)) {
+      throw new BadRequestException({
+        code: 'BAD_STUDENT_REPLACEMENT',
+        message: '학생 간 복사는 출발 학생과 대상 학생이 달라야 하며, 잘라내기나 같은 학생 명단 확인을 함께 요청할 수 없습니다',
+      });
+    }
     const sourceIds = [...new Set(dto.sources.map((s) => s.serId))];
     return this.tx('schedule.paste', sourceIds, (before) => {
       const seen = new Set<string>();
@@ -627,7 +647,12 @@ export class ScheduleWriteService {
         return source;
       });
 
-      const copied = copyMany(before, sources);
+      const requiredStudentId = dto.studentReplacement?.fromStudentId ?? dto.requiredStudentId;
+      if (requiredStudentId !== undefined) {
+        sources.forEach((source) => requireCurrentStudent(before, source, requiredStudentId, 'PASTE_STUDENT_CHANGED'));
+      }
+
+      const copied = copyMany(before, sources, dto.studentReplacement);
       const issue = pasteIssue(copied, dto.targetDate, dto.targetStartMin, dto.scope as Scope);
       if (issue) throw new BadRequestException({ code: 'BAD_PASTE', message: issue });
 
@@ -686,6 +711,9 @@ export class ScheduleWriteService {
             code: 'SOURCE_NOT_FOUND',
             message: `이동 원본 ${ref.serId} (${ref.onDate}) 회차를 찾을 수 없습니다`,
           });
+        }
+        if (dto.requiredStudentId !== undefined) {
+          requireCurrentStudent(before, source, dto.requiredStudentId, 'MOVE_STUDENT_CHANGED');
         }
         const timeIssue = lessonTimeIssue(item.startMin, item.endMin);
         if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
@@ -750,6 +778,9 @@ export class ScheduleWriteService {
     let overwrote: WriteResultDto['overwrote'] = null;
     return this.tx('schedule.patch', [serId], async (before, q) => {
       const ser = this.requireOccurrence(before, serId, dto.onDate);
+      if (dto.requiredStudentId !== undefined) {
+        requireCurrentStudent(before, { serId, onDate: dto.onDate }, dto.requiredStudentId, 'MOVE_STUDENT_CHANGED');
+      }
       if (dto.readVersion !== undefined && actorId !== undefined) {
         const [other] = (await q.query(
           `SELECT st.name, ${kstAt('l.at')} AS at

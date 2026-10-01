@@ -832,7 +832,8 @@ export function copyPayload(state: State, occurrence: Occurrence): CopyItem {
     rrule: ser.rrule,
     fromDate: ser.fromDate,
     toDate: ser.toDate,
-    students: (state.SER_STU || []).filter((r) => r.serId === ser.id).map((r) => r.studentId),
+    // 과거에만 재원한 학생이나 이 회차만 빠진 학생까지 새 규칙에 되살리지 않는다.
+    students: rosterAt(state, ser.id, occurrence.onDate),
     offsetDays: 0,
     offsetMinutes: 0,
     excCount: (state.EXC || []).filter((e) => e.serId === ser.id).length,
@@ -840,8 +841,19 @@ export function copyPayload(state: State, occurrence: Occurrence): CopyItem {
 }
 
 /** 여러 건을 복사하면 첫 건 대비 상대 간격을 남긴다 */
-export function copyMany(state: State, occurrences: Occurrence[]): CopyItem[] {
+export function copyMany(
+  state: State,
+  occurrences: Occurrence[],
+  studentReplacement?: { fromStudentId: number; toStudentId: number },
+): CopyItem[] {
   const items = occurrences.map((o) => copyPayload(state, o));
+  if (studentReplacement) {
+    const { fromStudentId, toStudentId } = studentReplacement;
+    for (const item of items) {
+      item.students = [...new Set(item.students.map((studentId) =>
+        studentId === fromStudentId ? toStudentId : studentId))];
+    }
+  }
   if (!items.length) return items;
   const base = items.reduce((a, b) =>
     a.date < b.date || (a.date === b.date && a.startMin <= b.startMin) ? a : b,

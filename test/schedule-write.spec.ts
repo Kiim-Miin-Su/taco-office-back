@@ -937,6 +937,113 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
     expect(Number(excs[0].n)).toBe(0);
   });
 
+  it('학생 표 붙여넣기는 저장 시점 명단을 다시 보고 stale 대상이면 새 SER 없이 409다', async () => {
+    const { id, from } = await makeSer();
+    await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'dropAll', onDate: from, studentId: 1 }).expect(200);
+    const before = await q<{ n: string }>('SELECT count(*)::text n FROM ser');
+    const body = { sources: [{ serId: id, date: from, onDate: from }], scope: 'this',
+      targetDate: plus(from, 1), targetStartMin: 840 };
+    const stale = await api('post', '/schedule/paste')
+      .send({ ...body, requiredStudentId: 1 }).expect(409);
+    expect(stale.body.code).toBe('PASTE_STUDENT_CHANGED');
+    expect(await q<{ n: string }>('SELECT count(*)::text n FROM ser')).toEqual(before);
+
+    const valid = await api('post', '/schedule/paste')
+      .send({ ...body, requiredStudentId: 2 }).expect(201);
+    const copiedId = (valid.body.serIds as number[]).find((value) => value !== id)!;
+    made.push(copiedId);
+    const roster = await q<{ student_id: string }>(
+      'SELECT student_id::text FROM ser_stu WHERE ser_id=$1 ORDER BY student_id', [copiedId],
+    );
+    expect(roster.map((row) => Number(row.student_id))).toEqual([2]);
+  });
+
+  it('학생 A→B 붙여넣기는 새 SER 유효 명단만 교체하고 원본·그룹 동료를 보존한다', async () => {
+    const { id, from } = await makeSer();
+    const body = { sources: [{ serId: id, date: from, onDate: from }], scope: 'this',
+      targetDate: plus(from, 1), targetStartMin: 840,
+      studentReplacement: { fromStudentId: 1, toStudentId: ROSTER_STUDENT } };
+    const result = await api('post', '/schedule/paste').send(body).expect(201);
+    const copiedId = (result.body.serIds as number[]).find((value) => value !== id)!;
+    made.push(copiedId);
+    const roster = async (serId: number) => (await q<{ student_id: string }>(
+      'SELECT student_id::text FROM ser_stu WHERE ser_id=$1 ORDER BY student_id', [serId],
+    )).map((row) => Number(row.student_id));
+    expect(await roster(id)).toEqual([1, 2]);
+    expect(await roster(copiedId)).toEqual([2, ROSTER_STUDENT]);
+
+    const deduped = await api('post', '/schedule/paste').send({ ...body, targetStartMin: 900,
+      studentReplacement: { fromStudentId: 1, toStudentId: 2 },
+    }).expect(201);
+    const dedupedId = (deduped.body.serIds as number[]).find((value) => value !== id)!;
+    made.push(dedupedId);
+    expect(await roster(dedupedId)).toEqual([2]);
+
+    const invalidTarget = await api('post', '/schedule/paste').send({ ...body,
+      targetDate: plus(from, 2),
+      studentReplacement: { fromStudentId: 1, toStudentId: 99999999 },
+    }).expect(400);
+    expect(invalidTarget.body.code).toBe('REFERENCE_NOT_FOUND');
+    expect(await q<{ n: string }>('SELECT count(*)::text n FROM exc WHERE ser_id=$1 AND canceled', [id]))
+      .toEqual([{ n: '0' }]);
+    expect(await roster(id)).toEqual([1, 2]);
+
+    for (const forbidden of [
+      { studentReplacement: { fromStudentId: 1, toStudentId: 1 } },
+      { studentReplacement: { fromStudentId: 1, toStudentId: 2 }, requiredStudentId: 1 },
+      { studentReplacement: { fromStudentId: 1, toStudentId: 2 }, cut: true },
+    ]) {
+      const rejected = await api('post', '/schedule/paste').send({ ...body, ...forbidden }).expect(400);
+      expect(rejected.body.code).toBe('BAD_STUDENT_REPLACEMENT');
+    }
+
+    const staleBefore = await q<{ n: string }>('SELECT count(*)::text n FROM ser');
+    const stale = await api('post', '/schedule/paste').send({ ...body,
+      studentReplacement: { fromStudentId: ROSTER_STUDENT, toStudentId: 1 },
+      targetStartMin: 900,
+    }).expect(409);
+    expect(stale.body.code).toBe('PASTE_STUDENT_CHANGED');
+    expect(await q<{ n: string }>('SELECT count(*)::text n FROM ser')).toEqual(staleBefore);
+    expect(await roster(id)).toEqual([1, 2]);
+  });
+
+  it('다중 붙여넣기의 학생 교체는 모든 원본에 출발 학생이 있어야만 한꺼번에 저장한다', async () => {
+    const first = await makeSer();
+    const second = await makeSer({ startMin: 720, endMin: 780 });
+    await api('patch', `/schedule/${second.id}/roster`)
+      .send({ op: 'dropOnce', onDate: second.from, studentId: 1 }).expect(200);
+    const before = await q<{ n: string }>('SELECT count(*)::text n FROM ser');
+    const result = await api('post', '/schedule/paste').send({
+      sources: [first, second].map(({ id, from }) => ({ serId: id, date: from, onDate: from })),
+      scope: 'this', targetDate: plus(first.from, 1), targetStartMin: 900,
+      studentReplacement: { fromStudentId: 1, toStudentId: ROSTER_STUDENT },
+    }).expect(409);
+    expect(result.body.code).toBe('PASTE_STUDENT_CHANGED');
+    expect(await q<{ n: string }>('SELECT count(*)::text n FROM ser')).toEqual(before);
+  });
+
+  it('학생 표 이동은 단건·다중 모두 잠근 최신 명단에서 대상 학생이 빠졌으면 409로 원자 거절한다', async () => {
+    const { id, from } = await makeSer();
+    await api('patch', `/schedule/${id}/roster`)
+      .send({ op: 'dropOnce', onDate: from, studentId: 1 }).expect(200);
+    const target = plus(from, 1);
+    const single = await api('patch', `/schedule/${id}`).send({
+      scope: 'this', onDate: from, date: target, requiredStudentId: 1,
+    }).expect(409);
+    expect(single.body.code).toBe('MOVE_STUDENT_CHANGED');
+    const many = await api('post', '/schedule/move').send({ scope: 'this', requiredStudentId: 1,
+      items: [{ source: { serId: id, date: from, onDate: from }, date: target, startMin: 600, endMin: 660 }],
+    }).expect(409);
+    expect(many.body.code).toBe('MOVE_STUDENT_CHANGED');
+    expect(await q<{ n: string }>('SELECT count(*)::text n FROM exc WHERE ser_id=$1 AND new_date IS NOT NULL', [id]))
+      .toEqual([{ n: '0' }]);
+    const valid = await api('patch', `/schedule/${id}`).send({
+      scope: 'this', onDate: from, date: target, requiredStudentId: 2,
+    }).expect(200);
+    expect(valid.body.serIds).toContain(id);
+  });
+
   it('잘라내기 붙여넣기는 원본 this 취소와 새 SER 생성을 한 트랜잭션에 넣는다', async () => {
     const { id, from } = await makeSer({ startMin: 720, endMin: 780 });
     const target = plus(from, 1);
