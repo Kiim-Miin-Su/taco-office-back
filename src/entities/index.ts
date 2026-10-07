@@ -85,6 +85,7 @@ export * from './ser-occ.entity';
 export * from './ser-stu.entity';
 export * from './staff.entity';
 export * from './stu.entity';
+export * from './stu-contact.entity';
 export * from './stu-profile-audit.entity';
 export * from './stu-profile-period.entity';
 export * from './sturate.entity';
@@ -196,6 +197,7 @@ import {
   SerStu,
   Staff,
   Stu,
+  StuContact,
   StuProfileAudit,
   StuProfilePeriod,
   Sturate,
@@ -308,6 +310,7 @@ export const ENTITIES = [
   SerStu,
   Staff,
   Stu,
+  StuContact,
   StuProfileAudit,
   StuProfilePeriod,
   Sturate,

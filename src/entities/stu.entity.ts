@@ -14,6 +14,8 @@ import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 // W11 수동 CHECK metadata: migration 1764110000000 과 함께 보존/검증한다 (N-83).
 @Check('stu_gender_words', "\"gender\" IS NULL OR \"gender\" IN ('female','male')")
+@Check('stu_english_name_present', 'english_name IS NULL OR (english_name = btrim(english_name) AND length(english_name) > 0)')
+@Check('stu_source_words', "source IS NULL OR source IN ('kakao','phone','blog','instagram','referral','walkin')")
 @Entity({ name: 'stu' })
 export class Stu {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -48,6 +50,20 @@ export class Stu {
    */
   @Column({ type: 'varchar', length: 6, nullable: true })
   gender: string | null;
+
+  /** BOC-03D-04a 권고안 채택: 옛 학생과 기존 등록 writer의 선택 정적 칸은 NULL 그대로다. */
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  englishName: string | null;
+
+  @Column({ type: 'date', nullable: true })
+  birthDate: string | null;
+
+  @Column({ type: 'boolean', nullable: true })
+  hasCitizenship: boolean | null;
+
+  /** LEAD.source의 기존 여섯 코드만 받으며 옛 LEAD에서 추정해 채우지 않는다. */
+  @Column({ type: 'varchar', length: 10, nullable: true })
+  source: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;
