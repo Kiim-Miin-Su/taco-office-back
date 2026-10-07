@@ -1,3 +1,5 @@
+// TBO55-BOC03D04A-R67 (2026-10-07): BOC-03D-04a 권고안 채택 — legacy STU는 NULL/연락처0행으로 보존하고 english_name·birth_date·has_citizenship·source와 STU_CONTACT만 additive 적용한다. label은 other에만 허용하고 email 활성 identity만 소문자 비교한다. v4.65/102표, migration1766000000000 로컬 신규·기존 전환 검증·운영 미적용. 정책 변경 시 StudentCreateDto·entity/migration·P-STU15·BOC-03·target/current DBML을 함께 수정한다.
+// TBO55-BOC03D03C-R66 (2026-10-07): D-03c 권고안의 관리자/강사 실제 브라우저→HTTP→DB→reload 7/7을 재검수했다. DTO/API/DDL delta0이며 v4.64/101표와 migration1766200000000을 그대로 유지한다. 정책 변경 시 Front·QA·P-REACT·BOC-03·DTO/OpenAPI·migration·ERD를 함께 수정한다.
 // TBO55-BOC03D03B-R65 (2026-10-07): BOC-03D-03b 권고안 채택 — append-only STU_STATUS_EVENT만 권위 상태이며 legacy 무상태는 unknown이다. STU_REACTIVATION_CONSULTATION·상태 event·profile audit·LOG를 한 transaction으로 저장하고 SER_STU 복귀 우회를 같은 STU 잠금과 trigger로 차단한다. v4.64/101표, migration1766200000000 로컬 검증·운영 미적용.
 // TBO55-BOC12B-DB (2026-10-07): BO-Q13 권고안 채택 — 사전 안건은 MTREC.minutes와 분리한 1:1 MTAGENDA 정본이다. version 정확히 +1 trigger, creator 불변, 실제 actor FK와 회의 cascade를 migration 1766100000000으로 방어한다. v4.63/99표이며 과거 속기록은 보존한다. 정책 변경 시 결정 원장·Front·DTO/service·migration의 BO-Q13 주석을 같은 청크에서 수정한다.
 // TBO55-BOC03B-R26 (2026-10-06): Front 8f21beb은 세 등록 진입과 재활성화 UI/draft 경계만 구현했다. 후보·저장은 권위 퇴원 상태/DTO/writer 전까지 잠겨 있고 업무 POST0·격리 STU19/lead18 불변이다. 현행 v4.62/98표, entity, migration, constraint 변경0이며 이 파일은 실제 스키마 정본을 그대로 유지한다.
@@ -290,10 +292,36 @@ Table STU {
   started_on  date
   guidance    varchar(20) [note: '지도 강도']
   lang        varchar(20) [note: '수업 언어']
-  gender      varchar(6)  [note: 'v4.54 · W11 N-83 선택 칸 — female | male (stu_gender_words CHECK · NULL 허용). 옛 학생 NULL — 추정 보정 0 (N-25). 관리자 §10 아바타에만 쓰고 학부모 · 외부 출력(리포트 · 안내 · 보호자 발송 · PNG)에 싣지 않는다. 등록 확정이 새 학생을 만들 때만 받는다 · 낱말은 GET /meta genders · migration 1764110000000']
+  gender      varchar(6)  [note: 'v4.54 · W11 N-83 선택 칸 — female | male (stu_gender_words CHECK · NULL 허용). 옛 학생 NULL — 추정 보정 0 (N-25). 관리자 §10 아바타에만 쓰고 학부모 · 외부 출력(리포트 · 안내 · 보호자 발송 · PNG)에는 싣지 않는다. 등록 확정이 새 학생을 만들 때만 받는다 · 낱말은 GET /meta genders · migration 1764110000000']
+  english_name varchar(80) [note: 'v4.65 · BOC-03D-04a 선택 칸. NULL 또는 trim된 1~80자; legacy NULL 보존']
+  birth_date date [note: 'v4.65 · 선택. 해당 칸 INSERT/UPDATE 때 KST 오늘 이후를 trigger로 거절; legacy NULL 보존']
+  has_citizenship boolean [note: 'v4.65 · true/false/미상 NULL. 거주국으로 추정하지 않는다']
+  source varchar(10) [note: 'v4.65 · kakao/phone/blog/instagram/referral/walkin/NULL; legacy LEAD에서 추정 backfill하지 않는다']
   profile_version bigint [not null, default: 0, note: 'v4.60 · ST1-b2. audit INSERT가 STU row lock 아래 전진; 비음수 CHECK/직접 지정 guard. JS number 변환 금지. 운영 미적용']
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 19명. 코디네이터와 공유. 포인트·청구는 강사에게 노출하지 않는다.'
+  Note: '시드 19명. 코디네이터와 공유. 포인트·청구는 강사에게 노출하지 않는다. v4.65 정적 선택칸은 신규 writer 연결 전까지 nullable이다.'
+}
+
+Table STU_CONTACT {
+  id bigserial [pk]
+  student_id bigint [not null, ref: > STU.id]
+  kind varchar(5) [not null, note: 'phone/kakao/email/other']
+  value varchar(254) [not null, note: 'trim된 비공백 원문; 권한 있는 관리 응답에만 노출']
+  label varchar(80) [note: 'kind=other일 때만 trim된 1~80자 필수; 그 밖의 kind는 반드시 NULL']
+  active boolean [not null, default: true]
+  created_by bigint [not null, ref: > STAFF.id]
+  created_at timestamptz [not null, default: `now()`]
+  indexes {
+    (student_id, active) [name: 'stu_contact_owner_active']
+    (student_id, kind, value) [name: 'stu_contact_active_identity', note: '실제 SQL은 canonical_contact_value와 coalesce(label) 식을 쓰는 active 부분 UNIQUE']
+  }
+  Note: '''
+  BOC-03D-04a 권고안 채택. legacy 학생은 0행이며 신규 등록 필수 연락처로 소급 해석하지 않는다.
+  phone은 국내 정규화 숫자 또는 E.164, email은 기본 shape를 DB가 방어한다. email 활성 identity만 lower 비교하며 phone/kakao/other 원문 대소문자는 바꾸지 않는다.
+  동일 학생의 같은 kind/canonical value/label 활성 중복만 금지하고 다른 학생의 동일 연락처는 허용한다.
+  label은 other에만 허용한다. 정책 변경 시 StudentCreateDto·entity/migration·P-STU15·BOC-03·target/current DBML을 함께 수정한다.
+  신규 생성/수정 writer, profile audit, 권한 응답, 발송 opt-in은 후속이며 이 청크에서 API 쓰기를 열지 않는다.
+  '''
 }
 
 Table COUNTRY {
@@ -2452,3 +2480,10 @@ Table SER_OCC {
 //   + STU_STATUS_EVENT — withdraw/reactivate append-only 상태 권위. event 없는 legacy는 unknown이며 휴원·수강·LOG로 추정하지 않는다.
 //   + student_status_current view — 학생별 마지막 event. 상담·상태·STU_PROFILE_AUDIT 동일 tx deferred completeness와 SER_STU 재활성화 guard.
 //   표 +2(99 → 101) · view +1 · 마이그레이션 1(1766200000000-student-status-reactivation) · 기존 행 상태 backfill0 · 운영 미적용.
+
+
+// v4.64 → v4.65 (2026-10-07 · TBO-55 BOC-03D-04a 권고안 채택) — 기존 STU 선택 칸 넷 + 학생 본인 연락처 표 하나.
+//   ~ STU + english_name/birth_date/has_citizenship/source — 전부 nullable, legacy backfill0. birth_date는 KST 미래 날짜 trigger, source는 기존 6코드 CHECK.
+//   + STU_CONTACT — 학생별 phone/kakao/email/other 원문, other 전용 label, active 부분 identity UNIQUE. email만 소문자 canonical 비교.
+//   표 +1(101 → 102) · 컬럼 +11(STU4 + 새 표7) · 함수2/trigger1 · 마이그레이션 1(1766000000000-student-static-contact) · 기존 행/연락처 backfill0 · 운영 미적용.
+//   신규 필수 writer·감사·권한 응답은 후속이며, 정책 변경은 StudentCreateDto·entity/migration·P-STU15·BOC-03·target/current DBML 동시 검수 대상이다.
