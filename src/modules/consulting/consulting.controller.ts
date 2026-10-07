@@ -13,7 +13,9 @@ import {
   ConsPaymentCreateDto, ConsSessionCreateDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsStudentsDto, ConsToInvoiceDto, ConsultingCreateDto,
   ConsultingDetailDto, ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto,
   ConsultingFileCreateDto, ConsultingListDto, ConsultingPatchDto, ConsultingSessionDto, ConsultingShareUpdateDto,
+  ConsultingTemplateDto, ConsultingTemplatesDto, ConsultingTemplateWriteDto,
 } from './consulting.dto';
+import type { ConsultingType } from './consulting.rules';
 
 /** 예외 종료 승인 권한 — 판정은 perm.ts 한 줄(ceoGate 계열)이다. 역할 문자열을 여기서 비교하지 않는다 (D-R39 · N-18-a) */
 const approveClose = (user: RequestUser): boolean => isRole(user.role) && canCeoApproveConsultingClose(user.role);
@@ -57,6 +59,21 @@ export class ConsultingController {
       canHide,
       await this.svc.consultingLineShown(canHide), // N-94 컨설팅 비공개 — 줄 금액
     );
+  }
+
+  @Get('templates')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '유형별 기본 항목 설정 — 활성 version과 미설정 차단 사유' })
+  @ApiOkResponse({ type: ConsultingTemplatesDto })
+  templates(): Promise<ConsultingTemplatesDto> { return this.svc.templates(); }
+
+  @Patch('templates/:consType')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '유형별 기본 항목 새 version 저장 — BOC-04D-03c' })
+  @ApiOkResponse({ type: ConsultingTemplateDto })
+  @ApiConflictResponse({ description: 'CONS_TEMPLATE_VERSION_CONFLICT · CONS_TEMPLATE_REQUEST_KEY_REUSED · CONS_TEMPLATE_REPLAY_STALE' })
+  writeTemplate(@CurrentUser() user: RequestUser, @Param('consType') consType: string, @Body() dto: ConsultingTemplateWriteDto): Promise<ConsultingTemplateDto> {
+    return this.svc.writeTemplate(user.id, consType as ConsultingType, dto);
   }
 
   @Patch(':id/items/:itemId')

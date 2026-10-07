@@ -20,9 +20,13 @@ const log = (over: Row = {}): Row => ({ id: '11', cons_id: '1', seq: 1, on_date:
   who: null, what: '비공개 회차 내용', why: null, how: null, ser_id: null, ...over });
 
 function service(rows: Row[], logs: Row[] = [log()], items: Row[] = []) {
-  // 첫 호출 = 건 목록, 이후는 SQL 로 구분 — 회차(cons_sess)와 항목(cons_item)이 같은 ANY($1) 모양을 쓴다
-  const query = jest.fn().mockResolvedValueOnce(rows).mockImplementation((sql: string, [ids]: [number[]]) =>
-    Promise.resolve((sql.includes('cons_item') ? items : logs).filter((r) => ids.includes(Number(r.cons_id)))));
+  // BOC-04D-03c 활성 template 조회가 먼저 온다. 이후 건·회차·항목 질의를 SQL owner로 구분한다.
+  const query = jest.fn().mockImplementation((sql: string, params: unknown[] = []) => {
+    if (sql.includes('FROM cons_template WHERE active')) return Promise.resolve([]);
+    if (sql.includes('FROM cons c LEFT JOIN staff')) return Promise.resolve(rows);
+    const ids = params[0] as number[];
+    return Promise.resolve((sql.includes('cons_item') ? items : logs).filter((r) => ids.includes(Number(r.cons_id))));
+  });
   return { svc: new ConsultingService({ query } as unknown as Repository<Lead>), query };
 }
 
@@ -42,8 +46,8 @@ describe('§26 조회 계약과 공개 범위', () => {
     ]);
     expect(result.items[1].sessionsLog).toEqual([]);
     // 회차 한 줄의 SELECT 는 공용 조각(CONS_SESS_SELECT · 별칭 x)이다 — 보이는 건만 넘긴다
-    expect(query.mock.calls[1][0]).toContain('WHERE x.cons_id = ANY($1::bigint[])');
-    expect(query.mock.calls[1][1]).toEqual([[1]]);
+    expect(query.mock.calls[2][0]).toContain('WHERE x.cons_id = ANY($1::bigint[])');
+    expect(query.mock.calls[2][1]).toEqual([[1]]);
   });
 
   it.each([
@@ -55,13 +59,13 @@ describe('§26 조회 계약과 공개 범위', () => {
     const result = await svc.all(viewer, false, canHide);
     expect(result.items.filter((r) => r.canOpen).map((r) => r.id)).toEqual(expected);
     expect(result.items.every((r) => r.amount === null)).toBe(true);
-    expect(query.mock.calls[1][1]).toEqual([expected]);
+    expect(query.mock.calls[2][1]).toEqual([expected]);
   });
 
   it('숨겨진 오염 건은 오류로 존재를 누출하지 않고 열람 가능한 회차가 없으면 쿼리도 생략한다', async () => {
     const { svc, query } = service([row({ share: 'private', stage: 'corrupt' })]);
     expect((await svc.all(2, false, false)).items).toEqual([]);
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it.each([{ stage: 'corrupt' }, { stage: 'running', contract_step: null }, { sessions: 0 }])('보이는 오염 건 %p는 공통 오류로 차단한다', async (over) => {

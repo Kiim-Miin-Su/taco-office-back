@@ -215,6 +215,9 @@ export class ConsultingShareWordDto {
 export class ConsultingWordDto {
   @ApiProperty() key!: string;
   @ApiProperty({ description: '「편입 · 전학」 · 「어머니」 …' }) label!: string;
+  @ApiPropertyOptional({ description: '종류 선택 가능 여부. 요청자 낱말에는 생략한다.' }) enabled?: boolean;
+  @ApiPropertyOptional({ ...S, description: '기본 항목 미설정 등 시작 차단 사유' }) blockedReason?: string | null;
+  @ApiPropertyOptional({ ...N, description: '활성 기본 항목 version. 미설정이면 null' }) templateVersion?: number | null;
 }
 
 export class ConsultingListDto {
@@ -240,6 +243,8 @@ export class ConsultingListDto {
 /* ══ §29 생성 · §30 계약 5단계 (C79-product) ═══════════════════════════ */
 
 export class ConsultingCreateDto {
+  /** BOC-04D-03c 권고안: create 재시도를 같은 CONS 한 줄로 수렴시킨다. */
+  @ApiProperty({ format: 'uuid' }) @IsUUID('4') requestKey!: string;
   @ApiProperty({ enum: CONSULTING_TYPES, description: '§29 확정 10종. 레거시 조회 코드는 이 enum으로 축소하지 않는다.' })
   @IsIn(CONSULTING_TYPES as unknown as string[]) consType!: ConsultingType;
 
@@ -264,6 +269,8 @@ export class ConsultingCreateDto {
 
 /** 계약 작업을 시작하기 전 바꿀 수 있는 핵심정보. 종류와 공개 범위는 각각 템플릿/전용 계약이 있어 여기서 받지 않는다. */
 export class ConsultingPatchDto {
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 ConsultingDetailDto.version' }) @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
+  @ApiProperty({ format: 'uuid' }) @IsUUID('4') requestKey!: string;
   @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, minItems: 1, uniqueItems: true })
   @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true })
   studentIds?: number[];
@@ -280,10 +287,44 @@ export class ConsultingPatchDto {
 }
 
 export class ConsultingShareUpdateDto {
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 ConsultingDetailDto.version' }) @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
+  @ApiProperty({ format: 'uuid' }) @IsUUID('4') requestKey!: string;
   @ApiProperty({ enum: CONS_SHARES }) @IsIn(CONS_SHARES as unknown as string[]) share!: ConsShare;
   @ApiPropertyOptional({ type: [Number], items: ID_SCHEMA, uniqueItems: true, description: "share='picked'일 때 1명 이상 필수" })
   @IsPickedStaffIds()
   pickedStaffIds?: number[];
+}
+
+export class ConsultingTemplateItemWriteDto {
+  @ApiProperty({ minLength: 1, maxLength: 80 }) @IsString() @MinLength(1) @MaxLength(80) label!: string;
+  @ApiProperty() @IsBoolean() required!: boolean;
+}
+
+export class ConsultingTemplateWriteDto {
+  @ApiProperty({ minimum: 0, description: '활성 version. 미설정 유형의 첫 저장은 0' }) @Type(() => Number) @IsInt() @Min(0) expectedVersion!: number;
+  @ApiProperty({ format: 'uuid' }) @IsUUID('4') requestKey!: string;
+  @ApiProperty({ type: [ConsultingTemplateItemWriteDto], minItems: 1, maxItems: 24 })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(24) @ValidateNested({ each: true }) @Type(() => ConsultingTemplateItemWriteDto)
+  items!: ConsultingTemplateItemWriteDto[];
+}
+
+export class ConsultingTemplateItemDto {
+  @ApiProperty() seq!: number;
+  @ApiProperty() label!: string;
+  @ApiProperty() required!: boolean;
+}
+
+export class ConsultingTemplateDto {
+  @ApiProperty({ enum: CONSULTING_TYPES }) consType!: ConsultingType;
+  @ApiProperty() label!: string;
+  @ApiProperty({ type: 'integer', nullable: true }) version!: number | null;
+  @ApiProperty({ type: [ConsultingTemplateItemDto] }) items!: ConsultingTemplateItemDto[];
+  @ApiProperty() enabled!: boolean;
+  @ApiProperty({ ...S }) blockedReason!: string | null;
+}
+
+export class ConsultingTemplatesDto {
+  @ApiProperty({ type: [ConsultingTemplateDto] }) items!: ConsultingTemplateDto[];
 }
 
 export class ConsultingFileCreateDto {
@@ -375,6 +416,7 @@ export class ConsultingContractStepDto {
 
 export class ConsultingDetailDto {
   @ApiProperty() id!: number;
+  @ApiPropertyOptional({ minimum: 1, description: '핵심정보·공개범위 optimistic version. 레거시 fixture에는 생략 가능' }) version?: number;
   @ApiProperty() consType!: string;
   @ApiProperty() consTypeLabel!: string;
   @ApiProperty({ enum: CONSULTING_STAGES }) stage!: ConsultingStage;
@@ -396,6 +438,8 @@ export class ConsultingDetailDto {
   @ApiProperty({ type: [Number] }) pickedStaffIds!: number[];
   @ApiProperty({ type: [String] }) pickedStaffNames!: string[];
   @ApiProperty() createdAt!: string;
+  @ApiPropertyOptional(N) createdBy?: number | null;
+  @ApiPropertyOptional(N) templateVersion?: number | null;
   @ApiProperty({ type: ConsultingTypeCapabilityDto }) typeCapability!: ConsultingTypeCapabilityDto;
   @ApiProperty({ type: ConsultingCapabilitiesDto }) capabilities!: ConsultingCapabilitiesDto;
   @ApiProperty({ type: [ConsultingFileDto], maxItems: CONSULTING_FILE_MAX }) contractFiles!: ConsultingFileDto[];

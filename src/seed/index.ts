@@ -56,11 +56,15 @@ export const SEEDED_TABLES = [
   'stu_reactivation_consultation', 'stu_status_event',
   // 줌 배정 정본(`zassign`)은 온라인 규칙에 시드가 넣는다(N-49 · W11) — 회차의 계정(`ser_occ.zacc_id`)은 그 투영이다
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'zassign', 'unav',
-  'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
+  'rep', 'rep_stu', 'guide', 'guide_write_req', 'pnoti', 'lib', 'issue', 'issue_write_req',
   // N-54 주간 묶음 총평(W11 · R2) — 시드는 안 넣는다(사람이 쓴 글만 둔다) · 앱이 쓰므로 비운다
   'wrep',
   'inv', 'inv_line', 'inv_installment', 'pay', 'expense', 'payout', 'carry',
-  'req', 'chreq', 'gpapack', 'gpapack_student', 'gpapack_lib', 'noti', 'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay',
+  'req', 'chreq', 'gpapack', 'gpapack_student', 'gpapack_lib', 'noti',
+  // BOC-04D-03c 권고안 채택: reset은 컨설팅 writer receipt와 immutable template version도 비운 뒤
+  // 아래에서 migration과 같은 admissions v1 기본7항목을 복원한다. 정책 변경 시 migration·DBML·P-BOC04D03C도 함께 수정한다.
+  'cons', 'cons_stu', 'cons_pick', 'cons_sess', 'cons_item', 'cons_pay',
+  'cons_write_req', 'cons_template_write_req', 'cons_template_item', 'cons_template',
   'cons_file', 'cons_feedback', 'cons_event', 'diag', 'lead_diag',
   // wave3 g3 (23-15 · 23-16) — 상담 배치안 초안 · 2차/진단 일정
   'lead_plan', 'lead_appt',
@@ -128,6 +132,17 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
     done.push({ table: 'country', rows: catalog.country });
     done.push({ table: 'country_timezone', rows: catalog.countryTimezone });
     done.push({ table: 'education_grade', rows: catalog.educationGrade });
+
+    // BOC-04D-03c: migration seed와 dev --reset의 결과를 동일하게 유지한다.
+    // 관리자가 만든 다른 유형/version을 추정 복원하지 않고 admissions v1 시스템 기본만 멱등 보장한다.
+    await q.query(`INSERT INTO cons_template(cons_type,version,created_by)
+      VALUES ('admissions',1,NULL) ON CONFLICT (cons_type,version) DO NOTHING`);
+    await q.query(`INSERT INTO cons_template_item(template_id,seq,label,required)
+      SELECT t.id,x.seq,x.label,true FROM cons_template t
+      CROSS JOIN (VALUES (1,'지원서 작성'),(2,'학업 성적 공증'),(3,'추천서 2부'),(4,'자기소개 에세이'),
+        (5,'활동 증빙 자료'),(6,'여권 사본'),(7,'재학 증명서')) AS x(seq,label)
+      WHERE t.cons_type='admissions' AND t.version=1
+      ON CONFLICT (template_id,seq) DO NOTHING`);
 
     // ── 기준 정보
     await add('kind', KINDS.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, rep_form: k.repForm, sort: k.sort })));

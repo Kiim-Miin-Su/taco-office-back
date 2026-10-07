@@ -439,6 +439,8 @@ export interface ConsViewer {
   isOwner: boolean;
   /** CONS_PICK 에 지정됐는가 */
   isPicked: boolean;
+  /** BOC-04D-03c 최초 등록자 — 공개 범위와 무관하게 전체 내용을 되읽는다. */
+  isCreator?: boolean;
   /** §76 canHide — 비공개 컨설팅 열람 */
   canHide: boolean;
   /** D-R39 canMoney — 금액. 공개 범위와 **독립된 층**이다 (사람별 예외까지 반영된 결론) */
@@ -446,7 +448,7 @@ export interface ConsViewer {
 }
 
 /** 담당이거나 열람권이 있는 사람 — 표의 「담당·열람권」 칸 */
-const isInsider = (v: ConsViewer): boolean => v.isOwner || v.canHide;
+const isInsider = (v: ConsViewer): boolean => v.isOwner || v.isCreator === true || v.canHide;
 
 /** 목록에 이 건이 보이는가 */
 export function csCan(share: ConsShare, v: ConsViewer): boolean {

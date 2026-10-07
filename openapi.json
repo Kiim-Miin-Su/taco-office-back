@@ -15487,6 +15487,182 @@
         ]
       }
     },
+    "/consulting/templates": {
+      "get": {
+        "operationId": "ConsultingController_templates",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingTemplatesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "유형별 기본 항목 설정 — 활성 version과 미설정 차단 사유",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
+    "/consulting/templates/{consType}": {
+      "patch": {
+        "operationId": "ConsultingController_writeTemplate",
+        "parameters": [
+          {
+            "name": "consType",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsultingTemplateWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsultingTemplateDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CONS_TEMPLATE_VERSION_CONFLICT · CONS_TEMPLATE_REQUEST_KEY_REUSED · CONS_TEMPLATE_REPLAY_STALE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "유형별 기본 항목 새 version 저장 — BOC-04D-03c",
+        "tags": [
+          "consulting"
+        ]
+      }
+    },
     "/consulting/{id}/items/{itemId}": {
       "patch": {
         "description": "공개 범위(csCanFull)·종료 잠금은 서버가 판정한다. 진행률 숫자는 저장하지 않는다 — 원장 행만 바뀐다.",
@@ -40243,6 +40419,10 @@
       "ConsultingCreateDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
           "consType": {
             "type": "string",
             "enum": [
@@ -40323,6 +40503,7 @@
           }
         },
         "required": [
+          "requestKey",
           "consType",
           "studentIds",
           "requester",
@@ -40626,6 +40807,11 @@
           "id": {
             "type": "number"
           },
+          "version": {
+            "type": "number",
+            "minimum": 1,
+            "description": "핵심정보·공개범위 optimistic version. 레거시 fixture에는 생략 가능"
+          },
           "consType": {
             "type": "string"
           },
@@ -40733,6 +40919,14 @@
           },
           "createdAt": {
             "type": "string"
+          },
+          "createdBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "templateVersion": {
+            "type": "number",
+            "nullable": true
           },
           "typeCapability": {
             "$ref": "#/components/schemas/ConsultingTypeCapabilityDto"
@@ -41212,6 +41406,20 @@
           "label": {
             "type": "string",
             "description": "「편입 · 전학」 · 「어머니」 …"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "종류 선택 가능 여부. 요청자 낱말에는 생략한다."
+          },
+          "blockedReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "기본 항목 미설정 등 시작 차단 사유"
+          },
+          "templateVersion": {
+            "type": "number",
+            "nullable": true,
+            "description": "활성 기본 항목 version. 미설정이면 null"
           }
         },
         "required": [
@@ -41275,6 +41483,131 @@
           "canSeeAmounts",
           "canSetPrivate",
           "stages"
+        ]
+      },
+      "ConsultingTemplateItemDto": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "number"
+          },
+          "label": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "seq",
+          "label",
+          "required"
+        ]
+      },
+      "ConsultingTemplateDto": {
+        "type": "object",
+        "properties": {
+          "consType": {
+            "type": "string",
+            "enum": [
+              "admissions",
+              "boarding",
+              "transfer",
+              "essay",
+              "interview",
+              "exam",
+              "roadmap",
+              "college",
+              "portfolio",
+              "visa"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "nullable": true
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingTemplateItemDto"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "blockedReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "consType",
+          "label",
+          "version",
+          "items",
+          "enabled",
+          "blockedReason"
+        ]
+      },
+      "ConsultingTemplatesDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingTemplateDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ConsultingTemplateItemWriteDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "label",
+          "required"
+        ]
+      },
+      "ConsultingTemplateWriteDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 0,
+            "description": "활성 version. 미설정 유형의 첫 저장은 0"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "items": {
+            "minItems": 1,
+            "maxItems": 24,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsultingTemplateItemWriteDto"
+            }
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "requestKey",
+          "items"
         ]
       },
       "ConsItemToggleDto": {
@@ -41740,6 +42073,15 @@
       "ConsultingPatchDto": {
         "type": "object",
         "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1,
+            "description": "화면이 읽은 ConsultingDetailDto.version"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
           "studentIds": {
             "items": {
               "type": "integer",
@@ -41782,11 +42124,24 @@
             "format": "date",
             "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
           }
-        }
+        },
+        "required": [
+          "expectedVersion",
+          "requestKey"
+        ]
       },
       "ConsultingShareUpdateDto": {
         "type": "object",
         "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1,
+            "description": "화면이 읽은 ConsultingDetailDto.version"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
           "share": {
             "type": "string",
             "enum": [
@@ -41808,6 +42163,8 @@
           }
         },
         "required": [
+          "expectedVersion",
+          "requestKey",
           "share"
         ]
       },

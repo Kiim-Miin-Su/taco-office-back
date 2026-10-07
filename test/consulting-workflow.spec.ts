@@ -11,6 +11,7 @@ import { CONSULTING_TYPES } from '../src/modules/consulting/consulting.rules';
 import { ConsultingService } from '../src/modules/consulting/consulting.service';
 
 const validCreate = (): ConsultingCreateDto => Object.assign(new ConsultingCreateDto(), {
+  requestKey: '11111111-1111-4111-8111-111111111111',
   consType: 'admissions', studentIds: [1, 2], requester: 'mother', ownerId: 3,
   amount: 1_200_000, sessions: 8, startOn: '2026-09-14', endOn: '2026-12-20', share: 'all',
 });

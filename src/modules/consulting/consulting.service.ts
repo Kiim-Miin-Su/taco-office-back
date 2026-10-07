@@ -7,6 +7,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
+import { createHash } from 'node:crypto';
 import { Lead } from '../../entities';
 import { hasPerm, isRole } from '../../common/perm';
 import { AUDIT_WRITES, audit } from '../../lib/audit';
@@ -25,12 +26,13 @@ import type {
   ConsultingCreateDto, ConsultingDetailDto, ConsultingPatchDto,
   ConsultingFeedbackCreateDto, ConsultingFeedbackDto, ConsultingFileDto, ConsultingListDto,
   ConsultingFileCreateDto, ConsultingSessionDto, ConsultingShareUpdateDto,
+  ConsultingTemplateDto, ConsultingTemplatesDto, ConsultingTemplateWriteDto,
 } from './consulting.dto';
 import {
   CONS_ITEM_MAX,
   CONSULTING_CONTRACT_STEPS, CONSULTING_CONTRACT_STEP_SUB,
-  CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB,
-  CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX, INTERNATIONAL_SCHOOL_ITEMS,
+  CONSULTING_FILE_MAX, CONSULTING_STAGES, CONSULTING_STAGE_LABEL, CONSULTING_STAGE_SUB, CONSULTING_TYPES,
+  CONSULTING_TYPE_LABEL, CONTRACT_STEP_MAX,
   consItemDue, consItemEditIssue, consPaidSql,
   consSessDoneSql, consShareChipLabel, consShareLabel, consShareMeaning, consultingAgeDays, consultingArchiveIssue,
   consultingCloseIssue, consultingContractStepLabel, consultingExceptionCloseIssue, consultingRecordIssue,
@@ -178,6 +180,7 @@ export class ConsultingService {
     return {
       isOwner: row.owner_id !== null && Number(row.owner_id) === viewerId,
       isPicked: row.is_picked === true,
+      isCreator: row.created_by !== null && row.created_by !== undefined && Number(row.created_by) === viewerId,
       canHide,
       canMoney,
     };
@@ -216,11 +219,12 @@ export class ConsultingService {
 
   /** 쓰기 성공 뒤 호출자 자신이 방금 만든/바꾼 건에서 잠기는 실패를 커밋 전에 막는다. */
   private assertNoSelfLockout(
-    share: ConsShare, ownerId: number | null, picked: readonly number[], viewerId: number, canHide: boolean,
+    share: ConsShare, ownerId: number | null, picked: readonly number[], viewerId: number, canHide: boolean, isCreator = true,
   ): void {
     const remainsOpen = csCanFull(share, {
       isOwner: ownerId === viewerId,
       isPicked: picked.includes(viewerId),
+      isCreator,
       canHide,
       canMoney: false,
     });
@@ -232,7 +236,14 @@ export class ConsultingService {
     }
   }
 
-  /** owner/picked는 활성 백오피스 사용자만 허용한다. 역할 문자열 비교는 공용 권한 함수에 맡긴다. */
+  /** 담당자는 원문 p69대로 수업 맡는 활성 직원 전원이다. 지정 공개는 관리 화면 사용자만 유지한다. */
+  private async assertActiveStaff(m: EntityManager, ids: readonly number[]): Promise<void> {
+    if (ids.length === 0) return;
+    const [{ count }] = await m.query(`SELECT count(*)::int AS count FROM staff WHERE id=ANY($1::bigint[]) AND active`, [ids]) as Array<{ count: number }>;
+    if (count !== new Set(ids).size) throw new BadRequestException({ code: 'CONS_STAFF_INVALID', message: '담당자는 활성 직원이어야 합니다' });
+  }
+
+  /** 지정 공개 후보는 관리 화면 사용자만 허용한다. 역할 문자열 비교는 공용 권한 함수에 맡긴다. */
   private async assertActiveAdminStaff(m: EntityManager, ids: readonly number[]): Promise<void> {
     if (ids.length === 0) return;
     const rows = (await m.query(
@@ -247,7 +258,7 @@ export class ConsultingService {
       canGpaPack: r.can_gpa_pack as boolean | null,
     }) && hasPerm(r.role, 'canCrudAll')).length;
     if (valid !== new Set(ids).size) {
-      throw new BadRequestException({ code: 'CONS_STAFF_INVALID', message: '담당/지정 직원은 활성 백오피스 사용자여야 합니다' });
+      throw new BadRequestException({ code: 'CONS_PICK_STAFF_INVALID', message: '지정 직원은 활성 백오피스 사용자여야 합니다' });
     }
   }
 
@@ -282,32 +293,50 @@ export class ConsultingService {
     if (dto.startOn > dto.endOn) {
       throw new BadRequestException({ code: 'CONS_DATE_ORDER', message: '종료일은 시작일보다 빠를 수 없습니다' });
     }
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      consType: dto.consType, studentIds: [...dto.studentIds].sort((a, b) => a - b), requester: dto.requester,
+      ownerId: dto.ownerId, amount: dto.amount, sessions: dto.sessions, startOn: dto.startOn, endOn: dto.endOn,
+      share: dto.share, pickedStaffIds: [...picked].sort((a, b) => a - b),
+    })).digest('hex');
     const id = await this.anyRepo.manager.transaction(async (m: EntityManager) => {
-      await this.assertActiveAdminStaff(m, [dto.ownerId, ...picked]);
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`consulting:${dto.requestKey}`]);
+      const [prior] = await m.query(`SELECT r.cons_id,r.fingerprint,r.actor_id,r.result_version,c.row_version
+        FROM cons_write_req r JOIN cons c ON c.id=r.cons_id WHERE r.request_key=$1`, [dto.requestKey]) as Array<R>;
+      if (prior) {
+        if (String(prior.fingerprint) !== fingerprint || Number(prior.actor_id) !== viewerId) {
+          throw new ConflictException({ code: 'CONS_REQUEST_KEY_REUSED', message: '같은 컨설팅 요청 키를 다른 내용에 다시 사용할 수 없습니다' });
+        }
+        if (Number(prior.row_version) !== Number(prior.result_version)) {
+          throw new ConflictException({ code: 'CONS_REQUEST_REPLAY_STALE', message: '이 요청 뒤에 컨설팅이 바뀌었습니다 — 최신 내용을 다시 확인하세요' });
+        }
+        return Number(prior.cons_id);
+      }
+      await this.assertActiveStaff(m, [dto.ownerId]);
+      await this.assertActiveAdminStaff(m, picked);
       const [{ count }] = (await m.query(
         `SELECT count(*)::int AS count FROM stu WHERE id=ANY($1::bigint[])`, [dto.studentIds],
       )) as Array<{ count: number }>;
       if (count !== dto.studentIds.length) {
         throw new BadRequestException({ code: 'CONS_STUDENT_INVALID', message: '존재하지 않는 학생이 포함되었습니다' });
       }
+      const [template] = await m.query(`SELECT id,version FROM cons_template WHERE cons_type=$1 AND active FOR SHARE`, [dto.consType]) as Array<R>;
+      if (!template) throw new ConflictException({
+        code: 'CONS_TEMPLATE_MISSING', message: '이 유형의 기본 항목이 아직 설정되지 않았습니다 — 관리자 설정에서 먼저 저장하세요',
+      });
       const [created] = (await m.query(
-        `INSERT INTO cons (cons_type,stage,contract_step,amount,sessions,start_on,end_on,requester,owner_id,share)
-         VALUES ($1,'contract',1,$2,$3,$4::date,$5::date,$6,$7,$8)
-         RETURNING id`,
-        [dto.consType, dto.amount, dto.sessions, dto.startOn, dto.endOn, dto.requester, dto.ownerId, dto.share],
+        `INSERT INTO cons (cons_type,stage,contract_step,amount,sessions,start_on,end_on,requester,owner_id,share,created_by,template_id)
+         VALUES ($1,'contract',1,$2,$3,$4::date,$5::date,$6,$7,$8,$9,$10)
+         RETURNING id,row_version`,
+        [dto.consType, dto.amount, dto.sessions, dto.startOn, dto.endOn, dto.requester, dto.ownerId, dto.share, viewerId, template.id],
       )) as Array<{ id: string }>;
       const consId = Number(created.id);
       await m.query(`INSERT INTO cons_stu (cons_id,student_id) SELECT $1,unnest($2::bigint[])`, [consId, dto.studentIds]);
       if (picked.length) await m.query(`INSERT INTO cons_pick (cons_id,staff_id) SELECT $1,unnest($2::bigint[])`, [consId, picked]);
-      if (dto.consType === 'admissions') {
-        await m.query(
-          `INSERT INTO cons_item (cons_id,seq,label,required,done,source)
-           SELECT $1, ordinality::smallint, label, true, false, 'template'
-             FROM unnest($2::text[]) WITH ORDINALITY AS x(label,ordinality)`,
-          [consId, [...INTERNATIONAL_SCHOOL_ITEMS]],
-        );
-      }
+      await m.query(`INSERT INTO cons_item (cons_id,seq,label,required,done,source)
+        SELECT $1,seq,label,required,false,'template' FROM cons_template_item WHERE template_id=$2 ORDER BY seq`, [consId, template.id]);
       await m.query(`INSERT INTO cons_event (cons_id,event_type,by_id) VALUES ($1,'created',$2)`, [consId, viewerId]);
+      await m.query(`INSERT INTO cons_write_req(request_key,action,cons_id,fingerprint,result_version,actor_id)
+        VALUES ($1,'create',$2,$3,1,$4)`, [dto.requestKey, consId, fingerprint, viewerId]);
       return consId;
     });
     return this.detail(viewerId, canMoney, canHide, id);
@@ -324,8 +353,30 @@ export class ConsultingService {
     if (!fields.some((key) => dto[key] !== undefined)) {
       throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 값을 하나 이상 보내야 합니다' });
     }
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      consId, expectedVersion: dto.expectedVersion,
+      studentIds: dto.studentIds ? [...dto.studentIds].sort((a, b) => a - b) : null,
+      requester: dto.requester ?? null, ownerId: dto.ownerId ?? null, amount: dto.amount ?? null,
+      sessions: dto.sessions ?? null, startOn: dto.startOn ?? null, endOn: dto.endOn ?? null,
+    })).digest('hex');
     await this.anyRepo.manager.transaction(async (m) => {
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`consulting:${dto.requestKey}`]);
+      const [prior] = await m.query(`SELECT r.cons_id,r.action,r.fingerprint,r.actor_id,r.result_version,c.row_version
+        FROM cons_write_req r JOIN cons c ON c.id=r.cons_id WHERE r.request_key=$1`, [dto.requestKey]) as Array<R>;
+      if (prior) {
+        if (Number(prior.cons_id) !== consId || String(prior.action) !== 'core' || String(prior.fingerprint) !== fingerprint || Number(prior.actor_id) !== viewerId) {
+          throw new ConflictException({ code: 'CONS_REQUEST_KEY_REUSED', message: '같은 컨설팅 요청 키를 다른 내용에 다시 사용할 수 없습니다' });
+        }
+        if (Number(prior.row_version) !== Number(prior.result_version)) throw new ConflictException({
+          code: 'CONS_REQUEST_REPLAY_STALE', message: '이 요청 뒤에 컨설팅이 바뀌었습니다 — 최신 내용을 다시 확인하세요',
+        });
+        return;
+      }
       const locked = await this.lockFull(m, viewerId, canHide, consId);
+      if (Number(locked.row_version ?? 1) !== dto.expectedVersion) throw new ConflictException({
+        code: 'CONS_VERSION_CONFLICT', message: '다른 사용자가 컨설팅을 바꿨습니다 — 최신 내용을 다시 확인하세요',
+        actualVersion: Number(locked.row_version ?? 1),
+      });
       if (String(locked.stage) !== 'contract' || Number(locked.contract_step) !== 1) {
         throw new ConflictException({ code: 'CONS_CORE_LOCKED', message: '계약서 작업을 시작하기 전까지만 핵심정보를 바꿀 수 있습니다' });
       }
@@ -341,21 +392,25 @@ export class ConsultingService {
           throw new BadRequestException({ code: 'CONS_STUDENT_INVALID', message: '존재하지 않는 학생이 포함되었습니다' });
         }
       }
-      if (dto.ownerId !== undefined) await this.assertActiveAdminStaff(m, [dto.ownerId]);
-      const startOn = dto.startOn ?? String(locked.start_on_text);
-      const endOn = dto.endOn ?? String(locked.end_on_text);
-      if (startOn > endOn) {
+      if (dto.ownerId !== undefined) await this.assertActiveStaff(m, [dto.ownerId]);
+      const currentStartOn = locked.start_on_text == null ? null : String(locked.start_on_text);
+      const currentEndOn = locked.end_on_text == null ? null : String(locked.end_on_text);
+      const startOn = dto.startOn ?? currentStartOn;
+      const endOn = dto.endOn ?? currentEndOn;
+      if (startOn !== null && endOn !== null && startOn > endOn) {
         throw new BadRequestException({ code: 'CONS_DATE_ORDER', message: '종료일은 시작일보다 빠를 수 없습니다' });
       }
       const picked = ((await m.query(
         `SELECT staff_id FROM cons_pick WHERE cons_id=$1 ORDER BY staff_id`, [consId],
       )) as Array<{ staff_id: string }>).map((row) => Number(row.staff_id));
-      const ownerId = dto.ownerId ?? Number(locked.owner_id);
-      this.assertNoSelfLockout(String(locked.share) as ConsShare, ownerId, picked, viewerId, canHide);
+      const ownerId = dto.ownerId ?? (locked.owner_id == null ? null : Number(locked.owner_id));
+      this.assertNoSelfLockout(String(locked.share) as ConsShare, ownerId, picked, viewerId, canHide, Number(locked.created_by) === viewerId);
       const before = {
-        studentIds: currentStudents, requester: locked.requester, ownerId: Number(locked.owner_id),
-        amount: Number(locked.amount), sessions: Number(locked.sessions),
-        startOn: String(locked.start_on_text), endOn: String(locked.end_on_text),
+        studentIds: currentStudents, requester: locked.requester,
+        ownerId: locked.owner_id == null ? null : Number(locked.owner_id),
+        amount: locked.amount == null ? null : Number(locked.amount),
+        sessions: locked.sessions == null ? null : Number(locked.sessions),
+        startOn: currentStartOn, endOn: currentEndOn,
       };
       const after = {
         studentIds: nextStudents, requester: dto.requester ?? before.requester, ownerId,
@@ -363,7 +418,8 @@ export class ConsultingService {
         startOn, endOn,
       };
       await m.query(
-        `UPDATE cons SET requester=$2, owner_id=$3, amount=$4, sessions=$5, start_on=$6::date, end_on=$7::date WHERE id=$1`,
+        `UPDATE cons SET requester=$2, owner_id=$3, amount=$4, sessions=$5, start_on=$6::date, end_on=$7::date,
+                         row_version=row_version+1 WHERE id=$1`,
         [consId, after.requester, after.ownerId, after.amount, after.sessions, after.startOn, after.endOn],
       );
       if (dto.studentIds !== undefined) {
@@ -371,6 +427,8 @@ export class ConsultingService {
         await m.query(`INSERT INTO cons_stu (cons_id,student_id) SELECT $1,unnest($2::bigint[])`, [consId, nextStudents]);
       }
       await audit(m, 'consulting.core', { actorId: viewerId, entityId: consId, before, after });
+      await m.query(`INSERT INTO cons_write_req(request_key,action,cons_id,fingerprint,result_version,actor_id)
+        VALUES ($1,'core',$2,$3,$4,$5)`, [dto.requestKey, consId, fingerprint, dto.expectedVersion + 1, viewerId]);
     });
     return this.detail(viewerId, canMoney, canHide, consId);
   }
@@ -398,14 +456,15 @@ export class ConsultingService {
     const { share, viewer } = await this.gate(m, viewerId, canHide, canMoney, consId);
     if (!csCanFull(share, viewer)) throw new ForbiddenException('이 건의 내용은 공개 범위 밖입니다');
     const [detail] = await q(
-      `SELECT c.*,to_char(c.start_on,'YYYY-MM-DD') AS start_on_text,to_char(c.end_on,'YYYY-MM-DD') AS end_on_text,
+      `SELECT c.*,t.version AS template_version,to_char(c.start_on,'YYYY-MM-DD') AS start_on_text,to_char(c.end_on,'YYYY-MM-DD') AS end_on_text,
               to_char(c.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD"T"HH24:MI:SS')||'+09:00' AS created_at_text,
               o.name AS owner_name,
               -- 받은 돈은 §28 · 전이와 같은 조각이다 — 전환 청구서 입금까지 (N-33 ②)
               ${consPaidSql('c')} AS paid,
               (SELECT count(*)::int FROM cons_pay p WHERE p.cons_id=c.id) AS pay_rows,
               (SELECT i.id FROM inv i WHERE i.cs_id=c.id AND i.state<>'void') AS inv_id
-         FROM cons c LEFT JOIN staff o ON o.id=c.owner_id WHERE c.id=$1 AND c.deleted_at IS NULL`, [consId],
+         FROM cons c LEFT JOIN staff o ON o.id=c.owner_id LEFT JOIN cons_template t ON t.id=c.template_id
+        WHERE c.id=$1 AND c.deleted_at IS NULL`, [consId],
     );
     // 정상 경로에서는 SHARE lock 때문에 사라질 수 없지만, 오염/드라이버 경계도 500으로 새지 않게 한다.
     if (!detail) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
@@ -476,6 +535,7 @@ export class ConsultingService {
     });
     return {
       id: consId,
+      version: Number(detail.row_version ?? 1),
       consType,
       consTypeLabel: CONSULTING_TYPE_LABEL[knownType] ?? consType,
       stage,
@@ -497,18 +557,20 @@ export class ConsultingService {
       pickedStaffIds: picked.map((s) => Number(s.id)),
       pickedStaffNames: picked.map((s) => String(s.name)),
       createdAt: String(detail.created_at_text),
+      createdBy: detail.created_by == null ? null : Number(detail.created_by),
+      templateVersion: detail.template_version == null ? null : Number(detail.template_version),
       /*
        * 「회차 기록」은 C95 부터 **시간표 회차(SER)를 실제로 만든다**(있으면 잇는다 · `ConsultingSessionService.addSessions`).
        * 여기만 「약정 회차만 저장합니다」라 적혀 있어 모든 상세에 사실과 다른 배너가 섰다 (30-02). 유형과 무관하다.
        */
-      typeCapability: consType === 'admissions'
+      typeCapability: detail.template_id != null
         ? {
           defaultItemsSupported: true, reason: null,
           scheduleCreationSupported: true, scheduleCreationReason: null,
         }
         : {
-          // 9유형 기본 항목표는 아직 없다(N-18-a 보류) — 그동안은 원문 §31 「항목 수정」으로 담당이 채운다(DQ5 대안)
-          defaultItemsSupported: false, reason: '이 유형의 기본 항목은 아직 정해지지 않았습니다 — 「항목 수정」으로 담당자가 직접 채웁니다',
+          // 레거시만 남는 경계다. 신규 시작은 활성 template이 없으면 CONS_TEMPLATE_MISSING으로 차단한다.
+          defaultItemsSupported: false, reason: '이 과거 건에는 생성 당시 기본 항목 버전이 없습니다',
           scheduleCreationSupported: true, scheduleCreationReason: null,
         },
       capabilities: {
@@ -563,17 +625,38 @@ export class ConsultingService {
   async updateShare(viewerId: number, canMoney: boolean, canHide: boolean, consId: number, dto: ConsultingShareUpdateDto): Promise<ConsultingDetailDto> {
     const picked = this.assertPicked(dto.share, dto.pickedStaffIds);
     this.assertCanSetPrivate(dto.share, canHide);
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      consId, expectedVersion: dto.expectedVersion, share: dto.share, pickedStaffIds: [...picked].sort((a, b) => a - b),
+    })).digest('hex');
     await this.anyRepo.manager.transaction(async (m) => {
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`consulting:${dto.requestKey}`]);
+      const [prior] = await m.query(`SELECT r.cons_id,r.action,r.fingerprint,r.actor_id,r.result_version,c.row_version
+        FROM cons_write_req r JOIN cons c ON c.id=r.cons_id WHERE r.request_key=$1`, [dto.requestKey]) as Array<R>;
+      if (prior) {
+        if (Number(prior.cons_id) !== consId || String(prior.action) !== 'share' || String(prior.fingerprint) !== fingerprint || Number(prior.actor_id) !== viewerId) {
+          throw new ConflictException({ code: 'CONS_REQUEST_KEY_REUSED', message: '같은 컨설팅 요청 키를 다른 내용에 다시 사용할 수 없습니다' });
+        }
+        if (Number(prior.row_version) !== Number(prior.result_version)) throw new ConflictException({
+          code: 'CONS_REQUEST_REPLAY_STALE', message: '이 요청 뒤에 컨설팅이 바뀌었습니다 — 최신 내용을 다시 확인하세요',
+        });
+        return;
+      }
       const c = await this.lockFull(m, viewerId, canHide, consId);
+      if (Number(c.row_version ?? 1) !== dto.expectedVersion) throw new ConflictException({
+        code: 'CONS_VERSION_CONFLICT', message: '다른 사용자가 컨설팅을 바꿨습니다 — 최신 내용을 다시 확인하세요',
+        actualVersion: Number(c.row_version ?? 1),
+      });
       if (String(c.stage) !== 'contract') {
         throw new ConflictException({ code: 'CONS_LOCKED', message: '계약 단계에서만 공개 범위를 바꿀 수 있습니다' });
       }
-      this.assertNoSelfLockout(dto.share, c.owner_id == null ? null : Number(c.owner_id), picked, viewerId, canHide);
+      this.assertNoSelfLockout(dto.share, c.owner_id == null ? null : Number(c.owner_id), picked, viewerId, canHide, Number(c.created_by) === viewerId);
       await this.assertActiveAdminStaff(m, picked);
       await m.query(`DELETE FROM cons_pick WHERE cons_id=$1`, [consId]);
       if (picked.length) await m.query(`INSERT INTO cons_pick (cons_id,staff_id) SELECT $1,unnest($2::bigint[])`, [consId, picked]);
-      await m.query(`UPDATE cons SET share=$2 WHERE id=$1`, [consId, dto.share]);
+      await m.query(`UPDATE cons SET share=$2,row_version=row_version+1 WHERE id=$1`, [consId, dto.share]);
       await m.query(`INSERT INTO cons_event (cons_id,event_type,by_id) VALUES ($1,'share_changed',$2)`, [consId, viewerId]);
+      await m.query(`INSERT INTO cons_write_req(request_key,action,cons_id,fingerprint,result_version,actor_id)
+        VALUES ($1,'share',$2,$3,$4,$5)`, [dto.requestKey, consId, fingerprint, dto.expectedVersion + 1, viewerId]);
     });
     return this.detail(viewerId, canMoney, canHide, consId);
   }
@@ -819,9 +902,77 @@ export class ConsultingService {
     });
   }
 
+  /** BOC-04D-03c 기본 항목 설정 정본. 비어 있는 유형도 모두 내려 시작 차단 이유를 같은 곳에서 말한다. */
+  async templates(): Promise<ConsultingTemplatesDto> {
+    const rows = await this.q(`SELECT t.id,t.cons_type,t.version,i.seq,i.label,i.required
+      FROM cons_template t LEFT JOIN cons_template_item i ON i.template_id=t.id
+      WHERE t.active ORDER BY t.cons_type,i.seq`);
+    const byType = new Map<string, ConsultingTemplateDto>();
+    for (const row of rows) {
+      const key = String(row.cons_type);
+      if (!byType.has(key)) byType.set(key, {
+        consType: key as ConsultingType, label: consultingTypeLabel(key), version: Number(row.version),
+        items: [], enabled: true, blockedReason: null,
+      });
+      if (row.seq != null) byType.get(key)!.items.push({ seq: Number(row.seq), label: String(row.label), required: row.required === true });
+    }
+    return { items: consultingTypeWords().map(({ key, label }) => byType.get(key) ?? {
+      consType: key as ConsultingType, label, version: null, items: [], enabled: false,
+      blockedReason: '기본 항목 미설정 — 이 유형의 컨설팅 시작을 막습니다',
+    }) };
+  }
+
+  async writeTemplate(viewerId: number, consType: ConsultingType, dto: ConsultingTemplateWriteDto): Promise<ConsultingTemplateDto> {
+    if (!CONSULTING_TYPES.includes(consType)) throw new BadRequestException({ code: 'CONS_TYPE_INVALID', message: '지원하지 않는 컨설팅 유형입니다' });
+    const items = dto.items.map((item) => ({ label: item.label.trim(), required: item.required }));
+    if (items.some((item) => item.label.length === 0)) {
+      throw new BadRequestException({ code: 'CONS_TEMPLATE_ITEM_EMPTY', message: '기본 항목 이름을 입력해 주세요' });
+    }
+    if (new Set(items.map((item) => item.label)).size !== items.length) {
+      throw new BadRequestException({ code: 'CONS_TEMPLATE_ITEM_DUPLICATE', message: '기본 항목 이름은 중복될 수 없습니다' });
+    }
+    const fingerprint = createHash('sha256').update(JSON.stringify({ consType, expectedVersion: dto.expectedVersion, items })).digest('hex');
+    const templateId = await this.anyRepo.manager.transaction(async (m) => {
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`consulting-template:${consType}`]);
+      const [prior] = await m.query(`SELECT * FROM cons_template_write_req WHERE request_key=$1`, [dto.requestKey]) as Array<R>;
+      if (prior) {
+        if (String(prior.cons_type) !== consType || String(prior.fingerprint) !== fingerprint || Number(prior.actor_id) !== viewerId) {
+          throw new ConflictException({ code: 'CONS_TEMPLATE_REQUEST_KEY_REUSED', message: '같은 설정 요청 키를 다른 내용에 다시 사용할 수 없습니다' });
+        }
+        return Number(prior.template_id);
+      }
+      const [active] = await m.query(`SELECT id,version FROM cons_template WHERE cons_type=$1 AND active FOR UPDATE`, [consType]) as Array<R>;
+      const actual = active ? Number(active.version) : 0;
+      if (actual !== dto.expectedVersion) throw new ConflictException({
+        code: 'CONS_TEMPLATE_VERSION_CONFLICT', message: '다른 사용자가 기본 항목을 바꿨습니다 — 최신 설정을 다시 확인하세요', actualVersion: actual,
+      });
+      if (active) await m.query(`UPDATE cons_template SET active=false WHERE id=$1`, [active.id]);
+      const [made] = await m.query(`INSERT INTO cons_template(cons_type,version,created_by) VALUES ($1,$2,$3) RETURNING id`,
+        [consType, actual + 1, viewerId]) as Array<R>;
+      for (const [index, item] of items.entries()) {
+        await m.query(`INSERT INTO cons_template_item(template_id,seq,label,required) VALUES ($1,$2,$3,$4)`,
+          [made.id, index + 1, item.label, item.required]);
+      }
+      await m.query(`INSERT INTO cons_template_write_req(request_key,cons_type,template_id,fingerprint,result_version,actor_id)
+        VALUES ($1,$2,$3,$4,$5,$6)`, [dto.requestKey, consType, made.id, fingerprint, actual + 1, viewerId]);
+      return Number(made.id);
+    });
+    const current = await this.templates();
+    const result = current.items.find((item) => item.consType === consType && item.version !== null);
+    if (!result) throw new InternalServerErrorException('컨설팅 기본 항목 저장 결과를 찾을 수 없습니다');
+    // 같은 요청의 과거 replay 뒤 더 새 version이 있으면 최신이 아닌 과거 결과를 성공처럼 돌려주지 않는다.
+    const [receipt] = await this.q(`SELECT result_version FROM cons_template_write_req WHERE request_key=$1 AND template_id=$2`, [dto.requestKey, templateId]);
+    if (!receipt || result.version !== Number(receipt.result_version)) throw new ConflictException({
+      code: 'CONS_TEMPLATE_REPLAY_STALE', message: '이 요청 뒤에 기본 항목이 바뀌었습니다 — 최신 설정을 다시 확인하세요',
+    });
+    return result;
+  }
+
   async all(viewerId: number, canMoney: boolean, canHide: boolean, lineShown = true): Promise<ConsultingListDto> {
+    const templateRows = await this.q(`SELECT cons_type,version FROM cons_template WHERE active`);
+    const templateVersion = new Map(templateRows.map((r) => [String(r.cons_type), Number(r.version)]));
     const rows = await this.q(
-      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
+      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id, c.created_by,
               c.requester,
               to_char(c.start_on,'YYYY-MM-DD')    AS start_on,
               to_char(c.end_on,'YYYY-MM-DD')      AS end_on,
@@ -847,6 +998,7 @@ export class ConsultingService {
       const share = String(r.share) as ConsShare;
       const viewer: ConsViewer = {
         isOwner: r.owner_id !== null && Number(r.owner_id) === viewerId,
+        isCreator: r.created_by !== null && Number(r.created_by) === viewerId,
         isPicked: r.is_picked === true, canHide, canMoney,
       };
       return csCan(share, viewer) ? [{ r, share, full: csCanFull(share, viewer), money: csCanAmount(share, viewer) }] : [];
@@ -925,7 +1077,10 @@ export class ConsultingService {
       // 공개 범위 넷의 이름과 뜻 — §29 칩 아래 한 줄(29-06)도 §30 배너와 같은 낱말이다 (D-R18)
       shares: CONS_SHARES.map((key) => ({ key, label: consShareLabel(key), meaning: consShareMeaning(key) ?? '' })),
       // §29 고르개 낱말 — 종류 10(가운뎃점 앞뒤 띄움 · 29-02) · 요청자 2. 화면은 이 차례·이름 그대로 칩을 세운다
-      types: consultingTypeWords(),
+      types: consultingTypeWords().map((word) => ({
+        ...word, enabled: templateVersion.has(word.key), templateVersion: templateVersion.get(word.key) ?? null,
+        blockedReason: templateVersion.has(word.key) ? null : '기본 항목 미설정 — 관리자 설정에서 먼저 저장하세요',
+      })),
       requesters: consultingRequesterWords(),
       // §27 탭 머리 「학생 N명」 — 탭을 열기 전에도 선다(26-03). 볼 수 있는 건의 학생만, 한 사람은 한 번 (students() 와 같은 셈)
       studentCount: new Set(visible.flatMap(({ r }) => ((r.student_ids as Array<string | number>) ?? []).map(Number))).size,
@@ -1182,13 +1337,14 @@ export class ConsultingService {
     m: EntityManager, viewerId: number, canHide: boolean, canMoney: boolean, consId: number,
   ): Promise<{ row: R; share: ConsShare; viewer: ConsViewer }> {
     const [c] = (await m.query(
-      `SELECT c.id, c.stage, c.contract_step, c.amount, c.share, c.owner_id,
+      `SELECT c.id, c.stage, c.contract_step, c.amount, c.share, c.owner_id, c.created_by,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $2) AS is_picked
          FROM cons c WHERE c.id = $1 AND c.deleted_at IS NULL FOR SHARE OF c`, [consId, viewerId])) as R[];
     if (!c) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
     const share = String(c.share) as ConsShare;
     const viewer: ConsViewer = {
       isOwner: c.owner_id !== null && Number(c.owner_id) === viewerId,
+      isCreator: c.created_by !== null && Number(c.created_by) === viewerId,
       isPicked: c.is_picked === true, canHide, canMoney,
     };
     if (!csCan(share, viewer)) throw new NotFoundException('컨설팅 건을 찾을 수 없습니다');
@@ -1204,7 +1360,7 @@ export class ConsultingService {
    */
   async accounting(viewerId: number, canMoney: boolean, canHide: boolean, lineShown = true): Promise<ConsAccountingDto> {
     const rows = await this.q(
-      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.share, c.owner_id,
+      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.share, c.owner_id, c.created_by,
               -- 「납부 넣기」 판정의 재료 — 서버가 보는 것과 같은 칸이어야 한다 (S5)
               (c.start_on IS NULL AND c.requester IS NULL) AS legacy,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
@@ -1227,6 +1383,7 @@ export class ConsultingService {
       const share = String(r.share) as ConsShare;
       const viewer: ConsViewer = {
         isOwner: r.owner_id !== null && Number(r.owner_id) === viewerId,
+        isCreator: r.created_by !== null && Number(r.created_by) === viewerId,
         isPicked: r.is_picked === true, canHide, canMoney,
       };
       return csCan(share, viewer) ? [{ r, money: csCanAmount(share, viewer) }] : [];
@@ -1552,7 +1709,7 @@ export class ConsultingService {
   async students(viewerId: number, canMoney: boolean, canHide: boolean, lineShown = true): Promise<ConsStudentsDto> {
     const today = todayKst();
     const rows = await this.q(
-      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id,
+      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.sessions, c.share, c.owner_id, c.created_by,
               to_char(c.start_on,'YYYY-MM-DD')   AS start_on,
               to_char(c.end_on,'YYYY-MM-DD')     AS end_on,
               to_char(c.created_at,'YYYY-MM-DD') AS created_on,
@@ -1575,6 +1732,7 @@ export class ConsultingService {
       const share = String(r.share) as ConsShare;
       const viewer: ConsViewer = {
         isOwner: r.owner_id !== null && Number(r.owner_id) === viewerId,
+        isCreator: r.created_by !== null && Number(r.created_by) === viewerId,
         isPicked: r.is_picked === true, canHide, canMoney,
       };
       return csCan(share, viewer)

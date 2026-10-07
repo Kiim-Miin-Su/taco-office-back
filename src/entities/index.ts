@@ -20,6 +20,10 @@ export * from './cons-sess.entity';
 export * from './cons-stu.entity';
 export * from './cpl.entity';
 export * from './cons-pay.entity';
+export * from './cons-template.entity';
+export * from './cons-template-item.entity';
+export * from './cons-write-req.entity';
+export * from './cons-template-write-req.entity';
 // ST1-b1 (2026-09-30) — 학생/구성원 공용 국가·시간대·학년·학교 사전
 export * from './country.entity';
 export * from './country-timezone.entity';
@@ -136,6 +140,10 @@ import {
   ConsSess,
   ConsStu,
   ConsPay,
+  ConsTemplate,
+  ConsTemplateItem,
+  ConsWriteReq,
+  ConsTemplateWriteReq,
   Country,
   CountryTimezone,
   Cpl,
@@ -251,6 +259,10 @@ export const ENTITIES = [
   ConsStu,
   // 기존 두 영속 표가 ENTITIES에서 빠져 schema:check가 검수하지 못하던 범위를 닫는다.
   ConsPay,
+  ConsTemplate,
+  ConsTemplateItem,
+  ConsWriteReq,
+  ConsTemplateWriteReq,
   Cpl,
   Diag,
   Enr,

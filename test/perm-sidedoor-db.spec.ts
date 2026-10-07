@@ -25,6 +25,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
@@ -79,6 +80,7 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
     if (!all.length) return;
     await q(`DELETE FROM cons_event WHERE cons_id = ANY($1)`, [all]);
     await q(`DELETE FROM cons_item WHERE cons_id = ANY($1)`, [all]);
+    await q(`DELETE FROM cons_write_req WHERE cons_id = ANY($1)`, [all]);
     await q(`DELETE FROM cons_pick WHERE cons_id = ANY($1)`, [all]);
     await q(`DELETE FROM cons_stu WHERE cons_id = ANY($1)`, [all]);
     await q(`DELETE FROM cons WHERE id = ANY($1)`, [all]);
@@ -89,6 +91,7 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
     if (consIds.length) {
       await q(`DELETE FROM cons_event WHERE cons_id = ANY($1)`, [consIds]);
       await q(`DELETE FROM cons_item WHERE cons_id = ANY($1)`, [consIds]);
+      await q(`DELETE FROM cons_write_req WHERE cons_id = ANY($1)`, [consIds]);
       await q(`DELETE FROM cons_pick WHERE cons_id = ANY($1)`, [consIds]);
       await q(`DELETE FROM cons_stu WHERE cons_id = ANY($1)`, [consIds]);
       await q(`DELETE FROM cons WHERE id = ANY($1)`, [consIds]);
@@ -230,7 +233,7 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
   /* ── ③ 컨설팅 비공개 「지정」 ──────────────────────────────────────── */
 
   const consBody = (share: string) => ({
-    consType: 'admissions', studentIds: [STU], requester: 'mother',
+    requestKey: randomUUID(), consType: 'admissions', studentIds: [STU], requester: 'mother',
     ownerId: CEO, amount: 100000, sessions: 1, startOn: '2026-09-01', endOn: '2026-12-31', share,
   });
 
@@ -244,7 +247,9 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
     consIds.push(Number(open.body.id));
 
     // 만든 뒤 비공개로 바꾸는 길도 같은 문을 지난다
-    const moved = await api('patch', `/consulting/${open.body.id}/share`, noHide).send({ share: 'private' }).expect(403);
+    const moved = await api('patch', `/consulting/${open.body.id}/share`, noHide).send({
+      expectedVersion: open.body.version, requestKey: randomUUID(), share: 'private',
+    }).expect(403);
     expect(moved.body.code).toBe('CONS_PRIVATE_FORBIDDEN');
     expect((await q<{ share: string }>(`SELECT share FROM cons WHERE id = $1`, [Number(open.body.id)]))[0].share).toBe('all');
 

@@ -91,6 +91,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
     await q(`DELETE FROM cons_file WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM file WHERE id = ANY($1::bigint[]) OR uploaded_by = ANY($2::bigint[])`, [files, STAFF]);
     await q(`DELETE FROM cons_item WHERE cons_id = ANY($1::bigint[])`, [cons]);
+    await q(`DELETE FROM cons_write_req WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM cons_pay WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM cons_sess WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM cons_stu WHERE cons_id = ANY($1::bigint[])`, [cons]);
@@ -581,7 +582,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
     const CONTRACT = 'contract body bytes';
     const setup = async () => {
       const created = await api('post', '/consulting').send({
-        consType: 'essay', studentIds: [STU_A], requester: 'mother', ownerId: MGR, amount: 500000, sessions: 4,
+        requestKey: randomUUID(), consType: 'admissions', studentIds: [STU_A], requester: 'mother', ownerId: MGR, amount: 500000, sessions: 4,
         startOn: TODAY, endOn: plus(TODAY, 60), share: 'all',
       }).expect(201);
       const id = Number(created.body.id);
@@ -664,8 +665,10 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
       expect(fake.calls).toHaveLength(0);                                 // 아무것도 나가지 않았다
 
       // 공개 범위 — 비공개 판정 재료가 없는 사람에게 지정 공개 건은 없는 건이다(존재를 숨긴다)
-      await q(`UPDATE cons SET share = 'picked' WHERE id = $1`, [id]);
-      await q(`INSERT INTO cons_pick (cons_id, staff_id) VALUES ($1, $2)`, [id, MGR]);
+      const [{ row_version: version }] = await q<{ row_version: number }>(`SELECT row_version FROM cons WHERE id = $1`, [id]);
+      await api('patch', `/consulting/${id}/share`).send({
+        expectedVersion: Number(version), requestKey: randomUUID(), share: 'picked', pickedStaffIds: [MGR],
+      }).expect(200);
       await expect(ds.transaction((m) => app.get(ConsultingService).deliveryAttachments(m, MGR2, false, STU_A, [fileId])))
         .rejects.toMatchObject({ status: 404 });
     });

@@ -8,6 +8,7 @@ import { Test } from '@nestjs/testing';
 import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
+import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
@@ -33,6 +34,7 @@ d('문의·컨설팅 핵심정보 수정 — HTTP→DTO→DB→감사', () => {
   async function cleanup() {
     if (!ds?.isInitialized) return;
     if (cons.length) {
+      await q(`DELETE FROM cons_write_req WHERE cons_id=ANY($1)`, [cons]);
       await q(`DELETE FROM cons_event WHERE cons_id=ANY($1)`, [cons]);
       await q(`DELETE FROM cons_item WHERE cons_id=ANY($1)`, [cons]);
       await q(`DELETE FROM cons_pick WHERE cons_id=ANY($1)`, [cons]);
@@ -95,11 +97,12 @@ d('문의·컨설팅 핵심정보 수정 — HTTP→DTO→DB→감사', () => {
 
   it('계약 1단계에서 핵심정보·학생 연결을 함께 바꾸고, 계약 작업 뒤에는 전부 거절한다', async () => {
     const made = await api('post', '/consulting').send({
-      consType: 'admissions', studentIds: [STU1], requester: 'mother', ownerId: CEO,
+      requestKey: randomUUID(), consType: 'admissions', studentIds: [STU1], requester: 'mother', ownerId: CEO,
       amount: 1000000, sessions: 4, startOn: '2026-10-01', endOn: '2026-12-31', share: 'all',
     }).expect(201);
     const id = Number(made.body.id); cons.push(id);
     const edited = await api('patch', `/consulting/${id}`).send({
+      expectedVersion: made.body.version, requestKey: randomUUID(),
       studentIds: [STU2], requester: 'father', ownerId: OWNER, amount: 1200000, sessions: 6,
       startOn: '2026-10-02', endOn: '2027-01-15',
     }).expect(200);
@@ -111,13 +114,13 @@ d('문의·컨설팅 핵심정보 수정 — HTTP→DTO→DB→감사', () => {
     expect(log.after).toMatchObject({ studentIds: [STU2], requester: 'father', amount: 1200000 });
 
     // 실제 편집기는 바뀐 칸만 보낸다. 날짜를 생략해도 DB Date 객체 문자열을 재전송하지 않고 YYYY-MM-DD를 보존해야 한다.
-    const partial = await api('patch', `/consulting/${id}`).send({ amount: 1250000 }).expect(200);
+    const partial = await api('patch', `/consulting/${id}`).send({ expectedVersion: edited.body.version, requestKey: randomUUID(), amount: 1250000 }).expect(200);
     expect(partial.body).toMatchObject({ amount: 1250000, startOn: '2026-10-02', endOn: '2027-01-15' });
     expect((await q(`SELECT amount,start_on::text,end_on::text FROM cons WHERE id=$1`, [id]))[0])
       .toMatchObject({ amount: 1250000, start_on: '2026-10-02', end_on: '2027-01-15' });
 
     await q(`UPDATE cons SET contract_step=2 WHERE id=$1`, [id]);
-    const locked = await api('patch', `/consulting/${id}`).send({ amount: 1300000 }).expect(409);
+    const locked = await api('patch', `/consulting/${id}`).send({ expectedVersion: partial.body.version, requestKey: randomUUID(), amount: 1300000 }).expect(409);
     expect(locked.body.code).toBe('CONS_CORE_LOCKED');
     expect((await q(`SELECT amount FROM cons WHERE id=$1`, [id]))[0]?.amount).toBe(1250000);
   });

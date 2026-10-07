@@ -74,7 +74,7 @@ describe('§26 단계 필터 조회 계약', () => {
     // C95 는 §31 회차 잡기(미리보기·확정·육하원칙)와 종료(미리보기·확정) 다섯을 더했다 (I-91 · I-95 · N-18 채택).
     // W11 은 원문 §31 「항목 수정」 하나와 항목 「파일」 올리기 · 빼기 둘을 더했다 (N-18-a DQ5 대안 · N-63 채택).
     expect(Object.keys(api.paths)).toEqual([
-      '/consulting', '/consulting/{id}/items/{itemId}',
+      '/consulting', '/consulting/templates', '/consulting/templates/{consType}', '/consulting/{id}/items/{itemId}',
       '/consulting/{id}/items', '/consulting/{id}/items/{itemId}/files', '/consulting/{id}/items/{itemId}/files/{fileId}',
       '/consulting/accounting', '/consulting/students',
       '/consulting/{id}', '/consulting/{id}/share',

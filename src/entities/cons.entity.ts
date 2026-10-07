@@ -22,6 +22,7 @@ import type { ConsultingStage } from '../modules/consulting/consulting.rules';
 @Check('cons_requester_check', "requester IS NULL OR requester IN ('mother','father')")
 @Check('cons_dates_check', 'start_on IS NULL OR end_on IS NULL OR start_on <= end_on')
 @Check('cons_deleted_pair_check', '(deleted_at IS NULL) = (deleted_by IS NULL)')
+@Check('cons_row_version_positive', 'row_version >= 1')
 export class Cons {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: number;
@@ -53,6 +54,17 @@ export class Cons {
 
   @Column({ type: 'bigint', nullable: true })
   ownerId: number | null;
+
+  /** BOC-04D-03c 신규 writer의 최초 등록자. 레거시는 null. */
+  @Column({ type: 'bigint', nullable: true })
+  createdBy: number | null;
+
+  /** 생성 당시 기본 항목 version snapshot. 레거시는 null. */
+  @Column({ type: 'bigint', nullable: true })
+  templateId: number | null;
+
+  @Column({ type: 'int', default: 1 })
+  rowVersion: number;
 
   /** §29 요청자 — 학부모 연락처/외부 발송 대상 정보는 이 값으로 추정하지 않는다. */
   @Column({ type: 'varchar', length: 8, nullable: true })

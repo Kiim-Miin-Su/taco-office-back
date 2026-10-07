@@ -128,11 +128,14 @@ d('§26 DB 제약과 migration 11', () => {
   });
 
   it('down/up은 레코드를 보존하며 현행 9개 제약과 entity metadata를 일치시킨다', async () => {
+    // BOC-04D-03c의 deferred receipt guard를 DDL 전에 확정해 PostgreSQL pending-trigger 제한과 분리한다.
+    await q.query(`SET CONSTRAINTS ALL IMMEDIATE`);
     await migration.down(q);
     await migration.up(q);
     const expected = [
       'cons_stage_check', 'cons_contract_step_check', 'cons_paid_stage_check', 'cons_sessions_check',
       'cons_requester_check', 'cons_dates_check', 'cons_deleted_pair_check',
+      'cons_row_version_positive',
       'cons_sess_seq_check', 'cons_sess_cons_seq_uniq',
     ].sort();
     const constraints = await q.query(`SELECT conname FROM pg_constraint WHERE conname = ANY($1)`, [expected]) as { conname: string }[];
@@ -143,6 +146,8 @@ d('§26 DB 제약과 migration 11', () => {
   });
 
   it('오염 preflight는 보정/삭제 없이 제약 적용 전에 실패한다', async () => {
+    // BOC-04D-03c의 deferred receipt guard를 DDL 전에 확정해 PostgreSQL pending-trigger 제한과 분리한다.
+    await q.query(`SET CONSTRAINTS ALL IMMEDIATE`);
     await migration.down(q);
     await q.query(`UPDATE cons SET stage='running',contract_step=NULL,sessions=0 WHERE id=$1`, [id]);
     await q.query(`INSERT INTO cons_sess (cons_id,seq) VALUES ($1,0),($1,0)`, [id]);
