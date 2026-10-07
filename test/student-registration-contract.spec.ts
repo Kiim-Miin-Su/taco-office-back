@@ -5,6 +5,7 @@
  */
 
 import { type INestApplication } from '@nestjs/common';
+import { HTTP_CODE_METADATA } from '@nestjs/common/constants';
 import { Test } from '@nestjs/testing';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
@@ -174,6 +175,8 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
       .toMatchObject({ type: 'string', pattern: '^(0|[1-9][0-9]*)$' });
     expect(doc.paths['/students/reactivation-candidates']?.get).toBeDefined();
     expect(doc.paths['/students/{id}/reactivate/preview']?.post).toBeDefined();
+    expect(doc.paths['/students/{id}/reactivate/preview']?.post?.responses?.['200']).toBeDefined();
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, StudentsController.prototype.previewReactivation)).toBe(200);
     expect(doc.paths['/students/{id}/reactivate']?.post).toBeDefined();
     expect(doc.paths['/students/{id}/reactivate']?.post?.responses?.['201']).toBeDefined();
     expect(Reflect.getMetadata(PERM_KEY, StudentsController)).toEqual(['canAdminPage', 'canCrudAll']);

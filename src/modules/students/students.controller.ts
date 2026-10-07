@@ -1,9 +1,9 @@
 /** @file-guide
- * 목적: students.controller.ts — 관리자 학생 목록·상세 GET(UX-C1)
- * 책임/재사용: 공용 Perm과 HTTP DTO를 사용한다. 신규 쓰기·삭제 권한을 열지 않는다.
+ * 목적: 관리자 학생 조회와 BOC-03D-03b 재활성화 후보·preview·save HTTP 경계를 연결한다.
+ * 책임/재사용: 공용 Perm·생성 DTO를 사용하며 실제 상태/transaction 판정은 StudentsService에 위임한다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
@@ -42,6 +42,7 @@ export class StudentsController {
   }
 
   @Post(':id/reactivate/preview')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '기존 학생 재활성화 미리보기 — 쓰기 0, requestKey 미소모' })
   @ApiOkResponse({ type: StudentReactivationPreviewDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'STUDENT_ID_MISMATCH | STUDENT_REACTIVATION_LEAD_INVALID' })
