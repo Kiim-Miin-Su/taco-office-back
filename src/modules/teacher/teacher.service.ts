@@ -640,6 +640,28 @@ export class TeacherService {
       };
     });
 
+    // BOC-09D-03: 특이사항 대상은 표시 이름에서 되짚지 않는다. 지급 시트가 확정한 정확한
+    // serId+원래 onDate만 다시 읽고 기간 명단·회차 제외를 적용해 구조화 ID를 붙인다.
+    const lessonKeys = [...new Map(lessons.map((lesson) => [
+      `${lesson.serId}:${lesson.onDate}`, { serId: lesson.serId, onDate: lesson.onDate },
+    ])).values()];
+    const studentRows = lessonKeys.length ? await this.q(`WITH keys AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(ser_id bigint,on_date date)
+      ) SELECT k.ser_id,k.on_date::text,
+        COALESCE(jsonb_agg(jsonb_build_object('id',st.id,'name',st.name) ORDER BY st.name,st.id)
+          FILTER (WHERE st.id IS NOT NULL),'[]'::jsonb) AS students
+      FROM keys k
+      LEFT JOIN ser_stu ss ON ss.ser_id=k.ser_id
+        AND (ss.from_date IS NULL OR ss.from_date <= k.on_date)
+        AND (ss.to_date IS NULL OR ss.to_date >= k.on_date)
+        AND NOT EXISTS (SELECT 1 FROM exc e JOIN exc_stu_out x ON x.exc_id=e.id AND x.student_id=ss.student_id
+          WHERE e.ser_id=k.ser_id AND e.on_date=k.on_date)
+      LEFT JOIN stu st ON st.id=ss.student_id GROUP BY k.ser_id,k.on_date`, [JSON.stringify(lessonKeys)]) : [];
+    const studentsByLesson = new Map(studentRows.map((row) => [
+      `${Number(row.ser_id)}:${String(row.on_date)}`,
+      (row.students as Array<{ id: number | string; name: string }>).map((student) => ({ id: Number(student.id), name: student.name })),
+    ]));
+
     return {
       month: ym,
       stats: {
@@ -653,7 +675,8 @@ export class TeacherService {
       lessons: lessons.map((l) => ({
         serId: l.serId, onDate: l.onDate, date: l.date, startMin: l.startMin, durMin: l.durMin,
         kindKey: l.kindKey, subKey: l.subKey, mode: l.mode, title: l.title,
-        students: l.students, studentCount: l.studentCount, repState: l.repState, canceled: l.canceled,
+        students: l.students, studentItems: studentsByLesson.get(`${l.serId}:${l.onDate}`) ?? [],
+        studentCount: l.studentCount, repState: l.repState, canceled: l.canceled,
         submittedAt: l.submittedAt, pay: l.pay, lateCut: l.lateCut, penaltyIfNow: l.penaltyIfNow,
         bonus: l.bonus, settle: l.settle, settleLabel: payoutSettleLabel(l),
         correctionOf: l.correctionOf, paidIn: l.paidIn, frozen: l.frozen,

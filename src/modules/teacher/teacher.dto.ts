@@ -191,6 +191,11 @@ export class TeacherHistoryQueryDto {
 }
 
 /** 히스토리의 수업 한 줄 — 금액은 본인 것만 실리는 표면이므로 projection 없이 그대로 준다. */
+export class TeacherHistoryStudentDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+}
+
 export class TeacherHistoryLessonDto {
   @ApiProperty() serId!: number;
   @ApiProperty({ description: '규칙상 원래 날짜 YYYY-MM-DD (KST) — 회차의 키' }) onDate!: string;
@@ -203,6 +208,8 @@ export class TeacherHistoryLessonDto {
   @ApiProperty({ enum: ['offline', 'online'] }) mode!: 'offline' | 'online';
   @ApiPropertyOptional(S) title?: string | null;
   @ApiPropertyOptional({ ...S, description: '수강 학생 이름 (·, 구분)' }) students?: string | null;
+  @ApiProperty({ type: [TeacherHistoryStudentDto], description: '특이사항 저장 identity. 표시 문자열에서 ID를 추정하지 않는다.' })
+  studentItems!: TeacherHistoryStudentDto[];
   @ApiProperty({ description: '명단 수 — «외 N명» 표기용' }) studentCount!: number;
   @ApiProperty({ enum: [...REP_STATE_T_VALUES] }) repState!: string;
   @ApiProperty() canceled!: boolean;

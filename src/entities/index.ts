@@ -64,6 +64,8 @@ export * from './mtattd.entity';
 export * from './mtagenda.entity';
 export * from './mtrec.entity';
 export * from './note.entity';
+export * from './teacher-private-note.entity';
+export * from './teacher-private-note-write-req.entity';
 export * from './noti.entity';
 export * from './pay.entity';
 export * from './payout.entity';
@@ -183,6 +185,8 @@ import {
   Mtagenda,
   Mtrec,
   Note,
+  TeacherPrivateNote,
+  TeacherPrivateNoteWriteReq,
   Noti,
   Pay,
   Payout,
@@ -301,6 +305,8 @@ export const ENTITIES = [
   Mtagenda,
   Mtrec,
   Note,
+  TeacherPrivateNote,
+  TeacherPrivateNoteWriteReq,
   Noti,
   Pay,
   Payout,

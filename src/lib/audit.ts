@@ -66,6 +66,7 @@ export const AUDIT_WRITES = [
   { key: 'payout.bonus_rule', entity: 'PAYOUT_BONUS', action: 'write', why: '가산 규칙 새 줄 — 시트 · 확정 · 강사 히스토리 금액이 바뀐다(N-93)' },
   { key: 'acct.privacy', entity: 'ACCT_PRIVACY', action: 'switch', why: '시급 · 컨설팅 비공개 켬 · 끔 — 누가 줄 금액을 보는가(N-94)' },
   { key: 'payout.correction', entity: 'PAYOUT', action: 'correction', why: '보정 승인 — 확정된 달 뒤에 쓴 회차를 다음 달 정산에 얹어 지급(N-51 · 슬라이드 77)' },
+  { key: 'teacher.private_note', entity: 'TPRIVNOTE', action: 'write', why: '강사 작성 관리자 전용 특이사항 — 본문 없이 actor·회차·학생·version만 감사' },
 ] as const;
 
 export type AuditKey = (typeof AUDIT_WRITES)[number]['key'];

@@ -37,6 +37,7 @@ import { ZoomModule } from './modules/zoom/zoom.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { GuardiansModule } from './modules/guardians/guardians.module';
 import { StudentsModule } from './modules/students/students.module';
+import { PrivateNotesModule } from './modules/private-notes/private-notes.module';
 
 @Module({
   imports: [
@@ -116,6 +117,8 @@ import { StudentsModule } from './modules/students/students.module';
     GuardiansModule,
     // UX-C1 학생 독립 목록·상세 — 기존 STU 읽기, 신규 등록/기간 이력은 별도 청크다.
     StudentsModule,
+    // BOC-09D-03 — 기존 NOTE와 분리한 강사 작성·관리자 전용 학생 특이사항
+    PrivateNotesModule,
   ],
   controllers: [HealthController],
   providers: [
