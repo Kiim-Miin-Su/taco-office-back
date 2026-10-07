@@ -50,6 +50,10 @@ export const SEEDED_TABLES = [
   // ST1-b2 기간·감사: dev --reset은 STU와 함께 두 원장을 명시적으로만 초기화한다.
   // 운영 전환 reset과 무관하다. 여기서 빠져도 STU TRUNCATE CASCADE가 조용히 지우므로 목록에 드러낸다.
   'stu_profile_audit', 'stu_profile_period',
+  // BOC-03D-03b 권고안 채택: 재활성화 상담·상태 원장도 앱 writer가 쌓는 개발/QA 자료다.
+  // 둘은 UPDATE/DELETE 불변이므로 개별 DELETE하지 않고, --reset의 단일 TRUNCATE ... CASCADE에서만 비운다.
+  // 정책 변경 시 migration·StudentsService·P-REACT·BOC-03D-03b 문서와 이 목록을 함께 검토한다.
+  'stu_reactivation_consultation', 'stu_status_event',
   // 줌 배정 정본(`zassign`)은 온라인 규칙에 시드가 넣는다(N-49 · W11) — 회차의 계정(`ser_occ.zacc_id`)은 그 투영이다
   'ser', 'ser_stu', 'ser_occ', 'exc', 'exc_stu_out', 'zassign', 'unav',
   'rep', 'rep_stu', 'guide', 'pnoti', 'lib', 'issue',
