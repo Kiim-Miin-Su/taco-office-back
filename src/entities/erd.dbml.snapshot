@@ -1,3 +1,4 @@
+// TBO55-BOC03D04B-R68 (2026-10-07): BOC-03D-04b 권고안 채택 — 관리자 신규 학생 preview/save를 동일 transaction writer로 연결했다. legacy·기존 최소 등록은 contract=0, 최종 15절 신규 등록만 contract=1이다. STU 계약/PII, GUARDIAN 확장, STU_STAFF/STU_SIBLING, create status와 지연 완결성 trigger를 v4.66/104표로 기록한다. 강사 생성 권한은 없으며 운영 migration은 미적용이다. 정책 변경 시 service·DTO/OpenAPI/generated schema·P-STU15·BOC-03·target/current DBML·portfolio를 함께 수정한다.
 // TBO55-BOC03D04A-R67 (2026-10-07): BOC-03D-04a 권고안 채택 — legacy STU는 NULL/연락처0행으로 보존하고 english_name·birth_date·has_citizenship·source와 STU_CONTACT만 additive 적용한다. label은 other에만 허용하고 email 활성 identity만 소문자 비교한다. v4.65/102표, migration1766000000000 로컬 신규·기존 전환 검증·운영 미적용. 정책 변경 시 StudentCreateDto·entity/migration·P-STU15·BOC-03·target/current DBML을 함께 수정한다.
 // TBO55-BOC03D03C-R66 (2026-10-07): D-03c 권고안의 관리자/강사 실제 브라우저→HTTP→DB→reload 7/7을 재검수했다. DTO/API/DDL delta0이며 v4.64/101표와 migration1766200000000을 그대로 유지한다. 정책 변경 시 Front·QA·P-REACT·BOC-03·DTO/OpenAPI·migration·ERD를 함께 수정한다.
 // TBO55-BOC03D03B-R65 (2026-10-07): BOC-03D-03b 권고안 채택 — append-only STU_STATUS_EVENT만 권위 상태이며 legacy 무상태는 unknown이다. STU_REACTIVATION_CONSULTATION·상태 event·profile audit·LOG를 한 transaction으로 저장하고 SER_STU 복귀 우회를 같은 STU 잠금과 trigger로 차단한다. v4.64/101표, migration1766200000000 로컬 검증·운영 미적용.
@@ -94,7 +95,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.65 (2026-10-07 · TBO-55 BOC-03D-04a 권고안 채택 · 정적4칸/STU_CONTACT 로컬·운영 미적용) — v4.64 상태/상담 원장(migration 1766200000000) ← v4.63 MTAGENDA(migration 1766100000000) ← v4.62 GUARDIAN_CONTACT(migration 1765900000000) ← v4.61 CHREQ.request_key(migration 1765800000000) ← v4.60 STU.profile_version + 기간·감사2표(migration 1765700000000) ← v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
+// version : 4.66 (2026-10-07 · TBO-55 BOC-03D-04b 권고안 채택 · 신규 학생 writer 로컬·운영 미적용) — v4.64 상태/상담 원장(migration 1766200000000) ← v4.63 MTAGENDA(migration 1766100000000) ← v4.62 GUARDIAN_CONTACT(migration 1765900000000) ← v4.61 CHREQ.request_key(migration 1765800000000) ← v4.60 STU.profile_version + 기간·감사2표(migration 1765700000000) ← v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
 // historical version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
@@ -298,8 +299,13 @@ Table STU {
   has_citizenship boolean [note: 'v4.65 · true/false/미상 NULL. 거주국으로 추정하지 않는다']
   source varchar(10) [note: 'v4.65 · kakao/phone/blog/instagram/referral/walkin/NULL; legacy LEAD에서 추정 backfill하지 않는다']
   profile_version bigint [not null, default: 0, note: 'v4.60 · ST1-b2. audit INSERT가 STU row lock 아래 전진; 비음수 CHECK/직접 지정 guard. JS number 변환 금지. 운영 미적용']
+  cash_receipt_encrypted bytea [note: 'v4.66 · 별도 STUDENT_PII_KEY AES-GCM envelope만 저장; 평문·Zoom key fallback 금지']
+  cash_receipt_key_version varchar(40) [note: '암문과 함께 NULL 또는 함께 존재']
+  created_by bigint [ref: > STAFF.id, note: 'contract1은 실제 관리자 actor 필수; legacy contract0은 NULL 허용']
+  registration_contract_version smallint [not null, default: 0, note: '0 legacy/기존 최소 등록, 1 최종 15절 writer']
+  registration_request_key uuid [note: 'contract1 필수. 부분 UNIQUE로 replay identity 소유']
   created_at  timestamptz [not null, default: `now()`]
-  Note: '시드 19명. 코디네이터와 공유. 포인트·청구는 강사에게 노출하지 않는다. v4.65 정적 선택칸은 신규 writer 연결 전까지 nullable이다.'
+  Note: '시드 19명. 코디네이터와 공유. 포인트·청구·PII는 강사에게 노출하지 않는다. v4.66 contract1은 gender/actor/requestKey, 현재 grade/residence, 활성 보호자/연락처, create audit/status를 지연 trigger가 최종 상태에서 검사한다. legacy contract0에는 소급하지 않는다.'
 }
 
 Table STU_CONTACT {
@@ -322,6 +328,32 @@ Table STU_CONTACT {
   label은 other에만 허용한다. 정책 변경 시 StudentCreateDto·entity/migration·P-STU15·BOC-03·target/current DBML을 함께 수정한다.
   신규 생성/수정 writer, profile audit, 권한 응답, 발송 opt-in은 후속이며 이 청크에서 API 쓰기를 열지 않는다.
   '''
+}
+
+Table STU_STAFF {
+  student_id bigint [not null, ref: > STU.id]
+  staff_id bigint [not null, ref: > STAFF.id]
+  active boolean [not null, default: true]
+  assigned_by bigint [not null, ref: > STAFF.id]
+  assigned_at timestamptz [not null, default: `now()`]
+  indexes {
+    (student_id, staff_id) [pk]
+    (staff_id, active, student_id) [name: 'stu_staff_reverse']
+  }
+  Note: 'v4.66 · 학생 복수 담당자 명시 연결. 실제 actor와 최초 시각을 보존하며 STAFF 역할을 복제하지 않는다.'
+}
+
+Table STU_SIBLING {
+  student_low_id bigint [not null, ref: > STU.id]
+  student_high_id bigint [not null, ref: > STU.id]
+  active boolean [not null, default: true]
+  linked_by bigint [not null, ref: > STAFF.id]
+  linked_at timestamptz [not null, default: `now()`]
+  indexes {
+    (student_low_id, student_high_id) [pk]
+    (student_high_id, active, student_low_id) [name: 'stu_sibling_reverse']
+  }
+  Note: 'v4.66 · CHECK low<high로 자기 연결·역순 중복을 차단한다. 연락처 일치 추론이나 청구 합산을 뜻하지 않는다.'
 }
 
 Table COUNTRY {
@@ -857,8 +889,12 @@ Table STU_PAUSE {
 Table GUARDIAN {
   id            bigserial    [pk]
   student_id    bigint       [not null, ref: > STU.id]
-  name          varchar(40)  [not null, note: 'guardian_name_present CHECK — 공백만은 안 된다']
-  relation      varchar(20)  [note: '어머니 · 아버지 · 보호자 … 사람이 적는 짧은 말(코드 아님)']
+  name          varchar(40)  [note: 'v4.66 · NULL 또는 trim된 비공백. 신규 계약에서 선택 입력']
+  relation      varchar(20)  [note: 'legacy 자유문구 보존']
+  relation_code varchar(6)   [note: 'v4.66 · mother/father/aunt/driver/other/NULL']
+  relation_other varchar(80) [note: 'relation_code=other일 때만 trim된 비공백']
+  residence_country_code char(2) [ref: > COUNTRY.code, note: '보호자 거주국 선택']
+  is_payer      boolean      [not null, default: false, note: '수납 payer 표시; 학생별 자동 유일/합산으로 추정하지 않음']
   email         varchar(254) [note: 'guardian_email_shape CHECK — notify/sender.isEmail 과 같은 모양']
   phone         varchar(11)  [note: '숫자만 010xxxxxxxx — notify/sender.phoneDigits · guardian_phone_digits CHECK']
   receive_email boolean      [not null, default: true, note: 'guardian_email_channel CHECK — 켜면 email 이 있어야 한다']
@@ -877,6 +913,7 @@ Table GUARDIAN {
   guardian_contact_present CHECK: email 또는 phone 중 하나는 있다. guardian_primary_active CHECK: 사용 중지한 사람은 대표가 아니다.
   연락처는 관리 API(@Perm canAdminPage+canCrudAll)에만 실린다 — 강사 응답 어디에도 없다. LOG 에는 가린 값만 적는다.
   채널을 더할 때(예: 알림톡) receive_<채널>·연락처 칸과 CHECK 를 이 표에 함께 새긴다 — 지금은 만들지 않는다(대표 답변).
+  v4.66은 이름 nullable·관계 코드/기타·거주국·payer를 추가한다. contract1 활성 보호자는 deferred trigger로 활성 연락처 최소1을 보장한다. legacy는 소급하지 않는다.
   기존 행 0 (새 표).
   '''
 }
@@ -2487,3 +2524,9 @@ Table SER_OCC {
 //   + STU_CONTACT — 학생별 phone/kakao/email/other 원문, other 전용 label, active 부분 identity UNIQUE. email만 소문자 canonical 비교.
 //   표 +1(101 → 102) · 컬럼 +11(STU4 + 새 표7) · 함수2/trigger1 · 마이그레이션 1(1766000000000-student-static-contact) · 기존 행/연락처 backfill0 · 운영 미적용.
 //   신규 필수 writer·감사·권한 응답은 후속이며, 정책 변경은 StudentCreateDto·entity/migration·P-STU15·BOC-03·target/current DBML 동시 검수 대상이다.
+
+// v4.65 → v4.66 (2026-10-07 · TBO-55 BOC-03D-04b 권고안 채택) — 관리자 신규 학생 preview/save writer의 최종 계약.
+//   ~ STU + cash_receipt_encrypted/key_version/created_by/registration_contract_version/request_key. contract0 legacy 보존, contract1만 지연 완결성 적용.
+//   ~ GUARDIAN 이름 nullable + relation_code/relation_other/residence_country_code/is_payer, GUARDIAN_CONTACT active canonical identity와 contract1 최소1 활성 연락처.
+//   + STU_STAFF · STU_SIBLING. STU_STATUS_EVENT create action, 현재 grade/residence·보호자·create audit/status를 commit 시점에 검사.
+//   표 +2(102 → 104) · migration 1(1766300000000-student-registration-writer) · OpenAPI 229 paths · 운영 미적용. 강사 생성 권한 없음.
