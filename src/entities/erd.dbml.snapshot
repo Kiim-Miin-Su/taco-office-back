@@ -1,3 +1,4 @@
+// TBO55-BOC09E01-R82 (2026-10-08): BO-09E-01 권고안 채택 — 관리자 marker append writer와 expectedVersion, 공통 반복수업 최종명단 판정, 월마감 공유→Kinder 배타→업무 행 잠금, 지연 constraint trigger를 연결한다. 일반 class의 명시 Kinder는 실제 KST 시작 기준 정확히1명이고 90일 투영 밖·복사/대체/이동/복원/undo도 같은 guard를 지난다. 진단 그룹은 유지하며 자동 분리/학생 제거는 하지 않는다. v4.75/113표, migration1767200000000 로컬 직접SQL·동시경합·서비스 writer 검증, 운영 미적용. 정책 변경 시 kinder-roster lib/DB·marker DTO/service/UI·schedule top-level writers·migration·두 DBML·P-BOC09E01·두 수정사항 대조표·portfolio를 함께 수정한다.
 // TBO55-BOC09D02-R81 (2026-10-08): BO-09D-02 권고안 채택 — STU_KINDER_MARKER append-only 효력 이력을 추가하고 학년·나이 추정을 금지한다. 공용 급여 계산기는 진단·모의 회차 총15,000원, 명시 Kinder 일반 class 1명 기본 시급+10,000원/시간·그룹0, 일반 그룹 기존 가산, 실제 접점 연강 유예를 적용한다. marker writer와 전 명단 경로 1대1 DB guard는 BO-09E-01 경계이며 이 청크 완료로 읽지 않는다. v4.74/113표, migration1767100000000 로컬 migration·projection·불변/version/future-only 검증, 운영 미적용. 정책 변경 시 계산기·marker entity/migration·DTO/OpenAPI/generated schema·두 DBML·P-BOC09D02·두 수정사항 대조표·portfolio를 함께 수정한다.
 // TBO55-BOC09D03-R79 (2026-10-08): BOC-09D-03 권고안 채택 — 기존 NOTE(관리자→강사 인계)와 분리한 TEACHER_PRIVATE_NOTE/WRITE_REQ를 추가한다. 강사 actor·정확한 원래 회차일·학생·version·requestKey를 검증하고 강사 projection은 본문을 제외하며 관리자 학생별 projection만 본문을 읽는다. deferred receipt trigger가 직접 쓰기를 막는다. v4.73/112표, migration1767000000000 로컬 기존 전환·신규103/103·down/up·멱등·stale·직접쓰기 검증, 운영 미적용. 정책 변경 시 PrivateNotes DTO/service/controller·TeacherPrivateNoteDraft·관리자 학생 모음·OpenAPI/generated schema·P-BOC09D03·portfolio·관리자/강사 수정사항 대조표를 함께 수정한다.
 // TBO55-BOC04E01-R77 (2026-10-08): BOC-04E-01 권고안 채택 — 학생 허브 exact studentId aggregate가 읽는 ENR·REP_STU·INV·LEAD 관계를 검증 FK로 고정하고 INV는 (enr_id,student_id) 복합 참조로 교차 학생 청구를 막는다. SER_STU/CONS_STU/GUIDE/ISSUE/INV/NOTE/PROFILE의 실제 학생 역방향·기간·keyset 경로에 명시 인덱스를 둔다. v4.72/110표, migration1766900000000 로컬 dev/test down/up 2회·직접쓰기·기존 허브/기간 회귀 검증, 운영 미적용. 정책 변경 시 StudentsService.hub/detail·entity/migration·P-BOC04E01·두 DBML·portfolio·관리자/강사 수정사항 대조표를 함께 수정한다.
@@ -103,7 +104,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.74 (2026-10-08 · TBO-55 BO-09D-02 권고안 채택 · Kinder 명시 표식 이력/공용 급여 계산·운영 미적용) — v4.73 강사 작성/관리자 전용 특이사항(migration 1767000000000) ← v4.72 학생 허브 관계/기간/keyset(migration 1766900000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
+// version : 4.75 (2026-10-08 · TBO-55 BO-09E-01 권고안 채택 · Kinder marker writer/전 명단 지연 guard·운영 미적용) — v4.74 Kinder 명시 표식/급여 계산(migration 1767100000000) ← v4.73 강사 작성/관리자 전용 특이사항(migration 1767000000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
 // historical version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
@@ -332,8 +333,8 @@ Table STU_KINDER_MARKER {
   }
   Note: '''
   BO-09D-02 · migration 1767100000000. 권고안 채택: Kinder는 별도 append-only event만 정본이며 STU.grade/나이로 추정하지 않는다.
-  UPDATE/DELETE 금지, version 연속, 미래 효력만 허용한다. 급여 projection은 실제 수업 시작 시점 마지막 event를 읽는다.
-  marker HTTP writer와 모든 명단 변경 경로의 1대1/KINDER_GROUP_CONFLICT/deferred guard는 BO-09E-01 소유이므로 이 표만으로 해당 계약 완료가 아니다.
+  BO-09E-01 · migration 1767200000000: 관리자 HTTP writer는 expectedVersion·실제 actor·미래 효력을 쓰며 실제 수업 시작 시점 마지막 event를 읽는다.
+  일반 class의 최종 명단은 정확히1명이다. 공통 service guard와 지연 trigger가 반복규칙·참여기간·취소·이동·회차 제외·투영 밖·직접 SQL·동시 요청을 방어한다. 확정 PAYOUT_LINE snapshot은 보존한다.
   '''
 }
 
@@ -1667,7 +1668,7 @@ Table PAYOUT_BONUS_RULE {
   }
   Note: '''
   v4.54 · W11 M2 · N-93 채택(migration 1764900000000) — 강사료 가산 규칙. 시급 · 단가표처럼 새 줄로만 바꾼다(지난 줄 불변). 처음엔 비어 있다 — D1(§4-12) 금액을 데이터로 넣지 않는다.
-  현행 셈은 lib/payout-sheet.lessonCompensation 한 곳(시트 · 확정 · 강사 히스토리). 학생 marker 효력이 있는 일반 class 1명은 기본 시급+시간당 10000원이며 그룹 가산은 없다. 진단·모의는 회차 총액이고 일반 그룹은 기존 학생당 시간 가산이다. marker writer와 전 명단 경로 1대1 guard는 BO-09E-01 경계다.
+  현행 셈은 lib/payout-sheet.lessonCompensation 한 곳(시트 · 확정 · 강사 히스토리). 학생 marker 효력이 있는 일반 class 1명은 기본 시급+시간당 10000원이며 그룹 가산은 없다. 진단·모의는 회차 총액이고 일반 그룹은 기존 학생당 시간 가산이다. marker writer와 전 명단 경로 1대1 guard는 migration1767200000000과 공용 kinder-roster 판정기가 소유한다.
   시드는 넣지 않고 운영 전환(golive-reset)은 비운다. 그룹 가산 학생 수 · 「건당 정액」 · 미확정 달 소급은 PLANNING N-125 ~ N-127(열림).
   '''
 }
@@ -2760,3 +2761,8 @@ Table SER_OCC {
  //   ~ payout projection — 실제 수업 시작 시점 마지막 marker만 사용하며 학년·나이 추정0. 진단·모의 총액, Kinder 1대1 시간 가산, 일반 그룹을 공용 계산기로 센다.
  //   표 +1(112 → 113) · 새 컬럼 +8 · 함수/trigger2 · migration 1(1767100000000-student-kinder-marker) · 로컬 projection/불변/version/future-only 검증 · 운영 미적용.
  //   marker writer·명단/복사/이동/undo/반복 전체 1대1 guard는 BO-09E-01 후속이며 이 전이로 완료 처리하지 않는다.
+// v4.74 → v4.75 (2026-10-08 · TBO-55 BO-09E-01 권고안 채택) — Kinder marker writer와 전 명단 최종상태 guard.
+ //   ~ STU_KINDER_MARKER — 관리자 expectedVersion append writer, 실제 actor, 미래 효력, 전체 이력/현재 projection을 DTO/OpenAPI로 공개한다.
+ //   ~ SER/SER_STU/EXC/EXC_STU_OUT — 일반 class만 반복규칙 원본·참여기간·취소·이동·회차 제외·실제 KST 시작 marker를 검사한다. 진단 그룹은 유지한다.
+ //   + kinder_roster_conflict_for_ser/kinder_roster_constraint_fn과 deferred constraint trigger5 — 직접 SQL과 marker/명단 동시 write-skew를 최종 commit 상태에서 거절한다.
+ //   표 +0(113 유지) · 함수 +2 · trigger +5 · migration 1(1767200000000-kinder-roster-constraint) · 로컬 직접SQL/동시경합/service writer 검증 · 운영 미적용.

@@ -25,12 +25,16 @@ import {
 } from './student-registration.dto';
 import { StudentDirectoryDto, StudentHubDto, StudentHubQueryDto, StudentListQueryDto, StudentReadDto, StudentReadParamsDto } from './students.dto';
 import { StudentsService } from './students.service';
+import {
+  StudentKinderMarkerConflictDto, StudentKinderMarkerCreateDto, StudentKinderMarkerDto, StudentKinderMarkerHistoryDto,
+} from './student-kinder.dto';
+import { StudentKinderService } from './student-kinder.service';
 
 @ApiTags('students')
 @Controller('students')
 @Perm('canAdminPage', 'canCrudAll')
 export class StudentsController {
-  constructor(private readonly service: StudentsService) {}
+  constructor(private readonly service: StudentsService, private readonly kinder: StudentKinderService) {}
 
   @Get()
   @ApiOperation({ summary: '학생 DB 최신 생성 순 목록 — 현행 STU만, 기본10명. LEAD 통합/재원상태/국가는 후속.' })
@@ -155,6 +159,31 @@ export class StudentsController {
       role !== null && hasPerm(role, 'canMoney', user.perms),
       role !== null && hasPerm(role, 'canHide', user.perms),
     );
+  }
+
+  @Get(':id/kinder-marker')
+  @ApiOperation({ summary: '학생 Kinder 명시 표식 append-only 이력 — 학년·나이 파생 없음' })
+  @ApiOkResponse({ type: StudentKinderMarkerHistoryDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND' })
+  kinderHistory(@Param() params: StudentReadParamsDto): Promise<StudentKinderMarkerHistoryDto> {
+    return this.kinder.history(params.id);
+  }
+
+  @Post(':id/kinder-marker')
+  @ApiOperation({
+    summary: '학생 Kinder 표식 예약 — 미래 효력·version·일반 class 1대1 강제',
+    description: '충돌 시 학생을 자동 제거하거나 수업을 분리하지 않고 원래 회차일·실제 수업일·충돌기간을 409로 반환합니다.',
+  })
+  @ApiCreatedResponse({ type: StudentKinderMarkerDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND' })
+  @ApiConflictResponse({ type: StudentKinderMarkerConflictDto })
+  createKinderMarker(
+    @CurrentUser() user: RequestUser,
+    @Param() params: StudentReadParamsDto,
+    @Body() dto: StudentKinderMarkerCreateDto,
+  ): Promise<StudentKinderMarkerDto> {
+    return this.kinder.create(user.id, params.id, dto);
   }
 
   @Get(':id')

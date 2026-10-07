@@ -26,6 +26,7 @@ import { NOTI_TITLE } from '../../lib/noti';
 import { END_MIN, START_MIN, kstDateOf, serStuOn, spanOf, writtenRows } from '../../lib/sql';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import type { ConsCloseDto, ConsCloseResultDto, ConsSessionCreateDto, ConsSessionPlanRowDto, ConsSessionsResultDto, ConsSessionWriteDto, ConsultingSessionDto } from './consulting.dto';
 import {
   CONSULTING_TYPE_LABEL, consSessDoneSql, consultingCloseIssue, consultingExceptionCloseIssue, consultingSessionAddIssue,
@@ -65,6 +66,7 @@ export class ConsultingSessionService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       const result = await body(q);
       if (preview) throw new PreviewRollback(result);
       await q.commitTransaction();

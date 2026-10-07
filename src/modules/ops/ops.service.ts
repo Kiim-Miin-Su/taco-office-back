@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import { ZoomService } from '../zoom/zoom.service';
 import { daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { kstAt } from '../../lib/sql';
@@ -756,6 +757,7 @@ export class OpsService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       let serId: number;
       let unavailable: MeetingCreateResultDto['unavailable'];
       try {

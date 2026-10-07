@@ -6,6 +6,7 @@
 import { Module } from '@nestjs/common';
 import { StudentsController } from './students.controller';
 import { StudentsService } from './students.service';
+import { StudentKinderService } from './student-kinder.service';
 
-@Module({ controllers: [StudentsController], providers: [StudentsService] })
+@Module({ controllers: [StudentsController], providers: [StudentsService, StudentKinderService] })
 export class StudentsModule {}

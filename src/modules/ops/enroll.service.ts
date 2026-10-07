@@ -31,6 +31,7 @@ import { GuidesService } from '../guides/guides.service';
 import { createGuardianWithin } from '../guardians/guardians.service';
 import { maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import type { EnrollGuardianCarryDto, EnrollMissingBookDto, EnrollResultDto, EnrollSeriesDto, LeadEnrollDto } from './enroll.dto';
 import { latestLeadDiagBookId, latestLeadDiagForStudent } from './lead-diag.service';
@@ -67,6 +68,7 @@ export class LeadEnrollService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       const result = await this.body(q, userId, leadId, dto, canSeeAmounts, preview);
       if (preview) throw new PreviewRollback(result);
       await q.commitTransaction();

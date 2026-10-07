@@ -32,6 +32,7 @@ import { kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
 import { GuidesService } from '../guides/guides.service';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import type { TcBookDto, TcPayoutMonthDto, TcSeriesDto, TcStaffDto, TcStepDto, TeacherChangeDto, TeacherChangeResultDto } from './teacher-change.dto';
 
 class PreviewRollback extends Error {
@@ -60,6 +61,7 @@ export class TeacherChangeService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       const result = await this.body(q, userId, dto, preview);
       if (preview) throw new PreviewRollback(result);
       await q.commitTransaction();

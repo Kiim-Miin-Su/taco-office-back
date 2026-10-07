@@ -30,6 +30,7 @@ import {
 import { todayKst } from '../../lib/kst';
 import { END_MIN, START_MIN, effectiveModeOf, kstDateOf } from '../../lib/sql';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import type { LeadApptBookDto, LeadApptDto, LeadApptWriteDto, LeadPlanLineDto, LeadPlanWriteDto } from './lead-plan.dto';
 
 type R = Record<string, unknown>;
@@ -309,6 +310,7 @@ export class LeadPlanService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       const lead = await this.lockOpen(q.manager, id, 'LEAD_APPT_LOCKED', '일정');
       const todo = (await q.query(
         `SELECT id, kind, to_char(on_date,'YYYY-MM-DD') AS on_date, start_min, end_min, mode, room_id
@@ -351,6 +353,7 @@ export class LeadPlanService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       const lead = await this.lockOpen(q.manager, id, 'LEAD_APPT_LOCKED', '일정');
       const [owner] = (await q.query(`SELECT id, name FROM staff WHERE id = $1 AND active`, [dto.ownerId])) as R[];
       if (!owner) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '고른 담당을 찾을 수 없습니다 — 재직 중인 사람만 고릅니다' });

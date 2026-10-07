@@ -23918,6 +23918,201 @@
         ]
       }
     },
+    "/students/{id}/kinder-marker": {
+      "get": {
+        "operationId": "StudentsController_kinderHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentKinderMarkerHistoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 Kinder 명시 표식 append-only 이력 — 학년·나이 파생 없음",
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "description": "충돌 시 학생을 자동 제거하거나 수업을 분리하지 않고 원래 회차일·실제 수업일·충돌기간을 409로 반환합니다.",
+        "operationId": "StudentsController_createKinderMarker",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentKinderMarkerCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentKinderMarkerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentKinderMarkerConflictDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 Kinder 표식 예약 — 미래 효력·version·일반 class 1대1 강제",
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/students/{id}": {
       "get": {
         "operationId": "StudentsController_detail",
@@ -50872,6 +51067,157 @@
           "reports",
           "comments",
           "invoices"
+        ]
+      },
+      "StudentKinderMarkerDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "version": {
+            "type": "number"
+          },
+          "marked": {
+            "type": "boolean"
+          },
+          "effectiveFrom": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "setBy": {
+            "type": "number"
+          },
+          "setByName": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "version",
+          "marked",
+          "effectiveFrom",
+          "setBy",
+          "setByName",
+          "createdAt"
+        ]
+      },
+      "StudentKinderMarkerHistoryDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "currentVersion": {
+            "type": "number",
+            "description": "현재 마지막 append version. 이력 없음은 0"
+          },
+          "current": {
+            "nullable": true,
+            "description": "지금 효력이 있는 마지막 표식",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StudentKinderMarkerDto"
+              }
+            ]
+          },
+          "items": {
+            "description": "version 오름차순 전체 이력. 미래 예약도 포함",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentKinderMarkerDto"
+            }
+          }
+        },
+        "required": [
+          "studentId",
+          "currentVersion",
+          "items"
+        ]
+      },
+      "StudentKinderMarkerCreateDto": {
+        "type": "object",
+        "properties": {
+          "marked": {
+            "type": "boolean",
+            "description": "true=Kinder, false=일반. 학년·나이에서 파생하지 않는 명시 표식"
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "description": "미래 실제 수업 시작부터 적용할 timezone 포함 ISO 시각"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 500,
+            "description": "정책 변경 사유. 공백만 보낼 수 없음"
+          },
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 0,
+            "description": "현재 마지막 version. 최초 표식은 0"
+          }
+        },
+        "required": [
+          "marked",
+          "effectiveFrom",
+          "expectedVersion"
+        ]
+      },
+      "StudentKinderMarkerConflictDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "KINDER_GROUP_CONFLICT",
+              "KINDER_MARKER_VERSION_CONFLICT",
+              "KINDER_MARKER_NOT_FUTURE"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "conflictFrom": {
+            "type": "string"
+          },
+          "conflictTo": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentIds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "currentVersion": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "code",
+          "message"
         ]
       },
       "StudentGuardianSummaryDto": {

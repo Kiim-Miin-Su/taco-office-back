@@ -37,6 +37,7 @@ import { CANCEL_NOTICE_LIKE, DAY_CANCEL_NOTICE_PREFIX, LESSON_CANCEL_NOTICE_PREF
 import { START_MIN, END_MIN, endMinOf, kstAt, kstDateOf, serStuOn, startMinOf, stuPausedOn } from '../../lib/sql';
 import type { AuditKey } from '../../lib/audit';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
+import { assertKinderRosterWrite, lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import { loadState, persist } from './schedule.state.repo';
 import { issueScheduleUndoStep, readScheduleUndo, sameScheduleState } from './schedule.undo';
 import { assertScheduleReferences, assertZaccAssignable } from './schedule.references';
@@ -469,6 +470,12 @@ interface TxOptions<T extends WriteResultDto> {
   outer?: QueryRunner;
   /** 학생 겹침 알림(N-58)을 실을 쓰기인가 — 만들기 · 수정 · 이동 · 붙여넣기 · 명단 넣기. 숫자면 그 학생만 본다 */
   overlaps?: boolean | { studentId: number };
+  /**
+   * BO-09E-01: marker writer와 반드시 직렬화해야 하는 명단 생성·복사·교체·추가/제거 경로.
+   * 시간/자원만 바꾸는 기존 동시 PATCH까지 전역 배타로 묶으면 서로 다른 필드 병합이 막히므로,
+   * 그 경로는 공통 최종상태 검사와 지연 DB 제약을 쓰되 이 선행 잠금은 잡지 않는다.
+   */
+  kinderRosterMutation?: boolean;
 }
 
 @Injectable()
@@ -525,8 +532,11 @@ export class ScheduleWriteService {
       Promise<{ after: State; log: string[]; effScope: string }>,
     opts: TxOptions<T>,
   ): Promise<T> {
-    const { enrich, actorId, undoable = true, overlaps } = opts;
+    const { enrich, actorId, undoable = true, overlaps, kinderRosterMutation = false } = opts;
     {
+      // BO-09E-01 권고안: 실제 명단 mutation은 월 마감 공유 → Kinder 배타 → 기존 업무 행 순서다.
+      // 시간/자원 PATCH는 기존 병합 동시성을 유지하고 commit 시 지연 DB 제약으로 최종상태를 다시 검사한다.
+      if (kinderRosterMutation) await lockKinderRosterPolicyWrite(q);
       // D-R43: 같은 SER의 모든 쓰기를 최초 snapshot 전에 직렬화한다. 자식만 바꾸는
       // 명단/회차 예외도 이 잠금을 공유하며 persist/project/commit까지 유지한다.
       const before = await loadState(q, serIds, { forWrite: true });
@@ -536,6 +546,7 @@ export class ScheduleWriteService {
       if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
 
       await assertScheduleReferences(q, after);
+      await assertKinderRosterWrite(q, after);
       // 되살아나는 휴강 회차의 안내 — 보낸 뒤면 409, 아니면 같은 트랜잭션에서 걷는다 (C-32 · SCHEDULE-EDGES)
       await settleRestoredCancelNotices(q, before, after);
       /*
@@ -613,7 +624,7 @@ export class ScheduleWriteService {
         },
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, { actorId, outer, overlaps: true });
+    }, { actorId, outer, overlaps: true, kinderRosterMutation: true });
   }
 
   /**
@@ -679,7 +690,7 @@ export class ScheduleWriteService {
         scope: dto.scope as Scope,
       });
       return { after: pasted, log: [...log, ...pasted.__log], effScope: pasted.__effScope };
-    }, { actorId, overlaps: true });
+    }, { actorId, overlaps: true, kinderRosterMutation: true });
   }
 
   /** C-7 — 여러 PATCH를 클라이언트에서 반복하지 않고 한 load/reduce/persist/project로 묶는다. */
@@ -972,6 +983,7 @@ export class ScheduleWriteService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       /*
        * 전일 휴원은 드문 전역 작업이다. 관련 원본/투영 표를 잠깐 table lock으로 닫아, 대상 조회와
        * commit 사이에 새 SER가 생기거나 다른 날 회차가 이 날로 들어오는 phantom을 막는다.
@@ -1075,7 +1087,7 @@ export class ScheduleWriteService {
         serId, onDate: dto.onDate, studentId: dto.studentId, op: dto.op,
       });
       return { after: a, log: a.__log, effScope: a.__effScope };
-    }, { actorId, overlaps: dto.op === 'add' ? { studentId: dto.studentId } : false, enrich: async (q, fresh, base) => {
+    }, { actorId, kinderRosterMutation: true, overlaps: dto.op === 'add' ? { studentId: dto.studentId } : false, enrich: async (q, fresh, base) => {
       const ids = rosterAt(fresh, serId, dto.onDate);
       const meta = await q.query(
         `SELECT k.cap, s.kind_key, s.sub_key
@@ -1167,6 +1179,7 @@ export class ScheduleWriteService {
     await q.connect();
     await q.startTransaction();
     try {
+      await lockKinderRosterPolicyWrite(q);
       const current = await loadState(q, ids, { forWrite: true });
       if (!sameScheduleState(current, payload.after)) {
         throw new ConflictException({
@@ -1177,6 +1190,7 @@ export class ScheduleWriteService {
       const timeIssue = scheduleTimeIssue(payload.before);
       if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
       await assertScheduleReferences(q, payload.before);
+      await assertKinderRosterWrite(q, payload.before);
       /*
        * 되돌리기가 **지우게 될** 규칙 — 되돌릴 `create`, 휴강의 보강 회차가 여기 든다.
        * 그 사이 누가 출결·리포트를 적었으면 즉시 NO ACTION FK 가 막아 **500** 이 난다.
