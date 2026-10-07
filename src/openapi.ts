@@ -34,6 +34,15 @@ import {
   StudentRegistrationTextPeriodDto,
   StudentRegistrationTimezoneOptionDto,
   StudentRegistrationWordDto,
+  StudentReactivationCandidateDto,
+  StudentReactivationCandidateQueryDto,
+  StudentReactivationCandidatesDto,
+  StudentReactivationConsultationDto,
+  StudentReactivationDto,
+  StudentReactivationEffectsDto,
+  StudentReactivationPreviewDto,
+  StudentReactivationResultDto,
+  StudentRegistrationConflictDto,
   StudentSchoolCreateDto,
   StudentSchoolOptionDto,
   StudentSchoolSearchQueryDto,
@@ -94,6 +103,20 @@ export function buildOpenApi(app: INestApplication) {
       StudentRegistrationSummaryDto,
       StudentCreatePreviewDto,
       StudentCreateResultDto,
+      /*
+       * BOC-03D-02 권고안 채택(2026-10-07): 재활성화는 기존 STU identity를 대상으로 한
+       * 별도 versioned command다. 공용 오류의 code/message 형상과 후보·preview/result
+       * schema만 생성하고, 권위 상태 owner와 transaction이 생기기 전 runtime path는 열지 않는다.
+       */
+      StudentReactivationCandidateQueryDto,
+      StudentReactivationCandidateDto,
+      StudentReactivationCandidatesDto,
+      StudentReactivationConsultationDto,
+      StudentReactivationDto,
+      StudentReactivationEffectsDto,
+      StudentReactivationPreviewDto,
+      StudentReactivationResultDto,
+      StudentRegistrationConflictDto,
     ],
   });
   SwaggerModule.setup('api/docs', app, doc);

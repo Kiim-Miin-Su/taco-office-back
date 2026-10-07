@@ -1,6 +1,6 @@
 /** @file-guide
- * 목적: BOC-03D-01 학생 신규 등록 15절 DTO/OpenAPI 생성 계약을 검증한다.
- * 책임/재사용: endpoint/service/DB 없이 입력 형상·중첩 검증·extraModels만 검사한다.
+ * 목적: BOC-03D-01/02 학생 신규 등록·재활성화 DTO/OpenAPI 생성 계약을 검증한다.
+ * 책임/재사용: endpoint/service/DB 없이 입력 형상·중첩·version/error·extraModels만 검사한다.
  * 검증/작업 지침: docs/spec/STUDENT-REGISTRATION-2026-09-30.md · docs/sprint/TBO-55/BOC-03-SCENARIOS-2026-10-06.md
  */
 
@@ -9,7 +9,11 @@ import { Test } from '@nestjs/testing';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { buildOpenApi } from '../src/openapi';
-import { StudentCreateDto, StudentSchoolCreateDto } from '../src/modules/students/student-registration.dto';
+import {
+  StudentCreateDto,
+  StudentReactivationDto,
+  StudentSchoolCreateDto,
+} from '../src/modules/students/student-registration.dto';
 
 const KEY = '00000000-0000-4000-8000-000000000301';
 const period = { from: '2026-10-07', fromPrecision: 'day', to: null, toPrecision: null, memo: undefined };
@@ -117,5 +121,88 @@ describe('BOC-03D-01 학생 신규 등록 DTO/OpenAPI 계약', () => {
     expect(await validate(plainToInstance(StudentSchoolCreateDto, {
       requestKey: 'bad', name: '', countryCode: 'KOR', region: null, campus: null,
     }))).not.toHaveLength(0);
+  });
+});
+
+describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
+  let app: INestApplication;
+  let doc: ReturnType<typeof buildOpenApi>;
+  let schemas: NonNullable<ReturnType<typeof buildOpenApi>['components']>['schemas'];
+
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({}).compile();
+    app = module.createNestApplication();
+    await app.init();
+    doc = buildOpenApi(app);
+    schemas = doc.components?.schemas;
+  });
+
+  afterAll(async () => { await app?.close(); });
+
+  const schema = (name: string) => {
+    const value = schemas?.[name];
+    if (!value || '$ref' in value) throw new Error(`${name} schema 누락`);
+    return value;
+  };
+
+  const reactivation = {
+    requestKey: '00000000-0000-4000-8000-000000000302',
+    studentId: 17,
+    expectedProfileVersion: '3',
+    entrySource: 'students',
+    leadId: null,
+    reactivateOn: '2026-10-07',
+    consultation: { channel: 'phone', content: '복귀 상담 완료', nextOn: null },
+  };
+
+  it('같은 STU를 version과 새 상담으로 재활성화하되 runtime path는 아직 열지 않는다', async () => {
+    expect(await validate(plainToInstance(StudentReactivationDto, reactivation))).toHaveLength(0);
+    expect(schema('StudentReactivationDto').required).toEqual([
+      'requestKey', 'studentId', 'expectedProfileVersion', 'entrySource', 'leadId',
+      'reactivateOn', 'consultation',
+    ]);
+    expect(schema('StudentReactivationDto').properties?.expectedProfileVersion)
+      .toMatchObject({ type: 'string', pattern: '^[1-9][0-9]*$' });
+    expect(doc.paths['/students/reactivation-candidates']).toBeUndefined();
+    expect(doc.paths['/students/{id}/reactivate']).toBeUndefined();
+  });
+
+  it('stale·잘못된 문맥·빈 상담을 DTO 경계에서 먼저 거절한다', async () => {
+    for (const body of [
+      { ...reactivation, studentId: 0 },
+      { ...reactivation, expectedProfileVersion: '0' },
+      { ...reactivation, expectedProfileVersion: '1e2' },
+      { ...reactivation, entrySource: 'intake', leadId: null },
+      { ...reactivation, entrySource: 'students', leadId: 7 },
+      { ...reactivation, reactivateOn: '2026-02-30' },
+      { ...reactivation, consultation: { channel: 'phone', content: '   ', nextOn: null } },
+      { ...reactivation, consultation: { channel: 'sms', content: '복귀', nextOn: null } },
+    ]) expect(await validate(plainToInstance(StudentReactivationDto, body))).not.toHaveLength(0);
+  });
+
+  it('후보·preview/result와 공용 두 필드 409 code 집합을 생성한다', () => {
+    for (const name of [
+      'StudentReactivationCandidateQueryDto', 'StudentReactivationCandidateDto',
+      'StudentReactivationCandidatesDto', 'StudentReactivationConsultationDto',
+      'StudentReactivationEffectsDto', 'StudentReactivationPreviewDto',
+      'StudentReactivationResultDto', 'StudentRegistrationConflictDto',
+    ]) schema(name);
+    expect(schema('StudentReactivationPreviewDto').properties?.saved).toMatchObject({ enum: [false] });
+    expect(schema('StudentReactivationPreviewDto').properties?.consultationId).toMatchObject({ nullable: true, enum: [null] });
+    expect(schema('StudentReactivationEffectsDto').properties).toMatchObject({
+      studentCreated: { type: 'boolean', enum: [false] },
+      enrollmentCreated: { type: 'boolean', enum: [false] },
+      lessonCreated: { type: 'boolean', enum: [false] },
+      invoiceCreated: { type: 'boolean', enum: [false] },
+    });
+    expect(Object.keys(schema('StudentRegistrationConflictDto').properties ?? {})).toEqual(['code', 'message']);
+    expect(schema('StudentRegistrationConflictDto').properties?.code).toMatchObject({
+      enum: expect.arrayContaining([
+        'STUDENT_CREATE_REQUEST_KEY_REUSED',
+        'STUDENT_REACTIVATION_REQUEST_KEY_REUSED',
+        'STUDENT_PROFILE_VERSION_CONFLICT',
+        'STUDENT_REACTIVATION_STATUS_UNKNOWN',
+      ]),
+    });
   });
 });

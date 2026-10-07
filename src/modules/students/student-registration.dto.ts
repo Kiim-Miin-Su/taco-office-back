@@ -1,6 +1,6 @@
 /** @file-guide
- * 목적: student-registration.dto.ts — 학생 신규 등록 15절·선택지·학교의 생성 DTO/OpenAPI 계약
- * 책임/재사용: P-STU15의 입력 형상을 생성 타입의 단일 진실원으로 제공한다. endpoint/service/DB writer는 후속 단계가 소유한다.
+ * 목적: student-registration.dto.ts — 학생 신규 등록 15절과 기존 학생 재활성화의 생성 DTO/OpenAPI 계약
+ * 책임/재사용: P-STU15·P-REACT 입력 형상을 생성 타입의 단일 진실원으로 제공한다. endpoint/service/DB writer는 후속 단계가 소유한다.
  * 검증/작업 지침: docs/spec/STUDENT-REGISTRATION-2026-09-30.md · docs/sprint/TBO-55/BOC-03-SCENARIOS-2026-10-06.md
  */
 
@@ -26,7 +26,8 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate } from '../../common/validation';
+import { ApiErrorDto } from '../../common/http.dto';
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { EducationGradeOptionDto } from '../meta/meta.dto';
 
 const ID_MAX = Number.MAX_SAFE_INTEGER;
@@ -36,6 +37,22 @@ const CONTACT_KINDS = ['phone', 'kakao', 'email', 'other'] as const;
 const GUARDIAN_RELATIONS = ['mother', 'father', 'aunt', 'driver', 'other'] as const;
 const STUDENT_SOURCES = ['kakao', 'phone', 'blog', 'instagram', 'referral', 'walkin'] as const;
 const PROFILE_TEXT_FIELDS = ['want', 'guidance', 'lang', 'target_exam'] as const;
+const REACTIVATION_STATUSES = ['withdrawn', 'active', 'unknown'] as const;
+const CONSULTATION_CHANNELS = ['visit', 'phone', 'kakao', 'other'] as const;
+const REGISTRATION_CONFLICT_CODES = [
+  'STUDENT_CREATE_REQUEST_KEY_REUSED',
+  'STUDENT_REACTIVATION_REQUEST_KEY_REUSED',
+  'STUDENT_PROFILE_VERSION_CONFLICT',
+  'STUDENT_DUPLICATE',
+  'STUDENT_SAME_NAME',
+  'STUDENT_REGISTRATION_OPTION_INACTIVE',
+  'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND',
+  'STUDENT_REGISTRATION_PERIOD_CONFLICT',
+  'STUDENT_REACTIVATION_ACTIVE',
+  'STUDENT_REACTIVATION_STATUS_UNKNOWN',
+  'STUDENT_REACTIVATION_LEAD_CHANGED',
+  'STUDENT_REACTIVATION_LEAD_LINKED',
+] as const;
 
 /** 종료값과 종료 정밀도는 둘 다 null이거나 둘 다 존재해야 한다. */
 function IsPeriodEndPair(): PropertyDecorator {
@@ -379,4 +396,132 @@ export class StudentCreateResultDto {
   @ApiProperty({ description: '같은 requestKey·같은 body의 기존 결과인가' }) replayed!: boolean;
   @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
   @ApiProperty({ type: StudentRegistrationSummaryDto }) summary!: StudentRegistrationSummaryDto;
+}
+
+/**
+ * BOC-03D-02 권고안 채택(2026-10-07): 재활성화는 신규 생성 DTO에 mode를 더하지 않고
+ * 같은 STU identity를 대상으로 하는 별도 versioned command로 분리한다. 휴원·수강 종료를
+ * 퇴원으로 추정하지 않고 Backend가 내려준 권위 상태가 withdrawn일 때만 허용한다.
+ *
+ * 오류 본문은 공용 ApiErrorDto의 code/message 두 필드만 유지한다. stale409에는 개인정보나
+ * 서버의 현재 row를 싣지 않고 Front가 후보를 재조회한다. 정책 변경 시 P-REACT, BOC-03,
+ * Front StudentRegistrationForm/api/students.ts와 이후 service/migration을 같은 청크에서 수정한다.
+ */
+export class StudentReactivationCandidateQueryDto {
+  @ApiPropertyOptional({ maxLength: 80, description: '이름·영문명 literal 검색. 빈 값은 최신 후보 10명.' })
+  @IsOptional() @IsString() @MaxLength(80)
+  q?: string;
+
+  @ApiPropertyOptional({ type: Number, minimum: 1, maximum: 1000000, default: 1 })
+  @IsOptional() @ToHttpInteger() @IsInt() @Min(1) @Max(1000000)
+  page?: number;
+}
+
+export class StudentReactivationCandidateDto {
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty({ maxLength: 40 }) name!: string;
+  @ApiProperty({ type: String, nullable: true, maxLength: 80 }) englishName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) gradeLabel!: string | null;
+  @ApiProperty({ type: String, nullable: true }) schoolLabel!: string | null;
+  @ApiProperty({ enum: REACTIVATION_STATUSES, description: '권위 상태 projection. 휴원·수강 종료로 추정하지 않는다.' })
+  status!: typeof REACTIVATION_STATUSES[number];
+  @ApiProperty({ description: 'status=withdrawn이고 별도 차단 사유가 없을 때만 true' }) reactivatable!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: 'ACTIVE_STUDENT | STATUS_UNKNOWN. 화면이 상태를 다시 계산하지 않는다.' })
+  blockedCode!: 'ACTIVE_STUDENT' | 'STATUS_UNKNOWN' | null;
+  @ApiProperty({ type: String, pattern: '^[1-9][0-9]*$', description: '재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string' })
+  profileVersion!: string;
+  @ApiProperty({ type: String, format: 'date-time', nullable: true }) lastConsultationAt!: string | null;
+  @ApiProperty({ ...DATE_SCHEMA, nullable: true, description: '명시적으로 저장된 마지막 퇴원일. 수강 종료일 추정값이 아니다.' })
+  withdrawnOn!: string | null;
+}
+
+export class StudentReactivationCandidatesDto {
+  @ApiProperty({ type: [StudentReactivationCandidateDto] }) items!: StudentReactivationCandidateDto[];
+  @ApiProperty() total!: number;
+  @ApiProperty() page!: number;
+  @ApiProperty({ type: 'integer', enum: [10] }) pageSize!: 10;
+}
+
+export class StudentReactivationConsultationDto {
+  @ApiProperty({ enum: CONSULTATION_CHANNELS, description: '수동 상담 정보의 방문·전화·카카오톡·기타' })
+  @IsIn(CONSULTATION_CHANNELS as unknown as string[])
+  channel!: typeof CONSULTATION_CHANNELS[number];
+
+  @ApiProperty({ minLength: 1, maxLength: 2000 })
+  @IsString() @MinLength(1) @Matches(/\S/) @MaxLength(2000)
+  content!: string;
+
+  @ApiProperty({ ...DATE_SCHEMA, nullable: true, description: '다음 일정은 선택. 작성자·작성시각은 서버가 기록한다.' })
+  @ValidateIf((_object, value) => value !== null)
+  @IsCalendarDate()
+  nextOn!: string | null;
+}
+
+export class StudentReactivationDto {
+  @ApiProperty({ format: 'uuid', description: '같은 actor·같은 정규화 body 재시도는 기존 결과, 다른 body는 409' })
+  @IsUUID()
+  requestKey!: string;
+
+  @ApiProperty(ID_SCHEMA)
+  @IsInt() @Min(1) @Max(ID_MAX)
+  studentId!: number;
+
+  @ApiProperty({ type: String, pattern: '^[1-9][0-9]*$', description: '후보 응답의 profileVersion. JS number로 변환하지 않는다.' })
+  @IsString() @Matches(/^[1-9][0-9]*$/)
+  expectedProfileVersion!: string;
+
+  @ApiProperty({ enum: ENTRY_SOURCES })
+  @IsIn(ENTRY_SOURCES as unknown as string[])
+  entrySource!: typeof ENTRY_SOURCES[number];
+
+  @ApiProperty({ type: Number, nullable: true, minimum: 1, description: 'intake 진입의 원천 lead. 재활성화 상담 record 자체의 identity는 아니다.' })
+  @IsRegistrationLeadContext()
+  leadId!: number | null;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: 'KST 업무 재활성화일. 과거/미래 허용 범위는 Backend가 검증한다.' })
+  @IsCalendarDate()
+  reactivateOn!: string;
+
+  @ApiProperty({ type: StudentReactivationConsultationDto, description: '기존 접촉 원장을 오변환하지 않고 새 수동 상담 정보를 한 transaction에 기록한다.' })
+  @ValidateNested() @Type(() => StudentReactivationConsultationDto)
+  consultation!: StudentReactivationConsultationDto;
+}
+
+export class StudentReactivationEffectsDto {
+  @ApiProperty({ type: 'boolean', enum: [false] }) studentCreated!: false;
+  @ApiProperty({ type: 'boolean', enum: [false] }) enrollmentCreated!: false;
+  @ApiProperty({ type: 'boolean', enum: [false] }) lessonCreated!: false;
+  @ApiProperty({ type: 'boolean', enum: [false] }) invoiceCreated!: false;
+  @ApiProperty({ type: 'boolean', enum: [false] }) bookIssueCreated!: false;
+  @ApiProperty({ type: 'boolean', enum: [false] }) guideCreated!: false;
+  @ApiProperty({ type: 'boolean', enum: [false] }) firstLessonTaskCreated!: false;
+}
+
+export class StudentReactivationPreviewDto {
+  @ApiProperty({ type: 'boolean', enum: [false] }) saved!: false;
+  @ApiProperty({ format: 'uuid' }) requestKey!: string;
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty({ type: String, pattern: '^[1-9][0-9]*$' }) profileVersion!: string;
+  @ApiProperty({ type: Number, nullable: true, enum: [null] }) consultationId!: null;
+  @ApiProperty({ type: StudentReactivationEffectsDto }) effects!: StudentReactivationEffectsDto;
+}
+
+export class StudentReactivationResultDto {
+  @ApiProperty({ type: 'boolean', enum: [true] }) saved!: true;
+  @ApiProperty({ format: 'uuid' }) requestKey!: string;
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty({ type: String, pattern: '^[1-9][0-9]*$' }) profileVersion!: string;
+  @ApiProperty(ID_SCHEMA) consultationId!: number;
+  @ApiProperty() replayed!: boolean;
+  @ApiProperty({ type: String, format: 'date-time' }) reactivatedAt!: string;
+  @ApiProperty({ type: StudentReactivationEffectsDto }) effects!: StudentReactivationEffectsDto;
+}
+
+/** ApiErrorFilter가 실제 반환하는 두 필드만 좁힌 학생 등록·재활성화 409 계약. */
+export class StudentRegistrationConflictDto extends ApiErrorDto {
+  @ApiProperty({ enum: REGISTRATION_CONFLICT_CODES })
+  declare code: typeof REGISTRATION_CONFLICT_CODES[number];
+
+  @ApiProperty({ description: '재조회·수정 방법을 설명하는 사용자 안내. PII·현재 row 원문은 포함하지 않는다.' })
+  declare message: string;
 }
