@@ -1,3 +1,4 @@
+// TBO55-BOC03D03B-R65 (2026-10-07): BOC-03D-03b 권고안 채택 — append-only STU_STATUS_EVENT만 권위 상태이며 legacy 무상태는 unknown이다. STU_REACTIVATION_CONSULTATION·상태 event·profile audit·LOG를 한 transaction으로 저장하고 SER_STU 복귀 우회를 같은 STU 잠금과 trigger로 차단한다. v4.64/101표, migration1766200000000 로컬 검증·운영 미적용.
 // TBO55-BOC12B-DB (2026-10-07): BO-Q13 권고안 채택 — 사전 안건은 MTREC.minutes와 분리한 1:1 MTAGENDA 정본이다. version 정확히 +1 trigger, creator 불변, 실제 actor FK와 회의 cascade를 migration 1766100000000으로 방어한다. v4.63/99표이며 과거 속기록은 보존한다. 정책 변경 시 결정 원장·Front·DTO/service·migration의 BO-Q13 주석을 같은 청크에서 수정한다.
 // TBO55-BOC03B-R26 (2026-10-06): Front 8f21beb은 세 등록 진입과 재활성화 UI/draft 경계만 구현했다. 후보·저장은 권위 퇴원 상태/DTO/writer 전까지 잠겨 있고 업무 POST0·격리 STU19/lead18 불변이다. 현행 v4.62/98표, entity, migration, constraint 변경0이며 이 파일은 실제 스키마 정본을 그대로 유지한다.
 // TBO55-BOC01C-R18 — Front bcb4b09 only consumes a future active39 projection. Current 46 education_grade rows, schema v4.62, migrations and legacy values are unchanged.
@@ -91,7 +92,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.63 (2026-10-07 · TBO-55 BO-Q13 권고안 채택 · MTAGENDA 로컬·운영 미적용) — v4.63 MTAGENDA(migration 1766100000000) ← v4.62 GUARDIAN_CONTACT(migration 1765900000000) ← v4.61 CHREQ.request_key(migration 1765800000000) ← v4.60 STU.profile_version + 기간·감사2표(migration 1765700000000) ← v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
+// version : 4.64 (2026-10-07 · TBO-55 BOC-03D-03b 권고안 채택 · 상태/상담 원장 로컬·운영 미적용) — v4.63 MTAGENDA(migration 1766100000000) ← v4.62 GUARDIAN_CONTACT(migration 1765900000000) ← v4.61 CHREQ.request_key(migration 1765800000000) ← v4.60 STU.profile_version + 기간·감사2표(migration 1765700000000) ← v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
 // historical version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
@@ -357,7 +358,7 @@ Table SCHOOL {
 Table STU_PROFILE_AUDIT {
   id bigserial [pk]
   student_id bigint [not null, ref: > STU.id]
-  action varchar(32) [not null, note: 'create/static_patch/period_append/period_correct/period_split/contact_change/guardian_change/staff_change/sibling_change']
+  action varchar(32) [not null, note: 'create/static_patch/period_append/period_correct/period_split/contact_change/guardian_change/staff_change/sibling_change/reactivate']
   field varchar(16) [note: '기간 action이면 grade/school/want/residence/guidance/lang/target_exam/notes 중 하나']
   request_key uuid [not null]
   request_fingerprint bytea [not null, note: '32 bytes; 동일키 재생 판정은 후속 HTTP writer 계약']
@@ -423,6 +424,61 @@ Ref: STU_PROFILE_PERIOD.(education_system, grade_code) > EDUCATION_GRADE.(educat
 Ref: STU_PROFILE_PERIOD.(residence_country_code, residence_timezone) > COUNTRY_TIMEZONE.(country_code, timezone) [delete: no action, update: no action]
 Ref: STU_PROFILE_PERIOD.(created_audit_id, student_id) > STU_PROFILE_AUDIT.(id, student_id) [delete: no action, update: no action]
 Ref: STU_PROFILE_PERIOD.(superseded_by_audit_id, student_id) > STU_PROFILE_AUDIT.(id, student_id) [delete: no action, update: no action]
+
+Table STU_REACTIVATION_CONSULTATION {
+  id bigserial [pk]
+  student_id bigint [not null, ref: > STU.id]
+  entry_source varchar(16) [not null, note: 'students 또는 intake; intake만 lead_id 필수']
+  lead_id bigint [ref: > LEAD.id, note: 'entry_source=intake일 때 필수']
+  reactivate_on date [not null]
+  channel varchar(16) [not null, note: 'visit/phone/kakao/other']
+  content text [not null, note: 'trim 1~2000']
+  next_on date
+  created_by bigint [not null, ref: > STAFF.id]
+  created_at timestamptz [not null, default: `now()`]
+  request_key uuid [not null]
+  request_fingerprint bytea [not null, note: 'SHA-256 32 bytes']
+  profile_version_before bigint [not null]
+  profile_version_after bigint [not null]
+  indexes {
+    (created_by, request_key) [unique, name: 'stu_reactivation_consultation_request_once']
+    (student_id, created_at, id) [name: 'stu_reactivation_consultation_timeline', note: '실제 SQL은 created_at DESC, id DESC']
+  }
+  Note: '''
+  BOC-03D-03b 권고안 채택. 같은 actor/requestKey/body는 기존 결과를 재사용하고 다른 body는 409다.
+  INSERT 뒤 UPDATE/DELETE는 trigger가 거절한다. 서버 시각을 강제하며 version_after=version_before+1이다.
+  deferred completeness trigger는 같은 transaction의 reactivate 상태 event와 STU_PROFILE_AUDIT를 actor/request/version/fingerprint/txid까지 대조한다.
+  '''
+}
+
+Table STU_STATUS_EVENT {
+  id bigserial [pk]
+  student_id bigint [not null, ref: > STU.id]
+  action varchar(16) [not null, note: 'withdraw/reactivate']
+  from_status varchar(16) [note: 'NULL 또는 active/withdrawn']
+  to_status varchar(16) [not null, note: 'active/withdrawn']
+  effective_on date [not null]
+  reason text [note: 'trim 1~1000']
+  actor_id bigint [not null, ref: > STAFF.id]
+  consultation_id bigint [unique, ref: > STU_REACTIVATION_CONSULTATION.id]
+  request_key uuid
+  request_fingerprint bytea
+  profile_version_before bigint
+  profile_version_after bigint
+  created_at timestamptz [not null, default: `now()`]
+  write_txid bigint [not null, default: `txid_current()`]
+  indexes {
+    (student_id, id) [name: 'stu_status_event_timeline', note: '실제 SQL은 id DESC']
+    (actor_id, request_key) [unique, name: 'stu_status_event_request_once', note: 'request_key IS NOT NULL 부분 유니크']
+  }
+  Note: '''
+  BOC-03D-03b 권고안 채택. 마지막 event만 student_status_current view의 권위 상태이며 event가 없으면 unknown이다.
+  수강·휴원·LOG에서 상태를 추정하지 않는다. 전체 퇴원은 withdrawn, 재활성화는 withdrawn→active만 허용하고 일부 수업 종료는 event를 쓰지 않는다.
+  STU FOR NO KEY UPDATE 잠금에서 이전 상태를 재검사하고 stale/불법 전이를 거절한다. event는 UPDATE/DELETE 불변이다.
+  SER_STU INSERT/기간 연장 trigger도 같은 STU 잠금을 사용해 withdrawn effective_on 뒤 참여를 막고 그 날 끝난 과거 명단은 보존한다.
+  down은 두 원장이나 reactivate profile audit이 있으면 이력 손실을 피하려고 중단하며 roll-forward로 수정한다.
+  '''
+}
 
 Table LEAD {
   id          bigserial   [pk]
@@ -2390,3 +2446,9 @@ Table SER_OCC {
 //     mtagenda_update_guard trigger는 mt_id/created_at/created_by 불변과 UPDATE version 정확히 +1을 직접 SQL에도 강제한다.
 //     서비스는 실제 이동 회차 시작부터 writer를 잠그고 expectedVersion stale을 409로 반환한다. 명시적 import는 saved=false 초안이며 MTREC.minutes 자동 쓰기0.
 //   표 +1(98 → 99) · 컬럼 +7 · 마이그레이션 1 (1766100000000-meeting-agenda) · 기존 MTREC/속기록 보정 0 · 운영 미적용.
+
+// v4.63 → v4.64 (2026-10-07 · TBO-55 BOC-03D-03b 권고안 채택) — 새 표 둘 + 현재 상태 view + 직접 SQL 방어.
+//   + STU_REACTIVATION_CONSULTATION — 같은 actor/requestKey 유일, 상담·version·SHA-256 fingerprint, INSERT 이후 불변.
+//   + STU_STATUS_EVENT — withdraw/reactivate append-only 상태 권위. event 없는 legacy는 unknown이며 휴원·수강·LOG로 추정하지 않는다.
+//   + student_status_current view — 학생별 마지막 event. 상담·상태·STU_PROFILE_AUDIT 동일 tx deferred completeness와 SER_STU 재활성화 guard.
+//   표 +2(99 → 101) · view +1 · 마이그레이션 1(1766200000000-student-status-reactivation) · 기존 행 상태 backfill0 · 운영 미적용.
