@@ -1283,9 +1283,9 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       .send({ op: 'add', onDate: from, studentId: 1 }).expect(200);
     expect(added.body.needBook).toContain(ROSTER_STUDENT_NAME);
 
-    expect((await api('patch', `/books/issues/${issue.id}/state`).send({ state: 'auto' }).expect(200)).body)
+    expect((await api('patch', `/books/issues/${issue.id}/state`).send({ state: 'auto', expectedVersion: 1 }).expect(200)).body)
       .toMatchObject({ state: 'auto' });
-    expect((await api('patch', `/books/issues/${issue.id}/state`).send({ state: 'ok' }).expect(200)).body)
+    expect((await api('patch', `/books/issues/${issue.id}/state`).send({ state: 'ok', expectedVersion: 2 }).expect(200)).body)
       .toMatchObject({ state: 'ok' });
     const completedBoard = await request(app.getHttpServer()).get('/board')
       .set('Authorization', `Bearer ${token}`).query({ from, to: from }).expect(200);

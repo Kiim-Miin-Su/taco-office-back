@@ -225,7 +225,13 @@ export class LeadEnrollService {
         libId = pickedBook; pickedBook = null; diagBookApplied = true;
       }
       if (libId) {
-        bookIssues.push(await this.books.createIssueWithin(m, userId, { libId, studentId, state: 'wait' }));
+        /* BOC-04D-03b 권고안: 등록 줄에 실제 강사·과목이 둘 다 있으면 별도 배부를 만들지 않고
+           최신 교재 배정 writer의 수업·학년·과목·판 검증과 알림을 그대로 재사용한다.
+           둘 중 하나가 없는 레거시/진단 등록은 값을 추정하지 않고 기존 wait 원장을 보존한다. */
+        const assignment = line.teacherId != null && line.subKey
+          ? { teacherId: line.teacherId, subKey: line.subKey }
+          : undefined;
+        bookIssues.push(await this.books.createIssueWithin(m, userId, { libId, studentId, state: 'wait' }, assignment));
       } else {
         booksMissing.push({ kindKey: line.kindKey, subKey: line.subKey ?? null, label: subName(line.subKey) ?? kindName(line.kindKey) });
       }

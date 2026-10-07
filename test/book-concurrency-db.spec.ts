@@ -5,6 +5,7 @@
  */
 
 import { DataSource } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { BooksService } from '../src/modules/books/books.service';
@@ -25,6 +26,9 @@ d('C77 교재 LIB-first 동시성', () => {
   const owner = 1881;
   const madeLibs: number[] = [];
   const madeStudents: number[] = [];
+  const madeSeries: number[] = [];
+  const madeKinds: string[] = [];
+  const madeSubs: string[] = [];
   let serial = 0;
 
   beforeAll(async () => {
@@ -38,6 +42,10 @@ d('C77 교재 LIB-first 동시성', () => {
   });
 
   afterEach(async () => {
+    if (madeSeries.length) {
+      await ds.query(`DELETE FROM ser_stu WHERE ser_id=ANY($1::bigint[])`, [madeSeries]);
+      await ds.query(`DELETE FROM ser WHERE id=ANY($1::bigint[])`, [madeSeries]);
+    }
     if (madeLibs.length) {
       await ds.query(`DELETE FROM hist WHERE (entity IN ('lib','vers','issue') AND ref_id IN (
         SELECT id FROM vers WHERE lib_id=ANY($1::bigint[])
@@ -49,8 +57,13 @@ d('C77 교재 LIB-first 동시성', () => {
       await ds.query(`DELETE FROM lib WHERE id=ANY($1::bigint[])`, [madeLibs]);
     }
     if (madeStudents.length) await ds.query(`DELETE FROM stu WHERE id=ANY($1::bigint[])`, [madeStudents]);
+    if (madeSubs.length) await ds.query(`DELETE FROM sub WHERE key=ANY($1::text[])`, [madeSubs]);
+    if (madeKinds.length) await ds.query(`DELETE FROM kind WHERE key=ANY($1::text[])`, [madeKinds]);
     madeLibs.length = 0;
     madeStudents.length = 0;
+    madeSeries.length = 0;
+    madeKinds.length = 0;
+    madeSubs.length = 0;
   });
   afterAll(async () => {
     await ds?.query(`DELETE FROM staff WHERE id=$1 AND email='book-concurrency@test'`, [owner]);
@@ -101,5 +114,41 @@ d('C77 교재 LIB-first 동시성', () => {
       `SELECT l.pages,i.progress_page FROM lib l JOIN issue i ON i.lib_id=l.id WHERE i.id=$1`, [issue.id],
     );
     expect(Number(stored.pages)).toBeGreaterThanOrEqual(Number(stored.progress_page));
+  });
+
+  it('같은 문맥 배정 requestKey의 동시 요청은 ISSUE와 요청 원장을 한 건으로 수렴한다', async () => {
+    const suffix = `${Date.now().toString(36)}${serial++}`;
+    const kindKey = `bc${suffix}`.slice(0, 16);
+    const subKey = `book-${suffix}`.slice(0, 20);
+    madeKinds.push(kindKey); madeSubs.push(subKey);
+    await ds.query(`INSERT INTO kind(key,name,color,cap,grp,rep) VALUES($1,'동시 배정','#334455',4,'lesson',true)`, [kindKey]);
+    await ds.query(`INSERT INTO sub(key,name,color) VALUES($1,'동시 과목','#556677')`, [subKey]);
+    const [student] = await ds.query(`INSERT INTO stu(name,grade) VALUES('동시 배정 학생','G9') RETURNING id`);
+    const studentId = Number(student.id); madeStudents.push(studentId);
+    const [book] = await ds.query(
+      `INSERT INTO lib(code,title,sub_key,pages,grade_from,grade_to) VALUES($1,'동시 배정 교재',$2,100,9,12) RETURNING id`,
+      [`ASSIGN-${suffix}`, subKey],
+    );
+    const libId = Number(book.id); madeLibs.push(libId);
+    const [version] = await ds.query(`INSERT INTO vers(lib_id,edition,from_date) VALUES($1,'v1',current_date) RETURNING id`, [libId]);
+    const [series] = await ds.query(
+      `INSERT INTO ser(kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date,title)
+       VALUES($1,$2,$3,'offline',600,660,'WEEKLY:MO',current_date,'동시 배정 수업') RETURNING id`,
+      [kindKey, subKey, owner],
+    );
+    const serId = Number(series.id); madeSeries.push(serId);
+    await ds.query(`INSERT INTO ser_stu(ser_id,student_id,from_date) VALUES($1,$2,current_date)`, [serId, studentId]);
+
+    const command = {
+      libId, versId: Number(version.id), studentId, teacherId: owner, subKey, requestKey: randomUUID(),
+    };
+    const results = await Promise.all([
+      new BooksService(ds.getRepository(Lead)).createAssignment(owner, command),
+      new BooksService(ds.getRepository(Lead)).createAssignment(owner, command),
+    ]);
+    expect(results[0].id).toBe(results[1].id);
+    expect(results[0]).toMatchObject({ state: 'wait', version: 1, teacherId: owner, subKey });
+    expect(Number((await ds.query(`SELECT count(*)::int AS n FROM issue WHERE student_id=$1 AND lib_id=$2`, [studentId, libId]))[0].n)).toBe(1);
+    expect(Number((await ds.query(`SELECT count(*)::int AS n FROM issue_write_req WHERE issue_id=$1`, [results[0].id]))[0].n)).toBe(1);
   });
 });

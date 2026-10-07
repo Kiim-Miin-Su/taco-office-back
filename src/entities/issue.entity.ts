@@ -27,6 +27,18 @@ export class Issue {
   @Column({ type: 'bigint' })
   studentId: number;
 
+  /** BOC-04D-03b 새 배정의 실제 수업 담당자. 옛 배부는 NULL로 보존한다. */
+  @Column({ type: 'bigint', nullable: true })
+  teacherId: number | null;
+
+  /** BOC-04D-03b 새 배정의 실제 수업 과목. teacherId와 함께 있거나 함께 NULL이다. */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  subKey: string | null;
+
+  /** 상태·진도·회수 동시 수정 충돌을 감지하는 낙관적 버전. */
+  @Column({ type: 'int', default: 1 })
+  rowVersion: number;
+
   @Column({ type: 'date', nullable: true })
   issuedOn: string | null;
 

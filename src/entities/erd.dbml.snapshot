@@ -1,3 +1,4 @@
+// TBO55-BOC04D03B-R74 (2026-10-08): BOC-04D-03b 권고안 채택 — 새 ISSUE 배정은 실제 현재·장래 수업의 teacher_id·sub_key와 정확한 현재 vers_id를 저장하고 state=wait에서 시작한다. 과거 ISSUE는 문맥을 추정 이관하지 않는다. ISSUE_WRITE_REQ가 actual actor·payload fingerprint·result version을 보존하며, contextual row의 상태/진도/회수는 expectedVersion으로 경합을 거절한다. DB trigger가 활성 담당·과목·정본 학년·수업 문맥·현재 판과 version 정확히 +1을 방어한다. v4.69/106표, migration1766600000000 로컬 신규99/99·down/up·반복·동시 request-key·직접쓰기·파괴적 down 거절·실제 Browser→HTTP→DB→reload 검증, 운영 미적용. 정책 변경 시 BookAssignment DTO/service/BookTracking/OpenAPI/generated schema·P-BOC04D03B·두 DBML·portfolio를 함께 수정한다.
 // TBO55-BOC04D03A-R73 (2026-10-08): BOC-04D-03a 권고안 채택 — GUIDE 본문 계열에 body_version을 추가하고 GUIDE_WRITE_REQ 요청 원장을 분리했다. 화면은 expectedVersion·requestKey를 보내며 서비스는 request-key advisory lock→GUIDE row lock 순서, 동일 actor/payload replay, 409 충돌, HIST를 한 transaction으로 처리한다. DB trigger는 본문 계열 변경·draft→ready가 version 정확히 +1인지 검사하고 version 단독 증가를 막는다. v4.68/105표, migration1766500000000 로컬 신규98/98·down/up·동시 HTTP·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 GuideBodyWriteDto·GuidesService·GuideWriter·OpenAPI/generated schema·P-BOC04D03A·current DBML·portfolio를 함께 수정한다.
 // TBO55-BOC03D04C-R69 (2026-10-07): BOC-03D-04c 권고안 채택 — v4.67/104표. 표·컬럼은 유지하고 SCHOOL identity를 DB locale과 무관한 und-x-icu 소문자 정규화로 고정했다. contract0 GUARDIAN 직접 쓰기는 scalar 연락처 최소1을 즉시 검사하고, contract1 writer의 같은 transaction GUARDIAN_CONTACT 완결성은 기존 지연 trigger가 검사한다. 관리자 Browser→HTTP→DB→hard reload 8/8, 강사 생성 UI/API 차단을 검증했으며 운영 migration은 미적용이다. 정책 변경 시 migration·service·DTO/OpenAPI/generated schema·P-STU15·BOC-03·target/current DBML·portfolio를 함께 수정한다.
 // TBO55-BOC03D04B-R68 (2026-10-07): BOC-03D-04b 권고안 채택 — 관리자 신규 학생 preview/save를 동일 transaction writer로 연결했다. legacy·기존 최소 등록은 contract=0, 최종 15절 신규 등록만 contract=1이다. STU 계약/PII, GUARDIAN 확장, STU_STAFF/STU_SIBLING, create status와 지연 완결성 trigger를 v4.66/104표로 기록한다. 강사 생성 권한은 없으며 운영 migration은 미적용이다. 정책 변경 시 service·DTO/OpenAPI/generated schema·P-STU15·BOC-03·target/current DBML·portfolio를 함께 수정한다.
@@ -97,7 +98,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.67 (2026-10-07 · TBO-55 BOC-03D-04c 권고안 채택 · 등록 호환성/역할 브라우저 로컬·운영 미적용) — v4.64 상태/상담 원장(migration 1766200000000) ← v4.63 MTAGENDA(migration 1766100000000) ← v4.62 GUARDIAN_CONTACT(migration 1765900000000) ← v4.61 CHREQ.request_key(migration 1765800000000) ← v4.60 STU.profile_version + 기간·감사2표(migration 1765700000000) ← v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
+// version : 4.68 (2026-10-08 · TBO-55 BOC-04D-03a 권고안 채택 · 안내 writer version/재시도 원장·운영 미적용) — v4.67 등록 호환성(migration 1766400000000) ← v4.64 상태/상담 원장(migration 1766200000000) ← v4.63 MTAGENDA(migration 1766100000000) ← v4.62 GUARDIAN_CONTACT(migration 1765900000000) ← v4.61 CHREQ.request_key(migration 1765800000000) ← v4.60 STU.profile_version + 기간·감사2표(migration 1765700000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
 // historical version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
@@ -1305,15 +1306,44 @@ Table ISSUE {
   student_id  bigint      [not null, ref: > STU.id]
   issued_on   date
   returned_on date
-  state       varchar(12) [not null, default: 'ok', note: 'wait | auto | ok | returned']
+  state       varchar(12) [not null, default: 'ok', note: 'wait | auto | ok | returned | canceled | rejected']
   progress_page int       [note: '숙제 페이지 기준 현재 쪽수. 퍼센트는 LIB.pages로 파생']
   requested_by bigint     [ref: > STAFF.id]
   approved_by bigint      [ref: > STAFF.id]
   delivered_at timestamptz
   reason      text        [note: 'v4.54 · W11 N-62 배부 사유 — 무슨 교재를 왜 줬는지(슬라이드 37) · 옛 줄 NULL · 진단 점수는 여기 적지 않는다(배부 창이 lead_diag 를 읽기만 · D-R22) · §40 「교재 배부」 줄 메모 · migration 1764310000000']
   form        varchar(8)  [note: 'v4.54 · W11 A 후속 · 7-3 §38-2 배부 형태 — pdf | print(issue_form_words CHECK) · 배부 창에서 고른다(선택) · 옛 줄 NULL = 칩 없음(보정 0) · §38 교재 칸 아래 칩 「PDF」 · 「실물 책」 · 승인 대기 요청 줄에도 선다 · migration 1764330000000']
-  indexes { (student_id, lib_id) [name: 'issue_active_book_unique', note: 'returned 제외 partial unique는 migration'] }
-  Note: '교재 배부·회수·진도 원장. 상태/시각 순서와 progress>=0은 migration CHECK. v4.54 · 배부 형태는 교재(LIB)가 아니라 배부 줄의 속성이다(리드 채택 · 권고 (가) — §39 서가 카드에는 형태 칩이 없고 승인 대기 요청에도 선다).'
+  ended_reason varchar(500) [note: 'canceled/rejected 사유. 종료 actor·시각과 한 묶음']
+  ended_by    bigint      [ref: > STAFF.id]
+  ended_at    timestamptz
+  reissued_from bigint    [ref: > ISSUE.id, unique, note: '종료된 배정에서 명시 재배정한 계보. 자기 참조 금지']
+  teacher_id  bigint      [ref: > STAFF.id, note: 'v4.69 · 신규 문맥 배정의 실제 담당 강사. legacy는 NULL 유지']
+  sub_key     varchar(20) [ref: > SUB.key, note: 'v4.69 · 신규 문맥 배정의 실제 수업 과목. teacher_id와 함께 NULL 또는 함께 값']
+  row_version integer     [not null, default: 1, note: 'v4.69 · 문맥 배정 상태/진도/회수 낙관적 version · CHECK >=1']
+  indexes {
+    (student_id, lib_id) [name: 'issue_active_legacy_book_unique', note: 'wait|auto|ok AND teacher_id/sub_key NULL partial unique']
+    (student_id, lib_id, teacher_id, sub_key) [name: 'issue_active_assignment_unique', note: 'wait|auto|ok AND teacher_id/sub_key NOT NULL partial unique']
+  }
+  Note: '''
+  교재 배정·승인·전달·회수·진도 원장. 상태/시각 순서와 progress>=0은 migration CHECK다.
+  v4.69 신규 문맥 배정만 실제 현재·장래 SER/SER_STU, 활성 담당, LIB 과목, 정본 학년 범위와 현재 VERS를 검사한다. legacy 행은 강사·과목을 추정하지 않는다.
+  문맥 신원이나 vers_id가 바뀌는 때만 현재 문맥을 다시 검사한다. 이후 새 판이 생겨도 과거 배정의 승인·진도·회수는 저장한 vers_id 스냅숏을 유지한다.
+  '''
+}
+
+Table ISSUE_WRITE_REQ {
+  request_key    uuid        [pk]
+  issue_id       bigint      [not null, ref: > ISSUE.id]
+  fingerprint    char(64)    [not null, note: '정규화한 lib/vers/student/teacher/sub/reissue/reason/form SHA-256 hex · CHECK lowercase 64자']
+  result_version integer     [not null, note: '최초 성공이 반환한 ISSUE.row_version · CHECK >=1']
+  actor_id       bigint      [not null, ref: > STAFF.id]
+  created_at     timestamptz [not null, default: `now()`]
+  indexes { (issue_id, created_at, request_key) [name: 'issue_write_req_issue_idx'] }
+  Note: '''
+  BOC-04D-03b 교재 배정 요청 원장. 같은 actor·payload·request_key만 최초 ISSUE 결과로 수렴한다.
+  key 재사용은 BOOK_ASSIGNMENT_REQUEST_KEY_REUSED, 결과 뒤 version이 바뀐 replay는 BOOK_ASSIGNMENT_REPLAY_STALE 409다.
+  ISSUE 삭제 시 CASCADE, STAFF actor 삭제는 RESTRICT. HIST book_assign·강사 NOTI와 같은 transaction에서 적는다.
+  '''
 }
 
 Table HIST {
@@ -1323,7 +1353,7 @@ Table HIST {
   action      varchar(20) [not null]
   by_id       bigint      [ref: > STAFF.id]
   at          timestamptz [not null, default: `now()`]
-  Note: '교재·안내 이력. 시드 18건.'
+  Note: '교재·안내 이력. BOC-04D-03b 신규 배정은 action=book_assign과 actual actor를 같은 transaction에 남긴다.'
 }
 
 Table GPAPACK {
@@ -2555,3 +2585,14 @@ Table SER_OCC {
 //   ~ normalize_school_identity — lower()에 명시적 und-x-icu collation을 사용해 C locale에서도 CAFÉ와 NFC/NFD 동등 입력을 같은 identity로 계산하고 stored key를 재계산한다.
 //   + guardian_legacy_contact_required trigger — contract0 GUARDIAN 직접 INSERT/UPDATE는 legacy scalar email/phone 최소1을 즉시 요구한다. contract1은 같은 transaction의 GUARDIAN_CONTACT를 허용하고 기존 지연 완결성 검사를 따른다.
 //   표·컬럼 +0(104표 유지) · 함수1 교체/함수1·trigger1 추가 · migration 1(1766400000000-student-registration-compatibility) · 운영 미적용.
+
+// v4.67 → v4.68 (2026-10-08 · TBO-55 BOC-04D-03a 권고안 채택) — 관리자 안내 본문 writer의 동시성·재시도 원장·직접 SQL 방어.
+//   ~ GUIDE + body_version — 본문·지도 방향·관리자 코멘트·draft→ready 변경은 version을 정확히 +1하고 version 단독 증가는 guard trigger가 거절한다.
+//   + GUIDE_WRITE_REQ — actor·guide·request_key·payload SHA-256·result version을 보존하며 삽입 후 변경을 금지한다. 서비스는 request-key advisory lock→GUIDE row lock 순서를 쓴다.
+//   표 +1(104 → 105) · 컬럼 +7(GUIDE1 + 새 표6) · 함수/trigger2 · migration 1(1766500000000-guide-write-version) · 격리 신규98/98·down/up 검증 · 운영 미적용.
+
+// v4.68 → v4.69 (2026-10-08 · TBO-55 BOC-04D-03b 권고안 채택) — 교재 배정의 수업 문맥·판 스냅숏·멱등·낙관적 경합 방어.
+//   ~ ISSUE + teacher_id/sub_key/row_version. legacy 활성 유일성과 문맥별 활성 유일성을 분리하고 과거 행은 NULL로 보존한다.
+//   + ISSUE_WRITE_REQ — actor·request_key·정규화 payload SHA-256·result version 원장. 서비스는 request-key 잠금 뒤 학생+교재 잠금을 사용한다.
+//   + 직접쓰기 guard — 활성 담당·과목·현재/장래 SER_STU·정본 학년·현재 판을 새 문맥 배정에 검사하고, 문맥 배정 업무 변경은 row_version 정확히 +1을 요구한다.
+//   표 +1(105 → 106) · 기존 컬럼 +3/새 표6 · 함수/trigger2 · migration 1(1766600000000-book-assignment-writer) · 로컬 신규99/99·down/up·반복·동시성·실제 browser 검증 · 운영 미적용.

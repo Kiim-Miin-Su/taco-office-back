@@ -288,7 +288,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
     expect(before.find((b) => b.issueId === waitIssueId)).toMatchObject({ changeRequestable: false });
 
     // 회수(E-55) → 같은 학생·같은 교재 재배부(계보 잇기)
-    await api('post', `/books/issues/${okIssueId}/return`).send({}).expect(200);
+    await api('post', `/books/issues/${okIssueId}/return`).send({ expectedVersion: 1 }).expect(200);
     expect((await api('post', '/books/issues').send({ studentId: STU1, libId, reason: '재배부' }).expect(409)).body.code).toBe('BOOK_REISSUE_SOURCE_REQUIRED');
     const reissued = (await api('post', '/books/issues').send({ studentId: STU1, libId, reissuedFrom: okIssueId, reason: '재배부' }).expect(201)).body;
     expect(reissued).toMatchObject({ state: 'ok', reissuedFrom: okIssueId });

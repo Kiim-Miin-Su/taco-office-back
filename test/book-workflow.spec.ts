@@ -8,7 +8,7 @@ import { isIssueActive, isIssueTerminal, issueActiveSql, issueTransitionIssue, p
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import {
-  BookHistoryQueryDto, BookIssueCreateDto, BookIssueReturnDto, BookIssueTransitionDto, BookPackPatchDto,
+  BookAssignmentCreateDto, BookHistoryQueryDto, BookIssueCreateDto, BookIssueReturnDto, BookIssueTransitionDto, BookPackPatchDto,
   BookPackWriteDto, BookPatchDto, BookVersionCreateDto, BookWriteDto,
 } from '../src/modules/books/books.dto';
 
@@ -52,10 +52,40 @@ describe('교재 배부 자동 전이', () => {
 
 describe('교재 배부 종료 입력', () => {
   it.each(['canceled', 'rejected'] as const)('%s은 빈 사유를 거절하고 trim한다', async (state) => {
-    expect(await validate(plainToInstance(BookIssueTransitionDto, { state, reason: '  ' }))).not.toHaveLength(0);
-    const dto = plainToInstance(BookIssueTransitionDto, { state, reason: '  사유  ' });
+    expect(await validate(plainToInstance(BookIssueTransitionDto, { state, reason: '  ', expectedVersion: 1 }))).not.toHaveLength(0);
+    const dto = plainToInstance(BookIssueTransitionDto, { state, reason: '  사유  ', expectedVersion: 1 });
     expect(await validate(dto)).toHaveLength(0);
     expect(dto.reason).toBe('사유');
+  });
+});
+
+describe('BOC-04D-03b 교재 배정 입력 계약', () => {
+  const valid = {
+    libId: 4,
+    versId: 11,
+    studentId: 3,
+    teacherId: 7,
+    subKey: 'reading',
+    requestKey: '00000000-0000-4000-8000-000000000001',
+    reason: '  읽기 기초 보강  ',
+    form: 'pdf',
+  };
+
+  it('강사·과목·학생·교재·정확한 판·UUID 요청 키를 모두 받고 사유를 trim한다', async () => {
+    const dto = plainToInstance(BookAssignmentCreateDto, valid);
+    expect(await validate(dto)).toHaveLength(0);
+    expect(dto.reason).toBe('읽기 기초 보강');
+  });
+
+  it.each(['teacherId', 'subKey', 'versId', 'requestKey'] as const)('%s가 빠진 배정은 거절한다', async (key) => {
+    const body = { ...valid };
+    delete body[key];
+    expect(await validate(plainToInstance(BookAssignmentCreateDto, body))).not.toHaveLength(0);
+  });
+
+  it('UUID가 아닌 재시도 키와 빈 과목은 거절한다', async () => {
+    expect(await validate(plainToInstance(BookAssignmentCreateDto, { ...valid, requestKey: 'retry', subKey: '' })))
+      .not.toHaveLength(0);
   });
 });
 

@@ -8,7 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString,
-  Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
+  IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested,
 } from 'class-validator';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { HIST_ACTIONS } from '../../lib/history';
@@ -248,8 +248,49 @@ export class BookIssueCreateDto {
   @IsOptional() @IsIn(ISSUE_FORMS) form?: string;
 }
 
+/**
+ * BOC-04D-03b 권고안: 최신 교재 배정 창은 legacy 배부 입력과 분리한다.
+ * 강사·과목·정확한 판·멱등 키를 필수로 받아 「누구 수업의 어떤 판인가」를 잃지 않는다.
+ * 정책을 바꾸면 관리자 수정사항 p32·51, 강사 수정사항 p78·82·83·101과
+ * docs/sprint/TBO-55/features/BOC-04D3B-BOOK-ASSIGNMENT-WRITER-2026-10-08.md를 함께 고친다.
+ */
+export class BookAssignmentCreateDto {
+  @ApiProperty() @Type(() => Number) @IsInt() @Min(1) libId!: number;
+  @ApiProperty({ description: '화면이 읽은 현재 VERS id. 서버 현재 판과 다르면 409' })
+  @Type(() => Number) @IsInt() @Min(1) versId!: number;
+  @ApiProperty() @Type(() => Number) @IsInt() @Min(1) studentId!: number;
+  @ApiProperty({ description: '이 교재를 사용할 실제 수업 담당자' })
+  @Type(() => Number) @IsInt() @Min(1) teacherId!: number;
+  @ApiProperty({ maxLength: 20, description: '실제 수업 과목이자 LIB.sub_key와 같은 값' })
+  @IsString() @MinLength(1) @MaxLength(20) subKey!: string;
+  @ApiProperty({ format: 'uuid', description: '같은 제출 재시도를 한 ISSUE로 수렴시키는 키' })
+  @IsUUID('4') requestKey!: string;
+  @ApiPropertyOptional({ minimum: 1, description: '종료된 배정에서 재배정할 때의 부모 ISSUE id' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) reissuedFrom?: number;
+  @ApiPropertyOptional({ maxLength: 500, description: '배정 사유 — 비우면 null' })
+  @IsOptional() @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MaxLength(500) reason?: string;
+  @ApiPropertyOptional({ enum: [...ISSUE_FORMS] }) @IsOptional() @IsIn(ISSUE_FORMS) form?: string;
+}
+
+export class BookAssignmentContextDto {
+  @ApiProperty() teacherId!: number;
+  @ApiProperty() teacherName!: string;
+  @ApiProperty() subKey!: string;
+  @ApiProperty() subName!: string;
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiPropertyOptional(S) grade?: string | null;
+}
+
+export class BookAssignmentOptionsDto {
+  @ApiProperty({ type: [BookAssignmentContextDto], description: '현재 또는 장래 실제 수업의 강사·과목·학생 조합' })
+  contexts!: BookAssignmentContextDto[];
+}
+
 export class BookIssueTransitionDto {
   @ApiProperty({ enum: ISSUE_TRANSITION_STATES }) @IsIn(ISSUE_TRANSITION_STATES) state!: 'auto' | 'ok' | 'canceled' | 'rejected';
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 BookIssueDto.version' }) @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
   @ApiPropertyOptional({ minLength: 1, maxLength: 500, description: '취소·반려 사유 — 종료 상태에서 필수' })
   @ValidateIf((dto: BookIssueTransitionDto) => dto.state === 'canceled' || dto.state === 'rejected')
   @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
@@ -259,16 +300,23 @@ export class BookIssueTransitionDto {
 
 export class BookIssueProgressDto {
   @ApiProperty({ minimum: 0 }) @Type(() => Number) @IsInt() @Min(0) progressPage!: number;
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 BookIssueDto.version' }) @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
 }
 
 export class BookIssueReturnDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, example: '2026-09-14' }) @IsOptional() @IsCalendarDate() returnedOn?: string;
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 BookIssueDto.version' }) @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
 }
 
 export class BookIssueDto {
   @ApiProperty() id!: number;
+  @ApiProperty({ minimum: 1, description: '상태·진도·회수 쓰기의 optimistic version' }) version!: number;
   @ApiProperty() libId!: number;
   @ApiProperty() studentId!: number;
+  @ApiPropertyOptional(N) teacherId?: number | null;
+  @ApiPropertyOptional(S) teacherName?: string | null;
+  @ApiPropertyOptional(S) subKey?: string | null;
+  @ApiPropertyOptional(S) subName?: string | null;
   @ApiPropertyOptional(N) versId?: number | null;
   @ApiPropertyOptional(S) edition?: string | null;
   @ApiPropertyOptional(S) fileUrl?: string | null;

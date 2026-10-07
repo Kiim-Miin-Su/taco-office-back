@@ -50,6 +50,10 @@ export class Guide {
   @Column({ type: 'text', nullable: true })
   body: string | null;
 
+  /** BOC-04D-03a 본문·지도 방향·관리자 코멘트 동시 수정 충돌 버전. */
+  @Column({ type: 'int', default: 1 })
+  bodyVersion: number;
+
   /** §44 「지도 방향」 상자 (v4.46 · g4 §44-3). 옛 안내 NULL */
   @Column({ type: 'text', nullable: true })
   direction: string | null;

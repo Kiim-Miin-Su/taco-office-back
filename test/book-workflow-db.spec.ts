@@ -11,8 +11,9 @@ import { Lead } from '../src/entities';
 import { BooksService } from '../src/modules/books/books.service';
 import { BookPatchDto } from '../src/modules/books/books.dto';
 import { BookWorkflow1759700000000 } from '../src/migrations/1759700000000-book-workflow';
+import { BookAssignmentWriter1766600000000 } from '../src/migrations/1766600000000-book-assignment-writer';
 import { todayKst } from '../src/lib/kst';
-import { assertScratch, TEST_URL } from './db';
+import { assertScratch, blockedBy, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 const url = TEST_URL ? assertScratch(TEST_URL) : '';
@@ -129,6 +130,102 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
     expect(await svc().createIssue(owner, {
       studentId: studentA, libId: libA, state: 'wait', reissuedFrom: issue.id,
     })).toMatchObject({ state: 'wait', reissuedFrom: issue.id });
+  });
+
+  it('문맥 배정은 실제 수업·학년·현재 판을 검증하고 멱등·버전·알림·DB guard를 한 원장에 묶는다', async () => {
+    const subKey = `boc04d3b-${studentA}`;
+    await q.query(`INSERT INTO sub(key,name,color,active) VALUES ($1,'배정 과목','#315efb',true)`, [subKey]);
+    await q.query(`UPDATE lib SET sub_key=$2,grade_from=9,grade_to=12 WHERE id=$1`, [libA, subKey]);
+    const version = await svc().addVersion(owner, libA, {
+      edition: 'assignment-v1',
+      seFile: { kind: 'lib-se', name: 'assignment-se.pdf', base64: Buffer.from('assignment-se').toString('base64') },
+    });
+    const nonLessonKey = `bocm${studentA}`;
+    await q.query(
+      `INSERT INTO kind(key,name,color,cap,grp,rep) VALUES ($1,'배정 제외 회의','#666666',20,'meeting',false)`,
+      [nonLessonKey],
+    );
+    const [nonLessonSeries] = await q.query(
+      `INSERT INTO ser(kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date,title)
+       VALUES ($1,$2,$3,'online',480,540,'WEEKLY:MO',$4::date,'배정 제외 회의') RETURNING id`,
+      [nonLessonKey, subKey, owner, EFFECTIVE_ON],
+    );
+    await q.query(
+      `INSERT INTO ser_stu(ser_id,student_id,from_date) VALUES ($1,$2,$3::date)`,
+      [nonLessonSeries.id, studentA, EFFECTIVE_ON],
+    );
+    expect((await svc().assignmentOptions()).contexts)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ teacherId: owner, subKey, studentId: studentA })]));
+    await expect(svc().createAssignment(owner, {
+      libId: libA, versId: version.id, studentId: studentA, teacherId: owner, subKey,
+      requestKey: '00000000-0000-4000-8000-000000000770',
+    })).rejects.toMatchObject({ response: { code: 'BOOK_ASSIGNMENT_CLASS_MISMATCH' } });
+    expect(await blockedBy(q,
+      `INSERT INTO issue(lib_id,vers_id,student_id,state,requested_by,teacher_id,sub_key)
+       VALUES ($1,$2,$3,'wait',$4,$4,$5)`, [libA, version.id, studentA, owner, subKey]))
+      .toContain('assignment context must reference a current or future class');
+
+    const makeSeries = async (teacherId: number) => {
+      const [series] = await q.query(
+        `INSERT INTO ser(kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date,title)
+         VALUES ('class',$1,$2,'online',600,660,'WEEKLY:MO',$3::date,'배정 수업') RETURNING id`,
+        [subKey, teacherId, EFFECTIVE_ON],
+      );
+      await q.query(`INSERT INTO ser_stu(ser_id,student_id,from_date) VALUES ($1,$2,$3::date)`, [series.id, studentA, EFFECTIVE_ON]);
+    };
+    await makeSeries(teacherOverride);
+    await makeSeries(managerRecipient);
+
+    expect((await svc().assignmentOptions()).contexts).toEqual(expect.arrayContaining([
+      expect.objectContaining({ teacherId: teacherOverride, subKey, studentId: studentA, grade: 'G9' }),
+      expect.objectContaining({ teacherId: managerRecipient, subKey, studentId: studentA, grade: 'G9' }),
+    ]));
+
+    const requestKey = '00000000-0000-4000-8000-000000000771';
+    const command = {
+      libId: libA, versId: version.id, studentId: studentA, teacherId: teacherOverride,
+      subKey, requestKey, reason: 'Reading 기초 보강', form: 'pdf',
+    } as const;
+    const made = await svc().createAssignment(owner, command);
+    expect(made).toMatchObject({
+      version: 1, state: 'wait', teacherId: teacherOverride, teacherName: '자료 권한 강사',
+      subKey, subName: '배정 과목', versId: version.id, reason: 'Reading 기초 보강', form: 'pdf',
+    });
+    expect((await svc().createAssignment(owner, command)).id).toBe(made.id);
+    await expect(svc().createAssignment(owner, { ...command, reason: '다른 내용' }))
+      .rejects.toMatchObject({ response: { code: 'BOOK_ASSIGNMENT_REQUEST_KEY_REUSED' } });
+    await expect(svc().createAssignment(owner, { ...command, requestKey: '00000000-0000-4000-8000-000000000772' }))
+      .rejects.toMatchObject({ response: { code: 'BOOK_ASSIGNMENT_ALREADY_ACTIVE' } });
+
+    const second = await svc().createAssignment(owner, {
+      ...command, teacherId: managerRecipient, requestKey: '00000000-0000-4000-8000-000000000773',
+    });
+    expect(second).toMatchObject({ state: 'wait', teacherId: managerRecipient, version: 1 });
+    expect(Number((await q.query(`SELECT count(*)::int AS n FROM issue WHERE student_id=$1 AND lib_id=$2 AND state='wait'`, [studentA, libA]))[0].n)).toBe(2);
+
+    await q.query('SAVEPOINT assignment_down_refusal');
+    await expect(new BookAssignmentWriter1766600000000().down(q))
+      .rejects.toThrow('would discard assignment identity or request history');
+    await q.query('ROLLBACK TO SAVEPOINT assignment_down_refusal');
+
+    await svc().addVersion(owner, libA, { edition: 'v2' });
+
+    expect(await blockedBy(q,
+      `UPDATE issue SET state='auto',approved_by=$2 WHERE id=$1`, [made.id, owner]))
+      .toContain('assignment row version must increase by exactly one');
+    await expect(svc().transitionIssue(owner, made.id, 'auto', undefined, 9))
+      .rejects.toMatchObject({ response: { code: 'BOOK_ISSUE_VERSION_CONFLICT', actualVersion: 1 } });
+    expect(await svc().transitionIssue(owner, made.id, 'auto', undefined, 1))
+      .toMatchObject({ state: 'auto', version: 2, versId: version.id, edition: 'assignment-v1' });
+    await expect(svc().createAssignment(owner, command))
+      .rejects.toMatchObject({ response: { code: 'BOOK_ASSIGNMENT_REPLAY_STALE' } });
+
+    expect((await q.query(`SELECT action FROM hist WHERE entity='issue' AND ref_id=$1`, [made.id])))
+      .toEqual([{ action: 'book_assign' }]);
+    const [notice] = await q.query(`SELECT title,body,link FROM noti WHERE to_id=$1 AND from_id=$2 AND title=$3`,
+      [teacherOverride, owner, '교재 배정']);
+    expect(notice).toMatchObject({ link: `/teacher/guides?studentId=${studentA}` });
+    expect(String(notice.body)).toContain('TE 파일 없음');
   });
 
   it('대기 배부는 사유·처리자·시각을 남기고 취소·반려로 종료한 뒤만 같은 교재를 재배부한다', async () => {

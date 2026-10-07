@@ -7,6 +7,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
+import { createHash } from 'node:crypto';
 import { Lead } from '../../entities';
 import { HIST_ACTIONS, histLabel, histSql } from '../../lib/history';
 import { todayKst } from '../../lib/kst';
@@ -19,7 +20,7 @@ import {
   progressIssue, progressPercent, type IssueState, type IssueTransitionState, type PackState, type PackType,
 } from '../../lib/book';
 import type {
-  BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookHoldersDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto,
+  BookAssignmentCreateDto, BookAssignmentOptionsDto, BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookHoldersDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto,
   BookPackDto, BookPackPatchDto, BookPacksDto, BookPackWriteDto,
   BookPatchDto, BookShelfQueryDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto,
 } from './books.dto';
@@ -28,8 +29,10 @@ import { prepareFile, storePreparedFile } from '../files/files.service';
 import { FILE_MAX_BYTES } from '../files/files.dto';
 import { canCeoReceivePack, hasPerm, isRole } from '../../common/perm';
 import { audit } from '../../lib/audit';
+import { projectEducationGrades, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
 
 type R = Record<string, unknown>;
+type IssueAssignmentContext = { teacherId: number; subKey: string; versId?: number };
 
 const optText = (v: unknown): string | null => (v === null || v === undefined ? null : String(v));
 const optNum = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
@@ -610,7 +613,9 @@ export class BooksService {
     const pages = r.pages == null ? null : Number(r.pages);
     const page = r.progress_page == null ? null : Number(r.progress_page);
     return {
-      id: Number(r.id), libId: Number(r.lib_id), studentId: Number(r.student_id),
+      id: Number(r.id), version: Number(r.row_version ?? 1), libId: Number(r.lib_id), studentId: Number(r.student_id),
+      teacherId: optNum(r.teacher_id), teacherName: optText(r.teacher_name),
+      subKey: optText(r.sub_key), subName: optText(r.sub_name),
       versId: r.vers_id == null ? null : Number(r.vers_id), state, stateLabel: ISSUE_STATE_LABEL[state],
       edition: (r.edition as string) ?? null,
       fileUrl: (r.file_url as string) ?? null,
@@ -633,11 +638,12 @@ export class BooksService {
   async tracking(): Promise<BookTrackingDto> {
     const rows = await this.q(
       `SELECT s.id AS student_id, s.name, s.grade,
-              i.id, i.lib_id, i.vers_id, i.state, i.progress_page, i.reason, i.form,
+              i.id, i.lib_id, i.vers_id, i.state, i.progress_page, i.reason, i.form, i.row_version,
+              i.teacher_id, i.sub_key, assigned.name AS teacher_name, assigned_sub.name AS sub_name,
               to_char(i.issued_on,'YYYY-MM-DD') AS issued_on, to_char(i.returned_on,'YYYY-MM-DD') AS returned_on,
               l.title, l.pages, l.level AS lib_level, l.book_level, v.edition, v.file_url, v.se_file_id, v.te_file_id,
-              (SELECT st.name FROM ser_stu ss JOIN ser sr ON sr.id=ss.ser_id JOIN staff st ON st.id=sr.teacher_id
-                WHERE ss.student_id=s.id ORDER BY sr.id LIMIT 1) AS teacher_name,
+              COALESCE(assigned.name,(SELECT st.name FROM ser_stu ss JOIN ser sr ON sr.id=ss.ser_id JOIN staff st ON st.id=sr.teacher_id
+                WHERE ss.student_id=s.id ORDER BY sr.id LIMIT 1)) AS student_teacher_name,
               (SELECT to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI')
                  FROM ser_stu ss JOIN ser_occ o ON o.ser_id=ss.ser_id AND ${serStuOn('ss', 'o.on_date')}
                 WHERE ss.student_id=s.id AND o.canceled=false AND lower(o.span) >= now()
@@ -647,6 +653,8 @@ export class BooksService {
          LEFT JOIN issue i ON i.student_id=s.id AND ${issueActiveSql('i')}
          LEFT JOIN lib l ON l.id=i.lib_id
          LEFT JOIN vers v ON v.id=i.vers_id
+         LEFT JOIN staff assigned ON assigned.id=i.teacher_id
+         LEFT JOIN sub assigned_sub ON assigned_sub.key=i.sub_key
         ORDER BY s.name, i.id`,
     );
     const students = new Map<number, BookTrackingDto['students'][number]>();
@@ -655,7 +663,7 @@ export class BooksService {
       const id = Number(r.student_id);
       const row = students.get(id) ?? {
         id, name: String(r.name), grade: (r.grade as string) ?? null,
-        teacherName: (r.teacher_name as string) ?? null, nextLesson: (r.next_lesson as string) ?? null,
+        teacherName: (r.student_teacher_name as string) ?? null, nextLesson: (r.next_lesson as string) ?? null,
         issues: [], reissueCandidates: [], todos: [], todoLabel: '정상',
       };
       guideStateByStudent.set(id, (r.guide_state as string) ?? null);
@@ -664,9 +672,12 @@ export class BooksService {
       students.set(id, row);
     }
     const reissueRows = await this.q(
-      `SELECT i.*,l.pages,v.edition,v.file_url,v.se_file_id,v.te_file_id,ended.name AS ended_by_name
+      `SELECT i.*,l.pages,v.edition,v.file_url,v.se_file_id,v.te_file_id,ended.name AS ended_by_name,
+              assigned.name AS teacher_name,assigned_sub.name AS sub_name
          FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
          LEFT JOIN staff ended ON ended.id=i.ended_by
+         LEFT JOIN staff assigned ON assigned.id=i.teacher_id
+         LEFT JOIN sub assigned_sub ON assigned_sub.key=i.sub_key
         WHERE i.state IN ('returned','canceled','rejected')
           AND NOT EXISTS (SELECT 1 FROM issue child WHERE child.reissued_from=i.id)
           AND NOT EXISTS (
@@ -760,6 +771,91 @@ export class BooksService {
   }
 
   /**
+   * BOC-04D-03b 권고안: 배정 선택지는 전체 직원·전체 학생 목록이 아니라 실제 현재/장래
+   * 수업 관계에서 만든다. 관리자·매니저도 수업을 맡으면 포함되고, 직책으로 강사를 추정하지 않는다.
+   */
+  async assignmentOptions(): Promise<BookAssignmentOptionsDto> {
+    const rows = await this.q(
+      `SELECT DISTINCT s.teacher_id,t.name AS teacher_name,s.sub_key,sb.name AS sub_name,
+              ss.student_id,st.name AS student_name,st.grade
+         FROM ser s
+         JOIN kind k ON k.key=s.kind_key AND k.grp='lesson'
+         JOIN staff t ON t.id=s.teacher_id AND t.active
+         JOIN sub sb ON sb.key=s.sub_key AND sb.active
+         JOIN ser_stu ss ON ss.ser_id=s.id
+         JOIN stu st ON st.id=ss.student_id
+        WHERE GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date),$1::date)
+              <= LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))
+        ORDER BY t.name,sb.name,st.name,ss.student_id`,
+      [todayKst()],
+    );
+    return {
+      contexts: rows.map((r) => ({
+        teacherId: Number(r.teacher_id), teacherName: String(r.teacher_name),
+        subKey: String(r.sub_key), subName: String(r.sub_name),
+        studentId: Number(r.student_id), studentName: String(r.student_name), grade: optText(r.grade),
+      })),
+    };
+  }
+
+  /** 최신 배정 창의 strict writer — 상태는 화면이 고르지 않고 언제나 wait에서 시작한다. */
+  async createAssignment(userId: number, dto: BookAssignmentCreateDto): Promise<BookIssueDto> {
+    const reason = dto.reason?.trim() || null;
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      libId: dto.libId, versId: dto.versId, studentId: dto.studentId,
+      teacherId: dto.teacherId, subKey: dto.subKey, reissuedFrom: dto.reissuedFrom ?? null,
+      reason, form: dto.form ?? null,
+    })).digest('hex');
+    return this.anyRepo.manager.transaction(async (m) => {
+      // 같은 요청의 동시 도착도 원장 조회보다 먼저 한 줄로 세운다(Guide writer와 같은 잠금 순서).
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`book-assignment:${dto.requestKey}`]);
+      const [prior] = await m.query(
+        `SELECT r.issue_id,r.fingerprint,r.result_version,r.actor_id,i.row_version
+           FROM issue_write_req r JOIN issue i ON i.id=r.issue_id WHERE r.request_key=$1`,
+        [dto.requestKey],
+      ) as Array<{ issue_id: string; fingerprint: string; result_version: number; actor_id: string; row_version: number }>;
+      if (prior) {
+        if (prior.fingerprint !== fingerprint || Number(prior.actor_id) !== userId) {
+          throw new ConflictException({
+            code: 'BOOK_ASSIGNMENT_REQUEST_KEY_REUSED',
+            message: '같은 교재 배정 요청 키를 다른 내용에 다시 사용할 수 없습니다',
+          });
+        }
+        if (Number(prior.row_version) !== Number(prior.result_version)) {
+          throw new ConflictException({
+            code: 'BOOK_ASSIGNMENT_REPLAY_STALE',
+            message: '이 요청 뒤에 교재 배정 상태가 바뀌었습니다 — 최신 내용을 다시 확인하세요',
+          });
+        }
+        return this.issueById(m, Number(prior.issue_id));
+      }
+
+      const made = await this.createIssueWithin(m, userId, {
+        libId: dto.libId, studentId: dto.studentId, state: 'wait',
+        reissuedFrom: dto.reissuedFrom, reason: reason ?? undefined, form: dto.form,
+      }, { teacherId: dto.teacherId, subKey: dto.subKey, versId: dto.versId });
+      await m.query(
+        `INSERT INTO issue_write_req(request_key,issue_id,fingerprint,result_version,actor_id)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [dto.requestKey, made.id, fingerprint, made.version, userId],
+      );
+      return made;
+    });
+  }
+
+  private async issueById(m: EntityManager, id: number): Promise<BookIssueDto> {
+    const [row] = await m.query(
+      `SELECT i.*,l.pages,v.edition,v.file_url,v.se_file_id,v.te_file_id,
+              t.name AS teacher_name,sb.name AS sub_name,ended.name AS ended_by_name
+         FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
+         LEFT JOIN staff t ON t.id=i.teacher_id LEFT JOIN sub sb ON sb.key=i.sub_key
+         LEFT JOIN staff ended ON ended.id=i.ended_by WHERE i.id=$1`, [id],
+    ) as R[];
+    if (!row) throw new NotFoundException('배부 내역을 찾을 수 없습니다');
+    return this.issueDto(row);
+  }
+
+  /**
    * 배부 창의 진단 한 줄 — 그 학생의 **최신 상담 진단**을 읽기만 한다 (N-62 ① · DQ1).
    * 읽는 함수는 §44 와 같은 한 벌(`latestLeadDiagForStudent`)이다 — 점수를 배부에 옮겨 적지 않는다(D-R22).
    */
@@ -774,12 +870,74 @@ export class BooksService {
   }
 
   /** 바깥 트랜잭션 안에서 한 건 — 등록 확정(C91)이 교재 요청(wait)을 같은 트랜잭션에서 남긴다 */
-  async createIssueWithin(m: EntityManager, userId: number, dto: BookIssueCreateDto): Promise<BookIssueDto> {
+  async createIssueWithin(
+    m: EntityManager,
+    userId: number,
+    dto: BookIssueCreateDto,
+    assignment?: IssueAssignmentContext,
+  ): Promise<BookIssueDto> {
     {
-      const [lib] = await m.query(`SELECT id,pages FROM lib WHERE id=$1 FOR UPDATE`, [dto.libId]) as R[];
+      const [lib] = await m.query(
+        `SELECT id,title,pages,sub_key,grade_from,grade_to FROM lib WHERE id=$1 FOR UPDATE`, [dto.libId],
+      ) as R[];
       if (!lib) throw new NotFoundException('교재를 찾을 수 없습니다');
-      const stu = await m.query(`SELECT id FROM stu WHERE id=$1 FOR KEY SHARE`, [dto.studentId]);
-      if (!stu.length) throw new NotFoundException('학생을 찾을 수 없습니다');
+      const [stu] = await m.query(`SELECT id,name,grade FROM stu WHERE id=$1 FOR KEY SHARE`, [dto.studentId]) as R[];
+      if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
+      // legacy·문맥 배정이 동시에 들어와도 학생+교재 중복 검사가 엇갈리지 않게 같은 잠금을 쓴다.
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`book-active:${dto.studentId}:${dto.libId}`]);
+
+      let teacherName: string | null = null;
+      let subName: string | null = null;
+      if (assignment) {
+        const [teacher] = await m.query(`SELECT id,name FROM staff WHERE id=$1 AND active FOR KEY SHARE`, [assignment.teacherId]) as R[];
+        if (!teacher) throw new ConflictException({ code: 'BOOK_ASSIGNMENT_TEACHER_INACTIVE', message: '현재 활동 중인 담당자만 배정할 수 있습니다' });
+        const [subject] = await m.query(`SELECT key,name FROM sub WHERE key=$1 AND active FOR KEY SHARE`, [assignment.subKey]) as R[];
+        if (!subject) throw new ConflictException({ code: 'BOOK_ASSIGNMENT_SUBJECT_INACTIVE', message: '현재 사용 중인 과목만 배정할 수 있습니다' });
+        if (String(lib.sub_key ?? '') !== assignment.subKey) {
+          throw new ConflictException({ code: 'BOOK_ASSIGNMENT_SUBJECT_MISMATCH', message: '수업 과목과 교재 연결 과목이 다릅니다' });
+        }
+        const [context] = await m.query(
+          `SELECT s.id FROM ser s JOIN kind k ON k.key=s.kind_key AND k.grp='lesson'
+             JOIN ser_stu ss ON ss.ser_id=s.id
+            WHERE s.teacher_id=$1 AND s.sub_key=$2 AND ss.student_id=$3
+              AND GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date),$4::date)
+                  <= LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))
+            ORDER BY s.id LIMIT 1 FOR KEY SHARE OF s,ss`,
+          [assignment.teacherId, assignment.subKey, dto.studentId, todayKst()],
+        ) as R[];
+        if (!context) {
+          throw new ConflictException({ code: 'BOOK_ASSIGNMENT_CLASS_MISMATCH', message: '선택한 강사·과목·학생의 현재 또는 장래 수업을 찾을 수 없습니다' });
+        }
+        const gradeRows = await m.query(
+          `SELECT education_system AS "educationSystem",code,active FROM education_grade ORDER BY education_system,sort`,
+        ) as EducationGradeSourceRow[];
+        const grade = projectEducationGrades(gradeRows).find((row) => row.value === String(stu.grade ?? ''))?.sort ?? null;
+        if (grade === null || !bookGradeCovers(optNum(lib.grade_from), optNum(lib.grade_to), grade)) {
+          throw new ConflictException({ code: 'BOOK_ASSIGNMENT_GRADE_MISMATCH', message: '학생 학년과 교재 학년 범위가 맞지 않습니다' });
+        }
+        const [legacyActive] = await m.query(
+          `SELECT i.id FROM issue i WHERE i.student_id=$1 AND i.lib_id=$2 AND ${issueActiveSql('i')}
+             AND i.teacher_id IS NULL AND i.sub_key IS NULL LIMIT 1 FOR UPDATE`,
+          [dto.studentId, dto.libId],
+        ) as R[];
+        if (legacyActive) {
+          throw new ConflictException({
+            code: 'BOOK_ASSIGNMENT_LEGACY_ACTIVE',
+            message: '담당 수업 정보가 없는 기존 활성 배부를 먼저 종료하거나 정리해 주세요',
+          });
+        }
+        teacherName = String(teacher.name);
+        subName = String(subject.name);
+      } else {
+        const [contextualActive] = await m.query(
+          `SELECT i.id FROM issue i WHERE i.student_id=$1 AND i.lib_id=$2 AND ${issueActiveSql('i')}
+             AND i.teacher_id IS NOT NULL AND i.sub_key IS NOT NULL LIMIT 1 FOR UPDATE`,
+          [dto.studentId, dto.libId],
+        ) as R[];
+        if (contextualActive) {
+          throw new ConflictException({ code: 'BOOK_ALREADY_ACTIVE', message: '이 학생에게 이미 배부 중인 교재입니다' });
+        }
+      }
       if (dto.reissuedFrom !== undefined) {
         const [source] = await m.query(
           `SELECT parent.*,child.id AS reissued_to
@@ -801,10 +959,11 @@ export class BooksService {
         const [terminal] = await m.query(
           `SELECT parent.id FROM issue parent
             WHERE parent.student_id=$1 AND parent.lib_id=$2
+              AND ($3::bigint IS NULL OR (parent.teacher_id=$3 AND parent.sub_key=$4))
               AND parent.state IN ('returned','canceled','rejected')
               AND NOT EXISTS (SELECT 1 FROM issue child WHERE child.reissued_from=parent.id)
             ORDER BY COALESCE(parent.ended_at,parent.returned_on::timestamptz) DESC,parent.id DESC LIMIT 1`,
-          [dto.studentId, dto.libId],
+          [dto.studentId, dto.libId, assignment?.teacherId ?? null, assignment?.subKey ?? null],
         ) as R[];
         if (terminal) {
           throw new ConflictException({
@@ -835,18 +994,42 @@ export class BooksService {
           FOR KEY SHARE`,
         [dto.libId, snapshotOn],
       ) as R[];
+      if (assignment?.versId !== undefined && Number(version?.id) !== assignment.versId) {
+        throw new ConflictException({
+          code: 'BOOK_ASSIGNMENT_VERSION_STALE',
+          message: '선택한 뒤 교재 판이 바뀌었습니다 — 최신 판을 다시 선택해 주세요',
+        });
+      }
+      if (assignment && !version) {
+        throw new ConflictException({ code: 'BOOK_ASSIGNMENT_VERSION_MISSING', message: '현재 사용할 수 있는 교재 판이 없습니다' });
+      }
       // 배부 사유(N-62) — 적은 것만 남긴다. 빈 칸은 NULL 이다(사유를 지어 넣지 않는다)
       const reason = dto.reason?.trim() || null;
       try {
         const [row] = await m.query(
-          `INSERT INTO issue (lib_id,vers_id,student_id,issued_on,state,progress_page,requested_by,approved_by,delivered_at,reason,form,reissued_from)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *, NULL::int AS pages`,
-          [dto.libId, version?.id ?? null, dto.studentId, issuedOn, state, dto.progressPage ?? null,
-           userId, state === 'ok' ? userId : null, state === 'ok' ? new Date() : null, reason, dto.form ?? null, dto.reissuedFrom ?? null],
+          `INSERT INTO issue (lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state,progress_page,requested_by,approved_by,delivered_at,reason,form,reissued_from)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *, NULL::int AS pages`,
+          [dto.libId, version?.id ?? null, dto.studentId, assignment?.teacherId ?? null, assignment?.subKey ?? null,
+           issuedOn, state, dto.progressPage ?? null, userId, state === 'ok' ? userId : null,
+           state === 'ok' ? new Date() : null, reason, dto.form ?? null, dto.reissuedFrom ?? null],
         ) as R[];
-        if (state === 'ok') await m.query(histSql(), ['issue', Number(row.id), 'book_issue', userId]);
+        if (assignment) {
+          await m.query(histSql(), ['issue', Number(row.id), 'book_assign', userId]);
+          if (assignment.teacherId !== userId) {
+            await m.query(
+              `INSERT INTO noti(to_id,from_id,title,body,link,category)
+               VALUES ($1,$2,$3,$4,$5,'request')`,
+              [assignment.teacherId, userId, NOTI_TITLE.bookAssigned,
+                `${String(stu.name)} · ${String(lib.title)} 배정 승인 대기${version?.te_file_id == null ? ' · TE 파일 없음' : ''}`,
+                `/teacher/guides?studentId=${dto.studentId}`],
+            );
+          }
+        } else if (state === 'ok') {
+          await m.query(histSql(), ['issue', Number(row.id), 'book_issue', userId]);
+        }
         return this.issueDto({
           ...row,
+          teacher_name: teacherName, sub_name: subName,
           edition: version?.edition ?? null,
           file_url: version?.file_url ?? null,
           se_file_id: version?.se_file_id ?? null,
@@ -855,8 +1038,12 @@ export class BooksService {
         });
       } catch (e) {
         if ((e as { code?: string; constraint?: string }).code === '23505') {
-          if ((e as { constraint?: string }).constraint === 'issue_reissued_from_unique') {
+          const constraint = (e as { constraint?: string }).constraint;
+          if (constraint === 'issue_reissued_from_unique') {
             throw new ConflictException({ code: 'BOOK_ALREADY_REISSUED', message: '이미 재배부한 내역입니다' });
+          }
+          if (constraint === 'issue_active_assignment_unique') {
+            throw new ConflictException({ code: 'BOOK_ASSIGNMENT_ALREADY_ACTIVE', message: '이 수업에 이미 활성 교재 배정이 있습니다' });
           }
           throw new ConflictException({ code: 'BOOK_ALREADY_ACTIVE', message: '이 학생에게 이미 배부 중인 교재입니다' });
         }
@@ -865,15 +1052,24 @@ export class BooksService {
     }
   }
 
-  async transitionIssue(userId: number, id: number, target: IssueTransitionState, reason?: string): Promise<BookIssueDto> {
+  async transitionIssue(
+    userId: number,
+    id: number,
+    target: IssueTransitionState,
+    reason?: string,
+    expectedVersion?: number,
+  ): Promise<BookIssueDto> {
     return this.anyRepo.manager.transaction(async (m) => {
       const [r] = await m.query(
-        `SELECT i.*,l.pages,v.edition,v.file_url,v.se_file_id,v.te_file_id
+        `SELECT i.*,l.pages,v.edition,v.file_url,v.se_file_id,v.te_file_id,
+                t.name AS teacher_name,sb.name AS sub_name
            FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
+           LEFT JOIN staff t ON t.id=i.teacher_id LEFT JOIN sub sb ON sb.key=i.sub_key
           WHERE i.id=$1 FOR UPDATE OF i`,
         [id],
       ) as R[];
       if (!r) throw new NotFoundException('배부 내역을 찾을 수 없습니다');
+      this.assertIssueVersion(r, expectedVersion);
       const why = issueTransitionIssue(String(r.state) as IssueState, target);
       if (why) throw new ConflictException({ code: 'ISSUE_INVALID_TRANSITION', message: why });
 
@@ -881,7 +1077,7 @@ export class BooksService {
         const endedReason = reason?.trim();
         if (!endedReason) throw new BadRequestException({ code: 'ISSUE_END_REASON_REQUIRED', message: '취소·반려 사유를 적어 주세요' });
         const [ended] = writtenRows<R>(await m.query(
-          `UPDATE issue SET state=$2,ended_reason=$3,ended_by=$4,ended_at=now()
+          `UPDATE issue SET state=$2,ended_reason=$3,ended_by=$4,ended_at=now(),row_version=row_version+1
             WHERE id=$1 RETURNING *`,
           [id, target, endedReason, userId],
         ));
@@ -899,18 +1095,30 @@ export class BooksService {
       if (reason !== undefined) throw new BadRequestException('취소·반려 사유는 종료 상태에서만 적을 수 있습니다');
 
       if (target === 'auto') {
-        await m.query(`UPDATE issue SET state='auto',approved_by=$2 WHERE id=$1`, [id, userId]);
-        return this.issueDto({ ...r, state: 'auto', approved_by: userId });
+        const [changed] = writtenRows<R>(await m.query(
+          `UPDATE issue SET state='auto',approved_by=$2,row_version=row_version+1 WHERE id=$1 RETURNING row_version`, [id, userId],
+        ));
+        return this.issueDto({ ...r, state: 'auto', approved_by: userId, row_version: changed.row_version });
       }
       const issuedOn = todayKst();
-      await m.query(
-        `UPDATE issue SET state='ok',issued_on=$2::date,approved_by=COALESCE(approved_by,$3),delivered_at=now()
-          WHERE id=$1`,
+      const [changed] = writtenRows<R>(await m.query(
+        `UPDATE issue SET state='ok',issued_on=$2::date,approved_by=COALESCE(approved_by,$3),delivered_at=now(),row_version=row_version+1
+          WHERE id=$1 RETURNING row_version`,
         [id, issuedOn, userId],
-      );
+      ));
       await m.query(histSql(), ['issue', id, 'book_issue', userId]);
-      return this.issueDto({ ...r, state: 'ok', issued_on: issuedOn, approved_by: r.approved_by ?? userId });
+      return this.issueDto({ ...r, state: 'ok', issued_on: issuedOn, approved_by: r.approved_by ?? userId, row_version: changed.row_version });
     });
+  }
+
+  private assertIssueVersion(row: R, expectedVersion?: number): void {
+    if (expectedVersion !== undefined && Number(row.row_version ?? 1) !== expectedVersion) {
+      throw new ConflictException({
+        code: 'BOOK_ISSUE_VERSION_CONFLICT',
+        message: '다른 사용자가 교재 배정 상태를 바꿨습니다 — 최신 내용을 다시 확인하세요',
+        actualVersion: Number(row.row_version ?? 1),
+      });
+    }
   }
 
   /**
@@ -922,7 +1130,7 @@ export class BooksService {
    *
    * `hist` 가 아닌 이유는 `patchBook` 과 같다 — 원문 §40 칩에 없는 낱말이고 before/after 칸도 없다.
    */
-  async updateIssueProgress(userId: number, id: number, page: number): Promise<BookIssueDto> {
+  async updateIssueProgress(userId: number, id: number, page: number, expectedVersion?: number): Promise<BookIssueDto> {
     return this.anyRepo.manager.transaction(async (m) => {
       const [ref] = await m.query(`SELECT lib_id FROM issue WHERE id=$1`, [id]) as R[];
       if (!ref) throw new NotFoundException('배부 내역을 찾을 수 없습니다');
@@ -931,30 +1139,36 @@ export class BooksService {
       if (!r || Number(r.lib_id) !== Number(lib.id)) {
         throw new ConflictException({ code: 'BOOK_ISSUE_MOVED', message: '배부 교재가 바뀌어 다시 시도해 주세요' });
       }
+      this.assertIssueVersion(r, expectedVersion);
       if (r.state !== 'ok') throw new ConflictException({ code: 'BOOK_NOT_DELIVERED', message: '배부 완료한 교재만 진도를 바꿀 수 있습니다' });
       const why = progressIssue(page, lib.pages == null ? null : Number(lib.pages));
       if (why) throw new BadRequestException(why);
-      await m.query(`UPDATE issue SET progress_page=$2 WHERE id=$1`, [id, page]);
+      const [changed] = writtenRows<R>(await m.query(
+        `UPDATE issue SET progress_page=$2,row_version=row_version+1 WHERE id=$1 RETURNING row_version`, [id, page],
+      ));
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'ISSUE',$2,'progress',$3::jsonb,$4::jsonb)`,
         [userId, id,
           JSON.stringify({ progressPage: r.progress_page == null ? null : Number(r.progress_page) }),
           JSON.stringify({ progressPage: page })],
       );
-      return this.issueDto({ ...r, pages: lib.pages, progress_page: page });
+      return this.issueDto({ ...r, pages: lib.pages, progress_page: page, row_version: changed.row_version });
     });
   }
 
-  async returnIssue(userId: number, id: number, returnedOn = todayKst()): Promise<BookIssueDto> {
+  async returnIssue(userId: number, id: number, returnedOn = todayKst(), expectedVersion?: number): Promise<BookIssueDto> {
     return this.anyRepo.manager.transaction(async (m) => {
       const [r] = await m.query(`SELECT i.*,l.pages FROM issue i JOIN lib l ON l.id=i.lib_id WHERE i.id=$1 FOR UPDATE`, [id]) as R[];
       if (!r) throw new NotFoundException('배부 내역을 찾을 수 없습니다');
+      this.assertIssueVersion(r, expectedVersion);
       if (r.state === 'returned') throw new ConflictException({ code: 'BOOK_ALREADY_RETURNED', message: '이미 회수한 교재입니다' });
       if (!r.issued_on) throw new ConflictException({ code: 'BOOK_NOT_DELIVERED', message: '배부 전 교재는 회수할 수 없습니다' });
       if (returnedOn < dbDay(r.issued_on)) throw new BadRequestException('회수일은 배부일보다 빠를 수 없습니다');
-      await m.query(`UPDATE issue SET state='returned',returned_on=$2 WHERE id=$1`, [id, returnedOn]);
+      const [changed] = writtenRows<R>(await m.query(
+        `UPDATE issue SET state='returned',returned_on=$2,row_version=row_version+1 WHERE id=$1 RETURNING row_version`, [id, returnedOn],
+      ));
       await m.query(histSql(), ['issue', id, 'book_drop', userId]);
-      return this.issueDto({ ...r, state: 'returned', returned_on: returnedOn });
+      return this.issueDto({ ...r, state: 'returned', returned_on: returnedOn, row_version: changed.row_version });
     });
   }
 

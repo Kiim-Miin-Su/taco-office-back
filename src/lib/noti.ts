@@ -107,6 +107,7 @@ export const NOTI_TITLE = {
   wageChanged: '시급 변경',
   // 교재 · 안내
   bookReceived: '자료 수령 확인',
+  bookAssigned: '교재 배정',
   bookNeeded: '교재 배정 필요',
   guideNeeded: '수업 안내 필요',
   guideArrived: '수업 안내 도착',

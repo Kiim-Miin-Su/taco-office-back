@@ -7,7 +7,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiTags } from '@nestjs/swagger';
 import {
-  BookHistoryDto, BookHistoryQueryDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto, BookIssueProgressDto,
+  BookAssignmentCreateDto, BookAssignmentOptionsDto, BookHistoryDto, BookHistoryQueryDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto, BookIssueProgressDto,
   BookIssueReturnDto, BookIssueTransitionDto, BookPackDto, BookPackPatchDto, BookPacksDto, BookPackWriteDto,
   BookHoldersDto, BookPatchDto, BookShelfQueryDto, BookTrackingDto, BookVersionCreateDto, BookVersionDto, BooksDto, BookWriteDto, BookWriteResultDto,
 } from './books.dto';
@@ -56,6 +56,11 @@ export class BooksController {
   @ApiOkResponse({ type: BookTrackingDto })
   async tracking(): Promise<BookTrackingDto> { return this.svc.tracking(); }
 
+  @Get('assignment-options')
+  @ApiOperation({ summary: '교재 배정 선택지 — 실제 현재·장래 수업의 강사·과목·학생 조합 (BOC-04D-03b)' })
+  @ApiOkResponse({ type: BookAssignmentOptionsDto })
+  async assignmentOptions(): Promise<BookAssignmentOptionsDto> { return this.svc.assignmentOptions(); }
+
   @Get('students/:studentId/latest-diag')
   @ApiOperation({ summary: '배부 창의 진단 한 줄 — 그 학생의 최신 상담 진단 (N-62 · 보여 주기만)' })
   @ApiOkResponse({ type: BookIssueDiagDto })
@@ -72,6 +77,15 @@ export class BooksController {
     return this.svc.createIssue(user.id, dto);
   }
 
+  @Post('assignments')
+  @Perm('canCrudAll')
+  @ApiOperation({ summary: '교재 배정 — 실제 수업 문맥·현재 판·멱등 키를 보존하고 승인 대기로 생성 (BOC-04D-03b)' })
+  @ApiCreatedResponse({ type: BookIssueDto })
+  @ApiConflictResponse({ description: 'BOOK_ASSIGNMENT_* — 수업/과목/학년/판/중복/멱등/재생 충돌' })
+  async assignment(@CurrentUser() user: RequestUser, @Body() dto: BookAssignmentCreateDto): Promise<BookIssueDto> {
+    return this.svc.createAssignment(user.id, dto);
+  }
+
   @Patch('issues/:id/state')
   @Perm('canCrudAll')
   @ApiOperation({ summary: '교재 배부 상태 전이 — 승인·전달 전이 또는 사유가 남는 취소·반려 (§38)' })
@@ -82,7 +96,7 @@ export class BooksController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: BookIssueTransitionDto,
   ): Promise<BookIssueDto> {
-    return this.svc.transitionIssue(user.id, id, dto.state, dto.reason);
+    return this.svc.transitionIssue(user.id, id, dto.state, dto.reason, dto.expectedVersion);
   }
 
   @Patch('issues/:id/progress')
@@ -90,7 +104,7 @@ export class BooksController {
   @ApiOperation({ summary: '숙제 페이지 기준 교재 진도 갱신 (§38)' })
   @ApiOkResponse({ type: BookIssueDto })
   async progress(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: BookIssueProgressDto): Promise<BookIssueDto> {
-    return this.svc.updateIssueProgress(user.id, id, dto.progressPage);
+    return this.svc.updateIssueProgress(user.id, id, dto.progressPage, dto.expectedVersion);
   }
 
   @Post('issues/:id/return')
@@ -99,7 +113,7 @@ export class BooksController {
   @ApiOperation({ summary: '교재 회수 (§38·§40)' })
   @ApiOkResponse({ type: BookIssueDto })
   async returnIssue(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: BookIssueReturnDto): Promise<BookIssueDto> {
-    return this.svc.returnIssue(user.id, id, dto.returnedOn);
+    return this.svc.returnIssue(user.id, id, dto.returnedOn, dto.expectedVersion);
   }
 
   /* ══ §40 교재 이력 — 읽기만 한다 ═════════════════════════════════════════ */

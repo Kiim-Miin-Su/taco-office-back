@@ -92,8 +92,9 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'등록 시험','#333333',4,'lesson',true), ($2,'단가 없음','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND, KIND_NORATE]);
     await q(`INSERT INTO sub (key,name,color) VALUES ($1,'등록 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
     await q(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, $3, '2026-01-01', 1), ($1, NULL, $4, '2026-01-01', 1)`, [KIND, SUB, RATE_SUB, RATE_KIND]);
-    const [lib] = await q<{ id: string }>(`INSERT INTO lib (code, title, sub_key, pages) VALUES ('EN-TEST', '등록 교재', $1, 100) RETURNING id`, [SUB]);
+    const [lib] = await q<{ id: string }>(`INSERT INTO lib (code, title, sub_key, pages, grade_from, grade_to) VALUES ('EN-TEST', '등록 교재', $1, 100, 9, 12) RETURNING id`, [SUB]);
     LIB = Number(lib.id);
+    await q(`INSERT INTO vers (lib_id,edition,from_date) VALUES ($1,'v1','2026-01-01')`, [LIB]);
     await q(
       `INSERT INTO lead (id, name, school, stage, owner_id) VALUES
          ($1,'등록B','테스트고','hold',$6), ($2,'등록C',NULL,'first',$6), ($3,'등록A','테스트고','second',$6), ($4,'등록D',NULL,'failed',$6), ($5,'등록E',NULL,'second',$6)`,
@@ -145,6 +146,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     }
     await q(`DELETE FROM lead_stage_log WHERE lead_id = ANY($1)`, [Object.values(LEADS)]);
     await q(`DELETE FROM lead WHERE id = ANY($1)`, [Object.values(LEADS)]);
+    await q(`DELETE FROM vers WHERE lib_id IN (SELECT id FROM lib WHERE code = 'EN-TEST')`);
     await q(`DELETE FROM lib WHERE code = 'EN-TEST'`);
     await q(`DELETE FROM rate WHERE kind_key = ANY($1)`, [[KIND, KIND_NORATE]]);
     await q(`DELETE FROM unav WHERE staff_id = $1`, [TEACHER]);
@@ -199,7 +201,10 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(Number(inv.amount)).toBe(RATE_SUB * r.series[0].monthCount + RATE_KIND * r.series[1].monthCount);
     expect(inv.n).toBe(2);
     // 교재 — 첫 줄은 요청(wait), 둘째 줄은 배정 필요
-    expect(r.bookIssues).toEqual([expect.objectContaining({ libId: LIB, studentId: r.studentId, state: 'wait' })]);
+    expect(r.bookIssues).toEqual([expect.objectContaining({
+      libId: LIB, studentId: r.studentId, state: 'wait', version: 1,
+      teacherId: TEACHER, teacherName: '등록강사', subKey: SUB, subName: '등록 과목', edition: 'v1',
+    })]);
     expect(r.booksMissing).toEqual([{ kindKey: KIND, subKey: null, label: '등록 시험' }]);
     expect(r.unavailable).toEqual([]);
     // W11 · N-86 — 사후 관리: 해피콜(첫 실제 수업 + 7일) · 첫 월간(다음 달 같은 날)을 상담 담당의 할 일로 · 같은 트랜잭션
@@ -223,13 +228,17 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     expect(log.after.serIds).toHaveLength(2);
     expect(log.after.invId).toBe(r.invoice.id);
     // 알림 — 강사에게 첫 수업일과 함께 · 대표(관리자)에게 등록 확정 · 교재 배정 필요
-    const teacherNoti = await q<{ body: string; link: string }>(`SELECT body, link FROM noti WHERE to_id = $1 AND from_id = $2`, [TEACHER, ADMIN]);
-    expect(teacherNoti).toHaveLength(1);
-    expect(teacherNoti[0]!.body).toContain('등록B');
+    const teacherNoti = await q<{ body: string; link: string }>(`SELECT body, link FROM noti WHERE to_id = $1 AND from_id = $2 ORDER BY id`, [TEACHER, ADMIN]);
+    expect(teacherNoti).toHaveLength(2);
+    expect(teacherNoti).toEqual(expect.arrayContaining([
+      expect.objectContaining({ body: expect.stringContaining('등록 교재 배정 승인 대기'), link: expect.stringContaining('/teacher/guides?studentId=') }),
+      expect.objectContaining({ body: expect.stringContaining('새 학생 등록 — 등록B') }),
+    ]));
     // 강사에게는 그 강사의 두 규칙 중 **가장 이른** 첫 수업일 — 금 규칙이 월 규칙보다 이를 수 있다
     const earliest = [FIRST_MON, firstDow(START, 5)].sort()[0]!;
-    expect(teacherNoti[0]!.body).toContain(`첫 수업 ${+earliest.slice(5, 7)}/${+earliest.slice(8, 10)}`);
-    expect(teacherNoti[0]!.link).toBe(`/schedule?date=${earliest}`);
+    const scheduleNotice = teacherNoti.find((notice) => notice.body.startsWith('새 학생 등록'))!;
+    expect(scheduleNotice.body).toContain(`첫 수업 ${+earliest.slice(5, 7)}/${+earliest.slice(8, 10)}`);
+    expect(scheduleNotice.link).toBe(`/schedule?date=${earliest}`);
     const ceoNotis = await q<{ body: string; link: string }>(`SELECT body, link FROM noti WHERE to_id = $1 AND from_id = $2 ORDER BY id`, [CEO, ADMIN]);
     expect(ceoNotis.map((n) => n.link)).toEqual(['/ops', '/books']);
     expect(ceoNotis[0]!.body).toContain('등록 확정 — 등록B');

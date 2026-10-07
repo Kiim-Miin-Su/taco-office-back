@@ -32,6 +32,7 @@ export type HistEntity = (typeof HIST_ENTITIES)[number];
  * 칩에 없는 낱말을 쌓으면 그 줄은 「전체」에만 보이고 어느 칩에도 안 걸린다.
  */
 export const HIST_ACTIONS = [
+  'book_assign',   // 교재 배정(승인 대기 생성)
   'book_issue',    // 교재 배부
   'book_upload',   // 교재 업로드 (새 판)
   'book_swap',     // 교재 교체 (판 바꾸기)
@@ -46,6 +47,7 @@ export type HistAction = (typeof HIST_ACTIONS)[number];
 
 /** 칩과 줄에 쓰는 이름 — 낱말을 만드는 자리는 여기 하나다 */
 export const HIST_ACTION_LABEL: Record<HistAction, string> = {
+  book_assign: '교재 배정',
   book_issue: '교재 배부',
   book_upload: '교재 업로드',
   book_swap: '교재 교체',
