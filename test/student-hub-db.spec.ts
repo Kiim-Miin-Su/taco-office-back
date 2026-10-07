@@ -82,4 +82,11 @@ suite('BOC-04D-01 학생 허브 실제 DB', () => {
     expect(other.comments).toMatchObject({ total: 0, items: [] });
     expect(other.invoices).toMatchObject({ total: 0, items: [] });
   });
+
+  it('인수인계 본문은 학생 목록 검색어가 아니며 이름·학교·학년 검색 경계를 넘지 않는다', async () => {
+    const result = await service.list({ q: 'note 17' });
+    expect(result).toMatchObject({ total: 0, items: [] });
+    const [stored] = await ds.query(`SELECT count(*)::int AS count FROM note WHERE student_id=$1 AND body=$2`, [studentId, 'BOC04 note 17']) as Array<{ count: number }>;
+    expect(stored.count).toBe(1);
+  });
 });

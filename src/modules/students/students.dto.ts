@@ -116,10 +116,10 @@ export class StudentHubReportDto {
 
 export class StudentHubCommentDto {
   @ApiProperty(ID_SCHEMA) id!: number;
-  @ApiProperty({ type: Number, nullable: true }) serId!: number | null;
-  @ApiProperty(ID_SCHEMA) authorId!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '인수인계가 연결된 수업. 학생 공통 인수인계면 null' }) serId!: number | null;
+  @ApiProperty({ ...ID_SCHEMA, description: '인수인계를 남긴 관리자·매니저 actor' }) authorId!: number;
   @ApiProperty({ type: String, nullable: true }) authorName!: string | null;
-  @ApiProperty() body!: string;
+  @ApiProperty({ description: '담당 강사와 공유하는 인수인계 본문. 학부모 전달·검색·파일·알림에는 사용하지 않는다' }) body!: string;
   @ApiProperty() createdAt!: string;
 }
 

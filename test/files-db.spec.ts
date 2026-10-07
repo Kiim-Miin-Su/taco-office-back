@@ -17,7 +17,7 @@ import { createHash } from 'node:crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { FileRow } from '../src/entities';
-import { FILE_MAX_BYTES } from '../src/modules/files/files.dto';
+import { FILE_KINDS, FILE_MAX_BYTES } from '../src/modules/files/files.dto';
 import { canReadStoredFile, decodeBase64, FilesService, fileUrlOf, mimeOf } from '../src/modules/files/files.service';
 import { assertScratch, TEST_URL } from './db';
 
@@ -75,6 +75,10 @@ describe('FILE kind별 중앙 권한표', () => {
    */
   const noMoney = { ...manager, perms: { canMoney: false } };
   const noHide = { ...manager, perms: { canHide: false } };
+
+  it('인수인계와 관리자 전용 특이사항은 FILE kind를 만들지 않는다', () => {
+    expect(FILE_KINDS).not.toEqual(expect.arrayContaining(['note', 'handover-note', 'private-note']));
+  });
 
   it('교재 파일은 실제 판 연결과 관리자 화면·자료 권한을 모두 요구한다', () => {
     expect(canReadStoredFile(manager, 'lib-te', facts)).toBe(false);

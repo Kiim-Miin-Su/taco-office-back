@@ -30,6 +30,7 @@ describe('학생 읽기 — 현재 DB 사실만', () => {
     expect(query.mock.calls[0][1]).toEqual(["%' OR true --", 'G8', 10, 10]);
     expect(query.mock.calls[0][0]).toContain('ORDER BY s.created_at DESC NULLS LAST, s.id DESC');
     expect(query.mock.calls[0][0]).not.toContain("%' OR true --");
+    expect(query.mock.calls[0][0]).not.toMatch(/\bFROM\s+note\b|\bJOIN\s+note\b/i);
     expect(result).toMatchObject({ total: 21, page: 2, pageSize: 10, grades: ['G8'], educationGrades: expect.any(Array),
       items: [{ id: 21, grade: null, gradeDisplay: null, school: null, createdAt: row.created_at }] });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE|password|phone/);

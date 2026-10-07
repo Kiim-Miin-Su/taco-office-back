@@ -46,6 +46,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
   const PW = 'report-delivery-1234';
   const MANAGER_EMAIL = `delivery-manager-${RUN}@t.kr`;
   const TEACHER_EMAIL = `delivery-teacher-${RUN}@t.kr`;
+  const HANDOVER_SECRET = `BOC04D02-HANDOVER-${RUN}`;
   let rep1 = 0;
   let rep2 = 0;
   let rep3 = 0;
@@ -74,6 +75,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
       [[STUDENT_READY, STUDENT_BLOCKED]]);
     await q(`DELETE FROM rsend WHERE student_id = ANY($1)`, [[STUDENT_READY, STUDENT_BLOCKED]]);
     await q(`DELETE FROM file WHERE name LIKE $1`, [`report-delivery-${RUN}-%`]);
+    await q(`DELETE FROM note WHERE student_id = ANY($1)`, [[STUDENT_READY, STUDENT_BLOCKED]]);
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1))`, [[SER1, SER2, SER3]]);
     await q(`DELETE FROM rep WHERE ser_id = ANY($1)`, [[SER1, SER2, SER3]]);
     await q(`DELETE FROM ser_occ WHERE ser_id = ANY($1)`, [[SER1, SER2, SER3]]);
@@ -109,6 +111,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     );
     await q(`INSERT INTO stu (id,name,grade) VALUES ($1,'준비학생','고2'), ($2,'차단학생','고1')`,
       [STUDENT_READY, STUDENT_BLOCKED]);
+    await q(`INSERT INTO note(student_id,author_id,body) VALUES ($1,$2,$3)`, [STUDENT_READY, MANAGER, HANDOVER_SECRET]);
     for (const [serId, start] of [[SER1, 540], [SER2, 600], [SER3, 660]]) {
       await q(
         `INSERT INTO ser (id,kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date,to_date,title)
@@ -543,6 +546,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     expect(res.body).toMatchObject({ onDate: DATE, total: 2, remaining: 1, blocked: 1 });
     expect(res.body.students.find((item: { student: { id: number } }) => item.student.id === STUDENT_READY))
       .toMatchObject({ canSend: true, blockedCount: 0 });
+    expect(JSON.stringify(res.body)).not.toContain(HANDOVER_SECRET);
     expect(res.body.students.find((item: { student: { id: number } }) => item.student.id === STUDENT_BLOCKED))
       .toMatchObject({ canSend: false, blockedCount: 1 });
   });
@@ -676,6 +680,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
     expect(saved.body).toContain(`② 수업: ${DATE} · AP Chem · 09:00–10:00`);
     expect(saved.body).toContain(`② 수업: ${DATE} · AP Chem · 10:00–11:00`);
     expect(saved.body).toContain('③ 수업 내용');
+    expect(saved.body).not.toContain(HANDOVER_SECRET);
     expect(await q(`SELECT 1 FROM pdflog WHERE kind='report_png' AND ref_id=$1`, [first.body.item.id]))
       .toHaveLength(2);
     // 7-3 ① F3(W11 R2) — 장마다 제 리포트(rep_id). 업로드 차례 = 리포트 차례라 파일 이름이 그 리포트의 것이다

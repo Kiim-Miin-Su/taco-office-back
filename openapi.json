@@ -49707,19 +49707,22 @@
           },
           "serId": {
             "type": "number",
-            "nullable": true
+            "nullable": true,
+            "description": "인수인계가 연결된 수업. 학생 공통 인수인계면 null"
           },
           "authorId": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "인수인계를 남긴 관리자·매니저 actor"
           },
           "authorName": {
             "type": "string",
             "nullable": true
           },
           "body": {
-            "type": "string"
+            "type": "string",
+            "description": "담당 강사와 공유하는 인수인계 본문. 학부모 전달·검색·파일·알림에는 사용하지 않는다"
           },
           "createdAt": {
             "type": "string"

@@ -803,9 +803,11 @@ export class StudentsService {
   }
 
   /**
-   * BOC-04D-01 권고안 채택(2026-10-08): 학생 허브는 이름 검색이나 Front 합계 대신
+   * BOC-04D-01·02 권고안 채택(2026-10-08): 학생 허브는 이름 검색이나 Front 합계 대신
    * exact studentId와 같은 REPEATABLE READ snapshot에서 도메인 원장을 읽는다. 리포트 본문,
    * 보호자 연락처, 감사 before/after, 계좌·파일 URL은 이 projection에 넣지 않는다.
+   * comments의 NOTE는 관리자→담당 강사 인수인계다. 강사 작성·관리자 전용 특이사항은 별도 계약이며
+   * NOTE나 이 projection에 합치지 않는다. 변경 시 BOC-04D-02·BOC-09D-03과 두 수정사항 대조표를 함께 고친다.
    */
   async hub(
     { id: studentId }: StudentReadParamsDto,

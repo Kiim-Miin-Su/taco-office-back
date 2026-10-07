@@ -75,6 +75,10 @@ describe('학생 목록/상세 HTTP 계약', () => {
     expect(doc.components?.schemas?.StudentHubDto).not.toHaveProperty('properties.phone');
     expect(doc.components?.schemas?.StudentHubReportDto).not.toHaveProperty('properties.body');
     expect(doc.components?.schemas?.StudentHubInvoiceDto).not.toHaveProperty('properties.proofUrl');
+    expect(doc.components?.schemas?.StudentHubCommentDto).toMatchObject({
+      properties: { body: { description: expect.stringContaining('학부모 전달·검색·파일·알림에는 사용하지 않는다') } },
+    });
+    expect(Object.keys(doc.components?.schemas ?? {})).not.toContain('TeacherPrivateNoteDto');
     expect(doc.components?.schemas?.StudentDirectoryDto).toHaveProperty('properties.educationGrades');
     expect(doc.components?.schemas?.StudentDirectoryRowDto).toHaveProperty('properties.gradeDisplay');
     expect(doc.components?.schemas?.EducationGradeOptionDto).toMatchObject({ required: [

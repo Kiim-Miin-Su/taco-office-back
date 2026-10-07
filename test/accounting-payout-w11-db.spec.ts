@@ -451,7 +451,8 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
   it('⑤ 인수인계 메모 — 관리자 · 매니저가 한 줄 더하고 §79 카드와 그 학생을 맡은 강사의 안내 카드가 읽는다 (학부모 · 남의 강사 X)', async () => {
     const s = await lesson(TEACHER, 540, M2_MON, [STU]);
     const note = (body: Record<string, unknown>, t = tokens.mgr) => api('post', '/schedule/tracking/notes', t).send(body);
-    const made1 = (await note({ studentId: STU, serId: s, body: '  집중 시간이 짧아 20분마다 쉬게 해 주세요  ' }).expect(201)).body;
+    const privacyBody = '집중 시간이 짧아 20분마다 쉬게 해 주세요';
+    const made1 = (await note({ studentId: STU, serId: s, body: `  ${privacyBody}  ` }).expect(201)).body;
     expect(made1).toMatchObject({ body: '집중 시간이 짧아 20분마다 쉬게 해 주세요', authorName: '정산W11매니저' });
     expect(typeof made1.createdAt).toBe('string');
     await note({ studentId: STU, serId: s, body: '학부모 요청 — 숙제 양 줄이기' }).expect(201);
@@ -477,6 +478,10 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
     // 그 주에 이 학생을 맡지 않은 강사에게는 없다
     const other = (await api('get', `/teacher/guides?week=${M2_MON}`, tokens.teacherB).expect(200)).body;
     expect(other.students.find((x: { studentId: number }) => x.studentId === STU)).toBeUndefined();
+    const [signals] = await q<{ staff: number; parent: number }>(`SELECT
+      (SELECT count(*)::int FROM noti WHERE body=$1 OR title=$1) AS staff,
+      (SELECT count(*)::int FROM pnoti WHERE body=$1) AS parent`, [privacyBody]);
+    expect(signals).toEqual({ staff: 0, parent: 0 });
   });
 
   /* ── ⑥ 지출 감사 · 영수증 (N-73 · PB-26 · PB-12-5) ────────────────────── */

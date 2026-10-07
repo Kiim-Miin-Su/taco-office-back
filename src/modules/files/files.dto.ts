@@ -10,6 +10,8 @@ import { IsIn, IsInt, IsString, MaxLength, Min } from 'class-validator';
 /**
  * 파일이 어디에 쓰이나 — **열람 권한이 이 낱말로 갈린다** (D6: 담당 강사와 매니저만 열람).
  * 낱말을 늘리는 것은 그 쓰임을 실제로 붙일 때다. 지금 없는 쓰임을 미리 적지 않는다.
+ * BOC-04D-02 권고안: 인수인계 NOTE와 강사 작성·관리자 전용 특이사항은 파일 kind가 아니며,
+ * 후속 첨부 요구가 생기기 전에는 raw FILE API로 본문이나 첨부를 만들지 않는다.
  */
 export const FILE_KINDS = [
   'cons-contract',   // §30 계약서 초안·수정본

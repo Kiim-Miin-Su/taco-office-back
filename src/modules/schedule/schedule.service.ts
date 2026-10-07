@@ -774,6 +774,8 @@ export class ScheduleService {
    * **더하기만 있다** — 고치기 · 지우기는 경로가 없다(누가 언제 무엇을 넘겼는지가 그대로 남아야 한다 · 표는 note).
    * 수업 맥락(`serId`)을 주면 그 학생이 그 명단에 있어야 한다 — 남의 수업 카드에서 엉뚱한 학생에게 적지 않게.
    * 읽는 쪽은 §79 카드(관리자 · 매니저)와 그 학생을 맡은 강사의 수업 안내 학생 카드뿐이다. 학부모에게는 나가지 않는다.
+   * BOC-04D-02 권고안 채택(2026-10-08): 이 NOTE는 강사 작성·관리자 전용 특이사항이 아니다.
+   * 후속 BOC-09D-03은 전용 원장/DTO를 사용하며 이 writer·NOTE·알림·파일 경로를 재사용하지 않는다.
    */
   async addNote(authorId: number, dto: NoteCreateDto): Promise<TrackedNoteDto> {
     const body = dto.body.trim();
