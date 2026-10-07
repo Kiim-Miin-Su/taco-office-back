@@ -190,6 +190,15 @@ d('회계 청구 경합 — 중복 발행 · 이월과 다음 달 발행 (7-3 �
         await ds.query(`DELETE FROM ser WHERE id = ANY($1::bigint[])`, [series]);
       }
       if (students.length) await ds.query(`DELETE FROM stu_pause WHERE student_id = ANY($1::bigint[])`, [students]);
+      if (students.length) {
+        // append-only 제품 원장은 이 스위트가 만든 임시 학생만 owner 권한으로 정리한다.
+        await ds.query(`ALTER TABLE stu_status_event DISABLE TRIGGER stu_status_event_no_change`);
+        try {
+          await ds.query(`DELETE FROM stu_status_event WHERE student_id = ANY($1::bigint[])`, [students]);
+        } finally {
+          await ds.query(`ALTER TABLE stu_status_event ENABLE TRIGGER stu_status_event_no_change`);
+        }
+      }
       if (students.length) await ds.query(`DELETE FROM stu WHERE id = ANY($1::bigint[])`, [students]);
       await ds.query(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
       await ds.query(`DELETE FROM sub WHERE key = $1 AND NOT EXISTS (SELECT 1 FROM ser WHERE sub_key = $1)`, [SUB]);

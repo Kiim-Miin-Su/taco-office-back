@@ -278,6 +278,24 @@ export class StudentWithdrawService {
       `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STU',$2,'withdraw',NULL,$3::jsonb)`,
       [userId, dto.studentId, JSON.stringify({ endedOn: dto.endedOn, serIds, remainingCount, refundTotal, invoices: invOut.map((i) => i.id), reason, enrollmentsEnded, cplId })],
     );
+    /*
+     * BOC-03D-03b 권고안 채택(2026-10-07): status는 ENR.ended_on이나 LOG에서 추정하지 않는다.
+     * 「이 수업만」 종료(serIds 지정)는 학생 전체 퇴원이 아니므로 상태를 바꾸지 않고,
+     * 전체 종료만 같은 transaction의 append-only status event로 명시한다.
+     */
+    if (dto.serIds === undefined) {
+      const [current] = (await m.query(
+        `SELECT to_status FROM stu_status_event WHERE student_id=$1 ORDER BY id DESC LIMIT 1`, [dto.studentId],
+      )) as Array<{ to_status: string }>;
+      if (current?.to_status === 'withdrawn') {
+        throw new ConflictException({ code: 'STUDENT_ALREADY_WITHDRAWN', message: '이미 퇴원 상태인 학생입니다' });
+      }
+      await m.query(`INSERT INTO stu_status_event (
+        student_id, action, from_status, to_status, effective_on, reason, actor_id
+      ) VALUES ($1,'withdraw',$2,'withdrawn',$3::date,$4,$5)`, [
+        dto.studentId, current?.to_status ?? null, dto.endedOn, reason, userId,
+      ]);
+    }
     if (cplId !== null) {
       // 컴플레인 쪽 감사 줄 — §67 컴플레인 이력이 이 줄을 읽어 「환불 N원」을 세운다(모양은 lib/complaint-words.CPL_REFUND_LOG 의 계약)
       await m.query(

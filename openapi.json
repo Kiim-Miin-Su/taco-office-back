@@ -22674,6 +22674,318 @@
         ]
       }
     },
+    "/students/reactivation-candidates": {
+      "get": {
+        "description": "BOC-03D-03b 권고안: 휴원·수강 종료·현재 명단으로 상태를 추정하지 않는다. event가 없는 기존 학생은 unknown으로 반환한다.",
+        "operationId": "StudentsController_reactivationCandidates",
+        "parameters": [
+          {
+            "name": "q",
+            "required": false,
+            "in": "query",
+            "description": "이름·영문명 literal 검색. 빈 값은 최신 후보 10명.",
+            "schema": {
+              "maxLength": 80,
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 1000000,
+              "default": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentReactivationCandidatesDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "기존 학생 재활성화 후보 — 명시 상태·현재 profile version",
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/students/{id}/reactivate/preview": {
+      "post": {
+        "operationId": "StudentsController_previewReactivation",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentReactivationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentReactivationPreviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "STUDENT_ID_MISMATCH | STUDENT_REACTIVATION_LEAD_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRegistrationConflictDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "기존 학생 재활성화 미리보기 — 쓰기 0, requestKey 미소모",
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/students/{id}/reactivate": {
+      "post": {
+        "description": "신규 STU·수강·수업·청구·교재·안내·첫 수업 task를 만들지 않는다. 같은 actor/requestKey/body 재시도는 기존 결과를 반환한다.",
+        "operationId": "StudentsController_reactivate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentReactivationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentReactivationResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "STUDENT_ID_MISMATCH | STUDENT_REACTIVATION_LEAD_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRegistrationConflictDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "기존 학생 재활성화 — 같은 STU·새 상담·상태/감사 한 transaction",
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/students/{id}": {
       "get": {
         "operationId": "StudentsController_detail",
@@ -47466,6 +47778,377 @@
           "educationGrades"
         ]
       },
+      "StudentReactivationCandidateDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "englishName": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80
+          },
+          "gradeLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "schoolLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "withdrawn",
+              "active",
+              "unknown"
+            ],
+            "description": "권위 상태 projection. 휴원·수강 종료로 추정하지 않는다."
+          },
+          "reactivatable": {
+            "type": "boolean",
+            "description": "status=withdrawn이고 별도 차단 사유가 없을 때만 true"
+          },
+          "blockedCode": {
+            "type": "string",
+            "nullable": true,
+            "description": "ACTIVE_STUDENT | STATUS_UNKNOWN. 화면이 상태를 다시 계산하지 않는다."
+          },
+          "profileVersion": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "description": "재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string. 기존 학생의 0도 유효하다."
+          },
+          "lastConsultationAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "withdrawnOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "명시적으로 저장된 마지막 퇴원일. 수강 종료일 추정값이 아니다."
+          }
+        },
+        "required": [
+          "studentId",
+          "name",
+          "englishName",
+          "gradeLabel",
+          "schoolLabel",
+          "status",
+          "reactivatable",
+          "blockedCode",
+          "profileVersion",
+          "lastConsultationAt",
+          "withdrawnOn"
+        ]
+      },
+      "StudentReactivationCandidatesDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentReactivationCandidateDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "pageSize": {
+            "type": "integer",
+            "enum": [
+              10
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize"
+        ]
+      },
+      "StudentReactivationConsultationDto": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "visit",
+              "phone",
+              "kakao",
+              "other"
+            ],
+            "description": "수동 상담 정보의 방문·전화·카카오톡·기타"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "nextOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "다음 일정은 선택. 작성자·작성시각은 서버가 기록한다."
+          }
+        },
+        "required": [
+          "channel",
+          "content",
+          "nextOn"
+        ]
+      },
+      "StudentReactivationDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 actor·같은 정규화 body 재시도는 기존 결과, 다른 body는 409"
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedProfileVersion": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "description": "후보 응답의 profileVersion. 기존 학생의 0도 허용하며 JS number로 변환하지 않는다."
+          },
+          "entrySource": {
+            "type": "string",
+            "enum": [
+              "students",
+              "schedule",
+              "intake"
+            ]
+          },
+          "leadId": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "description": "intake 진입의 원천 lead. 재활성화 상담 record 자체의 identity는 아니다."
+          },
+          "reactivateOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "KST 업무 재활성화일. 과거/미래 허용 범위는 Backend가 검증한다."
+          },
+          "consultation": {
+            "description": "기존 접촉 원장을 오변환하지 않고 새 수동 상담 정보를 한 transaction에 기록한다.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StudentReactivationConsultationDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "requestKey",
+          "studentId",
+          "expectedProfileVersion",
+          "entrySource",
+          "leadId",
+          "reactivateOn",
+          "consultation"
+        ]
+      },
+      "StudentReactivationEffectsDto": {
+        "type": "object",
+        "properties": {
+          "studentCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "enrollmentCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "lessonCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "invoiceCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "bookIssueCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "guideCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "firstLessonTaskCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "studentCreated",
+          "enrollmentCreated",
+          "lessonCreated",
+          "invoiceCreated",
+          "bookIssueCreated",
+          "guideCreated",
+          "firstLessonTaskCreated"
+        ]
+      },
+      "StudentReactivationPreviewDto": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "profileVersion": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "consultationId": {
+            "type": "number",
+            "nullable": true,
+            "enum": [
+              null
+            ]
+          },
+          "effects": {
+            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
+          }
+        },
+        "required": [
+          "saved",
+          "requestKey",
+          "studentId",
+          "profileVersion",
+          "consultationId",
+          "effects"
+        ]
+      },
+      "StudentRegistrationConflictDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "공용 오류 코드. HTTP status와 함께 판정한다.",
+            "enum": [
+              "STUDENT_CREATE_REQUEST_KEY_REUSED",
+              "STUDENT_REACTIVATION_REQUEST_KEY_REUSED",
+              "STUDENT_PROFILE_VERSION_CONFLICT",
+              "STUDENT_DUPLICATE",
+              "STUDENT_SAME_NAME",
+              "STUDENT_REGISTRATION_OPTION_INACTIVE",
+              "STUDENT_REGISTRATION_REFERENCE_NOT_FOUND",
+              "STUDENT_REGISTRATION_PERIOD_CONFLICT",
+              "STUDENT_REACTIVATION_ACTIVE",
+              "STUDENT_REACTIVATION_STATUS_UNKNOWN",
+              "STUDENT_REACTIVATION_LEAD_CHANGED",
+              "STUDENT_REACTIVATION_LEAD_LINKED"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "재조회·수정 방법을 설명하는 사용자 안내. PII·현재 row 원문은 포함하지 않는다."
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ]
+      },
+      "StudentReactivationResultDto": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "profileVersion": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "consultationId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "reactivatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "effects": {
+            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
+          }
+        },
+        "required": [
+          "saved",
+          "requestKey",
+          "studentId",
+          "profileVersion",
+          "consultationId",
+          "replayed",
+          "reactivatedAt",
+          "effects"
+        ]
+      },
       "StudentGuardianSummaryDto": {
         "type": "object",
         "properties": {
@@ -48599,377 +49282,6 @@
             "default": 1
           }
         }
-      },
-      "StudentReactivationCandidateDto": {
-        "type": "object",
-        "properties": {
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "name": {
-            "type": "string",
-            "maxLength": 40
-          },
-          "englishName": {
-            "type": "string",
-            "nullable": true,
-            "maxLength": 80
-          },
-          "gradeLabel": {
-            "type": "string",
-            "nullable": true
-          },
-          "schoolLabel": {
-            "type": "string",
-            "nullable": true
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "withdrawn",
-              "active",
-              "unknown"
-            ],
-            "description": "권위 상태 projection. 휴원·수강 종료로 추정하지 않는다."
-          },
-          "reactivatable": {
-            "type": "boolean",
-            "description": "status=withdrawn이고 별도 차단 사유가 없을 때만 true"
-          },
-          "blockedCode": {
-            "type": "string",
-            "nullable": true,
-            "description": "ACTIVE_STUDENT | STATUS_UNKNOWN. 화면이 상태를 다시 계산하지 않는다."
-          },
-          "profileVersion": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$",
-            "description": "재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string. 기존 학생의 0도 유효하다."
-          },
-          "lastConsultationAt": {
-            "type": "string",
-            "format": "date-time",
-            "nullable": true
-          },
-          "withdrawnOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true,
-            "description": "명시적으로 저장된 마지막 퇴원일. 수강 종료일 추정값이 아니다."
-          }
-        },
-        "required": [
-          "studentId",
-          "name",
-          "englishName",
-          "gradeLabel",
-          "schoolLabel",
-          "status",
-          "reactivatable",
-          "blockedCode",
-          "profileVersion",
-          "lastConsultationAt",
-          "withdrawnOn"
-        ]
-      },
-      "StudentReactivationCandidatesDto": {
-        "type": "object",
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentReactivationCandidateDto"
-            }
-          },
-          "total": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "pageSize": {
-            "type": "integer",
-            "enum": [
-              10
-            ]
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "pageSize"
-        ]
-      },
-      "StudentReactivationConsultationDto": {
-        "type": "object",
-        "properties": {
-          "channel": {
-            "type": "string",
-            "enum": [
-              "visit",
-              "phone",
-              "kakao",
-              "other"
-            ],
-            "description": "수동 상담 정보의 방문·전화·카카오톡·기타"
-          },
-          "content": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "nextOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true,
-            "description": "다음 일정은 선택. 작성자·작성시각은 서버가 기록한다."
-          }
-        },
-        "required": [
-          "channel",
-          "content",
-          "nextOn"
-        ]
-      },
-      "StudentReactivationDto": {
-        "type": "object",
-        "properties": {
-          "requestKey": {
-            "type": "string",
-            "format": "uuid",
-            "description": "같은 actor·같은 정규화 body 재시도는 기존 결과, 다른 body는 409"
-          },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "expectedProfileVersion": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$",
-            "description": "후보 응답의 profileVersion. 기존 학생의 0도 허용하며 JS number로 변환하지 않는다."
-          },
-          "entrySource": {
-            "type": "string",
-            "enum": [
-              "students",
-              "schedule",
-              "intake"
-            ]
-          },
-          "leadId": {
-            "type": "number",
-            "nullable": true,
-            "minimum": 1,
-            "description": "intake 진입의 원천 lead. 재활성화 상담 record 자체의 identity는 아니다."
-          },
-          "reactivateOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "KST 업무 재활성화일. 과거/미래 허용 범위는 Backend가 검증한다."
-          },
-          "consultation": {
-            "description": "기존 접촉 원장을 오변환하지 않고 새 수동 상담 정보를 한 transaction에 기록한다.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/StudentReactivationConsultationDto"
-              }
-            ]
-          }
-        },
-        "required": [
-          "requestKey",
-          "studentId",
-          "expectedProfileVersion",
-          "entrySource",
-          "leadId",
-          "reactivateOn",
-          "consultation"
-        ]
-      },
-      "StudentReactivationEffectsDto": {
-        "type": "object",
-        "properties": {
-          "studentCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "enrollmentCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "lessonCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "invoiceCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "bookIssueCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "guideCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "firstLessonTaskCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          }
-        },
-        "required": [
-          "studentCreated",
-          "enrollmentCreated",
-          "lessonCreated",
-          "invoiceCreated",
-          "bookIssueCreated",
-          "guideCreated",
-          "firstLessonTaskCreated"
-        ]
-      },
-      "StudentReactivationPreviewDto": {
-        "type": "object",
-        "properties": {
-          "saved": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "requestKey": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "profileVersion": {
-            "type": "string",
-            "pattern": "^[1-9][0-9]*$"
-          },
-          "consultationId": {
-            "type": "number",
-            "nullable": true,
-            "enum": [
-              null
-            ]
-          },
-          "effects": {
-            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
-          }
-        },
-        "required": [
-          "saved",
-          "requestKey",
-          "studentId",
-          "profileVersion",
-          "consultationId",
-          "effects"
-        ]
-      },
-      "StudentReactivationResultDto": {
-        "type": "object",
-        "properties": {
-          "saved": {
-            "type": "boolean",
-            "enum": [
-              true
-            ]
-          },
-          "requestKey": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "profileVersion": {
-            "type": "string",
-            "pattern": "^[1-9][0-9]*$"
-          },
-          "consultationId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "replayed": {
-            "type": "boolean"
-          },
-          "reactivatedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "effects": {
-            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
-          }
-        },
-        "required": [
-          "saved",
-          "requestKey",
-          "studentId",
-          "profileVersion",
-          "consultationId",
-          "replayed",
-          "reactivatedAt",
-          "effects"
-        ]
-      },
-      "StudentRegistrationConflictDto": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "description": "공용 오류 코드. HTTP status와 함께 판정한다.",
-            "enum": [
-              "STUDENT_CREATE_REQUEST_KEY_REUSED",
-              "STUDENT_REACTIVATION_REQUEST_KEY_REUSED",
-              "STUDENT_PROFILE_VERSION_CONFLICT",
-              "STUDENT_DUPLICATE",
-              "STUDENT_SAME_NAME",
-              "STUDENT_REGISTRATION_OPTION_INACTIVE",
-              "STUDENT_REGISTRATION_REFERENCE_NOT_FOUND",
-              "STUDENT_REGISTRATION_PERIOD_CONFLICT",
-              "STUDENT_REACTIVATION_ACTIVE",
-              "STUDENT_REACTIVATION_STATUS_UNKNOWN",
-              "STUDENT_REACTIVATION_LEAD_CHANGED",
-              "STUDENT_REACTIVATION_LEAD_LINKED"
-            ]
-          },
-          "message": {
-            "type": "string",
-            "description": "재조회·수정 방법을 설명하는 사용자 안내. PII·현재 row 원문은 포함하지 않는다."
-          }
-        },
-        "required": [
-          "code",
-          "message"
-        ]
       }
     }
   },

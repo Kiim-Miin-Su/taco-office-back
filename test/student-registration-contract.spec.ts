@@ -9,11 +9,14 @@ import { Test } from '@nestjs/testing';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { buildOpenApi } from '../src/openapi';
+import { PERM_KEY } from '../src/common/perm/perm.decorator';
+import { StudentsController } from '../src/modules/students/students.controller';
 import {
   StudentCreateDto,
   StudentReactivationDto,
   StudentSchoolCreateDto,
 } from '../src/modules/students/student-registration.dto';
+import { StudentsService } from '../src/modules/students/students.service';
 
 const KEY = '00000000-0000-4000-8000-000000000301';
 const period = { from: '2026-10-07', fromPrecision: 'day', to: null, toPrecision: null, memo: undefined };
@@ -48,7 +51,10 @@ describe('BOC-03D-01 학생 신규 등록 DTO/OpenAPI 계약', () => {
   let schemas: NonNullable<ReturnType<typeof buildOpenApi>['components']>['schemas'];
 
   beforeAll(async () => {
-    const module = await Test.createTestingModule({}).compile();
+    const module = await Test.createTestingModule({
+      controllers: [StudentsController],
+      providers: [{ provide: StudentsService, useValue: {} }],
+    }).compile();
     app = module.createNestApplication();
     await app.init();
     const doc = buildOpenApi(app);
@@ -130,7 +136,10 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
   let schemas: NonNullable<ReturnType<typeof buildOpenApi>['components']>['schemas'];
 
   beforeAll(async () => {
-    const module = await Test.createTestingModule({}).compile();
+    const module = await Test.createTestingModule({
+      controllers: [StudentsController],
+      providers: [{ provide: StudentsService, useValue: {} }],
+    }).compile();
     app = module.createNestApplication();
     await app.init();
     doc = buildOpenApi(app);
@@ -155,7 +164,7 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
     consultation: { channel: 'phone', content: '복귀 상담 완료', nextOn: null },
   };
 
-  it('같은 STU를 version과 새 상담으로 재활성화하되 runtime path는 아직 열지 않는다', async () => {
+  it('같은 STU를 version과 새 상담으로 재활성화하고 세 runtime path를 같은 권한 경계에 연다', async () => {
     expect(await validate(plainToInstance(StudentReactivationDto, reactivation))).toHaveLength(0);
     expect(schema('StudentReactivationDto').required).toEqual([
       'requestKey', 'studentId', 'expectedProfileVersion', 'entrySource', 'leadId',
@@ -163,8 +172,11 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
     ]);
     expect(schema('StudentReactivationDto').properties?.expectedProfileVersion)
       .toMatchObject({ type: 'string', pattern: '^(0|[1-9][0-9]*)$' });
-    expect(doc.paths['/students/reactivation-candidates']).toBeUndefined();
-    expect(doc.paths['/students/{id}/reactivate']).toBeUndefined();
+    expect(doc.paths['/students/reactivation-candidates']?.get).toBeDefined();
+    expect(doc.paths['/students/{id}/reactivate/preview']?.post).toBeDefined();
+    expect(doc.paths['/students/{id}/reactivate']?.post).toBeDefined();
+    expect(doc.paths['/students/{id}/reactivate']?.post?.responses?.['201']).toBeDefined();
+    expect(Reflect.getMetadata(PERM_KEY, StudentsController)).toEqual(['canAdminPage', 'canCrudAll']);
   });
 
   it('stale·잘못된 문맥·빈 상담을 DTO 경계에서 먼저 거절한다', async () => {

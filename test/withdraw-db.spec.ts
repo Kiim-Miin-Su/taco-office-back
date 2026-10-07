@@ -129,6 +129,13 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
   const made: number[] = [];
   afterEach(async () => {
     const stus = [STU_A, STU_B];
+    // append-only 상태 원장은 제품 경로에서 삭제할 수 없다. 이 스위트의 고정 fixture만 owner 권한으로 정리한다.
+    await q(`ALTER TABLE stu_status_event DISABLE TRIGGER stu_status_event_no_change`);
+    try {
+      await q(`DELETE FROM stu_status_event WHERE student_id = ANY($1)`, [stus]);
+    } finally {
+      await q(`ALTER TABLE stu_status_event ENABLE TRIGGER stu_status_event_no_change`);
+    }
     await q(`DELETE FROM month_close WHERE closed_by = $1`, [CEO]);
     await q(`DELETE FROM enr WHERE student_id = ANY($1)`, [stus]);
     await q(`DELETE FROM carry WHERE student_id = ANY($1)`, [stus]);
@@ -199,6 +206,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     expect(await q(`SELECT 1 FROM pay WHERE amount < 0 AND student_id = $1`, [STU_A])).toEqual([]);
     expect(await q(`SELECT 1 FROM enr WHERE student_id = $1 AND ended_on IS NOT NULL`, [STU_A])).toEqual([]);
     expect(await q(`SELECT 1 FROM log WHERE actor_id = $1 AND action = 'withdraw'`, [CEO])).toEqual([]);
+    expect(await q(`SELECT 1 FROM stu_status_event WHERE student_id = $1`, [STU_A])).toEqual([]);
 
     const res = await withdraw({ studentId: STU_A, endedOn, reason: '이사' }).expect(201);
     expect(res.body).toMatchObject({ preview: false, remainingCount: 3, refundTotal: DUO * 3, enrollmentsEnded: 1, reason: '이사' });
@@ -259,6 +267,8 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     expect(logs.map((l) => l.entity)).toEqual(['INV', 'STU']);
     expect(logs[0]!.after).toMatchObject({ refund: DUO * 3, removed: 3, endedOn });
     expect(logs[1]!.after).toMatchObject({ endedOn, remainingCount: 3, refundTotal: DUO * 3, reason: '이사', enrollmentsEnded: 1 });
+    expect(await q(`SELECT status FROM student_status_current WHERE student_id=$1`, [STU_A]))
+      .toEqual([{ status: 'withdrawn' }]);
 
     // 두 번은 409 — 종료할 수강이 없다
     const twice = await withdraw({ studentId: STU_A, endedOn }).expect(409);
@@ -277,6 +287,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     expect(res.body.invoices).toEqual([expect.objectContaining({ id: invA.id, amountAfter: SOLO * 5, refund: DUO * 5, voided: false, state: 'paid' })]);
     // 혼자 듣는 규칙은 그대로다
     expect(await q(`SELECT 1 FROM ser_stu WHERE student_id = $1 AND ser_id = ANY($2) AND to_date IS NULL`, [STU_A, solo])).toHaveLength(5);
+    expect(await q(`SELECT 1 FROM stu_status_event WHERE student_id=$1`, [STU_A])).toEqual([]);
     // 남은 규칙까지 종료하면 청구서는 0 원 — void 로 접히고 전액 환불
     const rest = await withdraw({ studentId: STU_A, endedOn }).expect(201);
     expect(rest.body.invoices).toEqual([expect.objectContaining({ id: invA.id, amountAfter: 0, refund: SOLO * 5, voided: true, state: 'void' })]);
@@ -287,6 +298,8 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     expect(inv.reason).toContain('수강 종료');
     const paid = await q<{ s: number }>(`SELECT COALESCE(sum(amount),0)::int AS s FROM pay WHERE inv_id = $1`, [invA.id]);
     expect(Number(paid[0]!.s)).toBe(0);
+    expect(await q(`SELECT status FROM student_status_current WHERE student_id=$1`, [STU_A]))
+      .toEqual([{ status: 'withdrawn' }]);
     // 잘못된 규칙 id 가 섞이면 400 · 없는 학생 404
     await withdraw({ studentId: STU_B, endedOn, serIds: [solo[0]] }).expect(400);
     await withdraw({ studentId: 99999999, endedOn }).expect(404);
