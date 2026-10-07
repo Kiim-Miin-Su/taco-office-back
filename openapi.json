@@ -31905,7 +31905,7 @@
           "decisionCount": {
             "type": "integer",
             "minimum": 0,
-            "description": "구조화된 결정 수"
+            "description": "속기록의 `[정한 것]` 머리말 수"
           },
           "taskCount": {
             "type": "integer",

@@ -57,6 +57,7 @@ export * from './log.entity';
 export * from './mfb.entity';
 export * from './mkt.entity';
 export * from './mtattd.entity';
+export * from './mtagenda.entity';
 export * from './mtrec.entity';
 export * from './note.entity';
 export * from './noti.entity';
@@ -168,6 +169,7 @@ import {
   Mfb,
   Mkt,
   Mtattd,
+  Mtagenda,
   Mtrec,
   Note,
   Noti,
@@ -278,6 +280,7 @@ export const ENTITIES = [
   Mfb,
   Mkt,
   Mtattd,
+  Mtagenda,
   Mtrec,
   Note,
   Noti,

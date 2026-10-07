@@ -780,7 +780,7 @@ export class MeetingMinutesSummaryDto {
   @ApiProperty({ type: String, format: 'date-time' }) writtenAt!: string;
   @ApiProperty({ type: 'integer', minimum: 1, description: '마지막 실제 저장 actor' }) writtenById!: number;
   @ApiProperty() writtenByName!: string;
-  @ApiProperty({ type: 'integer', minimum: 0, description: '구조화된 결정 수' }) decisionCount!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '속기록의 `[정한 것]` 머리말 수' }) decisionCount!: number;
   @ApiProperty({ type: 'integer', minimum: 0, description: '연결된 할 일 수' }) taskCount!: number;
   @ApiProperty({ type: 'integer', minimum: 0, description: '끝낸 할 일 수' }) taskDone!: number;
 }
