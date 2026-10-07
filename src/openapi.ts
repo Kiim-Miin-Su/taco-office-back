@@ -8,6 +8,16 @@ import { INestApplication } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ApiErrorDto } from './common/http.dto';
 import { REFRESH_COOKIE } from './auth/cookie';
+import {
+  MeetingAgendaDto,
+  MeetingAgendaImportDto,
+  MeetingAgendaImportResultDto,
+  MeetingAgendaSummaryDto,
+  MeetingAgendaWriteDto,
+  MeetingDetailDto,
+  MeetingDto,
+  MeetingMinutesSummaryDto,
+} from './modules/ops/ops.dto';
 
 /**
  * **DTO 가 단일 출처다.** 여기서 만든 openapi.json 을 프론트가 읽어 타입을 생성한다.
@@ -25,7 +35,24 @@ export function buildOpenApi(app: INestApplication) {
       status, type: ApiErrorDto, description: '공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.',
     })))
     .build();
-  const doc = SwaggerModule.createDocument(app, config, { extraModels: [ApiErrorDto] });
+  /*
+   * BO-Q13 DTO 단계: runtime endpoint보다 먼저 생성 계약을 Front에 전달한다.
+   * 실제 저장을 흉내 내지 않기 위해 controller path는 Backend 단계에서만 추가하고,
+   * 그 전에는 extraModels로 request/response schema만 생성한다.
+   */
+  const doc = SwaggerModule.createDocument(app, config, {
+    extraModels: [
+      ApiErrorDto,
+      MeetingAgendaSummaryDto,
+      MeetingMinutesSummaryDto,
+      MeetingAgendaDto,
+      MeetingAgendaWriteDto,
+      MeetingAgendaImportDto,
+      MeetingAgendaImportResultDto,
+      MeetingDto,
+      MeetingDetailDto,
+    ],
+  });
   SwaggerModule.setup('api/docs', app, doc);
   return doc;
 }

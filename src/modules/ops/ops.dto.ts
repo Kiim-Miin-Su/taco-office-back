@@ -755,6 +755,87 @@ export class PlanReviewDto {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 
+/**
+ * BO-Q13 (2026-10-07 사용자가 권고안을 채택해 확정) — 기존 `minutes`와 섞지 않는 별도 versioned agenda 계약.
+ * 정책을 바꿀 때는 docs/decisions/PLANNING-REQUIRED.md의 BO-Q13, Front `MeetingMinutesLedger.tsx`,
+ * 이후 service/migration의 BO-Q13 주석을 같은 변경에서 함께 수정한다.
+ *
+ * 이 DTO 청크는 생성 계약만 소유한다. endpoint/service/DB가 연결되기 전에는 agenda 저장 성공을 만들지 않는다.
+ */
+export class MeetingAgendaSummaryDto {
+  @ApiProperty({ maxLength: 240, description: '목록 미리보기 — 서버가 본문을 잘라 만든다' })
+  preview!: string;
+  @ApiProperty({ type: 'integer', minimum: 1, description: '상세 agenda와 같은 version' }) version!: number;
+  @ApiProperty({ type: String, format: 'date-time', description: '마지막 수정 시각' }) updatedAt!: string;
+  @ApiProperty({ type: 'integer', minimum: 1, description: '마지막 실제 수정 actor' }) updatedById!: number;
+  @ApiProperty({ description: '마지막 수정자 이름' }) updatedByName!: string;
+  @ApiProperty({ description: '실제 회의 시작 시각이 지나 writer가 잠겼는가' }) locked!: boolean;
+}
+
+/** 목록의 속기록 이력 — 상세와 같은 meetingId/version을 사용하고 화면이 본문을 다시 세지 않는다. */
+export class MeetingMinutesSummaryDto {
+  @ApiProperty({ type: 'integer', minimum: 1 }) meetingId!: number;
+  @ApiProperty({ maxLength: 240, description: '속기록 목록 미리보기' }) preview!: string;
+  @ApiProperty({ type: 'integer', minimum: 1, description: '속기록 이력 version' }) version!: number;
+  @ApiProperty({ type: String, format: 'date-time' }) writtenAt!: string;
+  @ApiProperty({ type: 'integer', minimum: 1, description: '마지막 실제 저장 actor' }) writtenById!: number;
+  @ApiProperty() writtenByName!: string;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '구조화된 결정 수' }) decisionCount!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '연결된 할 일 수' }) taskCount!: number;
+  @ApiProperty({ type: 'integer', minimum: 0, description: '끝낸 할 일 수' }) taskDone!: number;
+}
+
+/** 회의 상세의 사전 안건 정본 — 최초 작성 정보와 마지막 수정 정보를 모두 보존한다. */
+export class MeetingAgendaDto {
+  @ApiProperty({ type: 'integer', minimum: 1 }) meetingId!: number;
+  @ApiProperty({ maxLength: 8000, description: '사전 안건 본문' }) content!: string;
+  @ApiProperty({ type: 'integer', minimum: 1 }) version!: number;
+  @ApiProperty({ type: String, format: 'date-time' }) createdAt!: string;
+  @ApiProperty({ type: 'integer', minimum: 1 }) createdById!: number;
+  @ApiProperty() createdByName!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) updatedAt!: string;
+  @ApiProperty({ type: 'integer', minimum: 1 }) updatedById!: number;
+  @ApiProperty() updatedByName!: string;
+  @ApiProperty({ description: '실제 회의 시작 시각부터 true' }) locked!: boolean;
+  @ApiProperty({ type: String, format: 'date-time', nullable: true, description: 'writer 잠금 기준 시각 — 연결 회차가 없으면 null' })
+  lockedAt!: string | null;
+  @ApiProperty({ description: '현재 actor가 시작 전 agenda를 작성·수정할 수 있는가' }) canEdit!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '수정 불가 이유 — 가능하면 null' }) editBlockedReason!: string | null;
+  @ApiProperty({ description: '현재 actor가 명시적 「안건 가져오기」로 속기록 초안을 만들 수 있는가' })
+  canImportToMinutes!: boolean;
+}
+
+/** agenda create/update 공용 입력 — create는 null, update는 화면이 본 양의 version을 보낸다. */
+export class MeetingAgendaWriteDto {
+  @ApiProperty({ maxLength: 8000, description: '사전 안건 본문' })
+  @IsString() @MinLength(1, { message: '사전 안건을 적어 주세요' })
+  @Matches(/\S/, { message: '사전 안건을 적어 주세요' }) @MaxLength(8000)
+  content!: string;
+
+  @ApiProperty({ type: 'integer', minimum: 1, nullable: true, description: 'create=null · update=현재 version. 불일치하면 409 MEETING_AGENDA_VERSION_CONFLICT' })
+  @ValidateIf((_object, value) => value !== null)
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  expectedVersion!: number | null;
+}
+
+/** 명시적 「안건 가져오기」 입력 — 본 version과 다르면 저장하지 않고 409 뒤 재조회한다. */
+export class MeetingAgendaImportDto {
+  @ApiProperty({ type: 'integer', minimum: 1 })
+  @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  expectedVersion!: number;
+}
+
+/** `minutes`를 쓰지 않고 화면의 미저장 초안만 반환하는 import 결과. */
+export class MeetingAgendaImportResultDto {
+  @ApiProperty({ type: 'integer', minimum: 1 }) meetingId!: number;
+  @ApiProperty({ type: 'integer', minimum: 1 }) agendaVersion!: number;
+  @ApiProperty({ maxLength: 8000, description: '속기록 입력 칸에 놓을 미저장 초안' }) minutesDraft!: string;
+  @ApiProperty({ type: String, format: 'date-time' }) sourceUpdatedAt!: string;
+  @ApiProperty({ type: 'integer', minimum: 1 }) sourceUpdatedById!: number;
+  @ApiProperty() sourceUpdatedByName!: string;
+  @ApiProperty({ type: 'boolean', enum: [false], description: '자동 저장·자동 병합하지 않았음을 고정한다' }) saved!: false;
+}
+
 /** §63 회의 목록 */
 export class MeetingDto {
   @ApiProperty() id!: number;
@@ -767,6 +848,10 @@ export class MeetingDto {
   @ApiProperty() attendees!: number;
   @ApiProperty() confirmed!: number;
   @ApiProperty({ description: '속기록을 썼는가 — 안 쓰면 회의가 끝난 것이 아니다' }) hasMinutes!: boolean;
+  @ApiPropertyOptional({ type: () => MeetingAgendaSummaryDto, nullable: true, description: 'BO-Q13 별도 agenda 목록 projection — Backend 연결 전에는 생략된다' })
+  agenda?: MeetingAgendaSummaryDto | null;
+  @ApiPropertyOptional({ type: () => MeetingMinutesSummaryDto, nullable: true, description: '작성자·전문·결정·할 일 목록 projection — Backend 연결 전에는 생략된다' })
+  minutesSummary?: MeetingMinutesSummaryDto | null;
   /*
    * 시각·자리는 **시간표가 갖는다** (C96) — `mtrec` 에 칸을 새기면 같은 사실이 두 곳에 살고
    * 겹침(`ser_occ` EXCLUDE)의 판정 밖이 된다. 옛 회의는 어느 회차였는지 아무도 모르므로
@@ -934,6 +1019,8 @@ export class MeetingDetailDto {
   @ApiProperty({ description: '참석 머리글 — 원문 「참석 N/M 확인」' }) attendLabel!: string;
 
   @ApiProperty({ type: [String], description: '① 사전 자료 — 파일 주소' }) preFiles!: string[];
+  @ApiPropertyOptional({ type: () => MeetingAgendaDto, nullable: true, description: 'BO-Q13 별도 versioned agenda — Backend 연결 전에는 생략된다' })
+  agenda?: MeetingAgendaDto | null;
   @ApiPropertyOptional({ ...S, description: '② 속기록 본문' }) minutes?: string | null;
   @ApiPropertyOptional({ ...S, description: '마지막 저장 시각 (KST ISO) — 없으면 아직 저장한 적이 없다' })
   minutesAt?: string | null;

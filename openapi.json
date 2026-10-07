@@ -31658,6 +31658,104 @@
           "stageLabel"
         ]
       },
+      "MeetingAgendaSummaryDto": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "type": "string",
+            "maxLength": 240,
+            "description": "목록 미리보기 — 서버가 본문을 잘라 만든다"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "상세 agenda와 같은 version"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "마지막 수정 시각"
+          },
+          "updatedById": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "마지막 실제 수정 actor"
+          },
+          "updatedByName": {
+            "type": "string",
+            "description": "마지막 수정자 이름"
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "실제 회의 시작 시각이 지나 writer가 잠겼는가"
+          }
+        },
+        "required": [
+          "preview",
+          "version",
+          "updatedAt",
+          "updatedById",
+          "updatedByName",
+          "locked"
+        ]
+      },
+      "MeetingMinutesSummaryDto": {
+        "type": "object",
+        "properties": {
+          "meetingId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "preview": {
+            "type": "string",
+            "maxLength": 240,
+            "description": "속기록 목록 미리보기"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "속기록 이력 version"
+          },
+          "writtenAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "writtenById": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "마지막 실제 저장 actor"
+          },
+          "writtenByName": {
+            "type": "string"
+          },
+          "decisionCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "구조화된 결정 수"
+          },
+          "taskCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "연결된 할 일 수"
+          },
+          "taskDone": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "끝낸 할 일 수"
+          }
+        },
+        "required": [
+          "meetingId",
+          "preview",
+          "version",
+          "writtenAt",
+          "writtenById",
+          "writtenByName",
+          "decisionCount",
+          "taskCount",
+          "taskDone"
+        ]
+      },
       "MeetingAttendeeDto": {
         "type": "object",
         "properties": {
@@ -31734,6 +31832,26 @@
           "hasMinutes": {
             "type": "boolean",
             "description": "속기록을 썼는가 — 안 쓰면 회의가 끝난 것이 아니다"
+          },
+          "agenda": {
+            "nullable": true,
+            "description": "BO-Q13 별도 agenda 목록 projection — Backend 연결 전에는 생략된다",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MeetingAgendaSummaryDto"
+              }
+            ]
+          },
+          "minutesSummary": {
+            "nullable": true,
+            "description": "작성자·전문·결정·할 일 목록 projection — Backend 연결 전에는 생략된다",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MeetingMinutesSummaryDto"
+              }
+            ]
           },
           "serId": {
             "type": "number",
@@ -34686,6 +34804,85 @@
           "toId"
         ]
       },
+      "MeetingAgendaDto": {
+        "type": "object",
+        "properties": {
+          "meetingId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "사전 안건 본문"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "createdById": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdByName": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedById": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "updatedByName": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean",
+            "description": "실제 회의 시작 시각부터 true"
+          },
+          "lockedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "writer 잠금 기준 시각 — 연결 회차가 없으면 null"
+          },
+          "canEdit": {
+            "type": "boolean",
+            "description": "현재 actor가 시작 전 agenda를 작성·수정할 수 있는가"
+          },
+          "editBlockedReason": {
+            "type": "string",
+            "nullable": true,
+            "description": "수정 불가 이유 — 가능하면 null"
+          },
+          "canImportToMinutes": {
+            "type": "boolean",
+            "description": "현재 actor가 명시적 「안건 가져오기」로 속기록 초안을 만들 수 있는가"
+          }
+        },
+        "required": [
+          "meetingId",
+          "content",
+          "version",
+          "createdAt",
+          "createdById",
+          "createdByName",
+          "updatedAt",
+          "updatedById",
+          "updatedByName",
+          "locked",
+          "lockedAt",
+          "canEdit",
+          "editBlockedReason",
+          "canImportToMinutes"
+        ]
+      },
       "MeetingTaskDto": {
         "type": "object",
         "properties": {
@@ -34807,6 +35004,16 @@
             "items": {
               "type": "string"
             }
+          },
+          "agenda": {
+            "nullable": true,
+            "description": "BO-Q13 별도 versioned agenda — Backend 연결 전에는 생략된다",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MeetingAgendaDto"
+              }
+            ]
           },
           "minutes": {
             "type": "string",
@@ -47180,6 +47387,83 @@
           "history",
           "historyTotal",
           "historyLimit"
+        ]
+      },
+      "MeetingAgendaWriteDto": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "사전 안건 본문"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "create=null · update=현재 version. 불일치하면 409 MEETING_AGENDA_VERSION_CONFLICT"
+          }
+        },
+        "required": [
+          "content",
+          "expectedVersion"
+        ]
+      },
+      "MeetingAgendaImportDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "expectedVersion"
+        ]
+      },
+      "MeetingAgendaImportResultDto": {
+        "type": "object",
+        "properties": {
+          "meetingId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "agendaVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minutesDraft": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "속기록 입력 칸에 놓을 미저장 초안"
+          },
+          "sourceUpdatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceUpdatedById": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceUpdatedByName": {
+            "type": "string"
+          },
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "자동 저장·자동 병합하지 않았음을 고정한다"
+          }
+        },
+        "required": [
+          "meetingId",
+          "agendaVersion",
+          "minutesDraft",
+          "sourceUpdatedAt",
+          "sourceUpdatedById",
+          "sourceUpdatedByName",
+          "saved"
         ]
       }
     }
