@@ -18,6 +18,26 @@ import {
   MeetingDto,
   MeetingMinutesSummaryDto,
 } from './modules/ops/ops.dto';
+import {
+  StudentCreateDto,
+  StudentCreatePreviewDto,
+  StudentCreateResultDto,
+  StudentRegistrationContactDto,
+  StudentRegistrationCountryOptionDto,
+  StudentRegistrationGradePeriodDto,
+  StudentRegistrationGuardianDto,
+  StudentRegistrationOptionsDto,
+  StudentRegistrationPeriodDto,
+  StudentRegistrationResidencePeriodDto,
+  StudentRegistrationSchoolPeriodDto,
+  StudentRegistrationSummaryDto,
+  StudentRegistrationTextPeriodDto,
+  StudentRegistrationTimezoneOptionDto,
+  StudentRegistrationWordDto,
+  StudentSchoolCreateDto,
+  StudentSchoolOptionDto,
+  StudentSchoolSearchQueryDto,
+} from './modules/students/student-registration.dto';
 
 /**
  * **DTO 가 단일 출처다.** 여기서 만든 openapi.json 을 프론트가 읽어 타입을 생성한다.
@@ -51,6 +71,29 @@ export function buildOpenApi(app: INestApplication) {
       MeetingAgendaImportResultDto,
       MeetingDto,
       MeetingDetailDto,
+      /*
+       * BOC-03D-01 권고안 채택(2026-10-07): 15절 DTO를 LeadEnrollDto와 분리하고
+       * runtime path 전에 생성 schema만 공개한다. POST /students와 preview/options/schools는
+       * 공용 writer·권한·transaction이 연결되는 Backend 단계에서 함께 연다.
+       */
+      StudentRegistrationPeriodDto,
+      StudentRegistrationSchoolPeriodDto,
+      StudentRegistrationGradePeriodDto,
+      StudentRegistrationResidencePeriodDto,
+      StudentRegistrationTextPeriodDto,
+      StudentRegistrationContactDto,
+      StudentRegistrationGuardianDto,
+      StudentCreateDto,
+      StudentRegistrationTimezoneOptionDto,
+      StudentRegistrationCountryOptionDto,
+      StudentRegistrationWordDto,
+      StudentRegistrationOptionsDto,
+      StudentSchoolOptionDto,
+      StudentSchoolSearchQueryDto,
+      StudentSchoolCreateDto,
+      StudentRegistrationSummaryDto,
+      StudentCreatePreviewDto,
+      StudentCreateResultDto,
     ],
   });
   SwaggerModule.setup('api/docs', app, doc);

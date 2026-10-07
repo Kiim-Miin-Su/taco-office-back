@@ -47713,6 +47713,876 @@
           "historyTotal",
           "historyLimit"
         ]
+      },
+      "StudentRegistrationPeriodDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "유효 시작 경계 — 종료와 모두 포함"
+          },
+          "fromPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "description": "사용자가 알고 입력한 시작 정밀도"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "유효 종료 경계 — null이면 계속"
+          },
+          "toPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "nullable": true,
+            "description": "종료가 있으면 사용자가 입력한 정밀도, 없으면 null"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "기간 기록 메모. 연락처·금액 원문 저장 용도가 아니다."
+          }
+        },
+        "required": [
+          "from",
+          "fromPrecision",
+          "to",
+          "toPrecision"
+        ]
+      },
+      "StudentRegistrationSchoolPeriodDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "유효 시작 경계 — 종료와 모두 포함"
+          },
+          "fromPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "description": "사용자가 알고 입력한 시작 정밀도"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "유효 종료 경계 — null이면 계속"
+          },
+          "toPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "nullable": true,
+            "description": "종료가 있으면 사용자가 입력한 정밀도, 없으면 null"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "기간 기록 메모. 연락처·금액 원문 저장 용도가 아니다."
+          },
+          "schoolId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "from",
+          "fromPrecision",
+          "to",
+          "toPrecision",
+          "schoolId"
+        ]
+      },
+      "StudentRegistrationGradePeriodDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "유효 시작 경계 — 종료와 모두 포함"
+          },
+          "fromPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "description": "사용자가 알고 입력한 시작 정밀도"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "유효 종료 경계 — null이면 계속"
+          },
+          "toPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "nullable": true,
+            "description": "종료가 있으면 사용자가 입력한 정밀도, 없으면 null"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "기간 기록 메모. 연락처·금액 원문 저장 용도가 아니다."
+          },
+          "educationSystem": {
+            "type": "string",
+            "enum": [
+              "US",
+              "GB",
+              "KR",
+              "OTHER"
+            ]
+          },
+          "gradeCode": {
+            "type": "string",
+            "maxLength": 16,
+            "description": "GET /students/options의 활성 교육체계별 학년 code"
+          }
+        },
+        "required": [
+          "from",
+          "fromPrecision",
+          "to",
+          "toPrecision",
+          "educationSystem",
+          "gradeCode"
+        ]
+      },
+      "StudentRegistrationResidencePeriodDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "유효 시작 경계 — 종료와 모두 포함"
+          },
+          "fromPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "description": "사용자가 알고 입력한 시작 정밀도"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "유효 종료 경계 — null이면 계속"
+          },
+          "toPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "nullable": true,
+            "description": "종료가 있으면 사용자가 입력한 정밀도, 없으면 null"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "기간 기록 메모. 연락처·금액 원문 저장 용도가 아니다."
+          },
+          "countryCode": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "GET /students/options의 국가 code"
+          },
+          "timezone": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 64,
+            "description": "그 국가의 IANA timezone. 복수 시간대 국가는 Backend가 필수로 검사한다."
+          }
+        },
+        "required": [
+          "from",
+          "fromPrecision",
+          "to",
+          "toPrecision",
+          "countryCode",
+          "timezone"
+        ]
+      },
+      "StudentRegistrationTextPeriodDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "유효 시작 경계 — 종료와 모두 포함"
+          },
+          "fromPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "description": "사용자가 알고 입력한 시작 정밀도"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "유효 종료 경계 — null이면 계속"
+          },
+          "toPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "nullable": true,
+            "description": "종료가 있으면 사용자가 입력한 정밀도, 없으면 null"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "기간 기록 메모. 연락처·금액 원문 저장 용도가 아니다."
+          },
+          "field": {
+            "type": "string",
+            "enum": [
+              "want",
+              "guidance",
+              "lang",
+              "target_exam"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "from",
+          "fromPrecision",
+          "to",
+          "toPrecision",
+          "field",
+          "value"
+        ]
+      },
+      "StudentRegistrationContactDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "phone",
+              "kakao",
+              "email",
+              "other"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 254,
+            "description": "kind별 정규화·형식 검사는 공용 Backend validator가 다시 수행한다."
+          },
+          "label": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80,
+            "description": "kind=other일 때 필수. 나머지는 null."
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "label"
+        ]
+      },
+      "StudentRegistrationGuardianDto": {
+        "type": "object",
+        "properties": {
+          "relation": {
+            "type": "string",
+            "enum": [
+              "mother",
+              "father",
+              "aunt",
+              "driver",
+              "other"
+            ]
+          },
+          "relationOther": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 40
+          },
+          "name": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 40,
+            "description": "이름을 모르면 null. 관계를 이름으로 복제하지 않는다."
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "^[A-Z]{2}$"
+          },
+          "isPrimary": {
+            "type": "boolean",
+            "description": "0명 허용, 전체 guardians에서 최대 1명은 Backend가 검사한다."
+          },
+          "isPayer": {
+            "type": "boolean",
+            "description": "납부자 선택은 강제하지 않는다."
+          },
+          "contacts": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationContactDto"
+            }
+          }
+        },
+        "required": [
+          "relation",
+          "relationOther",
+          "name",
+          "countryCode",
+          "isPrimary",
+          "isPayer",
+          "contacts"
+        ]
+      },
+      "StudentCreateDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 actor·같은 body 재시도는 기존 결과, 같은 key의 다른 body는 409"
+          },
+          "entrySource": {
+            "type": "string",
+            "enum": [
+              "students",
+              "schedule",
+              "intake"
+            ],
+            "description": "공용 등록 화면의 실제 진입 문맥"
+          },
+          "leadId": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "description": "entrySource=intake일 때만 상담 원천 id"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "englishName": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "male",
+              "female"
+            ],
+            "description": "신규 학생만 필수. 기존 NULL 학생을 재활성화할 때 소급 강제하지 않는다."
+          },
+          "schoolHistory": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationSchoolPeriodDto"
+            }
+          },
+          "gradeHistory": {
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "등록일에 유효한 active 학년 행이 최소 하나 있어야 한다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationGradePeriodDto"
+            }
+          },
+          "residenceHistory": {
+            "minItems": 1,
+            "maxItems": 50,
+            "description": "등록일에 유효한 거주국 행이 최소 하나 있어야 한다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationResidencePeriodDto"
+            }
+          },
+          "textHistory": {
+            "maxItems": 100,
+            "description": "원하는 것·지도·언어·시험·주의사항의 초기 기간 이력",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationTextPeriodDto"
+            }
+          },
+          "contacts": {
+            "maxItems": 20,
+            "description": "학생 본인 연락처는 0개 허용",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationContactDto"
+            }
+          },
+          "birthDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "미래 날짜는 Backend가 KST 오늘 기준으로 거절한다."
+          },
+          "hasCitizenship": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "true/false/미상 null을 구분한다."
+          },
+          "guardians": {
+            "minItems": 1,
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationGuardianDto"
+            }
+          },
+          "cashReceiptNumber": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 40,
+            "description": "별도 PII key로 암호화하며 응답·LOG에 원문을 반환하지 않는다."
+          },
+          "siblingIds": {
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "maxItems": 50,
+            "uniqueItems": true,
+            "type": "array"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "kakao",
+              "phone",
+              "blog",
+              "instagram",
+              "referral",
+              "walkin"
+            ],
+            "nullable": true
+          },
+          "assigneeIds": {
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "maxItems": 50,
+            "uniqueItems": true,
+            "type": "array"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "15절 기타. 기간 notes와 중복 저장하지 않고 writer가 textHistory로 정규화한다."
+          },
+          "allowSameName": {
+            "type": "boolean",
+            "description": "동명이인 후보 확인 뒤에도 새 학생으로 만들겠다는 명시값. 같은 이름·학년·학교 중복은 별도 409."
+          }
+        },
+        "required": [
+          "requestKey",
+          "entrySource",
+          "leadId",
+          "name",
+          "englishName",
+          "gender",
+          "schoolHistory",
+          "gradeHistory",
+          "residenceHistory",
+          "textHistory",
+          "contacts",
+          "birthDate",
+          "hasCitizenship",
+          "guardians",
+          "cashReceiptNumber",
+          "siblingIds",
+          "source",
+          "assigneeIds",
+          "notes",
+          "allowSameName"
+        ]
+      },
+      "StudentRegistrationTimezoneOptionDto": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "representative": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "timezone",
+          "label",
+          "representative"
+        ]
+      },
+      "StudentRegistrationCountryOptionDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "timezones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationTimezoneOptionDto"
+            }
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "timezones"
+        ]
+      },
+      "StudentRegistrationWordDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
+      "StudentRegistrationOptionsDto": {
+        "type": "object",
+        "properties": {
+          "countries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationCountryOptionDto"
+            }
+          },
+          "educationGrades": {
+            "description": "active39 등록 선택지. 비활성·legacy 46행은 보존하되 신규 선택에서 제외한다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EducationGradeOptionDto"
+            }
+          },
+          "guardianRelations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationWordDto"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationWordDto"
+            }
+          }
+        },
+        "required": [
+          "countries",
+          "educationGrades",
+          "guardianRelations",
+          "sources"
+        ]
+      },
+      "StudentSchoolOptionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "countryLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "region": {
+            "type": "string",
+            "nullable": true
+          },
+          "campus": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "countryCode",
+          "countryLabel",
+          "region",
+          "campus",
+          "active"
+        ]
+      },
+      "StudentSchoolSearchQueryDto": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "q"
+        ]
+      },
+      "StudentSchoolCreateDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "countryCode": {
+            "type": "string",
+            "nullable": true,
+            "pattern": "^[A-Z]{2}$"
+          },
+          "region": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80
+          },
+          "campus": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "requestKey",
+          "name",
+          "countryCode",
+          "region",
+          "campus"
+        ]
+      },
+      "StudentRegistrationSummaryDto": {
+        "type": "object",
+        "properties": {
+          "schoolPeriods": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "gradePeriods": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "residencePeriods": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "textPeriods": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "studentContacts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "guardians": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "siblingLinks": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "assignees": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "schoolPeriods",
+          "gradePeriods",
+          "residencePeriods",
+          "textPeriods",
+          "studentContacts",
+          "guardians",
+          "siblingLinks",
+          "assignees"
+        ]
+      },
+      "StudentCreatePreviewDto": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "preview는 같은 writer를 끝까지 실행한 뒤 rollback한다."
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentId": {
+            "type": "number",
+            "nullable": true,
+            "enum": [
+              null
+            ]
+          },
+          "profileVersion": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              null
+            ]
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StudentRegistrationSummaryDto"
+          }
+        },
+        "required": [
+          "saved",
+          "requestKey",
+          "studentId",
+          "profileVersion",
+          "summary"
+        ]
+      },
+      "StudentCreateResultDto": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "profileVersion": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$",
+            "description": "DB bigint를 JS number로 축소하지 않는 decimal string"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "같은 requestKey·같은 body의 기존 결과인가"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/StudentRegistrationSummaryDto"
+          }
+        },
+        "required": [
+          "saved",
+          "requestKey",
+          "studentId",
+          "profileVersion",
+          "replayed",
+          "createdAt",
+          "summary"
+        ]
       }
     }
   },
