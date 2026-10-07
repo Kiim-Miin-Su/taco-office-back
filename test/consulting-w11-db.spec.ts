@@ -68,6 +68,10 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
   const api = (m: 'get' | 'post' | 'patch' | 'delete', p: string, t = ceo) =>
     request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${t}`).timeout({ response: 15000, deadline: 30000 });
   const b64 = (text: string) => Buffer.from(text, 'utf8').toString('base64');
+  const invoiceBody = async (consId: number, studentId?: number) => {
+    const [{ row_version: expectedVersion }] = await q<{ row_version: number }>(`SELECT row_version FROM cons WHERE id=$1`, [consId]);
+    return { expectedVersion: Number(expectedVersion), requestKey: randomUUID(), ...(studentId === undefined ? {} : { studentId }) };
+  };
 
   const myCons = async (): Promise<number[]> =>
     (await q<{ id: string }>(`SELECT id FROM cons WHERE owner_id = ANY($1::bigint[])`, [STAFF])).map((r) => Number(r.id));
@@ -81,6 +85,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
     await q(`DELETE FROM guardian_contact WHERE guardian_id IN (SELECT id FROM guardian WHERE student_id = ANY($1::bigint[]))`, [STU]);
     await q(`DELETE FROM guardian WHERE student_id = ANY($1::bigint[])`, [STU]);
     await q(`DELETE FROM pnoti WHERE student_id = ANY($1::bigint[])`, [STU]);
+    await q(`DELETE FROM cons_write_req WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM pay WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1::bigint[]) OR cs_id = ANY($2::bigint[]))`, [STU, cons]);
     await q(`DELETE FROM inv_line WHERE inv_id IN (SELECT id FROM inv WHERE student_id = ANY($1::bigint[]) OR cs_id = ANY($2::bigint[]))`, [STU, cons]);
     await q(`DELETE FROM inv WHERE student_id = ANY($1::bigint[]) OR cs_id = ANY($2::bigint[])`, [STU, cons]);
@@ -91,7 +96,6 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
     await q(`DELETE FROM cons_file WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM file WHERE id = ANY($1::bigint[]) OR uploaded_by = ANY($2::bigint[])`, [files, STAFF]);
     await q(`DELETE FROM cons_item WHERE cons_id = ANY($1::bigint[])`, [cons]);
-    await q(`DELETE FROM cons_write_req WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM cons_pay WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM cons_sess WHERE cons_id = ANY($1::bigint[])`, [cons]);
     await q(`DELETE FROM cons_stu WHERE cons_id = ANY($1::bigint[])`, [cons]);
@@ -205,14 +209,14 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
       // 고르개 재료 — 학생 id · 이름(이름 차례)
       expect(row.students).toEqual([{ id: STU_A, name: 'W11가' }, { id: STU_B, name: 'W11나' }]);
 
-      const none = await api('post', `/consulting/${id}/invoice`).send({}).expect(409);
+      const none = await api('post', `/consulting/${id}/invoice`).send(await invoiceBody(id)).expect(409);
       expect(none.body.code).toBe('CONS_INV_STUDENT_AMBIGUOUS');
       expect(none.body.message).toContain('고르세요');
-      const other = await api('post', `/consulting/${id}/invoice`).send({ studentId: STU_C }).expect(400);
+      const other = await api('post', `/consulting/${id}/invoice`).send(await invoiceBody(id, STU_C)).expect(400);
       expect(other.body.code).toBe('CONS_INV_STUDENT_INVALID');
       expect(await auditRows(id, 'to_invoice')).toHaveLength(0);          // 되돌린 쓰기에는 0줄
 
-      const done = await api('post', `/consulting/${id}/invoice`).send({ studentId: STU_B }).expect(201);
+      const done = await api('post', `/consulting/${id}/invoice`).send(await invoiceBody(id, STU_B)).expect(201);
       const [inv] = await q<{ student_id: string; amount: number; cs_id: string }>(`SELECT student_id, amount, cs_id FROM inv WHERE id = $1`, [done.body.invId]);
       expect(Number(inv.student_id)).toBe(STU_B);
       expect(Number(inv.amount)).toBe(400000);                           // 남은 돈
@@ -224,10 +228,23 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
 
     it('학생이 한 명이면 비워도 그 학생이다 — 강사는 403', async () => {
       const id = await makeCons({ stage: 'contract', step: 5, amount: 300000, students: [STU_A] });
-      await api('post', `/consulting/${id}/invoice`, teacher).send({}).expect(403);
-      const res = await api('post', `/consulting/${id}/invoice`).send({}).expect(201);
+      await api('post', `/consulting/${id}/invoice`, teacher).send(await invoiceBody(id)).expect(403);
+      const res = await api('post', `/consulting/${id}/invoice`).send(await invoiceBody(id)).expect(201);
       const [inv] = await q<{ student_id: string }>(`SELECT student_id FROM inv WHERE id = $1`, [res.body.invId]);
       expect(Number(inv.student_id)).toBe(STU_A);
+    });
+
+    it('같은 requestKey 동시 전환은 같은 청구서 한 장으로 수렴한다 (BOC-04D-03d)', async () => {
+      const id = await makeCons({ stage: 'contract', step: 5, amount: 300000, students: [STU_A] });
+      const body = await invoiceBody(id);
+      const [a, b] = await Promise.all([
+        api('post', `/consulting/${id}/invoice`).send(body).expect(201),
+        api('post', `/consulting/${id}/invoice`).send(body).expect(201),
+      ]);
+      expect(a.body.invId).toBe(b.body.invId);
+      expect(a.body.version).toBe(b.body.version);
+      expect(await q(`SELECT id FROM inv WHERE cs_id=$1`, [id])).toHaveLength(1);
+      expect(await q(`SELECT request_key FROM cons_write_req WHERE cons_id=$1 AND action='invoice'`, [id])).toHaveLength(1);
     });
 
     /**
@@ -239,7 +256,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
       const month = TODAY.slice(0, 7);
       await q(`INSERT INTO month_close (year_month, closed_by) VALUES ($1, $2)`, [month, CEO]);
 
-      const refused = await api('post', `/consulting/${id}/invoice`).send({}).expect(409);
+      const refused = await api('post', `/consulting/${id}/invoice`).send(await invoiceBody(id)).expect(409);
       expect(refused.body).toMatchObject({ code: 'MONTH_CLOSED', message: monthClosedMessage(month) });
       expect(await q(`SELECT id FROM inv WHERE cs_id = $1`, [id])).toHaveLength(0);
       expect(await auditRows(id, 'to_invoice')).toHaveLength(0);
@@ -248,7 +265,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
         `UPDATE month_close SET reopened_at = now(), reopened_by = $2, reopen_reason = '시험' WHERE year_month = $1 AND reopened_at IS NULL`,
         [month, CEO],
       );
-      const res = await api('post', `/consulting/${id}/invoice`).send({}).expect(201);
+      const res = await api('post', `/consulting/${id}/invoice`).send(await invoiceBody(id)).expect(201);
       const [inv] = await q<{ year_month: string }>(`SELECT year_month FROM inv WHERE id = $1`, [res.body.invId]);
       expect(inv.year_month).toBe(month);
     });
@@ -260,7 +277,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
     it('전환 청구서 입금까지 §28 · §26 · §27 · §30 이 같은 받은 돈을 말하고, 다 받는 순간 담당에게 알림 두 건 (I-90+)', async () => {
       const id = await makeCons({ stage: 'contract', step: 5, amount: 600000, students: [STU_A] });
       await q(`INSERT INTO cons_pay (cons_id, amount, paid_on, by_id) VALUES ($1, 200000, $2::date, $3)`, [id, TODAY, CEO]);
-      const invId = Number((await api('post', `/consulting/${id}/invoice`).send({}).expect(201)).body.invId);
+      const invId = Number((await api('post', `/consulting/${id}/invoice`).send(await invoiceBody(id)).expect(201)).body.invId);
       await api('post', `/accounting/invoices/${invId}/deliver`).send({}).expect(201);
 
       await api('post', '/accounting/payments').send({ requestKey: randomUUID(), invId, amount: 150000, paidOn: TODAY }).expect(201);
@@ -694,10 +711,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
 
     it('살아 있는 전환 청구서 · 회차 기록이 있어도 409', async () => {
       const inv = await makeCons({ stage: 'contract', step: 5, students: [STU_A] });
-      await q(
-        `INSERT INTO inv (student_id, year_month, inv_type, title, amount, state, issued_on, created_by, cs_id)
-         VALUES ($1, $2, 'consulting', 'W11 전환', 100000, 'draft', $3::date, $4, $5)`, [STU_A, TODAY.slice(0, 7), TODAY, CEO, inv],
-      );
+      await api('post', `/consulting/${inv}/invoice`).send(await invoiceBody(inv)).expect(201);
       expect((await api('delete', `/consulting/${inv}`).expect(409)).body.message).toContain('청구서');
       const sess = await makeCons({ stage: 'contract', step: 1, students: [STU_A] });
       await q(`INSERT INTO cons_sess (cons_id, seq, on_date) VALUES ($1, 1, $2::date)`, [sess, plus(TODAY, 3)]);

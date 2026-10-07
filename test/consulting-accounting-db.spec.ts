@@ -121,6 +121,12 @@ d('§28 컨설팅 회계 (C58)', () => {
     const { items } = await asBoss();
     return items.find((x) => x.id === id)!;
   };
+  const invoice = async (id: number, studentId?: number) => {
+    const current = await row(id);
+    return svc().toInvoice(OWNER, true, true, id, {
+      expectedVersion: current.version, requestKey: randomUUID(), ...(studentId === undefined ? {} : { studentId }),
+    });
+  };
 
   /* ── ① 뺄셈은 서버가 한다 ─────────────────────────────────────────── */
 
@@ -218,7 +224,7 @@ d('§28 컨설팅 회계 (C58)', () => {
   /* ── ④ · ⑤ 청구서로 전환 ─────────────────────────────────────────── */
 
   it('청구서는 **남은 돈**으로 낸다 — 받은 돈이 미수금에 한 번 더 얹히지 않는다', async () => {
-    const after = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    const after = await invoice(PAY_ONLY);
     expect(after.invId).not.toBeNull();
     const [inv] = (await q.query(
       `SELECT amount, inv_type, state, cs_id, student_id FROM inv WHERE id = $1`, [after.invId],
@@ -230,16 +236,62 @@ d('§28 컨설팅 회계 (C58)', () => {
     expect(Number(inv.student_id)).toBe(STU_B);
   });
 
+  it('같은 requestKey 재시도는 같은 청구서로 수렴하고 stale version·void 결과는 409다 (BOC-04D-03d)', async () => {
+    const before = await row(PAY_ONLY);
+    const command = { expectedVersion: before.version, requestKey: randomUUID() };
+    const first = await svc().toInvoice(OWNER, true, true, PAY_ONLY, command);
+    const replay = await svc().toInvoice(OWNER, true, true, PAY_ONLY, command);
+    expect(replay).toMatchObject({ invId: first.invId, version: before.version + 1 });
+    expect(await q.query(`SELECT id FROM inv WHERE cs_id=$1`, [PAY_ONLY])).toHaveLength(1);
+    const [receipt] = await q.query(
+      `SELECT action,result_version,result_ref_id,actor_id FROM cons_write_req WHERE request_key=$1`, [command.requestKey],
+    );
+    expect(receipt).toMatchObject({ action: 'invoice', result_version: before.version + 1, actor_id: String(OWNER) });
+    expect(Number(receipt.result_ref_id)).toBe(first.invId);
+
+    await expect(svc().toInvoice(OWNER, true, true, PAY_ONLY, { ...command, requestKey: randomUUID() }))
+      .rejects.toMatchObject({ response: { code: 'CONS_INV_VERSION_CONFLICT', actualVersion: before.version + 1 } });
+    await q.query(`UPDATE inv SET state='void' WHERE id=$1`, [first.invId]);
+    await expect(svc().toInvoice(OWNER, true, true, PAY_ONLY, command))
+      .rejects.toMatchObject({ response: { code: 'CONS_INV_REQUEST_REPLAY_STALE' } });
+  });
+
+  it('같은 requestKey를 다른 청구 전환 내용에 재사용하면 409이고 새 청구서는 없다', async () => {
+    const before = await row(TWO_STU);
+    const requestKey = randomUUID();
+    const first = await svc().toInvoice(OWNER, true, true, TWO_STU, {
+      expectedVersion: before.version, requestKey, studentId: STU_A,
+    });
+    await expect(svc().toInvoice(OWNER, true, true, TWO_STU, {
+      expectedVersion: before.version, requestKey, studentId: STU_B,
+    })).rejects.toMatchObject({ response: { code: 'CONS_INV_REQUEST_KEY_REUSED' } });
+    expect(await q.query(`SELECT id FROM inv WHERE cs_id=$1`, [TWO_STU])).toHaveLength(1);
+    expect((await q.query(`SELECT student_id FROM inv WHERE id=$1`, [first.invId]))[0].student_id).toBe(String(STU_A));
+  });
+
+  it('직접 SQL로 컨설팅 청구서를 만들면 deferred receipt trigger가 거절한다', async () => {
+    await q.query(`SAVEPOINT cons_invoice_direct`);
+    await q.query(
+      `INSERT INTO inv(student_id,year_month,inv_type,title,amount,state,issued_on,created_by,cs_id)
+       VALUES ($1,$2,'consulting','직접 전환',1,'draft',$3::date,$4,$5)`,
+      [STU_B, day(0).slice(0, 7), day(0), OWNER, PAY_ONLY],
+    );
+    await expect(q.query(`SET CONSTRAINTS ALL IMMEDIATE`)).rejects.toThrow(/consulting invoice writer receipt required/i);
+    await q.query(`ROLLBACK TO SAVEPOINT cons_invoice_direct`);
+    await q.query(`RELEASE SAVEPOINT cons_invoice_direct`);
+    await q.query(`SET CONSTRAINTS ALL DEFERRED`);
+  });
+
   it('전환해도 납부 기록은 그대로 남는다 — cs_id 는 연결이지 소유가 아니다', async () => {
-    const after = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    const after = await invoice(PAY_ONLY);
     expect(after.payments).toHaveLength(1);
     expect(after.paid).toBe(400000);
     expect(after.due).toBe(400000);
   });
 
   it('두 번 눌러도 청구서는 하나다', async () => {
-    await svc().toInvoice(OWNER, true, true, PAY_ONLY);
-    await expect(svc().toInvoice(OWNER, true, true, PAY_ONLY))
+    await invoice(PAY_ONLY);
+    await expect(invoice(PAY_ONLY))
       .rejects.toMatchObject({ response: { code: 'CONS_INV_EXISTS' } });
     const [{ n }] = (await q.query(
       `SELECT count(*)::int AS n FROM inv WHERE cs_id = ${PAY_ONLY}`,
@@ -249,13 +301,13 @@ d('§28 컨설팅 회계 (C58)', () => {
 
   it('전환한 건은 「청구서로 전환」이 더는 눌리지 않는다', async () => {
     expect((await row(PAY_ONLY)).canInvoice).toBe(true);
-    await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    await invoice(PAY_ONLY);
     expect((await row(PAY_ONLY)).canInvoice).toBe(false);
   });
 
   it('계약 5단계(수납) 전에는 전환하지 않는다 — 원문 「수납 시 청구서 생성 가능」', async () => {
     expect((await row(EARLY)).canInvoice).toBe(false);
-    await expect(svc().toInvoice(OWNER, true, true, EARLY))
+    await expect(invoice(EARLY))
       .rejects.toMatchObject({ response: { code: 'CONS_INV_NOT_PAID_STEP' } });
   });
 
@@ -263,20 +315,20 @@ d('§28 컨설팅 회계 (C58)', () => {
     await svc().addPayment(OWNER, true, true, OPEN, { requestKey: randomUUID(), amount: 900000, paidOn: day(0) });
     expect((await row(OPEN)).due).toBe(0);
     expect((await row(OPEN)).canInvoice).toBe(false);
-    await expect(svc().toInvoice(OWNER, true, true, OPEN))
+    await expect(invoice(OPEN))
       .rejects.toMatchObject({ response: { code: 'CONS_INV_NOTHING_DUE' } });
   });
 
   it('학생이 둘이면 전환하지 않는다 — 누구 앞으로 낼지는 원문에 없다 (N-33)', async () => {
-    await expect(svc().toInvoice(OWNER, true, true, TWO_STU))
+    await expect(invoice(TWO_STU))
       .rejects.toMatchObject({ response: { code: 'CONS_INV_STUDENT_AMBIGUOUS' } });
   });
 
   it('취소한 청구서는 다시 전환할 수 있다 — void 는 살아 있는 청구서가 아니다', async () => {
-    const first = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    const first = await invoice(PAY_ONLY);
     await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [first.invId]);
     expect((await row(PAY_ONLY)).canInvoice).toBe(true);
-    const again = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    const again = await invoice(PAY_ONLY);
     expect(again.invId).not.toBe(first.invId);
   });
   /* ── PB-03 전환 뒤에는 두 원장이 서로를 안다 ─────────────────────── */
@@ -284,7 +336,7 @@ d('§28 컨설팅 회계 (C58)', () => {
   const acct = () => new AccountingService(q.manager.getRepository(Inv));
   /** 전환 청구서를 학부모께 보냈다 — 초안에는 입금을 붙이지 못한다(§53 단계) */
   const convertAndSend = async (consId: number): Promise<number> => {
-    const { invId } = await svc().toInvoice(OWNER, true, true, consId);
+    const { invId } = await invoice(consId);
     await acct().deliverInvoice(OWNER, invId!, true);
     return invId!;
   };
@@ -295,7 +347,7 @@ d('§28 컨설팅 회계 (C58)', () => {
 
   it('전환한 건에는 「납부 넣기」가 서지 않고 이유를 말한다 — 입금은 청구서에서 받는다 (PB-03)', async () => {
     expect((await row(PAY_ONLY)).canAddPayment).toBe(true);
-    await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    await invoice(PAY_ONLY);
     const after = await row(PAY_ONLY);
     expect(after.canAddPayment).toBe(false);
     expect(after.payBlockedReason).toContain('청구서');
@@ -306,7 +358,7 @@ d('§28 컨설팅 회계 (C58)', () => {
   });
 
   it('전환한 건에 납부를 넣으면 409 — 같은 돈이 두 원장에 적히지 않는다 (PB-03)', async () => {
-    await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    await invoice(PAY_ONLY);
     const reason = (await row(PAY_ONLY)).payBlockedReason;
     await expect(svc().addPayment(OWNER, true, true, PAY_ONLY, { requestKey: randomUUID(), amount: 100000, paidOn: day(0) }))
       .rejects.toMatchObject({ status: 409, response: { code: 'CONS_PAY_INVOICED', message: reason } });
@@ -317,7 +369,7 @@ d('§28 컨설팅 회계 (C58)', () => {
   });
 
   it('전환 청구서를 취소하면 다시 납부를 넣을 수 있다 — void 는 살아 있는 청구서가 아니다', async () => {
-    const { invId } = await svc().toInvoice(OWNER, true, true, PAY_ONLY);
+    const { invId } = await invoice(PAY_ONLY);
     await q.query(`UPDATE inv SET state = 'void' WHERE id = $1`, [invId]);
     expect((await row(PAY_ONLY)).canAddPayment).toBe(true);
     const after = await svc().addPayment(OWNER, true, true, PAY_ONLY, { requestKey: randomUUID(), amount: 100000, paidOn: day(0) });

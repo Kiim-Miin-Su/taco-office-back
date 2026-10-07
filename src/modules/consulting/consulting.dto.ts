@@ -477,6 +477,7 @@ export class ConsStudentRefDto {
 /** §28 표 한 줄 — 계약 하나의 돈 */
 export class ConsAccountRowDto {
   @ApiProperty() id!: number;
+  @ApiProperty({ minimum: 1, description: '청구 전환 등 aggregate 쓰기의 현재 version' }) version!: number;
   @ApiProperty({ description: '학생 — 여럿이면 쉼표로 잇는다' }) studentName!: string;
   @ApiProperty({ type: [ConsStudentRefDto], description: '학생 id · 이름 — 여럿이면 「청구서로 전환」에서 받는 학생을 고른다(이름 차례)' })
   students!: ConsStudentRefDto[];
@@ -535,6 +536,8 @@ export class ConsPaymentCreateDto {
  * 한 명이면 비워도 그 학생이다.
  */
 export class ConsToInvoiceDto {
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 ConsAccountRowDto.version' }) @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
+  @ApiProperty({ format: 'uuid', description: '같은 전환 재시도를 청구서 한 장으로 수렴시키는 요청 키' }) @IsUUID('4') requestKey!: string;
   @ApiPropertyOptional({ ...ID_SCHEMA, description: '청구서를 받을 학생 — 그 컨설팅의 학생이어야 한다. 학생이 여럿이면 필수' })
   @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) studentId?: number;
 }

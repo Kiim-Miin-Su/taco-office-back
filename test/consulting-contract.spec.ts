@@ -114,6 +114,10 @@ describe('§26 단계 필터 조회 계약', () => {
     // 남음은 서버가 내려보내는 값이다 — 화면이 만들 칸이 아니다
     expect(schema.properties?.due).toBeDefined();
     expect(schema.properties?.canInvoice).toBeDefined();
+    expect(schema.properties?.version).toBeDefined();
+    const invoiceDto = api.components?.schemas?.ConsToInvoiceDto;
+    if (!invoiceDto || '$ref' in invoiceDto) throw new Error('ConsToInvoiceDto 누락');
+    expect(invoiceDto.required).toEqual(expect.arrayContaining(['expectedVersion', 'requestKey']));
   });
 
   it('금액이 오가는 쓰기 둘은 canMoney 까지 요구한다', () => {

@@ -1,3 +1,4 @@
+// TBO55-BOC04D03D-R76 (2026-10-08): BOC-04D-03d 권고안 채택 — 컨설팅 청구 전환은 ConsAccountRow.version·expectedVersion·requestKey를 사용한다. CONS_WRITE_REQ invoice receipt가 actual actor·payload fingerprint·result version·INV 결과를 보존하고 서비스는 request-key 잠금→CONS 행 잠금→월마감 공유 잠금 순서로 한 transaction에서 INV·version·LOG를 쓴다. 동일 요청 동시 재시도는 같은 청구서로 수렴하고 stale/void 결과는 409다. deferred INV receipt trigger가 직접 cs_id 쓰기를 막는다. v4.71/110표, migration1766800000000 로컬 down/up·반복·동시 HTTP·직접쓰기 검증, 운영 미적용. 정책 변경 시 ConsToInvoiceDto/service/ConsultingAccounting/OpenAPI/generated schema·P-BOC04D03D·두 DBML·portfolio·관리자/강사 수정사항 대조표를 함께 수정한다.
 // TBO55-BOC04D03C-R75 (2026-10-08): BOC-04D-03c 권고안 채택 — 컨설팅 유형별 기본 항목은 immutable version이며 미설정 유형은 시작을 막는다. 신규 CONS는 최초 등록자·template snapshot·row_version을 보존하고, CONS_WRITE_REQ/CONS_TEMPLATE_WRITE_REQ가 actual actor·payload fingerprint·result version을 보존한다. 서비스는 request-key 잠금→업무 행 잠금과 expectedVersion 409를 적용하고 DB 지연 receipt trigger가 원장 없는 직접 쓰기를 방어한다. admissions v1 시스템 기본7항목만 seed하고 과거 CONS는 추정 보정하지 않는다. v4.70/110표, migration1766700000000 로컬 신규·down/up·반복·동시 request-key·직접쓰기 검증, 운영 미적용. 정책 변경 시 Consulting DTO/service/UI/OpenAPI/generated schema·P-BOC04D03C·두 DBML·portfolio·관리자/강사 수정사항 대조표를 함께 수정한다.
 // TBO55-BOC04D03B-R74 (2026-10-08): BOC-04D-03b 권고안 채택 — 새 ISSUE 배정은 실제 현재·장래 수업의 teacher_id·sub_key와 정확한 현재 vers_id를 저장하고 state=wait에서 시작한다. 과거 ISSUE는 문맥을 추정 이관하지 않는다. ISSUE_WRITE_REQ가 actual actor·payload fingerprint·result version을 보존하며, contextual row의 상태/진도/회수는 expectedVersion으로 경합을 거절한다. DB trigger가 활성 담당·과목·정본 학년·수업 문맥·현재 판과 version 정확히 +1을 방어한다. v4.69/106표, migration1766600000000 로컬 신규99/99·down/up·반복·동시 request-key·직접쓰기·파괴적 down 거절·실제 Browser→HTTP→DB→reload 검증, 운영 미적용. 정책 변경 시 BookAssignment DTO/service/BookTracking/OpenAPI/generated schema·P-BOC04D03B·두 DBML·portfolio를 함께 수정한다.
 // TBO55-BOC04D03A-R73 (2026-10-08): BOC-04D-03a 권고안 채택 — GUIDE 본문 계열에 body_version을 추가하고 GUIDE_WRITE_REQ 요청 원장을 분리했다. 화면은 expectedVersion·requestKey를 보내며 서비스는 request-key advisory lock→GUIDE row lock 순서, 동일 actor/payload replay, 409 충돌, HIST를 한 transaction으로 처리한다. DB trigger는 본문 계열 변경·draft→ready가 version 정확히 +1인지 검사하고 version 단독 증가를 막는다. v4.68/105표, migration1766500000000 로컬 신규98/98·down/up·동시 HTTP·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 GuideBodyWriteDto·GuidesService·GuideWriter·OpenAPI/generated schema·P-BOC04D03A·current DBML·portfolio를 함께 수정한다.
@@ -1692,7 +1693,7 @@ Table CONS {
   owner_id    bigint       [ref: > STAFF.id]
   created_by  bigint       [ref: > STAFF.id, note: 'BOC-04D-03c 신규 writer 최초 등록자. 레거시는 null']
   template_id bigint       [ref: > CONS_TEMPLATE.id, note: '생성 당시 immutable 기본 항목 version snapshot. 레거시는 null']
-  row_version integer      [not null, default: 1, note: '핵심정보·공개범위 낙관적 경합. 양수']
+  row_version integer      [not null, default: 1, note: '핵심정보·공개범위·청구 전환 aggregate 낙관적 경합. 양수']
   share       cons_share_t [not null, default: 'all', note: 'csCan() 목록 필터 · csCanFull() 내용 접근']
   deleted_at  timestamptz  [note: '물리 삭제 대신 보관한 시각']
   deleted_by  bigint       [ref: > STAFF.id, note: 'deleted_at과 함께 있거나 함께 null']
@@ -1703,6 +1704,7 @@ Table CONS {
   cons_paid_stage_check (계약 외 step=5, NULL 차단), cons_sessions_check (>0).
   C79 migration 1759900000000: start_on/requester/deleted pair와 날짜 순서 CHECK, owner/deleted_by FK.
   BOC-04D-03c migration 1766700000000: 신규 writer만 created_by/template_id를 필수로 묶고 row_version 정확히 +1 및 같은 transaction receipt를 지연 trigger로 검사한다. 과거 행은 null provenance를 그대로 보존한다.
+  BOC-04D-03d migration 1766800000000: 청구 전환도 row_version을 정확히 +1하며 CONS_WRITE_REQ invoice receipt와 INV 결과 참조를 같은 transaction에 요구한다.
   v4.54 · W11(N-18-a DQ6 · 칸 변경 0): 예외 종료의 사유 · 승인자 · 남은 항목/회차는 칸이 아니라 LOG(entity CONS · action close_exception) before/after — 상세 closeReason 이 되읽는다.
   컨설팅 전환 청구서(INV.cs_id)는 받는 학생을 고르고(학생이 여럿이면) 그 달이 마감이면 409 MONTH_CLOSED(같은 달 열쇠 · M1 과 같은 축).
   '''
@@ -1736,14 +1738,15 @@ Table CONS_TEMPLATE_ITEM {
 
 Table CONS_WRITE_REQ {
   request_key   uuid        [pk]
-  action        varchar(16) [not null, note: 'create | core | share']
+  action        varchar(16) [not null, note: 'create | core | share | invoice']
   cons_id       bigint      [not null, ref: > CONS.id]
   fingerprint   char(64)    [not null, note: '정규화 payload SHA-256']
   result_version integer    [not null, note: '1 이상']
+  result_ref_id bigint      [ref: > INV.id, note: 'invoice action 결과 청구서. 다른 action은 null']
   actor_id      bigint      [not null, ref: > STAFF.id]
   created_at    timestamptz [not null, default: `now()`]
   indexes { (cons_id, created_at, request_key) }
-  Note: '동일 actor·payload 재시도만 같은 결과로 수렴시키며 CONS 지연 receipt trigger의 근거가 된다.'
+  Note: '동일 actor·payload 재시도만 같은 결과로 수렴시키며 CONS 지연 receipt trigger와 컨설팅 INV 직접쓰기 방어의 근거가 된다.'
 }
 
 Table CONS_TEMPLATE_WRITE_REQ {
@@ -2654,3 +2657,8 @@ Table SER_OCC {
 //   + CONS_WRITE_REQ/CONS_TEMPLATE_WRITE_REQ — actor·request_key·정규화 payload SHA-256·result version 원장. 서비스는 request-key 잠금 뒤 업무 행 잠금을 사용한다.
 //   + 직접쓰기 guard — provenance 불변·row_version 정확히 +1을 검사하고 deferred receipt trigger가 같은 transaction의 요청 원장을 요구한다.
 //   표 +4(106 → 110) · 기존 컬럼 +3/새 표25 · 함수/trigger3 · migration 1(1766700000000-consulting-writer) · 로컬 신규·down/up·반복·동시성·직접쓰기 검증 · 운영 미적용.
+
+// v4.70 → v4.71 (2026-10-08 · TBO-55 BOC-04D-03d 권고안 채택) — 컨설팅 청구 전환의 멱등·낙관적 경합·직접쓰기 방어.
+//   ~ CONS_WRITE_REQ action invoice + result_ref_id(INV). CONS row_version은 청구 전환 aggregate 변화도 정확히 +1한다.
+//   + deferred cons_invoice_receipt_guard — cs_id가 있는 새 INV는 같은 transaction의 invoice receipt를 요구한다.
+//   표 +0(110 유지) · 기존 컬럼 +1/함수·trigger1 · migration 1(1766800000000-consulting-invoice-writer) · 로컬 down/up·반복·동시 HTTP·직접쓰기 검증 · 운영 미적용.

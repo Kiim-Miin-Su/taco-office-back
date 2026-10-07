@@ -398,13 +398,15 @@ export class ConsultingController {
     description:
       '**남은 돈으로** 청구서를 낸다. 계약 전액으로 내면 이미 받은 돈이 §53 미수금에 한 번 더 얹힌다. '
       + '전환 뒤에도 납부 기록은 cons_pay 에 그대로 남는다 — cs_id 는 연결이지 소유가 아니다. '
-      + '받는 학생은 사람이 고른다(studentId · 학생이 여럿이면 필수 · 한 명이면 비워도 그 학생 · N-33 ②). 감사 원장에 남는다(N-73).',
+      + '받는 학생은 사람이 고른다(studentId · 학생이 여럿이면 필수 · 한 명이면 비워도 그 학생 · N-33 ②). '
+      + 'expectedVersion과 requestKey로 경합·재시도를 막고 실제 actor와 결과 청구서를 요청 원장·감사 원장에 남긴다.',
   })
   @ApiCreatedResponse({ type: ConsAccountRowDto })
   @ApiForbiddenResponse({ description: '금액이 공개 범위 밖' })
   @ApiNotFoundResponse({ description: '보이지 않는 건' })
   @ApiConflictResponse({
-    description: 'code CONS_INV_EXISTS · CONS_INV_NOT_PAID_STEP · CONS_INV_NOTHING_DUE · CONS_INV_STUDENT_AMBIGUOUS(학생이 여럿인데 고르지 않음 · 학생 없음) · '
+    description: 'code CONS_INV_EXISTS · CONS_INV_VERSION_CONFLICT · CONS_INV_REQUEST_KEY_REUSED · CONS_INV_REQUEST_REPLAY_STALE · '
+      + 'CONS_INV_NOT_PAID_STEP · CONS_INV_NOTHING_DUE · CONS_INV_STUDENT_AMBIGUOUS(학생이 여럿인데 고르지 않음 · 학생 없음) · '
       + 'MONTH_CLOSED(전환 청구서의 달 — 오늘의 달 — 이 마감됨 · 발행 · 이월과 같은 문장) · 400 CONS_INV_STUDENT_INVALID',
   })
   async toInvoice(

@@ -6,7 +6,7 @@
 import { Check, Column, Entity, Index, PrimaryColumn } from 'typeorm';
 @Entity({ name: 'cons_write_req' })
 @Index('cons_write_req_cons_idx', ['consId', 'createdAt'])
-@Check('cons_write_req_action_check', "action IN ('create','core','share')")
+@Check('cons_write_req_action_check', "action IN ('create','core','share','invoice')")
 @Check('cons_write_req_fingerprint_hex', "fingerprint ~ '^[0-9a-f]{64}$'")
 @Check('cons_write_req_version_positive', 'result_version >= 1')
 export class ConsWriteReq {
@@ -15,6 +15,7 @@ export class ConsWriteReq {
   @Column({ type: 'bigint' }) consId: number;
   @Column({ type: 'char', length: 64 }) fingerprint: string;
   @Column({ type: 'int' }) resultVersion: number;
+  @Column({ type: 'bigint', nullable: true }) resultRefId: number | null;
   @Column({ type: 'bigint' }) actorId: number;
   @Column({ type: 'timestamptz', default: () => 'now()' }) createdAt: Date;
 }

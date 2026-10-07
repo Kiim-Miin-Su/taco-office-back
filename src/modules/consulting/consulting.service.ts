@@ -1360,7 +1360,7 @@ export class ConsultingService {
    */
   async accounting(viewerId: number, canMoney: boolean, canHide: boolean, lineShown = true): Promise<ConsAccountingDto> {
     const rows = await this.q(
-      `SELECT c.id, c.cons_type, c.stage, c.contract_step, c.amount, c.share, c.owner_id, c.created_by,
+      `SELECT c.id, c.row_version, c.cons_type, c.stage, c.contract_step, c.amount, c.share, c.owner_id, c.created_by,
               -- 「납부 넣기」 판정의 재료 — 서버가 보는 것과 같은 칸이어야 한다 (S5)
               (c.start_on IS NULL AND c.requester IS NULL) AS legacy,
               EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id = c.id AND p.staff_id = $1) AS is_picked,
@@ -1421,6 +1421,7 @@ export class ConsultingService {
       const stage = record.stage;
       return {
         id: Number(r.id),
+        version: Number(r.row_version ?? 1),
         // 학생 이름은 이미 목록이 쓰는 배열 그대로다 — 여럿이면 원문 표의 한 칸에 쉼표로 든다
         studentName: ((r.student_names as string[]) ?? []).join(', '),
         students: ((r.students as Array<{ id: number | string; name: string }>) ?? []).map((s) => ({ id: Number(s.id), name: String(s.name) })),
@@ -1609,11 +1610,37 @@ export class ConsultingService {
    * 전환은 감사 원장에 남는다(N-73 `consulting.to_invoice` — 돈).
    * **마감한 달에는 내지 않는다**(W11 A′ 후속 · M1 발견) — 전환 청구서의 달(오늘 KST 의 달)을 발행 · 이월과 같은 축에서 본다.
    */
-  async toInvoice(viewerId: number, canMoney: boolean, canHide: boolean, consId: number, dto: ConsToInvoiceDto = {}): Promise<ConsAccountRowDto> {
+  async toInvoice(viewerId: number, canMoney: boolean, canHide: boolean, consId: number, dto: ConsToInvoiceDto): Promise<ConsAccountRowDto> {
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      action: 'invoice', consId, expectedVersion: dto.expectedVersion, studentId: dto.studentId ?? null,
+    })).digest('hex');
     await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      // BOC-04D-03d 권고안 채택: request-key 잠금 → aggregate 행 잠금 순서를 writer 전반과 맞춘다.
+      // 정책을 바꾸면 DTO/OpenAPI/Front useRequestKey/CONS_WRITE_REQ/DBML/P-BOC04D03D를 함께 고친다.
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`consulting-invoice:${dto.requestKey}`]);
+      const [prior] = await m.query(
+        `SELECT r.cons_id,r.action,r.fingerprint,r.actor_id,r.result_version,r.result_ref_id,c.row_version,
+                EXISTS (SELECT 1 FROM inv i WHERE i.id=r.result_ref_id AND i.cs_id=r.cons_id AND i.state <> 'void') AS result_live
+           FROM cons_write_req r JOIN cons c ON c.id=r.cons_id WHERE r.request_key=$1`,
+        [dto.requestKey],
+      ) as Array<R>;
+      if (prior) {
+        if (String(prior.action) !== 'invoice' || Number(prior.cons_id) !== consId
+          || String(prior.fingerprint) !== fingerprint || Number(prior.actor_id) !== viewerId) {
+          throw new ConflictException({ code: 'CONS_INV_REQUEST_KEY_REUSED', message: '같은 청구 전환 요청 키를 다른 내용에 다시 사용할 수 없습니다' });
+        }
+        if (Number(prior.row_version) !== Number(prior.result_version) || prior.result_live !== true) {
+          throw new ConflictException({ code: 'CONS_INV_REQUEST_REPLAY_STALE', message: '이 요청 뒤에 컨설팅 또는 청구서가 바뀌었습니다 — 최신 내용을 다시 확인하세요' });
+        }
+        return;
+      }
       // 같은 건을 두 번 눌러도 청구서는 하나다 — 잠그고 다시 센다 (inv_cs_id_live_uniq 가 최후 방어)
       const { row: c, share, viewer } = await this.lockVisible(m, viewerId, canHide, canMoney, consId);
       if (!csCanAmount(share, viewer)) throw new ForbiddenException('이 건의 금액은 공개 범위 밖입니다');
+      if (Number(c.row_version ?? 1) !== dto.expectedVersion) throw new ConflictException({
+        code: 'CONS_INV_VERSION_CONFLICT', message: '컨설팅이 다른 화면에서 변경되었습니다 — 최신 내용을 다시 확인하세요',
+        actualVersion: Number(c.row_version ?? 1),
+      });
       // 전환 청구서의 달 = 오늘(KST)의 달. 마감한 달이면 409 MONTH_CLOSED(발행 · 이월과 같은 문장) —
       // 달 열쇠를 공유로 잡은 **뒤** 마감을 읽으므로 이 전환이 끝나기 전에는 그 달의 마감이 커밋되지 않는다
       const today = todayKst();
@@ -1673,6 +1700,13 @@ export class ConsultingService {
          VALUES ($1, $2, 'consulting', $3, $4, 'draft', $5::date, $6, $7) RETURNING id`,
         [studentId, `${ym}-${mm}`, title, due, today, viewerId, consId],
       )) as Array<{ id: string }>;
+      const nextVersion = Number(c.row_version ?? 1) + 1;
+      await m.query(
+        `INSERT INTO cons_write_req(request_key,action,cons_id,fingerprint,result_version,result_ref_id,actor_id)
+         VALUES ($1,'invoice',$2,$3,$4,$5,$6)`,
+        [dto.requestKey, consId, fingerprint, nextVersion, inv.id, viewerId],
+      );
+      await m.query(`UPDATE cons SET row_version=$2 WHERE id=$1`, [consId, nextVersion]);
       // N-73 — 돈의 쓰기는 같은 트랜잭션에서 감사 원장에 한 줄
       await audit(m, 'consulting.to_invoice', {
         actorId: viewerId, entityId: consId,
