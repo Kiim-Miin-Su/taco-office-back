@@ -51,6 +51,7 @@ export const AUDIT_WRITES = [
   { key: 'catalog.sub', entity: 'SUB', action: 'write', why: '과목 만들기 · 고치기 · 끄기' },
   { key: 'guide.template', entity: 'GTPL', action: 'write', why: '문구 틀 만들기 · 고치기' },
   { key: 'meeting.minutes', entity: 'MTREC', action: 'minutes', why: '회의 속기록(통째로 덮어쓰는 쓰기)' },
+  { key: 'meeting.agenda', entity: 'MTAGENDA', action: 'write', why: 'BO-Q13 권고안 채택 — 회의 전 별도 versioned agenda 수정' },
   { key: 'change_request.review', entity: 'CHREQ', action: 'review', why: '변경 요청 반영 · 반려(시간표가 바뀐다)' },
   { key: 'request.review', entity: 'REQ', action: 'review', why: '요청 승인 · 반려(시급 · 시간대가 바뀐다)' },
   { key: 'approval.undo', entity: 'REQ', action: 'undo', why: '결재 되돌리기(N-84)' },

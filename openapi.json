@@ -10659,6 +10659,180 @@
         ]
       }
     },
+    "/ops/meetings/{id}/agenda": {
+      "put": {
+        "operationId": "OpsController_writeMeetingAgenda",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeetingAgendaWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingAgendaDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MEETING_NOT_FOUND"
+          },
+          "409": {
+            "description": "MEETING_AGENDA_LOCKED | MEETING_AGENDA_START_UNKNOWN | MEETING_AGENDA_VERSION_CONFLICT"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "회의 전 사전 안건 생성·수정 — 별도 version, 실제 시작 잠금, expectedVersion 충돌",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/meetings/{id}/agenda/import": {
+      "post": {
+        "operationId": "OpsController_importMeetingAgenda",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MeetingAgendaImportDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeetingAgendaImportResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "MEETING_AGENDA_NOT_FOUND"
+          },
+          "409": {
+            "description": "MEETING_AGENDA_VERSION_CONFLICT"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "현재 안건을 속기록 미저장 초안으로 명시적으로 가져오기 — 자동 저장·병합 없음",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/meetings/{id}/notice": {
       "post": {
         "description": "본문은 서버가 사실로만 조립한다 — 회의 이름 · 일시 · 강의실 또는 줌 계정 · 참가 링크. 줌 비밀번호는 넣지 않는다. 보내는 사람 · 그만둔 사람에게는 보내지 않는다. 알림 링크는 이 회의 상세이고, 받은 사람이 거기서 참석 · 불참을 누른다.",
@@ -35105,6 +35279,83 @@
           "myAttend"
         ]
       },
+      "MeetingAgendaWriteDto": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "사전 안건 본문"
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "nullable": true,
+            "description": "create=null · update=현재 version. 불일치하면 409 MEETING_AGENDA_VERSION_CONFLICT"
+          }
+        },
+        "required": [
+          "content",
+          "expectedVersion"
+        ]
+      },
+      "MeetingAgendaImportDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "expectedVersion"
+        ]
+      },
+      "MeetingAgendaImportResultDto": {
+        "type": "object",
+        "properties": {
+          "meetingId": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "agendaVersion": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "minutesDraft": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "속기록 입력 칸에 놓을 미저장 초안"
+          },
+          "sourceUpdatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sourceUpdatedById": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sourceUpdatedByName": {
+            "type": "string"
+          },
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "자동 저장·자동 병합하지 않았음을 고정한다"
+          }
+        },
+        "required": [
+          "meetingId",
+          "agendaVersion",
+          "minutesDraft",
+          "sourceUpdatedAt",
+          "sourceUpdatedById",
+          "sourceUpdatedByName",
+          "saved"
+        ]
+      },
       "MeetingNoticeResultDto": {
         "type": "object",
         "properties": {
@@ -47387,83 +47638,6 @@
           "history",
           "historyTotal",
           "historyLimit"
-        ]
-      },
-      "MeetingAgendaWriteDto": {
-        "type": "object",
-        "properties": {
-          "content": {
-            "type": "string",
-            "maxLength": 8000,
-            "description": "사전 안건 본문"
-          },
-          "expectedVersion": {
-            "type": "integer",
-            "minimum": 1,
-            "nullable": true,
-            "description": "create=null · update=현재 version. 불일치하면 409 MEETING_AGENDA_VERSION_CONFLICT"
-          }
-        },
-        "required": [
-          "content",
-          "expectedVersion"
-        ]
-      },
-      "MeetingAgendaImportDto": {
-        "type": "object",
-        "properties": {
-          "expectedVersion": {
-            "type": "integer",
-            "minimum": 1
-          }
-        },
-        "required": [
-          "expectedVersion"
-        ]
-      },
-      "MeetingAgendaImportResultDto": {
-        "type": "object",
-        "properties": {
-          "meetingId": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "agendaVersion": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "minutesDraft": {
-            "type": "string",
-            "maxLength": 8000,
-            "description": "속기록 입력 칸에 놓을 미저장 초안"
-          },
-          "sourceUpdatedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "sourceUpdatedById": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "sourceUpdatedByName": {
-            "type": "string"
-          },
-          "saved": {
-            "type": "boolean",
-            "enum": [
-              false
-            ],
-            "description": "자동 저장·자동 병합하지 않았음을 고정한다"
-          }
-        },
-        "required": [
-          "meetingId",
-          "agendaVersion",
-          "minutesDraft",
-          "sourceUpdatedAt",
-          "sourceUpdatedById",
-          "sourceUpdatedByName",
-          "saved"
         ]
       }
     }

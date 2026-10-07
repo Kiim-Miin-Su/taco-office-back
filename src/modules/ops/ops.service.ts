@@ -73,6 +73,7 @@ import type {
   MfbCommentWriteDto, MfbEditDto, MfbPostDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDto, PlanDueDecisionDto, PlanDueRowDto, PlanPatchDto, PlanReviewDto,
   PlanStageMoveDto, PlanTaskCreateDto, PlanTaskDto,
+  MeetingAgendaDto, MeetingAgendaImportDto, MeetingAgendaImportResultDto, MeetingAgendaWriteDto,
   MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
   MarketingCreateDto, MarketingDto,
@@ -145,6 +146,15 @@ const MEETING_MODE = effectiveModeOf('mx', 's');
  */
 const MEETING_START_MIN = `CASE WHEN mo.ser_id IS NULL THEN s.start_min ELSE ${startMinOf('mo')} END`;
 const MEETING_END_MIN = `CASE WHEN mo.ser_id IS NULL THEN s.end_min ELSE ${endMinOf('mo')} END`;
+
+/**
+ * BO-Q13의 실제 시작 잠금 시각. 투영된 회차가 있으면 이동 예외가 반영된 span 시작을 사용하고,
+ * 투영 밖이면 예외 날짜/시각 → 규칙 날짜/시각 순서로 계산한다. mtrec.on_date만 보면 옮긴 회의를 잘못 잠근다.
+ */
+const MEETING_START_AT = `COALESCE(
+  lower(mo.span),
+  (COALESCE(mx.new_date, m.on_date)::date + make_interval(mins => COALESCE(mx.start_min, s.start_min))) AT TIME ZONE 'Asia/Seoul'
+)`;
 
 /**
  * 「+ 대표 지시」가 막히는 이유 — 읽기(`addTaskBlockedReason`)와 쓰기(409)가 **같은 문장**을 쓴다 (S5 · D-R22 · w5 65-4).
@@ -654,6 +664,14 @@ export class OpsService {
     return (await this.q(
       `SELECT m.id, m.mt_type, m.title, to_char(m.on_date,'YYYY-MM-DD') AS on_date, m.minutes, m.ser_id,
               ${MEETING_START_MIN} AS start_min, ${MEETING_END_MIN} AS end_min, ${MEETING_MODE} AS mode, r.name AS room_name, z.label AS zoom_label,
+              left(btrim(ag.content), 240) AS agenda_preview, ag.version AS agenda_version,
+              ${kstAt('ag.updated_at')} AS agenda_updated_at, ag.updated_by AS agenda_updated_by, agu.name AS agenda_updated_by_name,
+              (${MEETING_START_AT} IS NOT NULL AND ${MEETING_START_AT} <= now()) AS agenda_locked,
+              ${kstAt('m.minutes_at')} AS minutes_at, m.minutes_by, mb.name AS minutes_by_name,
+              GREATEST(1, (SELECT count(*) FROM log ml WHERE ml.entity = 'MTREC' AND ml.entity_id = m.id AND ml.action = 'minutes'))::int AS minutes_version,
+              ((length(COALESCE(m.minutes,'')) - length(replace(COALESCE(m.minutes,''),'[정한 것]',''))) / length('[정한 것]'))::int AS decision_count,
+              (SELECT count(*)::int FROM todo t WHERE t.mt_id = m.id) AS task_count,
+              (SELECT count(*) FILTER (WHERE t.done)::int FROM todo t WHERE t.mt_id = m.id) AS task_done,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id)::int AS attendees,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed)::int AS confirmed,
               (SELECT count(*) FROM mtattd a WHERE a.mt_id = m.id AND a.confirmed IS NULL)::int AS waiting,
@@ -662,11 +680,15 @@ export class OpsService {
                          'staffId', a.staff_id, 'name', st.name, 'title', st.title, 'confirmed', a.confirmed) ORDER BY st.id)
                          FROM mtattd a JOIN staff st ON st.id = a.staff_id WHERE a.mt_id = m.id), '[]'::json) AS people
          FROM mtrec m
+         LEFT JOIN mtagenda ag ON ag.mt_id = m.id
+         LEFT JOIN staff agu ON agu.id = ag.updated_by
+         LEFT JOIN staff mb ON mb.id = m.minutes_by
          ${MEETING_PLACE_JOINS}
         ${where}
         ORDER BY m.on_date DESC NULLS LAST, m.id DESC`, params,
     )).map((r) => {
       const onDate = (r.on_date as string) ?? null;
+      const minutesReady = Boolean(r.minutes) && r.minutes_at != null && r.minutes_by != null && r.minutes_by_name != null;
       return {
         id: Number(r.id), mtType: String(r.mt_type),
         // 낱말은 서버가 만든다 — 한동안 이 표가 「general」 「plan」을 그대로 찍고 있었다 (D-R18 · C57)
@@ -676,6 +698,15 @@ export class OpsService {
         onDate,
         attendees: Number(r.attendees), confirmed: Number(r.confirmed), waiting: Number(r.waiting),
         hasMinutes: Boolean(r.minutes),
+        agenda: r.agenda_version == null ? null : {
+          preview: String(r.agenda_preview), version: Number(r.agenda_version), updatedAt: String(r.agenda_updated_at),
+          updatedById: leadId(r.agenda_updated_by), updatedByName: String(r.agenda_updated_by_name), locked: r.agenda_locked === true,
+        },
+        minutesSummary: !minutesReady ? null : {
+          meetingId: Number(r.id), preview: String(r.minutes).trim().slice(0, 240), version: Number(r.minutes_version),
+          writtenAt: String(r.minutes_at), writtenById: leadId(r.minutes_by), writtenByName: String(r.minutes_by_name),
+          decisionCount: Number(r.decision_count), taskCount: Number(r.task_count), taskDone: Number(r.task_done),
+        },
         serId: leadId(r.ser_id, true),
         startMin: r.start_min == null ? null : Number(r.start_min),
         endMin: r.end_min == null ? null : Number(r.end_min),
@@ -2460,6 +2491,7 @@ export class OpsService {
     // 「안내 보내기」 — 받을 사람(활동 중인 참석자 · 보내는 나 제외)이 있어야 선다. 막힌 이유는 쓰기(409)와 같은 문장이다
     const recipients = people.filter((r) => r.active === true && leadId(r.staff_id) !== viewer?.id).length;
     const noticeBlockedReason = !canManage ? null : OpsService.noticeBlockedReason(m.canceled === true, recipients);
+    const agenda = await this.meetingAgenda(id, canManage);
 
     return {
       id: leadId(m.id), mtType: mt, mtTypeLabel: mtTypeLabel(mt),
@@ -2472,6 +2504,7 @@ export class OpsService {
       // 원문 「참석 0/4 확인」 — 화면이 다시 세지 않는다 (D-R37)
       attendLabel: `참석 ${confirmed}/${attendees.length} 확인`,
       preFiles: files,
+      agenda,
       minutes: (m.minutes as string) ?? null,
       minutesAt: (m.minutes_at as string) ?? null,
       minutesByName: (m.minutes_by_name as string) ?? null,
@@ -2484,6 +2517,109 @@ export class OpsService {
       noticeBlockedReason,
       canRespond: mine !== null,
       myAttend: mine ? { state: mine.state, stateLabel: mine.stateLabel } : null,
+    };
+  }
+
+  /**
+   * BO-Q13 권고안 채택 지점(2026-10-07 사용자 확정).
+   * agenda는 minutes와 다른 정본이고 실제 회의 시작부터 writer만 잠긴다. 정책 변경 시 결정 원장,
+   * Front MeetingAgendaPanel/MeetingMinutesLedger, DTO/controller/migration의 BO-Q13 주석을 함께 수정한다.
+   */
+  private async meetingAgenda(id: number, canManage: boolean): Promise<MeetingAgendaDto | null> {
+    const [row] = await this.q(
+      `SELECT ag.mt_id, ag.content, ag.version,
+              ${kstAt('ag.created_at')} AS created_at, ag.created_by, cb.name AS created_by_name,
+              ${kstAt('ag.updated_at')} AS updated_at, ag.updated_by, ub.name AS updated_by_name,
+              ${kstAt(MEETING_START_AT)} AS locked_at,
+              (${MEETING_START_AT} IS NOT NULL AND ${MEETING_START_AT} <= now()) AS locked
+         FROM mtagenda ag JOIN mtrec m ON m.id = ag.mt_id
+         JOIN staff cb ON cb.id = ag.created_by JOIN staff ub ON ub.id = ag.updated_by
+         ${MEETING_PLACE_JOINS}
+        WHERE ag.mt_id = $1`,
+      [id],
+    );
+    if (!row) return null;
+    const locked = row.locked === true;
+    const startUnknown = row.locked_at == null;
+    const editBlockedReason = locked ? '회의가 시작되어 사전 안건을 고칠 수 없습니다'
+      : startUnknown ? '실제 회의 시작 시각을 확인할 수 없어 사전 안건을 고칠 수 없습니다'
+        : !canManage ? '사전 안건은 관리자·매니저가 회의 시작 전에 작성합니다' : null;
+    return {
+      meetingId: leadId(row.mt_id), content: String(row.content), version: Number(row.version),
+      createdAt: String(row.created_at), createdById: leadId(row.created_by), createdByName: String(row.created_by_name),
+      updatedAt: String(row.updated_at), updatedById: leadId(row.updated_by), updatedByName: String(row.updated_by_name),
+      locked, lockedAt: row.locked_at == null ? null : String(row.locked_at),
+      canEdit: canManage && !locked && !startUnknown, editBlockedReason,
+      canImportToMinutes: canManage,
+    };
+  }
+
+  /** agenda create/update는 같은 회의 행과 agenda 행을 잠그고 version·감사를 한 트랜잭션에서 쓴다. */
+  async writeMeetingAgenda(viewerId: number, id: number, dto: MeetingAgendaWriteDto): Promise<MeetingAgendaDto> {
+    const content = dto.content.trim();
+    await this.lead.manager.transaction(async (em) => {
+      const [meeting] = (await em.query(
+        `SELECT m.id, ${MEETING_START_AT} AS starts_at
+           FROM mtrec m ${MEETING_PLACE_JOINS}
+          WHERE m.id = $1 FOR UPDATE OF m`, [id],
+      )) as Array<{ id: string; starts_at: Date | null }>;
+      if (!meeting) throw new NotFoundException({ code: 'MEETING_NOT_FOUND', message: '회의를 찾을 수 없습니다' });
+      if (meeting.starts_at == null) {
+        throw new ConflictException({ code: 'MEETING_AGENDA_START_UNKNOWN', message: '실제 회의 시작 시각을 확인할 수 없어 사전 안건을 고칠 수 없습니다' });
+      }
+      const [{ locked }] = (await em.query(`SELECT $1::timestamptz <= now() AS locked`, [meeting.starts_at])) as Array<{ locked: boolean }>;
+      if (locked) throw new ConflictException({ code: 'MEETING_AGENDA_LOCKED', message: '회의가 시작되어 사전 안건을 고칠 수 없습니다' });
+
+      const [current] = (await em.query(
+        `SELECT content, version FROM mtagenda WHERE mt_id = $1 FOR UPDATE`, [id],
+      )) as Array<{ content: string; version: number }>;
+      const actualVersion = current ? Number(current.version) : null;
+      if (dto.expectedVersion !== actualVersion) {
+        throw new ConflictException({
+          code: 'MEETING_AGENDA_VERSION_CONFLICT', message: '다른 사람이 먼저 안건을 고쳤습니다. 최신 안건을 다시 불러와 주세요',
+          expectedVersion: dto.expectedVersion, actualVersion,
+        });
+      }
+      const nextVersion = actualVersion === null ? 1 : actualVersion + 1;
+      if (actualVersion === null) {
+        await em.query(
+          `INSERT INTO mtagenda (mt_id, content, version, created_by, updated_by) VALUES ($1,$2,1,$3,$3)`,
+          [id, content, viewerId],
+        );
+      } else {
+        await em.query(
+          `UPDATE mtagenda SET content=$2, version=$3, updated_by=$4, updated_at=now() WHERE mt_id=$1 AND version=$5`,
+          [id, content, nextVersion, viewerId, actualVersion],
+        );
+      }
+      await audit(em, 'meeting.agenda', {
+        actorId: viewerId, entityId: id,
+        before: current ? { content: current.content, version: actualVersion } : null,
+        after: { content, version: nextVersion },
+      });
+    });
+    return (await this.meetingAgenda(id, true))!;
+  }
+
+  /** 명시적 가져오기는 현재 version을 확인해 미저장 속기록 초안만 반환한다. DB 쓰기·자동 병합은 없다. */
+  async importMeetingAgenda(id: number, dto: MeetingAgendaImportDto): Promise<MeetingAgendaImportResultDto> {
+    const [row] = await this.q(
+      `SELECT ag.mt_id, ag.content, ag.version, ${kstAt('ag.updated_at')} AS updated_at,
+              ag.updated_by, s.name AS updated_by_name
+         FROM mtagenda ag JOIN staff s ON s.id = ag.updated_by WHERE ag.mt_id = $1`, [id],
+    );
+    if (!row) throw new NotFoundException({ code: 'MEETING_AGENDA_NOT_FOUND', message: '저장된 사전 안건이 없습니다' });
+    const actualVersion = Number(row.version);
+    if (dto.expectedVersion !== actualVersion) {
+      throw new ConflictException({
+        code: 'MEETING_AGENDA_VERSION_CONFLICT', message: '다른 사람이 먼저 안건을 고쳤습니다. 최신 안건을 다시 불러와 주세요',
+        expectedVersion: dto.expectedVersion, actualVersion,
+      });
+    }
+    return {
+      meetingId: leadId(row.mt_id), agendaVersion: actualVersion, minutesDraft: String(row.content),
+      sourceUpdatedAt: String(row.updated_at), sourceUpdatedById: leadId(row.updated_by),
+      sourceUpdatedByName: String(row.updated_by_name), saved: false,
     };
   }
 

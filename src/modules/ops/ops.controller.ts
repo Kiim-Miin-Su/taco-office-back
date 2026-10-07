@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, NotFoundException, Param, ParseIntPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, NotFoundException, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
@@ -14,6 +14,7 @@ import {
   LeadCreateDto, LeadDto, LeadFailDto, LeadPatchDto, LeadResumeDto, LeadStageMoveDto, LeadTouchWriteDto,
   MfbCommentWriteDto, MfbEditDto, MfbReplyWriteDto, MfbThreadDto, OpsDto,
   PlanDetailDto, PlanDueDecisionDto, PlanOwnerPatchDto, PlanPatchDto, PlanReviewDto, PlanStageMoveDto,
+  MeetingAgendaDto, MeetingAgendaImportDto, MeetingAgendaImportResultDto, MeetingAgendaWriteDto,
   MeetingAttendDto, MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto, PlanTaskCreateDto,
   MarketingCreateDto, MarketingDto, MarketingPatchDto, SuggestionDto, SuggestionReplyDto,
@@ -521,6 +522,38 @@ export class OpsController {
     const out = await this.svc.meetingDetail(id, { id: user.id, canManage: OpsController.canManage(user) });
     if (!out) throw new NotFoundException({ code: 'MEETING_NOT_FOUND', message: '회의를 찾을 수 없습니다' });
     return out;
+  }
+
+  /**
+   * BO-Q13 권고안 채택(2026-10-07): 속기록과 분리한 agenda 한 벌만 PUT으로 만든다/고친다.
+   * 정책 변경 시 docs 결정 원장과 Front MeetingAgendaPanel, DTO/service/migration의 BO-Q13 주석을 함께 수정한다.
+   */
+  @Put('meetings/:id/agenda')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '회의 전 사전 안건 생성·수정 — 별도 version, 실제 시작 잠금, expectedVersion 충돌' })
+  @ApiOkResponse({ type: MeetingAgendaDto })
+  @ApiNotFoundResponse({ description: 'MEETING_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'MEETING_AGENDA_LOCKED | MEETING_AGENDA_START_UNKNOWN | MEETING_AGENDA_VERSION_CONFLICT' })
+  writeMeetingAgenda(
+    @CurrentUser() user: RequestUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MeetingAgendaWriteDto,
+  ): Promise<MeetingAgendaDto> {
+    return this.svc.writeMeetingAgenda(user.id, id, dto);
+  }
+
+  @Post('meetings/:id/agenda/import')
+  @HttpCode(200)
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '현재 안건을 속기록 미저장 초안으로 명시적으로 가져오기 — 자동 저장·병합 없음' })
+  @ApiOkResponse({ type: MeetingAgendaImportResultDto })
+  @ApiNotFoundResponse({ description: 'MEETING_AGENDA_NOT_FOUND' })
+  @ApiConflictResponse({ description: 'MEETING_AGENDA_VERSION_CONFLICT' })
+  importMeetingAgenda(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MeetingAgendaImportDto,
+  ): Promise<MeetingAgendaImportResultDto> {
+    return this.svc.importMeetingAgenda(id, dto);
   }
 
   @Post('meetings/:id/notice')
