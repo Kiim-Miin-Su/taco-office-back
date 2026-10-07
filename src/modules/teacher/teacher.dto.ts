@@ -297,7 +297,7 @@ export class TeacherBonusRuleDto {
   @ApiProperty({ description: '칸 이름 — 「모의수업」 · 「진단고사」 · 「Kinder 수업」 · 「그룹 학생 한 명 늘 때」' }) label!: string;
   @ApiProperty({ description: '도움말 — 「한 번에 얼마」 · 「시급에 더함」 · 「한 명당」' }) hint!: string;
   @ApiProperty({ type: Number, nullable: true, description: '오늘 걸린 금액 — 적은 줄이 없으면 null(가산 없음)' }) amount!: number | null;
-  @ApiProperty({ description: '셈에 실제로 드는가 — Kinder 는 표시가 없어 false' }) applied!: boolean;
+  @ApiProperty({ description: '셈에 실제로 드는가 — Kinder는 별도 명시 표식이 유효한 일반 class에서 true' }) applied!: boolean;
   @ApiProperty({ ...S, description: '셈에 안 드는 까닭' }) note!: string | null;
 }
 

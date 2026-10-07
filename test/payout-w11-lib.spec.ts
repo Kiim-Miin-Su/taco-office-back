@@ -7,48 +7,54 @@
 /**
  * W11 M2 — DB 없이 보는 판정 넷 (N-93 가산 · N-51 보정 달 · N-94 줄 가림 · 권한 · 감사 줄).
  *
- * 가산은 **한 함수**(`lessonBonus`)가 시트 · 확정 · 강사 히스토리에 같이 더한다 — 그 함수의 셈을 여기서 못 박는다.
+ * 가산은 **한 함수**(`lessonCompensation`)가 시트 · 확정 · 강사 히스토리에 같이 더한다 — 그 함수의 셈을 여기서 못 박는다.
  * 금액은 D1(§4-12) 값을 쓰되 **데이터로 넣지 않는다**(규칙 줄은 대표가 적는다) — 여기서는 셈만 본다.
  */
 import {
-  BONUS_D1_DEFAULTS, KINDER_MARKER_EXISTS, correctionTargetMonth, lessonBonus, nextMonth, payOf, payoutSettleLabel,
-  payoutBreakdown, type BonusRuleRow, type PayoutLesson,
+  BONUS_D1_DEFAULTS, consecutiveGraceMinutes, correctionTargetMonth, lessonCompensation, nextMonth, payOf,
+  payoutSettleLabel, payoutBreakdown, type BonusRuleRow, type PayoutLesson,
 } from '../src/lib/payout-sheet';
 import { ACCT_PRIVACY_KEYS, acctPrivacyAuditId, lineAmountVisible } from '../src/lib/acct-privacy';
 import { AUDIT_WRITES } from '../src/lib/audit';
 import { canCeoApproveCorrection, canCeoSetAcctPrivacy, ROLES } from '../src/common/perm';
 
-describe('가산 한 함수 (N-93 · lib/payout-sheet.lessonBonus)', () => {
+describe('공용 급여 계산기 (BO-09D-02 · lib/payout-sheet.lessonCompensation)', () => {
   const rules: BonusRuleRow[] = [
     { kind: 'per_session', kindKey: 'mock', amount: 15000, fromDate: '2026-09-01' },
+    { kind: 'per_session', kindKey: 'diagx', amount: 15000, fromDate: '2026-09-01' },
     { kind: 'per_session', kindKey: 'mock', amount: 0, fromDate: '2026-10-01' }, // 그 날부터 멈춤
     { kind: 'group_per_student', kindKey: null, amount: 5000, fromDate: '2026-09-01' },
     { kind: 'kinder_hourly', kindKey: null, amount: 10000, fromDate: '2026-09-01' },
   ];
-  const lesson = (over: Partial<{ kindKey: string; onDate: string; durMin: number; bonusHeads: number }> = {}) => ({
-    kindKey: 'class', onDate: '2026-09-15', durMin: 60, bonusHeads: 1, ...over,
+  const lesson = (over: Partial<{ kindKey: string; onDate: string; durMin: number; bonusHeads: number; isKinder: boolean }> = {}) => ({
+    kindKey: 'class', onDate: '2026-09-15', durMin: 60, bonusHeads: 1, isKinder: false, ...over,
   });
 
-  it('「한 번에」는 그 수업 종류의 줄이 있으면 회차마다 그 금액 — 다른 종류 · 적용일 전에는 없다', () => {
-    expect(lessonBonus(lesson({ kindKey: 'mock' }), rules)).toEqual({ total: 15000, parts: [{ kind: 'per_session', amount: 15000 }] });
-    expect(lessonBonus(lesson({ kindKey: 'class' }), rules).total).toBe(0);
-    expect(lessonBonus(lesson({ kindKey: 'mock', onDate: '2026-08-31' }), rules).total).toBe(0);
-    // 금액 0 인 새 줄은 「그 날부터 멈춤」 — 지난 줄을 고치지 않고 새 줄로 바꾼다
-    expect(lessonBonus(lesson({ kindKey: 'mock', onDate: '2026-10-02' }), rules).total).toBe(0);
+  it('진단·모의는 기본 시급·시간·학생 수·Kinder·그룹을 합산하지 않고 회차당 총 15,000원이다', () => {
+    for (const kindKey of ['mock', 'diagx']) {
+      const out = lessonCompensation(lesson({ kindKey, durMin: 120, bonusHeads: 3, isKinder: true }), 45000, rules);
+      expect(out).toEqual({ pay: 0, bonus: 15000, parts: [{ kind: 'per_session', amount: 15000 }], unitRate: 0 });
+    }
   });
 
-  it('그룹은 그날 학생이 둘 이상일 때 (금액 × 학생 수)를 시급처럼 시간에 곱한다 — 강사 덱 §32 「2시간 · 학생당 5,000 · 3명」 = 30,000', () => {
-    expect(lessonBonus(lesson({ bonusHeads: 3, durMin: 120 }), rules)).toEqual({ total: 30000, parts: [{ kind: 'group_per_student', amount: 30000 }] });
-    expect(lessonBonus(lesson({ bonusHeads: 1, durMin: 120 }), rules).total).toBe(0);
+  it('일반 그룹은 기존 학생당 시간 가산을 유지한다', () => {
+    expect(lessonCompensation(lesson({ bonusHeads: 3, durMin: 120 }), 45000, rules)).toEqual({
+      pay: 90000, bonus: 30000, parts: [{ kind: 'group_per_student', amount: 30000 }], unitRate: 45000,
+    });
+    expect(lessonCompensation(lesson({ bonusHeads: 1, durMin: 120 }), 45000, rules)?.bonus).toBe(0);
     // 90분 · 2명 — 시급처럼 한 번만 절사(payOf)
-    expect(lessonBonus(lesson({ bonusHeads: 2, durMin: 90 }), rules).total).toBe(payOf(10000, 90));
-    // 쌓인다 — 모의수업이 그룹이면 둘 다
-    expect(lessonBonus(lesson({ kindKey: 'mock', bonusHeads: 2 }), rules).total).toBe(15000 + 10000);
+    expect(lessonCompensation(lesson({ bonusHeads: 2, durMin: 90 }), 45000, rules)?.bonus).toBe(payOf(10000, 90));
   });
 
-  it('Kinder 는 수업을 가를 표시가 모델에 없어 0 원이다 — 규칙 줄이 있어도 셈에 들지 않는다(지어내지 않는다)', () => {
-    expect(KINDER_MARKER_EXISTS).toBe(false);
-    expect(lessonBonus(lesson({ kindKey: 'class' }), rules).parts.some((p) => p.kind === 'kinder_hourly')).toBe(false);
+  it('명시 Kinder 표식의 일반 class는 1명만 허용하고 기본 시급 +10,000원/시간이며 그룹 가산은 0이다', () => {
+    expect(lessonCompensation(lesson({ isKinder: true, durMin: 90, bonusHeads: 1 }), 45000, rules)).toEqual({
+      pay: 67500, bonus: 15000, parts: [{ kind: 'kinder_hourly', amount: 15000 }], unitRate: 45000,
+    });
+    expect(() => lessonCompensation(lesson({ isKinder: true, bonusHeads: 2 }), 45000, rules)).toThrow('KINDER_GROUP_CONFLICT');
+  });
+
+  it('학년·나이 추정 입력 없이 명시 표식이 false이면 일반 수업으로 계산한다', () => {
+    expect(lessonCompensation(lesson({ isKinder: false }), 45000, rules)).toEqual({ pay: 45000, bonus: 0, parts: [], unitRate: 45000 });
   });
 
   it('D1 값은 칸을 미리 채울 값이다 — 원문 §56 세 칸(「한 번에」는 모의수업 · 진단고사 둘)', () => {
@@ -58,6 +64,19 @@ describe('가산 한 함수 (N-93 · lib/payout-sheet.lessonBonus)', () => {
       { kind: 'kinder_hourly', kindKey: null, amount: 10000 },
       { kind: 'group_per_student', kindKey: null, amount: 5000 },
     ]);
+  });
+});
+
+describe('실제 접점 연강 유예 (BO-09D-02)', () => {
+  it('같은 강사의 실제 종료와 다음 시작이 맞닿은 묶음만 마지막 종료 + 수업 수×1시간으로 계산한다', () => {
+    const grace = consecutiveGraceMinutes([
+      { key: 'a', startEpoch: 1000, endEpoch: 4600 },
+      { key: 'b', startEpoch: 4600, endEpoch: 8200 },
+      { key: 'gap', startEpoch: 8260, endEpoch: 11860 },
+    ]);
+    expect(grace.get('a')).toBe(180); // 첫 회차 종료→마지막 종료 60분 + 2시간 유예
+    expect(grace.get('b')).toBe(120);
+    expect(grace.get('gap')).toBe(0);
   });
 });
 
@@ -71,27 +90,31 @@ describe('강사 히스토리 정산 종류별 근거 (N-93 · 강사 덱 29)', 
     ...over,
   });
 
-  it('기본 시급과 그룹·진단·모의 가산을 서버가 각각 합계한다 — 겹친 모의 그룹도 총액과 맞다', () => {
+  it('기본 시급과 Kinder·그룹·진단·모의 총액을 서버가 각각 합계한다', () => {
     const out = payoutBreakdown([
       paid({ serId: 10, durMin: 30, pay: 22500 }),
       paid({
-        serId: 11, kindKey: 'mock', durMin: 60, pay: 45000, bonus: 25000,
-        bonusParts: [{ kind: 'per_session', amount: 15000 }, { kind: 'group_per_student', amount: 10000 }],
+        serId: 11, kindKey: 'mock', durMin: 60, pay: 0, bonus: 15000,
+        bonusParts: [{ kind: 'per_session', amount: 15000 }], unitRate: 0,
       }),
       paid({
-        serId: 12, kindKey: 'diagx', durMin: 90, pay: 67500, bonus: 15000,
-        bonusParts: [{ kind: 'per_session', amount: 15000 }],
+        serId: 12, kindKey: 'diagx', durMin: 90, pay: 0, bonus: 15000,
+        bonusParts: [{ kind: 'per_session', amount: 15000 }], unitRate: 0,
+      }),
+      paid({
+        serId: 13, durMin: 90, pay: 67500, bonus: 15000,
+        bonusParts: [{ kind: 'kinder_hourly', amount: 15000 }],
       }),
     ]);
     expect(out.map((r) => [r.key, r.lessonCount, r.minutes, r.amount])).toEqual([
       ['general', 1, 30, 22500],
-      ['kinder', 0, 0, 0],
-      ['group', 1, 60, 10000],
-      ['diag', 1, 90, 82500],
-      ['mock', 1, 60, 60000],
+      ['kinder', 1, 90, 82500],
+      ['group', 0, 0, 0],
+      ['diag', 1, 90, 15000],
+      ['mock', 1, 60, 15000],
       ['other', 0, 0, 0],
     ]);
-    expect(out.reduce((sum, row) => sum + row.amount, 0)).toBe(175000);
+    expect(out.reduce((sum, row) => sum + row.amount, 0)).toBe(135000);
   });
 
   it('정산에 들지 않는 미작성·취소 회차는 breakdown에 섞지 않는다', () => {

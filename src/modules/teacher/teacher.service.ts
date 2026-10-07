@@ -13,7 +13,7 @@ import {
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import {
-  BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL, KINDER_MARKER_EXISTS, KINDER_NOT_APPLIED,
+  BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL,
   loadBonusRules, payoutBreakdown, payoutSettleLabel, payoutSheet,
 } from '../../lib/payout-sheet';
 import { drawnDateOf, effectiveModeOf, kstAt, serStuOn } from '../../lib/sql';
@@ -548,7 +548,8 @@ export class TeacherService {
    *
    * 정산 규칙은 전부 lib/rules 정본을 소비한다: 인정 = 제출분(D-R7 — 승인 무관),
    * 차감 = 지각뿐(D-R32 — 최초 제출 기준), 원천징수 = 3%·10% 각각 절사(D-15).
-   * 가산(N-93 · W11 M2)은 대표의 정리 · 기준 탭 「가산 규칙」 줄을 **시트와 같은 함수**가 더한다 — Kinder 는 표시가 없어 0.
+   * 가산(N-93 · BO-09D-02)은 대표의 정리 · 기준 탭 「가산 규칙」 줄을 **시트와 같은 함수**가 더한다.
+   * Kinder는 학년·나이가 아닌 명시 표식만 쓰고 일반 class 1명일 때 기본 시급+시간 가산으로 센다.
    * 확정된 달은 지급 확정의 근거 줄(payout_line)을 그대로 읽는다(N-36 ①) · 확정 뒤에 쓴 회차는 「확정된 달 — 다음 달 보정」(N-51).
    * 강사 본인의 정산은 시급 비공개(N-94)와 상관없이 늘 본인에게 보인다.
    */
@@ -632,11 +633,10 @@ export class TeacherService {
       for (const r of rules) {
         if (r.kind === d.kind && r.kindKey === d.kindKey && r.fromDate <= today && (cur === null || r.fromDate > cur.fromDate)) cur = r;
       }
-      const applied = d.kind !== 'kinder_hourly' || KINDER_MARKER_EXISTS;
       return {
         label: d.kindKey ? (kindNames.get(d.kindKey) ?? d.kindKey) : BONUS_KIND_LABEL[d.kind],
         hint: BONUS_KIND_HINT[d.kind], amount: cur ? cur.amount : null,
-        applied, note: applied ? null : KINDER_NOT_APPLIED,
+        applied: true, note: null,
       };
     });
 

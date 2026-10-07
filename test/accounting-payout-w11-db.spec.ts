@@ -309,8 +309,7 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
       ['모의수업', '한 번에 얼마', 15000], ['진단고사', '한 번에 얼마', 15000],
       ['Kinder 수업', '시급에 더함', 10000], ['그룹 학생 한 명 늘 때', '한 명당', 5000],
     ]);
-    expect(book.slots.find((s: { kind: string }) => s.kind === 'kinder_hourly')).toMatchObject({ applied: false });
-    expect(book.slots.find((s: { kind: string }) => s.kind === 'kinder_hourly').note).toContain('Kinder');
+    expect(book.slots.find((s: { kind: string }) => s.kind === 'kinder_hourly')).toMatchObject({ applied: true, note: null });
 
     const today = kst();
     const post = (body: Record<string, unknown>, t = tokens.ceo) => api('post', '/accounting/bonus-rules', t).send(body);

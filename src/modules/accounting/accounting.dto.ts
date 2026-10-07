@@ -1477,7 +1477,7 @@ export class PayoutBonusSlotDto {
   @ApiProperty({ type: String, nullable: true, description: '오늘 걸린 줄의 적용일' }) currentFrom!: string | null;
   @ApiProperty({ type: Number, nullable: true, description: '앞으로 걸릴 줄(예약)의 금액' }) nextAmount!: number | null;
   @ApiProperty({ type: String, nullable: true, description: '앞으로 걸릴 줄의 적용일' }) nextFrom!: string | null;
-  @ApiProperty({ description: '셈에 실제로 드는가 — Kinder 는 수업을 가를 표시가 없어 false' }) applied!: boolean;
+  @ApiProperty({ description: '셈에 실제로 드는가 — Kinder는 별도 명시 표식이 유효한 일반 class에서 true' }) applied!: boolean;
   @ApiProperty({ type: String, nullable: true, description: '셈에 안 드는 까닭(서버 문장)' }) note!: string | null;
 }
 
@@ -1486,7 +1486,7 @@ export class PayoutBonusBookDto {
   @ApiProperty({ type: [PayoutBonusRuleDto], description: '적은 줄 전부 — 적용일 내림차순(지난 줄 불변)' }) rules!: PayoutBonusRuleDto[];
   @ApiProperty({ description: '오늘 YYYY-MM-DD — 적용일은 이 날 이후만 (소급 없음)' }) today!: string;
   @ApiProperty({ description: '규칙을 적을 수 있는가 — canWage' }) canWrite!: boolean;
-  @ApiProperty({ description: '셈의 규칙 한 줄(서버 문장) — 「그룹은 그날 학생 수 × 금액을 시급에 더한다」 등' }) rule!: string;
+  @ApiProperty({ description: '진단·모의 총액, Kinder 1대1 시간 가산, 일반 그룹 학생당 시간 가산의 서버 계산 규칙' }) rule!: string;
 }
 
 export class PayoutBonusRuleWriteDto {

@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: payout-sheet.ts — payoutSheet, lessonBonus, BONUS_*, TEACHER_OF_OCC, payoutSettleLabel (util)
+ * 목적: payout-sheet.ts — payoutSheet, lessonCompensation, BONUS_*, TEACHER_OF_OCC, payoutSettleLabel (util)
  * 책임/재사용: 강사 한 사람 한 달의 정산 시트를 회차·리포트·시급·가산 규칙·확정 근거 줄에서 세는 한 곳. 강사 히스토리(§57 강사 화면)와 §56 시트 · 지급 확정이 같은 함수를 부른다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -22,9 +22,9 @@
  *     새 달 시트에는 「확정된 달 — N월 지급」으로만 보이고 다시 더해지지 않는다.
  *
  * W11 M2 로 셋이 더해졌다 —
- *   ① **가산**(N-93) — `lessonBonus` 한 함수가 시트 · 확정 · 강사 히스토리에 같이 더한다. 규칙은 `payout_bonus_rule`
- *      (적용일 소급 없음 · 새 줄로만). D1 금액은 데이터가 아니다 — 대표가 적은 줄만 센다.
- *      **Kinder 는 0** 이다 — 수업을 Kinder 로 가를 표시가 모델에 없다(지어내지 않는다 · 규칙 줄은 적어 둘 수 있다).
+ *   ① **공용 급여 계산**(N-93 · BO-09D-02) — `lessonCompensation` 한 함수가 시트 · 확정 · 강사 히스토리에
+ *      같은 pay/bonus 스냅숏을 만든다. 진단·모의는 회차 총액만, 명시 Kinder 표식의 일반 class는 기본 시급+시간 가산,
+ *      일반 그룹만 학생당 시간 가산이다. 학년·나이로 Kinder를 추정하지 않는다.
  *   ② **확정된 달은 굳는다**(N-36 ①) — 확정한 달은 저장된 정산 행(payout)의 금액과 근거 줄(payout_line)을 그대로 읽는다.
  *      지금 시급 · 규칙으로 다시 세지 않는다. 근거 줄이 없는 옛 확정 달은 금액만 저장값이고 줄은 지금 계산이다.
  *   ③ **다음 달 보정**(N-51) — 확정된 달의 회차를 확정 뒤에 쓰면 그 달은 그대로 두고 **다음 미확정 달** 시트에
@@ -32,7 +32,7 @@
  *      **리포트 제출 시각 > 확정 시각**인 회차만 보정 대상이다(저장된 시각 비교 · 추정 아님).
  */
 import {
-  REPORT_WRITTEN_DB, effectiveRepStateFromEnded, latePenalty, minutesSinceEnd, payoutConfirmed, tierFor, withholding,
+  REPORT_WRITTEN_DB, effectiveRepStateFromEnded, minutesSinceEnd, payoutConfirmed, tierFor, withholding,
   type SessionLike,
 } from './rules';
 import { drawnDateOf, drawnMonthOf, effectiveModeOf, serStuOn, stuPausedOn } from './sql';
@@ -71,10 +71,6 @@ export const BONUS_D1_DEFAULTS: ReadonlyArray<{ kind: BonusKind; kindKey: string
   { kind: 'group_per_student', kindKey: null, amount: 5000 },
 ];
 
-/** Kinder 수업을 가를 표시가 모델에 있는가 — 없다. 생기면 여기와 `lessonBonus` 의 한 갈래만 바뀐다 */
-export const KINDER_MARKER_EXISTS = false;
-export const KINDER_NOT_APPLIED = 'Kinder 수업을 가르는 표시가 아직 없어 0원으로 셉니다 — 규칙은 적어 둘 수 있습니다';
-
 export interface BonusRuleRow { kind: BonusKind; kindKey: string | null; amount: number; fromDate: string }
 export interface BonusPart { kind: BonusKind; amount: number }
 
@@ -91,30 +87,89 @@ function ruleAt(rules: readonly BonusRuleRow[], kind: BonusKind, kindKey: string
   return best;
 }
 
+export interface LessonCompensationInput {
+  kindKey: string;
+  /** 가산 규칙의 적용일을 견줄 실제 수업일(옮긴 회차는 옮긴 날). */
+  onDate: string;
+  durMin: number;
+  /** 휴원·그날 제외를 뺀 실제 참여 학생 수. */
+  bonusHeads: number;
+  /** 학생의 별도 Kinder 표식 이력으로 판정한 값. 학년·나이 파생값을 넣지 않는다. */
+  isKinder: boolean;
+}
+
+export interface LessonCompensation {
+  pay: number;
+  bonus: number;
+  parts: BonusPart[];
+  unitRate: number;
+}
+
 /**
- * 한 회차의 가산 — **시트 · 확정 · 강사 히스토리가 부르는 한 함수** (N-93 · 「세는 곳이 둘이면 갈린다」 D-43).
- *   · 한 번에 — 그 수업 종류의 줄이 있으면 회차마다 그 금액
- *   · Kinder 시급에 더함 — 0 (표시 없음 · `KINDER_MARKER_EXISTS`)
- *   · 그룹 한 명당 — 그날 수업에 든 학생이 둘 이상이면 (금액 × 학생 수)를 시급처럼 시간에 곱한다
- *     (강사 덱 §32 「그룹 수업 2시간 · 학생당 +₩5,000 → ₩120,000」 = 2시간 × (45,000 + 3명 × 5,000))
- * 금액 0 인 줄은 「그 날부터 멈춤」이다.
+ * BO-09D-02 권고안 채택: 시트·지급 확정·강사 히스토리는 이 계산기 하나만 쓴다.
+ * 정책을 바꾸면 DTO/OpenAPI/generated schema, 두 수정사항 대조표, scenario, portfolio를 같은 청크에서 갱신한다.
+ *
+ * - 진단/모의: 시간·학생 수·Kinder와 무관하게 `per_session` 한 건이 **총 급여**다. 기본 시급과 다른 가산은 0.
+ * - 명시 Kinder 표식의 일반 class: 정확히 한 명, 기본 시급 + `kinder_hourly`; 그룹 가산 0.
+ * - 그 밖의 일반 그룹: 기본 시급 + 학생당 시간 가산.
+ * - 필요한 기본 시급/정책 줄이 없으면 null로 fail closed하여 `noRateCount`에 드러낸다.
  */
-export function lessonBonus(
-  /** `onDate` 는 가산 규칙의 적용일을 견줄 **그 회차의 실제 수업일**이다(옮긴 회차는 옮긴 날 · MEETING-MOVE) */
-  l: { kindKey: string; onDate: string; durMin: number; bonusHeads: number },
+export function lessonCompensation(
+  l: LessonCompensationInput,
+  rate: number | null,
   rules: readonly BonusRuleRow[],
-): { total: number; parts: BonusPart[] } {
+): LessonCompensation | null {
+  if (l.kindKey === 'diagx' || l.kindKey === 'mock') {
+    const fixed = ruleAt(rules, 'per_session', l.kindKey, l.onDate);
+    if (!fixed) return null;
+    const amount = Math.max(0, fixed.amount);
+    const parts = amount > 0 ? [{ kind: 'per_session' as const, amount }] : [];
+    return { pay: 0, bonus: amount, parts, unitRate: 0 };
+  }
+  if (rate === null) return null;
   const parts: BonusPart[] = [];
-  const once = ruleAt(rules, 'per_session', l.kindKey, l.onDate);
-  if (once && once.amount > 0) parts.push({ kind: 'per_session', amount: once.amount });
-  if (KINDER_MARKER_EXISTS) {
-    /* 표시가 생기면 여기서 `payOf(kinder.amount, l.durMin)` — 지금은 도달하지 않는다 */
+  if (l.isKinder) {
+    if (l.kindKey !== 'class' || l.bonusHeads !== 1) throw new Error('KINDER_GROUP_CONFLICT');
+    const kinder = ruleAt(rules, 'kinder_hourly', null, l.onDate);
+    if (!kinder) return null;
+    const amount = payOf(Math.max(0, kinder.amount), l.durMin);
+    if (amount > 0) parts.push({ kind: 'kinder_hourly', amount });
+  } else {
+    // 기존 사용자 정의 수업 종류의 회차 가산은 호환 보존한다. diagx/mock만 이 값을 총 급여로 해석한다.
+    const once = ruleAt(rules, 'per_session', l.kindKey, l.onDate);
+    if (once && once.amount > 0) parts.push({ kind: 'per_session', amount: once.amount });
+    const group = ruleAt(rules, 'group_per_student', null, l.onDate);
+    if (group && group.amount > 0 && l.bonusHeads >= 2) {
+      parts.push({ kind: 'group_per_student', amount: payOf(group.amount * l.bonusHeads, l.durMin) });
+    }
   }
-  const group = ruleAt(rules, 'group_per_student', null, l.onDate);
-  if (group && group.amount > 0 && l.bonusHeads >= 2) {
-    parts.push({ kind: 'group_per_student', amount: payOf(group.amount * l.bonusHeads, l.durMin) });
+  return { pay: payOf(rate, l.durMin), bonus: parts.reduce((n, p) => n + p.amount, 0), parts, unitRate: rate };
+}
+
+export interface ConsecutiveOccurrence { key: string; startEpoch: number; endEpoch: number }
+
+/**
+ * 같은 강사의 실제 end/start epoch가 정확히 맞닿은 묶음을 찾는다. 묶음의 모든 회차는 마지막 종료를 기준으로
+ * `수업 수 × 60분`을 유예받는다. 단독 회차와 1초라도 공백/겹침이 있는 회차는 유예 0이다.
+ */
+export function consecutiveGraceMinutes(rows: readonly ConsecutiveOccurrence[]): Map<string, number> {
+  const sorted = [...rows].sort((a, b) => a.startEpoch - b.startEpoch || a.endEpoch - b.endEpoch || a.key.localeCompare(b.key));
+  const out = new Map<string, number>();
+  let group: ConsecutiveOccurrence[] = [];
+  const flush = () => {
+    if (group.length === 1) out.set(group[0]!.key, 0);
+    else if (group.length > 1) {
+      const finalEnd = group[group.length - 1]!.endEpoch;
+      for (const row of group) out.set(row.key, Math.round((finalEnd - row.endEpoch) / 60) + group.length * 60);
+    }
+    group = [];
+  };
+  for (const row of sorted) {
+    if (group.length === 0 || group[group.length - 1]!.endEpoch === row.startEpoch) group.push(row);
+    else { flush(); group.push(row); }
   }
-  return { total: parts.reduce((n, p) => n + p.amount, 0), parts };
+  flush();
+  return out;
 }
 
 /** 가산 규칙 전부 — 적용일 차례. 시트 한 번에 한 번 읽는다 */
@@ -217,7 +272,7 @@ export function payoutBreakdown(lessons: readonly PayoutLesson[]): PayoutBreakdo
     lessonCount: 0,
     minutes: 0,
     amount: 0,
-    note: key === 'kinder' && !KINDER_MARKER_EXISTS ? KINDER_NOT_APPLIED : null,
+    note: null,
   }]));
   for (const lesson of lessons) {
     if ((lesson.settle !== 'written' && lesson.settle !== 'correction') || lesson.pay === null) continue;
@@ -259,7 +314,6 @@ export function payoutBreakdown(lessons: readonly PayoutLesson[]): PayoutBreakdo
   }
   return PAYOUT_BREAKDOWN_KEYS.map((key) => {
     const row = lines.get(key)!;
-    if (key === 'kinder' && row.amount !== 0) row.note = null;
     return row;
   });
 }
@@ -323,7 +377,19 @@ const LESSON_COLUMNS = `
     WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
       AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
       AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id = e.id AND xo.student_id = ss.student_id)) AS bonus_heads,
-  w.rate AS wage_rate`;
+  w.rate AS wage_rate,
+  -- BO-09D-02: 학년/나이가 아닌 append-only 명시 표식의 실제 수업 시작 시점 projection.
+  EXISTS (
+    SELECT 1 FROM ser_stu sks
+     WHERE sks.ser_id=o.ser_id AND ${serStuOn('sks', 'o.on_date')}
+       AND NOT ${stuPausedOn('sks.student_id', 'o.on_date')}
+       AND NOT EXISTS (SELECT 1 FROM exc_stu_out skx WHERE skx.exc_id=e.id AND skx.student_id=sks.student_id)
+       AND COALESCE((
+         SELECT skm.marked FROM stu_kinder_marker skm
+          WHERE skm.student_id=sks.student_id AND skm.effective_from <= lower(o.span)
+          ORDER BY skm.effective_from DESC,skm.version DESC LIMIT 1
+       ),false)
+  ) AS is_kinder`;
 
 const LESSON_JOINS = `
   JOIN ser s      ON s.id = o.ser_id
@@ -389,6 +455,27 @@ export async function payoutSheet(
     [teacherId, first, confirmed ? (po.confirmed_at as Date) : null, confirmed ? confirmed.payoutId : null],
   )) as Row[];
 
+  const occurrenceKey = (r: Row): string => `${String(r.ser_id)}:${String(r.on_date)}`;
+  /*
+   * 권고안 채택: 연강은 시트 월/보정 후보 조회 범위로 잘라 계산하지 않는다. 월 첫 회차가 전월 마지막 회차와
+   * 맞닿거나 오래된 보정 회차여도 같은 강사의 전체 실제 회차를 한 번 읽어 접점 묶음을 만든다.
+   * 기간 제한을 두면 월 경계와 투영 범위 밖에서 같은 수업의 차감액이 달라진다.
+   */
+  const graceRows = (await q.query(
+    `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+            EXTRACT(EPOCH FROM lower(o.span))::bigint AS actual_start_epoch,
+            EXTRACT(EPOCH FROM upper(o.span))::bigint AS actual_end_epoch
+       FROM ser_occ o JOIN ser s ON s.id=o.ser_id
+      WHERE ${TEACHER_OF_OCC}=$1 AND NOT o.canceled
+      ORDER BY lower(o.span),upper(o.span),o.ser_id,o.on_date`,
+    [teacherId],
+  )) as Row[];
+  const graceByOccurrence = consecutiveGraceMinutes(graceRows.map((r) => ({
+      key: occurrenceKey(r),
+      startEpoch: Number(r.actual_start_epoch),
+      endEpoch: Number(r.actual_end_epoch),
+    })));
+
   const lessons: PayoutLesson[] = [];
   const agg: PayoutAgg = {
     doneCount: 0, doneMinutes: 0, writtenCount: 0, writtenMinutes: 0,
@@ -420,14 +507,23 @@ export async function payoutSheet(
         canceled, submittedAt,
       },
       bonusHeads: Number(r.bonus_heads ?? 0),
+      isKinder: r.is_kinder === true,
+      graceMinutes: graceByOccurrence.get(occurrenceKey(r)) ?? 0,
     };
   };
 
   /** 지금 규칙으로 센 쓴 수업 한 줄의 돈 */
   const live = (b: ReturnType<typeof base>) => {
-    if (b.rate === null) return null;
-    const bonus = lessonBonus({ kindKey: b.lesson.kindKey, onDate: b.date, durMin: b.durMin, bonusHeads: b.bonusHeads }, rules);
-    return { pay: payOf(b.rate, b.durMin), lateCut: latePenalty(b.s), bonus: bonus.total, parts: bonus.parts, unitRate: b.rate };
+    const compensation = lessonCompensation({
+      kindKey: b.lesson.kindKey, onDate: b.date, durMin: b.durMin,
+      bonusHeads: b.bonusHeads, isKinder: b.isKinder,
+    }, b.rate, rules);
+    if (!compensation) return null;
+    const submittedAfter = b.submittedAt
+      ? minutesSinceEnd(b.s, b.submittedAt.slice(0, 10), b.submittedAt.length >= 16 ? Number(b.submittedAt.slice(11, 13)) * 60 + Number(b.submittedAt.slice(14, 16)) : 0)
+      : 0;
+    const lateCut = b.submittedAt && submittedAfter > b.graceMinutes ? tierFor(submittedAfter - b.graceMinutes).amount : 0;
+    return { ...compensation, lateCut };
   };
 
   for (const r of rows) {
@@ -469,7 +565,10 @@ export async function payoutSheet(
           out.unitRate = Number(r.line_rate); out.frozen = true;
         } else {
           const v = live(b);
-          if (v) { out.pay = v.pay; out.lateCut = v.lateCut; out.bonus = v.bonus; out.bonusParts = v.parts; }
+          if (v) {
+            out.pay = v.pay; out.lateCut = v.lateCut; out.bonus = v.bonus;
+            out.bonusParts = v.parts; out.unitRate = v.unitRate;
+          }
           else agg.noRateCount += 1;
         }
         if (out.pay !== null) { agg.gross += out.pay + (out.bonus ?? 0); agg.lateCut += out.lateCut ?? 0; agg.bonus += out.bonus ?? 0; }
@@ -479,7 +578,7 @@ export async function payoutSheet(
         agg.lateCount += 1;
       }
     } else if (isUnwritten) {
-      const after = minutesSinceEnd(b.s, today, nowMin);
+      const after = minutesSinceEnd(b.s, today, nowMin) - b.graceMinutes;
       out.penaltyIfNow = tierFor(after).amount;
       out.settle = 'unwritten';
       agg.unwrittenCount += 1; agg.unwrittenMinutes += b.durMin;
@@ -548,7 +647,7 @@ export async function payoutSheet(
         corrections.push({
           ...b.lesson, repState: String(r.rep_state), penaltyIfNow: null,
           pay: v?.pay ?? null, lateCut: v?.lateCut ?? null, bonus: v?.bonus ?? null, bonusParts: v?.parts ?? [],
-          unitRate: b.rate, settle: 'correction', correctionOf: fromMonth, paidIn: null, frozen: false,
+          unitRate: v?.unitRate ?? b.rate, settle: 'correction', correctionOf: fromMonth, paidIn: null, frozen: false,
         });
       }
     }

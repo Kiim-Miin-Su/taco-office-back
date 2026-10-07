@@ -96,6 +96,7 @@ export * from './stu-staff.entity';
 export * from './stu-sibling.entity';
 export * from './stu-profile-audit.entity';
 export * from './stu-profile-period.entity';
+export * from './stu-kinder-marker.entity';
 export * from './sturate.entity';
 export * from './sub.entity';
 export * from './suggestion.entity';
@@ -216,6 +217,7 @@ import {
   StuSibling,
   StuProfileAudit,
   StuProfilePeriod,
+  StuKinderMarker,
   Sturate,
   Sub,
   Suggestion,
@@ -337,6 +339,7 @@ export const ENTITIES = [
   StuSibling,
   StuProfileAudit,
   StuProfilePeriod,
+  StuKinderMarker,
   Sturate,
   Sub,
   Suggestion,

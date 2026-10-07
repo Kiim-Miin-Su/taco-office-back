@@ -165,8 +165,8 @@ export class AccountingController {
   @Perm('canAdminPage', 'canWage')
   @ApiOperation({
     summary: '가산 규칙 — 칸 셋(한 번에 · Kinder 시급에 더함 · 그룹 한 명당)과 적은 줄 전부 (N-93)',
-    description: '셈은 lib/payout-sheet 의 한 함수가 시트 · 확정 · 강사 히스토리에 같이 한다. D1 금액은 칸을 미리 채울 값이지 데이터가 아니다. '
-      + 'Kinder 는 수업을 가를 표시가 모델에 없어 0 원으로 센다(applied=false · note).',
+    description: '셈은 lib/payout-sheet의 공용 계산기가 시트·확정·강사 히스토리에 같이 적용한다. '
+      + '진단·모의는 회차 총액, 명시 Kinder 표식의 일반 class는 1대1 기본 시급+시간 가산과 그룹0, 일반 그룹은 학생당 시간 가산이다.',
   })
   @ApiOkResponse({ type: PayoutBonusBookDto })
   bonusBook(): Promise<PayoutBonusBookDto> {

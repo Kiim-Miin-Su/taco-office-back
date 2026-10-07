@@ -22,7 +22,7 @@ import { drawnDateOf, kstAt, kstMonthOf, serStuOn, sqlWordList, stuPausedOn } fr
 import { assertMonthOpen, assertMonthOpenForWrite, lockMonthExclusive, monthClosedMessage } from '../../lib/month-close';
 import { insertWage } from '../../lib/wage';
 import {
-  BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL, KINDER_MARKER_EXISTS, KINDER_NOT_APPLIED, TEACHER_OF_OCC,
+  BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL, TEACHER_OF_OCC,
   payoutSettleLabel, payoutSheet, type BonusKind, type PayoutSheet,
 } from '../../lib/payout-sheet';
 import {
@@ -1910,7 +1910,7 @@ export class AccountingService {
 
   /* ── 가산 규칙 (N-93 · D1 §4-12 · 원문 §56 「추가로 드리는 돈」) ─────────────────────────
      정리 · 기준 탭의 「가산 규칙」. 시급(WAGE)처럼 **새 줄로만 바꾼다** — 적용일은 오늘 이후(소급 없음 · D8 과 같은 뜻),
-     같은 칸 같은 날 두 줄은 409, 지난 줄은 고치지도 지우지도 않는다. 셈은 `lib/payout-sheet.lessonBonus` 한 곳이다.
+     같은 칸 같은 날 두 줄은 409, 지난 줄은 고치지도 지우지도 않는다. 셈은 `lib/payout-sheet.lessonCompensation` 한 곳이다.
      확정된 달은 이미 굳어 있어 새 줄이 닿지 않는다(가산은 미확정 달의 적용일부터).                                  */
 
   private static readonly BONUS_SELECT = `
@@ -1944,19 +1944,18 @@ export class AccountingService {
       const mine = rules.filter((r) => r.kind === d.kind && r.kindKey === d.kindKey);
       const cur = mine.find((r) => r.current) ?? null;
       const next = [...mine].filter((r) => r.fromDate > today).sort((a, b) => a.fromDate.localeCompare(b.fromDate))[0] ?? null;
-      const applied = d.kind !== 'kinder_hourly' || KINDER_MARKER_EXISTS;
       return {
         kind: d.kind, kindKey: d.kindKey,
         label: d.kindKey ? (kinds.get(d.kindKey) ?? d.kindKey) : BONUS_KIND_LABEL[d.kind],
         hint: BONUS_KIND_HINT[d.kind], d1Amount: d.amount,
         currentAmount: cur ? cur.amount : null, currentFrom: cur ? cur.fromDate : null,
         nextAmount: next ? next.amount : null, nextFrom: next ? next.fromDate : null,
-        applied, note: applied ? null : KINDER_NOT_APPLIED,
+        applied: true, note: null,
       };
     });
     return {
       slots, rules, today, canWrite: true,
-      rule: '가산은 리포트를 쓴 수업에만 붙습니다 — 「한 번에」는 회차마다 그 금액, 그룹은 그날 수업한 학생이 둘 이상이면 (금액 × 학생 수)를 시급처럼 시간에 곱합니다. 적용일은 오늘부터이고 확정한 달은 바뀌지 않습니다.',
+      rule: '진단·모의는 회차당 총액만, 명시 Kinder 표식의 일반 class는 1대1 기본 시급+시간 가산(그룹0), 그 밖의 일반 그룹만 학생당 시간 가산을 셉니다. 적용일은 오늘부터이고 확정한 달은 바뀌지 않습니다.',
     };
   }
 
