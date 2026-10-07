@@ -43,6 +43,17 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
   const SUB = 'w11h-sub';
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> => ds.query(sql, p) as Promise<T[]>;
+  const clearStatusFixtures = async () => {
+    // BOC-03D-03b 권고안 채택: 퇴원은 append-only 권위 원장이므로 일반 DELETE는 제품에서 막는다.
+    // 이 고정-ID fixture만 격리 검증 정리 때 trigger를 잠시 내려 지운다. 정책 변경 시
+    // StudentStatusReactivation migration·withdraw writer·P-REACT·BOC-03 문서와 함께 수정한다.
+    await q(`ALTER TABLE stu_status_event DISABLE TRIGGER stu_status_event_no_change`);
+    try {
+      await q(`DELETE FROM stu_status_event WHERE student_id = ANY($1::bigint[])`, [[STU_A, STU_B]]);
+    } finally {
+      await q(`ALTER TABLE stu_status_event ENABLE TRIGGER stu_status_event_no_change`);
+    }
+  };
   const kst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
   const plus = (iso: string, n: number) => new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86400e3).toISOString().slice(0, 10);
   const THIS = kst().slice(0, 7);
@@ -65,6 +76,7 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
     await app.listen(0, '127.0.0.1');
     ds = app.get(DataSource);
 
+    await clearStatusFixtures();
     await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER]]);
     const hash = await bcrypt.hash(PW, 4);
     await q(
@@ -91,6 +103,7 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
   const made: number[] = [];
   const cleanup = async () => {
     const stus = [STU_A, STU_B];
+    await clearStatusFixtures();
     const invIds = (await q<{ id: string }>(`SELECT id FROM inv WHERE student_id = ANY($1)`, [stus])).map((r) => Number(r.id));
     await q(`DELETE FROM log WHERE entity = 'INV' AND entity_id = ANY($1::bigint[])`, [invIds]);
     await q(`DELETE FROM log WHERE actor_id = $1`, [CEO]);
