@@ -49,7 +49,7 @@ export const SEEDED_TABLES = [
   'school',
   // ST1-b2 기간·감사: dev --reset은 STU와 함께 두 원장을 명시적으로만 초기화한다.
   // 운영 전환 reset과 무관하다. 여기서 빠져도 STU TRUNCATE CASCADE가 조용히 지우므로 목록에 드러낸다.
-  'stu_profile_audit', 'stu_profile_period',
+  'stu_profile_audit', 'stu_profile_period', 'stu_contact', 'stu_staff', 'stu_sibling',
   // BOC-03D-03b 권고안 채택: 재활성화 상담·상태 원장도 앱 writer가 쌓는 개발/QA 자료다.
   // 둘은 UPDATE/DELETE 불변이므로 개별 DELETE하지 않고, --reset의 단일 TRUNCATE ... CASCADE에서만 비운다.
   // 정책 변경 시 migration·StudentsService·P-REACT·BOC-03D-03b 문서와 이 목록을 함께 검토한다.

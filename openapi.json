@@ -22672,6 +22672,458 @@
         "tags": [
           "students"
         ]
+      },
+      "post": {
+        "description": "같은 actor/requestKey/body 재시도는 기존 결과를 반환한다. 연락처·현금영수증 원문은 LOG와 응답에 싣지 않는다.",
+        "operationId": "StudentsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentCreateResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_REGISTRATION_REFERENCE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRegistrationConflictDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "신규 학생 15절 저장 — 기간·연락·보호자·담당·형제·상태·감사 단일 transaction",
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/students/options": {
+      "get": {
+        "operationId": "StudentsController_registrationOptions",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRegistrationOptionsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "신규 학생 등록 국가·시간대·영속 학년 code 선택지",
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/students/schools": {
+      "get": {
+        "operationId": "StudentsController_searchSchools",
+        "parameters": [
+          {
+            "name": "q",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "minLength": 1,
+              "maxLength": 120,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StudentSchoolOptionDto"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "활성 학교 이름 검색 — 최대 20개",
+        "tags": [
+          "students"
+        ]
+      },
+      "post": {
+        "operationId": "StudentsController_createSchool",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentSchoolCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentSchoolOptionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRegistrationConflictDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학교 추가 또는 정규화 identity가 같은 활성 학교 반환",
+        "tags": [
+          "students"
+        ]
+      }
+    },
+    "/students/preview": {
+      "post": {
+        "description": "BOC-03D-04b 권고안: preview는 requestKey를 소비하지 않으며 이미 저장된 key는 409로 재조회를 요구한다.",
+        "operationId": "StudentsController_previewCreate",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentCreatePreviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_REGISTRATION_REFERENCE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRegistrationConflictDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "신규 학생 15절 등록 미리보기 — 실제 writer와 지연 제약을 실행한 뒤 쓰기 0",
+        "tags": [
+          "students"
+        ]
       }
     },
     "/students/reactivation-candidates": {
@@ -47778,295 +48230,211 @@
           "educationGrades"
         ]
       },
-      "StudentReactivationCandidateDto": {
+      "StudentRegistrationTimezoneOptionDto": {
         "type": "object",
         "properties": {
-          "studentId": {
+          "timezone": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "representative": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "timezone",
+          "label",
+          "representative"
+        ]
+      },
+      "StudentRegistrationCountryOptionDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "timezones": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationTimezoneOptionDto"
+            }
+          }
+        },
+        "required": [
+          "code",
+          "label",
+          "timezones"
+        ]
+      },
+      "StudentRegistrationGradeOptionDto": {
+        "type": "object",
+        "properties": {
+          "educationSystem": {
+            "type": "string",
+            "enum": [
+              "US",
+              "GB",
+              "KR",
+              "OTHER"
+            ]
+          },
+          "code": {
+            "type": "string",
+            "maxLength": 16,
+            "description": "StudentCreateDto.gradeHistory.gradeCode에 그대로 보내는 영속 code"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 30
+          },
+          "sort": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "educationSystem",
+          "code",
+          "label",
+          "sort"
+        ]
+      },
+      "StudentRegistrationWordDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label"
+        ]
+      },
+      "StudentRegistrationOptionsDto": {
+        "type": "object",
+        "properties": {
+          "countries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationCountryOptionDto"
+            }
+          },
+          "educationGrades": {
+            "description": "영속 code를 포함한 active39 등록 선택지. 표시 projection과 저장 code를 혼용하지 않는다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationGradeOptionDto"
+            }
+          },
+          "guardianRelations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationWordDto"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRegistrationWordDto"
+            }
+          }
+        },
+        "required": [
+          "countries",
+          "educationGrades",
+          "guardianRelations",
+          "sources"
+        ]
+      },
+      "StudentSchoolOptionDto": {
+        "type": "object",
+        "properties": {
+          "id": {
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
           },
           "name": {
             "type": "string",
-            "maxLength": 40
+            "maxLength": 120
           },
-          "englishName": {
-            "type": "string",
-            "nullable": true,
-            "maxLength": 80
-          },
-          "gradeLabel": {
+          "countryCode": {
             "type": "string",
             "nullable": true
           },
-          "schoolLabel": {
+          "countryLabel": {
             "type": "string",
             "nullable": true
           },
-          "status": {
+          "region": {
             "type": "string",
-            "enum": [
-              "withdrawn",
-              "active",
-              "unknown"
-            ],
-            "description": "권위 상태 projection. 휴원·수강 종료로 추정하지 않는다."
-          },
-          "reactivatable": {
-            "type": "boolean",
-            "description": "status=withdrawn이고 별도 차단 사유가 없을 때만 true"
-          },
-          "blockedCode": {
-            "type": "string",
-            "nullable": true,
-            "description": "ACTIVE_STUDENT | STATUS_UNKNOWN. 화면이 상태를 다시 계산하지 않는다."
-          },
-          "profileVersion": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$",
-            "description": "재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string. 기존 학생의 0도 유효하다."
-          },
-          "lastConsultationAt": {
-            "type": "string",
-            "format": "date-time",
             "nullable": true
           },
-          "withdrawnOn": {
+          "campus": {
             "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true,
-            "description": "명시적으로 저장된 마지막 퇴원일. 수강 종료일 추정값이 아니다."
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
           }
         },
         "required": [
-          "studentId",
+          "id",
           "name",
-          "englishName",
-          "gradeLabel",
-          "schoolLabel",
-          "status",
-          "reactivatable",
-          "blockedCode",
-          "profileVersion",
-          "lastConsultationAt",
-          "withdrawnOn"
+          "countryCode",
+          "countryLabel",
+          "region",
+          "campus",
+          "active"
         ]
       },
-      "StudentReactivationCandidatesDto": {
+      "StudentSchoolCreateDto": {
         "type": "object",
         "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentReactivationCandidateDto"
-            }
-          },
-          "total": {
-            "type": "number"
-          },
-          "page": {
-            "type": "number"
-          },
-          "pageSize": {
-            "type": "integer",
-            "enum": [
-              10
-            ]
-          }
-        },
-        "required": [
-          "items",
-          "total",
-          "page",
-          "pageSize"
-        ]
-      },
-      "StudentReactivationConsultationDto": {
-        "type": "object",
-        "properties": {
-          "channel": {
-            "type": "string",
-            "enum": [
-              "visit",
-              "phone",
-              "kakao",
-              "other"
-            ],
-            "description": "수동 상담 정보의 방문·전화·카카오톡·기타"
-          },
-          "content": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 2000
-          },
-          "nextOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true,
-            "description": "다음 일정은 선택. 작성자·작성시각은 서버가 기록한다."
-          }
-        },
-        "required": [
-          "channel",
-          "content",
-          "nextOn"
-        ]
-      },
-      "StudentReactivationDto": {
-        "type": "object",
-        "properties": {
-          "requestKey": {
-            "type": "string",
-            "format": "uuid",
-            "description": "같은 actor·같은 정규화 body 재시도는 기존 결과, 다른 body는 409"
-          },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "expectedProfileVersion": {
-            "type": "string",
-            "pattern": "^(0|[1-9][0-9]*)$",
-            "description": "후보 응답의 profileVersion. 기존 학생의 0도 허용하며 JS number로 변환하지 않는다."
-          },
-          "entrySource": {
-            "type": "string",
-            "enum": [
-              "students",
-              "schedule",
-              "intake"
-            ]
-          },
-          "leadId": {
-            "type": "number",
-            "nullable": true,
-            "minimum": 1,
-            "description": "intake 진입의 원천 lead. 재활성화 상담 record 자체의 identity는 아니다."
-          },
-          "reactivateOn": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "KST 업무 재활성화일. 과거/미래 허용 범위는 Backend가 검증한다."
-          },
-          "consultation": {
-            "description": "기존 접촉 원장을 오변환하지 않고 새 수동 상담 정보를 한 transaction에 기록한다.",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/StudentReactivationConsultationDto"
-              }
-            ]
-          }
-        },
-        "required": [
-          "requestKey",
-          "studentId",
-          "expectedProfileVersion",
-          "entrySource",
-          "leadId",
-          "reactivateOn",
-          "consultation"
-        ]
-      },
-      "StudentReactivationEffectsDto": {
-        "type": "object",
-        "properties": {
-          "studentCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "enrollmentCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "lessonCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "invoiceCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "bookIssueCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "guideCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
-          "firstLessonTaskCreated": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          }
-        },
-        "required": [
-          "studentCreated",
-          "enrollmentCreated",
-          "lessonCreated",
-          "invoiceCreated",
-          "bookIssueCreated",
-          "guideCreated",
-          "firstLessonTaskCreated"
-        ]
-      },
-      "StudentReactivationPreviewDto": {
-        "type": "object",
-        "properties": {
-          "saved": {
-            "type": "boolean",
-            "enum": [
-              false
-            ]
-          },
           "requestKey": {
             "type": "string",
             "format": "uuid"
           },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "profileVersion": {
+          "name": {
             "type": "string",
-            "pattern": "^[1-9][0-9]*$"
+            "minLength": 1,
+            "maxLength": 120
           },
-          "consultationId": {
-            "type": "number",
+          "countryCode": {
+            "type": "string",
             "nullable": true,
-            "enum": [
-              null
-            ]
+            "pattern": "^[A-Z]{2}$"
           },
-          "effects": {
-            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
+          "region": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80
+          },
+          "campus": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 120
           }
         },
         "required": [
-          "saved",
           "requestKey",
-          "studentId",
-          "profileVersion",
-          "consultationId",
-          "effects"
+          "name",
+          "countryCode",
+          "region",
+          "campus"
         ]
       },
       "StudentRegistrationConflictDto": {
@@ -48084,6 +48452,9 @@
               "STUDENT_REGISTRATION_OPTION_INACTIVE",
               "STUDENT_REGISTRATION_REFERENCE_NOT_FOUND",
               "STUDENT_REGISTRATION_PERIOD_CONFLICT",
+              "STUDENT_REGISTRATION_LEAD_LINKED",
+              "STUDENT_REGISTRATION_SIBLING_INACTIVE",
+              "STUDENT_SCHOOL_REQUEST_KEY_REUSED",
               "STUDENT_REACTIVATION_ACTIVE",
               "STUDENT_REACTIVATION_STATUS_UNKNOWN",
               "STUDENT_REACTIVATION_LEAD_CHANGED",
@@ -48098,351 +48469,6 @@
         "required": [
           "code",
           "message"
-        ]
-      },
-      "StudentReactivationResultDto": {
-        "type": "object",
-        "properties": {
-          "saved": {
-            "type": "boolean",
-            "enum": [
-              true
-            ]
-          },
-          "requestKey": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "studentId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "profileVersion": {
-            "type": "string",
-            "pattern": "^[1-9][0-9]*$"
-          },
-          "consultationId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "replayed": {
-            "type": "boolean"
-          },
-          "reactivatedAt": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "effects": {
-            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
-          }
-        },
-        "required": [
-          "saved",
-          "requestKey",
-          "studentId",
-          "profileVersion",
-          "consultationId",
-          "replayed",
-          "reactivatedAt",
-          "effects"
-        ]
-      },
-      "StudentGuardianSummaryDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "name": {
-            "type": "string"
-          },
-          "relation": {
-            "type": "string",
-            "nullable": true
-          },
-          "active": {
-            "type": "boolean"
-          },
-          "isPrimary": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "relation",
-          "active",
-          "isPrimary"
-        ]
-      },
-      "StudentEnrollmentSummaryDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "kindName": {
-            "type": "string"
-          },
-          "subjectName": {
-            "type": "string",
-            "nullable": true
-          },
-          "sessions": {
-            "type": "number",
-            "nullable": true
-          },
-          "startedOn": {
-            "type": "string",
-            "nullable": true
-          },
-          "endedOn": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "id",
-          "kindName",
-          "subjectName",
-          "sessions",
-          "startedOn",
-          "endedOn"
-        ]
-      },
-      "StudentAuditSummaryDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "entity": {
-            "type": "string",
-            "enum": [
-              "STU",
-              "LEAD",
-              "GUARDIAN"
-            ],
-            "description": "직접 학생 또는 명시적 student_id FK로 연결된 기존 LOG만"
-          },
-          "entityId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "action": {
-            "type": "string"
-          },
-          "actionLabel": {
-            "type": "string"
-          },
-          "actorId": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "actorName": {
-            "type": "string",
-            "nullable": true,
-            "description": "LOG.actor_id에 연결된 현재 STAFF 표시 이름. 당시 이름을 복원하지 않는다."
-          },
-          "at": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "entity",
-          "entityId",
-          "action",
-          "actionLabel",
-          "actorId",
-          "actorName",
-          "at"
-        ]
-      },
-      "StudentReadDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "grade": {
-            "type": "string",
-            "nullable": true
-          },
-          "school": {
-            "type": "string",
-            "nullable": true
-          },
-          "gender": {
-            "type": "string",
-            "enum": [
-              "female",
-              "male"
-            ],
-            "nullable": true,
-            "description": "성별(선택 · N-83) — 관리자 §10 아바타에만 쓴다. 학생 명단(students)은 관리 화면에만 실리므로 강사에게 가지 않는다. 비어 있으면 null"
-          },
-          "tag": {
-            "type": "string",
-            "nullable": true,
-            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 없으면 null. 판정은 서버 한 곳(lib/student-label)"
-          },
-          "label": {
-            "type": "string",
-            "description": "고르기에 적는 이름 — 「이름 · 꼬리」(꼬리가 없으면 이름). 화면은 이 글을 그대로 쓴다 (D-R18)"
-          },
-          "gradeDisplay": {
-            "type": "string",
-            "nullable": true,
-            "description": "정확히 대응되는 active 값이면 서버 listLabel, 아니면 legacy 원문. 자동 변환하지 않는다."
-          },
-          "createdAt": {
-            "type": "string",
-            "nullable": true,
-            "description": "STU.created_at 그대로(KST). 등록 확정/첫 수업 시각으로 추정하지 않는다."
-          },
-          "genderLabel": {
-            "type": "string",
-            "nullable": true
-          },
-          "guardianNames": {
-            "description": "현재 활성 보호자 이름. 연락처/납부 정보는 포함하지 않는다.",
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "startedOn": {
-            "type": "string",
-            "nullable": true,
-            "description": "기존 STU.started_on. 학생 생성 시각과 다르다."
-          },
-          "targetExam": {
-            "type": "string",
-            "nullable": true
-          },
-          "guidance": {
-            "type": "string",
-            "nullable": true
-          },
-          "lang": {
-            "type": "string",
-            "nullable": true
-          },
-          "guardians": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentGuardianSummaryDto"
-            }
-          },
-          "guardianTotal": {
-            "type": "number"
-          },
-          "enrollments": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentEnrollmentSummaryDto"
-            }
-          },
-          "enrollmentTotal": {
-            "type": "number"
-          },
-          "history": {
-            "description": "직접 학생/현재 연결 상담/보호자의 기존 감사 metadata 최근50건. 전체 CRUD/변경값/학교·학년 기간 이력이 아니다.",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentAuditSummaryDto"
-            }
-          },
-          "historyTotal": {
-            "type": "number"
-          },
-          "historyLimit": {
-            "type": "number",
-            "description": "보호자/수강/감사 각 최대50건"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "tag",
-          "label",
-          "gradeDisplay",
-          "createdAt",
-          "genderLabel",
-          "guardianNames",
-          "startedOn",
-          "targetExam",
-          "guidance",
-          "lang",
-          "guardians",
-          "guardianTotal",
-          "enrollments",
-          "enrollmentTotal",
-          "history",
-          "historyTotal",
-          "historyLimit"
-        ]
-      },
-      "StudentRegistrationPeriodDto": {
-        "type": "object",
-        "properties": {
-          "from": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "유효 시작 경계 — 종료와 모두 포함"
-          },
-          "fromPrecision": {
-            "type": "string",
-            "enum": [
-              "year",
-              "month",
-              "day"
-            ],
-            "description": "사용자가 알고 입력한 시작 정밀도"
-          },
-          "to": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "nullable": true,
-            "description": "유효 종료 경계 — null이면 계속"
-          },
-          "toPrecision": {
-            "type": "string",
-            "enum": [
-              "year",
-              "month",
-              "day"
-            ],
-            "nullable": true,
-            "description": "종료가 있으면 사용자가 입력한 정밀도, 없으면 null"
-          },
-          "memo": {
-            "type": "string",
-            "maxLength": 500,
-            "description": "기간 기록 메모. 연락처·금액 원문 저장 용도가 아니다."
-          }
-        },
-        "required": [
-          "from",
-          "fromPrecision",
-          "to",
-          "toPrecision"
         ]
       },
       "StudentRegistrationSchoolPeriodDto": {
@@ -48948,193 +48974,6 @@
           "allowSameName"
         ]
       },
-      "StudentRegistrationTimezoneOptionDto": {
-        "type": "object",
-        "properties": {
-          "timezone": {
-            "type": "string",
-            "maxLength": 64
-          },
-          "label": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "representative": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "timezone",
-          "label",
-          "representative"
-        ]
-      },
-      "StudentRegistrationCountryOptionDto": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "string",
-            "pattern": "^[A-Z]{2}$"
-          },
-          "label": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "timezones": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentRegistrationTimezoneOptionDto"
-            }
-          }
-        },
-        "required": [
-          "code",
-          "label",
-          "timezones"
-        ]
-      },
-      "StudentRegistrationWordDto": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "key",
-          "label"
-        ]
-      },
-      "StudentRegistrationOptionsDto": {
-        "type": "object",
-        "properties": {
-          "countries": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentRegistrationCountryOptionDto"
-            }
-          },
-          "educationGrades": {
-            "description": "active39 등록 선택지. 비활성·legacy 46행은 보존하되 신규 선택에서 제외한다.",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EducationGradeOptionDto"
-            }
-          },
-          "guardianRelations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentRegistrationWordDto"
-            }
-          },
-          "sources": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StudentRegistrationWordDto"
-            }
-          }
-        },
-        "required": [
-          "countries",
-          "educationGrades",
-          "guardianRelations",
-          "sources"
-        ]
-      },
-      "StudentSchoolOptionDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 9007199254740991
-          },
-          "name": {
-            "type": "string",
-            "maxLength": 120
-          },
-          "countryCode": {
-            "type": "string",
-            "nullable": true
-          },
-          "countryLabel": {
-            "type": "string",
-            "nullable": true
-          },
-          "region": {
-            "type": "string",
-            "nullable": true
-          },
-          "campus": {
-            "type": "string",
-            "nullable": true
-          },
-          "active": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "id",
-          "name",
-          "countryCode",
-          "countryLabel",
-          "region",
-          "campus",
-          "active"
-        ]
-      },
-      "StudentSchoolSearchQueryDto": {
-        "type": "object",
-        "properties": {
-          "q": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          }
-        },
-        "required": [
-          "q"
-        ]
-      },
-      "StudentSchoolCreateDto": {
-        "type": "object",
-        "properties": {
-          "requestKey": {
-            "type": "string",
-            "format": "uuid"
-          },
-          "name": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "countryCode": {
-            "type": "string",
-            "nullable": true,
-            "pattern": "^[A-Z]{2}$"
-          },
-          "region": {
-            "type": "string",
-            "nullable": true,
-            "maxLength": 80
-          },
-          "campus": {
-            "type": "string",
-            "nullable": true,
-            "maxLength": 120
-          }
-        },
-        "required": [
-          "requestKey",
-          "name",
-          "countryCode",
-          "region",
-          "campus"
-        ]
-      },
       "StudentRegistrationSummaryDto": {
         "type": "object",
         "properties": {
@@ -49265,6 +49104,655 @@
           "replayed",
           "createdAt",
           "summary"
+        ]
+      },
+      "StudentReactivationCandidateDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "englishName": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80
+          },
+          "gradeLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "schoolLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "withdrawn",
+              "active",
+              "unknown"
+            ],
+            "description": "권위 상태 projection. 휴원·수강 종료로 추정하지 않는다."
+          },
+          "reactivatable": {
+            "type": "boolean",
+            "description": "status=withdrawn이고 별도 차단 사유가 없을 때만 true"
+          },
+          "blockedCode": {
+            "type": "string",
+            "nullable": true,
+            "description": "ACTIVE_STUDENT | STATUS_UNKNOWN. 화면이 상태를 다시 계산하지 않는다."
+          },
+          "profileVersion": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "description": "재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string. 기존 학생의 0도 유효하다."
+          },
+          "lastConsultationAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "withdrawnOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "명시적으로 저장된 마지막 퇴원일. 수강 종료일 추정값이 아니다."
+          }
+        },
+        "required": [
+          "studentId",
+          "name",
+          "englishName",
+          "gradeLabel",
+          "schoolLabel",
+          "status",
+          "reactivatable",
+          "blockedCode",
+          "profileVersion",
+          "lastConsultationAt",
+          "withdrawnOn"
+        ]
+      },
+      "StudentReactivationCandidatesDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentReactivationCandidateDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "page": {
+            "type": "number"
+          },
+          "pageSize": {
+            "type": "integer",
+            "enum": [
+              10
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "pageSize"
+        ]
+      },
+      "StudentReactivationConsultationDto": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "visit",
+              "phone",
+              "kakao",
+              "other"
+            ],
+            "description": "수동 상담 정보의 방문·전화·카카오톡·기타"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "nextOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "다음 일정은 선택. 작성자·작성시각은 서버가 기록한다."
+          }
+        },
+        "required": [
+          "channel",
+          "content",
+          "nextOn"
+        ]
+      },
+      "StudentReactivationDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 actor·같은 정규화 body 재시도는 기존 결과, 다른 body는 409"
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "expectedProfileVersion": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "description": "후보 응답의 profileVersion. 기존 학생의 0도 허용하며 JS number로 변환하지 않는다."
+          },
+          "entrySource": {
+            "type": "string",
+            "enum": [
+              "students",
+              "schedule",
+              "intake"
+            ]
+          },
+          "leadId": {
+            "type": "number",
+            "nullable": true,
+            "minimum": 1,
+            "description": "intake 진입의 원천 lead. 재활성화 상담 record 자체의 identity는 아니다."
+          },
+          "reactivateOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "KST 업무 재활성화일. 과거/미래 허용 범위는 Backend가 검증한다."
+          },
+          "consultation": {
+            "description": "기존 접촉 원장을 오변환하지 않고 새 수동 상담 정보를 한 transaction에 기록한다.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StudentReactivationConsultationDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "requestKey",
+          "studentId",
+          "expectedProfileVersion",
+          "entrySource",
+          "leadId",
+          "reactivateOn",
+          "consultation"
+        ]
+      },
+      "StudentReactivationEffectsDto": {
+        "type": "object",
+        "properties": {
+          "studentCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "enrollmentCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "lessonCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "invoiceCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "bookIssueCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "guideCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "firstLessonTaskCreated": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        },
+        "required": [
+          "studentCreated",
+          "enrollmentCreated",
+          "lessonCreated",
+          "invoiceCreated",
+          "bookIssueCreated",
+          "guideCreated",
+          "firstLessonTaskCreated"
+        ]
+      },
+      "StudentReactivationPreviewDto": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "profileVersion": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "consultationId": {
+            "type": "number",
+            "nullable": true,
+            "enum": [
+              null
+            ]
+          },
+          "effects": {
+            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
+          }
+        },
+        "required": [
+          "saved",
+          "requestKey",
+          "studentId",
+          "profileVersion",
+          "consultationId",
+          "effects"
+        ]
+      },
+      "StudentReactivationResultDto": {
+        "type": "object",
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "profileVersion": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "consultationId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "reactivatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "effects": {
+            "$ref": "#/components/schemas/StudentReactivationEffectsDto"
+          }
+        },
+        "required": [
+          "saved",
+          "requestKey",
+          "studentId",
+          "profileVersion",
+          "consultationId",
+          "replayed",
+          "reactivatedAt",
+          "effects"
+        ]
+      },
+      "StudentGuardianSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "name": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string",
+            "nullable": true
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "isPrimary": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "relation",
+          "active",
+          "isPrimary"
+        ]
+      },
+      "StudentEnrollmentSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "kindName": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string",
+            "nullable": true
+          },
+          "sessions": {
+            "type": "number",
+            "nullable": true
+          },
+          "startedOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "endedOn": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "kindName",
+          "subjectName",
+          "sessions",
+          "startedOn",
+          "endedOn"
+        ]
+      },
+      "StudentAuditSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "entity": {
+            "type": "string",
+            "enum": [
+              "STU",
+              "LEAD",
+              "GUARDIAN"
+            ],
+            "description": "직접 학생 또는 명시적 student_id FK로 연결된 기존 LOG만"
+          },
+          "entityId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "action": {
+            "type": "string"
+          },
+          "actionLabel": {
+            "type": "string"
+          },
+          "actorId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "actorName": {
+            "type": "string",
+            "nullable": true,
+            "description": "LOG.actor_id에 연결된 현재 STAFF 표시 이름. 당시 이름을 복원하지 않는다."
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "entity",
+          "entityId",
+          "action",
+          "actionLabel",
+          "actorId",
+          "actorName",
+          "at"
+        ]
+      },
+      "StudentReadDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "school": {
+            "type": "string",
+            "nullable": true
+          },
+          "gender": {
+            "type": "string",
+            "enum": [
+              "female",
+              "male"
+            ],
+            "nullable": true,
+            "description": "성별(선택 · N-83) — 관리자 §10 아바타에만 쓴다. 학생 명단(students)은 관리 화면에만 실리므로 강사에게 가지 않는다. 비어 있으면 null"
+          },
+          "tag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리(N-137) — 학년 · 같은 이름이 있으면 학교 · 그래도 같으면 #번호. 없으면 null. 판정은 서버 한 곳(lib/student-label)"
+          },
+          "label": {
+            "type": "string",
+            "description": "고르기에 적는 이름 — 「이름 · 꼬리」(꼬리가 없으면 이름). 화면은 이 글을 그대로 쓴다 (D-R18)"
+          },
+          "gradeDisplay": {
+            "type": "string",
+            "nullable": true,
+            "description": "정확히 대응되는 active 값이면 서버 listLabel, 아니면 legacy 원문. 자동 변환하지 않는다."
+          },
+          "createdAt": {
+            "type": "string",
+            "nullable": true,
+            "description": "STU.created_at 그대로(KST). 등록 확정/첫 수업 시각으로 추정하지 않는다."
+          },
+          "genderLabel": {
+            "type": "string",
+            "nullable": true
+          },
+          "guardianNames": {
+            "description": "현재 활성 보호자 이름. 연락처/납부 정보는 포함하지 않는다.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "startedOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "기존 STU.started_on. 학생 생성 시각과 다르다."
+          },
+          "targetExam": {
+            "type": "string",
+            "nullable": true
+          },
+          "guidance": {
+            "type": "string",
+            "nullable": true
+          },
+          "lang": {
+            "type": "string",
+            "nullable": true
+          },
+          "guardians": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentGuardianSummaryDto"
+            }
+          },
+          "guardianTotal": {
+            "type": "number"
+          },
+          "enrollments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentEnrollmentSummaryDto"
+            }
+          },
+          "enrollmentTotal": {
+            "type": "number"
+          },
+          "history": {
+            "description": "직접 학생/현재 연결 상담/보호자의 기존 감사 metadata 최근50건. 전체 CRUD/변경값/학교·학년 기간 이력이 아니다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentAuditSummaryDto"
+            }
+          },
+          "historyTotal": {
+            "type": "number"
+          },
+          "historyLimit": {
+            "type": "number",
+            "description": "보호자/수강/감사 각 최대50건"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "tag",
+          "label",
+          "gradeDisplay",
+          "createdAt",
+          "genderLabel",
+          "guardianNames",
+          "startedOn",
+          "targetExam",
+          "guidance",
+          "lang",
+          "guardians",
+          "guardianTotal",
+          "enrollments",
+          "enrollmentTotal",
+          "history",
+          "historyTotal",
+          "historyLimit"
+        ]
+      },
+      "StudentRegistrationPeriodDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "유효 시작 경계 — 종료와 모두 포함"
+          },
+          "fromPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "description": "사용자가 알고 입력한 시작 정밀도"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true,
+            "description": "유효 종료 경계 — null이면 계속"
+          },
+          "toPrecision": {
+            "type": "string",
+            "enum": [
+              "year",
+              "month",
+              "day"
+            ],
+            "nullable": true,
+            "description": "종료가 있으면 사용자가 입력한 정밀도, 없으면 null"
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "기간 기록 메모. 연락처·금액 원문 저장 용도가 아니다."
+          }
+        },
+        "required": [
+          "from",
+          "fromPrecision",
+          "to",
+          "toPrecision"
+        ]
+      },
+      "StudentSchoolSearchQueryDto": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "q"
         ]
       },
       "StudentReactivationCandidateQueryDto": {

@@ -27,7 +27,9 @@ export async function familyLinks(run: Run, studentIds: number[]): Promise<Map<n
   if (!ids.length) return out;
   const rows = (await run(
     `SELECT g1.student_id AS me, g2.student_id AS sib, st.name, st.grade,
-            string_agg(DISTINCT g1.name, ' · ') AS via
+            string_agg(DISTINCT COALESCE(g1.name,g1.relation_other,CASE g1.relation_code
+              WHEN 'mother' THEN '어머니' WHEN 'father' THEN '아버지' WHEN 'aunt' THEN '이모/고모'
+              WHEN 'driver' THEN '기사님' ELSE NULL END,g1.relation,'보호자'), ' · ') AS via
        FROM guardian g1
        JOIN guardian g2 ON g2.active AND g2.student_id <> g1.student_id
         AND ((g1.phone IS NOT NULL AND g2.phone = g1.phone)

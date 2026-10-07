@@ -35,7 +35,7 @@ const koreanValue = (sort: number): string => {
   return `고${sort - 9}`;
 };
 
-const sourceCode = (system: EducationGradeSystem, sort: number): string => {
+export const educationGradeSourceCode = (system: EducationGradeSystem, sort: number): string => {
   if (system === 'US') return sort === 0 ? 'kinder' : `G${sort}`;
   if (system === 'GB') return `Yr${sort + 1}`;
   if (sort === 0) return 'kinder';
@@ -55,7 +55,7 @@ export function projectEducationGrades(rows: readonly EducationGradeSourceRow[])
 
   for (const system of ['US', 'GB', 'KR'] as const) {
     for (let sort = 0; sort < 13; sort += 1) {
-      if (!active.has(`${system}:${sourceCode(system, sort)}`)) continue;
+      if (!active.has(`${system}:${educationGradeSourceCode(system, sort)}`)) continue;
       const us = sort === 0 ? 'K' : `G${sort}`;
       const gb = `Y${sort + 1}`;
       const kr = koreanValue(sort);

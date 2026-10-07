@@ -10,12 +10,16 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, ForeignKey, Index, PrimaryGeneratedColumn } from 'typeorm';
 
 // W11 수동 CHECK metadata: migration 1764110000000 과 함께 보존/검증한다 (N-83).
 @Check('stu_gender_words', "\"gender\" IS NULL OR \"gender\" IN ('female','male')")
 @Check('stu_english_name_present', 'english_name IS NULL OR (english_name = btrim(english_name) AND length(english_name) > 0)')
 @Check('stu_source_words', "source IS NULL OR source IN ('kakao','phone','blog','instagram','referral','walkin')")
+@Check('stu_cash_receipt_pair', '(cash_receipt_encrypted IS NULL AND cash_receipt_key_version IS NULL) OR (cash_receipt_encrypted IS NOT NULL AND cash_receipt_key_version IS NOT NULL AND length(btrim(cash_receipt_key_version)) BETWEEN 1 AND 40)')
+@Check('stu_registration_contract', "registration_contract_version IN (0,1) AND (registration_contract_version = 0 OR (gender IS NOT NULL AND created_by IS NOT NULL AND registration_request_key IS NOT NULL))")
+@Index('stu_registration_request_once', ['registrationRequestKey'], { unique: true, where: 'registration_request_key IS NOT NULL' })
+@ForeignKey('staff', ['createdBy'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'stu' })
 export class Stu {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -64,6 +68,23 @@ export class Stu {
   /** LEAD.source의 기존 여섯 코드만 받으며 옛 LEAD에서 추정해 채우지 않는다. */
   @Column({ type: 'varchar', length: 10, nullable: true })
   source: string | null;
+
+  /** BOC-03D-04b 권고안: 현금영수증 원문은 독립 PII key의 AES-GCM envelope로만 저장한다. */
+  @Column({ type: 'bytea', nullable: true })
+  cashReceiptEncrypted: Buffer | null;
+
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  cashReceiptKeyVersion: string | null;
+
+  /** legacy/기존 최소 writer는 NULL, 15절 신규 writer는 인증 actor를 기록한다. */
+  @Column({ type: 'bigint', nullable: true })
+  createdBy: number | null;
+
+  @Column({ type: 'smallint', default: 0 })
+  registrationContractVersion: number;
+
+  @Column({ type: 'uuid', nullable: true })
+  registrationRequestKey: string | null;
 
   @Column({ type: 'timestamptz', default: () => "now()" })
   createdAt: Date;

@@ -49,6 +49,7 @@ const valid = {
 
 describe('BOC-03D-01 학생 신규 등록 DTO/OpenAPI 계약', () => {
   let app: INestApplication;
+  let doc: ReturnType<typeof buildOpenApi>;
   let schemas: NonNullable<ReturnType<typeof buildOpenApi>['components']>['schemas'];
 
   beforeAll(async () => {
@@ -58,9 +59,8 @@ describe('BOC-03D-01 학생 신규 등록 DTO/OpenAPI 계약', () => {
     }).compile();
     app = module.createNestApplication();
     await app.init();
-    const doc = buildOpenApi(app);
+    doc = buildOpenApi(app);
     schemas = doc.components?.schemas;
-    expect(doc.paths['/students']?.post).toBeUndefined();
   });
 
   afterAll(async () => { await app?.close(); });
@@ -71,7 +71,7 @@ describe('BOC-03D-01 학생 신규 등록 DTO/OpenAPI 계약', () => {
     return value;
   };
 
-  it('15절 최소 입력은 통과하고 공용 writer 전에는 runtime POST path를 열지 않는다', async () => {
+  it('15절 최소 입력과 preview/save runtime path를 같은 관리자 권한 경계에 연다', async () => {
     expect(await validate(plainToInstance(StudentCreateDto, valid))).toHaveLength(0);
     const create = schema('StudentCreateDto');
     expect(create.required).toEqual([
@@ -83,6 +83,10 @@ describe('BOC-03D-01 학생 신규 등록 DTO/OpenAPI 계약', () => {
     expect(create.properties?.gradeHistory).toMatchObject({ minItems: 1, maxItems: 50 });
     expect(create.properties?.residenceHistory).toMatchObject({ minItems: 1, maxItems: 50 });
     expect(create.properties?.guardians).toMatchObject({ minItems: 1, maxItems: 20 });
+    expect(doc.paths['/students/preview']?.post?.responses?.['200']).toBeDefined();
+    expect(doc.paths['/students']?.post?.responses?.['201']).toBeDefined();
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, StudentsController.prototype.previewCreate)).toBe(200);
+    expect(Reflect.getMetadata(PERM_KEY, StudentsController)).toEqual(['canAdminPage', 'canCrudAll']);
   });
 
   it('상담 진입 identity·필수 관계·기간 끝쌍·중복 FK를 DTO에서 먼저 거절한다', async () => {

@@ -17,13 +17,15 @@ import { Check, Column, Entity, ForeignKey, Index, PrimaryGeneratedColumn } from
 @Index('guardian_one_primary', ['studentId'], { unique: true, where: '"is_primary"' })
 @ForeignKey('stu', ['studentId'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('staff', ['createdBy'], ['id'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
-@Check('guardian_name_present', 'length(btrim(name)) > 0')
-@Check('guardian_contact_present', 'email IS NOT NULL OR phone IS NOT NULL')
+@Check('guardian_name_present', 'name IS NULL OR (name = btrim(name) AND length(name) > 0)')
 @Check('guardian_email_shape', "email IS NULL OR email ~ '^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]{2,}$'")
 @Check('guardian_phone_digits', "phone IS NULL OR phone ~ '^0[0-9]{9,10}$'")
 @Check('guardian_email_channel', 'NOT receive_email OR email IS NOT NULL')
 @Check('guardian_sms_channel', 'NOT receive_sms OR phone IS NOT NULL')
 @Check('guardian_primary_active', 'active OR NOT is_primary')
+@Check('guardian_relation_code', "relation_code IS NULL OR relation_code IN ('mother','father','aunt','driver','other')")
+@Check('guardian_relation_other', "(relation_code = 'other' AND relation_other IS NOT NULL AND relation_other = btrim(relation_other) AND length(relation_other) > 0) OR (relation_code IS DISTINCT FROM 'other' AND relation_other IS NULL)")
+@ForeignKey('country', ['residenceCountryCode'], ['code'], { onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'guardian' })
 export class Guardian {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -32,8 +34,8 @@ export class Guardian {
   @Column({ type: 'bigint' })
   studentId: number;
 
-  @Column({ type: 'varchar', length: 40 })
-  name: string;
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  name: string | null;
 
   /** 어머니 · 아버지 · 보호자 … 사람이 적는 짧은 말 (코드가 아니다) */
   @Column({ type: 'varchar', length: 20, nullable: true })
@@ -58,6 +60,18 @@ export class Guardian {
 
   @Column({ type: 'boolean', default: true })
   active: boolean;
+
+  @Column({ type: 'varchar', length: 6, nullable: true })
+  relationCode: string | null;
+
+  @Column({ type: 'varchar', length: 80, nullable: true })
+  relationOther: string | null;
+
+  @Column({ type: 'char', length: 2, nullable: true })
+  residenceCountryCode: string | null;
+
+  @Column({ type: 'boolean', default: false })
+  isPayer: boolean;
 
   @Column({ type: 'bigint' })
   createdBy: number;

@@ -78,6 +78,10 @@ import { StudentsModule } from './modules/students/students.module';
         COOKIE_SAME_ORIGIN_PROXY: Joi.string().valid('true', 'false').default('false'),
         ENABLE_DOCS: Joi.string().valid('true', 'false').default('false'),
         DB_POOL_MAX: Joi.number().optional(),
+        // BOC-03D-04b: 현금영수증 번호는 Zoom 비밀과 분리한 PII key로만 봉인한다.
+        // 번호를 쓰지 않는 환경은 키 없이도 뜨되, writer는 해당 입력만 503으로 거절한다.
+        STUDENT_PII_ENC_KEY: Joi.string().min(16).optional(),
+        STUDENT_PII_KEY_VERSION: Joi.string().trim().min(1).max(40).optional(),
       }).unknown(true),
     }),
     TypeOrmModule.forRoot(dataSourceOptions),

@@ -42,8 +42,10 @@ import type {
 interface GuardianRow {
   id: string;
   student_id: string;
-  name: string;
+  name: string | null;
   relation: string | null;
+  relation_code: string | null;
+  relation_other: string | null;
   email: string | null;
   phone: string | null;
   receive_email: boolean;
@@ -115,8 +117,19 @@ const STATUS_LABEL: Record<SendStatus, string> = {
   not_configured: '설정 없음 — 보내지 않았습니다',
 };
 
-const GUARDIAN_COLS = `id, student_id, name, relation, email, phone, receive_email, receive_sms, is_primary, active,
+const GUARDIAN_COLS = `id, student_id, name, relation, relation_code, relation_other,
+  email, phone, receive_email, receive_sms, is_primary, active,
   ${kstAt('created_at')} AS created_at`;
+
+/** BOC-03D-04b 권고안: 이름 미상 보호자는 관계를 표시명으로 쓰되 저장된 이름을 지어내지 않는다. */
+function guardianDisplayName(row: Pick<GuardianRow, 'name' | 'relation' | 'relation_code' | 'relation_other'>): string {
+  if (row.name) return row.name;
+  if (row.relation_other) return row.relation_other;
+  const labels: Readonly<Record<string, string>> = {
+    mother: '어머니', father: '아버지', aunt: '이모/고모', driver: '기사님', other: '보호자',
+  };
+  return row.relation_code ? labels[row.relation_code] ?? '보호자' : row.relation ?? '보호자';
+}
 
 @Injectable()
 export class GuardiansService {
@@ -146,7 +159,7 @@ export class GuardiansService {
     const student = await studentOf(this.ds, studentId);
     const rows = await this.ds.query(
       `SELECT ${GUARDIAN_COLS} FROM guardian WHERE student_id = $1
-        ORDER BY active DESC, is_primary DESC, name, id`,
+        ORDER BY active DESC, is_primary DESC, name NULLS LAST, id`,
       [studentId],
     ) as GuardianRow[];
     // A-13 — 같은 연락처로 묶인 형제(저장하지 않고 읽을 때 잇는다 · 회계 형제 묶음과 같은 함수)
@@ -254,7 +267,7 @@ export class GuardiansService {
       const guardians = dto.guardianIds.map((gid) => byId.get(gid)!);
       const inactive = guardians.find((g) => !g.active);
       if (inactive) {
-        throw new BadRequestException({ code: 'GUARDIAN_INACTIVE', message: `${inactive.name} 님은 사용 중지한 보호자입니다` });
+        throw new BadRequestException({ code: 'GUARDIAN_INACTIVE', message: `${guardianDisplayName(inactive)} 님은 사용 중지한 보호자입니다` });
       }
 
       // 채널 순서는 서버 배열 순서다 — 화면이 보낸 순서에 따라 원장 줄 순서가 달라지지 않게
@@ -264,11 +277,11 @@ export class GuardiansService {
       for (const g of guardians) {
         const mine = channels.filter((c) => RECEIVES[c].accepts(g));
         if (mine.length === 0) {
-          throw new BadRequestException({ code: 'GUARDIAN_CHANNEL_MISMATCH', message: `${g.name} 님은 고른 채널로 받지 않습니다` });
+          throw new BadRequestException({ code: 'GUARDIAN_CHANNEL_MISMATCH', message: `${guardianDisplayName(g)} 님은 고른 채널로 받지 않습니다` });
         }
         for (const channel of channels) {
           if (mine.includes(channel)) pairs.push({ g, channel, to: RECEIVES[channel].contact(g)! });
-          else skipped.push({ guardianId: Number(g.id), guardianName: g.name, channel, channelLabel: CHANNEL_SPECS[channel].label, reason: RECEIVES[channel].notAccepted });
+          else skipped.push({ guardianId: Number(g.id), guardianName: guardianDisplayName(g), channel, channelLabel: CHANNEL_SPECS[channel].label, reason: RECEIVES[channel].notAccepted });
         }
       }
 
@@ -371,7 +384,10 @@ export class GuardiansService {
 
   private async ledger(q: QueryRunner, requestKey: string): Promise<LedgerRow[]> {
     return q.query(
-      `SELECT s.id, s.request_key, s.pnoti_id, s.student_id, s.guardian_id, g.name AS guardian_name, g.relation,
+      `SELECT s.id, s.request_key, s.pnoti_id, s.student_id, s.guardian_id,
+              COALESCE(g.name,g.relation_other,CASE g.relation_code
+                WHEN 'mother' THEN '어머니' WHEN 'father' THEN '아버지' WHEN 'aunt' THEN '이모/고모'
+                WHEN 'driver' THEN '기사님' ELSE NULL END,g.relation,'보호자') AS guardian_name, g.relation,
               s.channel, s.to_masked, s.status, s.error, ${kstAt('s.sent_at')} AS sent_at
          FROM guardian_send s JOIN guardian g ON g.id = s.guardian_id
         WHERE s.request_key = $1
@@ -489,7 +505,7 @@ function assertContacts(v: { email: string | null; phone: string | null; receive
 
 function toDto(r: GuardianRow): GuardianDto {
   return {
-    id: Number(r.id), studentId: Number(r.student_id), name: r.name, relation: r.relation,
+    id: Number(r.id), studentId: Number(r.student_id), name: guardianDisplayName(r), relation: r.relation,
     email: r.email, phone: r.phone, phoneDisplay: phoneDigitsDisplay(r.phone),
     receiveEmail: r.receive_email, receiveSms: r.receive_sms,
     receives: SEND_CHANNELS.filter((c) => RECEIVES[c].accepts(r)),

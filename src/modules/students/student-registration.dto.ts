@@ -1,6 +1,6 @@
 /** @file-guide
  * 목적: student-registration.dto.ts — 학생 신규 등록 15절과 기존 학생 재활성화의 생성 DTO/OpenAPI 계약
- * 책임/재사용: P-STU15·P-REACT 입력 형상을 생성 타입의 단일 진실원으로 제공한다. endpoint/service/DB writer는 후속 단계가 소유한다.
+ * 책임/재사용: P-STU15·P-REACT 입력·응답 형상을 DTO→OpenAPI→Frontend 생성 타입의 단일 진실원으로 제공한다.
  * 검증/작업 지침: docs/spec/STUDENT-REGISTRATION-2026-09-30.md · docs/sprint/TBO-55/BOC-03-SCENARIOS-2026-10-06.md
  */
 
@@ -28,7 +28,6 @@ import {
 } from 'class-validator';
 import { ApiErrorDto } from '../../common/http.dto';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
-import { EducationGradeOptionDto } from '../meta/meta.dto';
 
 const ID_MAX = Number.MAX_SAFE_INTEGER;
 const PERIOD_PRECISIONS = ['year', 'month', 'day'] as const;
@@ -48,6 +47,9 @@ const REGISTRATION_CONFLICT_CODES = [
   'STUDENT_REGISTRATION_OPTION_INACTIVE',
   'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND',
   'STUDENT_REGISTRATION_PERIOD_CONFLICT',
+  'STUDENT_REGISTRATION_LEAD_LINKED',
+  'STUDENT_REGISTRATION_SIBLING_INACTIVE',
+  'STUDENT_SCHOOL_REQUEST_KEY_REUSED',
   'STUDENT_REACTIVATION_ACTIVE',
   'STUDENT_REACTIVATION_STATUS_UNKNOWN',
   'STUDENT_REACTIVATION_LEAD_CHANGED',
@@ -334,10 +336,17 @@ export class StudentRegistrationWordDto {
   @ApiProperty() label!: string;
 }
 
+export class StudentRegistrationGradeOptionDto {
+  @ApiProperty({ enum: ['US', 'GB', 'KR', 'OTHER'] }) educationSystem!: string;
+  @ApiProperty({ maxLength: 16, description: 'StudentCreateDto.gradeHistory.gradeCode에 그대로 보내는 영속 code' }) code!: string;
+  @ApiProperty({ maxLength: 30 }) label!: string;
+  @ApiProperty({ type: 'integer', minimum: 0 }) sort!: number;
+}
+
 export class StudentRegistrationOptionsDto {
   @ApiProperty({ type: [StudentRegistrationCountryOptionDto] }) countries!: StudentRegistrationCountryOptionDto[];
-  @ApiProperty({ type: [EducationGradeOptionDto], description: 'active39 등록 선택지. 비활성·legacy 46행은 보존하되 신규 선택에서 제외한다.' })
-  educationGrades!: EducationGradeOptionDto[];
+  @ApiProperty({ type: [StudentRegistrationGradeOptionDto], description: '영속 code를 포함한 active39 등록 선택지. 표시 projection과 저장 code를 혼용하지 않는다.' })
+  educationGrades!: StudentRegistrationGradeOptionDto[];
   @ApiProperty({ type: [StudentRegistrationWordDto] }) guardianRelations!: StudentRegistrationWordDto[];
   @ApiProperty({ type: [StudentRegistrationWordDto] }) sources!: StudentRegistrationWordDto[];
 }

@@ -1,6 +1,6 @@
 /** @file-guide
- * 목적: 관리자 학생 조회와 BOC-03D-03b 재활성화 후보·preview·save HTTP 경계를 연결한다.
- * 책임/재사용: 공용 Perm·생성 DTO를 사용하며 실제 상태/transaction 판정은 StudentsService에 위임한다.
+ * 목적: 관리자 학생 조회와 BOC-03 신규 등록·재활성화 HTTP 경계를 연결한다.
+ * 책임/재사용: 공용 Perm·생성 DTO를 사용하며 선택지·상태·transaction 판정은 StudentsService에 위임한다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
@@ -15,6 +15,13 @@ import {
   StudentReactivationPreviewDto,
   StudentReactivationResultDto,
   StudentRegistrationConflictDto,
+  StudentCreateDto,
+  StudentCreatePreviewDto,
+  StudentCreateResultDto,
+  StudentRegistrationOptionsDto,
+  StudentSchoolCreateDto,
+  StudentSchoolOptionDto,
+  StudentSchoolSearchQueryDto,
 } from './student-registration.dto';
 import { StudentDirectoryDto, StudentListQueryDto, StudentReadDto, StudentReadParamsDto } from './students.dto';
 import { StudentsService } from './students.service';
@@ -30,6 +37,60 @@ export class StudentsController {
   @ApiOkResponse({ type: StudentDirectoryDto })
   @ApiBadRequestResponse({ type: ApiErrorDto })
   list(@Query() query: StudentListQueryDto): Promise<StudentDirectoryDto> { return this.service.list(query); }
+
+  @Get('options')
+  @ApiOperation({ summary: '신규 학생 등록 국가·시간대·영속 학년 code 선택지' })
+  @ApiOkResponse({ type: StudentRegistrationOptionsDto })
+  registrationOptions(): Promise<StudentRegistrationOptionsDto> { return this.service.registrationOptions(); }
+
+  @Get('schools')
+  @ApiOperation({ summary: '활성 학교 이름 검색 — 최대 20개' })
+  @ApiOkResponse({ type: [StudentSchoolOptionDto] })
+  searchSchools(@Query() query: StudentSchoolSearchQueryDto): Promise<StudentSchoolOptionDto[]> {
+    return this.service.searchSchools(query);
+  }
+
+  @Post('schools')
+  @ApiOperation({ summary: '학교 추가 또는 정규화 identity가 같은 활성 학교 반환' })
+  @ApiCreatedResponse({ type: StudentSchoolOptionDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: StudentRegistrationConflictDto })
+  createSchool(@CurrentUser() user: RequestUser, @Body() dto: StudentSchoolCreateDto): Promise<StudentSchoolOptionDto> {
+    return this.service.createSchool(user.id, dto);
+  }
+
+  @Post('preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: '신규 학생 15절 등록 미리보기 — 실제 writer와 지연 제약을 실행한 뒤 쓰기 0',
+    description: 'BOC-03D-04b 권고안: preview는 requestKey를 소비하지 않으며 이미 저장된 key는 409로 재조회를 요구한다.',
+  })
+  @ApiOkResponse({ type: StudentCreatePreviewDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND' })
+  @ApiConflictResponse({ type: StudentRegistrationConflictDto })
+  previewCreate(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: StudentCreateDto,
+  ): Promise<StudentCreatePreviewDto> {
+    return this.service.previewCreate(user.id, dto);
+  }
+
+  @Post()
+  @ApiOperation({
+    summary: '신규 학생 15절 저장 — 기간·연락·보호자·담당·형제·상태·감사 단일 transaction',
+    description: '같은 actor/requestKey/body 재시도는 기존 결과를 반환한다. 연락처·현금영수증 원문은 LOG와 응답에 싣지 않는다.',
+  })
+  @ApiCreatedResponse({ type: StudentCreateResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND' })
+  @ApiConflictResponse({ type: StudentRegistrationConflictDto })
+  create(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: StudentCreateDto,
+  ): Promise<StudentCreateResultDto> {
+    return this.service.create(user.id, dto);
+  }
 
   @Get('reactivation-candidates')
   @ApiOperation({

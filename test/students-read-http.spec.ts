@@ -54,11 +54,15 @@ describe('학생 목록/상세 HTTP 계약', () => {
     expect(service.detail).not.toHaveBeenCalled();
   });
 
-  it('OpenAPI는 두 GET만 열고 전체 감사/등록 writer를 가장하지 않는다', () => {
+  it('OpenAPI는 조회·등록 writer·학교 계약을 열고 삭제 writer와 전체 감사 원문을 노출하지 않는다', () => {
     const doc = buildOpenApi(app);
     expect(doc.paths['/students'].get?.responses['200']).toBeDefined();
     expect(doc.paths['/students/{id}'].get?.responses['200']).toBeDefined();
-    expect(doc.paths['/students'].post).toBeUndefined();
+    expect(doc.paths['/students'].post?.responses['201']).toBeDefined();
+    expect(doc.paths['/students/preview'].post?.responses['200']).toBeDefined();
+    expect(doc.paths['/students/options'].get?.responses['200']).toBeDefined();
+    expect(doc.paths['/students/schools'].get?.responses['200']).toBeDefined();
+    expect(doc.paths['/students/schools'].post?.responses['201']).toBeDefined();
     expect(doc.paths['/students/{id}'].delete).toBeUndefined();
     expect(doc.components?.schemas?.StudentAuditSummaryDto).not.toHaveProperty('properties.before');
     expect(doc.components?.schemas?.StudentAuditSummaryDto).not.toHaveProperty('properties.after');

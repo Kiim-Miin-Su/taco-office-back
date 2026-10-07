@@ -1,21 +1,41 @@
 /** @file-guide
- * 목적: students.service.ts — 현재 학생 데이터의 목록·상세 읽기 소유자
- * 책임/재사용: studentTagSql/studentLabel/kstAt를 재사용한다. 학생 쓰기·전체 이력 추정·금융/연락처 노출은 하지 않는다.
+ * 목적: students.service.ts — 학생 목록·상세와 BOC-03 신규 등록/재활성화 transaction 소유자
+ * 책임/재사용: 공용 표시 함수와 생성 규칙을 재사용한다. PII 원문은 응답·일반 로그에 노출하지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
-import { BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import {
+  BadRequestException, ConflictException, Injectable, InternalServerErrorException, NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { DataSource, EntityManager, type QueryRunner } from 'typeorm';
+import { todayKst } from '../../lib/kst';
+import { sealSecret, secretKeyFrom } from '../../lib/secret-box';
 import { kstAt } from '../../lib/sql';
 import { studentLabel, studentTagSql } from '../../lib/student-label';
-import { educationGradeDisplay, projectEducationGrades, type EducationGradeProjection, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
+import { educationGradeDisplay, educationGradeSourceCode, projectEducationGrades, type EducationGradeProjection, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
 import { STU_GENDER_LABEL, type StuGender } from '../meta/meta.dto';
 import type {
+  StudentCreateDto,
+  StudentCreatePreviewDto,
+  StudentCreateResultDto,
+  StudentRegistrationOptionsDto,
+  StudentSchoolCreateDto,
+  StudentSchoolOptionDto,
+  StudentSchoolSearchQueryDto,
   StudentReactivationCandidateQueryDto,
   StudentReactivationCandidatesDto,
   StudentReactivationDto,
   StudentReactivationPreviewDto,
   StudentReactivationResultDto,
 } from './student-registration.dto';
+import {
+  normalizeStudentCreateCommand,
+  studentCreateFingerprint,
+  studentCreateSummary,
+  type NormalizedRegistrationPeriod,
+  type NormalizedStudentCreateCommand,
+} from './student-registration.rules';
 import {
   normalizeStudentReactivationCommand,
   studentReactivationFingerprint,
@@ -31,7 +51,10 @@ const PAGE_SIZE = 10;
 const DETAIL_LIMIT = 50;
 const SUMMARY = `s.id, s.name, s.grade, s.school, s.gender, ${studentTagSql('s')} AS tag,
   ${kstAt('s.created_at')} AS created_at,
-  ARRAY(SELECT g.name FROM guardian g WHERE g.student_id = s.id AND g.active ORDER BY g.is_primary DESC, g.id) AS guardian_names`;
+  ARRAY(SELECT COALESCE(g.name,g.relation_other,CASE g.relation_code
+      WHEN 'mother' THEN '어머니' WHEN 'father' THEN '아버지' WHEN 'aunt' THEN '이모/고모'
+      WHEN 'driver' THEN '기사님' ELSE NULL END,g.relation,'보호자')
+    FROM guardian g WHERE g.student_id = s.id AND g.active ORDER BY g.is_primary DESC, g.id) AS guardian_names`;
 const ACTION_LABEL: Readonly<Record<string, string>> = {
   create: '추가', edit: '수정', update: '수정', patch: '수정', deactivate: '사용 중지',
   enroll: '등록 확정', stage: '단계 변경', fail: '등록 실패', resume: '재개', diag: '진단 추가', withdraw: '퇴원 처리',
@@ -67,6 +90,24 @@ interface ReactivationReplayRow {
   created_at: Date;
 }
 
+interface StudentCreateReplayRow {
+  student_id: string;
+  recorded_by: string;
+  request_fingerprint: Buffer;
+  after_data: { summary?: StudentCreateResultDto['summary'] } | null;
+  created_at: Date;
+}
+
+interface StudentCreateLockedSibling {
+  id: string;
+  profile_version: string;
+  status: unknown;
+}
+
+class StudentCreatePreviewRollback extends Error {
+  constructor(public readonly result: StudentCreatePreviewDto) { super('student-create-preview'); }
+}
+
 function throwReactivationIssue(issue: ReturnType<typeof studentReactivationStatusIssue>): void {
   if (issue) throw new ConflictException(issue);
 }
@@ -94,6 +135,450 @@ export class StudentsService {
     if (educationGrades.length !== 39) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
     return { items: ((result.items ?? []) as Row[]).map((row) => summary(row, educationGrades)), total: Number(result.total), page, pageSize: PAGE_SIZE,
       grades: result.grades as string[], educationGrades };
+  }
+
+  async registrationOptions(): Promise<StudentRegistrationOptionsDto> {
+    const [result] = await this.ds.query(`SELECT
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'code',c.code,'label',c.name_ko,'timezones',COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          'timezone',z.timezone,'label',z.label_ko,'representative',z.is_representative)
+          ORDER BY z.is_representative DESC,z.label_ko,z.timezone)
+          FROM country_timezone z WHERE z.country_code=c.code AND z.active),'[]'::jsonb))
+        ORDER BY c.sort,c.code) FROM country c WHERE c.active),'[]'::jsonb) AS countries,
+      COALESCE((SELECT jsonb_agg(jsonb_build_object(
+        'educationSystem',g.education_system,'code',g.code,'label',g.label_ko,'sort',g.sort)
+        ORDER BY CASE g.education_system WHEN 'US' THEN 1 WHEN 'GB' THEN 2 WHEN 'KR' THEN 3 ELSE 4 END,g.sort,g.code)
+        FROM education_grade g WHERE g.active),'[]'::jsonb) AS grades`) as Array<{
+      countries: StudentRegistrationOptionsDto['countries'];
+      grades: StudentRegistrationOptionsDto['educationGrades'];
+    }>;
+    if (!result) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
+    const projection = projectEducationGrades(result.grades.map(row => ({
+      educationSystem: row.educationSystem, code: row.code, active: true,
+    })));
+    if (projection.length !== 39) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
+    const canonicalKeys = new Set(projection.map(row => `${row.system}:${educationGradeSourceCode(row.system, row.sort)}`));
+    const educationGrades = result.grades.filter(row => canonicalKeys.has(`${row.educationSystem}:${row.code}`));
+    return {
+      countries: result.countries,
+      educationGrades,
+      guardianRelations: [
+        { key: 'mother', label: '어머니' }, { key: 'father', label: '아버지' },
+        { key: 'aunt', label: '이모님' }, { key: 'driver', label: '기사님' }, { key: 'other', label: '기타' },
+      ],
+      sources: [
+        { key: 'kakao', label: '카카오' }, { key: 'phone', label: '전화' }, { key: 'blog', label: '블로그' },
+        { key: 'instagram', label: '인스타그램' }, { key: 'referral', label: '소개' }, { key: 'walkin', label: '방문' },
+      ],
+    };
+  }
+
+  async searchSchools(input: StudentSchoolSearchQueryDto): Promise<StudentSchoolOptionDto[]> {
+    const rows = await this.ds.query(`SELECT id,name,country_code AS "countryCode",
+      (SELECT name_ko FROM country WHERE code=school.country_code) AS "countryLabel",
+      region,campus,active FROM school
+      WHERE active AND strpos(name_key,normalize_school_identity($1))>0
+      ORDER BY CASE WHEN name_key=normalize_school_identity($1) THEN 0 ELSE 1 END,name,id LIMIT 20`,
+    [input.q]) as Array<StudentSchoolOptionDto & { id: string | number }>;
+    return rows.map(row => ({ ...row, id: id(row.id) }));
+  }
+
+  async createSchool(actorId: number, dto: StudentSchoolCreateDto): Promise<StudentSchoolOptionDto> {
+    const normalized = {
+      name: dto.name.trim(), countryCode: dto.countryCode,
+      region: dto.region?.trim() || null, campus: dto.campus?.trim() || null,
+    };
+    const fingerprint = createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+    return this.ds.transaction(async manager => {
+      // BOC-03D-04b 권고안 채택(2026-10-07): 학교 추가도 등록 선택지와 같은 active 국가 정본을 사용한다.
+      // 정책 변경 시 P-STU15, Front SchoolSelector, DBML의 school identity와 함께 수정한다.
+      if (normalized.countryCode !== null) {
+        const [country] = await manager.query(`SELECT code FROM country WHERE code=$1 AND active FOR SHARE`, [normalized.countryCode]);
+        if (!country) {
+          throw new ConflictException({ code: 'STUDENT_REGISTRATION_OPTION_INACTIVE', message: '사용할 수 없는 학교 국가입니다' });
+        }
+      }
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`student-school:${dto.requestKey}`]);
+      const [replay] = await manager.query(`SELECT l.actor_id,l.entity_id,l.after->>'fingerprint' AS fingerprint
+        FROM log l WHERE l.entity='SCHOOL' AND l.action='create'
+          AND l.after->>'requestKey'=$1 ORDER BY l.id DESC LIMIT 1`, [dto.requestKey]) as Array<{
+        actor_id: string; entity_id: string; fingerprint: string;
+      }>;
+      if (replay) {
+        if (Number(replay.actor_id) !== actorId || replay.fingerprint !== fingerprint) {
+          throw new ConflictException({ code: 'STUDENT_SCHOOL_REQUEST_KEY_REUSED', message: '이미 사용한 학교 추가 요청 키입니다' });
+        }
+        return this.schoolById(manager, Number(replay.entity_id));
+      }
+      const [resolved] = await manager.query(`SELECT resolve_school($1,$2,$3,$4,$5) AS id`, [
+        normalized.name, normalized.countryCode, normalized.region, normalized.campus, actorId,
+      ]) as Array<{ id: string }>;
+      const school = await this.schoolById(manager, Number(resolved.id));
+      await manager.query(`INSERT INTO log(actor_id,entity,entity_id,action,before,after)
+        VALUES ($1,'SCHOOL',$2,'create',NULL,$3::jsonb)`, [actorId, school.id,
+        JSON.stringify({ requestKey: dto.requestKey, fingerprint, resolved: true })]);
+      return school;
+    });
+  }
+
+  private async schoolById(manager: EntityManager, schoolId: number): Promise<StudentSchoolOptionDto> {
+    const [row] = await manager.query(`SELECT s.id,s.name,s.country_code AS "countryCode",c.name_ko AS "countryLabel",
+      s.region,s.campus,s.active FROM school s LEFT JOIN country c ON c.code=s.country_code WHERE s.id=$1`, [schoolId]) as StudentSchoolOptionDto[];
+    if (!row) throw new NotFoundException({ code: 'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND', message: '학교를 찾을 수 없습니다' });
+    return { ...row, id: id(row.id) };
+  }
+
+  previewCreate(actorId: number, dto: StudentCreateDto): Promise<StudentCreatePreviewDto> {
+    return this.runCreate(actorId, dto, true) as Promise<StudentCreatePreviewDto>;
+  }
+
+  create(actorId: number, dto: StudentCreateDto): Promise<StudentCreateResultDto> {
+    return this.runCreate(actorId, dto, false) as Promise<StudentCreateResultDto>;
+  }
+
+  private async runCreate(
+    actorId: number, dto: StudentCreateDto, preview: boolean,
+  ): Promise<StudentCreatePreviewDto | StudentCreateResultDto> {
+    let command: NormalizedStudentCreateCommand;
+    try {
+      command = normalizeStudentCreateCommand(dto);
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+      const separator = error.message.indexOf(': ');
+      throw new BadRequestException({
+        code: separator < 0 ? 'STUDENT_REGISTRATION_INVALID' : error.message.slice(0, separator),
+        message: separator < 0 ? error.message : error.message.slice(separator + 2),
+      });
+    }
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      const result = await this.createBody(q, actorId, command, preview);
+      // writer가 만든 최종 상태를 preview에서도 commit과 동일하게 검증한다. 새 지연 제약이 추가돼도 이 경계가 빠뜨리지 않는다.
+      await q.query(`SET CONSTRAINTS ALL IMMEDIATE`);
+      if (preview) {
+        throw new StudentCreatePreviewRollback({
+          saved: false,
+          requestKey: command.requestKey,
+          studentId: null,
+          profileVersion: null,
+          summary: result.summary,
+        });
+      }
+      await q.commitTransaction();
+      return result;
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      if (error instanceof StudentCreatePreviewRollback) return error.result;
+      throw error;
+    } finally {
+      await q.release();
+    }
+  }
+
+  /**
+   * BOC-03D-04b 권고안 채택(2026-10-07): 15절 신규 등록의 모든 write와 검증은 이 transaction에 모은다.
+   * 정책 변경 시 StudentCreateDto/rules, 176630 migration, P-STU15·BOC-03, 생성 Front 계약을 함께 수정한다.
+   */
+  private async createBody(
+    q: QueryRunner, actorId: number, command: NormalizedStudentCreateCommand, preview: boolean,
+  ): Promise<StudentCreateResultDto> {
+    const m = q.manager;
+    const fingerprint = studentCreateFingerprint(command);
+    const fingerprintBytes = Buffer.from(fingerprint, 'hex');
+    const registrationSummary = studentCreateSummary(command);
+    await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+      [`student-create:${command.requestKey}`]);
+    const replay = await this.studentCreateReplay(m, command.requestKey);
+    if (replay) {
+      if (preview || Number(replay.recorded_by) !== actorId || replay.request_fingerprint.toString('hex') !== fingerprint) {
+        throw new ConflictException({
+          code: 'STUDENT_CREATE_REQUEST_KEY_REUSED',
+          message: '이미 사용한 요청 키입니다. 등록 화면을 다시 열어 주세요',
+        });
+      }
+      return {
+        saved: true,
+        requestKey: command.requestKey,
+        studentId: id(replay.student_id),
+        profileVersion: '1',
+        replayed: true,
+        createdAt: new Date(replay.created_at).toISOString(),
+        summary: replay.after_data?.summary ?? registrationSummary,
+      };
+    }
+
+    await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`,
+      [`student-create-name:${command.name.toLocaleLowerCase('ko-KR')}`]);
+    await this.assertStudentCreateReferences(m, actorId, command);
+    const siblingRows = await this.lockStudentCreateSiblings(m, command.siblingIds);
+    await this.assertStudentCreateDuplicate(m, command);
+
+    let cashReceiptEncrypted: Buffer | null = null;
+    let cashReceiptKeyVersion: string | null = null;
+    if (command.cashReceiptNumber !== null) {
+      const key = secretKeyFrom(process.env.STUDENT_PII_ENC_KEY);
+      cashReceiptKeyVersion = process.env.STUDENT_PII_KEY_VERSION?.trim() || null;
+      if (!key || !cashReceiptKeyVersion) {
+        throw new ServiceUnavailableException({
+          code: 'STUDENT_PII_KEY_MISSING',
+          message: '현금영수증 번호를 저장할 암호화 키가 설정되지 않았습니다',
+        });
+      }
+      cashReceiptEncrypted = sealSecret(command.cashReceiptNumber, key);
+    }
+
+    const [student] = await m.query(`INSERT INTO stu (
+      name,english_name,gender,birth_date,has_citizenship,source,cash_receipt_encrypted,
+      cash_receipt_key_version,created_by,registration_contract_version,registration_request_key
+    ) VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9,1,$10::uuid) RETURNING id,created_at`, [
+      command.name, command.englishName, command.gender, command.birthDate, command.hasCitizenship,
+      command.source, cashReceiptEncrypted, cashReceiptKeyVersion, actorId, command.requestKey,
+    ]) as Array<{ id: string; created_at: Date }>;
+    const studentId = id(student.id);
+
+    const [audit] = await m.query(`INSERT INTO stu_profile_audit (
+      student_id,action,field,request_key,request_fingerprint,version_before,version_after,
+      before_data,after_data,recorded_by
+    ) VALUES ($1,'create',NULL,$2::uuid,$3,0,1,NULL,$4::jsonb,$5) RETURNING id`, [
+      studentId, command.requestKey, fingerprintBytes,
+      JSON.stringify({
+        entrySource: command.entrySource,
+        cashReceiptConfigured: command.cashReceiptNumber !== null,
+        summary: registrationSummary,
+      }),
+      actorId,
+    ]) as Array<{ id: string }>;
+    await this.insertStudentCreatePeriods(q, studentId, audit.id, command);
+
+    for (const contact of command.contacts) {
+      await m.query(`INSERT INTO stu_contact(student_id,kind,value,label,created_by)
+        VALUES ($1,$2,$3,$4,$5)`, [studentId, contact.kind, contact.value, contact.label, actorId]);
+    }
+    for (const guardian of command.guardians) {
+      const email = guardian.contacts.find(contact => contact.kind === 'email')?.value ?? null;
+      const phone = guardian.contacts.find(contact => contact.kind === 'phone')?.value ?? null;
+      /*
+       * 권고안: 생성 DTO에는 수신 동의 칸이 없으므로 기존 createGuardianWithin과 같이 첫 email만 기본 수신으로 둔다.
+       * phone은 저장/선택하되 SMS 동의를 추정하지 않는다. 계약을 바꾸면 DTO·Front·guardian_contact bridge를 함께 수정한다.
+       */
+      const [made] = await m.query(`INSERT INTO guardian (
+        student_id,name,relation,email,phone,receive_email,receive_sms,is_primary,active,
+        relation_code,relation_other,residence_country_code,is_payer,created_by
+      ) VALUES ($1,$2,NULL,$3,$4,$5,false,$6,true,$7,$8,$9,$10,$11) RETURNING id`, [
+        studentId, guardian.name, email, phone, email !== null, guardian.isPrimary,
+        guardian.relation, guardian.relationOther, guardian.countryCode, guardian.isPayer, actorId,
+      ]) as Array<{ id: string }>;
+      for (const contact of guardian.contacts) {
+        const selected = contact.kind === 'email' ? contact.value === email
+          : contact.kind === 'phone' ? contact.value === phone : false;
+        await m.query(`INSERT INTO guardian_contact (
+          guardian_id,kind,value,label,is_delivery_selected,origin,created_by
+        ) VALUES ($1,$2,$3,$4,$5,'user',$6)`, [
+          made.id, contact.kind, contact.value, contact.label, selected, actorId,
+        ]);
+      }
+    }
+    for (const staffId of command.assigneeIds) {
+      await m.query(`INSERT INTO stu_staff(student_id,staff_id,assigned_by) VALUES ($1,$2,$3)`,
+        [studentId, staffId, actorId]);
+    }
+    for (const sibling of siblingRows) {
+      const versionAfter = (BigInt(sibling.profile_version) + 1n).toString();
+      await m.query(`INSERT INTO stu_profile_audit (
+        student_id,action,field,request_key,request_fingerprint,version_before,version_after,
+        before_data,after_data,recorded_by
+      ) VALUES ($1,'sibling_change',NULL,$2::uuid,$3,$4,$5,NULL,$6::jsonb,$7)`, [
+        sibling.id, command.requestKey, fingerprintBytes, sibling.profile_version, versionAfter,
+        JSON.stringify({ linkedStudentId: studentId, active: true }), actorId,
+      ]);
+      await m.query(`INSERT INTO stu_sibling(student_low_id,student_high_id,linked_by)
+        VALUES (LEAST($1::bigint,$2::bigint),GREATEST($1::bigint,$2::bigint),$3)`,
+        [studentId, sibling.id, actorId]);
+    }
+    await m.query(`INSERT INTO stu_status_event (
+      student_id,action,from_status,to_status,effective_on,actor_id,consultation_id,
+      request_key,request_fingerprint,profile_version_before,profile_version_after
+    ) VALUES ($1,'create',NULL,'active',(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::date,$2,NULL,$3::uuid,$4,0,1)`,
+    [studentId, actorId, command.requestKey, fingerprintBytes]);
+    if (command.entrySource === 'intake' && command.leadId !== null) {
+      await m.query(`UPDATE lead SET student_id=$1 WHERE id=$2`, [studentId, command.leadId]);
+    }
+    await m.query(`INSERT INTO log(actor_id,entity,entity_id,action,before,after)
+      VALUES ($1,'STU',$2,'create',NULL,$3::jsonb)`, [
+      actorId, studentId, JSON.stringify({
+        profileVersion: '1', entrySource: command.entrySource, leadId: command.leadId,
+        cashReceiptConfigured: command.cashReceiptNumber !== null, summary: registrationSummary,
+      }),
+    ]);
+    return {
+      saved: true,
+      requestKey: command.requestKey,
+      studentId,
+      profileVersion: '1',
+      replayed: false,
+      createdAt: new Date(student.created_at).toISOString(),
+      summary: registrationSummary,
+    } as StudentCreateResultDto;
+  }
+
+  private async studentCreateReplay(
+    manager: EntityManager, requestKey: string,
+  ): Promise<StudentCreateReplayRow | undefined> {
+    const [row] = await manager.query(`SELECT a.student_id,a.recorded_by,a.request_fingerprint,a.after_data,s.created_at
+      FROM stu s JOIN stu_profile_audit a ON a.student_id=s.id AND a.action='create'
+      WHERE s.registration_request_key=$1::uuid`, [requestKey]) as StudentCreateReplayRow[];
+    return row;
+  }
+
+  private async assertStudentCreateReferences(
+    manager: EntityManager, actorId: number, command: NormalizedStudentCreateCommand,
+  ): Promise<void> {
+    const [actor] = await manager.query(`SELECT id FROM staff WHERE id=$1 AND active FOR SHARE`, [actorId]);
+    if (!actor) throw new BadRequestException({ code: 'STUDENT_REGISTRATION_ACTOR_INACTIVE', message: '등록할 수 없는 사용자입니다' });
+    if (command.entrySource === 'intake' && command.leadId !== null) {
+      const [lead] = await manager.query(`SELECT student_id FROM lead WHERE id=$1 FOR UPDATE`, [command.leadId]) as Array<{ student_id: string | null }>;
+      if (!lead) throw new NotFoundException({ code: 'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND', message: '상담 건을 찾을 수 없습니다' });
+      if (lead.student_id !== null) {
+        throw new ConflictException({ code: 'STUDENT_REGISTRATION_LEAD_LINKED', message: '이미 학생에 연결된 상담 건입니다' });
+      }
+    }
+    if (command.assigneeIds.length) {
+      const rows = await manager.query(`SELECT id FROM staff WHERE id=ANY($1::bigint[]) AND active ORDER BY id FOR SHARE`,
+        [command.assigneeIds]) as Array<{ id: string }>;
+      if (rows.length !== command.assigneeIds.length) {
+        throw new BadRequestException({ code: 'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND', message: '사용 중인 담당자를 모두 찾을 수 없습니다' });
+      }
+    }
+    if (command.schoolHistory.length) {
+      const schoolIds = [...new Set(command.schoolHistory.map(row => row.schoolId))];
+      const rows = await manager.query(`SELECT id FROM school WHERE id=ANY($1::bigint[]) AND active ORDER BY id FOR SHARE`,
+        [schoolIds]) as Array<{ id: string }>;
+      if (rows.length !== schoolIds.length) {
+        throw new ConflictException({ code: 'STUDENT_REGISTRATION_OPTION_INACTIVE', message: '사용할 수 없는 학교가 포함되어 있습니다' });
+      }
+    }
+    const gradeKeys = [...new Map(command.gradeHistory.map(row => [
+      `${row.educationSystem}\u0000${row.gradeCode}`,
+      { educationSystem: row.educationSystem, gradeCode: row.gradeCode },
+    ])).values()];
+    if (gradeKeys.length) {
+      const rows = await manager.query(`SELECT g.education_system,g.code FROM education_grade g
+        JOIN jsonb_to_recordset($1::jsonb) x(education_system text,grade_code text)
+          ON x.education_system=g.education_system AND x.grade_code=g.code
+        WHERE g.active ORDER BY g.education_system,g.code FOR SHARE OF g`, [JSON.stringify(gradeKeys.map(row => ({
+          education_system: row.educationSystem, grade_code: row.gradeCode,
+        })))]) as Array<{ education_system: string; code: string }>;
+      if (rows.length !== gradeKeys.length) {
+        throw new ConflictException({ code: 'STUDENT_REGISTRATION_OPTION_INACTIVE', message: '사용할 수 없는 학년이 포함되어 있습니다' });
+      }
+    }
+    const residenceKeys = [...new Map(command.residenceHistory.map(row => [
+      `${row.countryCode}\u0000${row.timezone ?? ''}`,
+      { countryCode: row.countryCode, timezone: row.timezone },
+    ])).values()];
+    for (const row of residenceKeys) {
+      const [country] = await manager.query(`SELECT code FROM country WHERE code=$1 AND active FOR SHARE`, [row.countryCode]);
+      if (!country) {
+        throw new ConflictException({ code: 'STUDENT_REGISTRATION_OPTION_INACTIVE', message: '사용할 수 없는 거주 국가가 포함되어 있습니다' });
+      }
+      const zones = await manager.query(`SELECT timezone FROM country_timezone
+        WHERE country_code=$1 AND active ORDER BY timezone FOR SHARE`, [row.countryCode]) as Array<{ timezone: string }>;
+      if (!zones.length || row.timezone === null && zones.length !== 1
+        || row.timezone !== null && !zones.some(zone => zone.timezone === row.timezone)) {
+        throw new ConflictException({ code: 'STUDENT_REGISTRATION_OPTION_INACTIVE', message: '거주 국가의 시간대를 다시 선택해 주세요' });
+      }
+    }
+    const guardianCountries = [...new Set(command.guardians.map(row => row.countryCode).filter((code): code is string => code !== null))];
+    if (guardianCountries.length) {
+      const rows = await manager.query(`SELECT code FROM country WHERE code=ANY($1::text[]) AND active ORDER BY code FOR SHARE`,
+        [guardianCountries]) as Array<{ code: string }>;
+      if (rows.length !== guardianCountries.length) {
+        throw new ConflictException({ code: 'STUDENT_REGISTRATION_OPTION_INACTIVE', message: '사용할 수 없는 보호자 거주 국가가 포함되어 있습니다' });
+      }
+    }
+  }
+
+  private async lockStudentCreateSiblings(
+    manager: EntityManager, siblingIds: readonly number[],
+  ): Promise<StudentCreateLockedSibling[]> {
+    if (!siblingIds.length) return [];
+    const rows = await manager.query(`SELECT s.id,s.profile_version,
+      COALESCE((SELECT e.to_status FROM stu_status_event e WHERE e.student_id=s.id ORDER BY e.id DESC LIMIT 1),'unknown') AS status
+      FROM stu s WHERE s.id=ANY($1::bigint[]) ORDER BY s.id FOR NO KEY UPDATE OF s`,
+    [siblingIds]) as StudentCreateLockedSibling[];
+    if (rows.length !== siblingIds.length) {
+      throw new BadRequestException({ code: 'STUDENT_REGISTRATION_REFERENCE_NOT_FOUND', message: '형제·자매 학생을 모두 찾을 수 없습니다' });
+    }
+    if (rows.some(row => row.status === 'withdrawn')) {
+      throw new ConflictException({ code: 'STUDENT_REGISTRATION_SIBLING_INACTIVE', message: '퇴원한 학생은 활성 형제·자매 관계에 연결할 수 없습니다' });
+    }
+    return rows;
+  }
+
+  private async assertStudentCreateDuplicate(
+    manager: EntityManager, command: NormalizedStudentCreateCommand,
+  ): Promise<void> {
+    const currentGrade = command.gradeHistory.find(row => this.periodIncludesToday(row))!;
+    const currentSchool = command.schoolHistory.find(row => this.periodIncludesToday(row));
+    let schoolName: string | null = null;
+    if (currentSchool) {
+      const [school] = await manager.query(`SELECT name FROM school WHERE id=$1 AND active FOR SHARE`, [currentSchool.schoolId]) as Array<{ name: string }>;
+      if (!school) throw new ConflictException({ code: 'STUDENT_REGISTRATION_OPTION_INACTIVE', message: '현재 학교를 사용할 수 없습니다' });
+      schoolName = school.name;
+    }
+    const same = await manager.query(`SELECT s.id,
+      COALESCE((SELECT COALESCE(p.grade_code,p.legacy_text) FROM student_profile_current p
+        WHERE p.student_id=s.id AND p.field='grade'),s.grade) AS grade,
+      COALESCE((SELECT COALESCE(sc.name,p.legacy_text) FROM student_profile_current p
+        LEFT JOIN school sc ON sc.id=p.school_id WHERE p.student_id=s.id AND p.field='school'),s.school) AS school
+      FROM stu s WHERE s.name=$1 ORDER BY s.id FOR SHARE OF s`, [command.name]) as Array<{ id: string; grade: string | null; school: string | null }>;
+    if (!same.length) return;
+    const twin = same.find(row => (row.grade ?? '') === currentGrade.gradeCode && (row.school ?? '') === (schoolName ?? ''));
+    if (twin) {
+      throw new ConflictException({
+        code: 'STUDENT_DUPLICATE',
+        message: `같은 이름·학년·학교의 학생(#${twin.id})이 이미 있습니다`,
+      });
+    }
+    if (!command.allowSameName) {
+      throw new ConflictException({
+        code: 'STUDENT_SAME_NAME',
+        message: `이름이 같은 학생이 ${same.length}명 있습니다. 다른 사람이 맞으면 동명이인을 확인하고 다시 저장해 주세요`,
+      });
+    }
+  }
+
+  private periodIncludesToday(period: NormalizedRegistrationPeriod): boolean {
+    const today = todayKst();
+    return period.from <= today && (period.to === null || period.to >= today);
+  }
+
+  private async insertStudentCreatePeriods(
+    q: QueryRunner, studentId: number, auditId: string, command: NormalizedStudentCreateCommand,
+  ): Promise<void> {
+    const insert = async (
+      field: string, period: NormalizedRegistrationPeriod, payload: {
+        educationSystem?: string; gradeCode?: string; schoolId?: number;
+        countryCode?: string; timezone?: string | null; textValue?: string;
+      },
+    ) => q.query(`INSERT INTO stu_profile_period (
+      student_id,field,valid_from,valid_to,from_precision,to_precision,
+      education_system,grade_code,school_id,residence_country_code,residence_timezone,text_value,memo,created_audit_id
+    ) VALUES ($1,$2,$3::date,$4::date,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [
+      studentId, field, period.from, period.to, period.fromPrecision, period.toPrecision,
+      payload.educationSystem ?? null, payload.gradeCode ?? null, payload.schoolId ?? null,
+      payload.countryCode ?? null, payload.timezone ?? null, payload.textValue ?? null, period.memo, auditId,
+    ]);
+    for (const row of command.schoolHistory) await insert('school', row, { schoolId: row.schoolId });
+    for (const row of command.gradeHistory) await insert('grade', row, { educationSystem: row.educationSystem, gradeCode: row.gradeCode });
+    for (const row of command.residenceHistory) await insert('residence', row, { countryCode: row.countryCode, timezone: row.timezone });
+    for (const row of command.textHistory) await insert(row.field, row, { textValue: row.value });
+    if (command.notes) {
+      const today = todayKst();
+      await insert('notes', { from: today, fromPrecision: 'day', to: null, toPrecision: null, memo: null }, { textValue: command.notes });
+    }
   }
 
   async reactivationCandidates(input: StudentReactivationCandidateQueryDto): Promise<StudentReactivationCandidatesDto> {
@@ -296,7 +781,11 @@ export class StudentsService {
       if (!student) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
       const educationGrades = projectEducationGrades((student.education_grades ?? []) as EducationGradeSourceRow[]);
       if (educationGrades.length !== 39) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
-      const guardians = await manager.query(`SELECT id, name, relation, active, is_primary, count(*) OVER() AS total
+      const guardians = await manager.query(`SELECT id,
+          COALESCE(name,relation_other,CASE relation_code
+            WHEN 'mother' THEN '어머니' WHEN 'father' THEN '아버지' WHEN 'aunt' THEN '이모/고모'
+            WHEN 'driver' THEN '기사님' ELSE NULL END,relation,'보호자') AS name,
+          relation, active, is_primary, count(*) OVER() AS total
         FROM guardian WHERE student_id = $1 ORDER BY active DESC, is_primary DESC, id DESC LIMIT $2`, [studentId, DETAIL_LIMIT]) as Row[];
       const enrollments = await manager.query(`SELECT e.id, k.name AS kind_name, sub.name AS sub_name, e.sessions,
         to_char(e.started_on,'YYYY-MM-DD') AS started_on, to_char(e.ended_on,'YYYY-MM-DD') AS ended_on, count(*) OVER() AS total
