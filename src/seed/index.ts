@@ -61,7 +61,8 @@ export const SEEDED_TABLES = [
   // wave3 g3 (23-15 · 23-16) — 상담 배치안 초안 · 2차/진단 일정
   'lead_plan', 'lead_appt',
   'gpasvc', 'gpa_cycle', 'gpa_alloc', 'gpa_use',
-  'mkt', 'mfb', 'plan', 'mtrec', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
+  // BO-Q13 별도 안건은 회의 본문과 독립 writer다. reset 뒤 과거 agenda/version이 남지 않게 함께 비운다.
+  'mkt', 'mfb', 'plan', 'mtrec', 'mtagenda', 'mtattd', 'cpl', 'suggestion', 'rpt', 'todo',
   // W11 — 기획 지정 공개(N-72) · 대표 보고 영역 담당(N-81) · 시드는 안 넣는다(담당은 대표가 정한다 · 이름을 지어 넣지 않는다)
   'plan_pick', 'exec_area_owner',
   // DQ3 — 학생 보호자 (가짜 연락처만)

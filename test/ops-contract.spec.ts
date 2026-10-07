@@ -323,8 +323,9 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       '/ops/plans/{id}/stage', '/ops/plans/{id}/due', '/ops/plans/{id}/review',
       // §65 「+ 대표 지시」 (w5 · 65-4) — 과제(TODO) 한 줄을 쓰는 길이지 검색이 아니다
       '/ops/plans/{id}/tasks',
-      // §66 회의 상세 — 상세·속기록·할 일 배정 (C57)
+      // §66 회의 상세 — 상세·버전 안건·속기록·할 일 배정 (C57 · BO-Q13)
       '/ops/meetings/{id}',
+      '/ops/meetings/{id}/agenda', '/ops/meetings/{id}/agenda/import',
       // 「안내 보내기」 · 본인 참석 응답 (W11 · N-32) — 쓰기 경로다. 검색 GET·query 계약은 여전히 0이다
       '/ops/meetings/{id}/notice', '/ops/meetings/{id}/attend',
       '/ops/meetings/{id}/minutes', '/ops/meetings/{id}/todos',
