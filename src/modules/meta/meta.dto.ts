@@ -28,6 +28,17 @@ export class SubDto {
   @ApiProperty() color!: string;
 }
 
+/** 최종 관리자 p20~22의 세 교육체계 학년 한 줄. 화면은 대응 문구나 정렬을 다시 계산하지 않는다. */
+export class EducationGradeOptionDto {
+  @ApiProperty({ description: 'STU.grade에 저장할 원문값. 예: G5, Y6, 초5' }) value!: string;
+  @ApiProperty({ enum: ['US', 'GB', 'KR'] }) system!: 'US' | 'GB' | 'KR';
+  @ApiProperty({ description: 'optgroup 이름' }) systemLabel!: string;
+  @ApiProperty({ description: '선택지 문구. 예: Y6 (= G5)' }) optionLabel!: string;
+  @ApiProperty({ description: '선택 후 대응 안내. 예: = G5 · 초5' }) equivalenceHint!: string;
+  @ApiProperty({ description: '학생 목록 표시. 예: Y6 · G5' }) listLabel!: string;
+  @ApiProperty({ description: '미국 K=0, G1=1 … G12=12 기준 대응 순서' }) sort!: number;
+}
+
 export class RoomDto {
   @ApiProperty() id!: number;
   @ApiProperty() branch!: string;
@@ -149,6 +160,8 @@ export class TeacherPolicyDto {
 export class MetaDto {
   @ApiProperty({ type: [KindDto] }) kinds!: KindDto[];
   @ApiProperty({ type: [SubDto] }) subs!: SubDto[];
+  @ApiProperty({ type: [EducationGradeOptionDto], description: 'BOC-01D-02 활성 39개 학년 projection. 영속 46행은 보존한다.' })
+  educationGrades!: EducationGradeOptionDto[];
   @ApiProperty({ type: [RoomDto] }) rooms!: RoomDto[];
   @ApiProperty({ type: [ZaccDto] }) zaccs!: ZaccDto[];
   @ApiProperty({ type: [StaffBriefDto] }) staff!: StaffBriefDto[];

@@ -16,7 +16,7 @@ import { buildOpenApi } from '../src/openapi';
 
 describe('학생 목록/상세 HTTP 계약', () => {
   let app: INestApplication;
-  const service = { list: jest.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 10, grades: [] })),
+  const service = { list: jest.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 10, grades: [], educationGrades: [] })),
     detail: jest.fn(async () => ({ id: 7 })) };
   beforeAll(async () => {
     const module = await Test.createTestingModule({ controllers: [StudentsController], providers: [{ provide: StudentsService, useValue: service }] }).compile();
@@ -63,5 +63,10 @@ describe('학생 목록/상세 HTTP 계약', () => {
     expect(doc.components?.schemas?.StudentAuditSummaryDto).not.toHaveProperty('properties.before');
     expect(doc.components?.schemas?.StudentAuditSummaryDto).not.toHaveProperty('properties.after');
     expect(doc.components?.schemas?.StudentReadDto).not.toHaveProperty('properties.phone');
+    expect(doc.components?.schemas?.StudentDirectoryDto).toHaveProperty('properties.educationGrades');
+    expect(doc.components?.schemas?.StudentDirectoryRowDto).toHaveProperty('properties.gradeDisplay');
+    expect(doc.components?.schemas?.EducationGradeOptionDto).toMatchObject({ required: [
+      'value', 'system', 'systemLabel', 'optionLabel', 'equivalenceHint', 'listLabel', 'sort',
+    ] });
   });
 });

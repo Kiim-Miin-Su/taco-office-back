@@ -8,9 +8,14 @@ import { validate } from 'class-validator';
 import type { DataSource } from 'typeorm';
 import { StudentListQueryDto, StudentReadParamsDto } from '../src/modules/students/students.dto';
 import { StudentsService } from '../src/modules/students/students.service';
+import { GRADE_CODES_V1 } from '../src/migrations/data/student-catalog-v1';
+
+const educationGrades = Object.entries(GRADE_CODES_V1).flatMap(([educationSystem, codes]) =>
+  codes.map((code) => ({ educationSystem, code, active: true })));
 
 const row = { id: '21', name: '동명학생', grade: null, school: null, gender: null, tag: null,
-  created_at: '2026-09-30T12:00:00+09:00', guardian_names: ['보호자'], password_hash: 'PRIVATE', phone: 'PRIVATE' };
+  created_at: '2026-09-30T12:00:00+09:00', guardian_names: ['보호자'], education_grades: educationGrades,
+  password_hash: 'PRIVATE', phone: 'PRIVATE' };
 function fixture(rows: unknown[][]) {
   const query = jest.fn();
   rows.forEach(result => query.mockResolvedValueOnce(result));
@@ -20,17 +25,18 @@ function fixture(rows: unknown[][]) {
 
 describe('학생 읽기 — 현재 DB 사실만', () => {
   it('최신10명 기본값·학년 필터·literal 검색을 바인딩하고 유출 칸을 버린다', async () => {
-    const { query, service } = fixture([[{ items: [row], total: 21, grades: ['G8'] }]]);
+    const { query, service } = fixture([[{ items: [row], total: 21, grades: ['G8'], education_grades: educationGrades }]]);
     const result = await service.list({ q: "%' OR true --", grade: 'G8', page: 2 });
     expect(query.mock.calls[0][1]).toEqual(["%' OR true --", 'G8', 10, 10]);
     expect(query.mock.calls[0][0]).toContain('ORDER BY s.created_at DESC NULLS LAST, s.id DESC');
     expect(query.mock.calls[0][0]).not.toContain("%' OR true --");
-    expect(result).toMatchObject({ total: 21, page: 2, pageSize: 10, grades: ['G8'], items: [{ id: 21, grade: null, school: null, createdAt: row.created_at }] });
+    expect(result).toMatchObject({ total: 21, page: 2, pageSize: 10, grades: ['G8'], educationGrades: expect.any(Array),
+      items: [{ id: 21, grade: null, gradeDisplay: null, school: null, createdAt: row.created_at }] });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE|password|phone/);
   });
 
   it('빈 페이지도 전체 total을 잃지 않는다', async () => {
-    const { service } = fixture([[{ items: [], total: 21, grades: [] }]]);
+    const { service } = fixture([[{ items: [], total: 21, grades: [], education_grades: educationGrades }]]);
     expect(await service.list({ page: 99 })).toMatchObject({ items: [], total: 21, page: 99 });
   });
 
@@ -68,12 +74,12 @@ describe('학생 읽기 — 현재 DB 사실만', () => {
   });
 
   it('생성 시각/학교/학년 미상은 수강 시작일로 복구하지 않는다', async () => {
-    const { service } = fixture([[{ items: [{ ...row, created_at: null }], total: 1, grades: [] }]]);
+    const { service } = fixture([[{ items: [{ ...row, created_at: null }], total: 1, grades: [], education_grades: educationGrades }]]);
     expect((await service.list({})).items[0]).toMatchObject({ createdAt: null, grade: null, school: null });
   });
 
   it('안전 정수를 벗어난 식별자는 다른 학생으로 반올림하지 않는다', async () => {
-    const { service } = fixture([[{ items: [{ ...row, id: '9007199254740993' }], total: 1, grades: [] }]]);
+    const { service } = fixture([[{ items: [{ ...row, id: '9007199254740993' }], total: 1, grades: [], education_grades: educationGrades }]]);
     await expect(service.list({})).rejects.toMatchObject({ status: 500 });
   });
 });

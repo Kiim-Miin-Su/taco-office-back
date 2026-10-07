@@ -28,6 +28,16 @@ suite('학생 읽기 실제 DB — 변경 없음', () => {
     expect(second.total).toBe(first.total);
   });
 
+  it('46개 영속 학년을 보존하고 활성 39개 projection을 같은 응답에서 재조회한다', async () => {
+    const [{ count }] = await ds.query('SELECT count(*)::int AS count FROM education_grade') as { count: number }[];
+    const result = await service.list({});
+    expect(count).toBe(46);
+    expect(result.educationGrades).toHaveLength(39);
+    expect(result.educationGrades.find(({ value }) => value === 'Y6')).toMatchObject({
+      optionLabel: 'Y6 (= G5)', equivalenceHint: '= G5 · 초5', listLabel: 'Y6 · G5', sort: 5,
+    });
+  });
+
   it('학년 정확 일치와 %, 작은따옴표를 literal로 읽으며 빈 페이지 total은 유지한다', async () => {
     const [{ grade }] = await ds.query('SELECT grade FROM stu WHERE grade IS NOT NULL ORDER BY id LIMIT 1') as { grade: string }[];
     const filtered = await service.list({ grade });

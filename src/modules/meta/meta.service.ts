@@ -10,7 +10,7 @@
  * 색·이름·정원이 여기서만 나오므로 명세서가 바뀌면 화면이 저절로 따라온다 (D-R18).
  * 컨트롤러는 권한만 보고 조회는 서비스가 갖는다 — 다른 아홉 모듈과 같은 모양이다.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Kind, Room, Staff, Stu, Sub, Zacc } from '../../entities';
@@ -22,6 +22,7 @@ import {
 } from '../../lib/rules';
 import { studentLabel, studentTagSql } from '../../lib/student-label';
 import { teacherPolicies } from '../../lib/teacher-policy';
+import { projectEducationGrades, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
 import { STU_GENDERS, STU_GENDER_LABEL, type MetaDto, type StuGender } from './meta.dto';
 
 /** 코드표 학생 한 줄 — 동명이인 꼬리(tag)를 SQL 이 붙여 온다 */
@@ -45,7 +46,7 @@ export class MetaService {
    */
   async all(canSeeRoster = false): Promise<MetaDto> {
 
-    const [kinds, subs, rooms, zaccs, staff, students] = await Promise.all([
+    const [kinds, subs, rooms, zaccs, staff, students, educationGradeRows] = await Promise.all([
       this.kinds.find({ order: { sort: 'ASC' } }),
       this.subs.find({ where: { active: true }, order: { sort: 'ASC' } }),
       this.rooms.find({ where: { active: true }, order: { id: 'ASC' } }),
@@ -57,10 +58,16 @@ export class MetaService {
           `SELECT s.id, s.name, s.grade, s.school, s.gender, ${studentTagSql('s')} AS tag FROM stu s ORDER BY s.id`,
         ) as Promise<RosterRow[]>)
         : Promise.resolve([] as RosterRow[]),
+      this.subs.query(`SELECT education_system AS "educationSystem", code, active
+        FROM education_grade ORDER BY education_system, sort`) as Promise<EducationGradeSourceRow[]>,
     ]);
+    const educationGrades = projectEducationGrades(educationGradeRows);
+    // 권고안 채택(BOC-01D-02): 일부만 내려 신규 입력을 왜곡하지 않는다. 46행 보존 DB에서 활성 39개가 모두 보여야 한다.
+    if (educationGrades.length !== 39) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
     return {
       kinds: kinds.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, extra: k.extra === true })),
       subs: subs.map((s) => ({ key: s.key, name: s.name, color: s.color })),
+      educationGrades,
       rooms: rooms.map((r) => ({ id: Number(r.id), branch: r.branch, name: r.name, capacity: r.capacity })),
       zaccs: zaccs.map((z) => ({ id: Number(z.id), label: z.label, meetingId: canSeeRoster ? z.meetingId : null })),
       staff: staff.map((s) => {

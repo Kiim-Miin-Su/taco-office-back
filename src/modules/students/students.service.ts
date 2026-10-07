@@ -7,6 +7,7 @@ import { Injectable, InternalServerErrorException, NotFoundException } from '@ne
 import { DataSource } from 'typeorm';
 import { kstAt } from '../../lib/sql';
 import { studentLabel, studentTagSql } from '../../lib/student-label';
+import { educationGradeDisplay, projectEducationGrades, type EducationGradeProjection, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
 import { STU_GENDER_LABEL, type StuGender } from '../meta/meta.dto';
 import type { StudentDirectoryDto, StudentDirectoryRowDto, StudentListQueryDto, StudentReadDto, StudentReadParamsDto } from './students.dto';
 
@@ -27,10 +28,12 @@ function id(value: unknown): number {
 }
 const nullableText = (value: unknown): string | null => value == null ? null : String(value);
 const total = (rows: Row[]): number => Number(rows[0]?.total ?? 0);
-function summary(row: Row): StudentDirectoryRowDto {
+function summary(row: Row, educationGrades: readonly EducationGradeProjection[]): StudentDirectoryRowDto {
   const gender = row.gender === 'female' || row.gender === 'male' ? row.gender as StuGender : null;
   const name = String(row.name), tag = nullableText(row.tag);
-  return { id: id(row.id), name, tag, label: studentLabel(name, tag), grade: nullableText(row.grade),
+  const grade = nullableText(row.grade);
+  return { id: id(row.id), name, tag, label: studentLabel(name, tag), grade,
+    gradeDisplay: educationGradeDisplay(grade, educationGrades),
     school: nullableText(row.school), gender, genderLabel: gender ? STU_GENDER_LABEL[gender] : null,
     createdAt: nullableText(row.created_at), guardianNames: (row.guardian_names ?? []) as string[] };
 }
@@ -49,17 +52,26 @@ export class StudentsService {
       SELECT ${SUMMARY}, s.created_at AS sort_created_at FROM matched s ORDER BY s.created_at DESC NULLS LAST, s.id DESC LIMIT $3 OFFSET $4
     ) SELECT (SELECT count(*)::int FROM matched) AS total,
       ARRAY(SELECT DISTINCT grade FROM stu WHERE grade IS NOT NULL AND btrim(grade) <> '' ORDER BY grade) AS grades,
+      (SELECT COALESCE(jsonb_agg(jsonb_build_object('educationSystem', education_system, 'code', code, 'active', active)
+        ORDER BY education_system, sort), '[]'::jsonb) FROM education_grade) AS education_grades,
       COALESCE((SELECT jsonb_agg(p ORDER BY p.sort_created_at DESC NULLS LAST, p.id DESC) FROM page_rows p), '[]'::jsonb) AS items`,
     [input.q?.trim() ?? '', input.grade?.trim() || null, PAGE_SIZE, (page - 1) * PAGE_SIZE]) as Row[];
-    return { items: ((result.items ?? []) as Row[]).map(summary), total: Number(result.total), page, pageSize: PAGE_SIZE,
-      grades: result.grades as string[] };
+    const educationGrades = projectEducationGrades((result.education_grades ?? []) as EducationGradeSourceRow[]);
+    // 권고안 채택(BOC-01D-02): 불완전 카탈로그를 정상 선택지로 보이지 않는다. 기존 grade 원문은 그대로 보존한다.
+    if (educationGrades.length !== 39) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
+    return { items: ((result.items ?? []) as Row[]).map((row) => summary(row, educationGrades)), total: Number(result.total), page, pageSize: PAGE_SIZE,
+      grades: result.grades as string[], educationGrades };
   }
 
   async detail({ id: studentId }: StudentReadParamsDto): Promise<StudentReadDto> {
     return this.ds.transaction('REPEATABLE READ', async (manager) => {
       const [student] = await manager.query(`SELECT ${SUMMARY}, to_char(s.started_on,'YYYY-MM-DD') AS started_on,
+        (SELECT COALESCE(jsonb_agg(jsonb_build_object('educationSystem', education_system, 'code', code, 'active', active)
+          ORDER BY education_system, sort), '[]'::jsonb) FROM education_grade) AS education_grades,
         s.target_exam, s.guidance, s.lang FROM stu s WHERE s.id = $1`, [studentId]) as Row[];
       if (!student) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
+      const educationGrades = projectEducationGrades((student.education_grades ?? []) as EducationGradeSourceRow[]);
+      if (educationGrades.length !== 39) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
       const guardians = await manager.query(`SELECT id, name, relation, active, is_primary, count(*) OVER() AS total
         FROM guardian WHERE student_id = $1 ORDER BY active DESC, is_primary DESC, id DESC LIMIT $2`, [studentId, DETAIL_LIMIT]) as Row[];
       const enrollments = await manager.query(`SELECT e.id, k.name AS kind_name, sub.name AS sub_name, e.sessions,
@@ -74,7 +86,7 @@ export class StudentsService {
           OR (a.entity = 'LEAD' AND EXISTS (SELECT 1 FROM lead l WHERE l.id = a.entity_id AND l.student_id = $1))
           OR (a.entity = 'GUARDIAN' AND EXISTS (SELECT 1 FROM guardian g WHERE g.id = a.entity_id AND g.student_id = $1))
         ORDER BY a.at DESC, a.id DESC LIMIT $2`, [studentId, DETAIL_LIMIT]) as Row[];
-      return { ...summary(student), startedOn: nullableText(student.started_on), targetExam: nullableText(student.target_exam),
+      return { ...summary(student, educationGrades), startedOn: nullableText(student.started_on), targetExam: nullableText(student.target_exam),
         guidance: nullableText(student.guidance), lang: nullableText(student.lang),
         guardians: guardians.map(row => ({ id: id(row.id), name: String(row.name), relation: nullableText(row.relation), active: row.active === true, isPrimary: row.is_primary === true })),
         guardianTotal: total(guardians),

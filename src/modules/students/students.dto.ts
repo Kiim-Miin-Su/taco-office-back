@@ -6,12 +6,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { ID_SCHEMA, ToHttpInteger } from '../../common/validation';
-import { StudentBriefDto } from '../meta/meta.dto';
+import { EducationGradeOptionDto, StudentBriefDto } from '../meta/meta.dto';
 
 export class StudentListQueryDto {
   @ApiPropertyOptional({ maxLength: 80, description: '현재 STU 이름·학교·학년의 literal 부분 검색. 미전환 LEAD 검색은 아직 포함하지 않는다.' })
   @IsOptional() @IsString() @MaxLength(80) q?: string;
-  @ApiPropertyOptional({ maxLength: 10, description: '현행 STU.grade의 정확한 값. 교육체계별 학년 카탈로그는 후속 계약이다.' })
+  @ApiPropertyOptional({ maxLength: 10, description: 'STU.grade의 정확한 원문값. 선택지는 응답 educationGrades를 사용한다.' })
   @IsOptional() @IsString() @MaxLength(10) grade?: string;
   @ApiPropertyOptional({ type: Number, minimum: 1, maximum: 1000000, default: 1 })
   @IsOptional() @ToHttpInteger() @IsInt() @Min(1) @Max(1000000) page?: number;
@@ -20,6 +20,8 @@ export class StudentReadParamsDto {
   @ApiProperty(ID_SCHEMA) @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER) id!: number;
 }
 export class StudentDirectoryRowDto extends StudentBriefDto {
+  @ApiProperty({ type: String, nullable: true, description: '정확히 대응되는 active 값이면 서버 listLabel, 아니면 legacy 원문. 자동 변환하지 않는다.' })
+  gradeDisplay!: string | null;
   @ApiProperty({ type: String, nullable: true, description: 'STU.created_at 그대로(KST). 등록 확정/첫 수업 시각으로 추정하지 않는다.' }) createdAt!: string | null;
   @ApiProperty({ type: String, nullable: true }) genderLabel!: string | null;
   @ApiProperty({ type: [String], description: '현재 활성 보호자 이름. 연락처/납부 정보는 포함하지 않는다.' }) guardianNames!: string[];
@@ -30,6 +32,8 @@ export class StudentDirectoryDto {
   @ApiProperty() page!: number;
   @ApiProperty({ description: '한 페이지10명' }) pageSize!: number;
   @ApiProperty({ type: [String], description: '현재 학생 DB의 학년 값. 검색 결과와 별개이며 미상값을 만들지 않는다.' }) grades!: string[];
+  @ApiProperty({ type: [EducationGradeOptionDto], description: 'BOC-01D-02 활성 39개 학년 projection. 필터·등록·목록이 함께 쓴다.' })
+  educationGrades!: EducationGradeOptionDto[];
 }
 export class StudentGuardianSummaryDto {
   @ApiProperty(ID_SCHEMA) id!: number;
