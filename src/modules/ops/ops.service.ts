@@ -61,6 +61,7 @@ import {
 } from '../../lib/plan-words';
 import { audit } from '../../lib/audit';
 import { meetingNotiLink } from '../../lib/meeting-link';
+import { assertEducationGradeWrite } from '../../lib/education-grade-write';
 import type { EntityManager } from 'typeorm';
 import {
   MINUTES_HINT, MINUTES_TEMPLATES, MT_ATTEND_LABEL, MT_TYPES, MT_TYPE_SHORT, MT_TYPE_SUB,
@@ -1494,6 +1495,8 @@ export class OpsService {
     const sent = leadParentFields(dto);
     const parent = { parentRelation: sent.parentRelation ?? null, parentPhone: sent.parentPhone ?? null, want: sent.want ?? null };
     const id = await this.lead.manager.transaction(async (em) => {
+      // BOC-01D-02b 권고안: 신규 상담 학년은 DB의 활성 39개 선택지로 서버가 최종 검증한다.
+      await assertEducationGradeWrite(em, grade);
       const [made] = (await em.query(
         `INSERT INTO lead (name, school, owner_id, stage, source, grade, parent_relation, parent_phone, want)
          VALUES ($1, $2, $3, 'first', $4, $5, $6, $7, $8) RETURNING id`,
@@ -1555,6 +1558,8 @@ export class OpsService {
         parentPhone: parent.parentPhone === undefined ? before.parentPhone : parent.parentPhone,
         want: parent.want === undefined ? before.want : parent.want,
       };
+      // BOC-01D-02b 권고안: 잠근 현재값과 같은 legacy 원문만 보존하고 새 값은 활성 선택지로 제한한다.
+      if (dto.grade !== undefined) await assertEducationGradeWrite(em, after.grade, before.grade);
       await em.query(
         `UPDATE lead SET name=$2, school=$3, source=$4, owner_id=$5, grade=$6, parent_relation=$7, parent_phone=$8, want=$9 WHERE id=$1`,
         [id, after.name, after.school, after.source, after.ownerId, after.grade, after.parentRelation, after.parentPhone, after.want],

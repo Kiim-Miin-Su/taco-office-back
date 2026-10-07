@@ -33,7 +33,7 @@ export class EnrollStudentDto {
   @IsOptional() @IsString() @MinLength(1) @MaxLength(40)
   name?: string;
 
-  @ApiPropertyOptional({ maxLength: 10, description: '학년 — 동명이인을 가르는 칸 (N-137)' })
+  @ApiPropertyOptional({ maxLength: 10, description: '학년 — GET /meta.educationGrades의 활성 39개 값 중 하나이며 동명이인을 가르는 칸 (N-137)' })
   @IsOptional() @IsString() @MaxLength(10)
   grade?: string;
 

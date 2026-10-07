@@ -208,7 +208,7 @@ export class LeadCreateDto {
   @IsOptional() @IsString() @MaxLength(500)
   note?: string | null;
 
-  @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — 원본 §23 카드의 학년 칩(23-10). 비우면 null' })
+  @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — GET /meta.educationGrades의 활성 39개 값 중 하나. 비우면 null' })
   @IsOptional() @IsString() @MaxLength(10)
   grade?: string | null;
 
@@ -244,7 +244,7 @@ export class LeadPatchDto {
   @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   ownerId?: number | null;
 
-  @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — null 또는 빈 문자열이면 비운다' })
+  @ApiPropertyOptional({ ...S, maxLength: 10, description: '학년 — GET /meta.educationGrades의 활성 39개 값 중 하나. null/빈 문자열이면 비운다. 기존 legacy 원문은 값이 그대로일 때만 보존한다' })
   @IsOptional() @IsString() @MaxLength(10)
   grade?: string | null;
 

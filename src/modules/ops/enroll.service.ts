@@ -35,6 +35,7 @@ import type { UnavWarnDto } from '../schedule/schedule.dto';
 import type { EnrollGuardianCarryDto, EnrollMissingBookDto, EnrollResultDto, EnrollSeriesDto, LeadEnrollDto } from './enroll.dto';
 import { latestLeadDiagBookId, latestLeadDiagForStudent } from './lead-diag.service';
 import { planLeadCare } from './lead-care';
+import { assertEducationGradeWrite } from '../../lib/education-grade-write';
 
 /** 미리보기의 되돌림 — 결과를 싣고 던져 트랜잭션을 통째로 되돌린다 (C94-c 의 `PreviewRollback` 과 같은 모양) */
 class PreviewRollback extends Error {
@@ -103,6 +104,8 @@ export class LeadEnrollService {
     } else {
       const name = dto.student?.name?.trim() || lead.name;
       const grade = dto.student?.grade?.trim() || null;
+      // BOC-01D-02b 권고안: 등록 확정에서 만드는 새 학생도 상담과 같은 활성 39개 계약을 쓴다.
+      await assertEducationGradeWrite(m, grade);
       const school = (dto.student?.school !== undefined ? dto.student.school.trim() : lead.school) || null;
       const same = (await m.query(`SELECT id, grade, school FROM stu WHERE name = $1 ORDER BY id`, [name])) as Array<{ id: string; grade: string | null; school: string | null }>;
       if (same.length) {

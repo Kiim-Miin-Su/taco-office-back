@@ -79,6 +79,17 @@ d('문의·컨설팅 핵심정보 수정 — HTTP→DTO→DB→감사', () => {
     const [log] = await q(`SELECT before,after FROM log WHERE entity='LEAD' AND entity_id=$1 AND action='edit' ORDER BY id DESC LIMIT 1`, [id]);
     expect(log.before).toMatchObject({ name: '수정 전', school: '전고', ownerId: CEO });
     expect(log.after).toMatchObject({ name: '수정 후', school: null, ownerId: OWNER });
+    const invalid = await api('patch', `/ops/leads/${id}`).send({ grade: '11학년' }).expect(400);
+    expect(invalid.body.code).toBe('EDUCATION_GRADE_INVALID');
+    expect((await q(`SELECT grade FROM lead WHERE id=$1`, [id]))[0]).toEqual({ grade: 'G11' });
+
+    // BOC-01D-02b 권고안: 이관된 legacy 원문은 다른 칸 수정에서 같은 값을 재전송해도 보존한다.
+    await q(`UPDATE lead SET grade='11' WHERE id=$1`, [id]);
+    const legacy = await api('patch', `/ops/leads/${id}`).send({ name: '레거시 보존', grade: '11' }).expect(200);
+    expect(legacy.body).toMatchObject({ name: '레거시 보존', grade: '11' });
+    const changedLegacy = await api('patch', `/ops/leads/${id}`).send({ grade: '10' }).expect(400);
+    expect(changedLegacy.body.code).toBe('EDUCATION_GRADE_INVALID');
+    expect((await q(`SELECT name,grade FROM lead WHERE id=$1`, [id]))[0]).toEqual({ name: '레거시 보존', grade: '11' });
     await api('patch', `/ops/leads/${id}`).send({}).expect(409);
   });
 

@@ -8,7 +8,7 @@
  * 1:1 대조 wave 3 — 상담 §23·§24 · 컨설팅 §27·§30·§31 의 **서버 몫**을 실제 앱(ValidationPipe · PermGuard) → DB 로 관통한다.
  *
  * 증명하는 것 —
- *   상담  ① 학년(23-10)은 적은 그대로 남고 11자는 400 · ② 단계 기한 띠(23-12)는 그 단계에 들어온 날 + SLA(1차 2 · 보류 2)로 서버가 만들고,
+ *   상담  ① 학년(23-10)은 활성 39개만 새로 쓰고 legacy는 자동 변환하지 않으며 11자는 DTO 400 · ② 단계 기한 띠(23-12)는 그 단계에 들어온 날 + SLA(1차 2 · 보류 2)로 서버가 만들고,
  *           들어온 날을 모르는 옛 건은 띠가 없다(N-25) · ③ 실패 사유 분류(24-05)는 다섯 낱말만 받고(DTO 400 · 표 CHECK) 머리 막대가 센다 ·
  *           ④ 실패한 날(24-04)은 도달 기록의 「등록 실패」 줄 · ⑤ 재연락(24-06)은 실패 뒤 접촉이 있으면 완료 · 옛 실패 건은 판정하지 않는다.
  *   컨설팅 ⑥ §27 회차 수(27-04)는 §26 목록과 같은 셈 — 앞으로 잡아 둔 날짜는 세지 않는다 · ⑦ 항목 처리 시각(31-04) ·
@@ -126,9 +126,12 @@ d('1:1 대조 wave 3 — 상담 §23·§24 · 컨설팅 §27·§30·§31 서버 
 
   /* ══ 상담 ══════════════════════════════════════════════════════════════════════════ */
 
-  it('학년은 적은 그대로 남고(23-10) · 1차 상담 띠는 접수일 + 2일이다 · 보류로 옮기면 그날부터 다시 센다 · 옛 건은 띠가 없다 (23-12)', async () => {
+  it('신규 학년은 활성 39개만 남고(23-10) · 1차 상담 띠는 접수일 + 2일이다 · 보류로 옮기면 그날부터 다시 센다 · 옛 건은 띠가 없다 (23-12)', async () => {
     // DTO 가 11자를 막는다 — 표의 varchar(10) 넘침 500 이 아니다
     expect((await api('post', '/ops/leads').send({ name: '삼차신규', source: 'kakao', grade: '12345678901' }).expect(400)).body.code).toBe('BAD_REQUEST');
+    const invalid = await api('post', '/ops/leads').send({ name: '삼차잘못', source: 'kakao', grade: '9학년' }).expect(400);
+    expect(invalid.body.code).toBe('EDUCATION_GRADE_INVALID');
+    expect(await q(`SELECT id FROM lead WHERE name = '삼차잘못'`)).toEqual([]);
     const made = (await api('post', '/ops/leads').send({ name: '삼차신규', source: 'kakao', grade: ' G8 ' }).expect(201)).body;
     leadIds.push(made.id);
     expect(made).toMatchObject({ grade: 'G8', stage: 'first' });

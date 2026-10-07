@@ -481,7 +481,7 @@ d('W11 스케줄 — 방식 전환 · 회차 메모 · 학생 겹침 · 빈 자�
 
     await q(`INSERT INTO lead (id, name, school, stage, owner_id) VALUES ($1, 'W11등록', 'W11고', 'first', $2)`, [LEAD, CEO]);
     const body = (gender: unknown) => ({
-      startedOn: plus(MON, 7), issueInvoice: false, student: { name: 'W11등록', grade: '9', gender },
+      startedOn: plus(MON, 7), issueInvoice: false, student: { name: 'W11등록', grade: 'G9', gender },
       lines: [{ kindKey: KIND, subKey: null, mode: 'offline', rrule: 'WEEKLY:TU', startMin: 900, endMin: 960, teacherId: T2, roomId: ROOM_C, libId: null }],
     });
     expect((await api('post', `/ops/leads/${LEAD}/enroll`).send(body('other'))).status).toBe(400);

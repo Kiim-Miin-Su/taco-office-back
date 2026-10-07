@@ -88,7 +88,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
          ($3,'등록관리자','en-a@t.kr','admin',$4,true,false)`,
       [CEO, TEACHER, ADMIN, hash],
     );
-    await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'등록A','10','테스트고')`, [STU_EXISTING]);
+    await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'등록A','G10','테스트고')`, [STU_EXISTING]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'등록 시험','#333333',4,'lesson',true), ($2,'단가 없음','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND, KIND_NORATE]);
     await q(`INSERT INTO sub (key,name,color) VALUES ($1,'등록 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
     await q(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, $3, '2026-01-01', 1), ($1, NULL, $4, '2026-01-01', 1)`, [KIND, SUB, RATE_SUB, RATE_KIND]);
@@ -169,8 +169,15 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
 
   /* ── ① A-05 · A-12 · A-14 ────────────────────────────────────────────── */
   it('보류 건을 등록 확정하면 한 트랜잭션에 일곱 가지가 남는다 — 학생·등록·시간표·첫 달 청구서·교재 요청/배정 알림·안내 초안·알림 · 첫 수업일은 시작일 이후 첫 요일 (A-05 · A-12 · A-14)', async () => {
+    const invalid = await api('post', `/ops/leads/${LEADS.hold}/enroll`).send({
+      student: { grade: '11학년' }, startedOn: START, dueOn: DUE, lines: [line()],
+    }).expect(400);
+    expect(invalid.body.code).toBe('EDUCATION_GRADE_INVALID');
+    expect(await q(`SELECT id FROM stu WHERE name = '등록B'`)).toEqual([]);
+    expect(await q(`SELECT 1 FROM lead WHERE id = $1 AND stage = 'hold' AND student_id IS NULL`, [LEADS.hold])).toHaveLength(1);
+
     const res = await api('post', `/ops/leads/${LEADS.hold}/enroll`).send({
-      student: { grade: '11' }, startedOn: START, dueOn: DUE, memo: '보류 뒤 등록',
+      student: { grade: 'G11' }, startedOn: START, dueOn: DUE, memo: '보류 뒤 등록',
       lines: [line({ libId: LIB, sessions: 8 }), line({ subKey: null, rrule: 'WEEKLY:FR', startMin: 840, endMin: 900, title: '등록 보충' })],
     }).expect(201);
     const r = res.body;
@@ -204,7 +211,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
 
     // DB — 학생 · 등록 · 명단 · 단계 · 도달 기록 · LOG
     const [stu] = await q<{ name: string; grade: string; school: string; started_on: string }>(`SELECT name, grade, school, to_char(started_on,'YYYY-MM-DD') AS started_on FROM stu WHERE id = $1`, [r.studentId]);
-    expect(stu).toEqual({ name: '등록B', grade: '11', school: '테스트고', started_on: START });
+    expect(stu).toEqual({ name: '등록B', grade: 'G11', school: '테스트고', started_on: START });
     expect(await q(`SELECT 1 FROM enr WHERE student_id = $1 AND to_char(started_on,'YYYY-MM-DD') = $2`, [r.studentId, START])).toHaveLength(2);
     expect(await q(`SELECT 1 FROM ser_stu WHERE student_id = $1`, [r.studentId])).toHaveLength(2);
     const [lead] = await q<{ stage: string; student_id: string; reason: string }>(`SELECT stage, student_id, reason FROM lead WHERE id = $1`, [LEADS.hold]);
@@ -348,14 +355,14 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
 
   /* ── ③ N-137 · 기존 학생 재등록 · 단가 없음 ───────────────────────── */
   it('동명이인 — 학년·학교가 같으면 409 · 다르면 allowSameName 으로 새 학생 · studentId 로 기존 학생을 재등록한다 · 단가가 없으면 청구서만 건너뛴다 (N-137)', async () => {
-    // 등록A · 10 · 테스트고 가 이미 있다 — 같은 학년·학교면 막는다
-    const twin = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ dueOn: DUE, student: { grade: '10' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
+    // 등록A · G10 · 테스트고 가 이미 있다 — 같은 학년·학교면 막는다
+    const twin = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ dueOn: DUE, student: { grade: 'G10' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
     expect(twin.body.code).toBe('STUDENT_DUPLICATE');
     expect(twin.body.message).toContain(`#${STU_EXISTING}`);
     // 학년이 다르면 — 그래도 한 번 묻는다
-    const ask = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ dueOn: DUE, student: { grade: '11' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
+    const ask = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ dueOn: DUE, student: { grade: 'G11' }, startedOn: START, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(409);
     expect(ask.body.code).toBe('STUDENT_SAME_NAME');
-    expect(ask.body.message).toContain(`#${STU_EXISTING} 10 · 테스트고`);
+    expect(ask.body.message).toContain(`#${STU_EXISTING} G10 · 테스트고`);
     expect(await q(`SELECT 1 FROM lead WHERE id = $1 AND stage = 'second'`, [LEADS.same])).toHaveLength(1);
     // 기존 학생 재등록 — 새 학생 없이 등록·시간표·청구서만. 형제 등록에는 이 경로를 쓰지 않는다.
     const reenrolled = await api('post', `/ops/leads/${LEADS.same}/enroll`).send({ studentId: STU_EXISTING, startedOn: START, issueInvoice: false, lines: [line({ rrule: 'WEEKLY:TU', startMin: 600, endMin: 660 })] }).expect(201);
