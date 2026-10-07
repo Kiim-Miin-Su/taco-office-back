@@ -7,6 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { PrivateNotesService } from '../src/modules/private-notes/private-notes.service';
+import { TeacherService } from '../src/modules/teacher/teacher.service';
+import { Ser } from '../src/entities';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -116,6 +118,12 @@ d('BOC-09D-03 강사 특이사항 — teacher write / admin body projection', ()
     );
     expect(JSON.stringify(log)).not.toContain(dto.body);
     expect(log.after).toMatchObject({ studentId, serId, onDate, version: 1 });
+  });
+
+  it('강사 히스토리는 정확한 회차 명단을 구조화 studentItems로 반환한다', async () => {
+    const history = await new TeacherService(ds.getRepository(Ser)).history(teacherId, '2026-01');
+    const lesson = history.lessons.find((item) => item.serId === serId && item.onDate === onDate);
+    expect(lesson?.studentItems).toEqual([{ id: studentId, name: '특이사항 학생' }]);
   });
 
   it('동일 requestKey·payload는 같은 version으로 수렴하고 다른 payload 재사용은 409 계약으로 거절한다', async () => {

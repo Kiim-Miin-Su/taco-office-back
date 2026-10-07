@@ -643,7 +643,9 @@ export class TeacherService {
     // BOC-09D-03: 특이사항 대상은 표시 이름에서 되짚지 않는다. 지급 시트가 확정한 정확한
     // serId+원래 onDate만 다시 읽고 기간 명단·회차 제외를 적용해 구조화 ID를 붙인다.
     const lessonKeys = [...new Map(lessons.map((lesson) => [
-      `${lesson.serId}:${lesson.onDate}`, { serId: lesson.serId, onDate: lesson.onDate },
+      // jsonb_to_recordset의 SQL 열 이름과 같은 키를 넘긴다. camelCase를 넘기면 두 열이
+      // 모두 NULL이 되어 강사 화면에서 특이사항 대상 학생이 사라진다(BO-09E-02).
+      `${lesson.serId}:${lesson.onDate}`, { ser_id: lesson.serId, on_date: lesson.onDate },
     ])).values()];
     const studentRows = lessonKeys.length ? await this.q(`WITH keys AS (
         SELECT * FROM jsonb_to_recordset($1::jsonb) AS x(ser_id bigint,on_date date)
