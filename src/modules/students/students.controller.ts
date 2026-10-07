@@ -6,7 +6,7 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { Perm, type RequestUser } from '../../common/perm';
+import { hasPerm, isRole, Perm, type RequestUser } from '../../common/perm';
 import { ApiErrorDto } from '../../common/http.dto';
 import {
   StudentReactivationCandidateQueryDto,
@@ -23,7 +23,7 @@ import {
   StudentSchoolOptionDto,
   StudentSchoolSearchQueryDto,
 } from './student-registration.dto';
-import { StudentDirectoryDto, StudentListQueryDto, StudentReadDto, StudentReadParamsDto } from './students.dto';
+import { StudentDirectoryDto, StudentHubDto, StudentHubQueryDto, StudentListQueryDto, StudentReadDto, StudentReadParamsDto } from './students.dto';
 import { StudentsService } from './students.service';
 
 @ApiTags('students')
@@ -132,6 +132,29 @@ export class StudentsController {
     @Body() dto: StudentReactivationDto,
   ): Promise<StudentReactivationResultDto> {
     return this.service.reactivate(user.id, params.id, dto);
+  }
+
+  @Get(':id/hub')
+  @ApiOperation({
+    summary: '학생 10탭 aggregate — 이어서 할 일·리포트·코멘트·청구 exact student projection',
+    description: 'BOC-04D-01 권고안: 세 목록은 독립 keyset cursor를 쓰며 금액은 canMoney, 컨설팅 건수는 공용 공개 범위를 통과한 것만 반환한다. 강사는 이 관리자 경계에서 403이다.',
+  })
+  @ApiOkResponse({ type: StudentHubDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'STUDENT_HUB_CURSOR_INVALID' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND' })
+  hub(
+    @CurrentUser() user: RequestUser,
+    @Param() params: StudentReadParamsDto,
+    @Query() query: StudentHubQueryDto,
+  ): Promise<StudentHubDto> {
+    const role = isRole(user.role) ? user.role : null;
+    return this.service.hub(
+      params,
+      query,
+      user.id,
+      role !== null && hasPerm(role, 'canMoney', user.perms),
+      role !== null && hasPerm(role, 'canHide', user.perms),
+    );
   }
 
   @Get(':id')

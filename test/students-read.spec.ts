@@ -6,7 +6,7 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import type { DataSource } from 'typeorm';
-import { StudentListQueryDto, StudentReadParamsDto } from '../src/modules/students/students.dto';
+import { StudentHubQueryDto, StudentListQueryDto, StudentReadParamsDto } from '../src/modules/students/students.dto';
 import { StudentsService } from '../src/modules/students/students.service';
 import { GRADE_CODES_V1 } from '../src/migrations/data/student-catalog-v1';
 
@@ -82,6 +82,58 @@ describe('학생 읽기 — 현재 DB 사실만', () => {
     const { service } = fixture([[{ items: [{ ...row, id: '9007199254740993' }], total: 1, grades: [], education_grades: educationGrades }]]);
     await expect(service.list({})).rejects.toMatchObject({ status: 500 });
   });
+
+  it('학생 허브는 exact student 원장·독립 cursor·금액/컨설팅 공개 범위를 서버에서 적용한다', async () => {
+    const { service, query, transaction } = fixture([
+      [{ id: '21', schedule_count: '2', billing_count: '1', book_count: '3', guide_count: '1', lead_count: '1' }],
+      [
+        { id: '30', share: 'private', owner_id: '9', is_picked: false },
+        { id: '31', share: 'money_only', owner_id: '9', is_picked: false },
+      ],
+      [{ total: 2 }],
+      [
+        { id: '12', on_date: '2026-10-07', cursor_date: '2026-10-07', kind_name: '수업', subject_name: '영어', teacher_name: '강사', stored_state: 'wait', reportable: true, ended: true, submitted_at: '2026-10-07T04:00:00Z', body: 'PRIVATE' },
+        { id: '11', on_date: '2026-10-06', cursor_date: '2026-10-06', kind_name: '수업', subject_name: '영어', teacher_name: '강사', stored_state: 'ok', reportable: true, ended: true, submitted_at: '2026-10-06T04:00:00Z' },
+      ],
+      [{ total: 2 }],
+      [
+        { id: '22', ser_id: '5', author_id: '2', author_name: '관리자', body: '인수인계', cursor_date: '2026-10-07T01:02:03.123456Z', created_at: '2026-10-07T01:02:03Z' },
+        { id: '21', ser_id: null, author_id: '2', author_name: '관리자', body: '이전 메모', cursor_date: '2026-10-06T01:02:03.123456Z', created_at: '2026-10-06T01:02:03Z' },
+      ],
+      [{ total: 2 }],
+      [
+        { id: '32', cursor_date: '2026-10', year_month: '2026-10', inv_type: 'tuition', title: '10월 수업료', state: 'partial', due_on: '2026-10-10', amount: 100000, paid_amount: 30000, proof_url: 'PRIVATE' },
+        { id: '31', cursor_date: '2026-09', year_month: '2026-09', inv_type: 'tuition', title: '9월 수업료', state: 'paid', due_on: null, amount: 90000, paid_amount: 90000 },
+      ],
+    ]);
+    const result = await service.hub({ id: 21 }, { limit: 1 }, 2, false, false);
+    expect(transaction.mock.calls[0][0]).toBe('REPEATABLE READ');
+    expect(result.nextActions.map(item => [item.key, item.count])).toEqual([
+      ['schedule', 2], ['billing', 1], ['consulting', 1], ['books', 3], ['guides', 1], ['lead', 1],
+    ]);
+    expect(result.nextActions.find(item => item.key === 'billing')?.href).toBe('/students/21?tab=billing');
+    expect(result.nextActions.find(item => item.key === 'lead')?.href).toBe('/intake');
+    expect(result.reports).toMatchObject({ total: 2, items: [{ id: 12, state: 'wait', stateLabel: '승인 대기' }] });
+    expect(result.comments).toMatchObject({ total: 2, items: [{ id: 22, body: '인수인계' }] });
+    expect(result.invoices).toMatchObject({ total: 2, items: [{ id: 32, amount: null, paidAmount: null, remainingAmount: null }] });
+    expect(['reports', 'comments', 'invoices'].map((kind) => {
+      const token = result[kind as 'reports'].nextCursor!;
+      return JSON.parse(Buffer.from(token, 'base64url').toString('utf8')).k;
+    })).toEqual(['reports', 'comments', 'invoices']);
+    expect(JSON.stringify(result)).not.toMatch(/PRIVATE|proofUrl|body.*PRIVATE/);
+    expect(query.mock.calls[2][0]).toContain('FROM rep_stu WHERE student_id=$1');
+    expect(query.mock.calls[4][0]).toContain('FROM note WHERE student_id=$1');
+    expect(query.mock.calls[6][0]).toContain('FROM inv WHERE student_id=$1');
+    expect(query.mock.calls.every(([sql]) => !/\b(INSERT|UPDATE|DELETE)\b/.test(sql))).toBe(true);
+  });
+
+  it('학생 허브 cursor는 목록 사이 재사용과 비정규 token을 거절한다', async () => {
+    const { service, transaction } = fixture([]);
+    const reportsCursor = Buffer.from(JSON.stringify({ v: 1, k: 'reports', d: '2026-10-07', i: 12 })).toString('base64url');
+    await expect(service.hub({ id: 21 }, { commentsCursor: reportsCursor }, 2, true, true)).rejects.toMatchObject({ status: 400 });
+    await expect(service.hub({ id: 21 }, { reportsCursor: 'not-canonical==' }, 2, true, true)).rejects.toMatchObject({ status: 400 });
+    expect(transaction).not.toHaveBeenCalled();
+  });
 });
 
 describe('학생 조회 HTTP 입력 계약', () => {
@@ -94,5 +146,9 @@ describe('학생 조회 HTTP 입력 계약', () => {
   it('q/grade 최대 길이 및 기본 조회를 검증한다', async () => {
     expect(await validate(plainToInstance(StudentListQueryDto, {}))).toHaveLength(0);
     expect(await validate(plainToInstance(StudentListQueryDto, { q: 'x'.repeat(81), grade: 'x'.repeat(11) }))).toHaveLength(2);
+  });
+  it('학생 허브 limit과 불투명 cursor 입력을 검증한다', async () => {
+    expect(await validate(plainToInstance(StudentHubQueryDto, { limit: '50', reportsCursor: 'abc_DEF-123' }))).toHaveLength(0);
+    expect(await validate(plainToInstance(StudentHubQueryDto, { limit: '51', commentsCursor: 'bad=' }))).toHaveLength(2);
   });
 });

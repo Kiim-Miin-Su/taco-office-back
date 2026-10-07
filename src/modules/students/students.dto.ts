@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { ID_SCHEMA, ToHttpInteger } from '../../common/validation';
 import { EducationGradeOptionDto, StudentBriefDto } from '../meta/meta.dto';
 
@@ -72,4 +72,94 @@ export class StudentReadDto extends StudentDirectoryRowDto {
   @ApiProperty({ type: [StudentAuditSummaryDto], description: '직접 학생/현재 연결 상담/보호자의 기존 감사 metadata 최근50건. 전체 CRUD/변경값/학교·학년 기간 이력이 아니다.' }) history!: StudentAuditSummaryDto[];
   @ApiProperty() historyTotal!: number;
   @ApiProperty({ description: '보호자/수강/감사 각 최대50건' }) historyLimit!: number;
+}
+
+/**
+ * BOC-04D-01 권고안 채택(2026-10-08): 학생 10탭의 서버 집계는 학생 상세와 분리한
+ * 읽기 계약으로 제공한다. 세 목록의 커서는 서로 바꿔 쓸 수 없는 불투명 keyset cursor다.
+ * 정책 변경 시 StudentDetail, OpenAPI/generated schema, P-STUDENT-HUB, BOC-04 문서와
+ * portfolio를 같은 청크에서 수정한다.
+ */
+export class StudentHubQueryDto {
+  @ApiPropertyOptional({ type: Number, minimum: 1, maximum: 50, default: 20, description: '리포트·코멘트·청구 각각의 페이지 크기' })
+  @IsOptional() @ToHttpInteger() @IsInt() @Min(1) @Max(50) limit?: number;
+
+  @ApiPropertyOptional({ type: String, maxLength: 256, description: '리포트 다음 페이지 불투명 커서' })
+  @IsOptional() @IsString() @MaxLength(256) @Matches(/^[A-Za-z0-9_-]+$/) reportsCursor?: string;
+
+  @ApiPropertyOptional({ type: String, maxLength: 256, description: '코멘트 다음 페이지 불투명 커서' })
+  @IsOptional() @IsString() @MaxLength(256) @Matches(/^[A-Za-z0-9_-]+$/) commentsCursor?: string;
+
+  @ApiPropertyOptional({ type: String, maxLength: 256, description: '청구 다음 페이지 불투명 커서' })
+  @IsOptional() @IsString() @MaxLength(256) @Matches(/^[A-Za-z0-9_-]+$/) invoicesCursor?: string;
+}
+
+export class StudentHubNextActionDto {
+  @ApiProperty({ enum: ['schedule', 'billing', 'consulting', 'books', 'guides', 'lead'] })
+  key!: 'schedule' | 'billing' | 'consulting' | 'books' | 'guides' | 'lead';
+  @ApiProperty() label!: string;
+  @ApiProperty({ description: '서버가 exact studentId로 센 현재 건수' }) count!: number;
+  @ApiProperty({ description: '0건도 숨기지 않는 서버 상태 문장' }) stateLabel!: string;
+  @ApiProperty({ description: '기존 도메인 화면의 학생 문맥 deep link' }) href!: string;
+}
+
+export class StudentHubReportDto {
+  @ApiProperty(ID_SCHEMA) id!: number;
+  @ApiProperty() onDate!: string;
+  @ApiProperty() kindName!: string;
+  @ApiProperty({ type: String, nullable: true }) subjectName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) teacherName!: string | null;
+  @ApiProperty({ enum: ['na', 'plan', 'none', 'draft', 'wait', 'ok', 'rej'] }) state!: string;
+  @ApiProperty({ description: '서버 공용 리포트 상태 낱말' }) stateLabel!: string;
+  @ApiProperty({ type: String, nullable: true }) submittedAt!: string | null;
+}
+
+export class StudentHubCommentDto {
+  @ApiProperty(ID_SCHEMA) id!: number;
+  @ApiProperty({ type: Number, nullable: true }) serId!: number | null;
+  @ApiProperty(ID_SCHEMA) authorId!: number;
+  @ApiProperty({ type: String, nullable: true }) authorName!: string | null;
+  @ApiProperty() body!: string;
+  @ApiProperty() createdAt!: string;
+}
+
+export class StudentHubInvoiceDto {
+  @ApiProperty(ID_SCHEMA) id!: number;
+  @ApiProperty() yearMonth!: string;
+  @ApiProperty() invType!: string;
+  @ApiProperty({ description: '서버 공용 청구 종류 낱말' }) invTypeLabel!: string;
+  @ApiProperty() title!: string;
+  @ApiProperty({ enum: ['draft', 'sent', 'unpaid', 'partial', 'paid', 'void'] }) state!: string;
+  @ApiProperty({ description: '서버 공용 청구 상태 낱말' }) stateLabel!: string;
+  @ApiProperty({ type: String, nullable: true }) dueOn!: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: 'canMoney를 통과할 때만 값' }) amount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: 'canMoney를 통과할 때만 값' }) paidAmount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '서버 계산 amount-paidAmount. canMoney를 통과할 때만 값' }) remainingAmount!: number | null;
+}
+
+export class StudentHubReportPageDto {
+  @ApiProperty({ type: [StudentHubReportDto] }) items!: StudentHubReportDto[];
+  @ApiProperty() total!: number;
+  @ApiProperty({ type: String, nullable: true }) nextCursor!: string | null;
+}
+
+export class StudentHubCommentPageDto {
+  @ApiProperty({ type: [StudentHubCommentDto] }) items!: StudentHubCommentDto[];
+  @ApiProperty() total!: number;
+  @ApiProperty({ type: String, nullable: true }) nextCursor!: string | null;
+}
+
+export class StudentHubInvoicePageDto {
+  @ApiProperty({ type: [StudentHubInvoiceDto] }) items!: StudentHubInvoiceDto[];
+  @ApiProperty() total!: number;
+  @ApiProperty({ type: String, nullable: true }) nextCursor!: string | null;
+}
+
+export class StudentHubDto {
+  @ApiProperty(ID_SCHEMA) studentId!: number;
+  @ApiProperty({ description: '청구 금액 projection 권한' }) canSeeAmounts!: boolean;
+  @ApiProperty({ type: [StudentHubNextActionDto] }) nextActions!: StudentHubNextActionDto[];
+  @ApiProperty({ type: StudentHubReportPageDto }) reports!: StudentHubReportPageDto;
+  @ApiProperty({ type: StudentHubCommentPageDto }) comments!: StudentHubCommentPageDto;
+  @ApiProperty({ type: StudentHubInvoicePageDto }) invoices!: StudentHubInvoicePageDto;
 }

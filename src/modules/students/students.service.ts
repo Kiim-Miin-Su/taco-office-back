@@ -12,8 +12,10 @@ import { DataSource, EntityManager, type QueryRunner } from 'typeorm';
 import { todayKst } from '../../lib/kst';
 import { sealSecret, secretKeyFrom } from '../../lib/secret-box';
 import { kstAt } from '../../lib/sql';
+import { csCan, effectiveRepStateFromEnded, REP_STATE_LABEL_DB, type ConsShare, type ConsViewer, type RepStateDb } from '../../lib/rules';
 import { studentLabel, studentTagSql } from '../../lib/student-label';
 import { educationGradeDisplay, educationGradeSourceCode, projectEducationGrades, type EducationGradeProjection, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
+import { INV_STATE_LABEL, INV_TYPE_LABEL } from '../accounting/accounting.dto';
 import { STU_GENDER_LABEL, type StuGender } from '../meta/meta.dto';
 import type {
   StudentCreateDto,
@@ -44,11 +46,16 @@ import {
   studentReactivationStatusIssue,
   studentReactivationVersionIssue,
 } from './student-reactivation.rules';
-import type { StudentDirectoryDto, StudentDirectoryRowDto, StudentListQueryDto, StudentReadDto, StudentReadParamsDto } from './students.dto';
+import type {
+  StudentDirectoryDto, StudentDirectoryRowDto, StudentHubDto, StudentHubInvoiceDto,
+  StudentHubNextActionDto, StudentHubQueryDto, StudentHubReportDto, StudentListQueryDto,
+  StudentReadDto, StudentReadParamsDto,
+} from './students.dto';
 
 type Row = Record<string, unknown>;
 const PAGE_SIZE = 10;
 const DETAIL_LIMIT = 50;
+const HUB_PAGE_SIZE = 20;
 const SUMMARY = `s.id, s.name, s.grade, s.school, s.gender, ${studentTagSql('s')} AS tag,
   ${kstAt('s.created_at')} AS created_at,
   ARRAY(SELECT COALESCE(g.name,g.relation_other,CASE g.relation_code
@@ -66,6 +73,29 @@ function id(value: unknown): number {
 }
 const nullableText = (value: unknown): string | null => value == null ? null : String(value);
 const total = (rows: Row[]): number => Number(rows[0]?.total ?? 0);
+
+type StudentHubCursorKind = 'reports' | 'comments' | 'invoices';
+type StudentHubCursor = { v: 1; k: StudentHubCursorKind; d: string; i: number };
+function parseStudentHubCursor(raw: string | undefined, kind: StudentHubCursorKind): StudentHubCursor | null {
+  if (!raw) return null;
+  try {
+    const text = Buffer.from(raw, 'base64url').toString('utf8');
+    if (Buffer.from(text).toString('base64url') !== raw) throw new Error('noncanonical');
+    const value = JSON.parse(text) as Partial<StudentHubCursor>;
+    const dateOk = kind === 'reports' ? /^\d{4}-\d{2}-\d{2}$/.test(value.d ?? '')
+      : kind === 'invoices' ? /^\d{4}-(0[1-9]|1[0-2])$/.test(value.d ?? '')
+        : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value.d ?? '');
+    if (value.v !== 1 || value.k !== kind || !dateOk || !Number.isSafeInteger(value.i) || value.i! < 1) {
+      throw new Error('invalid');
+    }
+    return value as StudentHubCursor;
+  } catch {
+    throw new BadRequestException({ code: 'STUDENT_HUB_CURSOR_INVALID', message: '학생 허브 커서가 올바르지 않습니다' });
+  }
+}
+const studentHubCursor = (kind: StudentHubCursorKind, row: Row): string => Buffer.from(JSON.stringify({
+  v: 1, k: kind, d: String(row.cursor_date), i: id(row.id),
+} satisfies StudentHubCursor)).toString('base64url');
 function summary(row: Row, educationGrades: readonly EducationGradeProjection[]): StudentDirectoryRowDto {
   const gender = row.gender === 'female' || row.gender === 'male' ? row.gender as StuGender : null;
   const name = String(row.name), tag = nullableText(row.tag);
@@ -770,6 +800,141 @@ export class StudentsService {
       reactivatedAt: new Date(replay.created_at).toISOString(),
       effects: studentReactivationNoEffects(),
     };
+  }
+
+  /**
+   * BOC-04D-01 권고안 채택(2026-10-08): 학생 허브는 이름 검색이나 Front 합계 대신
+   * exact studentId와 같은 REPEATABLE READ snapshot에서 도메인 원장을 읽는다. 리포트 본문,
+   * 보호자 연락처, 감사 before/after, 계좌·파일 URL은 이 projection에 넣지 않는다.
+   */
+  async hub(
+    { id: studentId }: StudentReadParamsDto,
+    query: StudentHubQueryDto,
+    viewerId: number,
+    canSeeAmounts: boolean,
+    canHideConsulting: boolean,
+  ): Promise<StudentHubDto> {
+    const limit = query.limit ?? HUB_PAGE_SIZE;
+    const cursors = {
+      reports: parseStudentHubCursor(query.reportsCursor, 'reports'),
+      comments: parseStudentHubCursor(query.commentsCursor, 'comments'),
+      invoices: parseStudentHubCursor(query.invoicesCursor, 'invoices'),
+    };
+    return this.ds.transaction('REPEATABLE READ', async manager => {
+      const [facts] = await manager.query(`SELECT s.id,
+        (SELECT count(*)::int FROM ser_occ o JOIN ser_stu ss ON ss.ser_id=o.ser_id
+          WHERE ss.student_id=s.id AND ss.from_date<=o.on_date AND (ss.to_date IS NULL OR ss.to_date>=o.on_date)
+            AND NOT o.canceled AND lower(o.span)>=now()
+            AND NOT EXISTS (SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id=e.id
+              WHERE e.ser_id=o.ser_id AND e.on_date=o.on_date AND xo.student_id=s.id)) AS schedule_count,
+        (SELECT count(*)::int FROM inv i WHERE i.student_id=s.id AND i.state IN ('draft','sent','unpaid','partial')) AS billing_count,
+        (SELECT count(*)::int FROM issue i WHERE i.student_id=s.id AND i.state='ok') AS book_count,
+        (SELECT count(*)::int FROM guide g WHERE g.student_id=s.id AND g.state IN ('draft','ready','sent')) AS guide_count,
+        (SELECT count(*)::int FROM lead l WHERE l.student_id=s.id) AS lead_count
+        FROM stu s WHERE s.id=$1`, [studentId]) as Row[];
+      if (!facts) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
+
+      const consultingRows = await manager.query(`SELECT c.id,c.share,c.owner_id,
+          EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id=c.id AND p.staff_id=$2) AS is_picked
+        FROM cons_stu cs JOIN cons c ON c.id=cs.cons_id
+        WHERE cs.student_id=$1 AND c.deleted_at IS NULL AND c.stage<>'done'`, [studentId, viewerId]) as Row[];
+      const consultingCount = consultingRows.filter(row => csCan(String(row.share) as ConsShare, {
+        isOwner: row.owner_id != null && Number(row.owner_id) === viewerId,
+        isPicked: row.is_picked === true,
+        canHide: canHideConsulting,
+        canMoney: canSeeAmounts,
+      } satisfies ConsViewer)).length;
+
+      const reports = await this.studentHubReports(manager, studentId, limit, cursors.reports);
+      const comments = await this.studentHubComments(manager, studentId, limit, cursors.comments);
+      const invoices = await this.studentHubInvoices(manager, studentId, limit, cursors.invoices, canSeeAmounts);
+      const action = (
+        key: StudentHubNextActionDto['key'], label: string, count: number, empty: string, unit: string, href: string,
+      ): StudentHubNextActionDto => ({ key, label, count, stateLabel: count > 0 ? `${count}${unit}` : empty, href });
+      const nextActions: StudentHubNextActionDto[] = [
+        action('schedule', '스케줄', Number(facts.schedule_count), '예정 수업 없음', '회 예정', `/schedule?studentId=${studentId}`),
+        action('billing', '회계', Number(facts.billing_count), '처리할 청구 없음', '건 처리 중', `/students/${studentId}?tab=billing`),
+        action('consulting', '컨설팅', consultingCount, '진행 중 컨설팅 없음', '건 진행 중', `/consulting?studentId=${studentId}`),
+        action('books', '교재', Number(facts.book_count), '배부 교재 없음', '종 사용 중', `/books?tab=tracking&studentId=${studentId}`),
+        action('guides', '안내', Number(facts.guide_count), '대기 안내 없음', '건 확인 필요', `/guides?tab=students&studentId=${studentId}`),
+        action('lead', '상담 카드', Number(facts.lead_count), '연결 상담 없음', '건 연결', '/intake'),
+      ];
+      return { studentId, canSeeAmounts, nextActions, reports, comments, invoices };
+    });
+  }
+
+  private async studentHubReports(
+    manager: EntityManager, studentId: number, limit: number, cursor: StudentHubCursor | null,
+  ): Promise<StudentHubDto['reports']> {
+    const [countRow] = await manager.query(`SELECT count(*)::int AS total FROM rep_stu WHERE student_id=$1`, [studentId]) as Row[];
+    const rows = await manager.query(`SELECT r.id,
+        to_char(COALESCE((lower(o.span) AT TIME ZONE 'Asia/Seoul')::date,r.on_date),'YYYY-MM-DD') AS on_date,
+        to_char(COALESCE((lower(o.span) AT TIME ZONE 'Asia/Seoul')::date,r.on_date),'YYYY-MM-DD') AS cursor_date,
+        k.name AS kind_name,COALESCE(sb.name,s.title,k.name) AS subject_name,t.name AS teacher_name,
+        r.state::text AS stored_state,k.rep AS reportable,COALESCE(upper(o.span)<=now(),false) AS ended,
+        to_char(r.submitted_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS submitted_at
+      FROM rep_stu rs JOIN rep r ON r.id=rs.rep_id JOIN ser s ON s.id=r.ser_id
+      JOIN kind k ON k.key=COALESCE(r.kind_key,s.kind_key)
+      LEFT JOIN sub sb ON sb.key=s.sub_key
+      LEFT JOIN ser_occ o ON o.ser_id=r.ser_id AND o.on_date=r.on_date
+      LEFT JOIN staff t ON t.id=COALESCE(o.teacher_id,r.teacher_id)
+      WHERE rs.student_id=$1
+        AND ($2::date IS NULL OR (COALESCE((lower(o.span) AT TIME ZONE 'Asia/Seoul')::date,r.on_date),r.id)<($2::date,$3::bigint))
+      ORDER BY COALESCE((lower(o.span) AT TIME ZONE 'Asia/Seoul')::date,r.on_date) DESC,r.id DESC LIMIT $4`,
+    [studentId, cursor?.d ?? null, cursor?.i ?? null, limit + 1]) as Row[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const items: StudentHubReportDto[] = page.map(row => {
+      const state = effectiveRepStateFromEnded(String(row.stored_state), row.reportable === true, row.ended === true);
+      return {
+        id: id(row.id), onDate: String(row.on_date), kindName: String(row.kind_name),
+        subjectName: nullableText(row.subject_name), teacherName: nullableText(row.teacher_name),
+        state, stateLabel: REP_STATE_LABEL_DB[state as RepStateDb], submittedAt: nullableText(row.submitted_at),
+      };
+    });
+    return { items, total: Number(countRow?.total ?? 0), nextCursor: hasMore && page.length ? studentHubCursor('reports', page[page.length - 1]!) : null };
+  }
+
+  private async studentHubComments(
+    manager: EntityManager, studentId: number, limit: number, cursor: StudentHubCursor | null,
+  ): Promise<StudentHubDto['comments']> {
+    const [countRow] = await manager.query(`SELECT count(*)::int AS total FROM note WHERE student_id=$1`, [studentId]) as Row[];
+    const rows = await manager.query(`SELECT n.id,n.ser_id,n.author_id,w.name AS author_name,n.body,
+        to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_date,
+        to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
+      FROM note n LEFT JOIN staff w ON w.id=n.author_id
+      WHERE n.student_id=$1 AND ($2::timestamptz IS NULL OR (n.created_at,n.id)<($2::timestamptz,$3::bigint))
+      ORDER BY n.created_at DESC,n.id DESC LIMIT $4`,
+    [studentId, cursor?.d ?? null, cursor?.i ?? null, limit + 1]) as Row[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const items = page.map(row => ({
+      id: id(row.id), serId: row.ser_id == null ? null : id(row.ser_id), authorId: id(row.author_id),
+      authorName: nullableText(row.author_name), body: String(row.body), createdAt: String(row.created_at),
+    }));
+    return { items, total: Number(countRow?.total ?? 0), nextCursor: hasMore && page.length ? studentHubCursor('comments', page[page.length - 1]!) : null };
+  }
+
+  private async studentHubInvoices(
+    manager: EntityManager, studentId: number, limit: number, cursor: StudentHubCursor | null, canSeeAmounts: boolean,
+  ): Promise<StudentHubDto['invoices']> {
+    const [countRow] = await manager.query(`SELECT count(*)::int AS total FROM inv WHERE student_id=$1`, [studentId]) as Row[];
+    const rows = await manager.query(`SELECT i.id,i.year_month AS cursor_date,i.year_month,i.inv_type,i.title,i.state::text,
+        to_char(i.due_on,'YYYY-MM-DD') AS due_on,i.amount,i.paid_amount
+      FROM inv i WHERE i.student_id=$1 AND ($2::text IS NULL OR (i.year_month,i.id)<($2::text,$3::bigint))
+      ORDER BY i.year_month DESC,i.id DESC LIMIT $4`,
+    [studentId, cursor?.d ?? null, cursor?.i ?? null, limit + 1]) as Row[];
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const money = (value: unknown): number | null => canSeeAmounts ? Number(value) : null;
+    const items: StudentHubInvoiceDto[] = page.map(row => ({
+      id: id(row.id), yearMonth: String(row.year_month), invType: String(row.inv_type),
+      invTypeLabel: INV_TYPE_LABEL[String(row.inv_type)] ?? String(row.inv_type), title: String(row.title),
+      state: String(row.state), stateLabel: INV_STATE_LABEL[String(row.state)] ?? String(row.state),
+      dueOn: nullableText(row.due_on), amount: money(row.amount), paidAmount: money(row.paid_amount),
+      remainingAmount: canSeeAmounts ? Math.max(0, Number(row.amount) - Number(row.paid_amount)) : null,
+    }));
+    return { items, total: Number(countRow?.total ?? 0), nextCursor: hasMore && page.length ? studentHubCursor('invoices', page[page.length - 1]!) : null };
   }
 
   async detail({ id: studentId }: StudentReadParamsDto): Promise<StudentReadDto> {

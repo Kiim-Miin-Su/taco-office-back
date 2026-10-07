@@ -23,17 +23,17 @@ const FRONT: Record<string, readonly string[]> = {
   '/schedule': ['date', 'serId', 'onDate', 'changeRequest', 'studentId', 'myExpense'], // myExpense — §75 지출 갈래의 되돌아온 것(H-84) → 서랍 「내 지출 신청」
   '/reports': ['section', 'review', 'serId', 'onDate'],
   '/accounting': ['tab', 'month', 'invId'],
-  '/books': ['tab', 'pack'],
+  '/books': ['tab', 'pack', 'studentId', 'create'],
   '/board': ['date'],
   '/exec': ['view', 'date', 'rpt'], // rpt 는 §75 가 싣는 서버 식별자 — 화면은 view · date 로 연다(exec page 주석)
-  '/consulting': ['id'],
+  '/consulting': ['id', 'studentId'],
   '/intake': ['lead'],
   '/teacher': ['meeting', 'req'], // req 는 요청 결과 알림의 표지 — 강사 홈이 그대로 연다(값 없음)
   '/teacher/guides': ['guideId'],
   '/teacher/suggestions': [],
   '/teacher/history': [],
   '/teacher/unavailable': [],
-  '/guides': [],
+  '/guides': ['tab', 'studentId'],
   '/gpa': [],
   '/zoom': [],
   '/programs': [],

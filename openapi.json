@@ -23438,6 +23438,142 @@
         ]
       }
     },
+    "/students/{id}/hub": {
+      "get": {
+        "description": "BOC-04D-01 권고안: 세 목록은 독립 keyset cursor를 쓰며 금액은 canMoney, 컨설팅 건수는 공용 공개 범위를 통과한 것만 반환한다. 강사는 이 관리자 경계에서 403이다.",
+        "operationId": "StudentsController_hub",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "리포트·코멘트·청구 각각의 페이지 크기",
+            "schema": {
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "reportsCursor",
+            "required": false,
+            "in": "query",
+            "description": "리포트 다음 페이지 불투명 커서",
+            "schema": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          },
+          {
+            "name": "commentsCursor",
+            "required": false,
+            "in": "query",
+            "description": "코멘트 다음 페이지 불투명 커서",
+            "schema": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          },
+          {
+            "name": "invoicesCursor",
+            "required": false,
+            "in": "query",
+            "description": "청구 다음 페이지 불투명 커서",
+            "schema": {
+              "maxLength": 256,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentHubDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "STUDENT_HUB_CURSOR_INVALID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 10탭 aggregate — 이어서 할 일·리포트·코멘트·청구 exact student projection",
+        "tags": [
+          "students"
+        ]
+      }
+    },
     "/students/{id}": {
       "get": {
         "operationId": "StudentsController_detail",
@@ -49444,6 +49580,311 @@
           "replayed",
           "reactivatedAt",
           "effects"
+        ]
+      },
+      "StudentHubNextActionDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "billing",
+              "consulting",
+              "books",
+              "guides",
+              "lead"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number",
+            "description": "서버가 exact studentId로 센 현재 건수"
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "0건도 숨기지 않는 서버 상태 문장"
+          },
+          "href": {
+            "type": "string",
+            "description": "기존 도메인 화면의 학생 문맥 deep link"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count",
+          "stateLabel",
+          "href"
+        ]
+      },
+      "StudentHubReportDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "onDate": {
+            "type": "string"
+          },
+          "kindName": {
+            "type": "string"
+          },
+          "subjectName": {
+            "type": "string",
+            "nullable": true
+          },
+          "teacherName": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ]
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "서버 공용 리포트 상태 낱말"
+          },
+          "submittedAt": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "onDate",
+          "kindName",
+          "subjectName",
+          "teacherName",
+          "state",
+          "stateLabel",
+          "submittedAt"
+        ]
+      },
+      "StudentHubReportPageDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentHubReportDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "nextCursor"
+        ]
+      },
+      "StudentHubCommentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "serId": {
+            "type": "number",
+            "nullable": true
+          },
+          "authorId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "authorName": {
+            "type": "string",
+            "nullable": true
+          },
+          "body": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "serId",
+          "authorId",
+          "authorName",
+          "body",
+          "createdAt"
+        ]
+      },
+      "StudentHubCommentPageDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentHubCommentDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "nextCursor"
+        ]
+      },
+      "StudentHubInvoiceDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "yearMonth": {
+            "type": "string"
+          },
+          "invType": {
+            "type": "string"
+          },
+          "invTypeLabel": {
+            "type": "string",
+            "description": "서버 공용 청구 종류 낱말"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "sent",
+              "unpaid",
+              "partial",
+              "paid",
+              "void"
+            ]
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "서버 공용 청구 상태 낱말"
+          },
+          "dueOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "nullable": true,
+            "description": "canMoney를 통과할 때만 값"
+          },
+          "paidAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "canMoney를 통과할 때만 값"
+          },
+          "remainingAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "서버 계산 amount-paidAmount. canMoney를 통과할 때만 값"
+          }
+        },
+        "required": [
+          "id",
+          "yearMonth",
+          "invType",
+          "invTypeLabel",
+          "title",
+          "state",
+          "stateLabel",
+          "dueOn",
+          "amount",
+          "paidAmount",
+          "remainingAmount"
+        ]
+      },
+      "StudentHubInvoicePageDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentHubInvoiceDto"
+            }
+          },
+          "total": {
+            "type": "number"
+          },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "nextCursor"
+        ]
+      },
+      "StudentHubDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "청구 금액 projection 권한"
+          },
+          "nextActions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentHubNextActionDto"
+            }
+          },
+          "reports": {
+            "$ref": "#/components/schemas/StudentHubReportPageDto"
+          },
+          "comments": {
+            "$ref": "#/components/schemas/StudentHubCommentPageDto"
+          },
+          "invoices": {
+            "$ref": "#/components/schemas/StudentHubInvoicePageDto"
+          }
+        },
+        "required": [
+          "studentId",
+          "canSeeAmounts",
+          "nextActions",
+          "reports",
+          "comments",
+          "invoices"
         ]
       },
       "StudentGuardianSummaryDto": {
