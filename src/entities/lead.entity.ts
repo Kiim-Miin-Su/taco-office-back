@@ -10,8 +10,10 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+// 실제 lead_student_fk 정본은 migration 1766900000000이다. 이 entity만 쓰는 legacy migration 시험의 독립 DataSource를 유지한다.
+@Index('lead_student_idx', ['studentId', 'id'], { where: '"student_id" IS NOT NULL' })
 @Check('lead_source_words', "source IS NULL OR source IN ('kakao','phone','blog','instagram','referral','walkin')")
 @Check('lead_reason_kind_words', "reason_kind IS NULL OR reason_kind IN ('unreachable','other_academy','schedule','cost','timing')")
 @Check('lead_parent_phone_digits', "parent_phone IS NULL OR parent_phone ~ '^0[0-9]{9,10}$'")

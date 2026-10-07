@@ -10,11 +10,14 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, ForeignKey, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { INV_STATE_T_VALUES } from './enums';
 
-@Index(['studentId', 'yearMonth'])
+@Index('inv_student_hub_idx', ['studentId', 'yearMonth', 'id'])
 @Index(['state', 'dueOn'])
+@ForeignKey('stu', ['studentId'], ['id'], { name: 'inv_student_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+@ForeignKey('enr', ['enrId', 'studentId'], ['id', 'studentId'], { name: 'inv_enrollment_student_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+@ForeignKey('cons', ['csId'], ['id'], { name: 'inv_cs_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'inv' })
 export class Inv {
   @PrimaryGeneratedColumn({ type: 'bigint' })

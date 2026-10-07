@@ -4,8 +4,10 @@
  * 검증/작업 지침: docs/contracts/db/erd.dbml · docs/contracts/db/student-registration-target.dbml
  */
 
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
+// BOC-04E-01: 현재값 projection은 활성 기간만 student/field/유효일 순으로 찾는다. DESC/partial 정의의 정본은 migration이다.
+@Index('stu_profile_period_current_lookup', ['studentId', 'field', 'validFrom', 'validTo', 'id'], { where: '"superseded_at" IS NULL' })
 @Entity({ name: 'stu_profile_period' })
 export class StuProfilePeriod {
   @PrimaryGeneratedColumn({ type: 'bigint' })

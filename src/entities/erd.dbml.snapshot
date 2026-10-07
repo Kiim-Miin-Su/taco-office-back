@@ -1,3 +1,4 @@
+// TBO55-BOC04E01-R77 (2026-10-08): BOC-04E-01 권고안 채택 — 학생 허브 exact studentId aggregate가 읽는 ENR·REP_STU·INV·LEAD 관계를 검증 FK로 고정하고 INV는 (enr_id,student_id) 복합 참조로 교차 학생 청구를 막는다. SER_STU/CONS_STU/GUIDE/ISSUE/INV/NOTE/PROFILE의 실제 학생 역방향·기간·keyset 경로에 명시 인덱스를 둔다. v4.72/110표, migration1766900000000 로컬 dev/test down/up 2회·직접쓰기·기존 허브/기간 회귀 검증, 운영 미적용. 정책 변경 시 StudentsService.hub/detail·entity/migration·P-BOC04E01·두 DBML·portfolio·관리자/강사 수정사항 대조표를 함께 수정한다.
 // TBO55-BOC04D03D-R76 (2026-10-08): BOC-04D-03d 권고안 채택 — 컨설팅 청구 전환은 ConsAccountRow.version·expectedVersion·requestKey를 사용한다. CONS_WRITE_REQ invoice receipt가 actual actor·payload fingerprint·result version·INV 결과를 보존하고 서비스는 request-key 잠금→CONS 행 잠금→월마감 공유 잠금 순서로 한 transaction에서 INV·version·LOG를 쓴다. 동일 요청 동시 재시도는 같은 청구서로 수렴하고 stale/void 결과는 409다. deferred INV receipt trigger가 직접 cs_id 쓰기를 막는다. v4.71/110표, migration1766800000000 로컬 down/up·반복·동시 HTTP·직접쓰기 검증, 운영 미적용. 정책 변경 시 ConsToInvoiceDto/service/ConsultingAccounting/OpenAPI/generated schema·P-BOC04D03D·두 DBML·portfolio·관리자/강사 수정사항 대조표를 함께 수정한다.
 // TBO55-BOC04D03C-R75 (2026-10-08): BOC-04D-03c 권고안 채택 — 컨설팅 유형별 기본 항목은 immutable version이며 미설정 유형은 시작을 막는다. 신규 CONS는 최초 등록자·template snapshot·row_version을 보존하고, CONS_WRITE_REQ/CONS_TEMPLATE_WRITE_REQ가 actual actor·payload fingerprint·result version을 보존한다. 서비스는 request-key 잠금→업무 행 잠금과 expectedVersion 409를 적용하고 DB 지연 receipt trigger가 원장 없는 직접 쓰기를 방어한다. admissions v1 시스템 기본7항목만 seed하고 과거 CONS는 추정 보정하지 않는다. v4.70/110표, migration1766700000000 로컬 신규·down/up·반복·동시 request-key·직접쓰기 검증, 운영 미적용. 정책 변경 시 Consulting DTO/service/UI/OpenAPI/generated schema·P-BOC04D03C·두 DBML·portfolio·관리자/강사 수정사항 대조표를 함께 수정한다.
 // TBO55-BOC04D03B-R74 (2026-10-08): BOC-04D-03b 권고안 채택 — 새 ISSUE 배정은 실제 현재·장래 수업의 teacher_id·sub_key와 정확한 현재 vers_id를 저장하고 state=wait에서 시작한다. 과거 ISSUE는 문맥을 추정 이관하지 않는다. ISSUE_WRITE_REQ가 actual actor·payload fingerprint·result version을 보존하며, contextual row의 상태/진도/회수는 expectedVersion으로 경합을 거절한다. DB trigger가 활성 담당·과목·정본 학년·수업 문맥·현재 판과 version 정확히 +1을 방어한다. v4.69/106표, migration1766600000000 로컬 신규99/99·down/up·반복·동시 request-key·직접쓰기·파괴적 down 거절·실제 Browser→HTTP→DB→reload 검증, 운영 미적용. 정책 변경 시 BookAssignment DTO/service/BookTracking/OpenAPI/generated schema·P-BOC04D03B·두 DBML·portfolio를 함께 수정한다.
@@ -100,7 +101,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.71 (2026-10-08 · TBO-55 BOC-04D-03d 권고안 채택 · 컨설팅 청구 전환 version/request receipt·운영 미적용) — v4.70 컨설팅 template/writer(migration 1766700000000) ← v4.69 교재 배정 문맥/판(migration 1766600000000) ← v4.68 안내 writer version(migration 1766500000000) ← v4.67 등록 호환성(migration 1766400000000) ← v4.64 상태/상담 원장(migration 1766200000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
+// version : 4.72 (2026-10-08 · TBO-55 BOC-04E-01 권고안 채택 · 학생 허브 관계/기간/keyset 정합성·운영 미적용) — v4.71 컨설팅 청구 전환(migration 1766800000000) ← v4.70 컨설팅 template/writer(migration 1766700000000) ← v4.69 교재 배정 문맥/판(migration 1766600000000) ← v4.68 안내 writer version(migration 1766500000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
 // historical version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
@@ -472,6 +473,7 @@ Table STU_PROFILE_PERIOD {
   superseded_at timestamptz
   indexes {
     (student_id, field, valid_from, recorded_at, id) [name: 'stu_profile_period_timeline', note: '실제 SQL은 valid_from/recorded_at/id DESC']
+    (student_id, field, valid_from, valid_to, id) [name: 'stu_profile_period_current_lookup', note: '실제 SQL은 valid_from/id DESC, superseded_at IS NULL · 현재값 projection']
     (education_system, grade_code, student_id) [name: 'stu_profile_period_grade_filter', note: '실제 SQL은 활성 revision 부분 인덱스']
     (school_id, student_id) [name: 'stu_profile_period_school_filter', note: '실제 SQL은 활성 revision 부분 인덱스']
     created_audit_id [name: 'stu_profile_period_created_audit']
@@ -564,6 +566,7 @@ Table LEAD {
   parent_phone varchar(11) [note: 'v4.57 · A-01 학부모 연락처 — 숫자만(lead_parent_phone_digits CHECK ^0[0-9]{9,10}$ · GUARDIAN.phone 과 같은 모양). 보이는 모양은 LeadDto.parentPhoneDisplay(서버) · LOG 는 가린 모양만. 등록 확정이 그 학생의 보호자로 잇는다(같은 번호가 있으면 잇지 않음). 옛 건 NULL — 접촉 글에서 뽑지 않는다(N-25)']
   want        varchar(120) [note: 'v4.57 · A-01 원하는 것(「MAP Reading 점수 올리기」) — §23 1차 카드 한 줄이 이 칸을 읽는다. 옛 건 NULL(N-25)']
   created_at  timestamptz [not null, default: `now()`]
+  indexes { (student_id, id) [name: 'lead_student_idx', note: 'student_id IS NOT NULL · 학생 허브 연결 상담 count'] }
   Note: '''
   시드 18건. 어느 단계에서 멈췄는지로 분류한다 (§24).
   C90 (N-44 · N-45): 유입은 POST /ops/leads(언제나 stage=first · LEAD_STAGE_LOG first) · 단계 이동은 PATCH /ops/leads/{id}/stage(전이표 LEAD_NEXT_STAGES · 같은 트랜잭션에 LEAD_STAGE_LOG) ·
@@ -576,7 +579,7 @@ Table LEAD {
   created_at은 실패일이 아니다. v4.45(wave3): 실패일은 LEAD_STAGE_LOG 의 마지막 failed 줄(LeadDto.failedAt · 24-04), 재연락 대기/완료는 그 뒤 LEAD_TOUCH 가 있는가(24-06),
   단계 기한 띠는 지금 단계에 들어온 날(LEAD_STAGE_LOG 마지막 줄 · 1차는 created_at) + 슬라이드 23 SLA(1차 2 · 2차 대기 7 · 2차 상담 1 · 보류 2)로 서버가 파생한다(23-12 · 칸 추가 0).
   등록 실패 건도 되살리기 없이 등록 확정한다(24-07) — 이력은 LEAD_STAGE_LOG(failed → enrolled)와 LOG before 에 남고 stop_at·fail_from 은 되살리기처럼 비운다. 당시 배치안은 v4.47 LEAD_PLAN 이다(23-16 · 24-07).
-  위 student_id/owner_id ref는 목표 FK다. init migration에는 실제 FK가 없으며 이번에 운영 DB 무결성을 검증하거나 적용하지 않았다.
+  owner_id ref는 목표 FK다. student_id는 BOC-04E-01 migration 1766900000000에서 기존 고아0 확인 뒤 lead_student_fk를 검증 적용했다.
   v4.54 · W11(N-86 · N-87): 등록 확정 트랜잭션이 사후 관리 할 일(TODO src=lead · 해피콜 · 첫 월간)을 상담 담당에게 만든다(ops/lead-care · first_lesson_on 기준).
   등록 확정은 이제 stop_at 을 건드리지 않고 fail_from 만 되살리기처럼 비운다(A′ 후속 1) — 위 24-07 문장의 「stop_at·fail_from 은 … 비운다」는 이 줄로 바뀐다.
   '''
@@ -690,7 +693,11 @@ Table ENR {
   sessions    smallint    [note: '회차']
   started_on  date
   ended_on    date
-  Note: '시드 16건. 청구서(INV) 자동 생성의 근거.'
+  indexes {
+    (id, student_id) [unique, name: 'enr_student_identity', note: 'INV의 수강 소유 학생 복합 참조 대상']
+    (student_id, started_on, id) [name: 'enr_student_hub_idx', note: '실제 SQL은 started_on/id DESC · 학생 상세 수강 keyset']
+  }
+  Note: '시드 16건. 청구서(INV) 자동 생성의 근거. BOC-04E-01에서 STU/KIND/SUB FK를 검증 적용했다.'
 }
 
 Table TZG {
@@ -788,7 +795,10 @@ Table SER_STU {
   student_id  bigint [not null, ref: > STU.id]
   from_date   date   [note: 'v4.30 · 이 날부터 명단에 있다 — NULL 이면 처음부터. 등록 확정(C91)이 적을 자리']
   to_date     date   [note: 'v4.30 · 이 날까지 명단에 있다 — NULL 이면 끝까지. 수강 종료(C94-c)가 적는다 · ser_stu_range CHECK']
-  indexes { (ser_id, student_id) [pk] }
+  indexes {
+    (ser_id, student_id) [pk]
+    (student_id, from_date, to_date, ser_id) [name: 'ser_stu_student_period_idx', note: '학생 허브 예정 회차의 참여기간 판정']
+  }
   Note: '''
   그룹 수업의 참여 학생. 인원이 늘면 1인 단가가 내려가고 총액은 오른다 (D-R10).
   v4.30 · C94-c — 테스트 시나리오 H-80 「중도 환불」 · N-136 「학생이 갑자기 그만둠」 · N-50 ①.
@@ -1120,7 +1130,10 @@ Table REP_STU {
   student_id  bigint [not null, ref: > STU.id]
   comment     text   [note: '그룹 리포트 학생별 코멘트 — v26 40자 이상']
   deliver     boolean [not null, default: true]
-  indexes { (rep_id, student_id) [pk] }
+  indexes {
+    (rep_id, student_id) [pk]
+    (student_id, rep_id) [name: 'rep_stu_student_report_idx', note: '학생 리포트 count/join 역방향']
+  }
 }
 
 Table RSEND {
@@ -1175,7 +1188,8 @@ Table GUIDE {
   created_at  timestamptz   [not null, default: `now()`]
   indexes {
     (ser_id, event_on, student_id, reason) [unique, name: 'guide_event_unique']
-    (student_id, created_at) [name: 'guide_student_created_idx']
+    (student_id, created_at, id) [name: 'guide_student_created_idx', note: '실제 SQL은 created_at/id DESC']
+    (student_id, state, id) [name: 'guide_student_state_idx', note: '실제 SQL은 id DESC · 학생 허브 대기 안내 count']
     (state, due_on) [name: 'guide_state_due_idx']
   }
   Note: '''
@@ -1325,6 +1339,7 @@ Table ISSUE {
   indexes {
     (student_id, lib_id) [name: 'issue_active_legacy_book_unique', note: 'wait|auto|ok AND teacher_id/sub_key NULL partial unique']
     (student_id, lib_id, teacher_id, sub_key) [name: 'issue_active_assignment_unique', note: 'wait|auto|ok AND teacher_id/sub_key NOT NULL partial unique']
+    (student_id, state, id) [name: 'issue_student_state_idx', note: '실제 SQL은 id DESC · 학생 허브 사용 교재 count']
   }
   Note: '''
   교재 배정·승인·전달·회수·진도 원장. 상태/시각 순서와 progress>=0은 migration CHECK다.
@@ -1445,7 +1460,7 @@ Table WAGE {
 Table INV {
   id          bigserial   [pk]
   student_id  bigint      [not null, ref: > STU.id]
-  enr_id      bigint      [ref: > ENR.id, note: '수강 내역에서 자동 생성 가능']
+  enr_id      bigint      [note: '수강 내역에서 자동 생성 가능 · 학생 소유권까지 INV.(enr_id,student_id) 복합 FK']
   year_month  varchar(7)  [not null]
   inv_type    varchar(16) [not null, note: '청구 종류 **넷** — tuition · consulting · diag_intake · exam_fee (대표 결정 2026-09-13 · N-37 · §57 「그 밖의 수입」 세 줄 + 수업료). inv_type_check NOT VALID 로 굳혔다. 예전 주석의 「6종」은 근거가 없었다']
   title       varchar(80) [not null]
@@ -1464,7 +1479,7 @@ Table INV {
   cs_id       bigint      [ref: > CONS.id, note: '어느 컨설팅에서 전환된 청구서인가 — 원문 §28 「INV 에 csid 로 연결」. 연결이지 소유가 아니다: 납부 기록은 CONS_PAY 에 그대로 남는다']
 
   indexes {
-    (student_id, year_month)
+    (student_id, year_month, id) [name: 'inv_student_hub_idx', note: '실제 SQL은 year_month/id DESC · 학생 청구 keyset']
     (state, due_on)
     (cs_id) [unique, name: 'inv_cs_id_live_uniq', note: 'cs_id IS NOT NULL AND state <> void — 한 컨설팅에 살아 있는 청구서는 하나']
   }
@@ -1479,6 +1494,8 @@ Table INV {
   분납 일정이 있는 청구서의 amount 가 바뀌면 커밋 때 회차 합 = amount 를 다시 본다. 월 마감 · 해제와 발행 · 이월 · 컨설팅 전환은 같은 달 열쇠(advisory lock)를 잡는다 — 칸 변경 0.
   '''
 }
+
+Ref: INV.(enr_id, student_id) > ENR.(id, student_id) [delete: no action, update: no action]
 
 Table INV_INSTALLMENT {
   id      bigserial [pk]
@@ -1710,7 +1727,14 @@ Table CONS {
   '''
 }
 
-Table CONS_STU  { cons_id bigint [ref: > CONS.id]  student_id bigint [ref: > STU.id]  indexes { (cons_id, student_id) [pk] } }
+Table CONS_STU  {
+  cons_id bigint [ref: > CONS.id]
+  student_id bigint [ref: > STU.id]
+  indexes {
+    (cons_id, student_id) [pk]
+    (student_id, cons_id) [name: 'cons_stu_student_cons_idx', note: '학생 허브 진행 컨설팅 역방향']
+  }
+}
 Table CONS_PICK { cons_id bigint [ref: > CONS.id]  staff_id   bigint [ref: > STAFF.id] indexes { (cons_id, staff_id) [pk] } Note: 'share=picked 일 때 볼 수 있는 사람' }
 
 Table CONS_TEMPLATE {
@@ -2126,7 +2150,7 @@ Table NOTE {
   author_id   bigint      [not null, ref: > STAFF.id, note: 'FK 없음 — 계정 참조 목록(lib/staff-refs STAFF_SOFT_REFS)이 관리한다']
   body        text        [not null, note: 'CHECK note_body_present — length(btrim(body)) > 0 AND length(body) <= 2000 (쓰기 경로는 500자 · v4.54 M2)']
   created_at  timestamptz [not null, default: `now()`]
-  indexes { (student_id, created_at) }
+  indexes { (student_id, created_at, id) [name: 'note_student_hub_idx', note: '실제 SQL은 created_at/id DESC · 학생 허브 코멘트 keyset'] }
   Note: '인수인계 메모(N-36 ② · v4.54 M2 · migration 1764900000000) — 관리자 · 매니저가 §79 학생 트래킹에서 한 줄씩 더하고(고치기 · 지우기 없음) 그 학생을 맡은 강사가 수업 안내 학생 카드에서 읽는다. 학부모에게 나가지 않는다.'
 }
 
@@ -2662,3 +2686,9 @@ Table SER_OCC {
 //   ~ CONS_WRITE_REQ action invoice + result_ref_id(INV). CONS row_version은 청구 전환 aggregate 변화도 정확히 +1한다.
 //   + deferred cons_invoice_receipt_guard — cs_id가 있는 새 INV는 같은 transaction의 invoice receipt를 요구한다.
 //   표 +0(110 유지) · 기존 컬럼 +1/함수·trigger1 · migration 1(1766800000000-consulting-invoice-writer) · 로컬 down/up·반복·동시 HTTP·직접쓰기 검증 · 운영 미적용.
+
+// v4.71 → v4.72 (2026-10-08 · TBO-55 BOC-04E-01 권고안 채택) — 학생 허브 관계·기간·keyset 정합성.
+//   + ENR(STU/KIND/SUB), REP_STU(REP/STU), INV(STU), LEAD(STU) 검증 FK. 기존 inv_cs_fk도 고아0 확인 뒤 VALIDATE.
+//   + ENR (id,student_id) unique와 INV (enr_id,student_id) 복합 FK — 다른 학생의 수강 id로 청구서 연결 금지.
+//   + 학생 역방향 인덱스 열: ENR/SER_STU/REP_STU/CONS_STU/GUIDE/ISSUE/INV/NOTE/LEAD 및 활성 PROFILE 현재값 조회.
+//   표·컬럼 +0(110 유지) · FK9(기존 inv_cs 검증 포함)/인덱스10 · migration 1(1766900000000-student-hub-relations) · 로컬 dev/test down/up 각2회·회귀 검증 · 운영 미적용.

@@ -17,7 +17,8 @@ import { GUIDE_STATE_T_VALUES } from './enums';
   unique: true,
   where: '"ser_id" IS NOT NULL AND "event_on" IS NOT NULL',
 })
-@Index(['studentId', 'createdAt'])
+@Index('guide_student_created_idx', ['studentId', 'createdAt', 'id'])
+@Index('guide_student_state_idx', ['studentId', 'state', 'id'])
 @Index(['state', 'dueOn'])
 @ForeignKey('ser', ['serId'], ['id'], { name: 'guide_ser_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @ForeignKey('stu', ['studentId'], ['id'], { name: 'guide_student_id_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })

@@ -10,8 +10,11 @@
  * 표 이름은 명세서 v2 의 전역 배열 이름을 **그대로** 씁니다 (명세서 §82).
  * 이름을 바꾸면 마이그레이션과 명세서 대조가 둘 다 어려워집니다.
  */
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, ForeignKey, Index, PrimaryColumn } from 'typeorm';
 
+@Index('rep_stu_student_report_idx', ['studentId', 'repId'])
+@ForeignKey('rep', ['repId'], ['id'], { name: 'rep_stu_rep_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
+@ForeignKey('stu', ['studentId'], ['id'], { name: 'rep_stu_student_fk', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' })
 @Entity({ name: 'rep_stu' })
 export class RepStu {
   @PrimaryColumn({ type: 'bigint' })
