@@ -4,13 +4,13 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
-import { OkDto } from '../../common/http.dto';
+import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
   TeacherDiagCreateDto, TeacherGuideDiagDto,
@@ -22,6 +22,7 @@ import {
 import { TeacherService } from './teacher.service';
 import { GuidesService } from '../guides/guides.service';
 import { GuideActionDto, GuideActionParamsDto, GuideDto, ReceivedGuidesDto } from '../guides/guides.dto';
+import { previousMonthKst } from '../../lib/kst';
 
 @ApiTags('teacher')
 @Controller('teacher')
@@ -61,12 +62,26 @@ export class TeacherController {
   }
 
   @Get('history')
-  @ApiOperation({ summary: '수업 히스토리 — 월 기록 + 본인 정산 (강사 덱 §29~31 · D-R7·D-R32·D-15)' })
+  @ApiOperation({ summary: '수업 히스토리 — 서버 KST 직전 달 기록 + 본인 정산 (강사 덱 §29~31 · D-R7·D-R32·D-15)' })
   @ApiOkResponse({ type: TeacherHistoryDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'TEACHER_HISTORY_MONTH_MISMATCH — 서버 KST 직전 달과 다른 legacy month' })
   @ApiForbiddenResponse({ description: '강사 전용 — 다른 강사의 정산은 누구도 여기서 볼 수 없다' })
   async history(@CurrentUser() user: RequestUser, @Query() query: TeacherHistoryQueryDto): Promise<TeacherHistoryDto> {
     this.assertTeacher(user);
-    return this.svc.history(user.id, query.month);
+    /*
+     * BOC-09D-01 권고안: 달 권위는 서버 KST 시계 한 곳이다. Front가 보낸 달로 과거 급여를 탐색하지 않는다.
+     * 이전 Front가 보낸 같은 달만 호환하고 다른 값은 명시적 400으로 거절한다. 정책을 바꾸면 kst helper,
+     * TeacherHistory DTO/service, generated OpenAPI/Front hook, 두 수정사항 대조표·scenario·portfolio를 함께 갱신한다.
+     */
+    const month = previousMonthKst();
+    if (query.month !== undefined && query.month !== month) {
+      throw new BadRequestException({
+        code: 'TEACHER_HISTORY_MONTH_MISMATCH',
+        message: '강사 수업 히스토리는 서버 KST 기준 직전 달만 조회할 수 있습니다.',
+        expectedMonth: month,
+      });
+    }
+    return this.svc.history(user.id, month);
   }
 
   @Get('guides')

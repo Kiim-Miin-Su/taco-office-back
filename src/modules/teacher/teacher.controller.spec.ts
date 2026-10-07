@@ -9,6 +9,7 @@ import { TeacherController } from './teacher.controller';
 import type { TeacherService } from './teacher.service';
 import type { GuidesService } from '../guides/guides.service';
 import type { RequestUser } from '../../common/perm';
+import { previousMonthKst } from '../../lib/kst';
 
 // DB 없는 단위 회귀 — 역할 방어와 본인 고정(위임 인자)만 본다. 집계 SQL은 격리 DB 스위트에서.
 describe('TeacherController — 강사 전용 표면', () => {
@@ -54,14 +55,37 @@ describe('TeacherController — 강사 전용 표면', () => {
     expect(svc.shell).not.toHaveBeenCalled();
   });
 
-  it('히스토리도 자기 id·요청 월로 위임된다', async () => {
-    await expect(ctrl.history(user('teacher', 42), { month: '2026-08' })).resolves.toBe(hist);
-    expect((svc.history as jest.Mock).mock.calls).toEqual([[42, '2026-08']]);
+  it('히스토리는 요청 월이 아니라 서버 KST 직전 달로 고정해 위임한다', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-31T14:59:59Z'));
+    try {
+      await expect(ctrl.history(user('teacher', 42), {})).resolves.toBe(hist);
+      expect(previousMonthKst()).toBe('2026-09');
+      expect((svc.history as jest.Mock).mock.calls).toEqual([[42, '2026-09']]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
-  it('히스토리 월 생략은 undefined 로 위임 — 기본 월 판정은 서비스가 한다', async () => {
-    await ctrl.history(user('teacher', 42), {});
-    expect((svc.history as jest.Mock).mock.calls).toEqual([[42, undefined]]);
+  it('1월 KST 경계는 전년 12월이며 같은 legacy month만 허용한다', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2025-12-31T15:00:00Z'));
+    try {
+      await expect(ctrl.history(user('teacher', 42), { month: '2025-12' })).resolves.toBe(hist);
+      expect((svc.history as jest.Mock).mock.calls).toEqual([[42, '2025-12']]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('서버 KST 직전 달과 다른 직접 API month는 명시적 400으로 거절한다', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-10-07T03:00:00Z'));
+    try {
+      await expect(ctrl.history(user('teacher', 42), { month: '2026-08' })).rejects.toMatchObject({
+        response: { code: 'TEACHER_HISTORY_MONTH_MISMATCH', expectedMonth: '2026-09' },
+      });
+      expect(svc.history).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 히스토리(정산 포함)도 403', async (role) => {

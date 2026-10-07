@@ -184,7 +184,9 @@ export class TeacherHomeDto {
 /* ══ 수업 히스토리 (강사 덱 §29~31) ═══════════════════════════════════ */
 
 export class TeacherHistoryQueryDto {
-  @ApiPropertyOptional({ description: 'YYYY-MM (KST) — 없으면 이번 달' })
+  @ApiPropertyOptional({
+    description: '이전 클라이언트 호환용 검증값. 서버가 계산한 KST 직전 달과 다르면 400 TEACHER_HISTORY_MONTH_MISMATCH. 생략 권장.',
+  })
   @IsOptional()
   @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'month는 YYYY-MM 형식입니다' })
   month?: string;

@@ -34,6 +34,12 @@ const KST_MS = 9 * 3600 * 1000;
 export const todayKst = (now: number = Date.now()): string =>
   new Date(now + KST_MS).toISOString().slice(0, 10);
 
+/** 서버가 공개하는 강사 월기록의 유일한 달 — KST 현재월의 직전 달. */
+export const previousMonthKst = (now: number = Date.now()): string => {
+  const [year, month] = todayKst(now).split('-').map(Number);
+  return month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+};
+
 /** 지금 몇 분 (KST 자정 기준) — 캘린더의 빨간 현재 시각 줄이 쓴다 */
 export const nowMinKst = (now: number = Date.now()): number => {
   const d = new Date(now + KST_MS);

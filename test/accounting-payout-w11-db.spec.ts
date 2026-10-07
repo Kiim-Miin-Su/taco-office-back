@@ -29,6 +29,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { AccountingService } from '../src/modules/accounting/accounting.service';
+import { TeacherService } from '../src/modules/teacher/teacher.service';
 import type { PayoutDetailDto, PayoutSheetDto, PayoutSheetRowDto } from '../src/modules/accounting/accounting.dto';
 import { DEV_URL } from './db';
 
@@ -247,8 +248,11 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
     expect(m2.gross).toBe(RATE);
     expect(m2.lateCut).toBe(10000);
 
-    // 강사 히스토리 — 확정된 달은 문장으로, 보정 달은 줄로
-    const h1 = await history(M1);
+    // 공개 강사 히스토리는 서버 KST 직전 달 하나뿐이다. 지지난달 직접 조회는 거절하되,
+    // 확정 과거 원장의 내부 계산과 보존은 회계/서비스 계약으로 계속 검증한다(BOC-09D-01).
+    const rejected = await api('get', `/teacher/history?month=${M1}`, tokens.teacher).expect(400);
+    expect(rejected.body).toMatchObject({ code: 'TEACHER_HISTORY_MONTH_MISMATCH' });
+    const h1 = await app.get(TeacherService).history(TEACHER, M1);
     expect(h1.settlement.note).toContain('다음 달 정산에 보정으로');
     expect(h1.lessons.find((l: { serId: number }) => l.serId === b)).toMatchObject({ settle: 'late', settleLabel: '확정된 달 — 다음 달 보정' });
     const h2 = await history(M2);
