@@ -37,7 +37,7 @@ const CONTACT_KINDS = ['phone', 'kakao', 'email', 'other'] as const;
 const GUARDIAN_RELATIONS = ['mother', 'father', 'aunt', 'driver', 'other'] as const;
 const STUDENT_SOURCES = ['kakao', 'phone', 'blog', 'instagram', 'referral', 'walkin'] as const;
 const PROFILE_TEXT_FIELDS = ['want', 'guidance', 'lang', 'target_exam'] as const;
-const REACTIVATION_STATUSES = ['withdrawn', 'active', 'unknown'] as const;
+export const REACTIVATION_STATUSES = ['withdrawn', 'active', 'unknown'] as const;
 const CONSULTATION_CHANNELS = ['visit', 'phone', 'kakao', 'other'] as const;
 const REGISTRATION_CONFLICT_CODES = [
   'STUDENT_CREATE_REQUEST_KEY_REUSED',
@@ -406,6 +406,8 @@ export class StudentCreateResultDto {
  * 오류 본문은 공용 ApiErrorDto의 code/message 두 필드만 유지한다. stale409에는 개인정보나
  * 서버의 현재 row를 싣지 않고 Front가 후보를 재조회한다. 정책 변경 시 P-REACT, BOC-03,
  * Front StudentRegistrationForm/api/students.ts와 이후 service/migration을 같은 청크에서 수정한다.
+ * BOC-03D-03 재검수 권고안: 현행 legacy STU의 profile_version=0은 유효하므로 재활성화 후보와
+ * expectedProfileVersion에서만 0을 허용한다. 신규 생성 결과의 version>=1 계약은 유지한다.
  */
 export class StudentReactivationCandidateQueryDto {
   @ApiPropertyOptional({ maxLength: 80, description: '이름·영문명 literal 검색. 빈 값은 최신 후보 10명.' })
@@ -428,7 +430,7 @@ export class StudentReactivationCandidateDto {
   @ApiProperty({ description: 'status=withdrawn이고 별도 차단 사유가 없을 때만 true' }) reactivatable!: boolean;
   @ApiProperty({ type: String, nullable: true, description: 'ACTIVE_STUDENT | STATUS_UNKNOWN. 화면이 상태를 다시 계산하지 않는다.' })
   blockedCode!: 'ACTIVE_STUDENT' | 'STATUS_UNKNOWN' | null;
-  @ApiProperty({ type: String, pattern: '^[1-9][0-9]*$', description: '재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string' })
+  @ApiProperty({ type: String, pattern: '^(0|[1-9][0-9]*)$', description: '재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string. 기존 학생의 0도 유효하다.' })
   profileVersion!: string;
   @ApiProperty({ type: String, format: 'date-time', nullable: true }) lastConsultationAt!: string | null;
   @ApiProperty({ ...DATE_SCHEMA, nullable: true, description: '명시적으로 저장된 마지막 퇴원일. 수강 종료일 추정값이 아니다.' })
@@ -466,8 +468,8 @@ export class StudentReactivationDto {
   @IsInt() @Min(1) @Max(ID_MAX)
   studentId!: number;
 
-  @ApiProperty({ type: String, pattern: '^[1-9][0-9]*$', description: '후보 응답의 profileVersion. JS number로 변환하지 않는다.' })
-  @IsString() @Matches(/^[1-9][0-9]*$/)
+  @ApiProperty({ type: String, pattern: '^(0|[1-9][0-9]*)$', description: '후보 응답의 profileVersion. 기존 학생의 0도 허용하며 JS number로 변환하지 않는다.' })
+  @IsString() @Matches(/^(0|[1-9][0-9]*)$/)
   expectedProfileVersion!: string;
 
   @ApiProperty({ enum: ENTRY_SOURCES })

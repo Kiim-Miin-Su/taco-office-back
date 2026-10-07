@@ -48645,8 +48645,8 @@
           },
           "profileVersion": {
             "type": "string",
-            "pattern": "^[1-9][0-9]*$",
-            "description": "재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string"
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "description": "재활성화 expectedProfileVersion에 그대로 보내는 bigint decimal string. 기존 학생의 0도 유효하다."
           },
           "lastConsultationAt": {
             "type": "string",
@@ -48751,8 +48751,8 @@
           },
           "expectedProfileVersion": {
             "type": "string",
-            "pattern": "^[1-9][0-9]*$",
-            "description": "후보 응답의 profileVersion. JS number로 변환하지 않는다."
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "description": "후보 응답의 profileVersion. 기존 학생의 0도 허용하며 JS number로 변환하지 않는다."
           },
           "entrySource": {
             "type": "string",

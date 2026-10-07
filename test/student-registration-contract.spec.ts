@@ -162,7 +162,7 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
       'reactivateOn', 'consultation',
     ]);
     expect(schema('StudentReactivationDto').properties?.expectedProfileVersion)
-      .toMatchObject({ type: 'string', pattern: '^[1-9][0-9]*$' });
+      .toMatchObject({ type: 'string', pattern: '^(0|[1-9][0-9]*)$' });
     expect(doc.paths['/students/reactivation-candidates']).toBeUndefined();
     expect(doc.paths['/students/{id}/reactivate']).toBeUndefined();
   });
@@ -170,7 +170,7 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
   it('stale·잘못된 문맥·빈 상담을 DTO 경계에서 먼저 거절한다', async () => {
     for (const body of [
       { ...reactivation, studentId: 0 },
-      { ...reactivation, expectedProfileVersion: '0' },
+      { ...reactivation, expectedProfileVersion: '-1' },
       { ...reactivation, expectedProfileVersion: '1e2' },
       { ...reactivation, entrySource: 'intake', leadId: null },
       { ...reactivation, entrySource: 'students', leadId: 7 },
@@ -178,6 +178,13 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
       { ...reactivation, consultation: { channel: 'phone', content: '   ', nextOn: null } },
       { ...reactivation, consultation: { channel: 'sms', content: '복귀', nextOn: null } },
     ]) expect(await validate(plainToInstance(StudentReactivationDto, body))).not.toHaveLength(0);
+  });
+
+  it('legacy 기존 학생의 profileVersion 0을 bigint decimal string으로 허용한다', async () => {
+    expect(await validate(plainToInstance(StudentReactivationDto, {
+      ...reactivation,
+      expectedProfileVersion: '0',
+    }))).toHaveLength(0);
   });
 
   it('후보·preview/result와 공용 두 필드 409 code 집합을 생성한다', () => {
