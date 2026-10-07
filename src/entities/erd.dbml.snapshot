@@ -1,3 +1,4 @@
+// TBO55-BOC04D03A-R73 (2026-10-08): BOC-04D-03a 권고안 채택 — GUIDE 본문 계열에 body_version을 추가하고 GUIDE_WRITE_REQ 요청 원장을 분리했다. 화면은 expectedVersion·requestKey를 보내며 서비스는 request-key advisory lock→GUIDE row lock 순서, 동일 actor/payload replay, 409 충돌, HIST를 한 transaction으로 처리한다. DB trigger는 본문 계열 변경·draft→ready가 version 정확히 +1인지 검사하고 version 단독 증가를 막는다. v4.68/105표, migration1766500000000 로컬 신규98/98·down/up·동시 HTTP·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 GuideBodyWriteDto·GuidesService·GuideWriter·OpenAPI/generated schema·P-BOC04D03A·current DBML·portfolio를 함께 수정한다.
 // TBO55-BOC03D04C-R69 (2026-10-07): BOC-03D-04c 권고안 채택 — v4.67/104표. 표·컬럼은 유지하고 SCHOOL identity를 DB locale과 무관한 und-x-icu 소문자 정규화로 고정했다. contract0 GUARDIAN 직접 쓰기는 scalar 연락처 최소1을 즉시 검사하고, contract1 writer의 같은 transaction GUARDIAN_CONTACT 완결성은 기존 지연 trigger가 검사한다. 관리자 Browser→HTTP→DB→hard reload 8/8, 강사 생성 UI/API 차단을 검증했으며 운영 migration은 미적용이다. 정책 변경 시 migration·service·DTO/OpenAPI/generated schema·P-STU15·BOC-03·target/current DBML·portfolio를 함께 수정한다.
 // TBO55-BOC03D04B-R68 (2026-10-07): BOC-03D-04b 권고안 채택 — 관리자 신규 학생 preview/save를 동일 transaction writer로 연결했다. legacy·기존 최소 등록은 contract=0, 최종 15절 신규 등록만 contract=1이다. STU 계약/PII, GUARDIAN 확장, STU_STAFF/STU_SIBLING, create status와 지연 완결성 trigger를 v4.66/104표로 기록한다. 강사 생성 권한은 없으며 운영 migration은 미적용이다. 정책 변경 시 service·DTO/OpenAPI/generated schema·P-STU15·BOC-03·target/current DBML·portfolio를 함께 수정한다.
 // TBO55-BOC03D04A-R67 (2026-10-07): BOC-03D-04a 권고안 채택 — legacy STU는 NULL/연락처0행으로 보존하고 english_name·birth_date·has_citizenship·source와 STU_CONTACT만 additive 적용한다. label은 other에만 허용하고 email 활성 identity만 소문자 비교한다. v4.65/102표, migration1766000000000 로컬 신규·기존 전환 검증·운영 미적용. 정책 변경 시 StudentCreateDto·entity/migration·P-STU15·BOC-03·target/current DBML을 함께 수정한다.
@@ -1162,6 +1163,7 @@ Table GUIDE {
   reason      varchar(20)   [not null, note: 'new(첫 수업) | teacher_change — 14자라 varchar(12) 에 안 들어갔다 (TBO-26)']
   state       guide_state_t [not null, default: 'draft']
   body        text
+  body_version integer      [not null, default: 1, note: 'BOC-04D-03a · body/direction/admin_note optimistic version · CHECK >=1 · content change or draft→ready requires exactly +1']
   direction   text          [note: 'v4.46 · §44 「지도 방향」 상자 (g4 §44-3) · guide_direction_len CHECK(≤4000) · 옛 안내 NULL']
   admin_note  text          [note: 'v4.46 · §44 「관리자 코멘트 · 강사만」 — 관리자와 받는 강사에게만 보인다. 학부모 발송 본문(body)·안내문 PNG 에 싣지 않는다 · guide_admin_note_len CHECK(≤4000) · 옛 안내 NULL']
   due_on      date
@@ -1179,6 +1181,23 @@ Table GUIDE {
   초안 생성 시 서버가 현재 회차·수강생·담당 강사를 다시 검증하고 같은 논리 사건의 중복 생성을 막는다.
   학부모 외부 전달은 v4.43(DQ3)에서 GUARDIAN(수신처) + GUARDIAN_SEND(보호자×채널 시도 원장)로 옮겨 갔다 — 이 표의 상태는 전송 성공을 뜻하지 않는다.
   강사 쪽 전달은 앱 안 알림(NOTI)이다.
+  '''
+}
+
+Table GUIDE_WRITE_REQ {
+  request_key   uuid        [pk]
+  guide_id      bigint      [not null, ref: > GUIDE.id]
+  fingerprint   char(64)    [not null, note: '정규화한 body/direction/admin_note의 SHA-256 hex · CHECK 64 lowercase hex']
+  result_version integer    [not null, note: '성공 또는 동일내용 no-op이 반환한 GUIDE.body_version · CHECK >=1']
+  actor_id      bigint      [not null, ref: > STAFF.id]
+  created_at    timestamptz [not null, default: `now()`]
+  indexes {
+    (guide_id, created_at, request_key) [name: 'guide_write_req_guide_idx']
+  }
+  Note: '''
+  BOC-04D-03a 안내 작성 요청 원장. 같은 actor·GUIDE·fingerprint·request_key 재시도만 기존 결과로 수렴한다.
+  같은 key의 다른 actor/guide/payload는 409이며, 뒤에 새 version이 생긴 뒤의 replay도 409다.
+  GUIDE 삭제 시 CASCADE, STAFF actor 삭제는 RESTRICT. HIST의 guide_write와 같은 transaction에서 적는다.
   '''
 }
 

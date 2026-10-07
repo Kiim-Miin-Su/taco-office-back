@@ -7,7 +7,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BadRequestException } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateIf, ValidateNested } from 'class-validator';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { GUIDE_FACT_KEYS_TEACHER_CHANGE, type GuideFactKey } from '../../lib/guide-body';
 import { LeadDiagDto } from '../ops/lead-diag.dto';
@@ -76,6 +76,7 @@ export class GuideSiblingDto {
 
 export class GuideDto {
   @ApiProperty() id!: number;
+  @ApiProperty({ minimum: 1, description: '안내 본문·지도 방향·관리자 코멘트의 낙관적 잠금 버전' }) version!: number;
   @ApiPropertyOptional(N) serId?: number | null;
   @ApiProperty() studentId!: number;
   @ApiPropertyOptional(N) teacherId?: number | null;
@@ -473,6 +474,21 @@ export class GuideBodyDto {
   })
   @ValidateIf((_object, value) => value !== undefined && value !== null) @IsString() @MaxLength(4000)
   adminNote?: string | null;
+}
+
+/**
+ * BOC-04D-03a 권고안 채택(2026-10-08): 안내 본문 갱신은 화면이 읽은 버전과 한 번의
+ * 제출에 고정한 요청 키를 함께 보낸다. 정책을 바꾸면 GuideWriter, OpenAPI/generated schema,
+ * GUIDE.body_version/GUIDE_WRITE_REQ, P-BOC04D03A와 두 수정사항 대조표를 같은 청크에서 바꾼다.
+ */
+export class GuideBodyWriteDto extends GuideBodyDto {
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 GuideDto.version. 다르면 409 GUIDE_VERSION_CONFLICT' })
+  @ToHttpInteger() @IsInt() @Min(1)
+  expectedVersion!: number;
+
+  @ApiProperty({ format: 'uuid', description: '같은 제출 재시도는 같은 값. 같은 키와 다른 본문은 409 GUIDE_WRITE_REQUEST_KEY_REUSED' })
+  @IsUUID()
+  requestKey!: string;
 }
 
 /**

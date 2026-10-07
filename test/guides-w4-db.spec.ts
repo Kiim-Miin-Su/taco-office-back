@@ -17,6 +17,7 @@ import { Lead } from '../src/entities';
 import { addDays, todayKst } from '../src/lib/kst';
 import { GuidesService } from '../src/modules/guides/guides.service';
 import { GuideDirection1762500000000 } from '../src/migrations/1762500000000-guide-direction';
+import { GuideWriteVersion1766500000000 } from '../src/migrations/1766500000000-guide-write-version';
 import { FakeSender } from './fake-sender';
 import { assertScratch, TEST_URL } from './db';
 
@@ -169,10 +170,10 @@ d('§43 안내 없음 줄 · §44 진단 점수 카드 (g4 43-2 · 44-2)', () =>
     const [target] = (await svc().all()).missing.filter((row) => row.serId === serId);
     const draft = await svc().createDraft(manager, { sourceOccurrenceId: target.sourceOccurrenceId, studentId: target.studentId });
     await q.query('SAVEPOINT too_long');
-    await expect(q.query(`UPDATE guide SET direction=$2 WHERE id=$1`, [draft.id, 'ㄱ'.repeat(4001)]))
+    await expect(q.query(`UPDATE guide SET direction=$2,body_version=body_version+1 WHERE id=$1`, [draft.id, 'ㄱ'.repeat(4001)]))
       .rejects.toMatchObject({ constraint: 'guide_direction_len' });
     await q.query('ROLLBACK TO SAVEPOINT too_long');
-    await expect(q.query(`UPDATE guide SET admin_note=$2 WHERE id=$1`, [draft.id, 'ㄱ'.repeat(4001)]))
+    await expect(q.query(`UPDATE guide SET admin_note=$2,body_version=body_version+1 WHERE id=$1`, [draft.id, 'ㄱ'.repeat(4001)]))
       .rejects.toMatchObject({ constraint: 'guide_admin_note_len' });
   });
 
@@ -182,10 +183,13 @@ d('§43 안내 없음 줄 · §44 진단 점수 카드 (g4 43-2 · 44-2)', () =>
     )).map((r: { column_name: string }) => r.column_name);
     const before = Number((await q.query(`SELECT count(*) FROM guide`))[0].count);
     const migration = new GuideDirection1762500000000();
+    const dependent = new GuideWriteVersion1766500000000();
     expect(await cols()).toEqual(['admin_note', 'direction']);
+    await dependent.down(q);
     await migration.down(q);
     expect(await cols()).toEqual([]);
     await migration.up(q);
+    await dependent.up(q);
     expect(await cols()).toEqual(['admin_note', 'direction']);
     const cons = await q.query(
       `SELECT conname FROM pg_constraint WHERE conname IN ('guide_direction_len','guide_admin_note_len') ORDER BY 1`,

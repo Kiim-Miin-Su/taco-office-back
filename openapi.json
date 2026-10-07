@@ -14189,7 +14189,7 @@
     },
     "/guides/{id}/body": {
       "put": {
-        "description": "상태 낱말은 화면이 보내지 않는다. 「썼다」만 주면 어느 상태가 되는지는 서버가 정한다 (D-R18).",
+        "description": "상태 낱말은 화면이 보내지 않는다. 「썼다」와 expectedVersion·requestKey만 주며 상태·동시성·멱등은 서버가 정한다 (D-R18 · BOC-04D-03a).",
         "operationId": "GuidesController_writeBody",
         "parameters": [
           {
@@ -14206,7 +14206,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GuideBodyDto"
+                "$ref": "#/components/schemas/GuideBodyWriteDto"
               }
             }
           }
@@ -14256,7 +14256,7 @@
             "description": "안내 없음"
           },
           "409": {
-            "description": "code GUIDE_ALREADY_SENT — 이미 보낸 안내는 고치지 않는다"
+            "description": "code GUIDE_ALREADY_SENT | GUIDE_VERSION_CONFLICT | GUIDE_WRITE_REQUEST_KEY_REUSED | GUIDE_WRITE_REPLAY_STALE"
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -38292,6 +38292,11 @@
           "id": {
             "type": "number"
           },
+          "version": {
+            "type": "number",
+            "minimum": 1,
+            "description": "안내 본문·지도 방향·관리자 코멘트의 낙관적 잠금 버전"
+          },
           "serId": {
             "type": "number",
             "nullable": true
@@ -38493,6 +38498,7 @@
         },
         "required": [
           "id",
+          "version",
           "studentId",
           "reason",
           "kindLabel",
@@ -39325,7 +39331,7 @@
           "body"
         ]
       },
-      "GuideBodyDto": {
+      "GuideBodyWriteDto": {
         "type": "object",
         "properties": {
           "body": {
@@ -39343,10 +39349,22 @@
             "nullable": true,
             "maxLength": 4000,
             "description": "「관리자 코멘트 · 강사만」 — 강사에게만 보인다(학부모 발송 본문·안내문 PNG 에 싣지 않는다). 안 보내면 그대로, 빈 글자·null 은 비운다"
+          },
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1,
+            "description": "화면이 읽은 GuideDto.version. 다르면 409 GUIDE_VERSION_CONFLICT"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "같은 제출 재시도는 같은 값. 같은 키와 다른 본문은 409 GUIDE_WRITE_REQUEST_KEY_REUSED"
           }
         },
         "required": [
-          "body"
+          "body",
+          "expectedVersion",
+          "requestKey"
         ]
       },
       "GuideClassDiagDto": {

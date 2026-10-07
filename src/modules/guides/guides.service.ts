@@ -5,6 +5,7 @@
  */
 
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Lead } from '../../entities';
@@ -16,7 +17,7 @@ import { bookLevelShown, issueActiveSql } from '../../lib/book';
 import { SENDER, type Sender } from '../notify/sender';
 import { GUIDE_DONE_DB, GUIDE_PENDING_DB } from '../../lib/rules';
 import type {
-  GuideBodyDto, GuideClassDiagListDto, GuideClassDiagWriteDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDayDto, GuideHistoryDto,
+  GuideBodyDto, GuideBodyWriteDto, GuideClassDiagListDto, GuideClassDiagWriteDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDayDto, GuideHistoryDto,
   GuideHistoryEventDto, GuideHistoryQueryDto,
   GuideHistorySpan, GuideMissingDto, GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto,
   PerLessonNoticeDto, ReceivedGuidesDto, ZoomNoticeBatchInfoDto, ZoomNoticeBatchResultDto, ZoomNoticeBatchRowDto,
@@ -99,7 +100,7 @@ export class GuidesService {
       ? (sql: string, p: unknown[]) => manager.query(sql, p) as Promise<R[]>
       : (sql: string, p: unknown[]) => this.q(sql, p);
     const rows = await run(
-      `SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.created_by,
+      `SELECT g.id,g.body_version,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.created_by,
               ${SIBLINGS_SQL} AS siblings,
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
@@ -310,7 +311,7 @@ export class GuidesService {
     const elapsed = r.sent_at && r.acknowledged_at
       ? (Date.parse(String(r.acknowledged_at)) - Date.parse(String(r.sent_at))) / 1000 : NaN;
     return {
-      id: Number(r.id), serId: r.ser_id == null ? null : Number(r.ser_id), studentId: Number(r.student_id),
+      id: Number(r.id), version: Number(r.body_version ?? 1), serId: r.ser_id == null ? null : Number(r.ser_id), studentId: Number(r.student_id),
       teacherId,
       reason: String(r.reason), kindLabel: guideKindLabel(String(r.reason)), state: String(r.state), pending,
       canSend: gate.canSend, canAck: gate.canAck, sendBlockedReason: gate.sendBlockedReason,
@@ -427,7 +428,7 @@ export class GuidesService {
                 row_number() OVER (PARTITION BY g.student_id ORDER BY g.created_at DESC,g.id DESC) AS rn
            FROM guide g
        )
-       SELECT g.id,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.guide_count,g.created_by,
+       SELECT g.id,g.body_version,g.ser_id,g.student_id,g.teacher_id,g.reason,g.state,g.body,g.direction,g.admin_note,g.guide_count,g.created_by,
               ${SIBLINGS_SQL} AS siblings,
               to_char(g.due_on,'YYYY-MM-DD') AS due_on,
               COALESCE(to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD'),to_char(g.event_on,'YYYY-MM-DD')) AS event_on,
@@ -905,7 +906,7 @@ export class GuidesService {
         const head = hasHead ? (await guideAutoFill(m, sibId))?.body ?? '' : '';
         const next = hasHead ? head + tail : tail;
         const rows = writtenRows<R>(await m.query(
-          `UPDATE guide SET body=$2,state='ready'::guide_state_t
+          `UPDATE guide SET body=$2,state='ready'::guide_state_t,body_version=body_version+1
             WHERE id=$1 AND state='draft'::guide_state_t RETURNING id`,
           [sibId, next],
         ));
@@ -1223,14 +1224,39 @@ export class GuidesService {
    * 여기가 정한다. 이미 보낸 안내는 **고치지 않는다** — 학부모가 받은 말과 장부가 갈린다.
    * 되돌리기가 필요하면 새 안내를 만드는 것이 원문의 방식이다(§53 규칙 줄과 같은 결).
    */
-  async writeBody(userId: number, id: number, dto: GuideBodyDto, viewer?: RequestUser): Promise<GuidesDto['guides'][number]> {
+  async writeBody(
+    userId: number,
+    id: number,
+    dto: GuideBodyDto | GuideBodyWriteDto,
+    viewer?: RequestUser,
+  ): Promise<GuidesDto['guides'][number]> {
     /*
      * 상태 판정도 행 잠금 뒤 **같은 트랜잭션**에서 한다. 발송과 동시에 쓰기가 들어와도
      * sent/read를 ready로 되돌리지 않는다. 이력도 같은 트랜잭션에서 남긴다.
      * 밖에서 남기면 쓰기는 되돌아가고 이력만 남아 「하지도 않은 일」이 장부에 찍힌다.
      */
     await this.anyRepo.manager.transaction(async (m) => {
-      const [cur] = await m.query(`SELECT id,state FROM guide WHERE id=$1 FOR UPDATE`, [id]) as Array<{ id: string; state: string }>;
+      const command = dto as GuideBodyDto & Partial<Pick<GuideBodyWriteDto, 'expectedVersion' | 'requestKey'>>;
+      const tidy = (value: string | null | undefined) => (value == null ? null : value.trim() || null);
+      const fingerprint = createHash('sha256').update(JSON.stringify({
+        body: dto.body,
+        direction: dto.direction === undefined ? { unchanged: true } : tidy(dto.direction),
+        adminNote: dto.adminNote === undefined ? { unchanged: true } : tidy(dto.adminNote),
+      })).digest('hex');
+      if (command.requestKey) {
+        // BOC-04D-03a 권고안: 요청 키 잠금 뒤 GUIDE 행을 잡아 서로 다른 재시도의 잠금 순서를 고정한다.
+        await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`guide-body:${command.requestKey}`]);
+      }
+      const [cur] = await m.query(
+        `SELECT id,state,body,body_version,direction,admin_note FROM guide WHERE id=$1 FOR UPDATE`, [id],
+      ) as Array<{
+        id: string;
+        state: string;
+        body: string | null;
+        body_version: number;
+        direction: string | null;
+        admin_note: string | null;
+      }>;
       if (!cur) throw new NotFoundException('안내를 찾을 수 없습니다');
       if ((GUIDE_DONE_DB as readonly string[]).includes(cur.state)) {
         throw new ConflictException({
@@ -1238,21 +1264,75 @@ export class GuidesService {
           message: '이미 보낸 안내는 고칠 수 없습니다 — 새 안내를 만드세요',
         });
       }
+      if (command.requestKey) {
+        const [prior] = await m.query(
+          `SELECT guide_id,fingerprint,result_version,actor_id FROM guide_write_req WHERE request_key=$1`, [command.requestKey],
+        ) as Array<{ guide_id: string; fingerprint: string; result_version: number; actor_id: string }>;
+        if (prior) {
+          if (Number(prior.guide_id) !== id || prior.fingerprint !== fingerprint || Number(prior.actor_id) !== userId) {
+            throw new ConflictException({
+              code: 'GUIDE_WRITE_REQUEST_KEY_REUSED',
+              message: '같은 안내 작성 요청 키를 다른 내용에 다시 사용할 수 없습니다',
+            });
+          }
+          if (Number(cur.body_version) !== Number(prior.result_version)) {
+            throw new ConflictException({
+              code: 'GUIDE_WRITE_REPLAY_STALE',
+              message: '이 요청 뒤에 안내가 다시 수정되었습니다 — 최신 내용을 다시 확인하세요',
+            });
+          }
+          return;
+        }
+      }
+      if (command.expectedVersion !== undefined && Number(cur.body_version) !== command.expectedVersion) {
+        throw new ConflictException({
+          code: 'GUIDE_VERSION_CONFLICT',
+          message: '다른 사용자가 안내를 수정했습니다 — 최신 내용을 다시 확인하세요',
+        });
+      }
       /*
        * §44 두 상자(지도 방향 · 관리자 코멘트)는 **보낸 칸만** 바꾼다 — 안 보낸 칸(undefined)은 그대로,
        * 빈 글자·null 은 비운다 (g4 §44-3). 본문과 같은 잠금·같은 트랜잭션이라 보낸 안내는 셋 다 못 고친다.
-       */
-      const tidy = (value: string | null | undefined) => (value == null ? null : value.trim() || null);
+      */
+      const nextDirection = dto.direction === undefined ? cur.direction : tidy(dto.direction);
+      const nextAdminNote = dto.adminNote === undefined ? cur.admin_note : tidy(dto.adminNote);
+      const sameContent = cur.body === dto.body
+        && cur.direction === nextDirection
+        && cur.admin_note === nextAdminNote;
+      if (cur.state === 'ready' && sameContent) {
+        if (command.requestKey) {
+          await m.query(
+            `INSERT INTO guide_write_req(request_key,guide_id,fingerprint,result_version,actor_id)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [command.requestKey, id, fingerprint, Number(cur.body_version), userId],
+          );
+        }
+        return;
+      }
       const rows = writtenRows<R>(await m.query(
         `UPDATE guide SET body=$2,state='ready'::guide_state_t,
                 direction=CASE WHEN $4::boolean THEN $5::text ELSE direction END,
-                admin_note=CASE WHEN $6::boolean THEN $7::text ELSE admin_note END
-          WHERE id=$1 AND state=ANY($3::guide_state_t[]) RETURNING id`,
+                admin_note=CASE WHEN $6::boolean THEN $7::text ELSE admin_note END,
+                body_version=body_version+1
+          WHERE id=$1 AND state=ANY($3::guide_state_t[])
+            AND ($8::integer IS NULL OR body_version=$8)
+          RETURNING id,body_version`,
         [id, dto.body, [...GUIDE_PENDING_DB],
-          dto.direction !== undefined, tidy(dto.direction), dto.adminNote !== undefined, tidy(dto.adminNote)],
+          dto.direction !== undefined, tidy(dto.direction), dto.adminNote !== undefined, tidy(dto.adminNote),
+          command.expectedVersion ?? null],
       ));
-      if (!rows[0]) throw new ConflictException({ code: 'GUIDE_STATE_CHANGED', message: '안내 상태가 변경되었습니다' });
+      if (!rows[0]) throw new ConflictException({
+        code: 'GUIDE_VERSION_CONFLICT',
+        message: '다른 사용자가 안내를 수정했습니다 — 최신 내용을 다시 확인하세요',
+      });
       await m.query(histSql(), ['guide', id, 'guide_write', userId]);
+      if (command.requestKey) {
+        await m.query(
+          `INSERT INTO guide_write_req(request_key,guide_id,fingerprint,result_version,actor_id)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [command.requestKey, id, fingerprint, Number(rows[0].body_version), userId],
+        );
+      }
     });
     const [found] = await this.guideRows(`WHERE g.id=$1`, [id], undefined, viewer);
     if (!found) throw new NotFoundException('안내를 찾을 수 없습니다');

@@ -9,6 +9,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'node:crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
@@ -61,6 +62,7 @@ d('S4-a GUIDE 내부 발송·확인 HTTP/DB', () => {
     if (code) expect(res.body).toMatchObject({ code });
   };
   const hist = () => sql('SELECT action,by_id FROM hist WHERE entity=$1 AND ref_id=$2 ORDER BY at,id', ['guide', guideId]);
+  const bodyCommand = (body: string, expectedVersion = 1) => ({ body, expectedVersion, requestKey: randomUUID() });
 
   beforeAll(async () => {
     const url = assertScratch(TEST_URL);
@@ -103,14 +105,31 @@ d('S4-a GUIDE 내부 발송·확인 HTTP/DB', () => {
 
   it('환경 대조군: 기존 본문 HTTP 저장→ready→SQL/HIST 경로는 실제로 동작한다', async () => {
     await state('draft');
-    const res = await http('put', `/guides/${guideId}/body`).send({ body: BODY }).expect(200);
+    const res = await http('put', `/guides/${guideId}/body`).send(bodyCommand(BODY)).expect(200);
     expect(res.body).toMatchObject({ id: guideId, state: 'ready', body: BODY });
     expect(await hist()).toEqual([{ action: 'guide_write', by_id: String(ADMIN) }]);
   });
 
+  it('같은 version의 동시 작성 둘은 한 건만 저장하고 다른 한 건은 409로 재조회를 요구한다', async () => {
+    await state('draft');
+    const first = bodyCommand('동시 작성 A');
+    const second = bodyCommand('동시 작성 B');
+    const results = await Promise.all([
+      http('put', `/guides/${guideId}/body`).send(first),
+      http('put', `/guides/${guideId}/body`).send(second),
+    ]);
+    expect(results.map((res) => res.status).sort()).toEqual([200, 409]);
+    expect(results.find((res) => res.status === 409)?.body).toMatchObject({ code: 'GUIDE_VERSION_CONFLICT' });
+    const [row] = await sql('SELECT body,state,body_version FROM guide WHERE id=$1', [guideId]);
+    expect(row).toMatchObject({ state: 'ready', body_version: 2 });
+    expect([first.body, second.body]).toContain(row.body);
+    expect(await hist()).toHaveLength(1);
+    expect(Number((await sql('SELECT count(*)::int AS n FROM guide_write_req WHERE guide_id=$1', [guideId]))[0].n)).toBe(1);
+  });
+
   it('관리자 작성→내부발송→수신강사확인→관리자 새GET과 최초시각이 일치한다', async () => {
     await state('draft');
-    const written = await http('put', `/guides/${guideId}/body`).send({ body: BODY }).expect(200);
+    const written = await http('put', `/guides/${guideId}/body`).send(bodyCommand(BODY)).expect(200);
     expect(written.body).toMatchObject({ canSend: true, canAck: false, sendBlockedReason: null, acknowledgedAfterSeconds: null });
     const sent = await send().send({}).expect(200);
     expect(sent.body).toMatchObject({ id: guideId, state: 'sent', body: BODY, canSend: false, canAck: false, acknowledgedAt: null });
@@ -211,7 +230,7 @@ d('S4-a GUIDE 내부 발송·확인 HTTP/DB', () => {
     await reject(ack(), 409, 'GUIDE_NOT_SENT');
   });
   it.each([null, '', '   '])('ready의빈본문%j는최초send409·canSend와사유일치', async body => {
-    await sql('UPDATE guide SET body=$1 WHERE id=$2', [body, guideId]);
+    await sql('UPDATE guide SET body=$1,body_version=body_version+1 WHERE id=$2', [body, guideId]);
     await reject(send(), 409, 'GUIDE_BODY_EMPTY');
     expect(await current()).toMatchObject({ canSend: false, sendBlockedReason: expect.any(String) });
   });
@@ -282,15 +301,15 @@ d('S4-a GUIDE 내부 발송·확인 HTTP/DB', () => {
   });
   it('본문수정과send경합은동일GUIDE를직렬화하고보낸뒤의본문수정은거절한다', async () => {
     const nextBody = '발송 전에 확정된 수정 본문';
-    const [sent, written] = await Promise.all([send(), http('put', `/guides/${guideId}/body`).send({ body: nextBody })]);
+    const [sent, written] = await Promise.all([send(), http('put', `/guides/${guideId}/body`).send(bodyCommand(nextBody))]);
     expect(sent.status).toBe(200);
     expect([200, 409]).toContain(written.status);
     expect(await current()).toMatchObject({ state: 'sent', body: written.status === 200 ? nextBody : BODY });
     expect((await hist()).filter(h => h.action === 'guide_send')).toHaveLength(1);
     expect((await hist()).filter(h => h.action === 'guide_write')).toHaveLength(written.status === 200 ? 1 : 0);
-    await reject(http('put', `/guides/${guideId}/body`).send({ body: '발송 후 변조' }), 409, 'GUIDE_ALREADY_SENT');
+    await reject(http('put', `/guides/${guideId}/body`).send(bodyCommand('발송 후 변조', 2)), 409, 'GUIDE_ALREADY_SENT');
     await ack().expect(200);
-    await reject(http('put', `/guides/${guideId}/body`).send({ body: '확인 후 변조' }), 409, 'GUIDE_ALREADY_SENT');
+    await reject(http('put', `/guides/${guideId}/body`).send(bodyCommand('확인 후 변조', 2)), 409, 'GUIDE_ALREADY_SENT');
   });
   it('A의발송후B새안내는수신범위와확인을분리하고A본문/대상불변이다', async () => {
     await state('sent'); const otherId = await make('ready', B, 'B에게만 보낸 새 안내');

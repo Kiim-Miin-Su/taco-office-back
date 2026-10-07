@@ -9,7 +9,7 @@ import { ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
-  GuideActionDto, GuideActionParamsDto, GuideBodyDto, GuideClassDiagListDto, GuideClassDiagWriteDto, GuideCopyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
+  GuideActionDto, GuideActionParamsDto, GuideBodyWriteDto, GuideClassDiagListDto, GuideClassDiagWriteDto, GuideCopyDto, GuideCopyResultDto, GuideDraftCreateDto, GuideDto, GuideHistoryDto, GuideHistoryQueryDto,
   GuideStudentsDto, GuideTemplateDto, GuideTemplateWriteDto, GuidesDto, ZoomNoticeBatchResultDto, ZoomNoticeResultDto, ZoomNoticeWriteDto,
 } from './guides.dto';
 import { GuidesService } from './guides.service';
@@ -97,15 +97,15 @@ export class GuidesController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '안내 작성 — 쓰면 보낼 준비가 된다 (§43)',
-    description: '상태 낱말은 화면이 보내지 않는다. 「썼다」만 주면 어느 상태가 되는지는 서버가 정한다 (D-R18).',
+    description: '상태 낱말은 화면이 보내지 않는다. 「썼다」와 expectedVersion·requestKey만 주며 상태·동시성·멱등은 서버가 정한다 (D-R18 · BOC-04D-03a).',
   })
   @ApiOkResponse({ type: GuideDto })
-  @ApiConflictResponse({ description: 'code GUIDE_ALREADY_SENT — 이미 보낸 안내는 고치지 않는다' })
+  @ApiConflictResponse({ description: 'code GUIDE_ALREADY_SENT | GUIDE_VERSION_CONFLICT | GUIDE_WRITE_REQUEST_KEY_REUSED | GUIDE_WRITE_REPLAY_STALE' })
   @ApiNotFoundResponse({ description: '안내 없음' })
   async writeBody(
     @CurrentUser() user: RequestUser,
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: GuideBodyDto,
+    @Body() dto: GuideBodyWriteDto,
   ): Promise<GuideDto> {
     return this.svc.writeBody(user.id, id, dto, user);
   }

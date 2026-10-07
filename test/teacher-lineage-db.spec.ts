@@ -28,6 +28,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import cookieParser from 'cookie-parser';
+import { randomUUID } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
@@ -230,7 +231,9 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
   /* ── ② 그날만 대강(마법사 아님) → §45 「안 한 것」 → 초안 — 이전 강사는 같은 규칙의 직전 회차에서 ── */
   it('EXC 로 바뀐 회차의 강사 교체 초안(§45 클릭)은 이전 강사를 같은 규칙의 직전 회차에서 되짚고 지도 방향을 물려받는다', async () => {
     // STU2 의 가장 최근 안내(①의 간이 안내)에 지도 방향을 적어 둔다 — 다음 초안이 이것을 물려받아야 한다
-    await api('put', `/guides/${guideStu2}/body`).send({ body: '강사 교체 안내입니다.', direction: '회화 중심' }).expect(200);
+    await api('put', `/guides/${guideStu2}/body`).send({
+      body: '강사 교체 안내입니다.', direction: '회화 중심', expectedVersion: 1, requestKey: randomUUID(),
+    }).expect(200);
     // 그날만 대강 — 마법사가 아니라 일정 쓰기(회차 예외)
     await api('patch', `/schedule/${s2}`).send({ scope: 'this', onDate: FRI2, teacherId: T_B }).expect(200);
     const missing = (await api('get', `/guides/history?span=week&anchor=${FRI2}`).expect(200)).body.missing;
@@ -247,7 +250,9 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
 
   /* ── ③ 작성 → 발송 → 새 강사 수신(이전 강사 표시) → 확인 → 이력 (F-65 · §43) ── */
   it('새 강사는 받은 안내에서 이전 강사를 보고 확인한다 — read · 걸린 시간 · 확인한 사람 · §45 이력에 작성·발송·확인 사건', async () => {
-    await api('put', `/guides/${guideStu1}/body`).send({ body: '강사 교체 안내 — 진도는 그대로 이어집니다.' }).expect(200);
+    await api('put', `/guides/${guideStu1}/body`).send({
+      body: '강사 교체 안내 — 진도는 그대로 이어집니다.', expectedVersion: 1, requestKey: randomUUID(),
+    }).expect(200);
     const sent = (await api('post', `/guides/${guideStu1}/send`).expect(200)).body;
     expect(sent).toMatchObject({ state: 'sent', sentByName: '계보대표', previousTeacherName: '계보A' });
     // 새 강사 — 받은 안내에 이전 강사 → 교체 강사

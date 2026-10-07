@@ -13,6 +13,7 @@
  *   ② **상태 낱말을 화면이 보내지 않는다.** 「썼다」만 주면 어느 상태가 되는지는 서버가 정한다.
  */
 import { DataSource, QueryRunner } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { GuidesService } from '../src/modules/guides/guides.service';
@@ -134,7 +135,7 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
   });
 
   it('이미 보낸 안내는 고치지 않는다 — 학부모가 받은 말과 장부가 갈린다', async () => {
-    await q.query(`UPDATE guide SET state = 'sent', body = '보낸 말' WHERE id = $1`, [guideId]);
+    await q.query(`UPDATE guide SET state = 'sent', body = '보낸 말', body_version=body_version+1 WHERE id = $1`, [guideId]);
     await expect(svc().writeBody(71, guideId, { body: '슬쩍 고친 말' }))
       .rejects.toMatchObject({ response: { code: 'GUIDE_ALREADY_SENT' } });
     const after = (await q.query(`SELECT body FROM guide WHERE id = $1`, [guideId])) as Array<{ body: string }>;
@@ -152,5 +153,47 @@ d('§43 문구 관리 · 안내 작성 (C51)', () => {
 
   it('없는 안내를 쓰면 404 다', async () => {
     await expect(svc().writeBody(71, 99999999, { body: 'x' })).rejects.toThrow();
+  });
+
+  it('BOC-04D-03a 버전 충돌·요청 키 재시도·감사 원장은 같은 트랜잭션에서 수렴한다', async () => {
+    const requestKey = randomUUID();
+    const command = { body: '버전으로 지키는 안내', expectedVersion: 1, requestKey };
+    const first = await svc().writeBody(71, guideId, command);
+    expect(first).toMatchObject({ version: 2, body: command.body, state: 'ready' });
+
+    const replay = await svc().writeBody(71, guideId, command);
+    expect(replay).toMatchObject({ version: 2, body: command.body });
+    expect(Number((await q.query(`SELECT count(*)::int AS n FROM guide_write_req WHERE request_key=$1`, [requestKey]))[0].n)).toBe(1);
+    expect(Number((await q.query(`SELECT count(*)::int AS n FROM hist WHERE entity='guide' AND ref_id=$1 AND action='guide_write'`, [guideId]))[0].n)).toBe(1);
+
+    await expect(svc().writeBody(71, guideId, { ...command, body: '같은 키의 다른 본문' }))
+      .rejects.toMatchObject({ response: { code: 'GUIDE_WRITE_REQUEST_KEY_REUSED' } });
+    await expect(svc().writeBody(71, guideId, {
+      body: '낡은 버전', expectedVersion: 1, requestKey: randomUUID(),
+    })).rejects.toMatchObject({ response: { code: 'GUIDE_VERSION_CONFLICT' } });
+
+    const sameBodyKey = randomUUID();
+    const unchanged = await svc().writeBody(71, guideId, {
+      body: command.body, expectedVersion: 2, requestKey: sameBodyKey,
+    });
+    expect(unchanged).toMatchObject({ version: 2, body: command.body });
+    expect(Number((await q.query(`SELECT result_version FROM guide_write_req WHERE request_key=$1`, [sameBodyKey]))[0].result_version)).toBe(2);
+    expect(Number((await q.query(`SELECT count(*)::int AS n FROM hist WHERE entity='guide' AND ref_id=$1 AND action='guide_write'`, [guideId]))[0].n)).toBe(1);
+
+    await expect(svc().writeBody(72, guideId, command))
+      .rejects.toMatchObject({ response: { code: 'GUIDE_WRITE_REQUEST_KEY_REUSED' } });
+    expect((await q.query(`SELECT body,body_version FROM guide WHERE id=$1`, [guideId]))[0])
+      .toEqual({ body: command.body, body_version: 2 });
+  });
+
+  it('DB 가 본문 변경 없는 version 증가와 version 없는 본문 변경을 모두 막는다', async () => {
+    await q.query('SAVEPOINT guide_version_guard');
+    await expect(q.query(`UPDATE guide SET body='직접 변경' WHERE id=$1`, [guideId]))
+      .rejects.toMatchObject({ constraint: 'guide_body_version_step' });
+    await q.query('ROLLBACK TO SAVEPOINT guide_version_guard');
+    await q.query('SAVEPOINT guide_version_only');
+    await expect(q.query(`UPDATE guide SET body_version=body_version+1 WHERE id=$1`, [guideId]))
+      .rejects.toMatchObject({ constraint: 'guide_body_version_without_change' });
+    await q.query('ROLLBACK TO SAVEPOINT guide_version_only');
   });
 });
