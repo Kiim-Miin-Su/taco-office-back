@@ -26,7 +26,7 @@ import type {
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
   TeacherHistoryDto, TeacherHomeDto, TeacherLessonDto,
   TeacherLessonHubDto, TeacherLessonHubHistoryItemDto,
-  TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
+  TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionLessonDto, TeacherSuggestionsDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
   TeacherNotiDto, TeacherShellDto,
 } from './teacher.dto';
@@ -935,6 +935,7 @@ export class TeacherService {
   }
 
   private suggestionRow(r: R): TeacherSuggestionDto {
+    const lesson = r.lesson_snapshot as TeacherSuggestionLessonDto | null | undefined;
     return {
       id: Number(r.id),
       category: String(r.category),
@@ -944,6 +945,7 @@ export class TeacherService {
       reply: (r.reply as string) ?? null,
       replyBy: (r.reply_by_name as string) ?? null,
       replyOn: (r.reply_on as string) ?? null,
+      lesson: lesson ?? null,
     };
   }
 
@@ -952,7 +954,7 @@ export class TeacherService {
     const today = todayKst();
     const used = await this.suggestionUsed(teacherId, today);
     const items = await this.q(
-      `SELECT g.id, g.category::text AS category, g.body, g.state::text AS state,
+      `SELECT g.id, g.category::text AS category, g.body, g.state::text AS state, g.lesson_snapshot,
               to_char((g.created_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS created_on,
               g.reply, st.name AS reply_by_name,
               to_char((g.reply_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS reply_on
@@ -976,18 +978,133 @@ export class TeacherService {
   /**
    * 건의 등록 — 확정 쓰기 1호. 쿼터 판정과 삽입을 **한 문장**으로 묶어
    * 동시 요청이 와도 한도를 넘겨 들어가지 않는다 (등록 차단: SUGGESTION_QUOTA_EXCEEDED).
+   *
+   * BO-06D-03 권고안: 10일 미만·지난 수업의 팝업 건의는 일반 건의 원장을 재사용하되,
+   * client 표시 문자열을 믿지 않고 서버가 exact 회차를 다시 읽어 제출 당시 수업 스냅숏을 만든다.
+   * requestKey 재시도·sourceDate/readVersion stale 판정·SER 공유 잠금은 한 transaction이다.
+   * 이 계약을 바꾸면 DTO/Swagger→OpenAPI/generated Front, migration/DBML, 두 수정사항 대조표,
+   * 시나리오와 portfolio를 같은 청크에서 갱신한다.
    */
   async createSuggestion(teacherId: number, dto: TeacherSuggestionCreateDto): Promise<TeacherSuggestionDto> {
     const today = todayKst();
     const body = dto.body.trim();
     if (!body) throw new ConflictException({ code: 'EMPTY_BODY', message: '내용을 적어 주세요' });
+    if (dto.lesson && !dto.requestKey) {
+      throw new BadRequestException({
+        code: 'SUGGESTION_REQUEST_KEY_REQUIRED',
+        message: '수업에 연결한 건의는 요청 키가 필요합니다',
+      });
+    }
 
-    // 잠금 + 판정 + 삽입을 한 트랜잭션으로 — 동시 요청 두 개가 같은 「2/3」을 보고 둘 다 들어가는 창을 닫는다
+    // 멱등 키 → SER → 월 쿼터 순서로 잠근다. 같은 키 재전송은 쿼터를 다시 쓰지 않고 기존 receipt로 수렴한다.
     const inserted = await this.anyRepo.manager.transaction(async (em) => {
+      if (dto.requestKey) {
+        await em.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [`suggestion:${teacherId}:${dto.requestKey}`]);
+        const [prior] = (await em.query(
+          `SELECT g.id, g.category::text AS category, g.body, g.state::text AS state, g.lesson_snapshot,
+                  g.ser_id, to_char(g.on_date,'YYYY-MM-DD') AS on_date,
+                  to_char(g.source_date,'YYYY-MM-DD') AS source_date, g.read_version,
+                  to_char((g.created_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS created_on,
+                  g.reply, st.name AS reply_by_name,
+                  to_char((g.reply_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS reply_on
+             FROM suggestion g LEFT JOIN staff st ON st.id=g.reply_by
+            WHERE g.staff_id=$1 AND g.request_key=$2::uuid`,
+          [teacherId, dto.requestKey],
+        )) as R[];
+        if (prior) {
+          const sameLesson = dto.lesson
+            ? Number(prior.ser_id) === dto.lesson.serId
+              && prior.on_date === dto.lesson.onDate
+              && prior.source_date === dto.lesson.sourceDate
+              && Number(prior.read_version) === dto.lesson.readVersion
+            : prior.ser_id == null && prior.on_date == null && prior.source_date == null && prior.read_version == null;
+          if (prior.category !== dto.category || prior.body !== body || !sameLesson) {
+            throw new ConflictException({
+              code: 'SUGGESTION_REQUEST_KEY_REUSED',
+              message: '같은 요청 키로 다른 건의가 이미 접수되었습니다',
+            });
+          }
+          return [prior];
+        }
+      }
+
+      let lessonSnapshot: TeacherSuggestionLessonDto | null = null;
+      if (dto.lesson) {
+        await em.query(`SELECT id FROM ser WHERE id=$1 FOR SHARE`, [dto.lesson.serId]);
+        const [lesson] = (await em.query(
+          `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+                  to_char(${drawnDateOf('o')},'YYYY-MM-DD') AS date,
+                  (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
+                  (EXTRACT(EPOCH FROM (upper(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS end_min,
+                  COALESCE(sb.name,k.name) AS subject, s.title, o.canceled,
+                  COALESCE(a.result::text,'completed') AS attendance_result,
+                  COALESCE(jsonb_agg(st.name ORDER BY st.name,st.id)
+                    FILTER (WHERE st.id IS NOT NULL),'[]'::jsonb) AS students
+             FROM ser_occ o
+             JOIN ser s ON s.id=o.ser_id
+             JOIN kind k ON k.key=s.kind_key
+             LEFT JOIN sub sb ON sb.key=s.sub_key
+             LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
+             LEFT JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+               AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+               AND NOT EXISTS (
+                 SELECT 1 FROM exc ex2 JOIN exc_stu_out x ON x.exc_id=ex2.id AND x.student_id=ss.student_id
+                  WHERE ex2.ser_id=o.ser_id AND ex2.on_date=o.on_date
+               )
+             LEFT JOIN stu st ON st.id=ss.student_id
+            WHERE ${TEACHER_OF}=$1 AND o.ser_id=$2 AND o.on_date=$3::date
+            GROUP BY o.ser_id,o.on_date,o.span,s.title,sb.name,k.name,o.canceled,a.result`,
+          [teacherId, dto.lesson.serId, dto.lesson.onDate],
+        )) as R[];
+        if (!lesson) {
+          throw new NotFoundException({ code: 'SUGGESTION_LESSON_NOT_FOUND', message: '건의를 보낼 담당 수업을 찾을 수 없습니다' });
+        }
+        if (lesson.canceled === true || lesson.attendance_result === 'canceled') {
+          throw new ConflictException({ code: 'SUGGESTION_LESSON_CHANGED', message: '취소된 수업에는 일정 건의를 보낼 수 없습니다' });
+        }
+        const actualDate = String(lesson.date);
+        if (actualDate !== dto.lesson.sourceDate) {
+          throw new ConflictException({
+            code: 'SUGGESTION_LESSON_STALE',
+            message: '읽은 뒤 수업 날짜가 변경되었습니다. 현재 일정에서 다시 요청해 주세요',
+            sourceDate: dto.lesson.sourceDate,
+            currentDate: actualDate,
+          });
+        }
+        const remainingDays = diffDays(today, actualDate);
+        if (remainingDays >= 10) {
+          throw new ConflictException({
+            code: 'SUGGESTION_CHANGE_REQUEST_REQUIRED',
+            message: '수업일까지 정확히 10일 이상이면 일정 변경 요청을 사용해 주세요',
+            today, lessonDate: actualDate, remainingDays, minimumDays: 10,
+          });
+        }
+        const [changed] = (await em.query(
+          `SELECT id FROM log WHERE id>$1 AND entity='SER' AND entity_id=$2 ORDER BY id LIMIT 1`,
+          [dto.lesson.readVersion, dto.lesson.serId],
+        )) as Array<{ id: string }>;
+        if (changed) {
+          throw new ConflictException({
+            code: 'SUGGESTION_LESSON_STALE',
+            message: '읽은 뒤 수업 일정이 변경되었습니다. 현재 일정에서 다시 요청해 주세요',
+            readVersion: dto.lesson.readVersion,
+            currentVersion: Number(changed.id),
+          });
+        }
+        lessonSnapshot = {
+          serId: Number(lesson.ser_id), onDate: String(lesson.on_date), date: actualDate,
+          startMin: Number(lesson.start_min), endMin: Number(lesson.end_min),
+          subject: String(lesson.subject), title: (lesson.title as string) ?? null,
+          students: (lesson.students as string[]).map(String),
+        };
+      }
+
+      // 잠금 + 판정 + 삽입을 한 트랜잭션으로 — 동시 요청 두 개가 같은 「2/3」을 보고 둘 다 들어가는 창을 닫는다
       await em.query(`SELECT pg_advisory_xact_lock(hashtext('suggestion-quota'), $1::int)`, [teacherId]);
       return em.query(
-        `INSERT INTO suggestion (staff_id, category, body)
-         SELECT $1, $2::sug_cat_t, $3
+        `INSERT INTO suggestion
+           (staff_id, category, body, ser_id, on_date, source_date, read_version, lesson_snapshot, request_key)
+         SELECT $1, $2::sug_cat_t, $3, $5, $6::date, $7::date, $8, $9::jsonb, $10::uuid
           WHERE (SELECT COUNT(*) FROM suggestion
                   WHERE staff_id = $1
                     AND ${KST_DATE} >= date_trunc('month', $4::date)::date
@@ -995,8 +1112,13 @@ export class TeacherService {
                 < ${SUGGESTION_MONTHLY_LIMIT}
          RETURNING id, category::text AS category, body, state::text AS state,
                    to_char((created_at AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS created_on,
-                   reply, NULL AS reply_by_name, NULL AS reply_on`,
-        [teacherId, dto.category, body, today],
+                   lesson_snapshot, reply, NULL AS reply_by_name, NULL AS reply_on`,
+        [
+          teacherId, dto.category, body, today,
+          dto.lesson?.serId ?? null, dto.lesson?.onDate ?? null, dto.lesson?.sourceDate ?? null,
+          dto.lesson?.readVersion ?? null, lessonSnapshot ? JSON.stringify(lessonSnapshot) : null,
+          dto.requestKey ?? null,
+        ],
       ) as Promise<R[]>;
     });
     const row = inserted[0];

@@ -18529,6 +18529,7 @@
         ]
       },
       "post": {
+        "description": "수업 팝업 건의는 exact 회차 identity와 requestKey를 보내며 서버가 담당·실제 날짜·읽은 version을 다시 검사하고 제출 당시 수업 정보를 저장한다.",
         "operationId": "TeacherController_createSuggestion",
         "parameters": [],
         "requestBody": {
@@ -18553,7 +18554,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "SUGGESTION_REQUEST_KEY_REQUIRED",
             "content": {
               "application/json": {
                 "schema": {
@@ -18576,7 +18577,7 @@
             "description": "강사 전용"
           },
           "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "SUGGESTION_LESSON_NOT_FOUND — 없음 또는 다른 강사의 회차",
             "content": {
               "application/json": {
                 "schema": {
@@ -18586,7 +18587,14 @@
             }
           },
           "409": {
-            "description": "이달 한도 소진 — code SUGGESTION_QUOTA_EXCEEDED"
+            "description": "SUGGESTION_QUOTA_EXCEEDED | SUGGESTION_REQUEST_KEY_REUSED | SUGGESTION_LESSON_CHANGED | SUGGESTION_LESSON_STALE | SUGGESTION_CHANGE_REQUEST_REQUIRED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -33671,6 +33679,61 @@
           "canReply"
         ]
       },
+      "TeacherSuggestionLessonDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "건의를 보낼 때의 실제 수업일"
+          },
+          "startMin": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1439
+          },
+          "endMin": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1440
+          },
+          "subject": {
+            "type": "string",
+            "description": "제출 당시 과목 표시"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "students": {
+            "description": "제출 당시 수강 학생 이름",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "date",
+          "startMin",
+          "endMin",
+          "subject",
+          "students"
+        ]
+      },
       "SuggestionDto": {
         "type": "object",
         "properties": {
@@ -33716,6 +33779,16 @@
           },
           "createdAt": {
             "type": "string"
+          },
+          "lesson": {
+            "nullable": true,
+            "description": "수업 팝업에서 보낸 건의의 제출 당시 수업 정보",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSuggestionLessonDto"
+              }
+            ]
           }
         },
         "required": [
@@ -44590,6 +44663,16 @@
             "type": "string",
             "nullable": true,
             "description": "답변일 YYYY-MM-DD (KST)"
+          },
+          "lesson": {
+            "nullable": true,
+            "description": "수업 팝업에서 보낸 건의의 제출 당시 수업 정보",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSuggestionLessonDto"
+              }
+            ]
           }
         },
         "required": [
@@ -44640,6 +44723,38 @@
           "items"
         ]
       },
+      "TeacherSuggestionLessonCreateDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "sourceDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "화면에서 본 실제 수업일"
+          },
+          "readVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "수업 목록을 읽기 직전의 LOG version"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "sourceDate",
+          "readVersion"
+        ]
+      },
       "TeacherSuggestionCreateDto": {
         "type": "object",
         "properties": {
@@ -44656,6 +44771,19 @@
           "body": {
             "type": "string",
             "description": "건의 내용 — 1~2000자"
+          },
+          "lesson": {
+            "description": "수업 팝업에서 보낼 때의 exact 회차 identity",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSuggestionLessonCreateDto"
+              }
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "재시도 멱등 키. 수업 연결 건의에는 필수"
           }
         },
         "required": [

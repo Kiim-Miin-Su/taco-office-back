@@ -154,9 +154,14 @@ export class TeacherController {
   }
 
   @Post('suggestions')
-  @ApiOperation({ summary: '건의 등록 — 월 3회는 서버가 센다 (초과: SUGGESTION_QUOTA_EXCEEDED)' })
+  @ApiOperation({
+    summary: '건의 등록 — 월 3회는 서버가 센다 (초과: SUGGESTION_QUOTA_EXCEEDED)',
+    description: '수업 팝업 건의는 exact 회차 identity와 requestKey를 보내며 서버가 담당·실제 날짜·읽은 version을 다시 검사하고 제출 당시 수업 정보를 저장한다.',
+  })
   @ApiCreatedResponse({ type: TeacherSuggestionDto })
-  @ApiConflictResponse({ description: '이달 한도 소진 — code SUGGESTION_QUOTA_EXCEEDED' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'SUGGESTION_REQUEST_KEY_REQUIRED' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'SUGGESTION_LESSON_NOT_FOUND — 없음 또는 다른 강사의 회차' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'SUGGESTION_QUOTA_EXCEEDED | SUGGESTION_REQUEST_KEY_REUSED | SUGGESTION_LESSON_CHANGED | SUGGESTION_LESSON_STALE | SUGGESTION_CHANGE_REQUEST_REQUIRED' })
   @ApiForbiddenResponse({ description: '강사 전용' })
   async createSuggestion(
     @CurrentUser() user: RequestUser,

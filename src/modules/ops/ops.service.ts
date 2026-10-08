@@ -414,7 +414,7 @@ export class OpsService {
   /** 건의 목록과 답변 쓰기 응답의 단일 읽기 모양. 강사 화면과 같은 답변자·날짜를 싣는다. */
   private async suggestionRows(where = '', params: unknown[] = []): Promise<SuggestionDto[]> {
     return (await this.q(
-      `SELECT g.id, s.name AS staff_name, g.category, g.body, g.state, g.reply,
+      `SELECT g.id, s.name AS staff_name, g.category, g.body, g.state, g.reply, g.lesson_snapshot,
               rb.name AS reply_by_name,
               to_char(g.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS created_at,
               to_char(g.reply_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS reply_on
@@ -427,7 +427,7 @@ export class OpsService {
       id: Number(r.id), staffName: String(r.staff_name), category: String(r.category),
       body: String(r.body), state: String(r.state), reply: (r.reply as string) ?? null,
       replyBy: (r.reply_by_name as string) ?? null, replyOn: (r.reply_on as string) ?? null,
-      createdAt: String(r.created_at),
+      createdAt: String(r.created_at), lesson: (r.lesson_snapshot as SuggestionDto['lesson']) ?? null,
     }));
   }
 

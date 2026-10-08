@@ -18,6 +18,7 @@ import { LeadDiagDto } from './lead-diag.dto';
 import { LeadApptDto, LeadPlanLineDto } from './lead-plan.dto';
 import { IsGuardianPhone } from '../guardians/guardians.dto';
 import { UnavWarnDto } from '../schedule/schedule.dto';
+import { TeacherSuggestionLessonDto } from '../teacher/teacher.dto';
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -1157,6 +1158,8 @@ export class SuggestionDto {
   @ApiPropertyOptional({ ...S, description: '답변한 관리자 이름' }) replyBy?: string | null;
   @ApiPropertyOptional({ ...S, description: '답변일 YYYY-MM-DD (KST)' }) replyOn?: string | null;
   @ApiProperty() createdAt!: string;
+  @ApiPropertyOptional({ type: () => TeacherSuggestionLessonDto, nullable: true, description: '수업 팝업에서 보낸 건의의 제출 당시 수업 정보' })
+  lesson?: TeacherSuggestionLessonDto | null;
 }
 
 /** 건의 관리자 답변 — 답변 완료로 옮기고 답변자·시각을 같은 트랜잭션에 남긴다. */

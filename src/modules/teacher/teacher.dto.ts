@@ -5,8 +5,8 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
-import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { REP_STATE_T_VALUES, SUG_CAT_T_VALUES, SUG_STATE_T_VALUES } from '../../entities/enums';
 import { PAYOUT_BREAKDOWN_KEYS, type PayoutBreakdownKey } from '../../lib/payout-sheet';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
@@ -260,6 +260,35 @@ export class TeacherBonusRuleDto {
 
 /* ══ 건의 사항 (강사 덱 §33~34 · D-11 분류 · D-12 상태 · 월 3회 서버 쿼터) ══ */
 
+export class TeacherSuggestionLessonDto {
+  @ApiProperty(ID_SCHEMA) serId!: number;
+  @ApiProperty(DATE_SCHEMA) onDate!: string;
+  @ApiProperty({ ...DATE_SCHEMA, description: '건의를 보낼 때의 실제 수업일' }) date!: string;
+  @ApiProperty({ minimum: 0, maximum: 1439 }) startMin!: number;
+  @ApiProperty({ minimum: 1, maximum: 1440 }) endMin!: number;
+  @ApiProperty({ description: '제출 당시 과목 표시' }) subject!: string;
+  @ApiPropertyOptional(S) title?: string | null;
+  @ApiProperty({ type: [String], description: '제출 당시 수강 학생 이름' }) students!: string[];
+}
+
+export class TeacherSuggestionLessonCreateDto {
+  @ApiProperty(ID_SCHEMA)
+  @Type(() => Number) @IsInt() @Min(1)
+  serId!: number;
+
+  @ApiProperty(DATE_SCHEMA)
+  @IsCalendarDate()
+  onDate!: string;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '화면에서 본 실제 수업일' })
+  @IsCalendarDate()
+  sourceDate!: string;
+
+  @ApiProperty({ type: 'integer', minimum: 0, description: '수업 목록을 읽기 직전의 LOG version' })
+  @Type(() => Number) @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER)
+  readVersion!: number;
+}
+
 export class TeacherSuggestionDto {
   @ApiProperty() id!: number;
   @ApiProperty({ enum: [...SUG_CAT_T_VALUES], description: '수업·시급·스케줄·기타 (D-11 확정)' })
@@ -271,6 +300,8 @@ export class TeacherSuggestionDto {
   @ApiPropertyOptional(S) reply?: string | null;
   @ApiPropertyOptional({ ...S, description: '답변한 관리자 이름' }) replyBy?: string | null;
   @ApiPropertyOptional({ ...S, description: '답변일 YYYY-MM-DD (KST)' }) replyOn?: string | null;
+  @ApiPropertyOptional({ type: () => TeacherSuggestionLessonDto, nullable: true, description: '수업 팝업에서 보낸 건의의 제출 당시 수업 정보' })
+  lesson?: TeacherSuggestionLessonDto | null;
 }
 
 /** GET /teacher/suggestions — 내가 보낸 건의 + 이달 쿼터. canPost 는 서버 판정 플래그다 (화면 재판정 금지). */
@@ -292,6 +323,14 @@ export class TeacherSuggestionCreateDto {
   @MinLength(1, { message: '내용을 적어 주세요' })
   @MaxLength(2000, { message: '내용은 2000자 이내입니다' })
   body!: string;
+
+  @ApiPropertyOptional({ type: () => TeacherSuggestionLessonCreateDto, description: '수업 팝업에서 보낼 때의 exact 회차 identity' })
+  @IsOptional() @ValidateNested() @Type(() => TeacherSuggestionLessonCreateDto)
+  lesson?: TeacherSuggestionLessonCreateDto;
+
+  @ApiPropertyOptional({ format: 'uuid', description: '재시도 멱등 키. 수업 연결 건의에는 필수' })
+  @IsOptional() @IsUUID()
+  requestKey?: string;
 }
 
 /* ══ 수업 안내 (강사 덱 §10~13 — 이번 주 담당 학생·교재·진단·수업 설정) ══ */
