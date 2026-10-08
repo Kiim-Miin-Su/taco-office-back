@@ -193,12 +193,14 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`,
       [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM rep_book_progress WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=ANY($1))`, [[SER, SER_DIAG]]);
     await q(
       `UPDATE rep SET body='{}'::jsonb, format_version=0, row_version=0, last_writer_id=NULL,
                       state='none', written_at=NULL, submitted_at=NULL,
                       reviewed_at=NULL, reviewer_id=NULL, reject_reason=NULL WHERE ser_id=ANY($1)`,
       [[SER, SER_DIAG]],
     );
+    await q(`UPDATE issue SET state='ok',returned_on=NULL,progress_page=NULL,row_version=1 WHERE id=$1`, [ISSUE]);
     await q(`DELETE FROM exc WHERE ser_id=$1`, [SER]);
   });
 
@@ -613,8 +615,86 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     expect(stored).toMatchObject({ format_version: 1, row_version: '1', last_writer_id: String(MANAGER) });
     expect(stored.body).toEqual(saved.body.structuredBody);
 
+    const [progress] = await q<{
+      rep_id: string; issue_id: string; lesson_on: string; progress_from_page: number; progress_to_page: number;
+      homework_from_page: number; homework_to_page: number; homework_amount: string; rep_version: string; actor_id: string;
+    }>(`SELECT rep_id::text,issue_id::text,lesson_on::text,progress_from_page,progress_to_page,
+              homework_from_page,homework_to_page,homework_amount,rep_version::text,actor_id::text
+         FROM rep_book_progress WHERE rep_id=$1`, [repId]);
+    expect(progress).toEqual({
+      rep_id: String(repId), issue_id: String(ISSUE), lesson_on: DATE,
+      progress_from_page: 12, progress_to_page: 18,
+      homework_from_page: 19, homework_to_page: 24, homework_amount: '홀수 문제 전부',
+      rep_version: '1', actor_id: String(MANAGER),
+    });
+    expect((await q<{ progress_page: number; row_version: number }>(
+      `SELECT progress_page,row_version FROM issue WHERE id=$1`, [ISSUE],
+    ))[0]).toEqual({ progress_page: 18, row_version: 2 });
+    const tracking = (await request(app.getHttpServer()).get('/books/tracking')
+      .set('Authorization', `Bearer ${managerToken}`).expect(200)).body;
+    const trackedStudent = tracking.students.find((student: { id: number }) => student.id === STUDENT);
+    expect(trackedStudent.issues.find((issue: { id: number }) => issue.id === ISSUE).progressHistory).toEqual([
+      expect.objectContaining({
+        repId, lessonOn: DATE, progressFromPage: 12, progressToPage: 18,
+        homeworkFromPage: 19, homeworkToPage: 24, homeworkAmount: '홀수 문제 전부', repVersion: 1,
+      }),
+    ]);
+    const progressBook = tracking.books.find((book: { libId: number }) => book.libId === LIB);
+    expect(progressBook.students.find((student: { studentId: number }) => student.studentId === STUDENT))
+      .toMatchObject({ lastProgressOn: DATE, stalled: true, homeworkPages28d: 0 });
+
     const stale = await put(managerToken, structured).expect(409);
     expect(stale.body.code).toBe('REPORT_VERSION_CONFLICT');
+  });
+
+  it('리포트 재저장은 같은 수업 원장을 갱신하고 자동 진도는 뒤로 가지 않으며 종료 뒤에도 이력을 보존한다', async () => {
+    await put(managerToken, structuredGroup(0)).expect(200);
+    const revised = structuredGroup(1);
+    revised.structuredBody.progress = { issueId: ISSUE, fromPage: 10, toPage: 16 };
+    revised.structuredBody.homework = { issueId: ISSUE, fromPage: 17, toPage: 22, amount: '짝수 문제' };
+    await put(managerToken, revised).expect(200);
+
+    expect((await q<{ count: string }>(
+      `SELECT count(*)::text AS count FROM rep_book_progress WHERE rep_id=$1`, [repId],
+    ))[0].count).toBe('1');
+    expect((await q<{ progress_to_page: number; homework_to_page: number; rep_version: string }>(
+      `SELECT progress_to_page,homework_to_page,rep_version::text FROM rep_book_progress WHERE rep_id=$1`, [repId],
+    ))[0]).toEqual({ progress_to_page: 16, homework_to_page: 22, rep_version: '2' });
+    expect((await q<{ progress_page: number; row_version: number }>(
+      `SELECT progress_page,row_version FROM issue WHERE id=$1`, [ISSUE],
+    ))[0]).toEqual({ progress_page: 18, row_version: 2 });
+
+    await q(`UPDATE issue SET state='returned',returned_on=$2 WHERE id=$1`, [ISSUE, DATE]);
+    expect((await q<{ count: string }>(
+      `SELECT count(*)::text AS count FROM rep_book_progress WHERE rep_id=$1`, [repId],
+    ))[0].count).toBe('1');
+  });
+
+  it('전체 쪽수를 넘는 구조화 범위는 REP·진도 원장·ISSUE를 모두 바꾸지 않는다', async () => {
+    const invalid = structuredGroup(0);
+    invalid.structuredBody.progress = { issueId: ISSUE, fromPage: 190, toPage: 201 };
+    const response = await put(managerToken, invalid).expect(400);
+    expect(response.body).toMatchObject({ code: 'REPORT_PAGE_OUT_OF_RANGE', message: '교재 전체 200쪽 안에서 입력해 주세요' });
+    expect(await q(`SELECT 1 FROM rep_book_progress WHERE rep_id=$1`, [repId])).toHaveLength(0);
+    expect((await q<{ format_version: number; row_version: string }>(
+      `SELECT format_version,row_version::text FROM rep WHERE id=$1`, [repId],
+    ))[0]).toEqual({ format_version: 0, row_version: '0' });
+    expect((await q<{ progress_page: number | null; row_version: number }>(
+      `SELECT progress_page,row_version FROM issue WHERE id=$1`, [ISSUE],
+    ))[0]).toEqual({ progress_page: null, row_version: 1 });
+  });
+
+  it('진도 원장을 직접 고쳐 REP 수업일 snapshot을 어긋나게 만들 수 없다', async () => {
+    await put(managerToken, structuredGroup(0)).expect(200);
+
+    await expect(q(
+      `UPDATE rep_book_progress SET lesson_on=$2 WHERE rep_id=$1`,
+      [repId, DIAG_DATE],
+    )).rejects.toMatchObject({ constraint: 'rep_book_progress_report_snapshot' });
+
+    expect((await q<{ lesson_on: string }>(
+      `SELECT lesson_on::text FROM rep_book_progress WHERE rep_id=$1`, [repId],
+    ))[0].lesson_on).toBe(DATE);
   });
 
   it('구조화 제출·승인은 version을 증가시키고 학생별 snapshot 전문과 최초 제출시각을 보존한다', async () => {

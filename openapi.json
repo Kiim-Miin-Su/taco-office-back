@@ -35596,6 +35596,52 @@
           "message"
         ]
       },
+      "BookProgressEventDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "repId": {
+            "type": "number"
+          },
+          "lessonOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "progressFromPage": {
+            "type": "number",
+            "nullable": true
+          },
+          "progressToPage": {
+            "type": "number",
+            "nullable": true
+          },
+          "homeworkFromPage": {
+            "type": "number",
+            "nullable": true
+          },
+          "homeworkToPage": {
+            "type": "number",
+            "nullable": true
+          },
+          "homeworkAmount": {
+            "type": "string",
+            "nullable": true
+          },
+          "repVersion": {
+            "type": "number",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "id",
+          "repId",
+          "lessonOn",
+          "repVersion"
+        ]
+      },
       "BookIssueDto": {
         "type": "object",
         "properties": {
@@ -35721,6 +35767,13 @@
             "type": "string",
             "nullable": true,
             "description": "형태 칩 낱말 — 원문 「PDF」 · 「실물 책」(서버가 만든다 · D-R18)"
+          },
+          "progressHistory": {
+            "description": "구조화 리포트에서 저장한 수업별 진도·숙제 원장, 최신 수업 순",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookProgressEventDto"
+            }
           }
         },
         "required": [
@@ -35729,7 +35782,8 @@
           "libId",
           "studentId",
           "state",
-          "stateLabel"
+          "stateLabel",
+          "progressHistory"
         ]
       },
       "EnrollMissingBookDto": {
@@ -38392,6 +38446,10 @@
           "name": {
             "type": "string"
           },
+          "progressPage": {
+            "type": "number",
+            "nullable": true
+          },
           "percent": {
             "type": "number",
             "nullable": true
@@ -38399,11 +38457,29 @@
           "elapsedDays": {
             "type": "number",
             "nullable": true
+          },
+          "lastProgressOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "stalledDays": {
+            "type": "number",
+            "nullable": true
+          },
+          "stalled": {
+            "type": "boolean"
+          },
+          "homeworkPages28d": {
+            "type": "number"
           }
         },
         "required": [
           "studentId",
-          "name"
+          "name",
+          "stalled",
+          "homeworkPages28d"
         ]
       },
       "BookProgressDto": {
@@ -38439,6 +38515,12 @@
             "type": "number",
             "nullable": true
           },
+          "stalledCount": {
+            "type": "number"
+          },
+          "homeworkPages28d": {
+            "type": "number"
+          },
           "students": {
             "type": "array",
             "items": {
@@ -38450,6 +38532,8 @@
           "libId",
           "title",
           "studentCount",
+          "stalledCount",
+          "homeworkPages28d",
           "students"
         ]
       },

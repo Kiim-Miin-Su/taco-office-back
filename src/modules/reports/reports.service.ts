@@ -471,9 +471,9 @@ export class ReportsService {
     if (required && requireAmount && !value.amount?.trim()) {
       throw new BadRequestException({ code: 'REPORT_HOMEWORK_AMOUNT_REQUIRED', message: '숙제 분량을 입력해 주세요' });
     }
-    const [book] = await q.query<ReportMaterialRow[]>(
+    const [book] = await q.query<(ReportMaterialRow & { pages: number | null })[]>(
       `SELECT i.id AS issue_id,i.row_version AS issue_version,i.student_id,i.lib_id,i.vers_id,
-              l.code,l.title,v.edition
+              l.code,l.title,l.pages,v.edition
          FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
         WHERE i.id=$1 AND i.student_id=ANY($2::bigint[]) AND ${issueActiveSql('i')}
         FOR SHARE OF i,l`,
@@ -482,6 +482,11 @@ export class ReportsService {
     if (!book) {
       throw new ConflictException({
         code: 'REPORT_MATERIAL_CHANGED', message: '선택한 배부 교재가 현재 명단에서 사용 중이 아닙니다. 다시 선택해 주세요',
+      });
+    }
+    if (book.pages !== null && value.toPage > Number(book.pages)) {
+      throw new BadRequestException({
+        code: 'REPORT_PAGE_OUT_OF_RANGE', message: `교재 전체 ${book.pages}쪽 안에서 입력해 주세요`, pages: Number(book.pages),
       });
     }
     return {
@@ -527,6 +532,7 @@ export class ReportsService {
     const submitting = action === 'submit';
     const source = dto.structuredBody;
     if (source.kind === 'individual' || source.kind === 'group') {
+      await this.lockReportMaterials(q, [source.progress, source.homework]);
       if (submitting) this.requiredText(source.content, 60, 'REPORT_CONTENT_REQUIRED', '수업 내용을 60자 이상 입력해 주세요');
       const progress = await this.reportMaterial(q, source.progress, studentIds, submitting, false);
       const homework = await this.reportMaterial(q, source.homework, studentIds, submitting, true);
@@ -595,6 +601,93 @@ export class ReportsService {
         };
       }),
     };
+  }
+
+  /**
+   * BOC-08D-01 권고안: 리포트는 모든 LIB를 id 순으로 잡은 뒤 ISSUE를 id 순으로 잡는다.
+   * 교재 총쪽수 수정·교재 종료·수동 진도와 같은 순서를 공유해 report 저장과 교재 writer가 교착되지 않게 한다.
+   * 정책 변경 시 BooksService의 LIB→ISSUE 순서와 동시성 시험·DBML·P-BOC08D01을 함께 고친다.
+   */
+  private async lockReportMaterials(q: Queryer, materials: readonly (ReportMaterialDto | null)[]): Promise<void> {
+    const issueIds = [...new Set(materials.filter((value): value is ReportMaterialDto => value !== null)
+      .map((value) => value.issueId))].sort((a, b) => a - b);
+    if (issueIds.length === 0) return;
+    const refs = await q.query<Array<{ id: string; lib_id: string }>>(
+      `SELECT id,lib_id FROM issue WHERE id=ANY($1::bigint[]) ORDER BY id`, [issueIds],
+    );
+    const libIds = [...new Set(refs.map((row) => Number(row.lib_id)))].sort((a, b) => a - b);
+    if (libIds.length) {
+      await q.query(`SELECT id FROM lib WHERE id=ANY($1::bigint[]) ORDER BY id FOR SHARE`, [libIds]);
+    }
+    await q.query(`SELECT id FROM issue WHERE id=ANY($1::bigint[]) ORDER BY id FOR UPDATE`, [issueIds]);
+  }
+
+  /**
+   * 구조화 REP의 표시 snapshot을 수업별 교재 진행 원장에 투영한다.
+   * 임시저장 재시도는 같은 REP×ISSUE 한 줄을 갱신하고, ISSUE.progress_page는 자동 저장으로 뒤로 가지 않는다.
+   * 과거 리포트 본문과 종료된 ISSUE의 원장 행은 수정하지 않는다.
+   */
+  private async syncReportBookProgress(
+    q: Queryer,
+    row: DetailRow,
+    body: ReportStructuredBodyDto,
+    actorId: number,
+  ): Promise<void> {
+    if (body.kind !== 'individual' && body.kind !== 'group') return;
+    const materials = [
+      { kind: 'progress' as const, value: body.progress },
+      { kind: 'homework' as const, value: body.homework },
+    ].filter((entry): entry is { kind: 'progress' | 'homework'; value: ReportMaterialDto } => entry.value !== null);
+    const issueIds = [...new Set(materials.map((entry) => entry.value.issueId))].sort((a, b) => a - b);
+    if (issueIds.length === 0) {
+      await q.query(`DELETE FROM rep_book_progress WHERE rep_id=$1`, [row.id]);
+      return;
+    }
+    const issues = await q.query<Array<{
+      id: string; lib_id: string; vers_id: string | null; student_id: string;
+      row_version: number; progress_page: number | null;
+    }>>(
+      `SELECT id,lib_id,vers_id,student_id,row_version,progress_page
+         FROM issue WHERE id=ANY($1::bigint[]) ORDER BY id`, [issueIds],
+    );
+    await q.query(`DELETE FROM rep_book_progress WHERE rep_id=$1 AND NOT (issue_id=ANY($2::bigint[]))`, [row.id, issueIds]);
+    const nextRepVersion = Number(row.row_version) + 1;
+    for (const issueId of issueIds) {
+      const issue = issues.find((candidate) => Number(candidate.id) === issueId);
+      if (!issue) {
+        throw new ConflictException({ code: 'REPORT_MATERIAL_CHANGED', message: '선택한 교재가 바뀌었습니다. 다시 선택해 주세요' });
+      }
+      const progress = materials.find((entry) => entry.kind === 'progress' && entry.value.issueId === issueId)?.value ?? null;
+      const homework = materials.find((entry) => entry.kind === 'homework' && entry.value.issueId === issueId)?.value ?? null;
+      await q.query(
+        `INSERT INTO rep_book_progress (
+           rep_id,issue_id,lib_id,vers_id,student_id,lesson_on,
+           progress_from_page,progress_to_page,homework_from_page,homework_to_page,homework_amount,
+           rep_version,issue_version,actor_id
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         ON CONFLICT (rep_id,issue_id) DO UPDATE SET
+           lib_id=EXCLUDED.lib_id,vers_id=EXCLUDED.vers_id,student_id=EXCLUDED.student_id,lesson_on=EXCLUDED.lesson_on,
+           progress_from_page=EXCLUDED.progress_from_page,progress_to_page=EXCLUDED.progress_to_page,
+           homework_from_page=EXCLUDED.homework_from_page,homework_to_page=EXCLUDED.homework_to_page,
+           homework_amount=EXCLUDED.homework_amount,rep_version=EXCLUDED.rep_version,
+           issue_version=EXCLUDED.issue_version,actor_id=EXCLUDED.actor_id`,
+        [
+          row.id, issueId, Number(issue.lib_id), issue.vers_id === null ? null : Number(issue.vers_id), Number(issue.student_id), row.on_date,
+          progress?.fromPage ?? null, progress?.toPage ?? null, homework?.fromPage ?? null, homework?.toPage ?? null,
+          homework?.amount ?? null, nextRepVersion, Number(issue.row_version), actorId,
+        ],
+      );
+      if (progress && (issue.progress_page === null || Number(issue.progress_page) < progress.toPage)) {
+        const before = issue.progress_page === null ? null : Number(issue.progress_page);
+        await q.query(`UPDATE issue SET progress_page=$2,row_version=row_version+1 WHERE id=$1`, [issueId, progress.toPage]);
+        await q.query(
+          `INSERT INTO log (actor_id,entity,entity_id,action,before,after)
+           VALUES ($1,'ISSUE',$2,'report_progress',$3::jsonb,$4::jsonb)`,
+          [actorId, issueId, JSON.stringify({ progressPage: before, repId: row.id }),
+            JSON.stringify({ progressPage: progress.toPage, repId: row.id, repVersion: nextRepVersion })],
+        );
+      }
+    }
   }
 
   private static kstYesterday(now = new Date()): string {
@@ -1451,6 +1544,9 @@ export class ReportsService {
           WHERE id = $1`,
         [row.id, JSON.stringify(body), nextState, action === 'submit', structured ? 1 : 0, dto.language ?? row.lang, actorId],
       );
+      if (structured) {
+        await this.syncReportBookProgress(q, row, body as ReportStructuredBodyDto, actorId);
+      }
       // N-73 — 다시 쓰면 결재 도장(reviewed_at · 반려 사유)이 지워진다. 무엇이 지워졌는지를 같은 트랜잭션에 남긴다.
       // 본문은 싣지 않는다(학생 기록 원문 — 원장은 「누가 언제 상태를 바꿨나」만 답한다).
       await audit(q, 'report.write', {

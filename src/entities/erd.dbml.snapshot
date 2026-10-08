@@ -1,3 +1,4 @@
+// TBO55-BOC08D01-R95 (2026-10-09): BOC-08D-01 권고안 채택 — 구조화 individual/group REP의 교재·쪽 snapshot을 REP_BOOK_PROGRESS 수업별 원장으로 투영하고 ISSUE.progress_page를 비감소 현재값으로 갱신한다. 14일 정체와 최근28일 숙제 쪽수는 원장에서 읽고, 완료 예상일은 계산 기준 확정 전 만들지 않는다. v4.81/114표, migration1767800000000 로컬 apply/revert/reapply/repeat·범위/직접쓰기/회귀·Browser→HTTP→DB→reload 검증, 운영 미적용. 정책 변경 시 report/book DTO·service·generated Front·BookTracking·두 DBML·P-BOC08D01·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC07D-R94 (2026-10-09): BOC-07D 권고안 채택 — REP는 format_version=0 legacy 3칸과 format_version=1의 individual/group/kinder/mock/diagnostic 구조화 snapshot을 함께 보존한다. row_version으로 draft/submit/review 경합을 409로 거절하고 last_writer_id에 대상 강사와 별개인 실제 actor를 기록한다. 최초 submitted_at은 재제출에도 유지하며 과거 format0·확정 급여는 변환하지 않는다. v4.80/113표, migration1767700000000 로컬 fresh/apply/revert/reapply/repeat·구조/권한/경합·Browser→HTTP→DB→reload·cleanup 검증, 운영 미적용. 정책 변경 시 report DTO/service/controller·생성 Front 계약·구조화 form/export·두 DBML·P-BOC07D·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC06D03-R92 (2026-10-08): BOC-06D-03 권고안 채택 — KST 실제 수업일이 10일 미만이거나 지난 수업의 팝업 건의는 기존 SUGGESTION 원장을 재사용하되 exact ser_id/on_date/source_date/read_version과 서버 생성 lesson_snapshot을 보존한다. staff+request_key 멱등, 담당·취소·이동·stale 재검사로 다른 강사/10일 이상 변경요청 우회를 막는다. 일반·기존 건의는 링크 컬럼 NULL로 보존한다. v4.79/113표, migration1767600000000 로컬 기존 전환·멱등·권한·경계·DB 제약 검증, 운영 미적용. 정책 변경 시 suggestion DTO/service/controller·TeacherScheduleChange/건의 이력/관리자 건의함·OpenAPI/generated schema·두 DBML·P-BOC06D03·두 수정사항 대조표·portfolio를 함께 수정한다.
 // TBO55-BOC06D02-R91 (2026-10-08): BOC-06D-02 권고안 채택 — 강사 변경 요청은 실제 회차일 기준 KST 정확히 10일 이상만 CHREQ로 접수하고 source_date/read_version을 보존한다. 승인 transaction은 SER 잠금 뒤 취소·이동·동일 SER 변경·월마감·충돌을 재검사하고 기존 일정 writer로 반영한다. 같은 actor+회차의 pending time_move는 advisory lock과 partial unique index로 한 건만 허용한다. v4.78/113표, migration1767500000000 로컬 fresh108 migration·동시 제출·승인 rollback·schema 일치 검증, 운영 미적용. 정책 변경 시 change-request DTO/service/controller·TeacherScheduleChange/Hub·OpenAPI/generated schema·두 DBML·P-BOC06D02·두 수정사항 대조표·portfolio를 함께 수정한다.
@@ -1169,6 +1170,41 @@ Table REP {
   DB는 허용 kind와 최상위 JSON 모양을 방어한다. row_version은 모든 write마다 증가하며 stale draft/submit/review는 409다.
   submitted_at은 최초 제출시각이라 반려 뒤 재제출에도 유지한다. last_writer_id는 대상 teacher_id와 별개의 실제 actor다.
   학부모 발송 전문과 PNG는 같은 구조화 snapshot에서 학생별로 만들며, 서버 descriptor가 발송 문자열 정본이다.
+  '''
+}
+
+Table REP_BOOK_PROGRESS {
+  id                 bigserial   [pk]
+  rep_id             bigint      [not null, ref: > REP.id, note: 'ON DELETE CASCADE — 리포트 삭제와 함께 그 수업의 투영 원장만 제거']
+  issue_id           bigint      [not null, ref: > ISSUE.id, note: 'ON DELETE RESTRICT — 종료·교체 뒤에도 당시 배부 identity 보존']
+  lib_id             bigint      [not null, ref: > LIB.id]
+  vers_id            bigint      [ref: > VERS.id]
+  student_id         bigint      [not null, ref: > STU.id]
+  lesson_on          date        [not null, note: 'REP.on_date와 같은 원래 회차일']
+  progress_from_page int
+  progress_to_page   int
+  homework_from_page int
+  homework_to_page   int
+  homework_amount    varchar(100)
+  rep_version        bigint      [not null, note: '이 원장을 만든 현재 REP.row_version, 양수']
+  issue_version      int         [not null, note: '검증에 사용한 ISSUE.row_version, 양수']
+  actor_id           bigint      [not null, ref: > STAFF.id, note: '대상 강사와 별개인 실제 저장 actor']
+  created_at         timestamptz [not null, default: `now()`]
+  updated_at         timestamptz [not null, default: `now()`]
+
+  indexes {
+    (rep_id, issue_id) [unique, name: 'rep_book_progress_rep_issue_unique']
+    (issue_id, lesson_on, id) [name: 'rep_book_progress_issue_lesson_idx']
+  }
+  Note: '''
+  v4.81 · BOC-08D-01 권고안. 구조화 individual/group 리포트 한 수업의 진도·숙제를 배부 교재별 한 줄로 보존한다.
+  같은 REP를 다시 저장하면 같은 REP×ISSUE 행을 갱신하고, 선택에서 빠진 교재 행만 제거한다. ISSUE.progress_page는
+  진행 끝 쪽의 비감소 projection이며 과거 종료 ISSUE와 확정 이력을 소급 변환하지 않는다.
+
+  CHECK는 진도/숙제 범위 쌍·1 이상 오름차순·최소 한 재료·양수 version을 검사한다. rep_book_progress_guard는
+  formatVersion1 현재 REP version·수업일, 활성 ISSUE의 lib/vers/student identity와 version, LIB 총쪽수 상한을 직접 SQL에도 강제한다.
+  14일 정체는 마지막 진행 수업일(없으면 배부일), 최근 숙제는 KST 오늘 포함 28일의 쪽 범위 합으로 읽는다.
+  완료 예상일은 두 수정사항에 산식이 없어 사용자 결정 전 저장·표시하지 않는다.
   '''
 }
 
@@ -2832,3 +2868,8 @@ Table SER_OCC {
 //   + rep_format_version_idx — 구조화 양식 전환 현황을 format1 partial index로 조회한다. down은 구조화/version/actor 이력이 한 건이라도 생기면 데이터 손실을 막고 거절한다.
 //   ~ writer는 REP 행 잠금과 expectedVersion으로 draft/submit/review 경합을 409로 거절하고, 실제 actor와 최초 submitted_at을 보존한다.
 //   표 +0(113 유지) · 새 컬럼 +3 · check2/기존 check1 교체/partial index1 · migration 1(1767700000000-report-structured-body) · 로컬 fresh/apply/revert/reapply/repeat·회귀57/57·Browser28/28·DB 복구 검증 · 운영 미적용.
+// v4.80 → v4.81 (2026-10-09 · TBO-55 BOC-08D-01 권고안 채택) — 구조화 리포트의 수업별 교재 진도·숙제 원장과 현재 projection.
+//   + REP_BOOK_PROGRESS — REP×ISSUE 유일, 당시 lib/vers/student·수업일·진도/숙제 범위·분량·REP/ISSUE version·실제 actor를 보존한다.
+//   + rep_book_progress_guard — 현재 format1 REP snapshot, 활성 ISSUE identity/version, LIB 총쪽수 상한을 INSERT/UPDATE 때 검사한다.
+//   ~ ISSUE.progress_page — 리포트 진행 끝 쪽으로 비감소 갱신. 14일 정체와 KST 오늘 포함 최근28일 숙제 쪽수는 원장에서 계산한다.
+//   표 +1(113 → 114) · 새 컬럼 +16 · check6/unique1/index1/함수·trigger1 · migration 1(1767800000000-report-book-progress) · 운영 미적용.

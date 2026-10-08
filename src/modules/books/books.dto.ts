@@ -308,6 +308,18 @@ export class BookIssueReturnDto {
   @ApiProperty({ minimum: 1, description: '화면이 읽은 BookIssueDto.version' }) @Type(() => Number) @IsInt() @Min(1) expectedVersion!: number;
 }
 
+export class BookProgressEventDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() repId!: number;
+  @ApiProperty({ ...DATE_SCHEMA }) lessonOn!: string;
+  @ApiPropertyOptional(N) progressFromPage?: number | null;
+  @ApiPropertyOptional(N) progressToPage?: number | null;
+  @ApiPropertyOptional(N) homeworkFromPage?: number | null;
+  @ApiPropertyOptional(N) homeworkToPage?: number | null;
+  @ApiPropertyOptional(S) homeworkAmount?: string | null;
+  @ApiProperty({ minimum: 1 }) repVersion!: number;
+}
+
 export class BookIssueDto {
   @ApiProperty() id!: number;
   @ApiProperty({ minimum: 1, description: '상태·진도·회수 쓰기의 optimistic version' }) version!: number;
@@ -336,6 +348,8 @@ export class BookIssueDto {
   @ApiPropertyOptional({ ...S, description: '배부 사유 (N-62) — 옛 배부는 null' }) reason?: string | null;
   @ApiPropertyOptional({ ...S, enum: [...ISSUE_FORMS], description: '배부 형태 (§38-2) — 옛 배부 · 고르지 않은 배부는 null' }) form?: string | null;
   @ApiPropertyOptional({ ...S, description: '형태 칩 낱말 — 원문 「PDF」 · 「실물 책」(서버가 만든다 · D-R18)' }) formLabel?: string | null;
+  @ApiProperty({ type: [BookProgressEventDto], description: '구조화 리포트에서 저장한 수업별 진도·숙제 원장, 최신 수업 순' })
+  progressHistory!: BookProgressEventDto[];
 }
 
 /**
@@ -362,8 +376,13 @@ export class BookTrackingStudentDto {
 export class BookProgressStudentDto {
   @ApiProperty() studentId!: number;
   @ApiProperty() name!: string;
+  @ApiPropertyOptional(N) progressPage?: number | null;
   @ApiPropertyOptional(N) percent?: number | null;
   @ApiPropertyOptional(N) elapsedDays?: number | null;
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true }) lastProgressOn?: string | null;
+  @ApiPropertyOptional(N) stalledDays?: number | null;
+  @ApiProperty() stalled!: boolean;
+  @ApiProperty() homeworkPages28d!: number;
 }
 
 export class BookProgressDto {
@@ -376,6 +395,8 @@ export class BookProgressDto {
   @ApiPropertyOptional(N) maxPercent?: number | null;
   @ApiPropertyOptional(N) averagePercent?: number | null;
   @ApiPropertyOptional(N) pages?: number | null;
+  @ApiProperty() stalledCount!: number;
+  @ApiProperty() homeworkPages28d!: number;
   @ApiProperty({ type: [BookProgressStudentDto] }) students!: BookProgressStudentDto[];
 }
 

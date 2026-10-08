@@ -81,6 +81,7 @@ export * from './exec-area-owner.entity';
 export * from './pnoti.entity';
 export * from './rate.entity';
 export * from './rep.entity';
+export * from './rep-book-progress.entity';
 export * from './rep-stu.entity';
 export * from './req.entity';
 export * from './room.entity';
@@ -201,6 +202,7 @@ import {
   Pnoti,
   Rate,
   Rep,
+  RepBookProgress,
   RepStu,
   Req,
   Room,
@@ -324,6 +326,7 @@ export const ENTITIES = [
   Pnoti,
   Rate,
   Rep,
+  RepBookProgress,
   RepStu,
   Req,
   Room,

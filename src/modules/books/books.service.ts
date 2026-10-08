@@ -632,6 +632,7 @@ export class BooksService {
       reason: optText(r.reason),
       // 형태 칩(§38-2 · W11 A') — 낱말은 서버가 만든다 · 옛 줄 NULL = 칩 없음
       form: optText(r.form), formLabel: issueFormLabel(optText(r.form)),
+      progressHistory: [],
     };
   }
 
@@ -689,10 +690,34 @@ export class BooksService {
     for (const r of reissueRows) {
       students.get(Number(r.student_id))?.reissueCandidates.push(this.issueDto(r));
     }
+    const allIssues = [...students.values()].flatMap((student) => [...student.issues, ...student.reissueCandidates]);
+    const progressRows = allIssues.length ? await this.q(
+      `SELECT id,rep_id,issue_id,to_char(lesson_on,'YYYY-MM-DD') AS lesson_on,
+              progress_from_page,progress_to_page,homework_from_page,homework_to_page,homework_amount,rep_version
+         FROM rep_book_progress WHERE issue_id=ANY($1::bigint[])
+        ORDER BY lesson_on DESC,id DESC`,
+      [allIssues.map((issue) => issue.id)],
+    ) : [];
+    const progressByIssue = new Map<number, BookIssueDto['progressHistory']>();
+    for (const row of progressRows) {
+      const issueId = Number(row.issue_id);
+      const history = progressByIssue.get(issueId) ?? [];
+      history.push({
+        id: Number(row.id), repId: Number(row.rep_id), lessonOn: String(row.lesson_on),
+        progressFromPage: optNum(row.progress_from_page), progressToPage: optNum(row.progress_to_page),
+        homeworkFromPage: optNum(row.homework_from_page), homeworkToPage: optNum(row.homework_to_page),
+        homeworkAmount: optText(row.homework_amount), repVersion: Number(row.rep_version),
+      });
+      progressByIssue.set(issueId, history);
+    }
+    for (const issue of allIssues) issue.progressHistory = progressByIssue.get(issue.id) ?? [];
     const active = rows.filter((r) => r.id != null);
     const bookMap = new Map<number, {
       libId: number; title: string; level: string | null; studentCount: number; values: number[]; pages: number | null;
-      students: Array<{ studentId: number; name: string; percent: number | null; elapsedDays: number | null }>;
+      students: Array<{
+        studentId: number; name: string; progressPage: number | null; percent: number | null; elapsedDays: number | null;
+        lastProgressOn: string | null; stalledDays: number | null; stalled: boolean; homeworkPages28d: number;
+      }>;
     }>();
     for (const r of active) {
       // level — 「교재별 진도율」 카드의 레벨 배지·왼쪽 띠(원문 §38 · g4 §38-7). 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 LIB 옛 원문
@@ -704,9 +729,26 @@ export class BooksService {
       const p = progressPercent(r.progress_page == null ? null : Number(r.progress_page), r.pages == null ? null : Number(r.pages));
       if (p !== null) old.values.push(p);
       const issuedOn = r.issued_on == null ? null : String(r.issued_on).slice(0, 10);
+      const history = progressByIssue.get(Number(r.id)) ?? [];
+      const lastProgressOn = history[0]?.lessonOn ?? null;
+      // BOC-08D-01 권고안: 마지막 리포트 진행 기록이 없으면 배부일을 기준으로 보고, 14일째부터 멈춤이다.
+      // 정책을 바꾸면 DTO/BookTracking/P-BOC08D01/두 수정사항 대조표를 함께 고친다.
+      const stallAnchor = lastProgressOn ?? issuedOn;
+      const stalledDays = stallAnchor
+        ? Math.max(0, Math.floor((Date.parse(`${todayKst()}T00:00:00Z`) - Date.parse(`${stallAnchor}T00:00:00Z`)) / 86_400_000))
+        : null;
+      const homeworkFloor = Date.parse(`${addDays(todayKst(), -27)}T00:00:00Z`);
+      const homeworkPages28d = history.reduce((sum, event) => {
+        if (Date.parse(`${event.lessonOn}T00:00:00Z`) < homeworkFloor
+          || event.homeworkFromPage === null || event.homeworkFromPage === undefined
+          || event.homeworkToPage === null || event.homeworkToPage === undefined) return sum;
+        return sum + event.homeworkToPage - event.homeworkFromPage + 1;
+      }, 0);
       old.students.push({
-        studentId: Number(r.student_id), name: String(r.name), percent: p,
+        studentId: Number(r.student_id), name: String(r.name),
+        progressPage: r.progress_page == null ? null : Number(r.progress_page), percent: p,
         elapsedDays: issuedOn ? Math.max(0, Math.floor((Date.parse(`${todayKst()}T00:00:00Z`) - Date.parse(`${issuedOn}T00:00:00Z`)) / 86_400_000)) : null,
+        lastProgressOn, stalledDays, stalled: stalledDays !== null && stalledDays >= 14, homeworkPages28d,
       });
       bookMap.set(libId, old);
     }
@@ -714,6 +756,8 @@ export class BooksService {
       ...b, minPercent: values.length ? Math.min(...values) : null,
       maxPercent: values.length ? Math.max(...values) : null,
       averagePercent: values.length ? Math.round(values.reduce((a, n) => a + n, 0) / values.length) : null,
+      stalledCount: b.students.filter((student) => student.stalled).length,
+      homeworkPages28d: b.students.reduce((sum, student) => sum + student.homeworkPages28d, 0),
     }));
     const studentRows = [...students.values()];
     const teacherRequests = (await this.q(
