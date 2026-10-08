@@ -29,7 +29,7 @@ const N = { type: Number, nullable: true } as const;
 
 /** §14 · §75 결재 한 줄 — 공통 5종과 강사 리포트가 같은 모양으로 온다 (D-R26 · D-R34) */
 export class ApRowDto {
-  @ApiProperty({ enum: ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'suggestion', 'missing'] }) kind!: string;
+  @ApiProperty({ enum: ['rep', 'rpt', 'plan', 'req', 'chreq', 'matreq', 'gpapack', 'expense', 'suggestion', 'missing'] }) kind!: string;
   @ApiProperty() id!: number;
   @ApiProperty() title!: string;
   @ApiPropertyOptional(S) sub?: string | null;
@@ -65,7 +65,7 @@ export class ApRowDto {
   actBlockedReason?: string | null;
 
   @ApiProperty({
-    enum: ['schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'missing', 'other'],
+    enum: ['schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'material_request', 'missing', 'other'],
     description: '§14 필터 분류 — 서버 코드표가 정한다',
   })
   category!: string;
@@ -76,7 +76,7 @@ export class ApRowDto {
 
 export class ApCategoryDto {
   @ApiProperty({
-    enum: ['schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'missing', 'other'],
+    enum: ['schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'material_request', 'missing', 'other'],
   })
   key!: string;
   @ApiProperty() label!: string;

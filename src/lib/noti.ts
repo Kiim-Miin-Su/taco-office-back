@@ -112,6 +112,11 @@ export const NOTI_TITLE = {
   guideNeeded: '수업 안내 필요',
   guideArrived: '수업 안내 도착',
   zoomGuide: '줌 안내',
+  materialRequestReceived: '자료 요청 접수',
+  materialRequestPreparing: '자료 준비 시작',
+  materialRequestDelivered: '요청 자료 도착',
+  materialRequestRejected: '자료 요청 반려',
+  materialRequestAcknowledged: '자료 수신 확인',
   // 리포트
   reportDue: '리포트 작성 독촉',
   reportApproved: '리포트 승인',

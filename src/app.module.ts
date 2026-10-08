@@ -38,6 +38,7 @@ import { CatalogModule } from './modules/catalog/catalog.module';
 import { GuardiansModule } from './modules/guardians/guardians.module';
 import { StudentsModule } from './modules/students/students.module';
 import { PrivateNotesModule } from './modules/private-notes/private-notes.module';
+import { MaterialRequestsModule } from './modules/material-requests/material-requests.module';
 
 @Module({
   imports: [
@@ -119,6 +120,8 @@ import { PrivateNotesModule } from './modules/private-notes/private-notes.module
     StudentsModule,
     // BOC-09D-03 — 기존 NOTE와 분리한 강사 작성·관리자 전용 학생 특이사항
     PrivateNotesModule,
+    // BOC-08D-02 — 강사 일반 자료요청과 관리자 준비·전달·반려 원장
+    MaterialRequestsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -116,6 +116,17 @@ describe('FILE kind별 중앙 권한표', () => {
     expect(canReadStoredFile(teacher, 'report-png', { ...facts, uploadedBy: null, reportLinked: true })).toBe(false);
     expect(canReadStoredFile(manager, 'future-kind' as never, facts)).toBe(false);
   });
+
+  it('일반 자료요청 파일은 실제 MATREQ 링크와 요청 강사 또는 관리자 자료 권한을 모두 요구한다', () => {
+    const linked = { ...facts, materialRequestLinked: true, materialRequestTeacher: true };
+    expect(canReadStoredFile(teacher, 'material-request', linked)).toBe(true);
+    expect(canReadStoredFile({ ...teacher, id: 11 }, 'material-request', { ...linked, materialRequestTeacher: false })).toBe(false);
+    expect(canReadStoredFile(manager, 'material-request', { ...linked, materialRequestTeacher: false })).toBe(true);
+    expect(canReadStoredFile({ ...manager, perms: { canGpaPack: false } }, 'material-request', {
+      ...linked, materialRequestTeacher: false,
+    })).toBe(false);
+    expect(canReadStoredFile(manager, 'material-request', facts)).toBe(false);
+  });
 });
 
 d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {

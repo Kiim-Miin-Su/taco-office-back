@@ -336,7 +336,7 @@ d('우측 서랍 — §14~§21', () => {
     const { approvalFlow: flow } = (await get('/drawer', MANAGER).expect(200)).body;
     expect(flow.canView).toBe(true);
     expect(flow.tiles.map((tile: { kind: string }) => tile.kind))
-      .toEqual(['rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense']);
+      .toEqual(['rpt', 'plan', 'req', 'chreq', 'matreq', 'expense']);
     expect(flow.total).toBe(flow.waiting.length);
     expect(flow.backCount).toBe(flow.back.length);
     // 수신처는 여전히 갈래가 정한다(rpt·plan 은 대표에게) — 달라진 것은 **누가 그것을 보는가**다

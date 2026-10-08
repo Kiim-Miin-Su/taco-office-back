@@ -22,6 +22,7 @@ export const FILE_KINDS = [
   'guide-png',       // §43 안내문 PNG
   'report-png',      // §50 리포트 전문 PNG (기존 경로가 옮겨 올 자리)
   'meet-brief',      // §66 회의 사전 자료
+  'material-request', // BOC-08D-02 일반 자료요청의 요청·전달 첨부
 ] as const;
 export type FileKind = (typeof FILE_KINDS)[number];
 

@@ -59,6 +59,9 @@ export * from './lead.entity';
 export * from './lib.entity';
 export * from './log.entity';
 export * from './mfb.entity';
+export * from './material-request.entity';
+export * from './material-request-event.entity';
+export * from './material-request-file.entity';
 export * from './mkt.entity';
 export * from './mtattd.entity';
 export * from './mtagenda.entity';
@@ -182,6 +185,9 @@ import {
   Lib,
   Log,
   Mfb,
+  MaterialRequest,
+  MaterialRequestEvent,
+  MaterialRequestFile,
   Mkt,
   Mtattd,
   Mtagenda,
@@ -234,7 +240,7 @@ import {
   Zlog,
 } from './index';
 
-/** DataSource 에 넘길 목록. 현행 ERD 95표, 기존 GPA 4표 포함. */
+/** DataSource 에 넘길 목록. 현행 ORM 113표, 기존 GPA 4표와 MATREQ 3표 포함. */
 export const ENTITIES = [
   // ST1-b1 공유 사전4표. 현행 ERD→생성기 출력과 대조했고 나머지 엔티티의 수동 metadata는 유지한다.
   Country,
@@ -304,6 +310,9 @@ export const ENTITIES = [
   Lib,
   Log,
   Mfb,
+  MaterialRequest,
+  MaterialRequestEvent,
+  MaterialRequestFile,
   Mkt,
   Mtattd,
   Mtagenda,

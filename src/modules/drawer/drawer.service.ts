@@ -50,6 +50,7 @@ import { loadState } from '../schedule/schedule.state.repo';
 import { issueScheduleUndoStep } from '../schedule/schedule.undo';
 import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
 import { STAFF_CREATE_ROLES } from './drawer.dto';
+import { MATERIAL_REQUEST_KIND_LABEL } from '../material-requests/material-requests.dto';
 import type {
   ApprovalUndoResultDto, ChangeReqResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
   StaffDirectoryAssignmentDto, StaffDirectoryAuditDto, StaffDirectoryDetailDto, StaffDirectoryDto, StaffDirectoryPayoutDto,
@@ -549,7 +550,31 @@ export class DrawerService {
       });
     }
 
-    // 다섯 번째 — 자료 요청 (§41). 다학생은 한 줄의 이름으로 모으고 작성자를 보존한다.
+    /*
+     * BOC-08D-02 권고안: 최신 일반 자료요청(MATREQ)은 GPAPACK 이름을 바꾼 것이 아니다.
+     * 접수·준비는 실장 대기, 반려는 요청자에게 되돌아온 건, 전달은 완료로 같은 원장을 투영한다.
+     * 실제 상태 변경은 /books 자료 요청 보드가 맡고 §14/§75는 해당 레코드로 이동한다.
+     */
+    for (const r of await this.q(
+      `SELECT mr.id,mr.kind,mr.needed_on::text,mr.body,mr.state,mr.reject_reason,
+              mr.teacher_id,t.name AS teacher_name,s.name AS student_name,
+              ${kstAt(`COALESCE(mr.rejected_at,mr.delivered_at,mr.updated_at,mr.created_at)`)} AS at
+         FROM material_request mr JOIN staff t ON t.id=mr.teacher_id JOIN stu s ON s.id=mr.student_id`,
+    )) {
+      const state = toApState(str(r.state));
+      const kind = String(r.kind) as keyof typeof MATERIAL_REQUEST_KIND_LABEL;
+      rows.push({
+        kind: 'matreq', id: Number(r.id),
+        title: `${MATERIAL_REQUEST_KIND_LABEL[kind] ?? String(r.kind)} 자료 요청`,
+        sub: `${String(r.student_name)} · 필요 ${String(r.needed_on)}`,
+        byId: num(r.teacher_id), byName: str(r.teacher_name), at: String(r.at),
+        state, why: state === 'back' ? str(r.reject_reason) : null,
+        go: `/books?tab=requests&request=${Number(r.id)}`,
+        reason: requesterReason([], r.body), applicable: false,
+      });
+    }
+
+    // 레거시 GPA 자료 묶음 — 기존 이력은 보존하되 최신 MATREQ 결재 타일과 섞지 않는다.
     for (const r of await this.q(
       `SELECT g.id, g.pack_type, g.title, g.state, g.memo, g.created_by, b.name AS by_name,
               to_char(g.effective_on, 'MM-DD') AS effective_on,

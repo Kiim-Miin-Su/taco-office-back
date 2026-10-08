@@ -24107,6 +24107,522 @@
           "private-notes"
         ]
       }
+    },
+    "/material-requests/options": {
+      "get": {
+        "operationId": "MaterialRequestsController_options",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRequestOptionsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 자료요청 전체 담당 학생 선택지 — 본인 범위",
+        "tags": [
+          "material-requests"
+        ]
+      }
+    },
+    "/material-requests/mine": {
+      "get": {
+        "operationId": "MaterialRequestsController_mine",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRequestsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 본인의 일반 자료요청과 전달 파일·처리 이력",
+        "tags": [
+          "material-requests"
+        ]
+      }
+    },
+    "/material-requests": {
+      "post": {
+        "description": "GPAPACK·교재 변경과 분리된 MATREQ 원장이다. 담당 학생·KST 기한·멱등 키·첨부를 같은 트랜잭션에서 검증한다.",
+        "operationId": "MaterialRequestsController_create",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialRequestCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRequestWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "MATERIAL_REQUEST_DATE_PAST | MATERIAL_REQUEST_FILE_KIND"
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MATERIAL_REQUEST_KEY_REUSED"
+          },
+          "413": {
+            "description": "FILE_TOO_LARGE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 일반 자료요청 접수",
+        "tags": [
+          "material-requests"
+        ]
+      },
+      "get": {
+        "operationId": "MaterialRequestsController_all",
+        "parameters": [
+          {
+            "name": "state",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "received",
+                "preparing",
+                "delivered",
+                "rejected"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRequestsDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "관리자 일반 자료요청 보드 — 접수·준비·전달·반려와 이력",
+        "tags": [
+          "material-requests"
+        ]
+      }
+    },
+    "/material-requests/{id}": {
+      "patch": {
+        "description": "접수→준비, 접수/준비→반려, 준비→전달만 허용한다. 전달은 실제 내부 첨부가 필수이며 외부 발송을 성공으로 표시하지 않는다.",
+        "operationId": "MaterialRequestsController_transition",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialRequestTransitionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRequestWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MATERIAL_REQUEST_STALE | MATERIAL_REQUEST_INVALID_TRANSITION | MATERIAL_REQUEST_KEY_REUSED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "관리자 자료요청 상태 전이",
+        "tags": [
+          "material-requests"
+        ]
+      }
+    },
+    "/material-requests/{id}/ack": {
+      "post": {
+        "operationId": "MaterialRequestsController_acknowledge",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialRequestAcknowledgeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRequestWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MATERIAL_REQUEST_STALE | MATERIAL_REQUEST_NOT_DELIVERED | MATERIAL_REQUEST_ALREADY_ACKNOWLEDGED"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 전달 파일 수신 확인 — 요청자 본인만",
+        "tags": [
+          "material-requests"
+        ]
+      }
     }
   },
   "info": {
@@ -28504,7 +29020,8 @@
               "expense-receipt",
               "guide-png",
               "report-png",
-              "meet-brief"
+              "meet-brief",
+              "material-request"
             ]
           },
           "name": {
@@ -29213,7 +29730,8 @@
               "expense-receipt",
               "guide-png",
               "report-png",
-              "meet-brief"
+              "meet-brief",
+              "material-request"
             ],
             "description": "어디에 쓰이는 파일인가 — 열람 권한이 여기서 갈린다"
           },
@@ -47011,7 +47529,9 @@
               "plan",
               "req",
               "chreq",
+              "matreq",
               "gpapack",
+              "expense",
               "suggestion",
               "missing"
             ]
@@ -47087,6 +47607,7 @@
               "wage_change",
               "suggestion",
               "gpa_request",
+              "material_request",
               "missing",
               "other"
             ],
@@ -47120,6 +47641,7 @@
               "wage_change",
               "suggestion",
               "gpa_request",
+              "material_request",
               "missing",
               "other"
             ]
@@ -47212,7 +47734,7 @@
               "plan",
               "req",
               "chreq",
-              "gpapack",
+              "matreq",
               "expense"
             ]
           },
@@ -47256,7 +47778,7 @@
               "plan",
               "req",
               "chreq",
-              "gpapack",
+              "matreq",
               "expense"
             ]
           },
@@ -52128,6 +52650,457 @@
         "required": [
           "studentId",
           "items"
+        ]
+      },
+      "MaterialRequestStudentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "label"
+        ]
+      },
+      "MaterialRequestOptionsDto": {
+        "type": "object",
+        "properties": {
+          "students": {
+            "description": "서버 KST 오늘 이후 담당이 남아 있는 전체 학생",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaterialRequestStudentDto"
+            }
+          }
+        },
+        "required": [
+          "students"
+        ]
+      },
+      "MaterialRequestFileDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cons-contract",
+              "cons-item",
+              "lib-se",
+              "lib-te",
+              "expense-receipt",
+              "guide-png",
+              "report-png",
+              "meet-brief",
+              "material-request"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "mime": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "number",
+            "description": "바이트 수 — 표가 실제 길이와 같은지 지킨다"
+          },
+          "url": {
+            "type": "string",
+            "description": "내려받는 자리. `/files/{id}` 면 Neon, `https://` 면 레거시 외부 저장소다"
+          },
+          "uploaderName": {
+            "type": "string",
+            "nullable": true
+          },
+          "uploadedAt": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "request",
+              "delivery"
+            ]
+          },
+          "addedByName": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "mime",
+          "bytes",
+          "url",
+          "uploadedAt",
+          "purpose"
+        ]
+      },
+      "MaterialRequestEventDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "created",
+              "preparing",
+              "delivered",
+              "rejected",
+              "acknowledged"
+            ]
+          },
+          "actionLabel": {
+            "type": "string"
+          },
+          "fromState": {
+            "type": "string",
+            "nullable": true
+          },
+          "toState": {
+            "type": "string",
+            "enum": [
+              "received",
+              "preparing",
+              "delivered",
+              "rejected"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "actorId": {
+            "type": "number"
+          },
+          "actorName": {
+            "type": "string"
+          },
+          "resultVersion": {
+            "type": "number"
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "actionLabel",
+          "toState",
+          "actorId",
+          "actorName",
+          "resultVersion",
+          "at"
+        ]
+      },
+      "MaterialRequestItemDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "book_pdf",
+              "worksheet",
+              "test_paper",
+              "other"
+            ]
+          },
+          "kindLabel": {
+            "type": "string"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "teacherId": {
+            "type": "number"
+          },
+          "teacherName": {
+            "type": "string"
+          },
+          "neededOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "body": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "received",
+              "preparing",
+              "delivered",
+              "rejected"
+            ]
+          },
+          "stateLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "assignedTo": {
+            "type": "number",
+            "nullable": true
+          },
+          "assignedToName": {
+            "type": "string",
+            "nullable": true
+          },
+          "deliveredBy": {
+            "type": "number",
+            "nullable": true
+          },
+          "deliveredByName": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejectReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "deliveredAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejectedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "acknowledgedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "overdue": {
+            "type": "boolean",
+            "description": "기한이 지났고 아직 전달·반려되지 않았는가"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaterialRequestFileDto"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaterialRequestEventDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "kindLabel",
+          "studentId",
+          "studentName",
+          "teacherId",
+          "teacherName",
+          "neededOn",
+          "body",
+          "state",
+          "stateLabel",
+          "version",
+          "createdAt",
+          "updatedAt",
+          "overdue",
+          "files",
+          "events"
+        ]
+      },
+      "MaterialRequestCountsDto": {
+        "type": "object",
+        "properties": {
+          "received": {
+            "type": "number"
+          },
+          "preparing": {
+            "type": "number"
+          },
+          "delivered": {
+            "type": "number"
+          },
+          "rejected": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "received",
+          "preparing",
+          "delivered",
+          "rejected"
+        ]
+      },
+      "MaterialRequestsDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MaterialRequestItemDto"
+            }
+          },
+          "counts": {
+            "$ref": "#/components/schemas/MaterialRequestCountsDto"
+          }
+        },
+        "required": [
+          "items",
+          "counts"
+        ]
+      },
+      "MaterialRequestCreateDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "book_pdf",
+              "worksheet",
+              "test_paper",
+              "other"
+            ]
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "neededOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "더블클릭·네트워크 재시도를 같은 요청으로 수렴시키는 키"
+          },
+          "files": {
+            "maxItems": 3,
+            "description": "요청을 설명하는 선택 첨부. kind=material-request",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileUploadDto"
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "studentId",
+          "neededOn",
+          "body",
+          "requestKey"
+        ]
+      },
+      "MaterialRequestWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/MaterialRequestItemDto"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "같은 actor·requestKey·payload의 재시도인가"
+          }
+        },
+        "required": [
+          "item",
+          "replayed"
+        ]
+      },
+      "MaterialRequestTransitionDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "preparing",
+              "delivered",
+              "rejected"
+            ]
+          },
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1,
+            "description": "화면이 읽은 현재 version"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "반려일 때 필수인 사유"
+          },
+          "files": {
+            "maxItems": 3,
+            "description": "전달 완료일 때 1개 이상 필수. kind=material-request",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FileUploadDto"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "expectedVersion",
+          "requestKey"
+        ]
+      },
+      "MaterialRequestAcknowledgeDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "requestKey"
         ]
       },
       "StudentRegistrationPeriodDto": {

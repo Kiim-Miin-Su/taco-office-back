@@ -130,6 +130,8 @@ interface FileAccessFacts {
   expenseRequester: boolean;
   reportLinked: boolean;
   reportTeacher: boolean;
+  materialRequestLinked?: boolean;
+  materialRequestTeacher?: boolean;
   /** C79: 공용 FILE이 실제 컨설팅 링크에 연결됐는지와 현재 사용자의 csCanFull 결과. */
   consultingLinked?: boolean;
   consultingActive?: boolean;
@@ -162,6 +164,10 @@ export function canReadStoredFile(user: RequestUser, kind: FileKind, facts: File
     case 'report-png':
       return mine || facts.reportTeacher
         || facts.reportLinked && hasPerm(user.role, 'canAdminPage', user.perms);
+    case 'material-request':
+      return facts.materialRequestLinked === true
+        && (facts.materialRequestTeacher === true
+          || hasPerm(user.role, 'canAdminPage', user.perms) && hasPerm(user.role, 'canGpaPack', user.perms));
     case 'guide-png':
     case 'meet-brief':
       return mine || hasPerm(user.role, 'canAdminPage', user.perms);
@@ -209,6 +215,12 @@ export class FilesService {
                    -- W11 7-3 ① F3 — 장마다 리포트가 적혀 있으면 그 리포트의 강사만(옛 행은 rep_id NULL → 묶음 전체)
                    AND (p.rep_id IS NULL OR p.rep_id=r.id)
               ) AS report_teacher,
+              EXISTS (SELECT 1 FROM material_request_file mf WHERE mf.file_id=f.id) AS material_request_linked,
+              EXISTS (
+                SELECT 1 FROM material_request_file mf
+                  JOIN material_request mr ON mr.id=mf.material_request_id
+                 WHERE mf.file_id=f.id AND mr.teacher_id=$3
+              ) AS material_request_teacher,
               EXISTS (SELECT 1 FROM cons_file cf WHERE cf.file_id=f.id) AS consulting_linked,
               EXISTS (
                 SELECT 1 FROM cons_file cf JOIN cons c ON c.id=cf.cons_id
@@ -226,6 +238,7 @@ export class FilesService {
     )) as Array<{
       kind: FileKind; uploaded_by: string | null; book_linked: boolean; expense_linked: boolean;
       expense_requester: boolean; report_linked: boolean; report_teacher: boolean;
+      material_request_linked: boolean; material_request_teacher: boolean;
       consulting_linked: boolean; consulting_active: boolean; consulting_full_access: boolean;
     }>;
     if (!row) throw new NotFoundException({ code: 'FILE_NOT_FOUND', message: '파일을 찾을 수 없습니다' });
@@ -236,6 +249,8 @@ export class FilesService {
       expenseRequester: row.expense_requester,
       reportLinked: row.report_linked,
       reportTeacher: row.report_teacher,
+      materialRequestLinked: row.material_request_linked,
+      materialRequestTeacher: row.material_request_teacher,
       consultingLinked: row.consulting_linked,
       consultingActive: row.consulting_active,
       consultingFullAccess: row.consulting_full_access,

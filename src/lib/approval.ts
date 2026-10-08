@@ -5,7 +5,7 @@
  */
 
 /**
- * 결재 흐름 — 공통 결재 다섯 갈래와 강사 리포트를 **한 모양으로** 만든다 (D-R26 · §14 · §75).
+ * 결재 흐름 — 공통 결재 갈래와 강사 리포트를 **한 모양으로** 만든다 (D-R26 · §14 · §75).
  *
  * 승인 대기함(§14)과 결재 흐름 오버레이(§75)는 **같은 데이터를 다르게 묶어 보여 줄 뿐**이다.
  * 두 화면이 각자 정규화하면 배지 숫자와 목록이 어긋난다 — 그래서 여기 한 곳에서만 만든다.
@@ -13,7 +13,8 @@
  * 순수 함수다. 행을 읽어 오는 일은 서비스가 하고, 여기서는 모양만 바꾼다 —
  * DB 없이 테스트할 수 있어야 규칙이 굳는다.
  *
- * §75의 공통 다섯 갈래(RPT·PLAN·REQ·CHREQ·GPAPACK)에 §14의 강사 리포트(REP)를 더한다.
+ * §75의 여섯 갈래(RPT·PLAN·REQ·CHREQ·MATREQ·EXPENSE)에 §14의 강사 리포트(REP)를 더한다.
+ * GPAPACK은 과거 자료 전달 이력으로만 보존하고 활성 결재 타일에는 투영하지 않는다.
  * `ApFlow.missingKinds`는 저장소가 실제로 없는 종류가 생길 때만 쓴다.
  */
 
@@ -112,7 +113,7 @@ export function selfApprovalSqlGuard(
 }
 
 /** §75 공통 여섯 갈래(지출 포함 · H-83) + §14 강사 리포트 (D-R26 · D-R34) */
-export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense', 'suggestion', 'missing'] as const;
+export const AP_KINDS = ['rep', 'rpt', 'plan', 'req', 'chreq', 'matreq', 'gpapack', 'expense', 'suggestion', 'missing'] as const;
 export type ApKind = (typeof AP_KINDS)[number];
 
 /**
@@ -122,17 +123,17 @@ export type ApKind = (typeof AP_KINDS)[number];
  * 테스트 시나리오 H-83 「결재 흐름에 집계」 · H-84 「결재 흐름 되돌아온 것에 붉게 표시」. 결재 · 반려는 여전히 회계 「나간 돈」
  * (POST /accounting/expenses/:id/review · canMoney)가 하고 §75 는 이동만 한다(D-R27). §14 승인 대기함에는 넣지 않는다(AP_INBOX_KINDS).
  */
-export const APPROVAL_FLOW_KINDS = ['rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense'] as const;
+export const APPROVAL_FLOW_KINDS = ['rpt', 'plan', 'req', 'chreq', 'matreq', 'expense'] as const;
 export type ApprovalFlowKind = (typeof APPROVAL_FLOW_KINDS)[number];
 export const APPROVAL_FLOW_RECIPIENTS = ['ceo', 'head'] as const;
 export type ApprovalFlowRecipient = (typeof APPROVAL_FLOW_RECIPIENTS)[number];
 
 export const APPROVAL_FLOW_KIND_LABEL: Record<ApprovalFlowKind, string> = {
-  rpt: '대표 보고', plan: '기획 결재', req: '강사 요청', chreq: '변경 요청', gpapack: '자료 요청', expense: '지출 결재',
+  rpt: '대표 보고', plan: '기획 결재', req: '강사 요청', chreq: '변경 요청', matreq: '자료 요청', expense: '지출 결재',
 };
 
 export const APPROVAL_FLOW_RECIPIENT: Record<ApprovalFlowKind, ApprovalFlowRecipient> = {
-  rpt: 'ceo', plan: 'ceo', req: 'head', chreq: 'head', gpapack: 'head', expense: 'ceo',
+  rpt: 'ceo', plan: 'ceo', req: 'head', chreq: 'head', matreq: 'head', expense: 'ceo',
 };
 
 export const APPROVAL_FLOW_RECIPIENT_NAMES = ['대표', '실장'] as const;
@@ -159,7 +160,8 @@ export const AP_KIND_LABEL: Record<ApKind, string> = {
   plan: '기획',
   req: '요청',
   chreq: '변경 요청',
-  gpapack: '자료 요청',
+  matreq: '자료 요청',
+  gpapack: '과거 자료 전달',
   expense: '지출',
   suggestion: '건의 사항',
   missing: '빠진 것',
@@ -167,7 +169,7 @@ export const AP_KIND_LABEL: Record<ApKind, string> = {
 
 /** §14 필터 순서와 낱말. 화면은 이 표를 복제하지 않고 응답의 `categories`를 그린다. */
 export const AP_INBOX_CATEGORIES = [
-  'schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'missing', 'other',
+  'schedule_change', 'book_change', 'tz_change', 'wage_change', 'suggestion', 'gpa_request', 'material_request', 'missing', 'other',
 ] as const;
 export type ApInboxCategory = (typeof AP_INBOX_CATEGORIES)[number];
 
@@ -178,6 +180,7 @@ export const AP_INBOX_CATEGORY_LABEL: Record<ApInboxCategory, string> = {
   wage_change: '시급 변경',
   suggestion: '건의 사항',
   gpa_request: 'GPA 요청',
+  material_request: '자료 요청',
   missing: '빠진 것',
   other: '기타',
 };
@@ -375,11 +378,11 @@ export const AP_ACTIONABLE_KINDS: ApKind[] = ['req', 'chreq'];
 /**
  * §14 승인 대기함에 **드는** 갈래 — 원문 슬라이드 14 「데이터: REQ(강사 요청), SER를 훑어 실시간 계산」.
  *
- * 강사가 올린 요청(요청 · 변경 요청 · 건의)과 SER 를 훑어 계산한 「빠진 것」뿐이다.
- * 자료 요청(gpapack)은 여기 없다 — §75 결재 흐름의 「자료 요청 → 실장에게」 줄로만 선다(g2 14-2).
+ * 강사가 올린 요청(요청 · 변경 요청 · 일반 자료요청 · 건의)과 SER 를 훑어 계산한 「빠진 것」이다.
+ * 레거시 자료 전달(gpapack)은 여기 없고, 최신 일반 자료요청(matreq)은 독립 분류로 선다.
  * 레일 배지(`inboxCount`)도 이 목록에서 세므로 두 곳이 갈리지 않는다.
  */
-export const AP_INBOX_KINDS: readonly ApKind[] = ['req', 'chreq', 'suggestion', 'missing'];
+export const AP_INBOX_KINDS: readonly ApKind[] = ['req', 'chreq', 'matreq', 'suggestion', 'missing'];
 
 export interface ApFlow {
   /** 되돌아온 것 → 기다리는 것 → 내가 올린 것 순 (§75) */
@@ -517,16 +520,17 @@ export function approvalFlowProjection(
 /**
  * §14의 분류는 저장 표 이름이 아니라 업무 의미다. 이 함수 한 곳에서만 대응한다.
  *
- * **자료 요청(gpapack)은 「GPA 요청」이 아니다**(g2 14-2 · D-R44). 원문 §14 의 GPA 요청 카드는
+ * **레거시 자료 전달(gpapack)은 「GPA 요청」이 아니다**(g2 14-2 · D-R44). 원문 §14 의 GPA 요청 카드는
  * 강사가 올린 GPA 회차 요청(「Sophia · 박하경 · Quiz 대비 · 20:00–20:40 → 줌 배정 후 확정」)이고,
- * 같은 두 줄이 §75 에서는 「강사 요청」으로 선다 — 원천이 REQ(강사 요청)다. 자료 요청은 §75 의
- * 「자료 요청 → 실장에게」 갈래라 여기서는 「기타」로 두고, §14 목록에는 넣지 않는다(`AP_INBOX_KINDS`).
+ * 같은 두 줄이 §75 에서는 「강사 요청」으로 선다 — 원천이 REQ(강사 요청)다. 최신 일반 자료요청은
+ * MATREQ의 `material_request` 분류이며, 레거시 GPAPACK은 「기타」로 두고 §14 목록에 넣지 않는다.
  * 강사 쪽 입력은 N-99(W11)로 생겼다 — 강사 캘린더의 「GPA 회차 요청」이 REQ `gpa_request` 한 줄을 쓴다(칩은 0 이어도 선다 · 어휘다).
  */
 export function approvalInboxCategory(row: ApRow): ApInboxCategory {
   if (row.kind === 'missing') return 'missing';
   if (row.kind === 'suggestion') return 'suggestion';
   if (row.kind === 'chreq') return 'schedule_change';
+  if (row.kind === 'matreq') return 'material_request';
   if (row.kind === 'req') {
     if (row.reqType === 'tz_change') return 'tz_change';
     if (row.reqType === 'wage_change') return 'wage_change';
@@ -581,7 +585,7 @@ export const CHREQ_REVIEW_FORBIDDEN_MESSAGE =
   '변경 요청은 시간표를 바꾸는 일이라 전체 편집 권한이 있어야 처리할 수 있습니다 — 결재 권한만으로는 처리하지 못합니다';
 
 /**
- * 공통 결재 다섯 갈래와 강사 리포트를 한 목록으로 묶는다.
+ * 공통 결재 갈래와 강사 리포트를 한 목록으로 묶는다.
  *
  * @param viewerId  「내가 올린 것」을 가르는 기준
  * @param canApprove 승인 권한이 있는가 — 없으면 `waiting` 에 남의 건이 들어가지 않는다 (D-R39)

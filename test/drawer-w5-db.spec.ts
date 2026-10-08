@@ -11,7 +11,7 @@
  *      EXC 키일 뿐 달력 날짜가 아니다(C84-b 가 `conflicts()` 에 적어 둔 그 구분). 예전에는 키를
  *      달력 날짜로 넘겨, 다른 날로 옮긴 회차의 요청이 **엉뚱한 날**의 겹침을 보고 있었다.
  *   ② §14 승인 대기함의 원천은 원문 슬라이드 14 의 「데이터: REQ(강사 요청), SER」 이다 —
- *      자료 요청(gpapack)은 강사가 올린 요청이 아니라 §75 「자료 요청 → 실장에게」 줄이다(g2 14-2).
+ *      최신 자료 요청(matreq)과 과거 자료 전달(gpapack)을 분리한다.
  *   ③ §75 의 강사 요청 줄은 원문 그대로 제목 「강사 요청」 + 회색 부제 요청자다(g2 75-6).
  *   ④ §16 칩 차례는 원문 「작성 독촉 · 재알람 · 리포트 · 요청 처리 · 일정 변경」이다(g2 16-3).
  *
@@ -86,20 +86,24 @@ describe('① 변경 요청 겹침 미리보기 — 실제로 놓인 날을 본�
   });
 });
 
-describe('② §14 승인 대기함의 원천 — 강사 요청과 계산한 누락뿐이다 (DB 독립)', () => {
-  it('자료 요청은 「GPA 요청」이 아니다 — 분류는 기타, §14 목록에는 들지 않는다', () => {
+describe('② §14 승인 대기함의 원천 — 최신 일반 자료요청과 레거시 GPA 자료묶음을 구분한다 (DB 독립)', () => {
+  it('MATREQ는 자료 요청 분류로 들고 레거시 GPAPACK은 GPA 요청으로 오분류하지 않는다', () => {
     expect(approvalInboxCategory(row({ kind: 'gpapack' }))).toBe('other');
+    expect(approvalInboxCategory(row({ kind: 'matreq' }))).toBe('material_request');
     const flow = apFlow([
       row({ id: 1 }),
       row({ kind: 'gpapack', id: 2, title: '시험 대비 자료 요청', sub: '기한 10-02' }),
+      row({ kind: 'matreq', id: 3, title: '워크시트 자료 요청', sub: '김학생 · 필요 2026-10-02' }),
     ], HEAD, true);
-    expect(flow.inbox.map((r) => r.kind)).toEqual(['req']);
-    expect(flow.inboxCount).toBe(1);
+    expect(flow.inbox.map((r) => r.kind)).toEqual(['req', 'matreq']);
+    expect(flow.inboxCount).toBe(2);
     // 칩은 어휘다 — 0 이어도 선다. GPA 요청 칩도 그대로 있다
     expect(flow.categories.find((c) => c.key === 'gpa_request')).toEqual({ key: 'gpa_request', label: 'GPA 요청', count: 0 });
     expect(flow.categories.find((c) => c.key === 'other')?.count).toBe(0);
-    // §75 결재 흐름은 자료 요청을 그대로 센다 — 「자료 요청 → 실장에게」
-    expect(flow.waiting.map((r) => r.kind)).toContain('gpapack');
+    expect(flow.categories.find((c) => c.key === 'material_request'))
+      .toEqual({ key: 'material_request', label: '자료 요청', count: 1 });
+    // 공용 approvals 원장에는 역사 GPAPACK도 남지만 §75의 최신 자료요청 갈래는 MATREQ다.
+    expect(flow.waiting.map((r) => r.kind)).toEqual(expect.arrayContaining(['gpapack', 'matreq']));
   });
 });
 
@@ -196,11 +200,11 @@ d('① · ② 서랍 응답 — 스크래치 DB', () => {
   });
 
   it('자료 요청은 §14 목록에 들지 않고 §75 결재 흐름에는 그대로 선다', async () => {
-    const [pack] = (await q.query(
+    await q.query(
       `INSERT INTO gpapack (pack_type, title, effective_on, coordinator_id, created_by)
-       VALUES ('exam', '2학기 중간', '2026-10-02', $2, $1) RETURNING id`,
+       VALUES ('exam', '2학기 중간', '2026-10-02', $2, $1)`,
       [TEACHER, HEAD],
-    )) as Array<{ id: string }>;
+    );
     const [req] = (await q.query(
       `INSERT INTO req (staff_id, req_type, payload) VALUES ($1, 'wage_change', $2::jsonb) RETURNING id`,
       [TEACHER, JSON.stringify({ from: 40000, to: 45000 })],
@@ -212,8 +216,7 @@ d('① · ② 서랍 응답 — 스크래치 DB', () => {
     // 레일 배지는 목록과 같은 배열에서 센다
     expect(out.approvals.inboxCount).toBe(out.approvals.inbox.length);
 
-    const flowPack = out.approvalFlow.waiting.find((r) => r.kind === 'gpapack' && r.id === Number(pack.id))!;
-    expect(flowPack.title).toBe('시험 대비 자료 요청 · 2학기 중간');
+    expect(out.approvalFlow.tiles.some((r) => String(r.kind) === 'gpapack')).toBe(false);
     const flowReq = out.approvalFlow.waiting.find((r) => r.kind === 'req' && r.id === Number(req.id))!;
     expect(flowReq.title).toBe('강사 요청');
     expect(flowReq.sub).toBe('Sophia');

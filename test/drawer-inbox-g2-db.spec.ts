@@ -150,9 +150,7 @@ d('§14 · §16 서랍 응답 — 사유 · 자료 요청 제목 · 알림 제�
 
     // §75 결재 흐름도 같은 줄을 읽는다 — 제목·부제가 같이 따라온다 (D-R26)
     const flow = (await svc().all(HEAD, true, true, false, 'all')).approvalFlow;
-    const f = flow.waiting.find((r) => r.kind === 'gpapack' && r.id === Number(same.id))!;
-    expect(f.title).toBe('시험 대비 자료 요청');
-    expect(f.sub ?? '').not.toContain('AP Chem');
+    expect(flow.tiles.some((r) => String(r.kind) === 'gpapack')).toBe(false);
   });
 
   it('알림은 제목과 보낸 이의 역할 낱말을 싣는다 — 옛 행은 제목이 null 이다 (16-1 · 16-2)', async () => {

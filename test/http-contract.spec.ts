@@ -104,7 +104,7 @@ describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
     expect(drawer.properties?.approvalFlow).toMatchObject({
       allOf: [{ $ref: '#/components/schemas/ApprovalFlowDto' }],
     });
-    expect(item.properties?.kind).toMatchObject({ enum: ['rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense'] });
+    expect(item.properties?.kind).toMatchObject({ enum: ['rpt', 'plan', 'req', 'chreq', 'matreq', 'expense'] });
     expect(item.properties?.toName).toMatchObject({ enum: ['대표', '실장'] });
     expect(tile.properties?.toLabel).toMatchObject({ enum: ['대표에게', '실장에게'] });
   });

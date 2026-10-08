@@ -124,7 +124,7 @@ describe('apFlow — 세 묶음', () => {
     const f = apFlow([], ME, true);
     // 한동안 gpapack 이 「표가 없다」로 빠져 있었는데 표는 처음부터 있었다
     expect(f.missingKinds).toEqual([]);
-    expect(AP_KINDS).toEqual(['rep', 'rpt', 'plan', 'req', 'chreq', 'gpapack', 'expense', 'suggestion', 'missing']);
+    expect(AP_KINDS).toEqual(['rep', 'rpt', 'plan', 'req', 'chreq', 'matreq', 'gpapack', 'expense', 'suggestion', 'missing']);
     expect(AP_KINDS_MISSING.every((k) => (AP_KINDS as readonly string[]).includes(k))).toBe(true);
   });
 
@@ -140,9 +140,10 @@ describe('apFlow — 세 묶음', () => {
       row({ id: 3, kind: 'chreq', reqType: 'time_move' }),
       row({ id: 4, kind: 'suggestion' }),
       row({ id: 5, kind: 'missing' }),
+      row({ id: 7, kind: 'matreq' }),
       row({ id: 6, kind: 'gpapack', state: 'done' }),
     ], ME, true);
-    expect(f.inbox.map((r) => r.id)).toEqual([2, 3, 4, 5]);
+    expect(f.inbox.map((r) => r.id)).toEqual([2, 3, 4, 5, 7]);
     expect(f.inboxCount).toBe(f.inbox.length);
     expect(f.categories.find((c) => c.key === 'wage_change')?.count).toBe(1);
     expect(f.categories.find((c) => c.key === 'schedule_change')?.count).toBe(1);
@@ -176,7 +177,8 @@ describe('§75 approvalFlowProjection — exact 6종(지출 포함 · H-83 · N-
     row({ id: 2, kind: 'plan', byId: OTHER, state: 'back', why: '근거 부족' }),
     row({ id: 3, kind: 'req', byId: OTHER }),
     row({ id: 4, kind: 'chreq', byId: OTHER }),
-    row({ id: 5, kind: 'gpapack', byId: ME }),
+    row({ id: 5, kind: 'matreq', byId: ME }),
+    row({ id: 12, kind: 'gpapack', byId: ME }),
     row({ id: 6, kind: 'rep' }),
     row({ id: 7, kind: 'suggestion' }),
     row({ id: 8, kind: 'missing' }),
@@ -190,7 +192,7 @@ describe('§75 approvalFlowProjection — exact 6종(지출 포함 · H-83 · N-
       ['plan', '기획 결재', '대표에게', 0],
       ['req', '강사 요청', '실장에게', 1],
       ['chreq', '변경 요청', '실장에게', 1],
-      ['gpapack', '자료 요청', '실장에게', 0],
+      ['matreq', '자료 요청', '실장에게', 0],
       ['expense', '지출 결재', '대표에게', 1],
     ]);
     expect(flow.total).toBe(flow.waiting.length);
