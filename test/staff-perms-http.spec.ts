@@ -43,7 +43,7 @@ d('W11 P — 사람별 권한 예외 · §76 권한 표 · 내 지출 신청 · 
   const SECRET = 'pp-meeting-secret-9x';
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> => ds.query(sql, p) as Promise<T[]>;
-  const api = (m: 'get' | 'post' | 'patch' | 'delete', url: string, token = tokens.ceo) =>
+  const api = (m: 'get' | 'post' | 'put' | 'patch' | 'delete', url: string, token = tokens.ceo) =>
     (request(app.getHttpServer()) as unknown as Record<string, (u: string) => request.Test>)[m](url)
       .timeout({ response: 8000, deadline: 15000 })
       .set('Authorization', `Bearer ${token}`);
@@ -164,6 +164,13 @@ d('W11 P — 사람별 권한 예외 · §76 권한 표 · 내 지출 신청 · 
     const staffCount = async (loginId: string) =>
       Number((await q<{ n: string }>(`SELECT count(*)::text AS n FROM staff WHERE lower(login_id) = lower($1)`, [loginId]))[0].n);
     try {
+      // 이전 실행이 테스트 프로세스 중단으로 finally 전에 끝났어도 고정 login_id fixture를 회수한다.
+      const stale = await q<{ id: string }>(`SELECT id FROM staff WHERE login_id = ANY($1)`, [['pp-grant-mgr', 'pp-grant-t', 'pp-grant-mgr2']]);
+      const staleIds = stale.map((row) => Number(row.id));
+      if (staleIds.length > 0) {
+        await q(`DELETE FROM log WHERE entity = 'STAFF' AND entity_id = ANY($1)`, [staleIds]);
+        await q(`DELETE FROM staff WHERE id = ANY($1)`, [staleIds]);
+      }
       // 앞 시험이 중간에 멈춰도 같은 자리에서 시작한다(역할 따름 → 끔)
       await q(`UPDATE staff SET can_money = NULL WHERE id = $1`, [MGR]);
       await api('patch', `/drawer/staff/${MGR}`).send({ perms: { canMoney: false } }).expect(200);
@@ -282,10 +289,18 @@ d('W11 P — 사람별 권한 예외 · §76 권한 표 · 내 지출 신청 · 
 
   /* ── BOC-13 강사 GPA 신규 요청 퇴역 ─────────────────────────────────────── */
 
-  it('「GPA 회차 요청」 계약은 역할과 무관하게 제거되어 404다', async () => {
+  it('GPA 과거 원장은 관리자만 읽고 신규 writer·강사 요청 계약은 모두 닫힌다', async () => {
+    await api('get', '/gpa').expect(200);
+    await api('get', '/gpa', tokens.teacher).expect(403);
+    await api('post', '/gpa/uses').send({}).expect(404);
+    await api('patch', '/gpa/uses/1').send({}).expect(404);
+    await api('delete', '/gpa/uses/1').expect(404);
+    await api('put', '/gpa/allocs').send({}).expect(404);
+    await api('post', '/gpa/cycles/1/close').send({}).expect(404);
     await api('get', '/teacher/gpa-request-options', tokens.teacher).expect(404);
     await api('get', '/teacher/gpa-request-options', tokens.mgr).expect(404);
     await api('get', '/teacher/gpa-services', tokens.teacher).expect(404);
+    await api('post', '/teacher/requests', tokens.teacher).send({ reqType: 'gpa_request' }).expect(400);
   });
 
   /* ── N-73 줌 계정 ──────────────────────────────────────────────────────── */
