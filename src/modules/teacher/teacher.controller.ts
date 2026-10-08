@@ -15,6 +15,7 @@ import { canAdminPage, isRole, type RequestUser } from '../../common/perm';
 import {
   TeacherDiagCreateDto, TeacherGuideDiagDto,
   TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHistoryDto, TeacherHistoryQueryDto, TeacherHomeDto,
+  TeacherLessonHubDto, TeacherLessonHubParamsDto, TeacherLessonHubQueryDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherShellDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto, TeacherUnavQueryDto,
@@ -59,6 +60,24 @@ export class TeacherController {
   async home(@CurrentUser() user: RequestUser): Promise<TeacherHomeDto> {
     this.assertTeacher(user);
     return this.svc.home(user.id);
+  }
+
+  @Get('lessons/:serId/:onDate/hub')
+  @ApiOperation({
+    summary: '강사 수업 허브 — 본인 회차의 리포트·안내·학생 이력·일정 변경 진입점',
+    description: 'serId+원래 회차일+실제 수업일을 함께 검증한다. 없는 회차와 다른 강사 회차는 같은 404이며, 이동된 stale URL은 실제 날짜를 포함한 409다.',
+  })
+  @ApiOkResponse({ type: TeacherLessonHubDto })
+  @ApiForbiddenResponse({ description: '강사 전용' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'TEACHER_LESSON_NOT_FOUND — 없음 또는 다른 강사의 회차' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'TEACHER_LESSON_MOVED — 실제 수업일이 요청 URL과 다름' })
+  async lessonHub(
+    @CurrentUser() user: RequestUser,
+    @Param() params: TeacherLessonHubParamsDto,
+    @Query() query: TeacherLessonHubQueryDto,
+  ): Promise<TeacherLessonHubDto> {
+    this.assertTeacher(user);
+    return this.svc.lessonHub(user.id, params.serId, params.onDate, query.date);
   }
 
   @Get('history')

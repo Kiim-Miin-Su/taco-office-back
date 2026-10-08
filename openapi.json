@@ -18004,6 +18004,114 @@
         ]
       }
     },
+    "/teacher/lessons/{serId}/{onDate}/hub": {
+      "get": {
+        "description": "serId+원래 회차일+실제 수업일을 함께 검증한다. 없는 회차와 다른 강사 회차는 같은 404이며, 이동된 stale URL은 실제 날짜를 포함한 409다.",
+        "operationId": "TeacherController_lessonHub",
+        "parameters": [
+          {
+            "name": "serId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "onDate",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            }
+          },
+          {
+            "name": "date",
+            "required": true,
+            "in": "query",
+            "description": "현재 화면이 연 실제 수업일. 옮긴 회차의 stale URL을 409로 검출한다.",
+            "schema": {
+              "format": "date",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherLessonHubDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "강사 전용"
+          },
+          "404": {
+            "description": "TEACHER_LESSON_NOT_FOUND — 없음 또는 다른 강사의 회차",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "TEACHER_LESSON_MOVED — 실제 수업일이 요청 URL과 다름",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 수업 허브 — 본인 회차의 리포트·안내·학생 이력·일정 변경 진입점",
+        "tags": [
+          "teacher"
+        ]
+      }
+    },
     "/teacher/history": {
       "get": {
         "operationId": "TeacherController_history",
@@ -43439,6 +43547,418 @@
           "settings"
         ]
       },
+      "TeacherGuideLessonDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number",
+            "description": "이 회차의 시리즈 id"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "규칙상 원래 날짜 YYYY-MM-DD (KST) — 회차의 키"
+          },
+          "date": {
+            "type": "string",
+            "description": "실제 수업일 YYYY-MM-DD (KST) — 옮긴 회차는 옮긴 날. 이번 주 판정과 표시는 이 값 (MEETING-MOVE)"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "durMin": {
+            "type": "number"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "date",
+          "startMin",
+          "durMin"
+        ]
+      },
+      "TeacherGuideBookDto": {
+        "type": "object",
+        "properties": {
+          "issueId": {
+            "type": "number"
+          },
+          "code": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "level": {
+            "type": "string",
+            "nullable": true,
+            "description": "교재 레벨 — 코드표 레벨(N-47) 낱말이 있으면 그것, 아직이면 옛 원문(lib.level) · 서가와 같은 함수(W11 A 후속)"
+          },
+          "seTe": {
+            "type": "string",
+            "description": "SE | TE"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "wait",
+              "auto",
+              "ok",
+              "returned"
+            ],
+            "description": "배부 상태 — wait 승인 대기 · auto 전달 대기 · ok 사용 중 · returned 회수(교재 완료)"
+          },
+          "stateLabel": {
+            "type": "string",
+            "description": "상태 낱말 — 서가·§38 과 같은 표(ISSUE_STATE_LABEL)"
+          },
+          "issuedOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "배부일 YYYY-MM-DD — 배부 전(wait · auto)이면 null"
+          },
+          "returnedOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "반환일 — null 이면 사용 중"
+          },
+          "reissuedFrom": {
+            "type": "number",
+            "nullable": true,
+            "description": "이 배부가 이어받은 이전 배부(회수·취소·반려)의 issueId — 없으면 null"
+          },
+          "reissuedTo": {
+            "type": "number",
+            "nullable": true,
+            "description": "이 배부를 이어받은 새 배부의 issueId — 없으면 null(아직 재배부하지 않음)"
+          },
+          "changePending": {
+            "type": "boolean",
+            "description": "이 교재에 진행 중인 변경 요청이 있는가 — 「변경 요청」이 「변경 요청 중」으로 선다(N-99)"
+          },
+          "changeRequestable": {
+            "type": "boolean",
+            "description": "「변경 요청」이 눌리는가 — 쓰는 중(사용 중)이고 열린 요청이 없을 때만. 쓰기와 같은 판정(N-99)"
+          }
+        },
+        "required": [
+          "issueId",
+          "code",
+          "title",
+          "seTe",
+          "state",
+          "stateLabel",
+          "issuedOn",
+          "reissuedFrom",
+          "reissuedTo"
+        ]
+      },
+      "TeacherGuideDiagDto": {
+        "type": "object",
+        "properties": {
+          "onDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "응시일 YYYY-MM-DD"
+          },
+          "levelSummary": {
+            "type": "string"
+          },
+          "strengths": {
+            "type": "string",
+            "nullable": true
+          },
+          "weaknesses": {
+            "type": "string",
+            "nullable": true
+          },
+          "curriculum": {
+            "type": "string",
+            "nullable": true,
+            "description": "권장 커리큘럼 — 원문 04 진단 리포트의 둘째 줄"
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true,
+            "description": "쓴 사람 — 조회하는 쪽이 누구 글인지 알아야 한다"
+          }
+        },
+        "required": [
+          "levelSummary"
+        ]
+      },
+      "TeacherGuideNoteDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "body": {
+            "type": "string"
+          },
+          "authorName": {
+            "type": "string",
+            "nullable": true,
+            "description": "적은 사람"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "적은 시각 — KST ISO(…+09:00)"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "authorName",
+          "createdAt"
+        ]
+      },
+      "TeacherGuideStudentDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "grade": {
+            "type": "string",
+            "nullable": true
+          },
+          "school": {
+            "type": "string",
+            "nullable": true
+          },
+          "targetExam": {
+            "type": "string",
+            "nullable": true
+          },
+          "guidance": {
+            "type": "string",
+            "nullable": true,
+            "description": "지도 강도 — stu.guidance 원문 (미설정 null)"
+          },
+          "lang": {
+            "type": "string",
+            "nullable": true,
+            "description": "수업 언어 — stu.lang 원문 (ko·en 등)"
+          },
+          "weekCount": {
+            "type": "number",
+            "description": "이번 주 내 수업 횟수 (취소 제외)"
+          },
+          "lessons": {
+            "description": "이번 주 내 수업 회차 (시각 순)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherGuideLessonDto"
+            }
+          },
+          "books": {
+            "description": "교재 — 사용 중 먼저, 반환분은 이력",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherGuideBookDto"
+            }
+          },
+          "diag": {
+            "nullable": true,
+            "description": "최신 진단 — 없으면 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherGuideDiagDto"
+              }
+            ]
+          },
+          "notes": {
+            "description": "인수인계 메모 — 관리자 · 매니저가 적은 줄, 최근 것부터 (N-36 ② · 강사 원문 27 · 44 「이전 강사 인수인계」 · 학부모에게 나가지 않는다)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherGuideNoteDto"
+            }
+          }
+        },
+        "required": [
+          "studentId",
+          "name",
+          "weekCount",
+          "lessons",
+          "books",
+          "notes"
+        ]
+      },
+      "TeacherHistoryStudentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "TeacherLessonHubHistoryItemDto": {
+        "type": "object",
+        "properties": {
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "startMin": {
+            "type": "number"
+          },
+          "durMin": {
+            "type": "number"
+          },
+          "kindKey": {
+            "type": "string"
+          },
+          "subKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "offline",
+              "online"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentItems": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherHistoryStudentDto"
+            }
+          },
+          "repState": {
+            "type": "string",
+            "enum": [
+              "na",
+              "plan",
+              "none",
+              "draft",
+              "wait",
+              "ok",
+              "rej"
+            ]
+          },
+          "canceled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "serId",
+          "onDate",
+          "date",
+          "startMin",
+          "durMin",
+          "kindKey",
+          "mode",
+          "studentItems",
+          "repState",
+          "canceled"
+        ]
+      },
+      "TeacherLessonHubCapabilityDto": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "열 수 없을 때 화면에 그대로 보여 줄 서버 사유"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "TeacherLessonHubCapabilitiesDto": {
+        "type": "object",
+        "properties": {
+          "report": {
+            "$ref": "#/components/schemas/TeacherLessonHubCapabilityDto"
+          },
+          "guide": {
+            "$ref": "#/components/schemas/TeacherLessonHubCapabilityDto"
+          },
+          "history": {
+            "$ref": "#/components/schemas/TeacherLessonHubCapabilityDto"
+          },
+          "scheduleChange": {
+            "$ref": "#/components/schemas/TeacherLessonHubCapabilityDto"
+          }
+        },
+        "required": [
+          "report",
+          "guide",
+          "history",
+          "scheduleChange"
+        ]
+      },
+      "TeacherLessonHubDto": {
+        "type": "object",
+        "properties": {
+          "lesson": {
+            "$ref": "#/components/schemas/TeacherLessonDto"
+          },
+          "guideStudents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherGuideStudentDto"
+            }
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherLessonHubHistoryItemDto"
+            }
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/TeacherLessonHubCapabilitiesDto"
+          }
+        },
+        "required": [
+          "lesson",
+          "guideStudents",
+          "history",
+          "capabilities"
+        ]
+      },
       "TeacherHistoryStatsDto": {
         "type": "object",
         "properties": {
@@ -43471,21 +43991,6 @@
           "writtenMinutes",
           "unwrittenCount",
           "unwrittenMinutes"
-        ]
-      },
-      "TeacherHistoryStudentDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name"
         ]
       },
       "TeacherHistoryLessonDto": {
@@ -43877,260 +44382,6 @@
           "lessons",
           "settlement",
           "bonusRules"
-        ]
-      },
-      "TeacherGuideLessonDto": {
-        "type": "object",
-        "properties": {
-          "serId": {
-            "type": "number",
-            "description": "이 회차의 시리즈 id"
-          },
-          "onDate": {
-            "type": "string",
-            "description": "규칙상 원래 날짜 YYYY-MM-DD (KST) — 회차의 키"
-          },
-          "date": {
-            "type": "string",
-            "description": "실제 수업일 YYYY-MM-DD (KST) — 옮긴 회차는 옮긴 날. 이번 주 판정과 표시는 이 값 (MEETING-MOVE)"
-          },
-          "startMin": {
-            "type": "number"
-          },
-          "durMin": {
-            "type": "number"
-          },
-          "subKey": {
-            "type": "string",
-            "nullable": true
-          },
-          "title": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "serId",
-          "onDate",
-          "date",
-          "startMin",
-          "durMin"
-        ]
-      },
-      "TeacherGuideBookDto": {
-        "type": "object",
-        "properties": {
-          "issueId": {
-            "type": "number"
-          },
-          "code": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "subKey": {
-            "type": "string",
-            "nullable": true
-          },
-          "level": {
-            "type": "string",
-            "nullable": true,
-            "description": "교재 레벨 — 코드표 레벨(N-47) 낱말이 있으면 그것, 아직이면 옛 원문(lib.level) · 서가와 같은 함수(W11 A 후속)"
-          },
-          "seTe": {
-            "type": "string",
-            "description": "SE | TE"
-          },
-          "state": {
-            "type": "string",
-            "enum": [
-              "wait",
-              "auto",
-              "ok",
-              "returned"
-            ],
-            "description": "배부 상태 — wait 승인 대기 · auto 전달 대기 · ok 사용 중 · returned 회수(교재 완료)"
-          },
-          "stateLabel": {
-            "type": "string",
-            "description": "상태 낱말 — 서가·§38 과 같은 표(ISSUE_STATE_LABEL)"
-          },
-          "issuedOn": {
-            "type": "string",
-            "nullable": true,
-            "description": "배부일 YYYY-MM-DD — 배부 전(wait · auto)이면 null"
-          },
-          "returnedOn": {
-            "type": "string",
-            "nullable": true,
-            "description": "반환일 — null 이면 사용 중"
-          },
-          "reissuedFrom": {
-            "type": "number",
-            "nullable": true,
-            "description": "이 배부가 이어받은 이전 배부(회수·취소·반려)의 issueId — 없으면 null"
-          },
-          "reissuedTo": {
-            "type": "number",
-            "nullable": true,
-            "description": "이 배부를 이어받은 새 배부의 issueId — 없으면 null(아직 재배부하지 않음)"
-          },
-          "changePending": {
-            "type": "boolean",
-            "description": "이 교재에 진행 중인 변경 요청이 있는가 — 「변경 요청」이 「변경 요청 중」으로 선다(N-99)"
-          },
-          "changeRequestable": {
-            "type": "boolean",
-            "description": "「변경 요청」이 눌리는가 — 쓰는 중(사용 중)이고 열린 요청이 없을 때만. 쓰기와 같은 판정(N-99)"
-          }
-        },
-        "required": [
-          "issueId",
-          "code",
-          "title",
-          "seTe",
-          "state",
-          "stateLabel",
-          "issuedOn",
-          "reissuedFrom",
-          "reissuedTo"
-        ]
-      },
-      "TeacherGuideDiagDto": {
-        "type": "object",
-        "properties": {
-          "onDate": {
-            "type": "string",
-            "nullable": true,
-            "description": "응시일 YYYY-MM-DD"
-          },
-          "levelSummary": {
-            "type": "string"
-          },
-          "strengths": {
-            "type": "string",
-            "nullable": true
-          },
-          "weaknesses": {
-            "type": "string",
-            "nullable": true
-          },
-          "curriculum": {
-            "type": "string",
-            "nullable": true,
-            "description": "권장 커리큘럼 — 원문 04 진단 리포트의 둘째 줄"
-          },
-          "byName": {
-            "type": "string",
-            "nullable": true,
-            "description": "쓴 사람 — 조회하는 쪽이 누구 글인지 알아야 한다"
-          }
-        },
-        "required": [
-          "levelSummary"
-        ]
-      },
-      "TeacherGuideNoteDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "body": {
-            "type": "string"
-          },
-          "authorName": {
-            "type": "string",
-            "nullable": true,
-            "description": "적은 사람"
-          },
-          "createdAt": {
-            "type": "string",
-            "description": "적은 시각 — KST ISO(…+09:00)"
-          }
-        },
-        "required": [
-          "id",
-          "body",
-          "authorName",
-          "createdAt"
-        ]
-      },
-      "TeacherGuideStudentDto": {
-        "type": "object",
-        "properties": {
-          "studentId": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "grade": {
-            "type": "string",
-            "nullable": true
-          },
-          "school": {
-            "type": "string",
-            "nullable": true
-          },
-          "targetExam": {
-            "type": "string",
-            "nullable": true
-          },
-          "guidance": {
-            "type": "string",
-            "nullable": true,
-            "description": "지도 강도 — stu.guidance 원문 (미설정 null)"
-          },
-          "lang": {
-            "type": "string",
-            "nullable": true,
-            "description": "수업 언어 — stu.lang 원문 (ko·en 등)"
-          },
-          "weekCount": {
-            "type": "number",
-            "description": "이번 주 내 수업 횟수 (취소 제외)"
-          },
-          "lessons": {
-            "description": "이번 주 내 수업 회차 (시각 순)",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TeacherGuideLessonDto"
-            }
-          },
-          "books": {
-            "description": "교재 — 사용 중 먼저, 반환분은 이력",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TeacherGuideBookDto"
-            }
-          },
-          "diag": {
-            "nullable": true,
-            "description": "최신 진단 — 없으면 null",
-            "type": "object",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/TeacherGuideDiagDto"
-              }
-            ]
-          },
-          "notes": {
-            "description": "인수인계 메모 — 관리자 · 매니저가 적은 줄, 최근 것부터 (N-36 ② · 강사 원문 27 · 44 「이전 강사 인수인계」 · 학부모에게 나가지 않는다)",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TeacherGuideNoteDto"
-            }
-          }
-        },
-        "required": [
-          "studentId",
-          "name",
-          "weekCount",
-          "lessons",
-          "books",
-          "notes"
         ]
       },
       "TeacherGuidesDto": {

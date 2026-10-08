@@ -18,6 +18,7 @@ describe('TeacherController — 강사 전용 표면', () => {
   const svc = {
     home: jest.fn().mockResolvedValue(dto),
     shell: jest.fn().mockResolvedValue({ timezone: 'Asia/Seoul', tzLabel: 'Seoul · UTC+9', wageRate: null, notis: [], unread: 0, notiWindowDays: 30 }),
+    lessonHub: jest.fn().mockResolvedValue({ lesson: {}, guideStudents: [], history: [], capabilities: {} }),
     history: jest.fn().mockResolvedValue(hist),
     suggestions: jest.fn().mockResolvedValue({ used: 0, items: [] }),
     createSuggestion: jest.fn().mockResolvedValue({ id: 1 }),
@@ -53,6 +54,17 @@ describe('TeacherController — 강사 전용 표면', () => {
   it.each(['manager', 'admin', 'ceo'] as const)('%s 는 강사 머리줄도 403 — 남의 시급·알림을 읽을 경로가 없다', async (role) => {
     await expect(ctrl.shell(user(role))).rejects.toBeInstanceOf(ForbiddenException);
     expect(svc.shell).not.toHaveBeenCalled();
+  });
+
+  it('회차 허브는 실제 사용자의 id와 정확한 회차 identity로 위임한다', async () => {
+    await ctrl.lessonHub(user('teacher', 42), { serId: 7, onDate: '2026-10-08' }, { date: '2026-10-10' });
+    expect((svc.lessonHub as jest.Mock).mock.calls).toEqual([[42, 7, '2026-10-08', '2026-10-10']]);
+  });
+
+  it.each(['manager', 'admin', 'ceo'] as const)('%s 는 회차 허브도 403 — targetStaff 우회가 없다', async (role) => {
+    await expect(ctrl.lessonHub(user(role), { serId: 7, onDate: '2026-10-08' }, { date: '2026-10-08' }))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(svc.lessonHub).not.toHaveBeenCalled();
   });
 
   it('히스토리는 요청 월이 아니라 서버 KST 직전 달로 고정해 위임한다', async () => {

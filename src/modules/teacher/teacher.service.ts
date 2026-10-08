@@ -9,14 +9,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Ser } from '../../entities';
 import {
-  ATTENDANCE_CANCEL_REASON_LABEL, REPORT_UNWRITTEN_CANDIDATE_DB, payoutConfirmed, type AttendanceCancelReason,
+  ATTENDANCE_CANCEL_REASON_LABEL, REPORT_UNWRITTEN_CANDIDATE_DB,
+  effectiveRepStateFromEnded, payoutConfirmed, type AttendanceCancelReason,
 } from '../../lib/rules';
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import {
   BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL,
   loadBonusRules, payoutBreakdown, payoutSettleLabel, payoutSheet,
 } from '../../lib/payout-sheet';
-import { drawnDateOf, effectiveModeOf, kstAt, serStuOn } from '../../lib/sql';
+import { drawnDateOf, effectiveModeOf, kstAt, serStuOn, stuPausedOn } from '../../lib/sql';
 import { REQ_TYPE_LABEL, labelOf, reqAsked, reqAskedLine } from '../../lib/approval';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory } from '../../lib/noti';
 import { wageRateAt } from '../../lib/wage';
@@ -24,6 +25,7 @@ import type {
   TeacherDiagCreateDto, TeacherGuideDiagDto, TeacherGuideStudentDto, TeacherGuidesDto,
   TeacherUnavBlockDto, TeacherUnavCreateDto, TeacherUnavDto,
   TeacherHistoryDto, TeacherHomeDto, TeacherLessonDto,
+  TeacherLessonHubDto, TeacherLessonHubHistoryItemDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
   TeacherNotiDto, TeacherShellDto,
@@ -447,6 +449,155 @@ export class TeacherService {
       payload: {
         issueId: dto.issueId, libId: Number(issue.lib_id), bookTitle: String(issue.title),
         subjectName: (issue.subject_name as string | null) ?? null, studentName: String(issue.student_name), message: reason,
+      },
+    };
+  }
+
+  /**
+   * 회차별 수업 허브 — 강사 본인의 정확한 `serId + onDate + 실제 date`만 연다.
+   *
+   * BOC-05D-01 권고안 채택(2026-10-08): 홈·일/주/월 캘린더·리포트에서 같은 회차를
+   * 열 수 있도록 서버가 권한과 이동된 실제 날짜를 함께 검증하고, 안내·학생 이력의
+   * 구조화 read model을 한 번에 돌려준다. 정책 변경 시 TeacherLessonHub DTO/OpenAPI/generated
+   * schema, TeacherSchedule/TeacherLessonHub, BOC-05 scenario·문서·portfolio를 함께 갱신한다.
+   */
+  async lessonHub(teacherId: number, serId: number, onDate: string, requestedDate: string): Promise<TeacherLessonHubDto> {
+    const DRAWN = drawnDateOf('o');
+    const [row] = await this.q(
+      `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              to_char(${DRAWN},'YYYY-MM-DD') AS date,
+              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
+              (EXTRACT(EPOCH FROM (upper(o.span)-lower(o.span)))/60)::int AS dur_min,
+              s.kind_key, s.sub_key, ${effectiveModeOf('ex', 's')} AS mode, s.title,
+              rm.name AS room_name, rm.branch AS room_branch, z.label AS zacc_label,
+              o.canceled, ex.cancel_kind, k.rep AS reportable,
+              COALESCE(r.state::text,'none') AS stored_rep_state,
+              COALESCE(a.result::text,'completed') AS attendance_result,
+              upper(o.span) <= now() AS ended,
+              COALESCE(jsonb_agg(jsonb_build_object('id',st.id,'name',st.name) ORDER BY st.name,st.id)
+                FILTER (WHERE st.id IS NOT NULL),'[]'::jsonb) AS student_items
+         FROM ser_occ o
+         JOIN ser s ON s.id=o.ser_id
+         LEFT JOIN rep r ON r.ser_id=o.ser_id AND r.on_date=o.on_date
+         JOIN kind k ON k.key=COALESCE(r.kind_key,s.kind_key)
+         LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
+         LEFT JOIN exc ex ON ex.ser_id=o.ser_id AND ex.on_date=o.on_date
+         LEFT JOIN room rm ON rm.id=COALESCE(o.room_id,s.room_id)
+         LEFT JOIN zacc z ON z.id=o.zacc_id
+         LEFT JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+           AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+           AND NOT EXISTS (
+             SELECT 1 FROM exc ex2 JOIN exc_stu_out x ON x.exc_id=ex2.id AND x.student_id=ss.student_id
+              WHERE ex2.ser_id=o.ser_id AND ex2.on_date=o.on_date
+           )
+         LEFT JOIN stu st ON st.id=ss.student_id
+        WHERE ${TEACHER_OF}=$1 AND o.ser_id=$2 AND o.on_date=$3::date
+        GROUP BY o.ser_id,o.on_date,o.span,s.kind_key,s.sub_key,ex.mode,s.mode,s.title,
+                 rm.name,rm.branch,z.label,o.canceled,ex.cancel_kind,k.rep,r.state,a.result`,
+      [teacherId, serId, onDate],
+    );
+    // 존재하지 않는 회차와 다른 강사의 회차는 같은 404 — ID 탐색으로 담당 강사를 추측할 수 없게 한다.
+    if (!row) {
+      throw new NotFoundException({ code: 'TEACHER_LESSON_NOT_FOUND', message: '담당 수업을 찾을 수 없습니다.' });
+    }
+    const actualDate = String(row.date);
+    if (actualDate !== requestedDate) {
+      throw new ConflictException({
+        code: 'TEACHER_LESSON_MOVED',
+        message: '수업일이 변경되었습니다. 최신 일정에서 다시 열어 주세요.',
+        actualDate,
+      });
+    }
+
+    const studentItems = (row.student_items as Array<{ id: number | string; name: string }>).map((student) => ({
+      id: Number(student.id), name: String(student.name),
+    }));
+    const studentIds = studentItems.map((student) => student.id);
+    const canceled = Boolean(row.canceled) || row.attendance_result === 'canceled';
+    const repState = effectiveRepStateFromEnded(
+      String(row.stored_rep_state), Boolean(row.reportable) && !canceled, Boolean(row.ended),
+    );
+    const lesson: TeacherLessonDto = {
+      serId: Number(row.ser_id), onDate: String(row.on_date), date: actualDate,
+      startMin: Number(row.start_min), durMin: Number(row.dur_min),
+      kindKey: String(row.kind_key), subKey: (row.sub_key as string) ?? null,
+      mode: row.mode === 'online' ? 'online' : 'offline', title: (row.title as string) ?? null,
+      roomName: (row.room_name as string) ?? null, roomBranch: (row.room_branch as string) ?? null,
+      zaccLabel: (row.zacc_label as string) ?? null,
+      students: studentItems.map((student) => student.name).join(', ') || null,
+      canceled: Boolean(row.canceled),
+      cancelKindLabel: row.cancel_kind
+        ? ATTENDANCE_CANCEL_REASON_LABEL[row.cancel_kind as AttendanceCancelReason] ?? null
+        : null,
+      repState,
+    };
+
+    // 기존 수업 안내 owner를 재사용한다. 취소 회차는 guides가 제외하므로 빈 안내와 명시적 사유가 된다.
+    const weeklyGuides = await this.guides(teacherId, actualDate);
+    const guideStudents = weeklyGuides.students.filter((student) => studentIds.includes(student.studentId)
+      && student.lessons.some((item) => item.serId === serId && item.onDate === onDate));
+
+    const historyRows = studentIds.length === 0 ? [] : await this.q(
+      `SELECT o.ser_id,to_char(o.on_date,'YYYY-MM-DD') AS on_date,
+              to_char(${DRAWN},'YYYY-MM-DD') AS date,
+              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
+              (EXTRACT(EPOCH FROM (upper(o.span)-lower(o.span)))/60)::int AS dur_min,
+              s.kind_key,s.sub_key,${effectiveModeOf('ex', 's')} AS mode,s.title,o.canceled,
+              k.rep AS reportable,COALESCE(r.state::text,'none') AS stored_rep_state,
+              COALESCE(a.result::text,'completed') AS attendance_result,upper(o.span)<=now() AS ended,
+              COALESCE(jsonb_agg(jsonb_build_object('id',st.id,'name',st.name) ORDER BY st.name,st.id)
+                FILTER (WHERE st.id IS NOT NULL),'[]'::jsonb) AS student_items
+         FROM ser_occ o
+         JOIN ser s ON s.id=o.ser_id
+         LEFT JOIN rep r ON r.ser_id=o.ser_id AND r.on_date=o.on_date
+         JOIN kind k ON k.key=COALESCE(r.kind_key,s.kind_key)
+         LEFT JOIN att a ON a.ser_id=o.ser_id AND a.on_date=o.on_date
+         LEFT JOIN exc ex ON ex.ser_id=o.ser_id AND ex.on_date=o.on_date
+         JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ss.student_id=ANY($2::bigint[])
+           AND ${serStuOn('ss', 'o.on_date')}
+           AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+           AND NOT EXISTS (
+             SELECT 1 FROM exc ex2 JOIN exc_stu_out x ON x.exc_id=ex2.id AND x.student_id=ss.student_id
+              WHERE ex2.ser_id=o.ser_id AND ex2.on_date=o.on_date
+           )
+         JOIN stu st ON st.id=ss.student_id
+        WHERE ${TEACHER_OF}=$1 AND upper(o.span)<=now()
+        GROUP BY o.ser_id,o.on_date,o.span,s.kind_key,s.sub_key,ex.mode,s.mode,s.title,
+                 o.canceled,k.rep,r.state,a.result
+        ORDER BY ${DRAWN} DESC, start_min DESC, o.ser_id DESC
+        LIMIT 200`,
+      [teacherId, studentIds],
+    );
+    const history: TeacherLessonHubHistoryItemDto[] = historyRows.map((item) => {
+      const itemCanceled = Boolean(item.canceled) || item.attendance_result === 'canceled';
+      return {
+        serId: Number(item.ser_id), onDate: String(item.on_date), date: String(item.date),
+        startMin: Number(item.start_min), durMin: Number(item.dur_min), kindKey: String(item.kind_key),
+        subKey: (item.sub_key as string) ?? null, mode: item.mode === 'online' ? 'online' : 'offline',
+        title: (item.title as string) ?? null,
+        studentItems: (item.student_items as Array<{ id: number | string; name: string }>).map((student) => ({
+          id: Number(student.id), name: String(student.name),
+        })),
+        repState: effectiveRepStateFromEnded(
+          String(item.stored_rep_state), Boolean(item.reportable) && !itemCanceled, Boolean(item.ended),
+        ),
+        canceled: Boolean(item.canceled),
+      };
+    });
+
+    const capability = (enabled: boolean, reason: string | null) => ({ enabled, reason: enabled ? null : reason });
+    const reportEnabled = ['none', 'draft', 'wait', 'ok', 'rej'].includes(repState) && !canceled;
+    return {
+      lesson,
+      guideStudents,
+      history,
+      capabilities: {
+        report: capability(reportEnabled, canceled ? '취소된 수업은 리포트를 열 수 없습니다.'
+          : repState === 'plan' ? '수업 종료 후 리포트를 열 수 있습니다.' : '리포트 대상 수업이 아닙니다.'),
+        guide: capability(guideStudents.length > 0, canceled
+          ? '취소된 수업의 안내는 열 수 없습니다.' : '이 회차에 연결된 학생 안내가 없습니다.'),
+        history: capability(history.length > 0, '이 회차 학생의 수업 이력이 없습니다.'),
+        scheduleChange: capability(!canceled, '취소된 수업은 일정 변경을 요청할 수 없습니다.'),
       },
     };
   }

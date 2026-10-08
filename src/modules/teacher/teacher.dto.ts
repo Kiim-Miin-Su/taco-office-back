@@ -8,6 +8,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { REP_STATE_T_VALUES, SUG_CAT_T_VALUES, SUG_STATE_T_VALUES } from '../../entities/enums';
 import { PAYOUT_BREAKDOWN_KEYS, type PayoutBreakdownKey } from '../../lib/payout-sheet';
+import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 
 /** 강사가 올리는 요청 갈래 — 내 설정 둘(덱 §8) + 교재 변경. GPA 신규 요청은 최신 수정사항에서 퇴역했다. */
 export const TEACHER_REQ_TYPES = ['wage_change', 'tz_change', 'book_change'] as const;
@@ -407,6 +408,63 @@ export class TeacherGuidesDto {
   @ApiProperty({ description: '이번 주 월요일 YYYY-MM-DD (KST)' }) weekFrom!: string;
   @ApiProperty({ description: '이번 주 일요일 YYYY-MM-DD (KST)' }) weekTo!: string;
   @ApiProperty({ type: [TeacherGuideStudentDto], description: '첫 수업 시각 순' }) students!: TeacherGuideStudentDto[];
+}
+
+/* ══ 회차별 수업 허브 (강사 수정사항 §42·46~48·52~54) ═══════════════ */
+
+export class TeacherLessonHubParamsDto {
+  @ApiProperty(ID_SCHEMA)
+  @ToHttpInteger() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  serId!: number;
+
+  @ApiProperty(DATE_SCHEMA)
+  @IsCalendarDate()
+  onDate!: string;
+}
+
+export class TeacherLessonHubQueryDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '현재 화면이 연 실제 수업일. 옮긴 회차의 stale URL을 409로 검출한다.' })
+  @IsCalendarDate()
+  date!: string;
+}
+
+export class TeacherLessonHubCapabilityDto {
+  @ApiProperty() enabled!: boolean;
+  @ApiPropertyOptional({ ...S, description: '열 수 없을 때 화면에 그대로 보여 줄 서버 사유' })
+  reason!: string | null;
+}
+
+export class TeacherLessonHubCapabilitiesDto {
+  @ApiProperty({ type: TeacherLessonHubCapabilityDto }) report!: TeacherLessonHubCapabilityDto;
+  @ApiProperty({ type: TeacherLessonHubCapabilityDto }) guide!: TeacherLessonHubCapabilityDto;
+  @ApiProperty({ type: TeacherLessonHubCapabilityDto }) history!: TeacherLessonHubCapabilityDto;
+  @ApiProperty({ type: TeacherLessonHubCapabilityDto }) scheduleChange!: TeacherLessonHubCapabilityDto;
+}
+
+export class TeacherLessonHubHistoryItemDto {
+  @ApiProperty() serId!: number;
+  @ApiProperty(DATE_SCHEMA) onDate!: string;
+  @ApiProperty(DATE_SCHEMA) date!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() durMin!: number;
+  @ApiProperty() kindKey!: string;
+  @ApiPropertyOptional(S) subKey!: string | null;
+  @ApiProperty({ enum: ['offline', 'online'] }) mode!: 'offline' | 'online';
+  @ApiPropertyOptional(S) title!: string | null;
+  @ApiProperty({ type: [TeacherHistoryStudentDto] }) studentItems!: TeacherHistoryStudentDto[];
+  @ApiProperty({ enum: [...REP_STATE_T_VALUES] }) repState!: string;
+  @ApiProperty() canceled!: boolean;
+}
+
+/**
+ * GET /teacher/lessons/:serId/:onDate/hub — 강사 본인 회차의 네 진입점.
+ * 안내·히스토리는 이 회차의 구조화 학생 ID로 묶고 급여·관리자 메모를 싣지 않는다.
+ */
+export class TeacherLessonHubDto {
+  @ApiProperty({ type: TeacherLessonDto }) lesson!: TeacherLessonDto;
+  @ApiProperty({ type: [TeacherGuideStudentDto] }) guideStudents!: TeacherGuideStudentDto[];
+  @ApiProperty({ type: [TeacherLessonHubHistoryItemDto] }) history!: TeacherLessonHubHistoryItemDto[];
+  @ApiProperty({ type: TeacherLessonHubCapabilitiesDto }) capabilities!: TeacherLessonHubCapabilitiesDto;
 }
 
 /** GET /teacher/history — 월 수업 기록 + 본인 정산 (덱 §29~31 · 강사 전용) */
