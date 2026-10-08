@@ -9,7 +9,7 @@
  *
  * 낱말은 강사 원문 덱(강사_백오피스_실제_화면_중심_구조.pptx §16 불가 시간 · §28 수업 안내 · §31~32
  * 수업 히스토리 · §34 건의 사항 · §36 줌 계정 운영 주의)에서 가져오되, **그 뒤에 확정된 결정이 이긴다**:
- *   - 불가 시간 마감은 덱의 「회차 시작 1주 전」이 아니라 N-20 채택 「날짜별 7일 전」이다.
+ *   - 불가 시간 마감은 최신 강사 수정사항 T07의 「대상 날짜 10일 전」이다.
  *   - 정산은 덱의 「승인된 리포트만」이 아니라 D-R7 「리포트를 썼는가」다.
  *   - 지각 차감은 덱의 「분 단위」가 아니라 D-R32 두 구간이다(리포트 화면의 차감 띠가 따로 말한다).
  * 홈·캘린더·리포트 세 화면은 돈이 걸린 지각 차감 띠(`lateReportTiers`)를 최상단에 두므로 여기 없다.
@@ -20,8 +20,10 @@ import { LATE_REPORT_TIERS } from './rules';
 
 /** 건의 월 한도 (강사 원문 §34 「월 3회」 — 서버가 센다, SUGGESTION_QUOTA_EXCEEDED) */
 export const SUGGESTION_MONTHLY_LIMIT = 3;
-/** 불가 시간 (N-20 채택 2026-09-12 §4-17) — 등록 대상 **날짜별 7일 전 마감** */
-export const UNAV_DEADLINE_DAYS = 7;
+/** 불가 시간 (T07 확정 2026-10-08) — 등록 대상 **날짜별 10일 전 마감** */
+export const UNAV_DEADLINE_DAYS = 10;
+/** 불가 사유 — 앞뒤 공백을 제외한 최소 글자 수 */
+export const UNAV_REASON_MIN_LENGTH = 15;
 
 export const TEACHER_POLICY_SCREENS = ['unavailable', 'guides', 'history', 'suggestions'] as const;
 export type TeacherPolicyScreen = (typeof TEACHER_POLICY_SCREENS)[number];
@@ -49,7 +51,7 @@ export function teacherPolicies(): TeacherPolicy[] {
       lines: [
         '2주 단위 회차마다 등록합니다 — 상시 등록이 아닙니다.',
         `날짜마다 ${UNAV_DEADLINE_DAYS}일 전에 마감됩니다 — 마감된 날짜는 관리자에게 문의해 주세요.`,
-        '사유는 꼭 적어 주세요 — 관리자가 조정할 수 있는지 판단합니다.',
+        `사유는 앞뒤 공백을 제외하고 ${UNAV_REASON_MIN_LENGTH}자 이상 적어 주세요 — 관리자가 조정 가능성을 판단합니다.`,
       ],
     },
     {

@@ -18756,7 +18756,7 @@
             }
           }
         },
-        "summary": "불가 시간 — 2주 격자 메타 + 내 등록 (원본 §15/16 · N-20 날짜별 7일 전 마감)",
+        "summary": "불가 시간 — 2주 격자 메타 + 내 등록 (최신 강사 수정사항 T07 · 날짜별 10일 전 마감)",
         "tags": [
           "teacher"
         ]
@@ -18819,7 +18819,21 @@
             }
           },
           "409": {
-            "description": "code UNAV_DEADLINE(7일 전 마감) | UNAV_OVERLAP(본인 겹침) | TIME_RANGE | INVALID_DATE"
+            "description": "UNAV_LESSON_CONFLICT(본인 실제 배정 수업 상세) | UNAV_DEADLINE(10일 전 마감) | UNAV_REASON_TOO_SHORT | UNAV_OVERLAP | TIME_RANGE | INVALID_DATE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiErrorDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/TeacherUnavailableConflictErrorDto"
+                    }
+                  ]
+                }
+              }
+            }
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -18832,7 +18846,7 @@
             }
           }
         },
-        "summary": "불가 시간 등록 — 마감·겹침은 서버가 판정 (UNAV_DEADLINE · UNAV_OVERLAP)",
+        "summary": "불가 시간 등록 — 10일·trim 사유 15자·실제 배정 수업 및 본인 겹침을 서버가 판정",
         "tags": [
           "teacher"
         ]
@@ -18909,7 +18923,7 @@
             }
           }
         },
-        "summary": "불가 시간 삭제 — 열린 날짜(오늘+7 이후)의 본인 등록만 (UNAV_LOCKED)",
+        "summary": "불가 시간 삭제 — 열린 날짜(오늘+10 이후)의 본인 등록만 (UNAV_LOCKED)",
         "tags": [
           "teacher"
         ]
@@ -43125,6 +43139,51 @@
           "computedAt"
         ]
       },
+      "TeacherUnavailableConflictErrorDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "공용 오류 코드. HTTP status와 함께 판정한다."
+          },
+          "message": {
+            "type": "string",
+            "description": "공용 필터에서 정규화한 사용자 안내 문구."
+          },
+          "serId": {
+            "type": "number"
+          },
+          "onDate": {
+            "type": "string",
+            "description": "규칙상 원래 회차일 YYYY-MM-DD"
+          },
+          "actualDate": {
+            "type": "string",
+            "description": "실제 수업일 YYYY-MM-DD"
+          },
+          "startMin": {
+            "type": "number",
+            "description": "실제 수업 시작 KST 분"
+          },
+          "endMin": {
+            "type": "number",
+            "description": "실제 수업 종료 KST 분"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "serId",
+          "onDate",
+          "actualDate",
+          "startMin",
+          "endMin"
+        ]
+      },
       "TeacherNotiDto": {
         "type": "object",
         "properties": {
@@ -44658,7 +44717,7 @@
           },
           "canDelete": {
             "type": "boolean",
-            "description": "마감 전(onDate ≥ 오늘+7)이면 삭제 가능 — 서버 판정"
+            "description": "마감 전(onDate ≥ 오늘+10)이면 삭제 가능 — 서버 판정"
           }
         },
         "required": [
@@ -44683,7 +44742,7 @@
           },
           "openFrom": {
             "type": "string",
-            "description": "등록이 열리는 첫 날짜 = max(회차 시작, 오늘+7). 회차 끝을 넘으면 이 회차 전체가 마감"
+            "description": "등록이 열리는 첫 날짜 = max(회차 시작, 오늘+10). 회차 끝을 넘으면 이 회차 전체가 마감"
           },
           "lockedDays": {
             "type": "number",
@@ -44715,7 +44774,7 @@
         "properties": {
           "onDate": {
             "type": "string",
-            "description": "등록 날짜 YYYY-MM-DD — 오늘(KST)+7일 이후만 (N-20 날짜별 마감)"
+            "description": "등록 날짜 YYYY-MM-DD — 오늘(KST)+10일 이후만 (T07 날짜별 마감)"
           },
           "startMin": {
             "type": "number",
@@ -44727,7 +44786,8 @@
           },
           "reason": {
             "type": "string",
-            "description": "사유 1~500자 — 필수. 관리자가 조정 가능성을 판단한다 (v26)"
+            "description": "사유 15~500자 — 앞뒤 공백 제외. 관리자가 조정 가능성을 판단한다 (T07)",
+            "minLength": 15
           }
         },
         "required": [

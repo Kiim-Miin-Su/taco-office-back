@@ -6,8 +6,8 @@
 
 import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseIntPipe, Post, Query, UseFilters } from '@nestjs/common';
 import {
-  ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
-  ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
+  ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse,
+  ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
@@ -25,8 +25,13 @@ import { GuidesService } from '../guides/guides.service';
 import { GuideActionDto, GuideActionParamsDto, GuideDto, ReceivedGuidesDto } from '../guides/guides.dto';
 import { previousMonthKst } from '../../lib/kst';
 import { TeacherLessonMovedErrorDto, TeacherLessonMovedFilter } from './teacher-lesson-moved.error';
+import {
+  TeacherUnavailableConflictErrorDto,
+  TeacherUnavailableConflictFilter,
+} from './teacher-unavailable-conflict.error';
 
 @ApiTags('teacher')
+@ApiExtraModels(TeacherUnavailableConflictErrorDto)
 @Controller('teacher')
 export class TeacherController {
   constructor(private readonly svc: TeacherService, private readonly guidesService: GuidesService) {}
@@ -184,7 +189,7 @@ export class TeacherController {
   }
 
   @Get('unavailable')
-  @ApiOperation({ summary: '불가 시간 — 2주 격자 메타 + 내 등록 (원본 §15/16 · N-20 날짜별 7일 전 마감)' })
+  @ApiOperation({ summary: '불가 시간 — 2주 격자 메타 + 내 등록 (최신 강사 수정사항 T07 · 날짜별 10일 전 마감)' })
   @ApiOkResponse({ type: TeacherUnavDto })
   @ApiForbiddenResponse({ description: '강사 전용' })
   async unavailable(@CurrentUser() user: RequestUser, @Query() query: TeacherUnavQueryDto): Promise<TeacherUnavDto> {
@@ -193,9 +198,18 @@ export class TeacherController {
   }
 
   @Post('unavailable')
-  @ApiOperation({ summary: '불가 시간 등록 — 마감·겹침은 서버가 판정 (UNAV_DEADLINE · UNAV_OVERLAP)' })
+  @UseFilters(TeacherUnavailableConflictFilter)
+  @ApiOperation({ summary: '불가 시간 등록 — 10일·trim 사유 15자·실제 배정 수업 및 본인 겹침을 서버가 판정' })
   @ApiCreatedResponse({ type: TeacherUnavBlockDto })
-  @ApiConflictResponse({ description: 'code UNAV_DEADLINE(7일 전 마감) | UNAV_OVERLAP(본인 겹침) | TIME_RANGE | INVALID_DATE' })
+  @ApiConflictResponse({
+    schema: {
+      oneOf: [
+        { $ref: getSchemaPath(ApiErrorDto) },
+        { $ref: getSchemaPath(TeacherUnavailableConflictErrorDto) },
+      ],
+    },
+    description: 'UNAV_LESSON_CONFLICT(본인 실제 배정 수업 상세) | UNAV_DEADLINE(10일 전 마감) | UNAV_REASON_TOO_SHORT | UNAV_OVERLAP | TIME_RANGE | INVALID_DATE',
+  })
   @ApiForbiddenResponse({ description: '강사 전용' })
   async createUnavailable(
     @CurrentUser() user: RequestUser,
@@ -206,7 +220,7 @@ export class TeacherController {
   }
 
   @Delete('unavailable/:id')
-  @ApiOperation({ summary: '불가 시간 삭제 — 열린 날짜(오늘+7 이후)의 본인 등록만 (UNAV_LOCKED)' })
+  @ApiOperation({ summary: '불가 시간 삭제 — 열린 날짜(오늘+10 이후)의 본인 등록만 (UNAV_LOCKED)' })
   @ApiOkResponse({ type: OkDto })
   @ApiConflictResponse({ description: 'code UNAV_LOCKED — 마감분·legacy 는 관리자 조정' })
   @ApiForbiddenResponse({ description: '강사 전용' })

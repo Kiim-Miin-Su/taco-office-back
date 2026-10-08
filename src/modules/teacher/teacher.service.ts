@@ -30,14 +30,16 @@ import type {
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
   TeacherNotiDto, TeacherShellDto,
 } from './teacher.dto';
-import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS } from '../../lib/teacher-policy';
+import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS, UNAV_REASON_MIN_LENGTH } from '../../lib/teacher-policy';
 import { audit } from '../../lib/audit';
 import { bookLevelShown, ISSUE_STATE_LABEL, type IssueState } from '../../lib/book';
 import { TeacherLessonMovedException } from './teacher-lesson-moved.error';
+import { findTeacherUnavailableLessonConflict, lockTeacherUnavailableWrite } from '../../lib/teacher-unavailable';
+import { TeacherUnavailableConflictException } from './teacher-unavailable-conflict.error';
 
 /** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
 const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
-/* 건의 월 한도 · 불가 시간 마감(N-20 · 날짜별 7일 전)은 lib/teacher-policy 한 곳 — 강사 정책 띠가 같은 숫자를 읽는다.
+/* 건의 월 한도 · 불가 시간 마감(T07 · 날짜별 10일 전)은 lib/teacher-policy 한 곳 — 강사 정책 띠가 같은 숫자를 읽는다.
    격자 창은 원본 §15/16 의 08:00~23:00. */
 const UNAV_MIN_START = 8 * 60;
 const UNAV_MAX_END = 23 * 60;
@@ -1004,7 +1006,7 @@ export class TeacherService {
 
   /**
    * 2주 격자 메타 + 내 등록. 회차는 입사일 + 14k (원본 §15 — 표시/묶음용, 판정은 날짜).
-   * openFrom = max(회차 시작, 오늘+7) — 원본 캡처의 「잠김 8일 · 열림 6일」이 이 식에서 나온다.
+   * openFrom = max(회차 시작, 오늘+10) — 최신 강사 수정사항의 10일 포함 기준을 서버 한 곳에서 계산한다.
    */
   async unavailable(teacherId: number, anchor?: string): Promise<TeacherUnavDto> {
     const today = todayKst();
@@ -1035,8 +1037,8 @@ export class TeacherService {
   }
 
   /**
-   * 등록 — 마감(날짜별 7일 전)과 본인 겹침을 서버가 판정한다. 겹침 판정과 삽입은
-   * advisory lock 트랜잭션의 guarded INSERT 한 문장 — 동시 등록이 같은 빈칸을 두 번 차지하지 못한다.
+   * 등록 — 마감(날짜별 10일 전), trim 사유 15자, 본인 UNAV 및 실제 배정 수업 겹침을 서버가 판정한다.
+   * 시간표 projection과 같은 강사 advisory lock을 잡아 동시 편성↔등록 결과도 직렬화한다.
    * 새 쓰기는 cycle 을 저장하지 않는다(§4-17 — 회차는 표시용 파생), dow 는 날짜에서 파생해 저장.
    */
   async createUnavailable(teacherId: number, dto: TeacherUnavCreateDto): Promise<TeacherUnavBlockDto> {
@@ -1054,14 +1056,20 @@ export class TeacherService {
     if (dto.onDate < openFromRaw) {
       throw new ConflictException({
         code: 'UNAV_DEADLINE',
-        message: '등록은 날짜별 7일 전까지만 가능합니다. 1주 안의 사정은 강사 단톡방에 올려 주세요 — 관리자가 확인하고 직접 조정합니다',
+        message: '등록은 대상 날짜 10일 전까지만 가능합니다. 10일 안의 사정은 강사 단톡방에 올려 주세요 — 관리자가 확인하고 직접 조정합니다',
       });
     }
     const reason = dto.reason.trim();
-    if (!reason) throw new ConflictException({ code: 'EMPTY_REASON', message: '사유를 적어 주세요' });
+    if (reason.length < UNAV_REASON_MIN_LENGTH) {
+      throw new ConflictException({ code: 'UNAV_REASON_TOO_SHORT', message: `사유는 앞뒤 공백을 제외하고 ${UNAV_REASON_MIN_LENGTH}자 이상 적어 주세요` });
+    }
 
     const inserted = await this.anyRepo.manager.transaction(async (em) => {
-      await em.query(`SELECT pg_advisory_xact_lock(hashtext('unav-write'), $1::int)`, [teacherId]);
+      await lockTeacherUnavailableWrite(em, [teacherId]);
+      const lesson = await findTeacherUnavailableLessonConflict(
+        em, teacherId, dto.onDate, dto.startMin, dto.endMin,
+      );
+      if (lesson) throw new TeacherUnavailableConflictException(lesson);
       return em.query(
         `INSERT INTO unav (staff_id, on_date, dow, start_min, end_min, reason)
          SELECT $1, $2::date, $3, $4, $5, $6
@@ -1078,7 +1086,7 @@ export class TeacherService {
     return this.unavBlockRow(inserted[0], openFromRaw);
   }
 
-  /** 삭제 — 본인 행이면서 아직 열린 날짜(오늘+7 이후)만. 마감분·legacy(날짜 미상)는 관리자 조정 대상. */
+  /** 삭제 — 본인 행이면서 아직 열린 날짜(오늘+10 이후)만. 마감분·legacy(날짜 미상)는 관리자 조정 대상. */
   async deleteUnavailable(teacherId: number, id: number): Promise<{ ok: true }> {
     // N-73 — 지운 줄은 감사 원장에 통째로 남긴다. 읽기 · 판정 · 지우기 · 기록이 한 트랜잭션이다(`audit()` 의 규칙)
     return this.anyRepo.manager.transaction(async (m) => {

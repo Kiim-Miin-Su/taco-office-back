@@ -20,6 +20,7 @@ import { addD, occ, ruleHits, type IsoDate, type State } from '../../lib/recurre
 import { todayKst } from '../../lib/kst';
 import { REPORT_UNWRITTEN_CANDIDATE_DB } from '../../lib/rules';
 import { serStuOn } from '../../lib/sql';
+import { lockTeacherUnavailableWrite } from '../../lib/teacher-unavailable';
 
 /**
  * 펼쳐 두는 기간.
@@ -137,11 +138,6 @@ export async function project(
   if (!serIds.length) return 0;
   const { from, to } = range ?? horizon();
 
-  await q.query(
-    `DELETE FROM ser_occ WHERE ser_id = ANY($1) AND on_date BETWEEN $2::date AND $3::date`,
-    [serIds, from, to],
-  );
-
   const want = new Set(serIds);
   const rows: Array<[number, string, number | null, number | null, boolean, string, number | null]> = [];
 
@@ -207,6 +203,26 @@ export async function project(
       ]);
     }
   }
+
+  /*
+   * BOC-06D-01 권고안: 관리자 편성은 기존처럼 UNAV를 경고로만 허용하되, 강사의 동시 등록과
+   * 결과가 엇갈리지 않도록 투영 전 같은 강사 잠금을 공유한다. 기존 회차와 새 회차 담당자를 모두
+   * 잠그므로 이동·교체·삭제도 직렬화된다. 잠금 범위를 바꾸면 teacher-unavailable helper와 BOC-06 문서를 함께 고친다.
+   */
+  const previousTeachers = (await q.query(
+    `SELECT DISTINCT teacher_id FROM ser_occ
+      WHERE ser_id = ANY($1) AND on_date BETWEEN $2::date AND $3::date AND teacher_id IS NOT NULL`,
+    [serIds, from, to],
+  )) as Array<{ teacher_id: string | number | null }>;
+  await lockTeacherUnavailableWrite(q, [
+    ...previousTeachers.map((row) => row.teacher_id == null ? null : Number(row.teacher_id)),
+    ...rows.map((row) => row[2]),
+  ]);
+
+  await q.query(
+    `DELETE FROM ser_occ WHERE ser_id = ANY($1) AND on_date BETWEEN $2::date AND $3::date`,
+    [serIds, from, to],
+  );
   if (!rows.length) return 0;
 
   // 한 번에 넣는다 — 회차마다 왕복하면 규칙 하나에 수백 번이 된다
