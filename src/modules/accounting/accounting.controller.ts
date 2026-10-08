@@ -28,6 +28,7 @@ import {
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
   WageHistoryDto, WageHistoryQueryDto, WageRowDto, WageWriteDto, MyExpenseListDto,
   PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, AcctPrivacyDto, AcctPrivacyWriteDto,
+  StudentCumulativeDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
@@ -67,6 +68,21 @@ export class AccountingController {
   async all(@CurrentUser() user: RequestUser): Promise<AccountingDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.all(canSee, isRole(user.role) && canCeoVoidInvoice(user.role), viewerOf(user));
+  }
+
+  @Get('student-cumulative')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '학생별 누적 — 최근 3개월·전체 매출/수납·미수·분류 (TBO-55 BO-11AD-02)',
+    description:
+      '최종 관리자 수정사항 p94·102의 서버 집계다. INV의 유효 청구와 PAY를 학생별로 모으며, '
+      + '월평균은 최근 3개 달 청구액 합을 거래 없는 달까지 포함한 3으로 나누고 원 단위 반올림한다. '
+      + '이 권고안은 accounting.service.ts와 TBO-55 기능 문서를 함께 바꿔야 한다.',
+  })
+  @ApiOkResponse({ type: StudentCumulativeDto })
+  async studentCumulative(@CurrentUser() user: RequestUser): Promise<StudentCumulativeDto> {
+    const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    return this.svc.studentCumulative(canSee);
   }
 
 

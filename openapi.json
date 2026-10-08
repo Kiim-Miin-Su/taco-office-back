@@ -5123,6 +5123,89 @@
         ]
       }
     },
+    "/accounting/student-cumulative": {
+      "get": {
+        "description": "최종 관리자 수정사항 p94·102의 서버 집계다. INV의 유효 청구와 PAY를 학생별로 모으며, 월평균은 최근 3개 달 청구액 합을 거래 없는 달까지 포함한 3으로 나누고 원 단위 반올림한다. 이 권고안은 accounting.service.ts와 TBO-55 기능 문서를 함께 바꿔야 한다.",
+        "operationId": "AccountingController_studentCumulative",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentCumulativeDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생별 누적 — 최근 3개월·전체 매출/수납·미수·분류 (TBO-55 BO-11AD-02)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/tuition": {
       "get": {
         "description": "원문 §54 의 「연동: **청구서 생성 시 이 계산 결과를 씁니다**」가 이 화면의 정체다 — 청구서가 쓰는 바로 그 계산(`invoice-lines.ts`)을 미리 보는 자리라, 단가를 여기서 다시 세지 않는다 (D-R22). 세는 것도 나누는 것도 서버다 — 화면이 회차를 세면 취소·「그날만 빠진」을 빠뜨리고(D-R21), 화면이 %를 내면 머리 칸과 갈린다 (D-R37). 결강은 금액에서 빠지고 「넘길 돈」으로 따로 선다.",
@@ -30952,6 +31035,182 @@
           "expenseCategories",
           "payCategories",
           "families"
+        ]
+      },
+      "StudentCumulativeMonthDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "example": "2026-08",
+            "description": "최근 3개월의 달 — 오래된 달부터 정렬"
+          },
+          "billed": {
+            "type": "number",
+            "nullable": true,
+            "description": "그 달에 발행된 유효 청구액. 초안·취소는 제외한다."
+          },
+          "collected": {
+            "type": "number",
+            "nullable": true,
+            "description": "그 달 입금일 기준 수납액. 수기 입금도 포함한다."
+          }
+        },
+        "required": [
+          "month",
+          "billed",
+          "collected"
+        ]
+      },
+      "StudentCumulativeCategoryDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "기존 PAY 분류 정본의 key"
+          },
+          "label": {
+            "type": "string",
+            "description": "기존 PAY 분류 정본의 표시 이름"
+          },
+          "billed": {
+            "type": "number",
+            "nullable": true
+          },
+          "collected": {
+            "type": "number",
+            "nullable": true
+          },
+          "receivable": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 남은 미수채권. sent/unpaid/partial 청구의 잔액만 센다."
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "billed",
+          "collected",
+          "receivable"
+        ]
+      },
+      "StudentCumulativeRowDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "studentTag": {
+            "type": "string",
+            "nullable": true,
+            "description": "동명이인 꼬리. 화면은 별도 학년 코드를 조합하지 않는다."
+          },
+          "registeredOn": {
+            "type": "string",
+            "format": "date",
+            "description": "STU.created_at의 KST 날짜. 첫 수업일로 추정하지 않는다."
+          },
+          "periodFrom": {
+            "type": "string",
+            "format": "date",
+            "description": "누적 집계 시작. 등록일보다 앞선 레거시 거래가 있으면 그 거래일부터다."
+          },
+          "periodTo": {
+            "type": "string",
+            "format": "date",
+            "description": "누적 집계 기준일(KST)"
+          },
+          "months": {
+            "description": "고정된 최근 3개월. 거래가 없는 달도 0으로 반환한다.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentCumulativeMonthDto"
+            }
+          },
+          "totalBilled": {
+            "type": "number",
+            "nullable": true,
+            "description": "전체 유효 청구 누적. 초안·취소는 제외한다."
+          },
+          "totalCollected": {
+            "type": "number",
+            "nullable": true,
+            "description": "전체 PAY 수납 누적. 청구서 없는 수기 입금도 포함한다."
+          },
+          "receivable": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 미수채권. 유효 open 청구 잔액의 합이다."
+          },
+          "monthlyAverageBilled": {
+            "type": "number",
+            "nullable": true,
+            "description": "권고안: 최근 3개 달 청구액 합 ÷ 3을 원 단위 반올림한다. 거래 0원 달도 분모에 포함한다(BO-11AD-02)."
+          },
+          "categories": {
+            "description": "기존 PAY 분류 여섯의 청구·수납·미수 합계",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentCumulativeCategoryDto"
+            }
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName",
+          "studentTag",
+          "registeredOn",
+          "periodFrom",
+          "periodTo",
+          "months",
+          "totalBilled",
+          "totalCollected",
+          "receivable",
+          "monthlyAverageBilled",
+          "categories"
+        ]
+      },
+      "StudentCumulativeDto": {
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date",
+            "description": "조회 기준일(KST)"
+          },
+          "recentMonths": {
+            "example": [
+              "2026-06",
+              "2026-07",
+              "2026-08"
+            ],
+            "description": "최근 3개월, 오래된 달부터",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "금액을 볼 수 있는가. false면 모든 금액 projection은 null이다."
+          },
+          "items": {
+            "description": "유효 청구 또는 입금이 있는 학생. 이름·번호 순.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentCumulativeRowDto"
+            }
+          }
+        },
+        "required": [
+          "asOf",
+          "recentMonths",
+          "canSeeAmounts",
+          "items"
         ]
       },
       "TuitionRowDto": {

@@ -54,6 +54,7 @@ import type {
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
   WageHistoryDto, WageRowDto, WageWriteDto, MyExpenseListDto,
   PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, PayoutBonusSlotDto, AcctPrivacyDto, AcctPrivacyWriteDto,
+  StudentCumulativeDto,
 } from './accounting.dto';
 import { fileUrlOf, storedFileRef } from '../files/files.service';
 import { ConsultingService } from '../consulting/consulting.service';
@@ -116,6 +117,16 @@ function invWhenLabel(due: string | null, today: string, overdueDays: number): s
 
 const daysBetween = (a: string, b: string) =>
   Math.floor((new Date(`${b}T00:00:00Z`).getTime() - new Date(`${a}T00:00:00Z`).getTime()) / 86400000);
+
+/** 최근 달 목록 — 달력 연산은 UTC의 월 첫날만 써서 서버 시간대와 무관하게 YYYY-MM을 만든다. */
+function recentCalendarMonths(today: string, count: number): string[] {
+  const first = new Date(`${today.slice(0, 7)}-01T00:00:00Z`);
+  return Array.from({ length: count }, (_, index) => {
+    const at = new Date(first);
+    at.setUTCMonth(at.getUTCMonth() - (count - index - 1));
+    return at.toISOString().slice(0, 7);
+  });
+}
 
 /**
  * 그 청구서의 줄이 **`kind = 'gpa'` 수업**에서 나왔는가 — §55 「GPA 관리비」를 가르는 한 조각 (N-37 ③ · C71).
@@ -544,6 +555,149 @@ export class AccountingService {
       invoices, payments, payouts, expenses, expenseTotals, payCategories,
       expenseCategories: EXPENSE_CATEGORIES.map((key) => ({ key, label: EXPENSE_CATEGORY_LABEL[key] ?? key })),
       families: await this.invoiceFamilies(invoices),
+    };
+  }
+
+  /**
+   * TBO-55 BO-11AD-02 권고안 — 관리자 수정사항 p94·102의 학생별 누적을 기존 INV/PAY에서 읽는다.
+   *
+   * 월평균의 분모는 원문이 별도로 정의하지 않았다. 화면 제목이 「최근 3개월」이므로 최근 세 달의 청구액을
+   * 거래가 없는 달까지 포함한 3으로 나누고 원 단위로 반올림한다. 이 정책을 바꾸면 DTO 설명, Front 누적 원장,
+   * BO-11AD-02 시나리오, PROMPT/TODO, portfolio를 같은 청크에서 갱신한다.
+   *
+   * 새 projection이므로 DB 표를 만들지 않는다. 초안·취소 INV는 매출에서 제외하고, 현재 미수는 기존 INV_OPEN과
+   * 같은 sent/unpaid/partial 잔액만 센다. 수납은 PAY가 정본이며 청구서 없는 수기 입금도 학생 수납에 포함한다.
+   */
+  async studentCumulative(canSeeAmounts: boolean, asOf = todayKst()): Promise<StudentCumulativeDto> {
+    const recentMonths = recentCalendarMonths(asOf, 3);
+    const gate = (value: number): number | null => (canSeeAmounts ? value : null);
+
+    type InvoiceRow = {
+      student_id: string; year_month: string; amount: string; paid_amount: string; state: string;
+      inv_type: string; is_gpa: boolean;
+    };
+    type PaymentRow = {
+      student_id: string; paid_on: string | null; paid_month: string | null; amount: string;
+      inv_type: string | null; is_gpa: boolean;
+    };
+    const invoiceRows = (await this.inv.query(
+      `SELECT i.student_id, i.year_month, i.amount, i.paid_amount, i.state, i.inv_type,
+              ${IS_GPA_INV_SQL} AS is_gpa
+         FROM inv i
+        WHERE i.state IN (${sqlWordList(INV_BILLABLE)})`,
+    )) as InvoiceRow[];
+    const paymentRows = (await this.inv.query(
+      `SELECT COALESCE(p.student_id, i.student_id) AS student_id,
+              to_char(p.paid_on, 'YYYY-MM-DD') AS paid_on,
+              to_char(p.paid_on, 'YYYY-MM') AS paid_month,
+              p.amount, i.inv_type, ${IS_GPA_INV_SQL} AS is_gpa
+         FROM pay p
+         LEFT JOIN inv i ON i.id = p.inv_id
+        WHERE COALESCE(p.student_id, i.student_id) IS NOT NULL AND p.amount IS NOT NULL`,
+    )) as PaymentRow[];
+
+    const studentIds = [...new Set([
+      ...invoiceRows.map((row) => Number(row.student_id)),
+      ...paymentRows.map((row) => Number(row.student_id)),
+    ])];
+    if (studentIds.length === 0) {
+      return { asOf, recentMonths, canSeeAmounts, items: [] };
+    }
+
+    const students = (await this.inv.query(
+      `SELECT s.id, s.name, ${studentTagSql('s')} AS student_tag,
+              to_char(s.created_at AT TIME ZONE 'Asia/Seoul', 'YYYY-MM-DD') AS registered_on
+         FROM stu s
+        WHERE s.id = ANY($1::bigint[])
+        ORDER BY s.name, s.id`,
+      [studentIds],
+    )) as Array<{ id: string; name: string; student_tag: string | null; registered_on: string }>;
+
+    type Amounts = { billed: number; collected: number; receivable: number };
+    type Draft = {
+      id: number; name: string; tag: string | null; registeredOn: string; periodFrom: string;
+      months: Map<string, { billed: number; collected: number }>;
+      totalBilled: number; totalCollected: number; receivable: number;
+      categories: Map<string, Amounts>;
+    };
+    const drafts = new Map<number, Draft>();
+    for (const student of students) {
+      drafts.set(Number(student.id), {
+        id: Number(student.id), name: student.name, tag: student.student_tag, registeredOn: student.registered_on,
+        periodFrom: student.registered_on,
+        months: new Map(recentMonths.map((month) => [month, { billed: 0, collected: 0 }])),
+        totalBilled: 0, totalCollected: 0, receivable: 0,
+        categories: new Map(PAY_CATEGORIES.map((category) => [category.key, { billed: 0, collected: 0, receivable: 0 }])),
+      });
+    }
+
+    for (const row of invoiceRows) {
+      const draft = drafts.get(Number(row.student_id));
+      if (!draft) continue;
+      const amount = Number(row.amount);
+      const receivable = (INV_OPEN as readonly string[]).includes(row.state)
+        ? Math.max(0, amount - Number(row.paid_amount))
+        : 0;
+      const category = payCategory(row.inv_type, row.is_gpa === true);
+      const categoryAmounts = draft.categories.get(category)!;
+      draft.totalBilled += amount;
+      draft.receivable += receivable;
+      categoryAmounts.billed += amount;
+      categoryAmounts.receivable += receivable;
+      const monthAmounts = draft.months.get(row.year_month);
+      if (monthAmounts) monthAmounts.billed += amount;
+      const invoiceStart = `${row.year_month}-01`;
+      if (invoiceStart < draft.periodFrom) draft.periodFrom = invoiceStart;
+    }
+
+    for (const row of paymentRows) {
+      const draft = drafts.get(Number(row.student_id));
+      if (!draft) continue;
+      const amount = Number(row.amount);
+      const category = payCategory(row.inv_type, row.is_gpa === true);
+      draft.totalCollected += amount;
+      draft.categories.get(category)!.collected += amount;
+      if (row.paid_month) {
+        const monthAmounts = draft.months.get(row.paid_month);
+        if (monthAmounts) monthAmounts.collected += amount;
+      }
+      if (row.paid_on && row.paid_on < draft.periodFrom) draft.periodFrom = row.paid_on;
+    }
+
+    return {
+      asOf,
+      recentMonths,
+      canSeeAmounts,
+      items: [...drafts.values()].map((draft) => {
+        const months = recentMonths.map((month) => {
+          const amounts = draft.months.get(month)!;
+          return { month, billed: gate(amounts.billed), collected: gate(amounts.collected) };
+        });
+        const recentBilled = [...draft.months.values()].reduce((sum, item) => sum + item.billed, 0);
+        return {
+          studentId: draft.id,
+          studentName: draft.name,
+          studentTag: draft.tag,
+          registeredOn: draft.registeredOn,
+          periodFrom: draft.periodFrom,
+          periodTo: asOf,
+          months,
+          totalBilled: gate(draft.totalBilled),
+          totalCollected: gate(draft.totalCollected),
+          receivable: gate(draft.receivable),
+          monthlyAverageBilled: gate(Math.round(recentBilled / recentMonths.length)),
+          categories: PAY_CATEGORIES.map((category) => {
+            const amounts = draft.categories.get(category.key)!;
+            return {
+              key: category.key,
+              label: category.label,
+              billed: gate(amounts.billed),
+              collected: gate(amounts.collected),
+              receivable: gate(amounts.receivable),
+            };
+          }),
+        };
+      }),
     };
   }
 
