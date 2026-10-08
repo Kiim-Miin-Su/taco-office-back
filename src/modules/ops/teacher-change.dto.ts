@@ -69,7 +69,9 @@ export class TcSeriesDto {
 }
 
 export class TcBookDto {
-  @ApiProperty({ description: '이 교재를 이어받을 새 강사 (STAFF)' }) teacherId!: number;
+  @ApiProperty({ description: '이관 전 교재 담당 강사 (STAFF)' }) previousTeacherId!: number;
+  @ApiProperty() previousTeacherName!: string;
+  @ApiProperty({ description: '작업 뒤 교재 담당 강사 — from이면 새 강사, day면 이전 강사 유지 (STAFF)' }) teacherId!: number;
   @ApiProperty() teacherName!: string;
   @ApiProperty({ description: '교체 시작일에 실제 명단에 있는 학생 (STU)' }) studentId!: number;
   @ApiProperty() studentName!: string;
@@ -77,6 +79,7 @@ export class TcBookDto {
   @ApiProperty({ description: '배부된 교재 (LIB)' }) libId!: number;
   @ApiProperty() title!: string;
   @ApiProperty({ description: 'ISSUE 활성 상태 — wait | auto | ok' }) state!: string;
+  @ApiProperty({ description: 'from 영구 교체로 담당을 이관하는가 — day 하루 대강은 false' }) transferred!: boolean;
 }
 
 export class TcPayoutMonthDto {
@@ -109,7 +112,7 @@ export class TeacherChangeResultDto {
   @ApiProperty({ description: '옮긴 회차 합' }) occurrences!: number;
   @ApiProperty({ description: '강사 교체 안내 초안 (GUIDE · F-62)' }) guideDrafts!: number;
   @ApiProperty({ description: '학부모 안내 행 (PNOTI · 보낼 것 · 발송처는 N-42)' }) parentNotices!: number;
-  @ApiProperty({ type: [TcBookDto], description: '이관 학생의 배부 교재 — 확인만 (ISSUE 에 강사 칸이 없다)' }) books!: TcBookDto[];
+  @ApiProperty({ type: [TcBookDto], description: '이전 강사 소유 교재 배정 — from은 새 강사에게 이관, day는 소유자 유지' }) books!: TcBookDto[];
   @ApiProperty({ type: [TcPayoutMonthDto], description: '달마다 옮겨 간 회차 — 정산은 회차를 읽으므로 저절로 따라온다 (lib/payout-sheet)' }) payout!: TcPayoutMonthDto[];
   @ApiProperty() notifiedTeachers!: number;
   @ApiProperty() notifiedStaff!: number;

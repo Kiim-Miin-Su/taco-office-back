@@ -239,7 +239,7 @@ export class OpsController {
   })
   @ApiCreatedResponse({ type: TeacherChangeResultDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'SAME_TEACHER | STAFF_INACTIVE | NOTHING_TO_CHANGE | CPL_STUDENT_MISMATCH(컴플레인의 학생과 studentId 가 다르다 — 쓰기 전에 거절 · CR-BE-02)' })
-  @ApiConflictResponse({ description: '시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED' })
+  @ApiConflictResponse({ description: 'RESOURCE_CONFLICT | MONTH_CLOSED | BOOK_ASSIGNMENT_TRANSFER_AMBIGUOUS | BOOK_ASSIGNMENT_TRANSFER_CONFLICT' })
   @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND | CPL_NOT_FOUND' })
   teacherChangePreview(@CurrentUser() user: RequestUser, @Body() dto: TeacherChangeDto): Promise<TeacherChangeResultDto> {
     return this.tcSvc.preview(user.id, dto);
@@ -250,11 +250,12 @@ export class OpsController {
   @ApiOperation({
     summary: '강사 교체 — 여섯 단계를 한 트랜잭션에 (C93 · 테스트 시나리오 J-97 · D-46 · N-132 · D-45 · F-62)',
     description: '스케줄(규칙마다 기존 patch · day=이번만 · from=그 날부터 규칙을 가른다) → 안내 초안(GUIDE teacher_change) → 학부모 안내(PNOTI · 보낼 것) '
-      + '→ 교재 확인(읽기) → 정산 시수(회차가 옮겨 가므로 시트가 따라온다 · 확정된 달은 알린다) → 새 강사·원래 강사·관리자 알림 → 컴플레인이면 teacher_changed + 대응. 겹치면 전부 되돌린다.',
+      + '→ 교재 담당(from은 이전 강사 소유 ISSUE만 이관 · day는 유지) → 정산 시수(회차가 옮겨 가므로 시트가 따라온다 · 확정된 달은 알린다) '
+      + '→ 새 강사·원래 강사·관리자 알림 → 컴플레인이면 teacher_changed + 대응. 겹치거나 교재 담당을 유일하게 정할 수 없으면 전부 되돌린다.',
   })
   @ApiCreatedResponse({ type: TeacherChangeResultDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'SAME_TEACHER | STAFF_INACTIVE | NOTHING_TO_CHANGE | CPL_STUDENT_MISMATCH(컴플레인의 학생과 studentId 가 다르다 — 어느 쓰기도 하기 전에 원자적으로 거절 · CR-BE-02)' })
-  @ApiConflictResponse({ description: '시간표 겹침 RESOURCE_CONFLICT | MONTH_CLOSED' })
+  @ApiConflictResponse({ description: 'RESOURCE_CONFLICT | MONTH_CLOSED | BOOK_ASSIGNMENT_TRANSFER_AMBIGUOUS | BOOK_ASSIGNMENT_TRANSFER_CONFLICT' })
   @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND | CPL_NOT_FOUND' })
   teacherChange(@CurrentUser() user: RequestUser, @Body() dto: TeacherChangeDto): Promise<TeacherChangeResultDto> {
     return this.tcSvc.apply(user.id, dto);

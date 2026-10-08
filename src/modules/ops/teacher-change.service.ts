@@ -11,7 +11,7 @@
  *   ① 스케줄 — 규칙마다 `ScheduleWriteService.patch(…, outer)` (day = 이번만 EXC · from = 그 날짜에서 규칙을 가른다 D-R16 · EXCLUDE 가 겹침을 막으면 전부 되돌아간다 · UNAV 는 응답)
  *   ② 안내 초안 — `GuidesService.draftsForTeacherChange` (§43 「한 번 보내는 것 — 강사 교체」 · F-62)
  *   ③ 학부모 안내 — PNOTI 행 (audience parent · 보낼 것으로 남는다 · 발송처는 N-42)
- *   ④ 교재 확인 — 이관 학생의 ISSUE 를 읽어 돌려준다 (우리 ISSUE 에는 강사 칸이 없어 바꿀 것이 없다 — 원문 `ISSUE.ins` 와 다른 자리)
+ *   ④ 교재 이관 — from은 이전 강사 소유 ISSUE를 새 강사로 옮기고, day는 하루 대강이라 소유자를 유지한다(관리자 수정사항 122~124장)
  *   ⑤ 정산 시수 — 회차가 새 강사로 갔으니 `lib/payout-sheet` 가 저절로 따라온다 · 달마다 세어 주고 이미 확정된 달(N-51)은 그렇다고 말한다
  *   ⑥ 선생님 전달 — 새 강사 · 원래 강사(활성이면) · 관리자 NOTI
  * + 컴플레인이 있으면 `cpl.teacher_changed` 와 단계(접수 → 대응) · LOG. 미리보기는 같은 트랜잭션을 끝까지 돌리고 되돌린다(D-R37).
@@ -33,6 +33,7 @@ import { GuidesService } from '../guides/guides.service';
 import type { UnavWarnDto } from '../schedule/schedule.dto';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
+import { histSql } from '../../lib/history';
 import type { TcBookDto, TcPayoutMonthDto, TcSeriesDto, TcStaffDto, TcStepDto, TeacherChangeDto, TeacherChangeResultDto } from './teacher-change.dto';
 
 class PreviewRollback extends Error {
@@ -43,7 +44,20 @@ const md = (iso: string) => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}`;
 const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 const TEACHER_OF = 'COALESCE(o.teacher_id, s.teacher_id)';
 
-interface Target { serId: number; onDate: string; calDate: string; title: string; kindName: string; subName: string | null; rrule: string; startMin: number; endMin: number }
+interface Target { serId: number; onDate: string; calDate: string; title: string; kindName: string; subKey: string | null; subName: string | null; rrule: string; startMin: number; endMin: number }
+interface LiveTarget { liveId: number; rosterDate: string; subKey: string | null }
+interface BookAssignmentRow {
+  teacher_id: string;
+  teacher_name: string;
+  student_id: string;
+  student_name: string;
+  issue_id: string;
+  lib_id: string;
+  title: string;
+  state: string;
+  sub_key: string;
+  row_version: number;
+}
 
 @Injectable()
 export class TeacherChangeService {
@@ -110,7 +124,7 @@ export class TeacherChangeService {
     const unavailable: UnavWarnDto[] = [];
     const series: TcSeriesDto[] = [];
     /** 규칙마다 실제로 살아 있는 규칙(from 이면 갈라진 새 규칙)과 **명단 기준일 하나** — 명단·학부모 안내·교재가 전부 이것을 본다 (CR-BE-01) */
-    const live: Array<{ liveId: number; rosterDate: string }> = [];
+    const live: LiveTarget[] = [];
     const touchedAll: number[] = [];
     for (const t of targets) {
       let written;
@@ -137,7 +151,7 @@ export class TeacherChangeService {
       const newSerId = written.serIds.find((id) => id !== t.serId) ?? null;
       const liveId = newSerId ?? t.serId;
       const rosterDate = this.rosterDate(t);
-      live.push({ liveId, rosterDate });
+      live.push({ liveId, rosterDate, subKey: t.subKey });
       touchedAll.push(...written.serIds);
       const students = (await m.query(
         `SELECT st.name FROM ser_stu ss JOIN stu st ON st.id = ss.student_id WHERE ss.ser_id = $1 AND ${serStuOn('ss', '$2::date')} ORDER BY st.name`,
@@ -180,35 +194,8 @@ export class TeacherChangeService {
       parentNotices += rows.length;
     }
 
-    /* ── ④ 교재 확인 — 이관 학생의 배부 교재 (읽기) ── */
-    // 규칙에 한 번이라도 속했던 모든 학생이 아니라 **교체가 시작되는 회차의 실제 명단**만 교재 대상이다 — 그 명단은 ①의 `students` 와
-    // 같은 기준일(`rosterDate` · 규칙 날짜)로 센다. 옮긴 달력 날짜로 세면 명단 경계를 넘어 옮긴 회차에서 두 집합이 갈린다 (CR-BE-01).
-    // ID 네 개를 함께 내려 화면·후속 쓰기가 이름으로 강사/학생/교재를 재추정하지 않게 한다.
-    const bookTargets = live.map((l) => ({ ser_id: l.liveId, on_date: l.rosterDate }));
-    const books = (await m.query(
-      `WITH target AS (
-         SELECT x.ser_id, x.on_date
-           FROM jsonb_to_recordset($1::jsonb) AS x(ser_id bigint, on_date date)
-       )
-       SELECT DISTINCT $2::bigint AS teacher_id, $3::text AS teacher_name,
-              st.id AS student_id, st.name AS student_name,
-              i.id AS issue_id, l.id AS lib_id, l.title, i.state
-         FROM target t
-         JOIN ser_stu ss ON ss.ser_id = t.ser_id AND ${serStuOn('ss', 't.on_date')}
-         JOIN stu st ON st.id = ss.student_id
-         JOIN issue i ON i.student_id = st.id AND ${issueActiveSql('i')}
-         JOIN lib l ON l.id = i.lib_id
-        ORDER BY st.name, l.title, i.id`,
-      [JSON.stringify(bookTargets), to.id, to.name],
-    )) as Array<{
-      teacher_id: string; teacher_name: string; student_id: string; student_name: string;
-      issue_id: string; lib_id: string; title: string; state: string;
-    }>;
-    const bookRows: TcBookDto[] = books.map((b) => ({
-      teacherId: Number(b.teacher_id), teacherName: b.teacher_name,
-      studentId: Number(b.student_id), studentName: b.student_name,
-      issueId: Number(b.issue_id), libId: Number(b.lib_id), title: b.title, state: b.state,
-    }));
+    /* ── ④ 교재 이관 — 이전 강사 소유 배정만 · 다른 강사/legacy 배정은 추정하지 않는다 ── */
+    const bookRows = await this.transferBooks(m, userId, dto, from, to, live);
 
     /* ── ⑤ 정산 시수 — 달마다 옮겨 간 회차 · 확정된 달은 되돌리지 않는다 (N-51) ── */
     const months = (await m.query(
@@ -284,7 +271,11 @@ export class TeacherChangeService {
       { key: 'schedule', label: '스케줄', count: occurrences, note: `규칙 ${series.length}개 · 회차 ${occurrences}회 — ${dto.mode === 'day' ? '이날만 대강(회차 예외)' : `${md(dto.date)}부터 계속(규칙을 가른다)`}` },
       { key: 'guide', label: '안내 초안', count: guideIds.length, note: guideIds.length ? '학생마다 강사 교체 안내 초안 — 수업 안내에서 다듬어 보냅니다' : '새로 만들 초안이 없습니다(이미 있음)' },
       { key: 'parent', label: '학부모 안내', count: parentNotices, note: '보낼 안내로 남겼습니다 — 학부모 수신처는 아직 없습니다' },
-      { key: 'book', label: '교재 확인', count: bookRows.length, note: bookRows.length ? '이관 학생의 배부 교재 — 새 강사가 이어받습니다(바꿀 것 없음)' : '배부된 교재가 없습니다' },
+      { key: 'book', label: dto.mode === 'from' ? '교재 이관' : '교재 유지', count: bookRows.length, note: bookRows.length
+        ? dto.mode === 'from'
+          ? `이전 강사 소유 배정 ${bookRows.length}권 — ${preview ? '확정 시 새 강사에게 이관합니다' : '새 강사에게 이관했습니다'}`
+          : `하루 대강은 교재 담당을 바꾸지 않습니다 — 이전 강사 배정 ${bookRows.length}권 유지`
+        : '대상 교재 배정이 없습니다' },
       { key: 'payout', label: '정산 시수', count: occurrences, note: payout.length ? payout.map((p) => `${+p.month.slice(5)}월 ${p.occurrences}회 → ${to.name}${p.fromConfirmed || p.toConfirmed ? ' (확정된 달 — 되돌리지 않습니다)' : ''}`).join(' · ') : '옮겨 간 회차가 없습니다' },
       { key: 'notify', label: '선생님 전달', count: notifiedTeachers, note: `새 강사 ${to.name}${from.active && from.id !== userId ? ` · 원래 강사 ${from.name}` : ''} · 관리자 ${notifiedStaff}명` },
     ];
@@ -307,11 +298,126 @@ export class TeacherChangeService {
    */
   private rosterDate(t: Pick<Target, 'onDate'>): string { return t.onDate; }
 
+  /**
+   * 관리자 수정사항 122~124장 권고안: 영구 교체만 학생×교재×강사×과목 배정 소유자를 넘긴다.
+   * ISSUE에는 규칙 id가 없으므로 같은 학생·과목을 이전 강사가 다른 미래 규칙에서도 계속 맡는 경우에는 자동 추정하지 않고 409로 막는다.
+   * 정책을 바꿀 때는 BOC-08D-03 문서·TcBookDto·TeacherChangeWizard·teacher-lineage DB 회귀를 함께 수정한다.
+   */
+  private async transferBooks(
+    m: EntityManager,
+    userId: number,
+    dto: TeacherChangeDto,
+    from: TcStaffDto,
+    to: TcStaffDto,
+    live: LiveTarget[],
+  ): Promise<TcBookDto[]> {
+    const bookTargets = live
+      .filter((target): target is LiveTarget & { subKey: string } => target.subKey !== null)
+      .map((target) => ({ ser_id: target.liveId, on_date: target.rosterDate, sub_key: target.subKey }));
+    if (!bookTargets.length) return [];
+
+    const params = [JSON.stringify(bookTargets), from.id, from.name];
+    const selectSql = (lock: boolean) => `WITH target AS (
+         SELECT x.ser_id, x.on_date, x.sub_key
+           FROM jsonb_to_recordset($1::jsonb) AS x(ser_id bigint, on_date date, sub_key varchar(20))
+       )
+       SELECT $2::bigint AS teacher_id, $3::text AS teacher_name,
+              st.id AS student_id, st.name AS student_name,
+              i.id AS issue_id, l.id AS lib_id, l.title, i.state, i.sub_key, i.row_version
+         FROM issue i
+         JOIN stu st ON st.id=i.student_id
+         JOIN lib l ON l.id=i.lib_id
+        WHERE i.teacher_id=$2 AND ${issueActiveSql('i')}
+          AND EXISTS (
+            SELECT 1 FROM target t
+            JOIN ser_stu ss ON ss.ser_id=t.ser_id AND ss.student_id=i.student_id AND ${serStuOn('ss', 't.on_date')}
+            WHERE i.sub_key=t.sub_key
+          )
+        ORDER BY st.name,l.title,i.id${lock ? ' FOR UPDATE OF i' : ''}`;
+
+    let books = (await m.query(selectSql(false), params)) as BookAssignmentRow[];
+    if (dto.mode === 'day' || !books.length) {
+      return books.map((book) => this.bookDto(book, from, from, false));
+    }
+
+    // 교재 배정 writer와 같은 학생+교재 advisory lock을 먼저 잡아 새 배정/다른 교체와 직렬화한다.
+    const lockKeys = [...new Set(books.map((book) => `${book.student_id}:${book.lib_id}`))].sort();
+    for (const key of lockKeys) {
+      await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`book-active:${key}`]);
+    }
+    books = (await m.query(selectSql(true), params)) as BookAssignmentRow[];
+    if (!books.length) return [];
+
+    const issueIds = books.map((book) => Number(book.issue_id));
+    const [ambiguous] = (await m.query(
+      `SELECT i.id FROM issue i
+        WHERE i.id=ANY($1) AND EXISTS (
+          SELECT 1 FROM ser s JOIN kind k ON k.key=s.kind_key AND k.grp='lesson'
+          JOIN ser_stu ss ON ss.ser_id=s.id AND ss.student_id=i.student_id
+          WHERE s.teacher_id=$2 AND s.sub_key=i.sub_key
+            AND GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date),$3::date)
+                <= LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))
+        ) ORDER BY i.id LIMIT 1`,
+      [issueIds, from.id, dto.date],
+    )) as Array<{ id: string }>;
+    if (ambiguous) {
+      throw new ConflictException({
+        code: 'BOOK_ASSIGNMENT_TRANSFER_AMBIGUOUS',
+        message: '이전 강사가 같은 학생·과목의 다른 수업을 계속 맡고 있어 교재 담당을 자동으로 정할 수 없습니다',
+        issueId: Number(ambiguous.id),
+      });
+    }
+    const [collision] = (await m.query(
+      `SELECT old_i.id FROM issue old_i WHERE old_i.id=ANY($1) AND EXISTS (
+         SELECT 1 FROM issue new_i
+          WHERE new_i.student_id=old_i.student_id AND new_i.lib_id=old_i.lib_id
+            AND new_i.teacher_id=$2 AND new_i.sub_key=old_i.sub_key AND ${issueActiveSql('new_i')}
+       ) ORDER BY old_i.id LIMIT 1`,
+      [issueIds, to.id],
+    )) as Array<{ id: string }>;
+    if (collision) {
+      throw new ConflictException({
+        code: 'BOOK_ASSIGNMENT_TRANSFER_CONFLICT',
+        message: '새 강사에게 같은 학생·교재 배정이 이미 있어 자동 이관할 수 없습니다',
+        issueId: Number(collision.id),
+      });
+    }
+
+    await m.query(`UPDATE issue SET teacher_id=$2,row_version=row_version+1 WHERE id=ANY($1)`, [issueIds, to.id]);
+    for (const book of books) {
+      await m.query(histSql(), ['issue', Number(book.issue_id), 'teacher_swap', userId]);
+      await m.query(
+        `INSERT INTO log(actor_id,entity,entity_id,action,before,after)
+         VALUES ($1,'ISSUE',$2,'teacher-change',$3::jsonb,$4::jsonb)`,
+        [userId, Number(book.issue_id),
+          JSON.stringify({ teacherId: from.id, subKey: book.sub_key, rowVersion: Number(book.row_version) }),
+          JSON.stringify({ teacherId: to.id, date: dto.date, mode: dto.mode, rowVersion: Number(book.row_version) + 1 })],
+      );
+    }
+    return books.map((book) => this.bookDto(book, from, to, true));
+  }
+
+  private bookDto(book: BookAssignmentRow, previous: TcStaffDto, current: TcStaffDto, transferred: boolean): TcBookDto {
+    return {
+      previousTeacherId: previous.id,
+      previousTeacherName: previous.name,
+      teacherId: current.id,
+      teacherName: current.name,
+      studentId: Number(book.student_id),
+      studentName: book.student_name,
+      issueId: Number(book.issue_id),
+      libId: Number(book.lib_id),
+      title: book.title,
+      state: book.state,
+      transferred,
+    };
+  }
+
   /** 대상 회차 — day: 그날의 회차 하나씩 · from: 규칙마다 그 날 이후 첫 회차 (patch 의 onDate = 규칙 날짜) */
   private async targets(m: EntityManager, dto: TeacherChangeDto, fromId: number, studentId: number | null): Promise<Target[]> {
     const rows = (await m.query(
       `SELECT DISTINCT ON (o.ser_id) o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date, to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS cal_date,
-              s.title, k.name AS kind_name, sb.name AS sub_name, s.rrule, s.start_min, s.end_min
+              s.title, k.name AS kind_name, s.sub_key, sb.name AS sub_name, s.rrule, s.start_min, s.end_min
          FROM ser_occ o JOIN ser s ON s.id = o.ser_id JOIN kind k ON k.key = s.kind_key LEFT JOIN sub sb ON sb.key = s.sub_key
         WHERE NOT o.canceled
           /* day 는 그날 실제로 맡는 사람(대강 예외 포함) · from 은 규칙의 강사 — 남의 규칙에 잠깐 대강으로 든 회차 때문에 그 규칙을 통째로 가르지 않는다 */
@@ -321,9 +427,9 @@ export class TeacherChangeService {
           AND ($5::bigint IS NULL OR EXISTS (SELECT 1 FROM ser_stu ss WHERE ss.ser_id = o.ser_id AND ss.student_id = $5 AND ${serStuOn('ss', 'o.on_date')}))
         ORDER BY o.ser_id, o.on_date, o.id`,
       [fromId, dto.mode === 'day', dto.date, dto.serIds?.length ? dto.serIds : null, studentId],
-    )) as Array<{ ser_id: string; on_date: string; cal_date: string; title: string; kind_name: string; sub_name: string | null; rrule: string; start_min: number; end_min: number }>;
+    )) as Array<{ ser_id: string; on_date: string; cal_date: string; title: string; kind_name: string; sub_key: string | null; sub_name: string | null; rrule: string; start_min: number; end_min: number }>;
     return rows.map((r) => ({
-      serId: Number(r.ser_id), onDate: r.on_date, calDate: r.cal_date, title: String(r.title ?? ''), kindName: r.kind_name, subName: r.sub_name ?? null,
+      serId: Number(r.ser_id), onDate: r.on_date, calDate: r.cal_date, title: String(r.title ?? ''), kindName: r.kind_name, subKey: r.sub_key ?? null, subName: r.sub_name ?? null,
       rrule: r.rrule, startMin: Number(r.start_min), endMin: Number(r.end_min),
     }));
   }

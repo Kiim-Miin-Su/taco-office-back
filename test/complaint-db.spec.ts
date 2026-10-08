@@ -47,7 +47,9 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   const STU_OLD = 9953; // 교체 시작 전에 명단이 끝난 학생 — 교재 대상에 섞으면 안 된다
   const KIND = 'cp_kind';
   const SUB = 'cp-sub';
+  const SUB_BINDING = 'cp-sub-binding';
   const BOOK_CODE = 'CP-TARGET-BOOK';
+  const ROSTER_BOOK_CODE = 'CP-ROSTER-BOOK';
   const serIds: number[] = [];
   const cplIds: number[] = [];
 
@@ -67,9 +69,9 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   const api = (m: 'post' | 'patch' | 'get', p: string, t = ceoToken) =>
     request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${t}`).timeout({ response: 10000, deadline: 20000 });
 
-  const makeSeries = async (rrule: string, startMin: number, teacherId: number, students: number[], title: string) => {
+  const makeSeries = async (rrule: string, startMin: number, teacherId: number, students: number[], title: string, subKey = SUB) => {
     const res = await api('post', '/schedule').send({
-      kindKey: KIND, subKey: SUB, mode: 'offline', fromDate: START, toDate: null, rrule, startMin, endMin: startMin + 60,
+      kindKey: KIND, subKey, mode: 'offline', fromDate: START, toDate: null, rrule, startMin, endMin: startMin + 60,
       teacherId, roomId: null, title, studentIds: students,
     }).expect(201);
     const id = Number(res.body.serIds[0]);
@@ -96,9 +98,11 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
       [CEO, T_A, T_B, ADMIN, hash],
     );
     await q(`INSERT INTO stu (id, name, grade, school) VALUES
-      ($1,'교체학생1','10','테스트고'), ($2,'교체학생2','11','테스트고'), ($3,'과거학생','9','테스트고')`, [STU1, STU2, STU_OLD]);
+      ($1,'교체학생1','G10','테스트고'), ($2,'교체학생2','G11','테스트고'), ($3,'과거학생','G9','테스트고')`, [STU1, STU2, STU_OLD]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'교체 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
-    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'교체 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
+    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES
+      ($1,'교체 과목','#A85764',$3), ($2,'컴플레인 결속 과목','#A85764',$3)
+      ON CONFLICT (key) DO NOTHING`, [SUB, SUB_BINDING, KIND]);
     const login = async (email: string) => {
       const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
@@ -127,12 +131,15 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     await q(`DELETE FROM guide WHERE student_id = ANY($1)`, [[STU1, STU2, STU_OLD]]);
     await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [[STU1, STU2, STU_OLD]]);
     await q(`DELETE FROM cpl WHERE student_id = ANY($1) OR owner_id = ANY($2) OR body LIKE '교체 시험%'`, [[STU1, STU2, STU_OLD], [CEO, T_A, T_B, ADMIN]]);
-    await q(`DELETE FROM issue WHERE student_id = ANY($1) OR lib_id IN (SELECT id FROM lib WHERE code = $2)`, [[STU1, STU2, STU_OLD], BOOK_CODE]);
-    await q(`DELETE FROM lib WHERE code = $1`, [BOOK_CODE]);
+    const bookCodes = [BOOK_CODE, ROSTER_BOOK_CODE];
+    await q(`DELETE FROM hist WHERE entity='issue' AND ref_id IN (SELECT id FROM issue WHERE student_id=ANY($1))`, [[STU1, STU2, STU_OLD]]);
+    await q(`DELETE FROM issue WHERE student_id = ANY($1) OR lib_id IN (SELECT id FROM lib WHERE code=ANY($2))`, [[STU1, STU2, STU_OLD], bookCodes]);
+    await q(`DELETE FROM vers WHERE lib_id IN (SELECT id FROM lib WHERE code=ANY($1))`, [bookCodes]);
+    await q(`DELETE FROM lib WHERE code=ANY($1)`, [bookCodes]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU1, STU2, STU_OLD]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, T_A, T_B, ADMIN]]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, T_A, T_B, ADMIN]]);
-    await q(`DELETE FROM sub WHERE key = $1`, [SUB]);
+    await q(`DELETE FROM sub WHERE key = ANY($1)`, [[SUB, SUB_BINDING]]);
     await q(`DELETE FROM kind WHERE key = $1`, [KIND]);
     await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, T_A, T_B, ADMIN]]);
   }
@@ -188,9 +195,16 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     const s2 = await makeSeries('WEEKLY:FR', 600, T_A, [STU2], '교체 S2');
     // 같은 규칙에 남아 있지만 교체 시작 전에 끝난 예전 명단. 기존 교재 질의는 날짜를 보지 않아 이 학생의 교재도 섞었다.
     await q(`INSERT INTO ser_stu (ser_id, student_id, from_date, to_date) VALUES ($1, $2, $3::date, $4::date)`, [s1, STU_OLD, START, plus(MON2, -1)]);
-    const [lib] = await q<{ id: string }>(`INSERT INTO lib (code, title, sub_key, pages) VALUES ($1, '교체 대상 교재', $2, 120) RETURNING id`, [BOOK_CODE, SUB]);
-    const [targetIssue] = await q<{ id: string }>(`INSERT INTO issue (lib_id, student_id, issued_on, state) VALUES ($1, $2, $3::date, 'ok') RETURNING id`, [lib.id, STU1, START]);
-    await q(`INSERT INTO issue (lib_id, student_id, issued_on, state) VALUES ($1, $2, $3::date, 'ok')`, [lib.id, STU_OLD, START]);
+    const [lib] = await q<{ id: string }>(`INSERT INTO lib (code,title,sub_key,pages,grade_from,grade_to) VALUES ($1,'교체 대상 교재',$2,120,0,12) RETURNING id`, [BOOK_CODE, SUB]);
+    const [version] = await q<{ id: string }>(`INSERT INTO vers (lib_id,edition,from_date) VALUES ($1,'1판',$2::date) RETURNING id`, [lib.id, TODAY]);
+    const [targetIssue] = await q<{ id: string }>(
+      `INSERT INTO issue (lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state)
+       VALUES ($1,$2,$3,$4,$5,$6::date,'ok') RETURNING id`, [lib.id, version.id, STU1, T_A, SUB, START],
+    );
+    await q(
+      `INSERT INTO issue (lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state)
+       VALUES ($1,$2,$3,$4,$5,$6::date,'ok')`, [lib.id, version.id, STU_OLD, T_A, SUB, START],
+    );
     const cpl = (await api('post', '/ops/complaints').send({ area: 'teacher', studentId: STU1, body: '교체 시험 — 강사를 바꿔 주세요' }).expect(201)).body;
     cplIds.push(cpl.id);
 
@@ -207,8 +221,9 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(pre.guideDrafts).toBe(2);
     expect(pre.parentNotices).toBe(2);
     expect(pre.books).toEqual([{
+      previousTeacherId: T_A, previousTeacherName: '교체A',
       teacherId: T_B, teacherName: '교체B', studentId: STU1, studentName: '교체학생1',
-      issueId: Number(targetIssue.id), libId: Number(lib.id), title: '교체 대상 교재', state: 'ok',
+      issueId: Number(targetIssue.id), libId: Number(lib.id), title: '교체 대상 교재', state: 'ok', transferred: true,
     }]);
     expect(pre.steps.map((s: { key: string }) => s.key)).toEqual(['schedule', 'guide', 'parent', 'book', 'payout', 'notify']);
     expect(pre.cpl).toMatchObject({ id: cpl.id, stage: 'acting', teacherChanged: true });
@@ -217,6 +232,8 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM pnoti WHERE student_id = ANY($1)`, [[STU1, STU2]]))[0]!.n).toBe(0);
     expect((await q<{ t: boolean; stage: string }>(`SELECT teacher_changed AS t, stage FROM cpl WHERE id = $1`, [cpl.id]))[0]).toEqual({ t: false, stage: 'received' });
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser_occ WHERE ser_id = $1 AND teacher_id = $2`, [s1, T_B]))[0]!.n).toBe(0);
+    expect((await q<{ teacher_id: string; row_version: number }>(`SELECT teacher_id,row_version FROM issue WHERE id=$1`, [targetIssue.id]))[0])
+      .toEqual({ teacher_id: String(T_A), row_version: 1 });
 
     // 실제 — 규칙이 갈린다 (D-R16): 옛 규칙은 전날까지 · 새 규칙은 새 강사
     const r = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, cplId: cpl.id, memo: '학부모 요청' }).expect(201)).body;
@@ -227,6 +244,8 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(old).toEqual({ to_date: plus(MON2, -1), teacher_id: String(T_A) });
     const [fresh] = await q<{ from_date: string; teacher_id: string }>(`SELECT to_char(from_date,'YYYY-MM-DD') AS from_date, teacher_id FROM ser WHERE id = $1`, [newId]);
     expect(fresh).toEqual({ from_date: MON2, teacher_id: String(T_B) });
+    expect((await q<{ teacher_id: string; row_version: number }>(`SELECT teacher_id,row_version FROM issue WHERE id=$1`, [targetIssue.id]))[0])
+      .toEqual({ teacher_id: String(T_B), row_version: 2 });
     // 명단이 따라간다 · 첫 주(MON1)는 A 그대로, MON2 부터 B · 리포트(미작성)도 B
     // 기간이 끝난 명단은 감사 이력으로 복사되어도, 교체 시작일의 실제 대상은 두 명뿐이다.
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM ser_stu WHERE ser_id = $1`, [newId]))[0]!.n).toBe(3);
@@ -322,8 +341,16 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     // STU2 의 명단은 규칙 날짜 MON3 까지만 유효하다 — 옮긴 달력 날짜(WED3)에는 없다
     await q(`UPDATE ser_stu SET to_date = $3::date WHERE ser_id = $1 AND student_id = $2`, [s6, STU2, MON3]);
     // 두 학생 모두 배부 교재가 있다 — 교재 대상이 명단과 갈리면 여기서 보인다
-    const [lib] = await q<{ id: string }>(`SELECT id FROM lib WHERE code = $1`, [BOOK_CODE]);
-    await q(`INSERT INTO issue (lib_id, student_id, issued_on, state) VALUES ($1, $2, $3::date, 'ok')`, [lib.id, STU2, START]);
+    const [lib] = await q<{ id: string }>(
+      `INSERT INTO lib (code,title,sub_key,pages,grade_from,grade_to) VALUES ($1,'명단 교재',$2,120,0,12) RETURNING id`,
+      [ROSTER_BOOK_CODE, SUB],
+    );
+    const [version] = await q<{ id: string }>(`INSERT INTO vers (lib_id,edition,from_date) VALUES ($1,'1판',$2::date) RETURNING id`, [lib.id, TODAY]);
+    await q(
+      `INSERT INTO issue (lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state) VALUES
+       ($1,$2,$3,$5,$6,$7::date,'ok'),($1,$2,$4,$5,$6,$7::date,'ok')`,
+      [lib.id, version.id, STU1, STU2, T_A, SUB, START],
+    );
     // MON3 회차를 WED3 으로 옮긴다 — 규칙 날짜(EXC 키)는 MON3 그대로, 달력 날짜만 WED3
     await api('patch', `/schedule/${s6}`).send({ scope: 'this', onDate: MON3, date: WED3 }).expect(200);
     const [moved] = await q<{ on_date: string; cal: string }>(
@@ -353,7 +380,9 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   /* ── ⑤ CR-BE-02 — 컴플레인의 학생과 교체 대상 학생은 하나다 ─────────────── */
   it('CR-BE-02: 학생 A 의 cplId 와 학생 B 의 studentId 를 함께 보내면 400 이고 수업·컴플레인·LOG·NOTI 가 모두 그대로다 — 같은 학생이면 그대로 성공한다', async () => {
     const TUE = firstDow(plus(MON2, 7), 2);
-    const s7 = await makeSeries('WEEKLY:TU', 780, T_A, [STU1, STU2], '교체 S7 (컴플레인 결속)');
+    // 이 시나리오는 cplId/studentId 결속만 검증한다. 앞 시나리오의 같은 학생·과목 교재가
+    // 영구 이관 모호성 방어를 건드리지 않도록 독립 과목으로 fixture를 분리한다.
+    const s7 = await makeSeries('WEEKLY:TU', 780, T_A, [STU1, STU2], '교체 S7 (컴플레인 결속)', SUB_BINDING);
     const cpl = (await api('post', '/ops/complaints').send({ area: 'teacher', studentId: STU1, body: '교체 시험 — A 학생의 컴플레인' }).expect(201)).body;
     cplIds.push(cpl.id);
     const snapshot = async () => ({

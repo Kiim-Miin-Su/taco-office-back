@@ -54,6 +54,8 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
   const BOOK = 'TL-BOOK-A';
   const BOOK_WAIT = 'TL-BOOK-WAIT';
   const BOOK_CANCELED = 'TL-BOOK-CANCELED';
+  const BOOK_TRANSFER = 'TL-BOOK-TRANSFER';
+  const BOOK_OTHER = 'TL-BOOK-OTHER';
   const serIds: number[] = [];
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> => ds.query(sql, p) as Promise<T[]>;
@@ -88,6 +90,8 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
   let libId = 0;
   let okIssueId = 0;
   let waitIssueId = 0;
+  let transferIssueId = 0;
+  let otherTeacherIssueId = 0;
   let guideStu1 = 0; // 마법사가 STU1 에게 만든 간이 안내
   let guideStu2 = 0;
 
@@ -108,7 +112,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
          ($3,'계보B','tl-b@t.kr','teacher',$4,true,null)`,
       [CEO, T_A, T_B, hash],
     );
-    await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'계보학생1','10','테스트고'), ($2,'계보학생2','11','테스트고')`, [STU1, STU2]);
+    await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'계보학생1','G10','테스트고'), ($2,'계보학생2','G11','테스트고')`, [STU1, STU2]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'계보 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
     await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'계보 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
     const login = async (email: string) => {
@@ -120,6 +124,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
 
     s1 = await makeSeries('WEEKLY:MO,WE', 600, T_A, [STU1, STU2], '계보 S1');
     s2 = await makeSeries('WEEKLY:FR', 600, T_A, [STU2], '계보 S2');
+    await makeSeries('WEEKLY:TU', 780, T_B, [STU1], '다른 강사 수업');
     // STU1 의 이전 안내(첫 수업 · 이미 읽음) — 지도 방향이 적혀 있다. §44 「가장 최근 안내가 현재 유효한 것」
     await q(
       `INSERT INTO guide (ser_id,student_id,teacher_id,reason,state,due_on,event_on,created_by,body,direction,admin_note,created_at)
@@ -139,6 +144,32 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
       `INSERT INTO issue (lib_id, student_id, state, ended_reason, ended_by, ended_at) VALUES ($1, $2, 'canceled', '잘못 올림', $3, now())`,
       [libCanceled.id, STU1, CEO],
     );
+    const [transferBook] = await q<{ id: string }>(
+      `INSERT INTO lib (code,title,sub_key,pages,grade_from,grade_to) VALUES ($1,'이전 강사 교재',$2,100,0,12) RETURNING id`,
+      [BOOK_TRANSFER, SUB],
+    );
+    const [otherBook] = await q<{ id: string }>(
+      `INSERT INTO lib (code,title,sub_key,pages,grade_from,grade_to) VALUES ($1,'다른 강사 교재',$2,100,0,12) RETURNING id`,
+      [BOOK_OTHER, SUB],
+    );
+    const [transferVersion] = await q<{ id: string }>(
+      `INSERT INTO vers (lib_id,edition,from_date) VALUES ($1,'1판',$2::date) RETURNING id`, [transferBook.id, TODAY],
+    );
+    const [otherVersion] = await q<{ id: string }>(
+      `INSERT INTO vers (lib_id,edition,from_date) VALUES ($1,'1판',$2::date) RETURNING id`, [otherBook.id, TODAY],
+    );
+    const [transferIssue] = await q<{ id: string }>(
+      `INSERT INTO issue (lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state)
+       VALUES ($1,$2,$3,$4,$5,$6::date,'ok') RETURNING id`,
+      [transferBook.id, transferVersion.id, STU1, T_A, SUB, TODAY],
+    );
+    transferIssueId = Number(transferIssue.id);
+    const [otherIssue] = await q<{ id: string }>(
+      `INSERT INTO issue (lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state)
+       VALUES ($1,$2,$3,$4,$5,$6::date,'ok') RETURNING id`,
+      [otherBook.id, otherVersion.id, STU1, T_B, SUB, TODAY],
+    );
+    otherTeacherIssueId = Number(otherIssue.id);
   });
 
   async function cleanup() {
@@ -163,8 +194,10 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
     await q(`DELETE FROM hist WHERE entity = 'issue' AND ref_id IN (SELECT id FROM issue WHERE student_id = ANY($1))`, [[STU1, STU2]]);
     await q(`DELETE FROM guide WHERE student_id = ANY($1)`, [[STU1, STU2]]);
     await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [[STU1, STU2]]);
-    await q(`DELETE FROM issue WHERE student_id = ANY($1) OR lib_id IN (SELECT id FROM lib WHERE code = ANY($2))`, [[STU1, STU2], [BOOK, BOOK_WAIT, BOOK_CANCELED]]);
-    await q(`DELETE FROM lib WHERE code = ANY($1)`, [[BOOK, BOOK_WAIT, BOOK_CANCELED]]);
+    const bookCodes = [BOOK, BOOK_WAIT, BOOK_CANCELED, BOOK_TRANSFER, BOOK_OTHER];
+    await q(`DELETE FROM issue WHERE student_id = ANY($1) OR lib_id IN (SELECT id FROM lib WHERE code = ANY($2))`, [[STU1, STU2], bookCodes]);
+    await q(`DELETE FROM vers WHERE lib_id IN (SELECT id FROM lib WHERE code = ANY($1))`, [bookCodes]);
+    await q(`DELETE FROM lib WHERE code = ANY($1)`, [bookCodes]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU1, STU2]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, T_A, T_B]]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, T_A, T_B]]);
@@ -179,10 +212,41 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
 
   /* ── ① 마법사 「이 날부터」 — 지도 방향 승계 · 이전 강사 · hist teacher_swap · 알림 (F-62 · §44 · D-46) ── */
   it('강사 교체 초안은 그 학생의 가장 최근 안내에서 지도 방향을 물려받고, 이전 강사는 마법사 LOG 에서 되짚으며, 초안마다 hist teacher_swap 이 남는다', async () => {
+    const dayPreview = (await api('post', '/ops/teacher-change/preview').send({
+      fromTeacherId: T_A, toTeacherId: T_B, mode: 'day', date: MON2, serIds: [s1], studentId: STU1,
+    }).expect(201)).body;
+    expect(dayPreview.books).toEqual([
+      expect.objectContaining({
+        issueId: transferIssueId, previousTeacherId: T_A, teacherId: T_A, transferred: false,
+      }),
+    ]);
+    expect(dayPreview.steps.find((step: { key: string }) => step.key === 'book')).toMatchObject({ label: '교재 유지', count: 1 });
+    expect(await q<{ teacher_id: string; row_version: number }>(
+      `SELECT teacher_id,row_version FROM issue WHERE id=$1`, [transferIssueId],
+    )).toEqual([{ teacher_id: String(T_A), row_version: 1 }]);
+    expect(await q(`SELECT id FROM hist WHERE entity='issue' AND ref_id=$1 AND action='teacher_swap'`, [transferIssueId])).toEqual([]);
+
     const r = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, serIds: [s1], memo: '학부모 요청' }).expect(201)).body;
     newS1 = Number(r.series[0].newSerId);
     serIds.push(newS1);
     expect(r.guideDrafts).toBe(2);
+
+    // 관리자 수정사항 122~124장 — 영구 교체는 이전 강사 소유 교재만 넘기고 다른 강사 교재는 그대로 둔다.
+    expect(r.books).toEqual([
+      expect.objectContaining({
+        issueId: transferIssueId, previousTeacherId: T_A, teacherId: T_B, transferred: true,
+      }),
+    ]);
+    const assignmentRows = await q<{ id: string; teacher_id: string; row_version: number }>(
+      `SELECT id,teacher_id,row_version FROM issue WHERE id = ANY($1) ORDER BY id`, [[transferIssueId, otherTeacherIssueId]],
+    );
+    expect(assignmentRows).toEqual([
+      { id: String(transferIssueId), teacher_id: String(T_B), row_version: 2 },
+      { id: String(otherTeacherIssueId), teacher_id: String(T_B), row_version: 1 },
+    ]);
+    expect(await q<{ action: string; by_id: string }>(
+      `SELECT action,by_id FROM hist WHERE entity='issue' AND ref_id=$1 ORDER BY id`, [transferIssueId],
+    )).toEqual([{ action: 'teacher_swap', by_id: String(CEO) }]);
 
     // 지도 방향 — STU1 은 이전 안내의 것을 그대로, STU2 는 이전 안내가 없어 null (관리자 코멘트는 물려주지 않는다)
     const drafts = await q<{ id: string; student_id: string; direction: string | null; admin_note: string | null; state: string }>(
@@ -279,7 +343,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
       const page = (await api('get', `/teacher/guides?week=${MON2}`, newTeacherToken).expect(200)).body;
       return page.students.find((s: { studentId: number }) => s.studentId === STU1).books as Array<Record<string, unknown>>;
     };
-    const before = await week();
+    const before = (await week()).filter((b) => [waitIssueId, okIssueId].includes(Number(b.issueId)));
     expect(before.map((b) => [b.issueId, b.state, b.stateLabel, b.issuedOn, b.returnedOn, b.reissuedFrom, b.reissuedTo])).toEqual([
       [waitIssueId, 'wait', '승인 대기', null, null, null, null],
       [okIssueId, 'ok', '배부 완료', TODAY, null, null, null],
@@ -293,7 +357,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
     const reissued = (await api('post', '/books/issues').send({ studentId: STU1, libId, reissuedFrom: okIssueId, reason: '재배부' }).expect(201)).body;
     expect(reissued).toMatchObject({ state: 'ok', reissuedFrom: okIssueId });
 
-    const after = await week();
+    const after = (await week()).filter((b) => [waitIssueId, okIssueId, reissued.id].includes(Number(b.issueId)));
     expect(after.map((b) => [b.issueId, b.state, b.issuedOn, b.returnedOn, b.reissuedFrom, b.reissuedTo])).toEqual([
       [waitIssueId, 'wait', null, null, null, null],
       [reissued.id, 'ok', TODAY, null, okIssueId, null],
