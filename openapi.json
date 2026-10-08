@@ -21345,7 +21345,7 @@
     },
     "/drawer/change-requests": {
       "post": {
-        "description": "requestKey를 보낸 새 화면은 같은 작성자·정규화된 본문의 재시도에 기존 id를 받는다. 다른 작성자·본문에 같은 키를 쓰면 409다. 기존 무키 화면은 배포 호환을 위해 받는다.",
+        "description": "requestKey를 보낸 새 화면은 같은 작성자·정규화된 본문의 재시도에 기존 id를 받는다. 강사 요청은 sourceDate·readVersion을 보내며 서버 KST 기준 실제 수업일까지 정확히 10일 이상이어야 한다. 다른 작성자·본문에 같은 키를 쓰면 409다.",
         "operationId": "DrawerController_createChangeReq",
         "parameters": [],
         "requestBody": {
@@ -21426,7 +21426,7 @@
             }
           },
           "409": {
-            "description": "CHREQ_REQUEST_KEY_REUSED — 같은 요청키의 작성자 또는 내용이 다르다",
+            "description": "CHREQ_REQUEST_KEY_REUSED | CHREQ_ALREADY_PENDING | CHREQ_NOTICE_TOO_SHORT | CHREQ_SOURCE_STALE | CHREQ_OCCURRENCE_CHANGED",
             "content": {
               "application/json": {
                 "schema": {
@@ -43989,6 +43989,35 @@
           "scheduleChange"
         ]
       },
+      "TeacherLessonHubChangeRequestDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
+          },
+          "asked": {
+            "type": "string",
+            "description": "날짜·시각을 포함한 요청 요약 — 서버가 만든다"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "접수 시각 KST"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "asked",
+          "createdAt"
+        ]
+      },
       "TeacherLessonHubDto": {
         "type": "object",
         "properties": {
@@ -44009,6 +44038,16 @@
           },
           "capabilities": {
             "$ref": "#/components/schemas/TeacherLessonHubCapabilitiesDto"
+          },
+          "scheduleChangeRequest": {
+            "nullable": true,
+            "description": "이 강사가 이 회차에 올린 최신 승인 대기 일정 변경 요청",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherLessonHubChangeRequestDto"
+              }
+            ]
           }
         },
         "required": [
@@ -45927,6 +45966,16 @@
             "format": "uuid",
             "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
           },
+          "sourceDate": {
+            "type": "string",
+            "format": "date",
+            "description": "화면이 읽은 실제 수업일. 강사 요청은 필수이며 서버가 현재 회차와 대조한다"
+          },
+          "readVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "회차 목록을 읽기 직전 LOG version. 강사 요청은 필수"
+          },
           "serId": {
             "type": "number",
             "minimum": 1,
@@ -45951,6 +46000,11 @@
             "enum": [
               "time_move"
             ]
+          },
+          "requestedDate": {
+            "type": "string",
+            "format": "date",
+            "description": "옮길 실제 날짜. 생략하면 현재 실제 날짜에서 시각만 변경한다"
           },
           "startMin": {
             "type": "number",
@@ -45979,6 +46033,16 @@
             "type": "string",
             "format": "uuid",
             "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
+          "sourceDate": {
+            "type": "string",
+            "format": "date",
+            "description": "화면이 읽은 실제 수업일. 강사 요청은 필수이며 서버가 현재 회차와 대조한다"
+          },
+          "readVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "회차 목록을 읽기 직전 LOG version. 강사 요청은 필수"
           },
           "serId": {
             "type": "number",
@@ -46026,6 +46090,16 @@
             "format": "uuid",
             "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
           },
+          "sourceDate": {
+            "type": "string",
+            "format": "date",
+            "description": "화면이 읽은 실제 수업일. 강사 요청은 필수이며 서버가 현재 회차와 대조한다"
+          },
+          "readVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "회차 목록을 읽기 직전 LOG version. 강사 요청은 필수"
+          },
           "serId": {
             "type": "number",
             "minimum": 1,
@@ -46071,6 +46145,16 @@
             "type": "string",
             "format": "uuid",
             "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
+          "sourceDate": {
+            "type": "string",
+            "format": "date",
+            "description": "화면이 읽은 실제 수업일. 강사 요청은 필수이며 서버가 현재 회차와 대조한다"
+          },
+          "readVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "회차 목록을 읽기 직전 LOG version. 강사 요청은 필수"
           },
           "serId": {
             "type": "number",
@@ -46118,6 +46202,16 @@
             "type": "string",
             "format": "uuid",
             "description": "같은 변경 요청의 HTTP 재시도 키. 기존 클라이언트 호환으로 선택 입력이며 새 화면은 항상 보낸다"
+          },
+          "sourceDate": {
+            "type": "string",
+            "format": "date",
+            "description": "화면이 읽은 실제 수업일. 강사 요청은 필수이며 서버가 현재 회차와 대조한다"
+          },
+          "readVersion": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "회차 목록을 읽기 직전 LOG version. 강사 요청은 필수"
           },
           "serId": {
             "type": "number",

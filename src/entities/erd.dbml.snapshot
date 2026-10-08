@@ -1,3 +1,4 @@
+// TBO55-BOC06D02-R91 (2026-10-08): BOC-06D-02 권고안 채택 — 강사 변경 요청은 실제 회차일 기준 KST 정확히 10일 이상만 CHREQ로 접수하고 source_date/read_version을 보존한다. 승인 transaction은 SER 잠금 뒤 취소·이동·동일 SER 변경·월마감·충돌을 재검사하고 기존 일정 writer로 반영한다. 같은 actor+회차의 pending time_move는 advisory lock과 partial unique index로 한 건만 허용한다. v4.78/113표, migration1767500000000 로컬 fresh108 migration·동시 제출·승인 rollback·schema 일치 검증, 운영 미적용. 정책 변경 시 change-request DTO/service/controller·TeacherScheduleChange/Hub·OpenAPI/generated schema·두 DBML·P-BOC06D02·두 수정사항 대조표·portfolio를 함께 수정한다.
 // TBO55-BOC06D01-R90 (2026-10-08): BOC-06D-01 권고안 채택 — UNAV writer는 KST 대상일 10일 전까지, trim 사유 15자 이상, 실제 ser_occ.span 겹침 없음으로 판정한다. teacher-level advisory lock을 시간표 projection과 공유해 동시 편성↔불가시간 등록을 직렬화하며, 관리자 편성은 기존 unavailable warning을 유지한다. 표·컬럼·FK 변화가 없어 v4.77/113표이고 migration은 추가하지 않았다. 정책 변경 시 teacher-unavailable lib·Teacher DTO/service/controller·schedule projection·OpenAPI/generated Front·P-BOC06D01·두 수정사항 대조표·portfolio를 함께 수정한다.
 // TBO55-BOC01D01-R87 (2026-10-08): BOC-01D-01 권고안 채택 — SUB.kind_key 단일 KIND FK, 정규화 이름 유일, 신규·변경 8색과 GPA 신규 연결 금지를 migration1767400000000으로 방어한다. 정본 21종은 명세 대응표, 그 밖의 legacy는 실제 사용 KIND가 정확히 하나일 때만 이관하며 미연결·불일치는 읽기 보존한다. v4.77/113표, fresh107 migration·seed3863·down/up/repeat·custom down 거절·직접 SQL 검증, 운영 미적용. 정책 변경 시 catalog/meta DTO·service·OpenAPI/generated Front·seed/entity/migration·두 DBML·P-BOC01D01·두 수정사항 대조표·portfolio를 함께 수정한다.
 // TBO55-BOC13E-R86 (2026-10-08): BO-13E 권고안 채택 — GPA 4표(gpasvc/gpa_cycle/gpa_alloc/gpa_use)는 물리 삭제하지 않고 읽기 전용 역사 원장으로 보존한다. migration1767300000000이 일반 DML/TRUNCATE를 GPA_RETIRED로 막고, 결정적 0600 JSON export와 빈 _test DB 확인형 restore만 SET LOCAL 우회 키를 쓴다. 표·컬럼·FK는 그대로라 v4.76/113표이며 로컬 fresh106 migration·seed3863·down/up·restore hash를 검증했고 운영 미적용이다. 정책 변경 시 migration·archive lib/CLI·seed/reset 예외·GPA DTO/OpenAPI/generated Front·Figma·두 수정사항 대조표·시나리오·portfolio를 함께 수정한다.
@@ -1087,6 +1088,8 @@ Table CONS_ITEM {
 Table CHREQ {
   id          bigserial   [pk]
   request_key uuid        [note: 'v4.61 · UX-15 선택적 요청 식별자. legacy NULL 허용; chreq_request_key_once partial unique WHERE request_key IS NOT NULL. 같은 key+actor+정규화 본문은 첫 id/201, actor·본문 다르면 409 CHREQ_REQUEST_KEY_REUSED. migration 1765800000000 · 운영 미적용']
+  source_date date         [note: 'v4.78 · BO-06D-02 요청 당시 실제 배치 날짜. 강사 신규 요청은 필수, legacy NULL 허용. 승인 시 현재 SER_OCC 실제 날짜와 재대조']
+  read_version bigint      [note: 'v4.78 · BO-06D-02 요청 화면이 읽은 LOG version. 강사 신규 요청은 필수, legacy NULL 허용. 같은 SER의 이후 감사 줄이 있으면 409 CHREQ_SOURCE_STALE']
   ser_id      bigint      [not null, ref: > SER.id]
   on_date     date        [not null]
   req_type    varchar(12) [not null, note: 'time_move | teacher | room | cancel']
@@ -1100,7 +1103,10 @@ Table CHREQ {
   apply_all   boolean     [not null, default: false, note: '선택 회차부터 이후 전체 적용']
   created_at  timestamptz [not null, default: `now()`]
 
-  indexes { request_key [unique, note: 'chreq_request_key_once — 실제 migration은 WHERE request_key IS NOT NULL partial unique; NULL legacy 행 보존'] }
+  indexes {
+    request_key [unique, note: 'chreq_request_key_once — 실제 migration은 WHERE request_key IS NOT NULL partial unique; NULL legacy 행 보존']
+    (ser_id,on_date,by_id) [unique, note: 'chreq_pending_time_move_once — 실제 migration은 WHERE state=pending AND req_type=time_move partial unique; 같은 강사의 같은 회차 승인 대기 일정 이동은 하나']
+  }
 
   Note: '''
   겹치면 누구와 겹치는지 표시하고 저장을 막는다. 반영 시 EXC 생성 + LOG (D-R2).
@@ -1111,6 +1117,8 @@ Table CHREQ {
   room={roomId}|{zaccId}, cancel={}. API와 DB CHECK가 같은 네 종류만 허용한다.
   UX-15 선택 request_key의 재시도는 현재 회차·대상·겹침 preflight보다 먼저 저장된 요청을 조회한다.
   같은 키여도 신청자 또는 정규화 본문이 달라지면 409; 무키 옛 클라이언트는 종전 생성 경로다.
+  BO-06D-02 강사 요청은 source_date·read_version을 저장한다. 서버 KST 기준 실제 수업일까지 정확히 10일 이상일 때만
+  접수하고, 승인 transaction에서 SER 잠금 뒤 취소·이동·동일 SER 변경을 다시 검사한 다음 기존 일정 쓰기로 반영한다.
   '''
 }
 

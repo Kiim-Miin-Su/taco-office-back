@@ -1616,10 +1616,11 @@ export class DrawerService {
     const [req] = await this.q<{
       id: string; ser_id: string; on_date: string; req_type: string;
       payload: Record<string, unknown>; state: string; by_id: string; apply_all: boolean;
+      source_date: string | null; read_version: string | null;
       teacher_name: string | null; room_name: string | null; zacc_label: string | null;
     }>(
       `SELECT c.id, c.ser_id, to_char(c.on_date,'YYYY-MM-DD') AS on_date, c.req_type, c.payload,
-              c.state, c.by_id, c.apply_all,
+              c.state, c.by_id, c.apply_all, to_char(c.source_date,'YYYY-MM-DD') AS source_date, c.read_version,
               t.name AS teacher_name, rm.name AS room_name, z.label AS zacc_label
          FROM chreq c
          LEFT JOIN staff t ON t.id = (c.payload->>'teacherId')::bigint
@@ -1717,6 +1718,10 @@ export class DrawerService {
         const q = m.queryRunner as QueryRunner;
         // 배정 앞 상태 — 일정 쓰기와 같은 부모 잠금(SER)을 먼저 잡는다(assignIn 도 같은 잠금을 다시 잡는다)
         const before = await loadState(q, [serId], { forWrite: true });
+        await this.assertChangeRequestSourceFresh({
+          serId, onDate: req.on_date, sourceDate: req.source_date,
+          readVersion: req.read_version === null ? null : num(req.read_version),
+        }, q);
         await this.zoom!.assignIn(m, viewerId, {
           serId,
           // apply_all 이면 규칙 전체, 아니면 그 회차만 (D-R16 과 같은 뜻)
@@ -1739,21 +1744,32 @@ export class DrawerService {
      * 반영은 **처리한 사람의 이름으로** 일정 쓰기를 탄다(actorId) — 그래야 일정 되돌리기 토큰이 나오고(N-84 「일정 되돌리기
      * 토큰을 그대로」), 휴강 알림의 보낸 이가 처리한 사람이 된다(자기에게는 가지 않는다 · 직접 휴강과 같다).
      */
-    let written: { undoToken?: string | null; undoExpiresAt?: string | null };
-    if (req.req_type === 'cancel') {
-      written = await this.schedWrite.remove(serId, { scope, onDate: req.on_date }, inside, viewerId);
-    } else {
+    let written: { undoToken?: string | null; undoExpiresAt?: string | null } = {};
+    await this.anyRepo.manager.transaction(async (m: EntityManager) => {
+      const q = m.queryRunner as QueryRunner;
+      // 일정 쓰기와 같은 부모 SER 잠금을 먼저 잡고, 그 뒤 source identity/version을 재검사한다.
+      // 검사를 통과한 뒤 기존 writer를 같은 QueryRunner로 호출하므로 월마감·충돌·요청 종결이 한 transaction이다.
+      await loadState(q, [serId], { forWrite: true });
+      await this.assertChangeRequestSourceFresh({
+        serId, onDate: req.on_date, sourceDate: req.source_date,
+        readVersion: req.read_version === null ? null : num(req.read_version),
+      }, q);
+      if (req.req_type === 'cancel') {
+        written = await this.schedWrite!.remove(serId, { scope, onDate: req.on_date }, inside, viewerId, q);
+        return;
+      }
       const p = req.payload ?? {};
       const patch: Record<string, unknown> = { scope, onDate: req.on_date };
       if (req.req_type === 'time_move') {
         patch.startMin = Number(p.startMin); patch.endMin = Number(p.endMin);
+        if (typeof p.requestedDate === 'string') patch.date = p.requestedDate;
       } else if (req.req_type === 'teacher') {
         patch.teacherId = Number(p.teacherId);
       } else {
         patch.roomId = Number(p.roomId);
       }
-      written = await this.schedWrite.patch(serId, patch as never, inside, viewerId);
-    }
+      written = await this.schedWrite!.patch(serId, patch as never, inside, viewerId, q);
+    });
     const schedToken = written.undoToken ?? null;
     const undo = schedToken
       ? issueApprovalUndo(viewerId, { target: 'chreq', id: chreqId, decision: 'approve', logId, schedToken }, Date.now(), written.undoExpiresAt)
@@ -2004,19 +2020,50 @@ export class DrawerService {
     d: NormalizedChangeRequest,
     preflight: (manager?: EntityManager) => Promise<ConflictRowDto[]>,
   ): Promise<ChangeReqResultDto> {
+    const lockPendingTimeMove = async (manager: EntityManager): Promise<void> => {
+      if (d.reqType !== 'time_move') return;
+      // BO-06D-02 권고안: requestKey와 별개로 actor+회차를 잠근다. 두 탭에서 서로 다른 키를 보낸 경우에도
+      // 대기 요청은 하나뿐이며, DB partial unique index는 직접 SQL과 구버전 writer까지 마지막으로 방어한다.
+      const identity = `chreq:pending:time_move:${byId}:${d.serId}:${d.onDate}`;
+      await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [identity]);
+      const [pending] = (await manager.query(
+        `SELECT id FROM chreq
+          WHERE by_id=$1 AND ser_id=$2 AND on_date=$3::date
+            AND req_type='time_move' AND state='pending'
+          LIMIT 1`,
+        [byId, d.serId, d.onDate],
+      )) as Array<{ id: string }>;
+      if (pending) throw new ConflictException({
+        code: 'CHREQ_ALREADY_PENDING',
+        message: '이 수업의 일정 변경 요청이 이미 승인 대기 중입니다',
+        requestId: Number(pending.id),
+      });
+    };
+
     const make = async (manager?: EntityManager): Promise<ChangeReqResultDto> => {
       const conflicts = await preflight(manager);
       if (conflicts.length) return { id: null, conflicts };
       // 상태는 **적지 않는다** — 표의 기본값('pending')이 낱말의 출처다.
-      const sql = `INSERT INTO chreq (ser_id, on_date, req_type, payload, reason, by_id, apply_all, request_key)
-                   VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8) RETURNING id`;
-      const params = [d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, byId, d.applyAll, d.requestKey ?? null];
+      const sql = `INSERT INTO chreq
+                     (ser_id, on_date, req_type, payload, reason, by_id, apply_all, request_key, source_date, read_version)
+                   VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10) RETURNING id`;
+      const params = [
+        d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, byId, d.applyAll,
+        d.requestKey ?? null, d.sourceDate ?? null, d.readVersion ?? null,
+      ];
       const rows = (manager ? await manager.query(sql, params) : await this.q<{ id: string }>(sql, params)) as Array<{ id: string }>;
       return { id: Number(rows[0].id), conflicts: [] };
     };
 
     // 구버전 화면과 직접 API 호출은 당분간 키를 안 보내도 된다. 배포 중 프런트/백 순서가 갈려도 400이 되지 않는다.
-    if (!d.requestKey) return make();
+    // 다만 time_move는 키가 없어도 같은 actor+회차 잠금과 pending 검사를 반드시 거친다.
+    if (!d.requestKey) {
+      if (d.reqType !== 'time_move') return make();
+      return this.anyRepo.manager.transaction(async (manager) => {
+        await lockPendingTimeMove(manager);
+        return make(manager);
+      });
+    }
 
     return this.anyRepo.manager.transaction(async (manager) => {
       // 같은 키의 두 연결을 한 줄로 세운다. 잠금·기존행 검사·preflight·INSERT가 같은 연결이다.
@@ -2025,9 +2072,14 @@ export class DrawerService {
       const [prior] = (await manager.query(
         `SELECT id,
                 (by_id = $2::bigint AND ser_id = $3::bigint AND on_date = $4::date
-                 AND req_type = $5 AND payload = $6::jsonb AND reason = $7 AND apply_all = $8) AS same
+                 AND req_type = $5 AND payload = $6::jsonb AND reason = $7 AND apply_all = $8
+                 AND source_date IS NOT DISTINCT FROM $9::date
+                 AND read_version IS NOT DISTINCT FROM $10::bigint) AS same
            FROM chreq WHERE request_key = $1::uuid`,
-        [d.requestKey, byId, d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, d.applyAll],
+        [
+          d.requestKey, byId, d.serId, d.onDate, d.reqType, JSON.stringify(d.payload), d.reason, d.applyAll,
+          d.sourceDate ?? null, d.readVersion ?? null,
+        ],
       )) as Array<{ id: string; same: boolean }>;
       if (prior) {
         if (!prior.same) throw new ConflictException({
@@ -2036,6 +2088,7 @@ export class DrawerService {
         });
         return { id: Number(prior.id), conflicts: [] };
       }
+      await lockPendingTimeMove(manager);
       return make(manager);
     });
   }
@@ -2057,10 +2110,10 @@ export class DrawerService {
    */
   async occOf(serId: number, onDate: string, manager?: EntityManager): Promise<{
     startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null;
-    date: string;
+    date: string; canceled: boolean;
   } | null> {
     const sql = `SELECT ${START_MIN} AS start_min, ${END_MIN} AS end_min,
-              o.teacher_id, o.room_id, o.zacc_id,
+              o.teacher_id, o.room_id, o.zacc_id, o.canceled,
               to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS placed_on
          FROM ser_occ o WHERE o.ser_id = $1 AND o.on_date = $2 LIMIT 1`;
     const rows = manager ? await manager.query(sql, [serId, onDate]) : await this.q(sql, [serId, onDate]);
@@ -2069,7 +2122,55 @@ export class DrawerService {
     return {
       startMin: Number(r.start_min), endMin: Number(r.end_min),
       teacherId: num(r.teacher_id), roomId: num(r.room_id), zaccId: num(r.zacc_id),
-      date: String(r.placed_on),
+      date: String(r.placed_on), canceled: r.canceled === true,
     };
+  }
+
+  /**
+   * BO-06D-02 권고안: 승인 요청의 sourceDate/readVersion은 화면 장식이 아니라 서버 경합 계약이다.
+   * 생성 시와 승인 시 같은 검사를 쓰며, 승인에서는 반드시 SER 잠금 뒤 같은 transaction 연결로 호출한다.
+   * 계약을 바꾸면 DTO/Swagger→OpenAPI→Frontend와 두 수정사항 대조표·시나리오·portfolio를 함께 갱신한다.
+   */
+  async assertChangeRequestSourceFresh(
+    d: { serId: number; onDate: string; sourceDate?: string | null; readVersion?: number | null },
+    manager?: EntityManager | QueryRunner,
+  ): Promise<void> {
+    const query = (sql: string, params: unknown[]) => manager ? manager.query(sql, params) : this.q(sql, params);
+    const rows = await query(
+      `SELECT to_char(${kstDateOf('lower(o.span)')}, 'YYYY-MM-DD') AS placed_on, o.canceled
+         FROM ser_occ o WHERE o.ser_id = $1 AND o.on_date = $2::date LIMIT 1`,
+      [d.serId, d.onDate],
+    ) as Array<{ placed_on: string; canceled: boolean }>;
+    const current = rows[0];
+    if (!current || current.canceled) {
+      throw new ConflictException({
+        code: 'CHREQ_OCCURRENCE_CHANGED',
+        message: current?.canceled ? '요청한 수업이 이미 취소되어 다시 확인해야 합니다' : '요청한 수업 회차가 더 이상 존재하지 않습니다',
+      });
+    }
+    if (d.sourceDate && current.placed_on !== d.sourceDate) {
+      throw new ConflictException({
+        code: 'CHREQ_SOURCE_STALE',
+        message: '요청한 수업이 다른 날짜로 이동했습니다. 현재 일정에서 다시 요청해 주세요',
+        sourceDate: d.sourceDate,
+        currentDate: current.placed_on,
+      });
+    }
+    if (d.readVersion !== null && d.readVersion !== undefined) {
+      const changed = await query(
+        `SELECT l.id FROM log l
+          WHERE l.id > $1 AND l.entity = 'SER' AND l.entity_id = $2
+          ORDER BY l.id LIMIT 1`,
+        [d.readVersion, d.serId],
+      ) as Array<{ id: string }>;
+      if (changed[0]) {
+        throw new ConflictException({
+          code: 'CHREQ_SOURCE_STALE',
+          message: '읽은 뒤 수업 일정이 변경되었습니다. 현재 일정을 다시 확인해 주세요',
+          readVersion: d.readVersion,
+          currentVersion: Number(changed[0].id),
+        });
+      }
+    }
   }
 }

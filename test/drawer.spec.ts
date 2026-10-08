@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { isKnownApWord } from '../src/lib/approval';
-import { todayKst } from '../src/lib/kst';
+import { addDays, todayKst } from '../src/lib/kst';
 import { tierFor } from '../src/lib/rules';
 import { DrawerController } from '../src/modules/drawer/drawer.controller';
 import type { DrawerService } from '../src/modules/drawer/drawer.service';
@@ -37,17 +37,18 @@ jest.setTimeout(40_000);
 
 describe('변경 요청 회차 소유권 — DB 독립', () => {
   const viewer = { id: 921, name: '강사', role: 'teacher' };
-  const base = { startMin: 540, endMin: 600, teacherId: viewer.id, roomId: null, zaccId: null };
-  const occurrence = { serId: 100, onDate: '2026-09-07' };
+  const base = { startMin: 540, endMin: 600, teacherId: viewer.id, roomId: null, zaccId: null, date: '2026-09-17', canceled: false };
+  const occurrence = { serId: 100, onDate: '2026-09-17', sourceDate: '2026-09-17', readVersion: 0 };
   const commands: ChangeReqCreateDto[] = [
     { ...occurrence, reqType: 'cancel', reason: '휴강 요청' },
     { ...occurrence, reqType: 'time_move', startMin: 600, endMin: 660, reason: '시간 변경' },
     { ...occurrence, reqType: 'teacher', teacherId: 922, reason: '강사 변경' },
   ];
 
-  function setup(teacherId: number | null = viewer.id) {
+  function setup(teacherId: number | null = viewer.id, date = base.date) {
     const svc = {
-      occOf: jest.fn().mockResolvedValue({ ...base, teacherId }),
+      occOf: jest.fn().mockResolvedValue({ ...base, teacherId, date }),
+      assertChangeRequestSourceFresh: jest.fn().mockResolvedValue(undefined),
       activeChangeTargetExists: jest.fn().mockResolvedValue(true),
       createChangeReq: jest.fn().mockImplementation(async (_byId, _d, preflight: () => Promise<unknown[]>) => {
         const conflicts = await preflight();
@@ -61,6 +62,13 @@ describe('변경 요청 회차 소유권 — DB 독립', () => {
     );
     return { controller, svc, sched };
   }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-09-07T00:00:00Z'));
+  });
+
+  afterEach(() => jest.useRealTimers());
 
   it.each(commands)('타인 회차 $reqType 요청은 자원·충돌 정보 조회와 저장 전에 거절한다', async (command) => {
     const { controller, svc, sched } = setup(999);
@@ -76,6 +84,14 @@ describe('변경 요청 회차 소유권 — DB 독립', () => {
     const { controller, svc } = setup();
     await expect(controller.createChangeReq(viewer, command)).resolves.toEqual({ id: 200, conflicts: [] });
     expect(svc.createChangeReq).toHaveBeenCalledWith(viewer.id, expect.objectContaining(occurrence), expect.any(Function));
+  });
+
+  it('정확히 10일은 받고 9일은 CHREQ_NOTICE_TOO_SHORT로 거절한다', async () => {
+    const { controller } = setup();
+    await expect(controller.createChangeReq(viewer, commands[1])).resolves.toMatchObject({ id: 200 });
+    const nine = { ...commands[1], onDate: '2026-09-16', sourceDate: '2026-09-16' };
+    const { controller: short } = setup(viewer.id, '2026-09-16');
+    await expect(short.createChangeReq(viewer, nine)).rejects.toMatchObject({ response: { code: 'CHREQ_NOTICE_TOO_SHORT' } });
   });
 
   it.each(['manager', 'admin', 'ceo'])('%s는 다른 강사의 회차도 요청할 수 있다', async (role) => {
@@ -154,7 +170,7 @@ d('우측 서랍 — §14~§21', () => {
       );
     }
     // 본인 회차 성공 검증은 남의 시드 일정을 빌리지 않고 이 강사 전용 원장으로 한다.
-    const onDate = todayKst();
+    const onDate = addDays(todayKst(), 14);
     const [series] = await ds.query(
       `INSERT INTO ser (kind_key, teacher_id, mode, start_min, end_min, rrule, from_date, to_date, title)
        VALUES ('class', $1, 'offline', 540, 600, 'ONCE', $2, $2, '서랍 권한 검증') RETURNING id`,
@@ -222,11 +238,18 @@ d('우측 서랍 — §14~§21', () => {
       });
   const firstOccurrence = async () => {
     const [row] = await ds.query(
-      `SELECT ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date
+      `SELECT ser_id, to_char(on_date, 'YYYY-MM-DD') AS on_date,
+              to_char((lower(span) AT TIME ZONE 'Asia/Seoul')::date, 'YYYY-MM-DD') AS source_date
          FROM ser_occ WHERE ser_id = $1 AND teacher_id = $2 ORDER BY on_date LIMIT 1`,
       [ownSerId, T],
     );
-    return { serId: Number(row.ser_id), onDate: String(row.on_date) };
+    const [{ version }] = await ds.query(`SELECT COALESCE(max(id),0)::int AS version FROM log`);
+    return {
+      serId: Number(row.ser_id),
+      onDate: String(row.on_date),
+      sourceDate: String(row.source_date),
+      readVersion: Number(version),
+    };
   };
 
   /* ── ① 한 번에 여덟 칸 ─────────────────────────────────────────── */
@@ -577,7 +600,7 @@ d('우측 서랍 — §14~§21', () => {
     const r = await get('/drawer', MANAGER).expect(200);
     const row = r.body.changeReqs.find((c: { id: number }) => c.id === res.body.id);
     expect(row.state).toBe('pending');            // 자동 승인 없음
-    expect(row).toMatchObject(occurrence);
+    expect(row).toMatchObject({ serId: occurrence.serId, onDate: occurrence.onDate });
     expect(row.reason).toBe('가'.repeat(500));    // 길이 판정과 저장 모두 trim 뒤 한 번만
   });
 

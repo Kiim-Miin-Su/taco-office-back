@@ -36,6 +36,7 @@ import { bookLevelShown, ISSUE_STATE_LABEL, type IssueState } from '../../lib/bo
 import { TeacherLessonMovedException } from './teacher-lesson-moved.error';
 import { findTeacherUnavailableLessonConflict, lockTeacherUnavailableWrite } from '../../lib/teacher-unavailable';
 import { TeacherUnavailableConflictException } from './teacher-unavailable-conflict.error';
+import { chreqAsked } from '../../lib/change-request';
 
 /** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
 const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
@@ -586,17 +587,32 @@ export class TeacherService {
 
     const capability = (enabled: boolean, reason: string | null) => ({ enabled, reason: enabled ? null : reason });
     const reportEnabled = ['none', 'draft', 'wait', 'ok', 'rej'].includes(repState) && !canceled;
+    const [pendingChange] = await this.q(
+      `SELECT id, req_type, payload, ${kstAt('created_at')} AS created_at
+         FROM chreq
+        WHERE ser_id=$1 AND on_date=$2::date AND by_id=$3 AND state='pending'
+        ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [serId, onDate, teacherId],
+    );
+    const scheduleChangeRequest = pendingChange ? {
+      id: Number(pendingChange.id),
+      state: 'pending' as const,
+      asked: chreqAsked(String(pendingChange.req_type), pendingChange.payload) ?? '일정 변경',
+      createdAt: String(pendingChange.created_at),
+    } : null;
     return {
       lesson,
       guideStudents,
       history,
+      scheduleChangeRequest,
       capabilities: {
         report: capability(reportEnabled, canceled ? '취소된 수업은 리포트를 열 수 없습니다.'
           : repState === 'plan' ? '수업 종료 후 리포트를 열 수 있습니다.' : '리포트 대상 수업이 아닙니다.'),
         guide: capability(guideStudents.length > 0, canceled
           ? '취소된 수업의 안내는 열 수 없습니다.' : '이 회차에 연결된 학생 안내가 없습니다.'),
         history: capability(history.length > 0, '이 회차 학생의 수업 이력이 없습니다.'),
-        scheduleChange: capability(!canceled, '취소된 수업은 일정 변경을 요청할 수 없습니다.'),
+        scheduleChange: capability(!canceled && scheduleChangeRequest === null,
+          canceled ? '취소된 수업은 일정 변경을 요청할 수 없습니다.' : '이 수업의 일정 변경 요청이 관리자 승인 대기 중입니다.'),
       },
     };
   }

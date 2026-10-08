@@ -442,6 +442,13 @@ export class TeacherLessonHubCapabilitiesDto {
   @ApiProperty({ type: TeacherLessonHubCapabilityDto }) scheduleChange!: TeacherLessonHubCapabilityDto;
 }
 
+export class TeacherLessonHubChangeRequestDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: ['pending'] }) state!: 'pending';
+  @ApiProperty({ description: '날짜·시각을 포함한 요청 요약 — 서버가 만든다' }) asked!: string;
+  @ApiProperty({ format: 'date-time', description: '접수 시각 KST' }) createdAt!: string;
+}
+
 export class TeacherLessonHubHistoryItemDto {
   @ApiProperty() serId!: number;
   @ApiProperty(DATE_SCHEMA) onDate!: string;
@@ -466,6 +473,8 @@ export class TeacherLessonHubDto {
   @ApiProperty({ type: [TeacherGuideStudentDto] }) guideStudents!: TeacherGuideStudentDto[];
   @ApiProperty({ type: [TeacherLessonHubHistoryItemDto] }) history!: TeacherLessonHubHistoryItemDto[];
   @ApiProperty({ type: TeacherLessonHubCapabilitiesDto }) capabilities!: TeacherLessonHubCapabilitiesDto;
+  @ApiPropertyOptional({ type: TeacherLessonHubChangeRequestDto, nullable: true, description: '이 강사가 이 회차에 올린 최신 승인 대기 일정 변경 요청' })
+  scheduleChangeRequest!: TeacherLessonHubChangeRequestDto | null;
 }
 
 /** GET /teacher/history — 월 수업 기록 + 본인 정산 (덱 §29~31 · 강사 전용) */

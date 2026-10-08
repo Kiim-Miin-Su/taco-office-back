@@ -15,7 +15,7 @@
  * **승인과 반려는 여기서 하지 않는다** (D-R27). 줄을 누르면 그 화면으로 간다.
  */
 import {
-  BadRequestException, Body, Controller, Delete, ForbiddenException, Get, NotFoundException,
+  BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException, Get, NotFoundException,
   Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import {
@@ -26,6 +26,7 @@ import type { EntityManager } from 'typeorm';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import { approvalFlowScope, canCeoSetPermOverride, Perm, hasPerm, isRole, permsOf, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
+import { daysUntil, todayKst } from '../../lib/kst';
 import { ScheduleService } from '../schedule/schedule.service';
 import {
   ApprovalUndoDto, ApprovalUndoResultDto,
@@ -332,7 +333,7 @@ export class DrawerController {
   @Post('change-requests')
   @ApiOperation({
     summary: '§19 변경 요청 넣기 — 겹치면 **누구와** 겹치는지 돌려주고 넣지 않는다',
-    description: 'requestKey를 보낸 새 화면은 같은 작성자·정규화된 본문의 재시도에 기존 id를 받는다. 다른 작성자·본문에 같은 키를 쓰면 409다. 기존 무키 화면은 배포 호환을 위해 받는다.',
+    description: 'requestKey를 보낸 새 화면은 같은 작성자·정규화된 본문의 재시도에 기존 id를 받는다. 강사 요청은 sourceDate·readVersion을 보내며 서버 KST 기준 실제 수업일까지 정확히 10일 이상이어야 한다. 다른 작성자·본문에 같은 키를 쓰면 409다.',
   })
   @ApiBody({
     schema: {
@@ -342,7 +343,7 @@ export class DrawerController {
     },
   })
   @ApiCreatedResponse({ type: ChangeReqResultDto })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'CHREQ_REQUEST_KEY_REUSED — 같은 요청키의 작성자 또는 내용이 다르다' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'CHREQ_REQUEST_KEY_REUSED | CHREQ_ALREADY_PENDING | CHREQ_NOTICE_TOO_SHORT | CHREQ_SOURCE_STALE | CHREQ_OCCURRENCE_CHANGED' })
   async createChangeReq(
     @CurrentUser() user: RequestUser,
     @Body() dto: ChangeReqCreateDto,
@@ -360,6 +361,36 @@ export class DrawerController {
       // 자원 조회·충돌 설명보다 먼저 검사해 다른 수업의 정보가 응답에 섞이지 않게 한다.
       if (!base || (!canSeeAll && base.teacherId !== user.id)) {
         throw new NotFoundException({ code: 'OCCURRENCE_NOT_FOUND', message: '변경할 회차를 찾을 수 없습니다' });
+      }
+
+      if (base.canceled) {
+        throw new ConflictException({ code: 'CHREQ_OCCURRENCE_CHANGED', message: '취소된 수업은 변경 요청을 만들 수 없습니다' });
+      }
+
+      /*
+       * BO-06D-02 권고안: 강사 일정 변경은 실제 수업일까지 KST로 정확히 10일 이상일 때 승인 요청으로 접수한다.
+       * sourceDate/readVersion은 화면이 본 회차를 고정하고 승인 시 같은 규칙으로 재검사하기 위한 계약이다.
+       * 변경 시 DTO/Swagger→OpenAPI→Frontend와 두 수정사항 대조표·시나리오·portfolio를 같은 청크에서 갱신한다.
+       */
+      if (!canSeeAll) {
+        if (change.sourceDate === undefined || change.readVersion === undefined) {
+          throw new BadRequestException({ code: 'CHREQ_SOURCE_REQUIRED', message: '현재 수업 날짜와 읽은 버전을 함께 보내야 합니다' });
+        }
+        if (change.sourceDate !== base.date) {
+          throw new ConflictException({
+            code: 'CHREQ_SOURCE_STALE', message: '읽은 뒤 수업 날짜가 변경되었습니다. 현재 일정에서 다시 요청해 주세요',
+            sourceDate: change.sourceDate, currentDate: base.date,
+          });
+        }
+        const today = todayKst();
+        const remainingDays = daysUntil(base.date, today);
+        if (remainingDays < 10) {
+          throw new ConflictException({
+            code: 'CHREQ_NOTICE_TOO_SHORT', message: '수업일까지 10일 미만이면 해당 수업의 건의로 요청해 주세요',
+            today, lessonDate: base.date, remainingDays, minimumDays: 10,
+          });
+        }
+        await this.svc.assertChangeRequestSourceFresh(change, manager);
       }
 
       // JSONB 안의 id에는 FK를 걸 수 없으므로 저장 직전에 실제 활성 자원을 확인한다.
@@ -389,7 +420,7 @@ export class DrawerController {
     dto: NormalizedChangeRequest,
     base: {
       startMin: number; endMin: number; teacherId: number | null; roomId: number | null; zaccId: number | null;
-      date: string;
+      date: string; canceled: boolean;
     },
     manager?: EntityManager,
   ) {
@@ -408,7 +439,7 @@ export class DrawerController {
     }
 
     return this.sched.conflicts({
-      onDate: base.date,
+      onDate: dto.reqType === 'time_move' ? (dto.payload.requestedDate ?? base.date) : base.date,
       startMin: dto.reqType === 'time_move' ? dto.payload.startMin : base.startMin,
       endMin: dto.reqType === 'time_move' ? dto.payload.endMin : base.endMin,
       teacherId: dto.reqType === 'teacher' ? dto.payload.teacherId : base.teacherId,

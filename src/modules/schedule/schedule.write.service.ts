@@ -905,6 +905,8 @@ export class ScheduleWriteService {
   /** @param inside `patch` 와 같다 — 같은 트랜잭션에서 함께 커밋할 일 (C42) */
   async remove(
     serId: number, dto: OccurrenceDeleteDto, inside?: (q: QueryRunner) => Promise<void>, actorId?: number,
+    /** 바깥 트랜잭션 — 변경 요청 승인이 source version 검사부터 요청 종결까지 한 연결로 묶는다. */
+    outer?: QueryRunner,
   ): Promise<WriteResultDto> {
     // 사유·처리는 휴강(이번만)에만 붙는다. 향후·모두는 수업 종료라 정책이 없다 (C92)
     const cancel = dto.scope === 'this' ? cancelArgs(dto) : undefined;
@@ -960,7 +962,7 @@ export class ScheduleWriteService {
       // N-138 「실수로 지운 일정 되돌리기」 — 토큰을 준다. C87 이 「삭제는 경계」로 닫아 둔 것은
       // 이 다섯째 인자 하나였다(스냅숏도 발급기도 이미 있었다). 되살릴 때 번호를 지키는 길은
       // `undo()` 가 `restoreSerIds` 로 연다.
-    }, { enrich: after, actorId });
+    }, { enrich: after, actorId, outer });
   }
 
   /**

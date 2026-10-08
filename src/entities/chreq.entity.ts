@@ -44,6 +44,14 @@ export class Chreq {
   @Column({ type: 'uuid', nullable: true })
   requestKey: string | null;
 
+  /** 요청 당시 화면과 서버가 대조한 실제 배치 날짜. legacy 요청은 NULL이다. */
+  @Column({ type: 'date', nullable: true })
+  sourceDate: string | null;
+
+  /** 요청 화면이 읽은 일정 LOG version. legacy 요청은 NULL이다. */
+  @Column({ type: 'bigint', nullable: true })
+  readVersion: number | null;
+
   /** 반려 사유 — 반려 시 필수 (D-R13). 신청 사유(reason)를 덮어쓰지 않는다 */
   @Column({ type: 'text', nullable: true })
   rejectReason: string | null;

@@ -828,6 +828,14 @@ export class ChangeReqTargetDto {
   @ValidateIf((_, value: unknown) => value !== undefined) @IsUUID()
   requestKey?: string;
 
+  @ApiPropertyOptional({ format: 'date', description: '화면이 읽은 실제 수업일. 강사 요청은 필수이며 서버가 현재 회차와 대조한다' })
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  sourceDate?: string;
+
+  @ApiPropertyOptional({ type: 'integer', minimum: 0, description: '회차 목록을 읽기 직전 LOG version. 강사 요청은 필수' })
+  @IsOptional() @IsInt() @Min(0) @Max(Number.MAX_SAFE_INTEGER)
+  readVersion?: number;
+
   @ApiProperty({ minimum: 1, description: '변경할 수업 규칙 id' })
   @IsInt() @Min(1)
   serId!: number;
@@ -848,6 +856,9 @@ export class ChangeReqTargetDto {
 
 export class TimeMoveChangeReqDto extends ChangeReqTargetDto {
   @ApiProperty({ enum: ['time_move'] }) reqType!: 'time_move';
+  @ApiPropertyOptional({ format: 'date', description: '옮길 실제 날짜. 생략하면 현재 실제 날짜에서 시각만 변경한다' })
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  requestedDate?: string;
   @ApiProperty({ minimum: 0, maximum: 1439 }) startMin!: number;
   @ApiProperty({ minimum: 10, maximum: 1440 }) endMin!: number;
 }
@@ -888,6 +899,10 @@ export class ChangeReqCreateDto extends ChangeReqTargetDto {
   @ApiPropertyOptional({ minimum: 10, maximum: 1440 })
   @IsOptional() @IsInt() @Min(10) @Max(1440)
   endMin?: number;
+
+  @ApiPropertyOptional({ format: 'date' })
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  requestedDate?: string;
 
   @ApiPropertyOptional({ minimum: 1 })
   @IsOptional() @IsInt() @Min(1)

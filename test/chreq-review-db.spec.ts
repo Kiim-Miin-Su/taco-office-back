@@ -17,6 +17,7 @@
  *   그래서 스크래치 DB(`*_test`)에서만 돌고, 만든 행은 스스로 지운다.
  */
 import { DataSource } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead, Zacc } from '../src/entities';
 import { ConfigService } from '@nestjs/config';
@@ -43,16 +44,22 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
 
   const q = (sql: string, p: unknown[] = []) => ds.query(sql, p) as Promise<Record<string, unknown>[]>;
 
-  const chreq = async (reqType: string, payload: Record<string, unknown>, applyAll = false, byId = T1) => {
+  const chreq = async (
+    reqType: string, payload: Record<string, unknown>, applyAll = false, byId = T1,
+    source?: { sourceDate: string; readVersion: number },
+  ) => {
     const [r] = await q(
-      `INSERT INTO chreq (ser_id, on_date, req_type, payload, reason, by_id, apply_all)
-       VALUES ($1,$2,$3,$4::jsonb,'원문 사유입니다',$5,$6) RETURNING id`,
-      [SER, ON, reqType, JSON.stringify(payload), byId, applyAll],
+      `INSERT INTO chreq (ser_id, on_date, req_type, payload, reason, by_id, apply_all, source_date, read_version)
+       VALUES ($1,$2,$3,$4::jsonb,'원문 사유입니다',$5,$6,$7,$8) RETURNING id`,
+      [SER, ON, reqType, JSON.stringify(payload), byId, applyAll, source?.sourceDate ?? null, source?.readVersion ?? null],
     );
     return Number(r.id);
   };
   const occ = async () => (await q(
-    `SELECT teacher_id, room_id, canceled, lower(span) AS from_at, upper(span) AS to_at
+    `SELECT teacher_id, room_id, canceled, lower(span) AS from_at, upper(span) AS to_at,
+            to_char(lower(span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS actual_date,
+            (extract(hour from lower(span) AT TIME ZONE 'Asia/Seoul')::int * 60
+              + extract(minute from lower(span) AT TIME ZONE 'Asia/Seoul')::int) AS start_min
        FROM ser_occ WHERE ser_id = $1 AND on_date = $2`, [SER, ON],
   ))[0];
   const row = async (id: number) => (await q(
@@ -84,6 +91,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     await q(`DELETE FROM chreq WHERE ser_id = $1`, [SER]);
     await q(`DELETE FROM ser WHERE id = ANY($1)`, [[SER, RIVAL]]);
     await q(`DELETE FROM noti WHERE to_id = $1`, [T1]);
+    await q(`DELETE FROM month_close WHERE year_month = '2026-11'`);
     await q(
       `INSERT INTO ser (id,kind_key,mode,start_min,end_min,rrule,from_date,to_date,teacher_id,title)
        VALUES ($1,'chreq_test','offline',600,660,'ONCE',$2,$2,$3,'MAP Reading')`, [SER, ON, T1],
@@ -103,6 +111,7 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     // 결재 줄은 표의 이름(CHREQ)이다 — 옛 소문자 줄도 함께 치운다(W11 A' 후속)
     await q(`DELETE FROM log WHERE upper(entity) = 'CHREQ' AND actor_id = $1`, [BOSS]);
     await q(`DELETE FROM noti WHERE to_id = $1`, [T1]);
+    await q(`DELETE FROM month_close WHERE year_month = '2026-11'`);
     await q(`DELETE FROM ser WHERE id = ANY($1)`, [[SER, RIVAL]]);
     if (ds?.isInitialized) await ds.destroy();
   });
@@ -129,6 +138,95 @@ d('§20 변경 요청 반영 — 시간표가 실제로 바뀌고, 막히면 요
     expect(out.applied).toBe('20:00–21:30 로 이동');
     const after = await occ();
     expect(new Date(String(after.from_at)).toISOString()).toContain('T11:00');
+  });
+
+  it('요청 날짜까지 반영하고 source date/version은 승인 transaction에서 다시 검사한다', async () => {
+    const [{ version }] = await q(`SELECT COALESCE(max(id),0)::int AS version FROM log`);
+    const id = await chreq(
+      'time_move', { startMin: 720, endMin: 780, requestedDate: '2026-11-06' }, false, T1,
+      { sourceDate: ON, readVersion: Number(version) },
+    );
+    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true))
+      .resolves.toMatchObject({ state: 'approved', applied: '2026-11-06 12:00–13:00 로 이동' });
+    const moved = await occ();
+    expect(moved).toMatchObject({ actual_date: '2026-11-06', start_min: 720 });
+  });
+
+  it('migration 전 legacy 요청의 NULL source/version은 version 0으로 오해하지 않는다', async () => {
+    const id = await chreq('time_move', { startMin: 720, endMin: 780 });
+    await q(`INSERT INTO log(actor_id,entity,entity_id,action,before,after) VALUES($1,'SER',$2,'legacy_marker','{}','{}')`, [BOSS, SER]);
+
+    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true))
+      .resolves.toMatchObject({ state: 'approved' });
+    expect(await occ()).toMatchObject({ actual_date: ON, start_min: 720 });
+  });
+
+  it('같은 키는 같은 요청으로 수렴하고 서로 다른 키의 동시 제출도 pending 한 건만 남긴다', async () => {
+    const [{ version }] = await q(`SELECT COALESCE(max(id),0)::int AS version FROM log`);
+    const request = (requestKey: string) => ({
+      reqType: 'time_move' as const,
+      serId: SER,
+      onDate: ON,
+      sourceDate: ON,
+      readVersion: Number(version),
+      payload: { startMin: 720, endMin: 780 },
+      reason: '동시 제출 회귀 검증',
+      applyAll: false,
+      requestKey,
+    });
+    const preflight = async () => [];
+
+    const replayKey = randomUUID();
+    const first = await svc.createChangeReq(T1, request(replayKey), preflight);
+    await expect(svc.createChangeReq(T1, request(replayKey), preflight)).resolves.toEqual(first);
+    expect(await q(`SELECT id FROM chreq WHERE ser_id=$1 AND on_date=$2 AND state='pending'`, [SER, ON])).toHaveLength(1);
+
+    await q(`DELETE FROM chreq WHERE id=$1`, [first.id]);
+    const concurrent = await Promise.allSettled([
+      svc.createChangeReq(T1, request(randomUUID()), preflight),
+      svc.createChangeReq(T1, request(randomUUID()), preflight),
+    ]);
+    expect(concurrent.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const rejected = concurrent.find((result) => result.status === 'rejected') as PromiseRejectedResult;
+    expect(rejected.reason).toMatchObject({ response: { code: 'CHREQ_ALREADY_PENDING' } });
+    expect(await q(`SELECT id FROM chreq WHERE ser_id=$1 AND on_date=$2 AND state='pending'`, [SER, ON])).toHaveLength(1);
+    await expect(q(
+      `INSERT INTO chreq
+         (ser_id,on_date,req_type,payload,reason,by_id,request_key,source_date,read_version)
+       VALUES ($1,$2,'time_move','{"startMin":780,"endMin":840}'::jsonb,'직접 중복',$3,$4,$2,$5)`,
+      [SER, ON, T1, randomUUID(), Number(version)],
+    )).rejects.toMatchObject({ code: '23505', constraint: 'chreq_pending_time_move_once' });
+  });
+
+  it('요청 뒤 같은 SER가 바뀌면 CHREQ_SOURCE_STALE이고 요청·시간표는 그대로다', async () => {
+    const [{ version }] = await q(`SELECT COALESCE(max(id),0)::int AS version FROM log`);
+    const id = await chreq('time_move', { startMin: 720, endMin: 780 }, false, T1, {
+      sourceDate: ON, readVersion: Number(version),
+    });
+    await q(`INSERT INTO log(actor_id,entity,entity_id,action,before,after) VALUES($1,'SER',$2,'update','{}','{}')`, [BOSS, SER]);
+    await expect(svc.reviewChangeRequest(id, BOSS, { decision: 'approve' }, true))
+      .rejects.toMatchObject({ response: { code: 'CHREQ_SOURCE_STALE' } });
+    expect(await row(id)).toMatchObject({ state: 'pending' });
+    expect(await occ()).toMatchObject({ actual_date: ON, start_min: 600 });
+  });
+
+  it('취소된 원본은 CHREQ_OCCURRENCE_CHANGED, 마감 월은 MONTH_CLOSED로 승인 전체가 롤백된다', async () => {
+    const cancelled = await chreq('time_move', { startMin: 720, endMin: 780 }, false, T1, {
+      sourceDate: ON, readVersion: 0,
+    });
+    await q(`UPDATE ser_occ SET canceled=true WHERE ser_id=$1 AND on_date=$2`, [SER, ON]);
+    await expect(svc.reviewChangeRequest(cancelled, BOSS, { decision: 'approve' }, true))
+      .rejects.toMatchObject({ response: { code: 'CHREQ_OCCURRENCE_CHANGED' } });
+    expect(await row(cancelled)).toMatchObject({ state: 'pending' });
+
+    await q(`UPDATE ser_occ SET canceled=false WHERE ser_id=$1 AND on_date=$2`, [SER, ON]);
+    await q(`DELETE FROM chreq WHERE id=$1`, [cancelled]);
+    const closed = await chreq('time_move', { startMin: 720, endMin: 780 });
+    await q(`INSERT INTO month_close(year_month,closed_by) VALUES('2026-11',$1)`, [BOSS]);
+    await expect(svc.reviewChangeRequest(closed, BOSS, { decision: 'approve' }, true))
+      .rejects.toMatchObject({ response: { code: 'MONTH_CLOSED' } });
+    expect(await row(closed)).toMatchObject({ state: 'pending' });
+    expect(await occ()).toMatchObject({ actual_date: ON, start_min: 600 });
   });
 
   it('휴강을 반영하면 그 회차가 취소된다 — 규칙은 그대로 둔다 (EXC · D-R21)', async () => {

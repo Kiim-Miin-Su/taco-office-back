@@ -16,6 +16,8 @@ export const isChreqType = (value: unknown): value is ChreqType =>
 
 export interface ChangeRequestInput {
   requestKey?: unknown;
+  sourceDate?: unknown;
+  readVersion?: unknown;
   reqType: unknown;
   serId?: unknown;
   onDate?: unknown;
@@ -23,6 +25,7 @@ export interface ChangeRequestInput {
   applyAll?: unknown;
   startMin?: unknown;
   endMin?: unknown;
+  requestedDate?: unknown;
   teacherId?: unknown;
   roomId?: unknown;
   zaccId?: unknown;
@@ -30,6 +33,10 @@ export interface ChangeRequestInput {
 
 interface ChangeRequestTarget {
   requestKey?: string;
+  /** 화면이 읽은 실제 배치 날짜. 서버가 현재 회차와 대조하고 승인 때 다시 검사한다. */
+  sourceDate?: string;
+  /** 회차 목록을 읽기 직전 LOG version. 그 뒤 같은 SER가 바뀌면 요청/승인을 409로 막는다. */
+  readVersion?: number;
   serId: number;
   onDate: string;
   reason: string;
@@ -37,7 +44,7 @@ interface ChangeRequestTarget {
 }
 
 export type NormalizedChangeRequest = ChangeRequestTarget & (
-  | { reqType: 'time_move'; payload: { startMin: number; endMin: number } }
+  | { reqType: 'time_move'; payload: { startMin: number; endMin: number; requestedDate?: string } }
   | { reqType: 'teacher'; payload: { teacherId: number } }
   | { reqType: 'room'; payload: { roomId: number } | { zaccId: number } }
   | { reqType: 'cancel'; payload: Record<string, never> }
@@ -63,7 +70,7 @@ export function chreqAsked(
   };
   if (reqType === 'time_move') {
     const from = hhmm(p.startMin); const to = hhmm(p.endMin);
-    return from && to ? `${from}–${to} 로 이동` : null;
+    return from && to ? `${typeof p.requestedDate === 'string' ? `${p.requestedDate} ` : ''}${from}–${to} 로 이동` : null;
   }
   if (reqType === 'teacher') return `강사 → ${names.teacherName ?? `#${String(p.teacherId ?? '?')}`}`;
   if (reqType === 'room') {
@@ -115,6 +122,12 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
   if (input.requestKey !== undefined && (typeof input.requestKey !== 'string' || !isUUID(input.requestKey))) {
     return fail('CHANGE_REQUEST_KEY_INVALID', '요청 키가 올바르지 않습니다');
   }
+  if (input.sourceDate !== undefined && !isIsoDate(input.sourceDate)) {
+    return fail('CHANGE_REQUEST_SOURCE_INVALID', '읽은 수업 날짜가 올바르지 않습니다');
+  }
+  if (input.readVersion !== undefined && (!isInt(input.readVersion) || input.readVersion < 0)) {
+    return fail('CHANGE_REQUEST_VERSION_INVALID', '읽은 수업 버전이 올바르지 않습니다');
+  }
   if (!isChreqType(input.reqType)) {
     return fail('BAD_CHANGE_TYPE', '지원하지 않는 변경 요청 종류입니다');
   }
@@ -141,6 +154,8 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
   const target = {
     // PostgreSQL uuid 비교는 대소문자를 무시한다. 잠금 키도 같은 표기로 맞춰야 동시 replay가 한 줄에 선다.
     ...(typeof input.requestKey === 'string' ? { requestKey: input.requestKey.toLowerCase() } : {}),
+    ...(typeof input.sourceDate === 'string' ? { sourceDate: input.sourceDate } : {}),
+    ...(typeof input.readVersion === 'number' ? { readVersion: input.readVersion } : {}),
     serId: input.serId,
     onDate: input.onDate,
     reason,
@@ -158,9 +173,20 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
     }
     const issue = lessonTimeIssue(input.startMin, input.endMin);
     if (issue) return fail('BAD_RANGE', issue);
+    if (input.requestedDate !== undefined && !isIsoDate(input.requestedDate)) {
+      return fail('REQUESTED_DATE_INVALID', '변경할 날짜가 올바르지 않습니다');
+    }
     return {
       ok: true,
-      value: { ...target, reqType: input.reqType, payload: { startMin: input.startMin, endMin: input.endMin } },
+      value: {
+        ...target,
+        reqType: input.reqType,
+        payload: {
+          startMin: input.startMin,
+          endMin: input.endMin,
+          ...(typeof input.requestedDate === 'string' ? { requestedDate: input.requestedDate } : {}),
+        },
+      },
     };
   }
 
@@ -168,7 +194,7 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
     if (!isPositiveInt(input.teacherId)) {
       return fail('TEACHER_REQUIRED', '바꿀 강사를 선택해야 합니다');
     }
-    if (supplied('startMin') || supplied('endMin') || supplied('roomId') || supplied('zaccId')) {
+    if (supplied('startMin') || supplied('endMin') || input.requestedDate !== undefined || supplied('roomId') || supplied('zaccId')) {
       return fail('BAD_CHANGE_FIELDS', '강사 바꾸기 요청에는 강사만 보낼 수 있습니다');
     }
     return { ok: true, value: { ...target, reqType: input.reqType, payload: { teacherId: input.teacherId } } };
@@ -186,7 +212,7 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
     if (hasZoom && !isPositiveInt(input.zaccId)) {
       return fail('ROOM_REQUIRED', '바꿀 Zoom 계정을 선택해야 합니다');
     }
-    if (supplied('startMin') || supplied('endMin') || supplied('teacherId')) {
+    if (supplied('startMin') || supplied('endMin') || input.requestedDate !== undefined || supplied('teacherId')) {
       return fail('BAD_CHANGE_FIELDS', '강의실 바꾸기 요청에는 강의실 또는 Zoom 계정만 보낼 수 있습니다');
     }
     return {
@@ -197,7 +223,7 @@ export function normalizeChangeRequest(input: ChangeRequestInput): ChangeRequest
     };
   }
 
-  if (supplied('startMin') || supplied('endMin') || supplied('teacherId') || supplied('roomId') || supplied('zaccId')) {
+  if (supplied('startMin') || supplied('endMin') || input.requestedDate !== undefined || supplied('teacherId') || supplied('roomId') || supplied('zaccId')) {
     return fail('BAD_CHANGE_FIELDS', '취소 요청에는 변경 값을 보낼 수 없습니다');
   }
   return { ok: true, value: { ...target, reqType: input.reqType, payload: {} } };

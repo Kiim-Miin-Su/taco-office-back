@@ -118,6 +118,26 @@ d('BOC-05D-01 — 강사 수업 허브 exact read contract', () => {
     });
   });
 
+  it('hard reload read model은 이 강사의 pending 일정 변경 요청과 승인 전 원래 일정을 함께 돌려준다', async () => {
+    const date = addDays(today, 12);
+    const id = await lesson(teacherId, date, date, '승인 대기 수업');
+    const [request] = (await q.query(
+      `INSERT INTO chreq (ser_id,on_date,req_type,payload,reason,by_id,source_date,read_version)
+       VALUES ($1,$2::date,'time_move',$3::jsonb,'학생과 확인한 변경 요청',$4,$2::date,0) RETURNING id`,
+      [id, date, JSON.stringify({ requestedDate: addDays(date, 1), startMin: 720, endMin: 780 }), teacherId],
+    )) as Array<{ id: string }>;
+
+    const result = await svc().lessonHub(teacherId, id, date, date);
+
+    expect(result.lesson).toMatchObject({ serId: id, date, startMin: 600 });
+    expect(result.scheduleChangeRequest).toMatchObject({
+      id: Number(request.id), state: 'pending', asked: `${addDays(date, 1)} 12:00–13:00 로 이동`,
+    });
+    expect(result.capabilities.scheduleChange).toEqual({
+      enabled: false, reason: '이 수업의 일정 변경 요청이 관리자 승인 대기 중입니다.',
+    });
+  });
+
   it('다른 강사 회차와 존재하지 않는 회차는 같은 숨김형 404다', async () => {
     const date = addDays(today, -1);
     const foreign = await lesson(otherTeacherId, date);

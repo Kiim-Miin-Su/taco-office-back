@@ -75,4 +75,24 @@ describe('변경 요청 종류별 계약', () => {
         .toMatchObject({ ok: false, issue: { code: 'CHANGE_REQUEST_KEY_INVALID' } });
     }
   });
+
+  it('날짜 이동과 source identity/version을 보존하고 다른 종류에는 requestedDate를 허용하지 않는다', () => {
+    expect(normalizeChangeRequest({
+      ...target, reqType: 'time_move', startMin: 600, endMin: 660,
+      requestedDate: '2026-09-05', sourceDate: '2026-09-03', readVersion: 42,
+    })).toEqual({
+      ok: true,
+      value: {
+        serId: 12, onDate: '2026-09-03', sourceDate: '2026-09-03', readVersion: 42,
+        reason: '수업 사정', applyAll: false, reqType: 'time_move',
+        payload: { startMin: 600, endMin: 660, requestedDate: '2026-09-05' },
+      },
+    });
+    expect(normalizeChangeRequest({ ...target, reqType: 'time_move', startMin: 600, endMin: 660, requestedDate: '2026-02-30' }))
+      .toMatchObject({ ok: false, issue: { code: 'REQUESTED_DATE_INVALID' } });
+    expect(normalizeChangeRequest({ ...target, reqType: 'teacher', teacherId: 3, requestedDate: '2026-09-05' }))
+      .toMatchObject({ ok: false, issue: { code: 'BAD_CHANGE_FIELDS' } });
+    expect(normalizeChangeRequest({ ...target, reqType: 'cancel', sourceDate: '2026-09-03', readVersion: -1 }))
+      .toMatchObject({ ok: false, issue: { code: 'CHANGE_REQUEST_VERSION_INVALID' } });
+  });
 });
