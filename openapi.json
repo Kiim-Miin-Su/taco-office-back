@@ -5206,6 +5206,594 @@
         ]
       }
     },
+    "/accounting/adjustments": {
+      "get": {
+        "description": "최종 관리자 수정사항 p106·112의 전용 원장이다. pending/rejected는 INV 금액을 바꾸지 않고, 대표 승인 뒤 approved 합계만 적용 월 tuition 청구액에서 차감한다. 실제 환불 송금 완료는 BO-Q9 전까지 기록하지 않는다. 이 권고안은 invoice-adjustments.service/migration/Front/기능 문서를 함께 바꿔야 한다.",
+        "operationId": "AccountingController_adjustmentLedger",
+        "parameters": [
+          {
+            "name": "month",
+            "required": false,
+            "in": "query",
+            "description": "비우면 서버 KST 현재 달",
+            "schema": {
+              "example": "2026-10",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceAdjustmentLedgerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구 조정 원장 — 할인·환불·형제 할인·이월 (TBO-55 BO-11BD-01)",
+        "tags": [
+          "accounting"
+        ]
+      },
+      "post": {
+        "operationId": "AccountingController_createAdjustment",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceAdjustmentCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceAdjustmentWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구 조정 승인 요청 — 승인 전 INV 금액 불변 (TBO-55 BO-11BD-01)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/adjustments/{id}/approve": {
+      "post": {
+        "operationId": "AccountingController_approveAdjustment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceAdjustmentActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceAdjustmentWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구 조정 대표 승인·INV 반영 (TBO-55 BO-11BD-01)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/adjustments/{id}/reject": {
+      "post": {
+        "operationId": "AccountingController_rejectAdjustment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceAdjustmentReasonActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceAdjustmentWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "청구 조정 반려·INV 불변 (TBO-55 BO-11BD-01)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/adjustments/{id}/cancel": {
+      "post": {
+        "operationId": "AccountingController_cancelAdjustment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceAdjustmentReasonActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceAdjustmentWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "승인 조정 반영 취소·INV 보상 복구 (TBO-55 BO-11BD-01)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/adjustments/{id}/undo": {
+      "post": {
+        "operationId": "AccountingController_undoAdjustment",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvoiceAdjustmentReasonActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceAdjustmentWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "반려·반영 취소 되돌리기 (TBO-55 BO-11BD-01)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/payment-evidence": {
       "get": {
         "description": "관리자 수정사항 p100의 PAY별 증빙 상태다. 외부 국세청/PG 발급을 수행하거나 번호를 만들지 않고, 관리자가 외부 발행 완료를 확인한 사실과 당시 출력 snapshot을 기록한다. 이 권고안은 service/migration/기능 문서와 함께 바꿔야 한다.",
@@ -32066,6 +32654,384 @@
           "recentMonths",
           "canSeeAmounts",
           "items"
+        ]
+      },
+      "InvoiceAdjustmentEventDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "created",
+              "approved",
+              "rejected",
+              "canceled",
+              "restored"
+            ]
+          },
+          "fromState": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "canceled"
+            ]
+          },
+          "toState": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "canceled"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "actorId": {
+            "type": "number"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "invoiceAmountBefore": {
+            "type": "number",
+            "description": "이 전이가 시작되기 직전의 INV.amount"
+          },
+          "invoiceAmountAfter": {
+            "type": "number",
+            "description": "이 전이가 끝난 뒤의 INV.amount"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "fromState",
+          "toState",
+          "version",
+          "actorId",
+          "actor",
+          "reason",
+          "invoiceAmountBefore",
+          "invoiceAmountAfter",
+          "createdAt"
+        ]
+      },
+      "InvoiceAdjustmentDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "invoiceId": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "studentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "yearMonth": {
+            "type": "string",
+            "example": "2026-10"
+          },
+          "effectiveOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "discount",
+              "refund",
+              "sibling_discount",
+              "carry"
+            ]
+          },
+          "kindLabel": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "description": "양의 입력 금액. approved 상태일 때 현재 월 청구액에서 차감한다"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "canceled"
+            ]
+          },
+          "stateLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "originalInvoiceAmount": {
+            "type": "number",
+            "description": "첫 요청 때 고정한 청구 원금 snapshot"
+          },
+          "invoiceAmount": {
+            "type": "number",
+            "description": "현재 INV.amount. pending/rejected는 바꾸지 않는다"
+          },
+          "paidAmount": {
+            "type": "number"
+          },
+          "refundDue": {
+            "type": "number",
+            "description": "현재 납부액이 조정 뒤 청구액을 넘는 금액. BO-Q9 전에는 송금 완료를 뜻하지 않는다"
+          },
+          "requestedById": {
+            "type": "number"
+          },
+          "requestedBy": {
+            "type": "string"
+          },
+          "requestedAt": {
+            "type": "string"
+          },
+          "decidedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "decidedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "rejectReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "canceledBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "canceledAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "cancelReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "canApprove": {
+            "type": "boolean"
+          },
+          "canReject": {
+            "type": "boolean"
+          },
+          "canCancel": {
+            "type": "boolean"
+          },
+          "canUndo": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceAdjustmentEventDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "invoiceId",
+          "studentId",
+          "studentName",
+          "studentTag",
+          "yearMonth",
+          "effectiveOn",
+          "kind",
+          "kindLabel",
+          "reason",
+          "amount",
+          "state",
+          "stateLabel",
+          "version",
+          "originalInvoiceAmount",
+          "invoiceAmount",
+          "paidAmount",
+          "refundDue",
+          "requestedById",
+          "requestedBy",
+          "requestedAt",
+          "decidedBy",
+          "decidedAt",
+          "rejectReason",
+          "canceledBy",
+          "canceledAt",
+          "cancelReason",
+          "canApprove",
+          "canReject",
+          "canCancel",
+          "canUndo",
+          "events"
+        ]
+      },
+      "InvoiceAdjustmentLedgerDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "example": "2026-10"
+          },
+          "pendingCount": {
+            "type": "number"
+          },
+          "approvedAmount": {
+            "type": "number",
+            "description": "현재 approved 조정 금액 합계"
+          },
+          "refundDue": {
+            "type": "number",
+            "description": "현재 납부액이 조정 청구액을 넘는 학생별 환불 예정액 합계"
+          },
+          "canRequest": {
+            "type": "boolean"
+          },
+          "canApprove": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InvoiceAdjustmentDto"
+            }
+          }
+        },
+        "required": [
+          "month",
+          "pendingCount",
+          "approvedAmount",
+          "refundDue",
+          "canRequest",
+          "canApprove",
+          "items"
+        ]
+      },
+      "InvoiceAdjustmentCreateDto": {
+        "type": "object",
+        "properties": {
+          "effectiveOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "이 날짜의 월에 있는 유효 tuition 청구서 하나를 서버가 선택한다"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "discount",
+              "refund",
+              "sibling_discount",
+              "carry"
+            ]
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 500
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 1,
+            "description": "원 단위 양의 정수. 승인 때 현재 청구액에서 차감한다"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "effectiveOn",
+          "kind",
+          "studentId",
+          "reason",
+          "amount",
+          "requestKey"
+        ]
+      },
+      "InvoiceAdjustmentWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/InvoiceAdjustmentDto"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "같은 actor/action/payload/requestKey 재시도면 true"
+          }
+        },
+        "required": [
+          "item",
+          "replayed"
+        ]
+      },
+      "InvoiceAdjustmentActionDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "requestKey"
+        ]
+      },
+      "InvoiceAdjustmentReasonActionDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "requestKey",
+          "reason"
         ]
       },
       "PaymentEvidenceDto": {

@@ -295,6 +295,7 @@ const INV_SELECT = `
          -- 「취소」 단추가 서는지에 필요한 둘 — 서버가 실제로 거절하는 조건과 **같은 것**을 본다 (S5 · D-R39)
          EXISTS (SELECT 1 FROM month_close mc WHERE mc.year_month = i.year_month AND mc.reopened_at IS NULL) AS month_closed,
          EXISTS (SELECT 1 FROM pay p WHERE p.inv_id = i.id) AS has_pay,
+         EXISTS (SELECT 1 FROM invoice_adjustment a WHERE a.inv_id = i.id) AS has_adjustment,
          COALESCE((SELECT json_agg(json_build_object(
             'subKey', l.sub_key, 'label', l.label, 'count', l.count,
             'unitPrice', l.unit_price, 'amount', l.amount) ORDER BY l.seq)
@@ -402,6 +403,7 @@ export class AccountingService {
     if (r.has_pay === true || Number(r.paid_amount) > 0) {
       return blocked('입금이 붙은 청구서는 취소할 수 없습니다 — 입금을 먼저 지우세요');
     }
+    if (r.has_adjustment === true) return blocked('조정 이력이 있는 청구서는 취소할 수 없습니다 — 조정 원장에서 상태를 확인하세요');
     return { canVoid: true, voidBlockedReason: null };
   }
 
@@ -1536,6 +1538,14 @@ export class AccountingService {
       const [{ n }] = (await m.query(`SELECT count(*)::int AS n FROM pay WHERE inv_id = $1`, [id])) as Array<{ n: number }>;
       if (n > 0 || Number(inv.paid_amount) > 0) {
         throw new ConflictException({ code: 'INV_HAS_PAYMENTS', message: '입금이 붙은 청구서는 취소할 수 없습니다 — 입금을 먼저 지우세요' });
+      }
+      const [{ adjustment_count }] = (await m.query(
+        `SELECT count(*)::int AS adjustment_count FROM invoice_adjustment WHERE inv_id=$1`, [id],
+      )) as Array<{ adjustment_count: number }>;
+      if (Number(adjustment_count) > 0) {
+        throw new ConflictException({
+          code: 'INV_HAS_ADJUSTMENTS', message: '조정 이력이 있는 청구서는 취소할 수 없습니다 — 조정 원장에서 상태를 확인하세요',
+        });
       }
       await m.query(
         `UPDATE inv SET state = 'void',
@@ -2845,6 +2855,16 @@ export class AccountingService {
         throw new ConflictException({
           code: 'PAYMENT_EVIDENCE_UNISSUED', message: `증빙 미발행 ${Number(evidence.count)}건을 먼저 처리해 주세요`,
           details: { month: dto.month, count: Number(evidence.count) },
+        });
+      }
+      // BO-11BD-01: 승인 전 조정은 청구액 불변이다. pending을 남긴 채 마감하면 이후 승인할 수 없어 원장이 갈린다.
+      const [adjustments] = (await m.query(
+        `SELECT count(*)::int AS count FROM invoice_adjustment WHERE year_month=$1 AND state='pending'`, [dto.month],
+      )) as Array<{ count: number }>;
+      if (Number(adjustments.count) > 0) {
+        throw new ConflictException({
+          code: 'INVOICE_ADJUSTMENT_PENDING', message: `승인 대기 조정 ${Number(adjustments.count)}건을 먼저 처리해 주세요`,
+          details: { month: dto.month, count: Number(adjustments.count) },
         });
       }
       const [row] = (await m.query(

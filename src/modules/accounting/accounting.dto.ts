@@ -563,6 +563,130 @@ export class PayoutDisbursementBatchResultDto {
   @ApiProperty({ type: [PayoutDisbursementDto] }) items!: PayoutDisbursementDto[];
 }
 
+/* ── BO-11BD-01 청구 조정 승인 원장 ─────────────────────────────────────
+ * 최종 관리자 수정사항 p106·112·115의 전용 계약이다. 기존 지출·강사료 보정·중앙 결재와 섞지 않는다.
+ * 정책 변경 시 service/migration/generated Front/Figma A24/기능 문서/portfolio를 같은 청크에서 갱신한다.
+ */
+export const INVOICE_ADJUSTMENT_KINDS = ['discount', 'refund', 'sibling_discount', 'carry'] as const;
+export type InvoiceAdjustmentKind = (typeof INVOICE_ADJUSTMENT_KINDS)[number];
+export const INVOICE_ADJUSTMENT_STATES = ['pending', 'approved', 'rejected', 'canceled'] as const;
+export type InvoiceAdjustmentState = (typeof INVOICE_ADJUSTMENT_STATES)[number];
+
+export class InvoiceAdjustmentEventDto {
+  @ApiProperty({ enum: ['created', 'approved', 'rejected', 'canceled', 'restored'] })
+  action!: 'created' | 'approved' | 'rejected' | 'canceled' | 'restored';
+  @ApiProperty({ type: String, nullable: true, enum: INVOICE_ADJUSTMENT_STATES })
+  fromState!: InvoiceAdjustmentState | null;
+  @ApiProperty({ enum: INVOICE_ADJUSTMENT_STATES }) toState!: InvoiceAdjustmentState;
+  @ApiProperty() version!: number;
+  @ApiProperty() actorId!: number;
+  @ApiProperty() actor!: string;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty({ description: '이 전이가 시작되기 직전의 INV.amount' }) invoiceAmountBefore!: number;
+  @ApiProperty({ description: '이 전이가 끝난 뒤의 INV.amount' }) invoiceAmountAfter!: number;
+  @ApiProperty() createdAt!: string;
+}
+
+export class InvoiceAdjustmentDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() invoiceId!: number;
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ type: String, nullable: true }) studentTag!: string | null;
+  @ApiProperty({ example: '2026-10' }) yearMonth!: string;
+  @ApiProperty({ ...DATE_SCHEMA }) effectiveOn!: string;
+  @ApiProperty({ enum: INVOICE_ADJUSTMENT_KINDS }) kind!: InvoiceAdjustmentKind;
+  @ApiProperty() kindLabel!: string;
+  @ApiProperty() reason!: string;
+  @ApiProperty({ description: '양의 입력 금액. approved 상태일 때 현재 월 청구액에서 차감한다' }) amount!: number;
+  @ApiProperty({ enum: INVOICE_ADJUSTMENT_STATES }) state!: InvoiceAdjustmentState;
+  @ApiProperty() stateLabel!: string;
+  @ApiProperty() version!: number;
+  @ApiProperty({ description: '첫 요청 때 고정한 청구 원금 snapshot' }) originalInvoiceAmount!: number;
+  @ApiProperty({ description: '현재 INV.amount. pending/rejected는 바꾸지 않는다' }) invoiceAmount!: number;
+  @ApiProperty() paidAmount!: number;
+  @ApiProperty({ description: '현재 납부액이 조정 뒤 청구액을 넘는 금액. BO-Q9 전에는 송금 완료를 뜻하지 않는다' })
+  refundDue!: number;
+  @ApiProperty() requestedById!: number;
+  @ApiProperty() requestedBy!: string;
+  @ApiProperty() requestedAt!: string;
+  @ApiProperty({ type: String, nullable: true }) decidedBy!: string | null;
+  @ApiProperty({ type: String, nullable: true }) decidedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) rejectReason!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledBy!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) cancelReason!: string | null;
+  @ApiProperty() canApprove!: boolean;
+  @ApiProperty() canReject!: boolean;
+  @ApiProperty() canCancel!: boolean;
+  @ApiProperty() canUndo!: boolean;
+  @ApiProperty({ type: [InvoiceAdjustmentEventDto] }) events!: InvoiceAdjustmentEventDto[];
+}
+
+export class InvoiceAdjustmentLedgerDto {
+  @ApiProperty({ example: '2026-10' }) month!: string;
+  @ApiProperty() pendingCount!: number;
+  @ApiProperty({ description: '현재 approved 조정 금액 합계' }) approvedAmount!: number;
+  @ApiProperty({ description: '현재 납부액이 조정 청구액을 넘는 학생별 환불 예정액 합계' }) refundDue!: number;
+  @ApiProperty() canRequest!: boolean;
+  @ApiProperty() canApprove!: boolean;
+  @ApiProperty({ type: [InvoiceAdjustmentDto] }) items!: InvoiceAdjustmentDto[];
+}
+
+export class InvoiceAdjustmentQueryDto {
+  @ApiPropertyOptional({ example: '2026-10', description: '비우면 서버 KST 현재 달' })
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month?: string;
+}
+
+export class InvoiceAdjustmentCreateDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: '이 날짜의 월에 있는 유효 tuition 청구서 하나를 서버가 선택한다' })
+  @IsCalendarDate()
+  effectiveOn!: string;
+
+  @ApiProperty({ enum: INVOICE_ADJUSTMENT_KINDS })
+  @IsIn(INVOICE_ADJUSTMENT_KINDS as unknown as string[])
+  kind!: InvoiceAdjustmentKind;
+
+  @ApiProperty({ ...ID_SCHEMA })
+  @ToHttpInteger() @IsInt() @Min(1)
+  studentId!: number;
+
+  @ApiProperty({ minLength: 2, maxLength: 500 })
+  @IsString() @MinLength(2) @MaxLength(500)
+  reason!: string;
+
+  @ApiProperty({ minimum: 1, description: '원 단위 양의 정수. 승인 때 현재 청구액에서 차감한다' })
+  @ToHttpInteger() @IsInt() @Min(1)
+  amount!: number;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class InvoiceAdjustmentActionDto {
+  @ApiProperty({ minimum: 1 })
+  @ToHttpInteger() @IsInt() @Min(1)
+  expectedVersion!: number;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class InvoiceAdjustmentReasonActionDto extends InvoiceAdjustmentActionDto {
+  @ApiProperty({ minLength: 2, maxLength: 200 })
+  @IsString() @MinLength(2) @MaxLength(200)
+  reason!: string;
+}
+
+export class InvoiceAdjustmentWriteResultDto {
+  @ApiProperty({ type: InvoiceAdjustmentDto }) item!: InvoiceAdjustmentDto;
+  @ApiProperty({ description: '같은 actor/action/payload/requestKey 재시도면 true' }) replayed!: boolean;
+}
+
 /**
  * 입금 한 줄 등록 — **분납은 줄을 늘려서 표현한다** (A-D2 · PLANNING §4-17).
  * 누계·상태 전이·초과 판정은 전부 서버가 한다. 화면은 잔여를 placeholder 로만 보여 준다 (ACCOUNTING §0).

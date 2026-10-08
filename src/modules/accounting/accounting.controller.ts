@@ -12,7 +12,8 @@ import {
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import {
-  Perm, canCeoApproveCorrection, canCeoCloseMonth, canCeoConfirmPayout, canCeoFileExpenseForOther, canCeoSetAcctPrivacy, canCeoVoidInvoice,
+  Perm, canCeoApproveCorrection, canCeoApproveInvoiceAdjustment, canCeoCloseMonth, canCeoConfirmPayout,
+  canCeoFileExpenseForOther, canCeoSetAcctPrivacy, canCeoVoidInvoice,
   hasPerm, isRole, type RequestUser,
 } from '../../common/perm';
 import {
@@ -32,9 +33,12 @@ import {
   PaymentEvidenceIssueDto, PaymentEvidenceCancelDto, PaymentEvidenceBatchIssueDto, PaymentEvidenceBatchResultDto,
   PayoutDisbursementDto, PayoutDisbursementLedgerDto, PayoutDisbursementPayDto,
   PayoutDisbursementCancelDto, PayoutDisbursementBatchPayDto, PayoutDisbursementBatchResultDto,
+  InvoiceAdjustmentLedgerDto, InvoiceAdjustmentQueryDto, InvoiceAdjustmentCreateDto,
+  InvoiceAdjustmentActionDto, InvoiceAdjustmentReasonActionDto, InvoiceAdjustmentWriteResultDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
+import { InvoiceAdjustmentsService } from './invoice-adjustments.service';
 import { StudentWithdrawService } from './withdraw.service';
 
 /** 회계 비공개(N-94)의 보는 사람 — 비공개 열람(canHide · 사람별 예외 반영)과 본인 번호 */
@@ -54,7 +58,11 @@ function canSetAcctPrivacy(user: RequestUser): boolean {
 @ApiTags('accounting')
 @Controller('accounting')
 export class AccountingController {
-  constructor(private readonly svc: AccountingService, private readonly withdrawSvc: StudentWithdrawService) {}
+  constructor(
+    private readonly svc: AccountingService,
+    private readonly adjustments: InvoiceAdjustmentsService,
+    private readonly withdrawSvc: StudentWithdrawService,
+  ) {}
 
   /**
    * ⚠️ 2026-09-12 (C36-a) 교정 — 종전 `canCrudAll` 은 **원문과 달랐다.**
@@ -86,6 +94,96 @@ export class AccountingController {
   async studentCumulative(@CurrentUser() user: RequestUser): Promise<StudentCumulativeDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.studentCumulative(canSee);
+  }
+
+  @Get('adjustments')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '청구 조정 원장 — 할인·환불·형제 할인·이월 (TBO-55 BO-11BD-01)',
+    description: '최종 관리자 수정사항 p106·112의 전용 원장이다. pending/rejected는 INV 금액을 바꾸지 않고, '
+      + '대표 승인 뒤 approved 합계만 적용 월 tuition 청구액에서 차감한다. 실제 환불 송금 완료는 BO-Q9 전까지 기록하지 않는다. '
+      + '이 권고안은 invoice-adjustments.service/migration/Front/기능 문서를 함께 바꿔야 한다.',
+  })
+  @ApiOkResponse({ type: InvoiceAdjustmentLedgerDto })
+  adjustmentLedger(
+    @CurrentUser() user: RequestUser, @Query() query: InvoiceAdjustmentQueryDto,
+  ): Promise<InvoiceAdjustmentLedgerDto> {
+    const canRequest = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    const canApprove = isRole(user.role) && canCeoApproveInvoiceAdjustment(user.role);
+    return this.adjustments.ledger(query.month, canRequest, canApprove);
+  }
+
+  @Post('adjustments')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '청구 조정 승인 요청 — 승인 전 INV 금액 불변 (TBO-55 BO-11BD-01)' })
+  @ApiCreatedResponse({ type: InvoiceAdjustmentWriteResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  createAdjustment(
+    @CurrentUser() user: RequestUser, @Body() dto: InvoiceAdjustmentCreateDto,
+  ): Promise<InvoiceAdjustmentWriteResultDto> {
+    return this.adjustments.create(
+      user.id,
+      isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms),
+      isRole(user.role) && canCeoApproveInvoiceAdjustment(user.role),
+      dto,
+    );
+  }
+
+  @Post('adjustments/:id/approve')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '청구 조정 대표 승인·INV 반영 (TBO-55 BO-11BD-01)' })
+  @ApiCreatedResponse({ type: InvoiceAdjustmentWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  approveAdjustment(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: InvoiceAdjustmentActionDto,
+  ): Promise<InvoiceAdjustmentWriteResultDto> {
+    return this.adjustments.transition(
+      user.id, isRole(user.role) && canCeoApproveInvoiceAdjustment(user.role), id, 'approve', dto,
+    );
+  }
+
+  @Post('adjustments/:id/reject')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '청구 조정 반려·INV 불변 (TBO-55 BO-11BD-01)' })
+  @ApiCreatedResponse({ type: InvoiceAdjustmentWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  rejectAdjustment(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: InvoiceAdjustmentReasonActionDto,
+  ): Promise<InvoiceAdjustmentWriteResultDto> {
+    return this.adjustments.transition(
+      user.id, isRole(user.role) && canCeoApproveInvoiceAdjustment(user.role), id, 'reject', dto,
+    );
+  }
+
+  @Post('adjustments/:id/cancel')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '승인 조정 반영 취소·INV 보상 복구 (TBO-55 BO-11BD-01)' })
+  @ApiCreatedResponse({ type: InvoiceAdjustmentWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  cancelAdjustment(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: InvoiceAdjustmentReasonActionDto,
+  ): Promise<InvoiceAdjustmentWriteResultDto> {
+    return this.adjustments.transition(
+      user.id, isRole(user.role) && canCeoApproveInvoiceAdjustment(user.role), id, 'cancel', dto,
+    );
+  }
+
+  @Post('adjustments/:id/undo')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '반려·반영 취소 되돌리기 (TBO-55 BO-11BD-01)' })
+  @ApiCreatedResponse({ type: InvoiceAdjustmentWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  undoAdjustment(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: InvoiceAdjustmentReasonActionDto,
+  ): Promise<InvoiceAdjustmentWriteResultDto> {
+    return this.adjustments.transition(
+      user.id, isRole(user.role) && canCeoApproveInvoiceAdjustment(user.role), id, 'undo', dto,
+    );
   }
 
   @Get('payment-evidence')

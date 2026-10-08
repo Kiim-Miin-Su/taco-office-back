@@ -105,6 +105,11 @@ export const NOTI_TITLE = {
   expenseSubmitted: '지출 심사 요청',
   expenseRejected: '지출 반려',
   wageChanged: '시급 변경',
+  invoiceAdjustmentRequested: '청구 조정 승인 요청',
+  invoiceAdjustmentApproved: '청구 조정 승인',
+  invoiceAdjustmentRejected: '청구 조정 반려',
+  invoiceAdjustmentCanceled: '청구 조정 반영 취소',
+  invoiceAdjustmentRestored: '청구 조정 되돌리기',
   // 교재 · 안내
   bookReceived: '자료 수령 확인',
   bookAssigned: '교재 배정',

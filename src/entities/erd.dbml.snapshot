@@ -1,3 +1,7 @@
+// TBO55-BO11BD01-R103 (2026-10-09): BO-11BD-01 권고안 채택 — 할인·환불·형제 할인·이월 신청을 적용 월의 단일 유효 tuition INV에 연결하고 BASE 원금 snapshot, ADJUSTMENT current, EVENT 불변 이력으로 승인·반려·반영 취소·되돌리기를 저장한다. pending/rejected는 금액 불변, approved 합계만 차감하며 초과 납부 차액은 refundDue로만 표시하고 실제 환불 송금은 BO-Q9에 남긴다. v4.85/127표, migration1768200000000 로컬 fresh/upgrade/repeat/down-up·권한·멱등·stale·월마감·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 조정 DTO/service/Front·migration/두 DBML·P-BO11BD01·두 수정사항 대조표·Figma A24·scenario·portfolio를 함께 수정한다.
+// TBO55-BO11AD03-R102 (2026-10-09): BO-11AD-03 권고안 채택 — 확정 PAYOUT/PAYOUT_LINE 계산 snapshot과 실제 송금을 분리하고 PAYOUT_DISBURSEMENT current, REQUEST 멱등 원장, EVENT 불변 이력으로 지급·취소·재지급을 저장한다. 계좌 식별자는 BO-Q9 보호 계약 전까지 추정·저장하지 않으며 bank_transfer와 actual actor/date/version을 보존한다. v4.84/124표, migration1768100000000 로컬 적용·권한·stale·동시 지급·취소·일괄 재지급·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 지급 DTO/service/Front·migration/DBML·P-BO11AD03·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
+// TBO55-BO11AD01-R101 (2026-10-09): BO-11AD-01 권고안 채택 — PAY별 외부 증빙 발행 확인을 PAYMENT_EVIDENCE current, REQUEST 멱등 원장, EVENT 불변 이력으로 저장한다. 외부 국세청/PG 발급 번호는 만들지 않으며 발행 당시 snapshot과 actual actor/version을 보존한다. POLICY 적용시각 이전 PAY는 과거 상태를 추정하지 않고 월 마감 gate에서 보존하며 이후 등록된 양수 PAY만 current issued를 요구한다. v4.83/121표, migration1768000000000 로컬 적용·권한·stale·동시 발행·취소·일괄 발행·월마감 race 검증, 운영 미적용. 정책 변경 시 증빙 DTO/service/Front·migration/DBML·P-BO11AD01·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
+// TBO55-BOC08D02-R96 (2026-10-09): BOC-08D-02 권고안 채택 — 일반 자료 요청을 과거 GPA 자료 원장과 분리하고 MATERIAL_REQUEST/EVENT/FILE 세 표와 공용 FILE(kind=material-request)로 저장한다. 첫 준비자·identity·ack 불변, version+1, event/file 목적, commit 시 event와 전달 파일 완결성을 직접 SQL에도 강제한다. v4.82/117표, migration1767900000000 신규/기존 전환·반복·schema·회귀·Browser5/5 검증, 운영 미적용. 정책 변경 시 material-request DTO/service·generated Front·두 화면/drawer·migration/DBML·P-BOC08D02·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC08D01-R95 (2026-10-09): BOC-08D-01 권고안 채택 — 구조화 individual/group REP의 교재·쪽 snapshot을 REP_BOOK_PROGRESS 수업별 원장으로 투영하고 ISSUE.progress_page를 비감소 현재값으로 갱신한다. 14일 정체와 최근28일 숙제 쪽수는 원장에서 읽고, 완료 예상일은 계산 기준 확정 전 만들지 않는다. v4.81/114표, migration1767800000000 로컬 apply/revert/reapply/repeat·범위/직접쓰기/회귀·Browser→HTTP→DB→reload 검증, 운영 미적용. 정책 변경 시 report/book DTO·service·generated Front·BookTracking·두 DBML·P-BOC08D01·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC07D-R94 (2026-10-09): BOC-07D 권고안 채택 — REP는 format_version=0 legacy 3칸과 format_version=1의 individual/group/kinder/mock/diagnostic 구조화 snapshot을 함께 보존한다. row_version으로 draft/submit/review 경합을 409로 거절하고 last_writer_id에 대상 강사와 별개인 실제 actor를 기록한다. 최초 submitted_at은 재제출에도 유지하며 과거 format0·확정 급여는 변환하지 않는다. v4.80/113표, migration1767700000000 로컬 fresh/apply/revert/reapply/repeat·구조/권한/경합·Browser→HTTP→DB→reload·cleanup 검증, 운영 미적용. 정책 변경 시 report DTO/service/controller·생성 Front 계약·구조화 form/export·두 DBML·P-BOC07D·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC06D03-R92 (2026-10-08): BOC-06D-03 권고안 채택 — KST 실제 수업일이 10일 미만이거나 지난 수업의 팝업 건의는 기존 SUGGESTION 원장을 재사용하되 exact ser_id/on_date/source_date/read_version과 서버 생성 lesson_snapshot을 보존한다. staff+request_key 멱등, 담당·취소·이동·stale 재검사로 다른 강사/10일 이상 변경요청 우회를 막는다. 일반·기존 건의는 링크 컬럼 NULL로 보존한다. v4.79/113표, migration1767600000000 로컬 기존 전환·멱등·권한·경계·DB 제약 검증, 운영 미적용. 정책 변경 시 suggestion DTO/service/controller·TeacherScheduleChange/건의 이력/관리자 건의함·OpenAPI/generated schema·두 DBML·P-BOC06D03·두 수정사항 대조표·portfolio를 함께 수정한다.
@@ -111,7 +115,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.81 (2026-10-09 · TBO-55 BOC-08D-01 권고안 채택 · 리포트 교재 진도·숙제 수업 원장/ISSUE 비감소 projection·운영 미적용) — v4.80 REP 구조화 snapshot/낙관적 version/실제 actor(migration 1767700000000) ← v4.79 SUGGESTION exact 수업 identity/server snapshot/멱등(migration 1767600000000) ← v4.78 CHREQ source/version·pending unique·승인 재검사(migration 1767500000000) ← v4.77 과목당 단일 프로그램·이름 유일·8색 DB guard(migration 1767400000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
+// version : 4.84 (2026-10-09 · TBO-55 BO-11AD-03 권고안 채택 · 확정 PAYOUT과 실제 지급 current/request/event 원장 분리·운영 미적용) — v4.83 PAY 증빙 정책/current/request/event 네 원장(migration 1768000000000) ← v4.82 일반 자료 요청 projection/event/file 원장과 내부 FILE ACL(migration 1767900000000) ← v4.81 리포트 교재 진도·숙제 수업 원장/ISSUE 비감소 projection(migration 1767800000000) ← v4.80 REP 구조화 snapshot/낙관적 version/실제 actor(migration 1767700000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
 // historical version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
@@ -2873,3 +2877,293 @@ Table SER_OCC {
 //   + rep_book_progress_guard — 현재 format1 REP snapshot, 활성 ISSUE identity/version, LIB 총쪽수 상한을 INSERT/UPDATE 때 검사한다.
 //   ~ ISSUE.progress_page — 리포트 진행 끝 쪽으로 비감소 갱신. 14일 정체와 KST 오늘 포함 최근28일 숙제 쪽수는 원장에서 계산한다.
 //   표 +1(113 → 114) · 새 컬럼 +16 · check6/unique1/index1/함수·trigger1 · migration 1(1767800000000-report-book-progress) · 운영 미적용.
+
+// v4.81 → v4.82 (2026-10-09 · TBO-55 BOC-08D-02 권고안 채택) — 일반 강사 자료 요청의 현재 projection·불변 전이·FILE 연결.
+//   + MATERIAL_REQUEST — 강사/학생/종류/필요일/본문, received/preparing/delivered/rejected, version, 첫 담당자, 전달/반려/수신 시각.
+//   + MATERIAL_REQUEST_EVENT — created/preparing/delivered/rejected/acknowledged 실제 actor, UUID requestKey, payload SHA-256, 결과 version.
+//   + MATERIAL_REQUEST_FILE — 요청/전달 FILE과 해당 event·추가 actor. FILE.kind에 material-request를 추가한다.
+//   + 직접쓰기 guard — identity·담당자·ack 불변, version 정확히 +1, event/file 목적 일치, commit 시 결과 event와 delivered 파일 최소1을 검사한다.
+//   표 +3(114 → 117) · 새 컬럼 +32 · migration 1(1767900000000-material-request) · 신규/기존 전환·반복·Browser5/5 검증 · 운영 미적용.
+
+Table MATERIAL_REQUEST {
+  id bigint [pk, increment]
+  teacher_id bigint [not null]
+  student_id bigint [not null]
+  kind varchar(20) [not null, note: 'book_pdf | worksheet | test_paper | other']
+  needed_on date [not null]
+  body varchar(2000) [not null]
+  state varchar(16) [not null, default: 'received']
+  row_version int [not null, default: 1]
+  request_key uuid [not null]
+  assigned_to bigint
+  delivered_by bigint
+  reject_reason varchar(500)
+  delivered_at timestamptz
+  rejected_at timestamptz
+  acknowledged_at timestamptz
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (teacher_id, request_key) [unique, name: 'material_request_teacher_key_unique']
+    (state, needed_on, id) [name: 'material_request_state_needed_idx']
+    (teacher_id, created_at, id) [name: 'material_request_teacher_created_idx']
+  }
+}
+
+Table MATERIAL_REQUEST_EVENT {
+  id bigint [pk, increment]
+  material_request_id bigint [not null]
+  action varchar(20) [not null]
+  from_state varchar(16)
+  to_state varchar(16) [not null]
+  reason varchar(500)
+  actor_id bigint [not null]
+  request_key uuid [not null, unique]
+  payload_sha256 char(64) [not null]
+  result_version int [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (material_request_id, result_version) [unique, name: 'material_request_event_version_unique']
+    (material_request_id, created_at, id) [name: 'material_request_event_request_idx']
+  }
+}
+
+Table MATERIAL_REQUEST_FILE {
+  id bigint [pk, increment]
+  material_request_id bigint [not null]
+  event_id bigint [not null]
+  file_id bigint [not null, unique]
+  purpose varchar(12) [not null, note: 'request | delivery']
+  added_by bigint [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (material_request_id, purpose, id) [name: 'material_request_file_request_idx']
+  }
+}
+
+Ref: MATERIAL_REQUEST.teacher_id > STAFF.id [delete: restrict]
+Ref: MATERIAL_REQUEST.student_id > STU.id [delete: restrict]
+Ref: MATERIAL_REQUEST.assigned_to > STAFF.id [delete: restrict]
+Ref: MATERIAL_REQUEST.delivered_by > STAFF.id [delete: restrict]
+Ref: MATERIAL_REQUEST_EVENT.material_request_id > MATERIAL_REQUEST.id [delete: cascade]
+Ref: MATERIAL_REQUEST_EVENT.actor_id > STAFF.id [delete: restrict]
+Ref: MATERIAL_REQUEST_FILE.material_request_id > MATERIAL_REQUEST.id [delete: cascade]
+Ref: MATERIAL_REQUEST_FILE.event_id > MATERIAL_REQUEST_EVENT.id [delete: cascade]
+Ref: MATERIAL_REQUEST_FILE.file_id > FILE.id [delete: restrict]
+Ref: MATERIAL_REQUEST_FILE.added_by > STAFF.id [delete: restrict]
+
+// v4.82 → v4.83 (2026-10-09 · TBO-55 BO-11AD-01 권고안 채택) — PAY 증빙 발행 확인·멱등 요청·불변 사건.
+//   + PAYMENT_EVIDENCE_POLICY — 배포 적용시각 이전 PAY를 추정 발행하지 않고 월 마감 gate에서 보존한다.
+//   + PAYMENT_EVIDENCE — PAY 1:1 current issued/canceled, version, 출력 snapshot, 실제 발행/취소 actor·시각·사유.
+//   + PAYMENT_EVIDENCE_REQUEST — 개별 발행/취소 또는 월 일괄 발행의 UUID 멱등 범위.
+//   + PAYMENT_EVIDENCE_EVENT — issued/canceled 상태 전이와 결과 version·snapshot을 append-only 보존.
+//   + 월 마감 — 양수 PAY 중 current issued가 아닌 건수만 세며 1건 이상이면 PAYMENT_EVIDENCE_UNISSUED.
+//   표 +4(117 → 121) · migration 1(1768000000000-payment-evidence) · 운영 미적용.
+
+Table PAYMENT_EVIDENCE_POLICY {
+  id smallint [pk, note: '항상 1']
+  effective_at timestamptz [not null, default: `now()`]
+}
+
+Table PAYMENT_EVIDENCE {
+  id bigint [pk, increment]
+  pay_id bigint [not null, unique]
+  state varchar(12) [not null, note: 'issued | canceled']
+  row_version int [not null]
+  snapshot jsonb [not null, note: '발행 당시 payId/paidOn/student/content/amount/method']
+  issued_by bigint [not null]
+  issued_at timestamptz [not null]
+  canceled_by bigint
+  canceled_at timestamptz
+  cancel_reason varchar(200)
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (state, pay_id) [name: 'payment_evidence_state_idx']
+  }
+}
+
+Table PAYMENT_EVIDENCE_REQUEST {
+  request_key uuid [pk]
+  actor_id bigint [not null]
+  action varchar(12) [not null, note: 'issued | canceled | batch_issued']
+  pay_id bigint
+  year_month char(7)
+  result_count int [not null, default: 0, note: '같은 requestKey 재생 시 반환할 성공 건수']
+  skipped_count int [not null, default: 0, note: '일괄 발행에서 이미 발행되어 건너뛴 건수']
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table PAYMENT_EVIDENCE_EVENT {
+  id bigint [pk, increment]
+  payment_evidence_id bigint [not null]
+  action varchar(12) [not null, note: 'issued | canceled']
+  from_state varchar(12)
+  to_state varchar(12) [not null]
+  actor_id bigint [not null]
+  request_key uuid [not null]
+  result_version int [not null]
+  snapshot jsonb [not null]
+  reason varchar(200)
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (payment_evidence_id, result_version) [unique, name: 'payment_evidence_event_version_unique']
+    (payment_evidence_id, request_key) [unique, name: 'payment_evidence_event_request_unique']
+    (payment_evidence_id, created_at, id) [name: 'payment_evidence_event_evidence_idx']
+  }
+}
+
+Ref: PAYMENT_EVIDENCE.pay_id > PAY.id [delete: restrict]
+Ref: PAYMENT_EVIDENCE.issued_by > STAFF.id [delete: restrict]
+Ref: PAYMENT_EVIDENCE.canceled_by > STAFF.id [delete: restrict]
+Ref: PAYMENT_EVIDENCE_REQUEST.actor_id > STAFF.id [delete: restrict]
+Ref: PAYMENT_EVIDENCE_REQUEST.pay_id > PAY.id [delete: restrict]
+Ref: PAYMENT_EVIDENCE_EVENT.payment_evidence_id > PAYMENT_EVIDENCE.id [delete: restrict]
+Ref: PAYMENT_EVIDENCE_EVENT.actor_id > STAFF.id [delete: restrict]
+Ref: PAYMENT_EVIDENCE_EVENT.request_key > PAYMENT_EVIDENCE_REQUEST.request_key [delete: restrict]
+
+// v4.83 → v4.84 (2026-10-09 · TBO-55 BO-11AD-03 권고안 채택) — 확정 정산과 실제 지급·취소·재지급 분리.
+//   + PAYOUT_DISBURSEMENT — PAYOUT 1:1 current paid/canceled, 확정 금액 snapshot, 실제 지급일·수단·actor·version.
+//   + PAYOUT_DISBURSEMENT_REQUEST — 개별 지급/취소 또는 월 일괄 지급의 UUID 멱등 범위와 결과 수.
+//   + PAYOUT_DISBURSEMENT_EVENT — paid/canceled 상태 전이, 결과 version·snapshot·실제 지급일을 append-only 보존.
+//   + 계좌 번호/reference는 BO-Q9 전까지 저장하지 않고 bank_transfer만 허용한다.
+//   표 +3(121 → 124) · migration 1(1768100000000-payout-disbursement) · 운영 미적용.
+
+Table PAYOUT_DISBURSEMENT {
+  id bigint [pk, increment]
+  payout_id bigint [not null, unique]
+  state varchar(12) [not null, note: 'paid | canceled']
+  row_version int [not null]
+  snapshot jsonb [not null, note: '확정 payoutId/yearMonth/staff/gross/deductions/tax/net snapshot']
+  paid_on date [not null]
+  method varchar(24) [not null, note: 'bank_transfer']
+  paid_by bigint [not null]
+  paid_at timestamptz [not null]
+  canceled_by bigint
+  canceled_at timestamptz
+  cancel_reason varchar(200)
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (state, payout_id) [name: 'payout_disbursement_state_idx']
+  }
+}
+
+Table PAYOUT_DISBURSEMENT_REQUEST {
+  request_key uuid [pk]
+  actor_id bigint [not null]
+  action varchar(16) [not null, note: 'paid | canceled | batch_paid']
+  payout_id bigint
+  year_month char(7)
+  paid_on date
+  method varchar(24)
+  result_count int [not null, default: 0]
+  skipped_count int [not null, default: 0]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table PAYOUT_DISBURSEMENT_EVENT {
+  id bigint [pk, increment]
+  payout_disbursement_id bigint [not null]
+  action varchar(12) [not null, note: 'paid | canceled']
+  from_state varchar(12)
+  to_state varchar(12) [not null]
+  actor_id bigint [not null]
+  request_key uuid [not null]
+  result_version int [not null]
+  snapshot jsonb [not null]
+  paid_on date
+  method varchar(24)
+  reason varchar(200)
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (payout_disbursement_id, result_version) [unique, name: 'payout_disbursement_event_version_unique']
+    (payout_disbursement_id, request_key) [unique, name: 'payout_disbursement_event_request_unique']
+    (payout_disbursement_id, created_at, id) [name: 'payout_disbursement_event_current_idx']
+  }
+}
+
+Ref: PAYOUT_DISBURSEMENT.payout_id > PAYOUT.id [delete: restrict]
+Ref: PAYOUT_DISBURSEMENT.paid_by > STAFF.id [delete: restrict]
+Ref: PAYOUT_DISBURSEMENT.canceled_by > STAFF.id [delete: restrict]
+Ref: PAYOUT_DISBURSEMENT_REQUEST.actor_id > STAFF.id [delete: restrict]
+Ref: PAYOUT_DISBURSEMENT_REQUEST.payout_id > PAYOUT.id [delete: restrict]
+Ref: PAYOUT_DISBURSEMENT_EVENT.payout_disbursement_id > PAYOUT_DISBURSEMENT.id [delete: restrict]
+Ref: PAYOUT_DISBURSEMENT_EVENT.actor_id > STAFF.id [delete: restrict]
+Ref: PAYOUT_DISBURSEMENT_EVENT.request_key > PAYOUT_DISBURSEMENT_REQUEST.request_key [delete: restrict]
+
+// v4.84 → v4.85 (2026-10-09 · TBO-55 BO-11BD-01 권고안 채택) — 청구 조정 신청과 승인 상태·금액·감사 이력.
+//   + INVOICE_ADJUSTMENT_BASE — 첫 신청 시점의 INV 원금 snapshot. UPDATE/DELETE를 금지한다.
+//   + INVOICE_ADJUSTMENT — 신청 identity와 pending/approved/rejected/canceled current, actual actor·version·사유·시각.
+//   + INVOICE_ADJUSTMENT_EVENT — UUID requestKey·payload hash·결과 version과 전이 전후 INV amount를 append-only 보존한다.
+//   + deferred receipt/합계/초과납부 guard — current와 event가 일치하고 INV.amount=원금-approved 합계이며 승인 없는 초과 수납을 거절한다.
+//   표 +3(124 → 127) · migration 1(1768200000000-invoice-adjustment) · 운영 미적용.
+
+Table INVOICE_ADJUSTMENT_BASE {
+  inv_id bigint [pk]
+  original_amount int [not null, note: '첫 조정 요청 시 고정한 비음수 INV 원금']
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table INVOICE_ADJUSTMENT {
+  id bigint [pk, increment]
+  inv_id bigint [not null]
+  student_id bigint [not null]
+  year_month char(7) [not null]
+  effective_on date [not null]
+  kind varchar(24) [not null, note: 'discount | refund | sibling_discount | carry']
+  reason varchar(500) [not null]
+  amount int [not null, note: '승인 시 현재 청구액에서 차감할 양의 원 금액']
+  state varchar(16) [not null, default: 'pending', note: 'pending | approved | rejected | canceled']
+  row_version int [not null, default: 1]
+  requested_by bigint [not null]
+  requested_at timestamptz [not null, default: `now()`]
+  decided_by bigint
+  decided_at timestamptz
+  reject_reason varchar(200)
+  canceled_by bigint
+  canceled_at timestamptz
+  cancel_reason varchar(200)
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (year_month, state, effective_on, id) [name: 'invoice_adjustment_month_state_idx']
+    (inv_id, requested_at, id) [name: 'invoice_adjustment_invoice_idx']
+    (student_id, year_month, id) [name: 'invoice_adjustment_student_idx']
+  }
+}
+
+Table INVOICE_ADJUSTMENT_EVENT {
+  id bigint [pk, increment]
+  invoice_adjustment_id bigint [not null]
+  action varchar(20) [not null, note: 'created | approved | rejected | canceled | restored']
+  from_state varchar(16)
+  to_state varchar(16) [not null]
+  reason varchar(200)
+  actor_id bigint [not null]
+  request_key uuid [not null, unique]
+  payload_sha256 char(64) [not null]
+  result_version int [not null]
+  invoice_amount_before int [not null]
+  invoice_amount_after int [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (invoice_adjustment_id, result_version) [unique, name: 'invoice_adjustment_event_version_unique']
+    (invoice_adjustment_id, result_version, id) [name: 'invoice_adjustment_event_item_idx']
+  }
+}
+
+Ref: INVOICE_ADJUSTMENT_BASE.inv_id > INV.id [delete: restrict]
+Ref: INVOICE_ADJUSTMENT.inv_id > INV.id [delete: restrict]
+Ref: INVOICE_ADJUSTMENT.student_id > STU.id [delete: restrict]
+Ref: INVOICE_ADJUSTMENT.requested_by > STAFF.id [delete: restrict]
+Ref: INVOICE_ADJUSTMENT.decided_by > STAFF.id [delete: restrict]
+Ref: INVOICE_ADJUSTMENT.canceled_by > STAFF.id [delete: restrict]
+Ref: INVOICE_ADJUSTMENT_EVENT.invoice_adjustment_id > INVOICE_ADJUSTMENT.id [delete: restrict]
+Ref: INVOICE_ADJUSTMENT_EVENT.actor_id > STAFF.id [delete: restrict]

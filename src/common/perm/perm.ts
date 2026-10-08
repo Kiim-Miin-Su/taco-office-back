@@ -150,6 +150,13 @@ export const canCeoSetExecOwner = (r: Role): boolean => ceoGate(r);
 export const canCeoApproveCorrection = (r: Role): boolean => ceoGate(r);
 
 /**
+ * TBO-55 BO-11BD-01 청구 **할인·환불·형제 할인·이월 조정 승인** — 최종 관리자 수정사항 p106·112의 대표 승인.
+ * 강사료 보정(`canCeoApproveCorrection`)과 다른 원장이므로 판정 이름도 분리한다. 현재 관리자·매니저 기본 권한 유지
+ * 결정은 공통 `ceoGate`가 소유하며, 대표 전용 정책으로 복귀할 때 이 기능도 같은 한 줄을 따른다.
+ */
+export const canCeoApproveInvoiceAdjustment = (r: Role): boolean => ceoGate(r);
+
+/**
  * 회계 탭 줄의 **시급 비공개 · 컨설팅 비공개** 스위치를 켜고 끄는가 — 대표 판정
  * (N-94 채택 · W11 M2 · 원문 슬라이드 77 「강사 시급 공개 지정 · 내역 비공개 지정 — 대표만」). 켠 뒤 누가 보는가는 `canHide` 다.
  */
