@@ -38,6 +38,7 @@ import {
   TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
 } from './drawer.dto';
 import { DrawerService } from './drawer.service';
+import { TeacherGuidesDto, TeacherGuidesQueryDto, TeacherHomeDto, TeacherSuggestionsDto } from '../teacher/teacher.dto';
 
 @ApiTags('drawer')
 @ApiExtraModels(
@@ -101,6 +102,40 @@ export class DrawerController {
   ): Promise<StaffDirectoryDetailDto> {
     const g = this.gate(user);
     return this.svc.staffDirectoryDetail(p.id, user.id, g.canWage, g.canHide, q.cursor);
+  }
+
+  @Get('staff-directory/:id/home')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '관리자 강사 홈 — 실제 관리자 actor를 유지한 targetStaff 조회',
+    description: '강사 본인 API를 대리 호출하지 않는다. 시급과 시급 변경 요청 값은 실제 관리자 권한과 비공개 설정을 서버에서 적용한다.',
+  })
+  @ApiOkResponse({ type: TeacherHomeDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND — 강사 역할 또는 실제 수업 담당자가 아님' })
+  staffTeacherHome(@CurrentUser() user: RequestUser, @Param() p: StaffParamsDto): Promise<TeacherHomeDto> {
+    const g = this.gate(user);
+    return this.svc.staffTeacherHome(p.id, user.id, g.canWage, g.canHide);
+  }
+
+  @Get('staff-directory/:id/guides')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '관리자 강사 수업 안내 — targetStaff의 주간 담당 학생·교재·진단·인수인계' })
+  @ApiOkResponse({ type: TeacherGuidesDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  staffTeacherGuides(@Param() p: StaffParamsDto, @Query() q: TeacherGuidesQueryDto): Promise<TeacherGuidesDto> {
+    return this.svc.staffTeacherGuides(p.id, q.week);
+  }
+
+  @Get('staff-directory/:id/suggestions')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '관리자 강사 건의 — targetStaff가 보낸 건의와 답변 readback',
+    description: '답변은 기존 PATCH /ops/suggestions/:id/reply를 사용해 실제 관리자 actor·최초 답변·409·NOTI·LOG 계약을 재사용한다.',
+  })
+  @ApiOkResponse({ type: TeacherSuggestionsDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  staffTeacherSuggestions(@Param() p: StaffParamsDto): Promise<TeacherSuggestionsDto> {
+    return this.svc.staffTeacherSuggestions(p.id);
   }
 
   @Post('staff')

@@ -14,6 +14,7 @@ import { GuidesModule } from '../guides/guides.module';
 @Module({
   imports: [TypeOrmModule.forFeature([Ser]), GuidesModule],
   controllers: [TeacherController],
+  exports: [TeacherService],
   providers: [TeacherService],
 })
 export class TeacherModule {}

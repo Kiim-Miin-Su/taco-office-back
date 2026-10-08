@@ -46,6 +46,8 @@ import { PHONE_COUNTRIES } from '../../lib/phone';
 import { staffRecordTables } from '../../lib/staff-refs';
 import { maskEmail, maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
+import { TeacherService } from '../teacher/teacher.service';
+import type { TeacherGuidesDto, TeacherHomeDto, TeacherSuggestionsDto } from '../teacher/teacher.dto';
 import { loadState } from '../schedule/schedule.state.repo';
 import { issueScheduleUndoStep } from '../schedule/schedule.undo';
 import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
@@ -243,6 +245,12 @@ export class DrawerService {
     private readonly schedWrite?: ScheduleWriteService,
     /** 줌 갈래도 같은 이유로 **줌 배정 경로를 그대로 탄다** (C48) */
     private readonly zoom?: ZoomService,
+    /**
+     * BOC-10 권고안: 관리자 세션을 강사로 가장하지 않는다. 강사 본인 controller의 역할 검사는 그대로 두고,
+     * 검증된 targetStaff id만 기존 읽기 계산에 넘기는 관리자 facade가 같은 projection을 재사용한다.
+     * 이 경계를 바꾸면 drawer DTO/OpenAPI, 관리자 강사 8탭, 두 수정사항 대조표와 portfolio를 함께 갱신한다.
+     */
+    private readonly teacher?: TeacherService,
   ) {}
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
@@ -255,7 +263,9 @@ export class DrawerService {
     const pageSize = 10;
     const state = q.state ?? 'all';
     const search = q.search?.trim() ?? '';
-    const where = `s.role = 'teacher' AND ($1::text = 'all' OR s.active = ($1::text = 'active'))
+    // 관리자 수정사항 p62: 역할명이 teacher가 아니어도 실제 수업을 맡으면 강사 탭에 선다.
+    const where = `(s.role = 'teacher' OR EXISTS (SELECT 1 FROM ser owned WHERE owned.teacher_id = s.id))
+      AND ($1::text = 'all' OR s.active = ($1::text = 'active'))
       AND ($2::text = '' OR position(lower($2::text) in lower(s.name)) > 0)`;
     const rows = await this.q(
       `WITH total AS (SELECT count(*)::text AS total FROM staff s WHERE ${where}),
@@ -286,7 +296,8 @@ export class DrawerService {
     const [staff] = await this.q(
       `SELECT s.id, s.name, s.email, s.phone, s.title, s.tz, s.active,
               to_char(s.hired_on,'YYYY-MM-DD') AS hired_on, ${kstAt('s.created_at')} AS created_at
-         FROM staff s WHERE s.id = $1 AND s.role = 'teacher'`, [id],
+         FROM staff s WHERE s.id = $1
+          AND (s.role = 'teacher' OR EXISTS (SELECT 1 FROM ser owned WHERE owned.teacher_id = s.id))`, [id],
     );
     if (!staff) throw staffNotFound();
 
@@ -368,6 +379,55 @@ export class DrawerService {
       })),
       audit, nextCursor: hasMore && auditPage.length > 0 ? staffAuditCursor(auditPage[auditPage.length - 1]) : null,
     };
+  }
+
+  private async assertTeachingStaff(id: number): Promise<void> {
+    const [row] = await this.q(
+      `SELECT s.id FROM staff s WHERE s.id = $1
+        AND (s.role = 'teacher' OR EXISTS (SELECT 1 FROM ser owned WHERE owned.teacher_id = s.id))`,
+      [id],
+    );
+    if (!row) throw staffNotFound();
+  }
+
+  private teacherReader(): TeacherService {
+    if (!this.teacher) throw new Error('TeacherService is not connected to the staff target reader');
+    return this.teacher;
+  }
+
+  /** 관리자 강사 홈 — 실제 actor 권한을 유지한 targetStaff 읽기 facade. */
+  async staffTeacherHome(
+    id: number, viewerId: number, canWage: boolean, canHide: boolean,
+  ): Promise<TeacherHomeDto> {
+    await this.assertTeachingStaff(id);
+    const home = await this.teacherReader().home(id);
+    const wagePrivate = canWage
+      ? (await readAcctPrivacy({ query: (sql: string, p?: unknown[]) => this.q(sql, p ?? []) })).wage.private
+      : false;
+    const showWage = lineAmountVisible(canWage, wagePrivate, canHide, viewerId === id);
+    return {
+      ...home,
+      settings: {
+        ...home.settings,
+        wageRate: showWage ? home.settings.wageRate : null,
+        wageFrom: showWage ? home.settings.wageFrom : null,
+        requests: home.settings.requests.map((request) => (
+          request.reqType === 'wage_change' && !showWage ? { ...request, asked: null } : request
+        )),
+      },
+    };
+  }
+
+  /** 관리자 강사 수업 안내 — 본인 API를 열지 않고 같은 서버 projection을 targetStaff로 읽는다. */
+  async staffTeacherGuides(id: number, week?: string): Promise<TeacherGuidesDto> {
+    await this.assertTeachingStaff(id);
+    return this.teacherReader().guides(id, week);
+  }
+
+  /** 관리자 강사 건의 — 조회 대상은 id, 답변 actor는 별도 기존 Ops writer가 보존한다. */
+  async staffTeacherSuggestions(id: number): Promise<TeacherSuggestionsDto> {
+    await this.assertTeachingStaff(id);
+    return this.teacherReader().suggestions(id);
   }
 
   /**

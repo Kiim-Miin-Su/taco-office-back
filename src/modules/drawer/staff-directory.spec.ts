@@ -21,6 +21,9 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
   it('두 조회 경로 모두 관리자+전체 CRUD 권한이 필요하다', () => {
     expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffDirectory)).toEqual(['canAdminPage', 'canCrudAll']);
     expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffDirectoryDetail)).toEqual(['canAdminPage', 'canCrudAll']);
+    expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherHome)).toEqual(['canAdminPage', 'canCrudAll']);
+    expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherGuides)).toEqual(['canAdminPage', 'canCrudAll']);
+    expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherSuggestions)).toEqual(['canAdminPage', 'canCrudAll']);
   });
 
   it('등록 시각 DESC/id DESC로 10건 페이지를 요청하고 결과에 민감정보를 넣지 않는다', async () => {
@@ -32,9 +35,41 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
     expect(result).toMatchObject({ page: 2, pageSize: 10, total: 21, items: [{ id: 42, englishName: null }] });
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0][0]).toContain('ORDER BY s.created_at DESC, s.id DESC LIMIT $3 OFFSET $4');
+    expect(query.mock.calls[0][0]).toContain("s.role = 'teacher' OR EXISTS");
     expect(query.mock.calls[0][1]).toEqual(['active', '테스트', 10, 10]);
     expect(JSON.stringify(result)).not.toContain(staff.email);
     expect(JSON.stringify(result)).not.toContain(staff.phone);
+  });
+
+  it('실제 수업 담당자를 targetStaff로 검증하고 기존 강사 읽기 계산을 관리자 facade에서 재사용한다', async () => {
+    const query = jest.fn().mockImplementation((sql: string) => {
+      if (sql.includes('SELECT s.id FROM staff s')) return [{ id: '42' }];
+      throw new Error(`예상하지 않은 조회: ${sql}`);
+    });
+    const teacher = {
+      home: jest.fn().mockResolvedValue({
+        todayDate: '2026-10-09', today: [], upcoming: [], todaySummary: { lessons: 0, minutes: 0 },
+        week: { lessons: 0, minutes: 0, unwritten: 0 },
+        todo: { unwrittenReports: 0, waitingApprovals: 0, openChangeRequests: 0, openStaffRequests: 0, openBookChanges: 0 },
+        settings: {
+          name: '실장 강사', timezone: 'Asia/Seoul', wageRate: 50000, wageFrom: '2026-10-01', timezones: [],
+          requests: [{ id: 9, reqType: 'wage_change', label: '시급 변경', asked: '60,000원/시간', state: 'pending', createdOn: '2026-10-09', rejectReason: null }],
+          canAskWage: false, wageAskableOn: '2026-11-01', canAskTz: true,
+        },
+      }),
+      guides: jest.fn().mockResolvedValue({ weekFrom: '2026-10-05', weekTo: '2026-10-11', students: [] }),
+      suggestions: jest.fn().mockResolvedValue({ yearMonth: '2026-10', used: 1, limit: 3, remaining: 2, canPost: true, items: [] }),
+    };
+    const svc = new DrawerService(
+      { query } as unknown as Repository<Lead>, undefined, undefined, teacher as never,
+    );
+    const home = await svc.staffTeacherHome(42, 2, false, false);
+    expect(teacher.home).toHaveBeenCalledWith(42);
+    expect(home.settings).toMatchObject({ wageRate: null, wageFrom: null, requests: [{ asked: null }] });
+    await expect(svc.staffTeacherGuides(42, '2026-10-09')).resolves.toMatchObject({ weekFrom: '2026-10-05' });
+    await expect(svc.staffTeacherSuggestions(42)).resolves.toMatchObject({ used: 1, remaining: 2 });
+    expect(teacher.guides).toHaveBeenCalledWith(42, '2026-10-09');
+    expect(teacher.suggestions).toHaveBeenCalledWith(42);
   });
 
   it('빈 페이지도 단일 스냅숏 total을 돌려준다', async () => {
