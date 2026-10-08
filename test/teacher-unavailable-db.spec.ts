@@ -13,6 +13,7 @@ import { project } from '../src/modules/schedule/schedule.project';
 import { loadState } from '../src/modules/schedule/schedule.state.repo';
 import { TeacherService } from '../src/modules/teacher/teacher.service';
 import { TeacherUnavailableConflictException } from '../src/modules/teacher/teacher-unavailable-conflict.error';
+import { lockTeacherUnavailableWrite } from '../src/lib/teacher-unavailable';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -196,6 +197,50 @@ d('BOC-06D-01 — 시간표 projection과 불가시간 동시 쓰기', () => {
       });
     } finally {
       if (scheduleTx.isTransactionActive) await scheduleTx.rollbackTransaction();
+      await scheduleTx.release();
+    }
+  });
+
+  it('불가시간이 잠금을 먼저 잡으면 편성은 커밋을 기다린 뒤 같은 원장을 보존하고 회차를 투영한다', async () => {
+    const unavailableTx = ds.createQueryRunner();
+    const scheduleTx = ds.createQueryRunner();
+    await unavailableTx.connect();
+    await scheduleTx.connect();
+    await unavailableTx.startTransaction();
+    await scheduleTx.startTransaction();
+    try {
+      await lockTeacherUnavailableWrite(unavailableTx, [teacherId]);
+      const [block] = (await unavailableTx.query(
+        `INSERT INTO unav (staff_id, on_date, dow, start_min, end_min, reason)
+         VALUES ($1,$2::date,extract(dow from $2::date)::int,630,690,'동시 편성 경합을 확인하는 충분한 사유')
+         RETURNING id`,
+        [teacherId, actualDate],
+      )) as Array<{ id: string }>;
+
+      const pending = project(scheduleTx, await loadState(scheduleTx, [serId], { forWrite: true }), [serId], {
+        from: actualDate, to: actualDate,
+      });
+      const stateBeforeCommit = await Promise.race([
+        pending.then(() => 'resolved', () => 'rejected'),
+        new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), 50)),
+      ]);
+      expect(stateBeforeCommit).toBe('waiting');
+
+      await unavailableTx.commitTransaction();
+      await expect(pending).resolves.toBe(1);
+      await scheduleTx.commitTransaction();
+
+      const [state] = (await ds.query(
+        `SELECT
+           (SELECT count(*)::int FROM unav WHERE id = $1) AS unavailable_count,
+           (SELECT count(*)::int FROM ser_occ WHERE ser_id = $2 AND on_date = $3::date AND NOT canceled) AS lesson_count`,
+        [Number(block.id), serId, actualDate],
+      )) as Array<{ unavailable_count: number; lesson_count: number }>;
+      expect(state).toEqual({ unavailable_count: 1, lesson_count: 1 });
+    } finally {
+      if (unavailableTx.isTransactionActive) await unavailableTx.rollbackTransaction();
+      if (scheduleTx.isTransactionActive) await scheduleTx.rollbackTransaction();
+      await unavailableTx.release();
       await scheduleTx.release();
     }
   });
