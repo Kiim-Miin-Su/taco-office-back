@@ -18086,11 +18086,11 @@
             }
           },
           "409": {
-            "description": "TEACHER_LESSON_MOVED — 실제 수업일이 요청 URL과 다름",
+            "description": "TEACHER_LESSON_MOVED — actualDate가 요청 URL과 다름",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
+                  "$ref": "#/components/schemas/TeacherLessonMovedErrorDto"
                 }
               }
             }
@@ -43957,6 +43957,29 @@
           "guideStudents",
           "history",
           "capabilities"
+        ]
+      },
+      "TeacherLessonMovedErrorDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "공용 오류 코드. HTTP status와 함께 판정한다."
+          },
+          "message": {
+            "type": "string",
+            "description": "공용 필터에서 정규화한 사용자 안내 문구."
+          },
+          "actualDate": {
+            "type": "string",
+            "example": "2026-10-05",
+            "description": "서버가 확인한 최신 실제 수업일"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "actualDate"
         ]
       },
       "TeacherHistoryStatsDto": {

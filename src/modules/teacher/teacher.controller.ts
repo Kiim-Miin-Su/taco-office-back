@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, ParseIntPipe, Post, Query, UseFilters } from '@nestjs/common';
 import {
   ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse,
   ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags,
@@ -24,6 +24,7 @@ import { TeacherService } from './teacher.service';
 import { GuidesService } from '../guides/guides.service';
 import { GuideActionDto, GuideActionParamsDto, GuideDto, ReceivedGuidesDto } from '../guides/guides.dto';
 import { previousMonthKst } from '../../lib/kst';
+import { TeacherLessonMovedErrorDto, TeacherLessonMovedFilter } from './teacher-lesson-moved.error';
 
 @ApiTags('teacher')
 @Controller('teacher')
@@ -63,6 +64,7 @@ export class TeacherController {
   }
 
   @Get('lessons/:serId/:onDate/hub')
+  @UseFilters(TeacherLessonMovedFilter)
   @ApiOperation({
     summary: '강사 수업 허브 — 본인 회차의 리포트·안내·학생 이력·일정 변경 진입점',
     description: 'serId+원래 회차일+실제 수업일을 함께 검증한다. 없는 회차와 다른 강사 회차는 같은 404이며, 이동된 stale URL은 실제 날짜를 포함한 409다.',
@@ -70,7 +72,7 @@ export class TeacherController {
   @ApiOkResponse({ type: TeacherLessonHubDto })
   @ApiForbiddenResponse({ description: '강사 전용' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'TEACHER_LESSON_NOT_FOUND — 없음 또는 다른 강사의 회차' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'TEACHER_LESSON_MOVED — 실제 수업일이 요청 URL과 다름' })
+  @ApiConflictResponse({ type: TeacherLessonMovedErrorDto, description: 'TEACHER_LESSON_MOVED — actualDate가 요청 URL과 다름' })
   async lessonHub(
     @CurrentUser() user: RequestUser,
     @Param() params: TeacherLessonHubParamsDto,

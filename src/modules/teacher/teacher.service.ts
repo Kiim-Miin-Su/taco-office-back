@@ -33,6 +33,7 @@ import type {
 import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS } from '../../lib/teacher-policy';
 import { audit } from '../../lib/audit';
 import { bookLevelShown, ISSUE_STATE_LABEL, type IssueState } from '../../lib/book';
+import { TeacherLessonMovedException } from './teacher-lesson-moved.error';
 
 /** created_at(timestamptz) → KST 달력일 — 쿼터·표기 공용 */
 const KST_DATE = "(created_at AT TIME ZONE 'Asia/Seoul')::date";
@@ -502,11 +503,7 @@ export class TeacherService {
     }
     const actualDate = String(row.date);
     if (actualDate !== requestedDate) {
-      throw new ConflictException({
-        code: 'TEACHER_LESSON_MOVED',
-        message: '수업일이 변경되었습니다. 최신 일정에서 다시 열어 주세요.',
-        actualDate,
-      });
+      throw new TeacherLessonMovedException(actualDate);
     }
 
     const studentItems = (row.student_items as Array<{ id: number | string; name: string }>).map((student) => ({
