@@ -10,7 +10,7 @@ import request from 'supertest';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { todayKst } from '../src/lib/kst';
+import { previousMonthKst, todayKst } from '../src/lib/kst';
 import { assertScratch, DEV_URL, TEST_URL } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
@@ -33,6 +33,8 @@ d('관리자 강사 탭 — HTTP→DTO→DB', () => {
   const payoutIds: number[] = [];
   const serIds: number[] = [];
   const studentIds: number[] = [];
+  const reqIds: number[] = [];
+  const unavIds: number[] = [];
   const q = <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> => db.query(sql, params) as Promise<T[]>;
 
   beforeAll(async () => {
@@ -99,10 +101,31 @@ d('관리자 강사 탭 — HTTP→DTO→DB', () => {
     managerToken = await login(managerId);
     limitedToken = await login(limitedId);
     teacherToken = await login(teacherId);
+    const [wageRequest] = await q<{ id: string }>(
+      `INSERT INTO req (staff_id, req_type, payload)
+       VALUES ($1, 'wage_change', '{"from":45000,"to":50000,"reason":"sdir-fixture-private"}'::jsonb)
+       RETURNING id`,
+      [teacherId],
+    );
+    const [retiredGpaRequest] = await q<{ id: string }>(
+      `INSERT INTO req (staff_id, req_type, payload)
+       VALUES ($1, 'gpa_request', '{"message":"sdir-fixture-retired"}'::jsonb)
+       RETURNING id`,
+      [teacherId],
+    );
+    reqIds.push(Number(wageRequest.id), Number(retiredGpaRequest.id));
+    const [unavailable] = await q<{ id: string }>(
+      `INSERT INTO unav (staff_id, cycle, dow, on_date, start_min, end_min, reason)
+       VALUES ($1, 0, 1, (current_date + 20), 600, 660, 'sdir-fixture-unavailable') RETURNING id`,
+      [teacherId],
+    );
+    unavIds.push(Number(unavailable.id));
   });
 
   afterAll(async () => {
     if (db) {
+      if (unavIds.length) await q(`DELETE FROM unav WHERE id = ANY($1::bigint[])`, [unavIds]);
+      if (reqIds.length) await q(`DELETE FROM req WHERE id = ANY($1::bigint[])`, [reqIds]);
       if (serIds.length) await q(`DELETE FROM ser_stu WHERE ser_id = ANY($1::bigint[])`, [serIds]);
       if (serIds.length) await q(`DELETE FROM ser WHERE id = ANY($1::bigint[])`, [serIds]);
       if (studentIds.length) await q(`DELETE FROM stu WHERE id = ANY($1::bigint[])`, [studentIds]);
@@ -151,6 +174,36 @@ d('관리자 강사 탭 — HTTP→DTO→DB', () => {
     expect(hidden.body.wageAccess).toBe(false);
     expect(hidden.body.wages).toEqual([]);
     expect(hidden.body.payouts).toEqual([]);
+  });
+
+  it('전월 히스토리와 들어온 것 8종을 targetStaff로 읽고 실제 actor 권한으로 금액을 가린다', async () => {
+    const fullHistory = await request(app.getHttpServer()).get(`/drawer/staff-directory/${teacherId}/history`)
+      .set('Authorization', `Bearer ${managerToken}`).expect(200);
+    expect(fullHistory.body).toMatchObject({ month: previousMonthKst(), wageAccess: true, wageRate: 45000 });
+    expect(fullHistory.body.settlement).not.toBeNull();
+
+    const hiddenHistory = await request(app.getHttpServer()).get(`/drawer/staff-directory/${teacherId}/history`)
+      .set('Authorization', `Bearer ${limitedToken}`).expect(200);
+    expect(hiddenHistory.body).toMatchObject({ month: previousMonthKst(), wageAccess: false, wageRate: null, wageFrom: null, settlement: null });
+    expect(hiddenHistory.body.lessons.every((lesson: Record<string, unknown>) =>
+      lesson.pay === null && lesson.lateCut === null && lesson.penaltyIfNow === null && lesson.bonus === null)).toBe(true);
+
+    const inbox = await request(app.getHttpServer()).get(`/drawer/staff-directory/${teacherId}/inbox`)
+      .set('Authorization', `Bearer ${limitedToken}`).expect(200);
+    expect(inbox.body.categories.map((row: { key: string }) => row.key)).toEqual([
+      'report', 'schedule_change', 'book_change', 'unavailable',
+      'material_request', 'tz_change', 'wage_change', 'suggestion',
+    ]);
+    expect(inbox.body.items).toHaveLength(2);
+    expect(inbox.body.items.every((row: { byId: number }) => row.byId === teacherId)).toBe(true);
+    expect(inbox.body.items.find((row: { category: string }) => row.category === 'wage_change')).toMatchObject({
+      sub: null, asked: null, reason: null, canAct: false, actBlockedReason: '시급 조회 권한이 없습니다',
+    });
+    expect(inbox.body.items.find((row: { category: string }) => row.category === 'unavailable')).toMatchObject({
+      sourceKind: 'unav', canAct: false,
+    });
+    expect(JSON.stringify(inbox.body)).not.toContain('sdir-fixture-private');
+    expect(JSON.stringify(inbox.body)).not.toContain('sdir-fixture-retired');
   });
 
   it('현재 배정에는 시작 전·종료 후 규칙을 빼고 종료 당일 규칙·오늘 명단만 남긴다', async () => {

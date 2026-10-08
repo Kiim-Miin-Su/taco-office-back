@@ -26,13 +26,14 @@ import type { EntityManager } from 'typeorm';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import { approvalFlowScope, canCeoSetPermOverride, Perm, hasPerm, isRole, permsOf, type RequestUser } from '../../common/perm';
 import { normalizeChangeRequest, type NormalizedChangeRequest } from '../../lib/change-request';
-import { daysUntil, todayKst } from '../../lib/kst';
+import { daysUntil, previousMonthKst, todayKst } from '../../lib/kst';
 import { ScheduleService } from '../schedule/schedule.service';
 import {
   ApprovalUndoDto, ApprovalUndoResultDto,
   CancelChangeReqDto, ChangeReqCreateDto, ChangeReqResultDto, DrawerDto, DrawerQueryDto,
   ChreqReviewDto, MemberDto, NotiReadAllDto, ReqReviewDto, ReqReviewResultDto, RoomChangeReqDto, ScheduleHistoryDto, ScheduleHistoryQueryDto,
   StaffDirectoryDetailDto, StaffDirectoryDetailQueryDto, StaffDirectoryDto, StaffDirectoryQueryDto,
+  StaffTeacherHistoryDto, StaffTeacherInboxDto,
   StaffActiveDto, StaffCreateDto, StaffParamsDto, StaffPasswordResetDto, StaffPatchDto,
   TeacherChangeReqDto, TimeMoveChangeReqDto, TodoClearDto, TodoClearRequestDto, TodoCreateDto, TodoCreateResultDto,
   TodoParamsDto, TodoPatchDto, ZoomChangeReqDto,
@@ -136,6 +137,34 @@ export class DrawerController {
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
   staffTeacherSuggestions(@Param() p: StaffParamsDto): Promise<TeacherSuggestionsDto> {
     return this.svc.staffTeacherSuggestions(p.id);
+  }
+
+  @Get('staff-directory/:id/history')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '관리자 강사 수업 히스토리 — targetStaff의 서버 KST 직전 달 수업·정산',
+    description: '수업 사실은 대상 강사 기준으로 읽고 금액은 실제 관리자 actor의 canWage·회계 비공개·canHide 판정으로 서버에서 가린다.',
+  })
+  @ApiOkResponse({ type: StaffTeacherHistoryDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  staffTeacherHistory(@CurrentUser() user: RequestUser, @Param() p: StaffParamsDto): Promise<StaffTeacherHistoryDto> {
+    const g = this.gate(user);
+    return this.svc.staffTeacherHistory(p.id, user.id, g.canWage, g.canHide, previousMonthKst());
+  }
+
+  @Get('staff-directory/:id/inbox')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '관리자 강사 들어온 것 — 선택 강사가 보낸 원문 8종 열린 업무',
+    description: '리포트·스케줄 변경·교재 변경·불가 시간·자료 요청·시간대 변경·시급 변경·건의만 반환한다. 처리 가능 여부와 시급 값은 실제 로그인 관리자 권한으로 판정한다.',
+  })
+  @ApiOkResponse({ type: StaffTeacherInboxDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
+  staffTeacherInbox(@CurrentUser() user: RequestUser, @Param() p: StaffParamsDto): Promise<StaffTeacherInboxDto> {
+    const g = this.gate(user);
+    return this.svc.staffTeacherInbox(
+      p.id, user.id, g.canApprove, g.canSeeAll, g.canWage, g.canHide, g.approvalFlowScope, g.canMoney,
+    );
   }
 
   @Post('staff')

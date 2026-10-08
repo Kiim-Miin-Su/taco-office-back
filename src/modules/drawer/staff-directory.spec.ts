@@ -24,6 +24,8 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
     expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherHome)).toEqual(['canAdminPage', 'canCrudAll']);
     expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherGuides)).toEqual(['canAdminPage', 'canCrudAll']);
     expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherSuggestions)).toEqual(['canAdminPage', 'canCrudAll']);
+    expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherHistory)).toEqual(['canAdminPage', 'canCrudAll']);
+    expect(Reflect.getMetadata(PERM_KEY, DrawerController.prototype.staffTeacherInbox)).toEqual(['canAdminPage', 'canCrudAll']);
   });
 
   it('등록 시각 DESC/id DESC로 10건 페이지를 요청하고 결과에 민감정보를 넣지 않는다', async () => {
@@ -59,6 +61,19 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
       }),
       guides: jest.fn().mockResolvedValue({ weekFrom: '2026-10-05', weekTo: '2026-10-11', students: [] }),
       suggestions: jest.fn().mockResolvedValue({ yearMonth: '2026-10', used: 1, limit: 3, remaining: 2, canPost: true, items: [] }),
+      history: jest.fn().mockResolvedValue({
+        month: '2026-09', stats: { doneCount: 1, doneMinutes: 60, writtenCount: 1, writtenMinutes: 60, unwrittenCount: 0, unwrittenMinutes: 0 },
+        wageRate: 50000, wageFrom: '2026-10-01',
+        lessons: [{
+          serId: 3, onDate: '2026-09-30', date: '2026-09-30', startMin: 600, durMin: 60,
+          kindKey: 'class', subKey: 'writing', mode: 'offline', title: 'Writing', students: '학생A',
+          studentItems: [{ id: 31, name: '학생A' }], studentCount: 1, repState: 'ok', canceled: false,
+          submittedAt: '2026-09-30 11:10', pay: 50000, lateCut: 5000, penaltyIfNow: null, bonus: 10000,
+          settle: 'written', settleLabel: '리포트 씀', correctionOf: null, paidIn: null, frozen: false,
+        }],
+        settlement: { yearMonth: '2026-09', net: 52000 },
+        bonusRules: [{ label: 'Kinder', hint: '시간 가산', amount: 10000, applied: true, note: null }],
+      }),
     };
     const svc = new DrawerService(
       { query } as unknown as Repository<Lead>, undefined, undefined, teacher as never,
@@ -70,6 +85,50 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
     await expect(svc.staffTeacherSuggestions(42)).resolves.toMatchObject({ used: 1, remaining: 2 });
     expect(teacher.guides).toHaveBeenCalledWith(42, '2026-10-09');
     expect(teacher.suggestions).toHaveBeenCalledWith(42);
+    const history = await svc.staffTeacherHistory(42, 2, false, false, '2026-09');
+    expect(teacher.history).toHaveBeenCalledWith(42, '2026-09');
+    expect(history).toMatchObject({
+      month: '2026-09', wageAccess: false, wageRate: null, wageFrom: null, settlement: null,
+      lessons: [{ pay: null, lateCut: null, penaltyIfNow: null, bonus: null, settleLabel: '리포트 씀' }],
+      bonusRules: [{ label: 'Kinder', amount: null }],
+    });
+  });
+
+  it('강사별 들어온 것은 원문 8종만 targetStaff로 묶고 실제 actor 권한으로 시급 값을 가린다', async () => {
+    const query = jest.fn().mockImplementation((sql: string) => {
+      if (sql.includes('SELECT s.id FROM staff s')) return [{ id: '42' }];
+      if (sql.includes('FROM unav u')) return [{
+        id: '91', on_date: '2026-10-18', start_min: 600, end_min: 660,
+        reason: '병원 진료', at: '2026-10-08T09:00:00+09:00',
+      }];
+      throw new Error(`예상하지 않은 조회: ${sql}`);
+    });
+    const svc = new DrawerService({ query } as unknown as Repository<Lead>);
+    jest.spyOn(svc as never, 'approvalRows' as never).mockResolvedValue([
+      { kind: 'rep', id: 1, title: '리포트', sub: null, byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/reports' },
+      { kind: 'chreq', id: 2, title: '스케줄 변경', sub: '10:00 → 11:00', byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/schedule', applicable: true },
+      { kind: 'req', id: 3, title: '교재 변경', sub: 'Book A', byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/books', reqType: 'book_change' },
+      { kind: 'matreq', id: 4, title: '자료 요청', sub: '학생A', byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/books' },
+      { kind: 'req', id: 5, title: '시간대 변경', sub: '서울 → 뉴욕', byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/ops', reqType: 'tz_change' },
+      { kind: 'req', id: 6, title: '시급 변경', sub: '50,000원 → 60,000원', asked: '50,000원 → 60,000원', reason: '민감한 협상 사유', byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/ops', reqType: 'wage_change' },
+      { kind: 'suggestion', id: 7, title: '건의 사항', sub: '일정 확인', byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/ops', applicable: false },
+      { kind: 'req', id: 8, title: '퇴역 GPA', sub: '노출 금지', byId: 42, byName: '테스트 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/gpa', reqType: 'gpa_request' },
+      { kind: 'req', id: 9, title: '다른 강사', sub: null, byId: 43, byName: '다른 강사', at: '2026-10-09', state: 'waiting', why: null, go: '/ops', reqType: 'book_change' },
+    ] as never);
+
+    const result = await svc.staffTeacherInbox(42, 2, true, true, false, false, 'all', false);
+    expect(result.categories.map((item) => item.key)).toEqual([
+      'report', 'schedule_change', 'book_change', 'unavailable', 'material_request', 'tz_change', 'wage_change', 'suggestion',
+    ]);
+    expect(result.items).toHaveLength(8);
+    expect(result.items.every((item) => item.byId === 42)).toBe(true);
+    expect(result.items.some((item) => item.title.includes('GPA') || item.title === '다른 강사')).toBe(false);
+    expect(result.items.find((item) => item.category === 'wage_change')).toMatchObject({
+      sub: null, asked: null, reason: null, canAct: false,
+    });
+    expect(result.items.find((item) => item.category === 'unavailable')).toMatchObject({
+      sourceKind: 'unav', title: '불가 시간 · 10:00–11:00', state: 'waiting', canAct: false,
+    });
   });
 
   it('빈 페이지도 단일 스냅숏 total을 돌려준다', async () => {

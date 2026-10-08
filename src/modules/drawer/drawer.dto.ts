@@ -20,6 +20,9 @@ import {
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
 import { PhoneCountryDto } from '../../auth/dto/onboarding.dto';
+import {
+  TeacherBonusRuleDto, TeacherHistoryLessonDto, TeacherHistoryStatsDto, TeacherSettlementDto,
+} from '../teacher/teacher.dto';
 
 /** §14 처리의 두 갈래 — 낱말의 출처는 여기 하나다 */
 export const REQ_DECISIONS = ['approve', 'reject'] as const;
@@ -419,6 +422,67 @@ export class StaffDirectoryDetailDto {
   @ApiProperty({ type: [StaffDirectoryReportDto] }) reports!: StaffDirectoryReportDto[];
   @ApiProperty({ type: [StaffDirectoryAuditDto] }) audit!: StaffDirectoryAuditDto[];
   @ApiProperty({ type: String, nullable: true }) nextCursor!: string | null;
+}
+
+/**
+ * BO-10D-01B 권고안 채택: 관리자 수정사항 p60의 「들어온 것 8종」 정본.
+ *
+ * 전역 §14 필터의 기술 분류(`missing`, `other`, 퇴역 GPA)를 그대로 복사하지 않는다. 강사별 화면은
+ * 최신 수정사항이 열거한 리포트·일정·교재·불가시간·자료·시간대·시급·건의만 같은 순서로 보여 준다.
+ * 이 목록을 바꾸면 관리자/강사 수정사항 대조표, Figma ADMIN-10, 생성 Front 타입과 portfolio를 함께 갱신한다.
+ */
+export const STAFF_TEACHER_INBOX_CATEGORIES = [
+  'report', 'schedule_change', 'book_change', 'unavailable',
+  'material_request', 'tz_change', 'wage_change', 'suggestion',
+] as const;
+export type StaffTeacherInboxCategory = (typeof STAFF_TEACHER_INBOX_CATEGORIES)[number];
+
+export class StaffTeacherInboxCategoryDto {
+  @ApiProperty({ enum: STAFF_TEACHER_INBOX_CATEGORIES }) key!: StaffTeacherInboxCategory;
+  @ApiProperty() label!: string;
+  @ApiProperty() count!: number;
+}
+
+export class StaffTeacherInboxItemDto {
+  @ApiProperty({ enum: ['rep', 'req', 'chreq', 'matreq', 'suggestion', 'unav'] })
+  sourceKind!: 'rep' | 'req' | 'chreq' | 'matreq' | 'suggestion' | 'unav';
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: STAFF_TEACHER_INBOX_CATEGORIES }) category!: StaffTeacherInboxCategory;
+  @ApiProperty() categoryLabel!: string;
+  @ApiProperty() title!: string;
+  @ApiPropertyOptional(S) sub!: string | null;
+  @ApiProperty() byId!: number;
+  @ApiPropertyOptional(S) byName!: string | null;
+  @ApiProperty() at!: string;
+  @ApiProperty({ enum: ['waiting'] }) state!: 'waiting';
+  @ApiProperty() go!: string;
+  @ApiPropertyOptional(S) reqType!: string | null;
+  @ApiPropertyOptional(S) asked!: string | null;
+  @ApiPropertyOptional(S) reason!: string | null;
+  @ApiProperty({ description: '실제 로그인 관리자 actor가 기존 writer에서 지금 처리할 수 있는가' }) canAct!: boolean;
+  @ApiPropertyOptional(S) actBlockedReason!: string | null;
+}
+
+export class StaffTeacherInboxDto {
+  @ApiProperty({ type: [StaffTeacherInboxItemDto] }) items!: StaffTeacherInboxItemDto[];
+  @ApiProperty({ type: [StaffTeacherInboxCategoryDto], description: '관리자 수정사항 p60의 8종 고정 순서' })
+  categories!: StaffTeacherInboxCategoryDto[];
+  @ApiProperty({ description: 'items.length와 같은 값' }) count!: number;
+}
+
+/** 관리자 targetStaff 전월 기록. 수업 사실은 보이되 금액은 실제 actor 권한·회계 비공개 정책으로 가린다. */
+export class StaffTeacherHistoryDto {
+  @ApiProperty({ description: '서버 KST 직전 달 YYYY-MM' }) month!: string;
+  @ApiProperty({ type: TeacherHistoryStatsDto }) stats!: TeacherHistoryStatsDto;
+  @ApiProperty({ description: '시급·수업별 금액·정산 상세를 볼 수 있는가' }) wageAccess!: boolean;
+  @ApiPropertyOptional({ type: Number, nullable: true }) wageRate!: number | null;
+  @ApiPropertyOptional(S) wageFrom!: string | null;
+  @ApiProperty({ type: [TeacherHistoryLessonDto], description: '금액 권한이 없으면 pay/lateCut/penaltyIfNow/bonus는 null' })
+  lessons!: TeacherHistoryLessonDto[];
+  @ApiProperty({ type: TeacherSettlementDto, nullable: true, description: '금액 권한이 없으면 null' })
+  settlement!: TeacherSettlementDto | null;
+  @ApiProperty({ type: [TeacherBonusRuleDto], description: '금액 권한이 없으면 규칙 이름은 유지하고 amount는 null' })
+  bonusRules!: TeacherBonusRuleDto[];
 }
 
 /** 권한 예외 한 칸 — 켬(true) · 끔(false) · 역할 따름(null) */

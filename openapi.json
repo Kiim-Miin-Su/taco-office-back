@@ -20304,6 +20304,194 @@
         ]
       }
     },
+    "/drawer/staff-directory/{id}/history": {
+      "get": {
+        "description": "수업 사실은 대상 강사 기준으로 읽고 금액은 실제 관리자 actor의 canWage·회계 비공개·canHide 판정으로 서버에서 가린다.",
+        "operationId": "DrawerController_staffTeacherHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffTeacherHistoryDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "관리자 강사 수업 히스토리 — targetStaff의 서버 KST 직전 달 수업·정산",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
+    "/drawer/staff-directory/{id}/inbox": {
+      "get": {
+        "description": "리포트·스케줄 변경·교재 변경·불가 시간·자료 요청·시간대 변경·시급 변경·건의만 반환한다. 처리 가능 여부와 시급 값은 실제 로그인 관리자 권한으로 판정한다.",
+        "operationId": "DrawerController_staffTeacherInbox",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "minimum": 1,
+              "maximum": 9007199254740991,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffTeacherInboxDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STAFF_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "관리자 강사 들어온 것 — 선택 강사가 보낸 원문 8종 열린 업무",
+        "tags": [
+          "drawer"
+        ]
+      }
+    },
     "/drawer/staff": {
       "post": {
         "description": "이름 · 아이디(형식 자유 · 띄어쓰기 없음 · 대소문자 무시 유일) · 임시 비밀번호 · 이메일(선택 · 유일) · 역할 둘 · 직함 · 시간대(tzg) · 휴대폰 · 입사일 · 기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). **아이디와 임시 비밀번호는 매니저가 정한다**(W10) — 비밀번호는 해시로만 저장하고 응답 · 기록에 싣지 않는다. 첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 건다. 대표·관리자 계정은 이 길로 만들지 않는다.",
@@ -49332,6 +49520,211 @@
           "reports",
           "audit",
           "nextCursor"
+        ]
+      },
+      "StaffTeacherHistoryDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "description": "서버 KST 직전 달 YYYY-MM"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/TeacherHistoryStatsDto"
+          },
+          "wageAccess": {
+            "type": "boolean",
+            "description": "시급·수업별 금액·정산 상세를 볼 수 있는가"
+          },
+          "wageRate": {
+            "type": "number",
+            "nullable": true
+          },
+          "wageFrom": {
+            "type": "string",
+            "nullable": true
+          },
+          "lessons": {
+            "description": "금액 권한이 없으면 pay/lateCut/penaltyIfNow/bonus는 null",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherHistoryLessonDto"
+            }
+          },
+          "settlement": {
+            "nullable": true,
+            "description": "금액 권한이 없으면 null",
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TeacherSettlementDto"
+              }
+            ]
+          },
+          "bonusRules": {
+            "description": "금액 권한이 없으면 규칙 이름은 유지하고 amount는 null",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeacherBonusRuleDto"
+            }
+          }
+        },
+        "required": [
+          "month",
+          "stats",
+          "wageAccess",
+          "lessons",
+          "settlement",
+          "bonusRules"
+        ]
+      },
+      "StaffTeacherInboxItemDto": {
+        "type": "object",
+        "properties": {
+          "sourceKind": {
+            "type": "string",
+            "enum": [
+              "rep",
+              "req",
+              "chreq",
+              "matreq",
+              "suggestion",
+              "unav"
+            ]
+          },
+          "id": {
+            "type": "number"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "report",
+              "schedule_change",
+              "book_change",
+              "unavailable",
+              "material_request",
+              "tz_change",
+              "wage_change",
+              "suggestion"
+            ]
+          },
+          "categoryLabel": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "sub": {
+            "type": "string",
+            "nullable": true
+          },
+          "byId": {
+            "type": "number"
+          },
+          "byName": {
+            "type": "string",
+            "nullable": true
+          },
+          "at": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "waiting"
+            ]
+          },
+          "go": {
+            "type": "string"
+          },
+          "reqType": {
+            "type": "string",
+            "nullable": true
+          },
+          "asked": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "canAct": {
+            "type": "boolean",
+            "description": "실제 로그인 관리자 actor가 기존 writer에서 지금 처리할 수 있는가"
+          },
+          "actBlockedReason": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "sourceKind",
+          "id",
+          "category",
+          "categoryLabel",
+          "title",
+          "byId",
+          "at",
+          "state",
+          "go",
+          "canAct"
+        ]
+      },
+      "StaffTeacherInboxCategoryDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "report",
+              "schedule_change",
+              "book_change",
+              "unavailable",
+              "material_request",
+              "tz_change",
+              "wage_change",
+              "suggestion"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "count": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "count"
+        ]
+      },
+      "StaffTeacherInboxDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffTeacherInboxItemDto"
+            }
+          },
+          "categories": {
+            "description": "관리자 수정사항 p60의 8종 고정 순서",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StaffTeacherInboxCategoryDto"
+            }
+          },
+          "count": {
+            "type": "number",
+            "description": "items.length와 같은 값"
+          }
+        },
+        "required": [
+          "items",
+          "categories",
+          "count"
         ]
       },
       "StaffCreateDto": {

@@ -57,8 +57,10 @@ import type {
   ApprovalUndoResultDto, ChangeReqResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
   StaffDirectoryAssignmentDto, StaffDirectoryAuditDto, StaffDirectoryDetailDto, StaffDirectoryDto, StaffDirectoryPayoutDto,
   StaffDirectoryQueryDto, StaffDirectoryReportDto, StaffDirectoryWageDto,
+  StaffTeacherHistoryDto, StaffTeacherInboxCategory, StaffTeacherInboxDto, StaffTeacherInboxItemDto,
   StaffCreateDto, StaffPatchDto, TodoCreateDto, TodoPatchDto,
 } from './drawer.dto';
+import { STAFF_TEACHER_INBOX_CATEGORIES } from './drawer.dto';
 import type { ConflictRowDto } from '../schedule/schedule.dto';
 import { scheduleHistoryLine } from '../../lib/schedule-history';
 import { issueApprovalUndo, readApprovalUndo, type ApprovalUndoPayload, type ReqUndoEffect } from './approval-undo';
@@ -68,6 +70,12 @@ type R = Record<string, unknown>;
 
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+const clock = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+const STAFF_TEACHER_INBOX_LABEL: Record<StaffTeacherInboxCategory, string> = {
+  report: '리포트', schedule_change: '스케줄 변경', book_change: '교재 변경', unavailable: '불가 시간',
+  material_request: '자료 요청', tz_change: '시간대 변경', wage_change: '시급 변경', suggestion: '건의 사항',
+};
 
 const staffNotFound = () => new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 구성원을 찾을 수 없습니다' });
 
@@ -395,16 +403,20 @@ export class DrawerService {
     return this.teacher;
   }
 
+  private async targetWageVisible(id: number, viewerId: number, canWage: boolean, canHide: boolean): Promise<boolean> {
+    const wagePrivate = canWage
+      ? (await readAcctPrivacy({ query: (sql: string, p?: unknown[]) => this.q(sql, p ?? []) })).wage.private
+      : false;
+    return lineAmountVisible(canWage, wagePrivate, canHide, viewerId === id);
+  }
+
   /** 관리자 강사 홈 — 실제 actor 권한을 유지한 targetStaff 읽기 facade. */
   async staffTeacherHome(
     id: number, viewerId: number, canWage: boolean, canHide: boolean,
   ): Promise<TeacherHomeDto> {
     await this.assertTeachingStaff(id);
     const home = await this.teacherReader().home(id);
-    const wagePrivate = canWage
-      ? (await readAcctPrivacy({ query: (sql: string, p?: unknown[]) => this.q(sql, p ?? []) })).wage.private
-      : false;
-    const showWage = lineAmountVisible(canWage, wagePrivate, canHide, viewerId === id);
+    const showWage = await this.targetWageVisible(id, viewerId, canWage, canHide);
     return {
       ...home,
       settings: {
@@ -428,6 +440,101 @@ export class DrawerService {
   async staffTeacherSuggestions(id: number): Promise<TeacherSuggestionsDto> {
     await this.assertTeachingStaff(id);
     return this.teacherReader().suggestions(id);
+  }
+
+  /**
+   * BO-10D-01B 권고안 채택: 강사 본인 계산 owner를 재사용하고 금액만 실제 관리자 권한으로 재투영한다.
+   * 수업 사실·정산 분류는 관리자 p56·60·강사 p91의 공통 업무 정보이지만, 시급·차감·가산·세금은
+   * `canWage + acct_privacy + canHide`를 모두 통과해야 한다. 정책 변경 시 teacher history, drawer DTO/OpenAPI,
+   * 관리자 8탭, 두 수정사항 대조표와 portfolio를 같은 청크에서 갱신한다.
+   */
+  async staffTeacherHistory(
+    id: number, viewerId: number, canWage: boolean, canHide: boolean, month: string,
+  ): Promise<StaffTeacherHistoryDto> {
+    await this.assertTeachingStaff(id);
+    const [history, showWage] = await Promise.all([
+      this.teacherReader().history(id, month),
+      this.targetWageVisible(id, viewerId, canWage, canHide),
+    ]);
+    return {
+      month: history.month,
+      stats: history.stats,
+      wageAccess: showWage,
+      wageRate: showWage ? history.wageRate ?? null : null,
+      wageFrom: showWage ? history.wageFrom ?? null : null,
+      lessons: history.lessons.map((lesson) => showWage ? lesson : {
+        ...lesson, pay: null, lateCut: null, penaltyIfNow: null, bonus: null,
+      }),
+      settlement: showWage ? history.settlement : null,
+      bonusRules: history.bonusRules.map((rule) => showWage ? rule : { ...rule, amount: null }),
+    };
+  }
+
+  /** 원문 8종에 해당하는 기존 결재 행만 선택한다. 퇴역 GPA와 내부 missing/other는 강사별 화면에 투영하지 않는다. */
+  private staffTeacherInboxCategory(row: ApRow): StaffTeacherInboxCategory | null {
+    if (row.kind === 'rep') return 'report';
+    if (row.kind === 'chreq') return 'schedule_change';
+    if (row.kind === 'matreq') return 'material_request';
+    if (row.kind === 'suggestion') return 'suggestion';
+    if (row.kind !== 'req') return null;
+    if (row.reqType === 'book_change') return 'book_change';
+    if (row.reqType === 'tz_change') return 'tz_change';
+    if (row.reqType === 'wage_change') return 'wage_change';
+    return null;
+  }
+
+  /**
+   * 관리자 p60 「들어온 것 8종」 — 전역 §14의 기술 분류를 복사하지 않고 선택 강사가 보낸 열린 업무만 묶는다.
+   * 승인 가능 여부는 실제 관리자 actor로 `apFlow`가 계산하고, 불가시간은 승인 요청이 아닌 편성 정보라 읽기만 한다.
+   */
+  async staffTeacherInbox(
+    id: number, viewerId: number, canApprove: boolean, canWriteSchedule: boolean,
+    canWage: boolean, canHide: boolean, flowScope: ApprovalFlowScope, canMoney: boolean,
+  ): Promise<StaffTeacherInboxDto> {
+    await this.assertTeachingStaff(id);
+    const [rows, unavailable, showWage] = await Promise.all([
+      this.approvalRows(viewerId, flowScope, canMoney),
+      this.q(
+        `SELECT u.id,u.on_date::text AS on_date,u.start_min,u.end_min,u.reason,${kstAt('u.created_at')} AS at
+           FROM unav u
+          WHERE u.staff_id=$1 AND u.on_date >= $2::date
+          ORDER BY u.on_date,u.start_min,u.id`,
+        [id, todayKst()],
+      ),
+      this.targetWageVisible(id, viewerId, canWage, canHide),
+    ]);
+    const flow = apFlow(rows, viewerId, canApprove, canWage, canWriteSchedule);
+    const items: StaffTeacherInboxItemDto[] = flow.waiting.flatMap((row) => {
+      const category = this.staffTeacherInboxCategory(row);
+      if (category === null || row.byId !== id) return [];
+      const wageHidden = category === 'wage_change' && !showWage;
+      return [{
+        sourceKind: row.kind as StaffTeacherInboxItemDto['sourceKind'], id: row.id,
+        category, categoryLabel: STAFF_TEACHER_INBOX_LABEL[category], title: row.title,
+        sub: wageHidden ? null : row.sub ?? null, byId: id, byName: row.byName ?? null, at: row.at,
+        state: 'waiting' as const, go: row.go, reqType: row.reqType ?? null,
+        asked: wageHidden ? null : row.asked ?? null, reason: wageHidden ? null : row.reason ?? null,
+        canAct: wageHidden ? false : row.canAct === true,
+        actBlockedReason: wageHidden ? '시급 조회 권한이 없습니다' : row.actBlockedReason ?? null,
+      }];
+    });
+    for (const row of unavailable) {
+      const startMin = Number(row.start_min);
+      const endMin = Number(row.end_min);
+      items.push({
+        sourceKind: 'unav', id: Number(row.id), category: 'unavailable',
+        categoryLabel: STAFF_TEACHER_INBOX_LABEL.unavailable,
+        title: `불가 시간 · ${clock(startMin)}–${clock(endMin)}`,
+        sub: `${String(row.on_date)} · ${String(row.reason)}`, byId: id, byName: null, at: String(row.at),
+        state: 'waiting', go: `/staff/${id}?tab=unavailable`, reqType: null, asked: null,
+        reason: null, canAct: false, actBlockedReason: '편성 참고 정보이며 승인 대상이 아닙니다',
+      });
+    }
+    items.sort((left, right) => left.at < right.at ? 1 : left.at > right.at ? -1 : 0);
+    const categories = STAFF_TEACHER_INBOX_CATEGORIES.map((key) => ({
+      key, label: STAFF_TEACHER_INBOX_LABEL[key], count: items.filter((item) => item.category === key).length,
+    }));
+    return { items, categories, count: items.length };
   }
 
   /**
