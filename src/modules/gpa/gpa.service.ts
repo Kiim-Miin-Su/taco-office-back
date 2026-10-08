@@ -5,28 +5,22 @@
  */
 
 /**
- * GPA 관리 (v2 §4.5·§82 · N-13 채택 ①) — 4주 사이클 포인트제.
- * gpaByStudent() = 배정 − 사용(ok) − 대기(wait). 이월 없음 — 닫힌 사이클은 모든 쓰기 잠금.
- * 배정 초과는 막지 않는다(원문: 붉게 표시 + 추가 결제/다음 사이클 조정 안내) — over 로 내려 화면이 말한다.
- * points 는 기록 시점의 GPASVC.point 스냅샷 — 규정이 바뀌어도 과거 소비는 그대로다.
+ * GPA 과거 원장 조회. 최신 수정사항에서 신규 GPA 기능과 모든 writer가 퇴역했다.
+ * 과거 확정 행과 당시 스냅숏은 보존하고, 이 서비스는 관리자 읽기 전용 projection만 제공한다.
  */
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import { GpaCycle } from '../../entities';
-import { addDays, todayKst } from '../../lib/kst';
-import { END_MIN, kstAt, serStuOn, START_MIN, writtenRows } from '../../lib/sql';
-import { blocksSelfApproval, SELF_APPROVAL_CODE } from '../../lib/approval';
+import { todayKst } from '../../lib/kst';
+import { END_MIN, kstAt } from '../../lib/sql';
 import { studentLabel, studentTagSql } from '../../lib/student-label';
 import type {
-  GpaAllocPutDto, GpaBoardDto, GpaCycleCloseResultDto, GpaCycleDto, GpaLessonDto, GpaStudentDto, GpaStudentSvcDto, GpaUseCreateDto, GpaUseDto, GpaUseStateDto,
+  GpaBoardDto, GpaCycleDto, GpaStudentDto, GpaStudentSvcDto, GpaUseDto,
 } from './gpa.dto';
 
 type R = Record<string, unknown>;
-const md = (iso: string) => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}`;
-
-/** 소비 기록이 붙는 수업의 종류 — 원문 §82 데이터 「SER(kind='gpa')」 */
-const GPA_KIND = 'gpa';
+const GPA_RETIRED_REASON = 'GPA 신규 기능이 퇴역하여 과거 원장만 조회할 수 있습니다';
 
 @Injectable()
 export class GpaService {
@@ -67,28 +61,15 @@ export class GpaService {
     return prev ?? null;
   }
 
-  /**
-   * 마감할 수 있는가 — **오늘** 기준이다(anchor 가 아니다). 열려 있고 · 끝날이 지났고 · 승인 대기가 0.
-   * 끝나기 전에 닫으면 남은 날의 기록을 적을 사이클이 없어진다(기록 날짜는 사이클 창 안이어야 한다) — 그래서 끝날 전에는 막는다.
-   */
-  private closeIssue(cy: R, today: string): string | null {
-    if (cy.closed === true) return '이미 마감된 사이클입니다';
-    if (String(cy.t) >= today) return `사이클 끝(${md(String(cy.t))})이 지나야 마감할 수 있습니다 — 그 전에는 남은 날의 기록을 적을 자리가 없어집니다`;
-    const wait = Number(cy.wait_count ?? 0);
-    if (wait > 0) return `승인 대기 ${wait}건을 먼저 승인하거나 지워야 마감할 수 있습니다`;
-    return null;
-  }
-
-  private cycleDto(cy: R, today: string): GpaCycleDto {
-    const issue = this.closeIssue(cy, today);
+  private cycleDto(cy: R): GpaCycleDto {
     return {
       id: Number(cy.id), no: Number(cy.no), from: String(cy.f), to: String(cy.t), closed: cy.closed === true,
       closedAt: (cy.closed_at as string | null) ?? null, closedByName: (cy.closed_by_name as string | null) ?? null,
-      canClose: issue === null, closeBlockedReason: issue,
+      canClose: false, closeBlockedReason: GPA_RETIRED_REASON,
     };
   }
 
-  async board(anchor?: string, viewerId?: number): Promise<GpaBoardDto> {
+  async board(anchor?: string): Promise<GpaBoardDto> {
     const services = (await this.q(
       `SELECT key, name, point FROM gpasvc ORDER BY sort NULLS LAST, key`,
     )).map((r) => ({ key: String(r.key), name: String(r.name), point: Number(r.point) }));
@@ -167,7 +148,7 @@ export class GpaService {
 
 
     return {
-      cycle: this.cycleDto(cy, todayKst()),
+      cycle: this.cycleDto(cy),
       hasPrev: (nav?.has_prev as boolean) === true,
       hasNext: (nav?.has_next as boolean) === true,
       services,
@@ -178,43 +159,17 @@ export class GpaService {
       // 「N회 진행」 — 기록이 있다는 것은 회차가 있었다는 뜻이다 (승인 대기도 센다)
       totalUses: uses.length,
       students: rows,
-      uses: uses.map((r) => this.useRow(r, viewerId)),
-      lessons: await this.lessons(String(cy.f), String(cy.t)),
+      uses: uses.map((r) => this.useRow(r)),
+      // BOC-13D 권고안: 응답 모양은 이전 클라이언트 호환을 위해 남기되 신규 입력 후보는 한 건도 제공하지 않는다.
+      // 정책 변경 시 DTO/OpenAPI/Front/Figma/두 수정사항 대조표와 portfolio를 함께 갱신한다.
+      lessons: [],
     };
   }
 
   /**
-   * 기록 창 「수업 연결」 줄 — 이 사이클 창 안의 GPA 회차가 **그날 놓인 자리**(`ser_occ`)와 그날 명단(수강 기간 안).
-   * 휴강 회차는 뺀다 — 열리지 않은 회차에 소비를 붙이면 포인트가 하지 않은 수업에서 깎인다.
+   * 과거 소비 기록 한 줄. 신규 승인/되돌림은 퇴역했으므로 capability는 항상 닫는다.
    */
-  private async lessons(from: string, to: string): Promise<GpaLessonDto[]> {
-    const rows = await this.q(
-      `SELECT o.ser_id, o.on_date::text AS on_date, ${START_MIN} AS start_min, ${END_MIN} AS end_min,
-              COALESCE(NULLIF(btrim(s.title), ''), sb.name, k.name) AS name,
-              ARRAY(SELECT ss.student_id FROM ser_stu ss
-                     WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
-                     ORDER BY ss.student_id) AS student_ids
-         FROM ser_occ o
-         JOIN ser s ON s.id = o.ser_id
-         JOIN kind k ON k.key = s.kind_key
-         LEFT JOIN sub sb ON sb.key = s.sub_key
-        WHERE s.kind_key = $3 AND o.on_date BETWEEN $1::date AND $2::date AND NOT o.canceled
-        ORDER BY o.on_date, start_min, o.ser_id`,
-      [from, to, GPA_KIND],
-    );
-    return rows.map((r) => ({
-      serId: Number(r.ser_id), onDate: String(r.on_date),
-      startMin: Number(r.start_min), endMin: Number(r.end_min), name: String(r.name),
-      studentIds: ((r.student_ids as Array<string | number> | null) ?? []).map(Number),
-    }));
-  }
-
-  /**
-   * `viewerId` 를 주면 **승인 단추가 열리는지도 서버가 정한다** — 기록한 사람은 승인하지 못하므로
-   * (`gpa_use_no_self_approve`) 화면이 단추만 열어 두면 눌렀을 때 거절당한다 (D-R39).
-   * 누가 보는지 모르면 닫는다 — 모르는 쪽으로 열면 그 자리가 다음 불일치가 된다.
-   */
-  private useRow(r: R, viewerId?: number): GpaUseDto {
+  private useRow(r: R): GpaUseDto {
     return {
       id: Number(r.id), studentId: Number(r.student_id), svcKey: String(r.svc_key),
       points: Number(r.points), onDate: String(r.on_date),
@@ -227,253 +182,8 @@ export class GpaService {
       // 승인 도장 — 목록 질의가 아직 안 읽는 자리에서는 undefined 가 아니라 null 로 내려간다
       approvedByName: (r.approved_by_name as string) ?? null,
       approvedOn: (r.approved_on as string) ?? null,
-      canApprove: String(r.state) === 'wait'
-        && viewerId !== undefined
-        && !blocksSelfApproval('gpa-use', r.coord_id, viewerId),
+      canApprove: false,
     };
   }
 
-  /**
-   * 열린 사이클 행을 가져온다 — 닫힘/부재를 한 곳에서 판정 (이월 없음 · D-R29).
-   *
-   * `em`(트랜잭션)을 주면 사이클 행을 **FOR SHARE** 로 잡고 읽는다(W11 PB-12-3). `closeCycle` 은 같은 행을
-   * FOR UPDATE 로 잡으므로 둘은 서로를 기다린다 — 마감이 진행 중이면 이 읽기는 그 커밋 뒤의 값(닫힘)을 보고,
-   * 이쪽이 먼저 잡았으면 마감은 이 쓰기가 끝난 뒤에 승인 대기 수를 다시 센다.
-   */
-  private async openCycle(cycleId: number, em?: EntityManager): Promise<{ f: string; t: string }> {
-    const sql = `SELECT from_date::text AS f, to_date::text AS t, closed FROM gpa_cycle WHERE id = $1${em ? ' FOR SHARE' : ''}`;
-    const [cy] = em
-      ? ((await em.query(sql, [cycleId])) as Array<{ f: string; t: string; closed: boolean }>)
-      : await this.q<{ f: string; t: string; closed: boolean }>(sql, [cycleId]);
-    if (!cy) throw new NotFoundException('사이클을 찾을 수 없습니다');
-    if (cy.closed) {
-      throw new ConflictException({ code: 'CYCLE_CLOSED', message: '닫힌 사이클입니다 — 잔여는 소멸했고 기록·배정을 바꿀 수 없습니다' });
-    }
-    return cy;
-  }
-
-  /**
-   * 회차 소비 기록 — wait 로 들어간다. 포인트는 규정 스냅샷, 초과는 막지 않는다(화면이 붉게 안내).
-   *
-   * 사이클 열림은 **쓰기와 같은 트랜잭션에서 잠그고** 본다(W11 A' · PB-12-3 과 같은 규칙) — 전에는 트랜잭션 밖에서
-   * 잠그지 않고 봐서, 마감(`closeCycle`)이 사이클을 잡고 닫는 중에 들어온 기록이 「열림」을 읽고 닫힌 사이클에 대기 줄을
-   * 남겼다(마감이 센 「승인 대기 0」이 거짓이 된다). 트랜잭션을 받지 않으면 스스로 연다.
-   */
-  async createUse(coordId: number, dto: GpaUseCreateDto, em?: EntityManager): Promise<GpaUseDto> {
-    if (!em) return this.anyRepo.manager.transaction((m) => this.createUse(coordId, dto, m));
-    // 남의 트랜잭션 안에서도 같은 기록을 쓴다 — §14 「GPA 회차 요청」 승인이 이 길로 들어온다(N-99 · P 영역 · 판정은 그대로)
-    const q = <T = R>(sql: string, p: unknown[] = []): Promise<T[]> => em.query(sql, p) as Promise<T[]>;
-    const cy = await this.openCycle(dto.cycleId, em);
-    if (dto.onDate < cy.f || dto.onDate > cy.t) {
-      throw new ConflictException({ code: 'OUT_OF_CYCLE', message: '기록 날짜가 이 사이클 창 밖입니다' });
-    }
-    const [svc] = await q<{ point: number }>(`SELECT point FROM gpasvc WHERE key = $1`, [dto.svcKey]);
-    if (!svc) throw new NotFoundException('서비스 규정을 찾을 수 없습니다');
-    const [stu] = await q(`SELECT id FROM stu WHERE id = $1`, [dto.studentId]);
-    if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
-    if (dto.serId !== undefined) {
-      /*
-       * 잇는 회차는 **있어야 하고 GPA 수업이어야** 한다(원문 §82 「SER(kind='gpa')」). 없는 id 는 FK 가 막지만
-       * 그 거절은 사람이 읽을 문장이 아니고, 다른 종류의 수업은 FK 로 못 막는다 — 정규 수업에 GPA 포인트가 붙으면
-       * 회차 내역의 끝 시각이 그 수업에서 읽혀 거짓이 된다.
-       */
-      const [ser] = await q<{ kind_key: string }>(`SELECT kind_key FROM ser WHERE id = $1`, [dto.serId]);
-      if (!ser) throw new NotFoundException({ code: 'SER_NOT_FOUND', message: '연결할 수업을 찾을 수 없습니다' });
-      if (ser.kind_key !== GPA_KIND) {
-        throw new ConflictException({ code: 'GPA_SER_NOT_GPA', message: 'GPA 수업의 회차만 연결할 수 있습니다' });
-      }
-    }
-    const [made] = await q<{ id: string }>(
-      `INSERT INTO gpa_use (cycle_id, student_id, ser_id, svc_key, points, on_date, start_min, coord_id, note_url, state)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'wait') RETURNING id`,
-      [dto.cycleId, dto.studentId, dto.serId ?? null, dto.svcKey, Number(svc.point), dto.onDate,
-       dto.startMin ?? null, coordId, dto.noteUrl?.trim() || null],
-    );
-    // 방금 넣은 줄을 id 로 읽는다 — 「그 학생의 가장 나중 줄」은 같은 학생에게 동시에 둘이 들어오면 남의 줄이 된다
-    const [row] = await q(`${GpaService.USE_SELECT} WHERE u.id = $1`, [Number(made.id)]);
-    return this.useRow(row, coordId);
-  }
-
-  /**
-   * 승인(ok)·되돌림(wait) — 닫힌 사이클은 잠긴다.
-   *
-   * **기록한 사람은 승인하지 못한다.** 2026-09-20 검수 전까지 이 경로는 `@CurrentUser` 를 **받지도 않아**
-   * 누가 승인했는지 어디에도 안 남았고 자기 기록을 자기가 승인할 수 있었다. 판정은 `blocksSelfApproval`
-   * 한 곳이고 DB 도 `gpa_use_no_self_approve` 로 한 번 더 막는다.
-   *
-   * 승인은 도장을 찍고 **되돌림은 도장을 지운다** — 되돌린 기록에 승인자가 남아 있으면 거짓말이 된다.
-   *
-   * **판정은 전부 잠금 안에서 한다**(W11 PB-12-3). 전에는 잠그지 않고 사이클 열림을 트랜잭션 밖에서 봐서
-   * ① 진행 중인 마감(`closeCycle`)과 엇갈려 닫힌 사이클의 줄이 고쳐졌고 ② 이미 승인된 줄을 다른 사람이
-   * 한 번 더 승인하면 첫 도장(누가 · 언제)을 덮었다. 이제 대상 줄을 FOR UPDATE → 사이클을 FOR SHARE 로 잡고
-   * 본다(`closeCycle` 은 사이클 행 하나만 잠그므로 교차 대기가 없다). 같은 상태로의 전이는 쓰기가 아니라 409 다.
-   * 거절 차례: 404 → `CYCLE_CLOSED` → `USE_STATE_UNCHANGED` → 자기 승인.
-   */
-  async setUseState(id: number, actorId: number, dto: GpaUseStateDto): Promise<GpaUseDto> {
-    await this.anyRepo.manager.transaction(async (em) => {
-      const [row] = (await em.query(
-        `SELECT cycle_id, coord_id, state FROM gpa_use WHERE id = $1 FOR UPDATE`, [id],
-      )) as Array<Record<string, unknown>>;
-      if (!row) throw new NotFoundException('기록을 찾을 수 없습니다');
-      await this.openCycle(Number(row.cycle_id), em);
-      if (String(row.state) === dto.state) {
-        throw new ConflictException({
-          code: 'USE_STATE_UNCHANGED',
-          message: dto.state === 'ok'
-            ? '이미 승인된 기록입니다 — 승인 도장(누가 · 언제)은 처음 승인한 그대로 둡니다'
-            : '이미 승인 대기 중인 기록입니다',
-        });
-      }
-      if (dto.state === 'ok' && blocksSelfApproval('gpa-use', row.coord_id, actorId)) {
-        throw new ConflictException({
-          code: SELF_APPROVAL_CODE,
-          message: '자기가 기록한 포인트는 자기가 승인할 수 없습니다 — 적는 사람과 승인하는 사람은 다릅니다',
-        });
-      }
-      await em.query(
-        `UPDATE gpa_use
-            SET state = $2::text,
-                approved_by = CASE WHEN $2::text = 'ok' THEN $3::bigint ELSE NULL END,
-                approved_at = CASE WHEN $2::text = 'ok' THEN now() ELSE NULL END
-          WHERE id = $1`,
-        [id, dto.state, actorId],
-      );
-      await em.query(
-        `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
-         VALUES ($1, 'GPA_USE', $2, $3, $4::jsonb, $5::jsonb)`,
-        [actorId, id, dto.state === 'ok' ? 'approve' : 'revert',
-          JSON.stringify({ state: row.state }), JSON.stringify({ state: dto.state })],
-      );
-    });
-    const [out] = await this.q(
-      `${GpaService.USE_SELECT}
-        WHERE u.id = $1`, [id]);
-    return this.useRow(out, actorId);
-  }
-
-  /**
-   * 잘못 기록한 wait 만 지운다 — 승인분은 불변, 닫힌 사이클은 잠긴다.
-   *
-   * **지운 사람이 안 남던 자리다** (S7 · 전수 검수 §7). 이 경로는 `@CurrentUser` 를 받지도 않았고
-   * 하는 일은 하드 삭제라, 누가 언제 **무엇을** 지웠는지가 통째로 사라졌다. 소비 기록은 포인트 잔여의
-   * 근거라 한 줄이 없어지면 배정과 잔여의 차이를 설명할 수 없다. 지우기 전에 그 줄을 통째로
-   * `log.before` 에 적는다 — S2 가 입금 줄에서 한 것과 같은 자리·같은 모양이다.
-   *
-   * 판정을 **잠금 안에서 다시** 본다 — 밖에서 읽고 지우면 그 사이 남이 승인한 기록이 지워진다.
-   * 대상 줄 `FOR UPDATE` 뒤 같은 트랜잭션에서 사이클을 `FOR SHARE` 로 확인한다 — 마감은 사이클을
-   * `FOR UPDATE` 로 잡으므로, 마감과 삭제가 엇갈려 닫힌 사이클의 소비 근거가 사라지지 않는다.
-   * 거절 차례는 그대로다(404 → `CYCLE_CLOSED` → `USE_APPROVED`).
-   */
-  async deleteUse(id: number, actorId: number): Promise<{ ok: true }> {
-    return this.anyRepo.manager.transaction(async (em) => {
-      const [row] = (await em.query(
-        `SELECT cycle_id, student_id, svc_key, points, on_date::text AS on_date, start_min, ser_id,
-                note_url, state, coord_id
-           FROM gpa_use WHERE id = $1 FOR UPDATE`, [id],
-      )) as Array<Record<string, unknown>>;
-      if (!row) throw new NotFoundException('기록을 찾을 수 없습니다');
-      await this.openCycle(Number(row.cycle_id), em);
-      if (row.state !== 'wait') {
-        throw new ConflictException({ code: 'USE_APPROVED', message: '승인된 기록은 지울 수 없습니다 — 되돌림(wait) 후 처리하세요' });
-      }
-      const num = (v: unknown): number | null => (v == null ? null : Number(v));
-      await em.query(`DELETE FROM gpa_use WHERE id = $1`, [id]);
-      await em.query(
-        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'GPA_USE',$2,'delete',$3::jsonb,NULL)`,
-        [actorId, id, JSON.stringify({
-          cycleId: num(row.cycle_id), studentId: num(row.student_id), svcKey: row.svc_key ?? null,
-          points: num(row.points), onDate: row.on_date ?? null, startMin: num(row.start_min),
-          serId: num(row.ser_id), noteUrl: row.note_url ?? null, state: row.state ?? null,
-          coordId: num(row.coord_id),
-        })],
-      );
-      return { ok: true as const };
-    });
-  }
-
-  /**
-   * 배정 upsert — (cycle, student) 하나. 0 은 배정 회수. 닫힌 사이클은 잠긴다.
-   * 열림 검사와 쓰기가 한 트랜잭션이다(W11 A') — 마감 중에 들어온 배정이 닫힌 사이클의 배정(소멸 포인트의 근거)을 바꾸지 않는다.
-   */
-  async putAlloc(coordId: number, dto: GpaAllocPutDto): Promise<GpaStudentDto> {
-    return this.anyRepo.manager.transaction(async (em) => {
-      const q = <T = R>(sql: string, p: unknown[] = []): Promise<T[]> => em.query(sql, p) as Promise<T[]>;
-      await this.openCycle(dto.cycleId, em);
-      const [stu] = await q(`SELECT st.id, st.name, st.grade, ${studentTagSql('st')} AS tag FROM stu st WHERE st.id = $1`, [dto.studentId]);
-      if (!stu) throw new NotFoundException('학생을 찾을 수 없습니다');
-      await q(
-        `INSERT INTO gpa_alloc (cycle_id, student_id, coord_id, points)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (cycle_id, student_id) DO UPDATE SET points = EXCLUDED.points, coord_id = EXCLUDED.coord_id`,
-        [dto.cycleId, dto.studentId, coordId, dto.points]);
-      const [sums] = await q(
-        `SELECT COALESCE(SUM(points) FILTER (WHERE state = 'ok'), 0) AS used,
-                COALESCE(SUM(points) FILTER (WHERE state = 'wait'), 0) AS wait
-           FROM gpa_use WHERE cycle_id = $1 AND student_id = $2`, [dto.cycleId, dto.studentId]);
-      const [co] = await q<{ name: string }>(`SELECT name FROM staff WHERE id = $1`, [coordId]);
-      const used = Number(sums?.used ?? 0); const wait = Number(sums?.wait ?? 0);
-      const remain = dto.points - used - wait;
-      return {
-        studentId: Number(stu.id), name: String(stu.name), grade: (stu.grade as string) ?? null,
-        tag: (stu.tag as string | null) ?? null, label: studentLabel(String(stu.name), stu.tag as string | null),
-        coordName: co?.name ?? null, alloc: dto.points, used, wait, remain, over: remain < 0,
-        // 배정 저장 응답은 **그 한 줄**이다 — 카드 칩은 보드 조회가 만든다
-        svcs: [],
-      };
-    });
-  }
-
-  /* ══ C95 · O-150 「4주마다 — GPA 사이클 마감」 ════════════════════════════════════════════════════
-   * 도장(closed_at/by)을 찍고 잔여를 그대로 소멸 포인트로 돌려준다 — board() 와 같은 셈(배정 − 승인 사용)이다.
-   * 다음 사이클이 없으면 끝날 다음 날부터 4주를 연다 — 4주마다 하는 일이 한 번에 끝나야 다음 기록이 막히지 않는다.
-   * ══════════════════════════════════════════════════════════════════════════════════════ */
-  async closeCycle(userId: number, cycleId: number): Promise<GpaCycleCloseResultDto> {
-    return this.anyRepo.manager.transaction(async (m) => {
-      const q = <T = R>(sql: string, p: unknown[] = []): Promise<T[]> => m.query(sql, p) as Promise<T[]>;
-      await q(`SELECT id FROM gpa_cycle WHERE id = $1 FOR UPDATE`, [cycleId]);
-      const [cy] = await q(`${GpaService.CYCLE_SELECT} WHERE c.id = $1`, [cycleId]);
-      if (!cy) throw new NotFoundException('사이클을 찾을 수 없습니다');
-      const today = todayKst();
-      const issue = this.closeIssue(cy, today);
-      if (issue) {
-        throw new ConflictException({ code: cy.closed === true ? 'CYCLE_CLOSED' : Number(cy.wait_count ?? 0) > 0 ? 'CYCLE_HAS_WAIT' : 'CYCLE_NOT_ENDED', message: issue });
-      }
-      const students = await q(
-        `SELECT st.id, st.name, COALESCE(a.points, 0) - COALESCE(u.used, 0) AS remain
-           FROM (SELECT student_id FROM gpa_alloc WHERE cycle_id = $1
-                 UNION SELECT student_id FROM gpa_use WHERE cycle_id = $1) x
-           JOIN stu st ON st.id = x.student_id
-           LEFT JOIN gpa_alloc a ON a.cycle_id = $1 AND a.student_id = st.id
-           LEFT JOIN (SELECT student_id, SUM(points) FILTER (WHERE state = 'ok') AS used FROM gpa_use WHERE cycle_id = $1 GROUP BY student_id) u
-                  ON u.student_id = st.id
-          ORDER BY remain, st.name`, [cycleId]);
-      const rows = students.map((r) => ({ studentId: Number(r.id), name: String(r.name), remain: Number(r.remain) }));
-      const closedRows = writtenRows<R>(await q(
-        `UPDATE gpa_cycle SET closed = true, closed_at = now(), closed_by = $2 WHERE id = $1 AND NOT closed RETURNING id`, [cycleId, userId],
-      ));
-      if (closedRows.length === 0) throw new ConflictException({ code: 'CYCLE_CLOSED', message: '이미 마감된 사이클입니다' });
-      /* 다음 사이클 — 없을 때만. 끝날 다음 날부터 4주(28일) */
-      let opened: GpaCycleDto | null = null;
-      const [next] = await q(`SELECT id FROM gpa_cycle WHERE from_date > $1::date ORDER BY from_date LIMIT 1`, [cy.t]);
-      if (!next) {
-        const from = addDays(String(cy.t), 1);
-        const [made] = await q<{ id: string }>(
-          `INSERT INTO gpa_cycle (no, from_date, to_date) VALUES ($1, $2::date, $3::date) RETURNING id`,
-          [Number(cy.no) + 1, from, addDays(from, 27)]);
-        const [row] = await q(`${GpaService.CYCLE_SELECT} WHERE c.id = $1`, [made.id]);
-        opened = this.cycleDto(row, today);
-      }
-      await q(
-        `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'GPA_CYCLE',$2,'close',$3::jsonb,$4::jsonb)`,
-        [userId, cycleId, JSON.stringify({ closed: false }), JSON.stringify({ closed: true, expired: rows.filter((r) => r.remain > 0).reduce((a, r) => a + r.remain, 0), openedCycleId: opened?.id ?? null })],
-      );
-      const [after] = await q(`${GpaService.CYCLE_SELECT} WHERE c.id = $1`, [cycleId]);
-      return {
-        cycle: this.cycleDto(after, today),
-        opened,
-        expiredPoints: rows.filter((r) => r.remain > 0).reduce((a, r) => a + r.remain, 0),
-        students: rows,
-      };
-    });
-  }
 }

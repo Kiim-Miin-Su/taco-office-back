@@ -30,6 +30,7 @@ const DOMAIN = 'approval-undo.';
 export type ReqUndoEffect =
   | { kind: 'wage'; wageId: number; staffId: number; fromDate: string }
   | { kind: 'tz'; staffId: number; from: string | null; to: string }
+  /** v2 10분 토큰 호환용. BOC-13 이후 실행은 GPA_RETIRED로 거절하고 원장을 보존한다. */
   | { kind: 'gpa'; useId: number }
   | { kind: 'none' };
 

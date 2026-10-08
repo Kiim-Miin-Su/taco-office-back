@@ -14,8 +14,7 @@
  *   ① 컨설팅 항목 체크/해제 — 해제가 `done_by`·`done_at` 을 지우는데 원장에 줄이 없었다
  *   ② 교재 기본 정보 수정   — actor 를 받지도 않았다 (쪽수는 진도 퍼센트의 분모다)
  *   ③ 교재 진도 갱신        — actor 를 받지도 않았고 앞 쪽수가 덮여 사라졌다
- *   ④ GPA 기록 삭제         — 하드 삭제인데 actor 도 before 도 없었다
- *   ⑤ 대표 피드백 고치기     — 원래 무엇이라 적었는지가 사라졌다
+ *   ④ 대표 피드백 고치기     — 원래 무엇이라 적었는지가 사라졌다
  *
  * **두 규약을 함께 본다.**
  *   · **줄은 쓰기와 같은 트랜잭션에 있다** — 거절된 쓰기는 줄도 남기지 않는다.
@@ -29,10 +28,9 @@
  */
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
-import { GpaCycle, Lead } from '../src/entities';
+import { Lead } from '../src/entities';
 import { BooksService } from '../src/modules/books/books.service';
 import { ConsultingService } from '../src/modules/consulting/consulting.service';
-import { GpaService } from '../src/modules/gpa/gpa.service';
 import { HIST_ACTIONS } from '../src/lib/history';
 import { makeOpsService } from './ops-svc';
 import { assertScratch, TEST_URL } from './db';
@@ -54,7 +52,6 @@ d('S7 흔적을 남긴다 — 감사 빠진 다섯 쓰기 (전수 검수 §7)', 
 
   const books = () => new BooksService(q.manager.getRepository(Lead));
   const consulting = () => new ConsultingService(q.manager.getRepository(Lead));
-  const gpa = () => new GpaService(q.manager.getRepository(GpaCycle));
   const ops = () => makeOpsService(q.manager.getRepository(Lead));
 
   /** 그 행에 붙은 감사 줄만 본다 — 남의 줄을 세면 수가 실행 순서에 따라 흔들린다 */
@@ -197,45 +194,7 @@ d('S7 흔적을 남긴다 — 감사 빠진 다섯 쓰기 (전수 검수 §7)', 
     expect(await logs('ISSUE', issue.id)).toHaveLength(1);
   });
 
-  /* ── ④ GPA 기록 삭제 ─────────────────────────────────────────────── */
-
-  const makeUse = async (): Promise<{ cycleId: number; useId: number; studentId: number }> => {
-    await q.query(`INSERT INTO gpasvc (key,name,point,sort) VALUES ('s7hw','숙제 지원',1,1) ON CONFLICT (key) DO NOTHING`);
-    const [cy] = (await q.query(
-      `INSERT INTO gpa_cycle (no, from_date, to_date) VALUES (77, '2026-10-05', '2026-11-01') RETURNING id`,
-    )) as Array<{ id: string }>;
-    const cycleId = Number(cy.id);
-    const [s] = (await q.query(`INSERT INTO stu (name) VALUES ('GPA 학생') RETURNING id`)) as Array<{ id: string }>;
-    const studentId = Number(s.id);
-    const made = await gpa().createUse(ACTOR, { cycleId, studentId, svcKey: 's7hw', onDate: '2026-10-07' });
-    return { cycleId, useId: made.id, studentId };
-  };
-
-  it('④ 지운 기록은 통째로 before 에 남는다 — 하드 삭제라 여기 말고는 되짚을 데가 없다', async () => {
-    const { cycleId, useId, studentId } = await makeUse();
-
-    expect(await gpa().deleteUse(useId, OTHER)).toEqual({ ok: true });
-    expect(await q.query(`SELECT 1 FROM gpa_use WHERE id=$1`, [useId])).toHaveLength(0);
-
-    const rows = await logs('GPA_USE', useId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ action: 'delete', actor_id: String(OTHER), after: null });
-    expect(rows[0].before).toMatchObject({
-      cycleId, studentId, svcKey: 's7hw', points: 1, onDate: '2026-10-07', state: 'wait', coordId: ACTOR,
-    });
-  });
-
-  it('④ 승인분 삭제 거절은 줄을 안 남긴다 — 판정을 잠금 안에서 다시 본다', async () => {
-    const { useId } = await makeUse();
-    await gpa().setUseState(useId, OTHER, { state: 'ok' });
-
-    await expect(gpa().deleteUse(useId, OTHER)).rejects.toMatchObject({ response: { code: 'USE_APPROVED' } });
-    expect(await q.query(`SELECT 1 FROM gpa_use WHERE id=$1`, [useId])).toHaveLength(1);
-    // 승인 줄(approve)은 있고 삭제 줄은 없다
-    expect((await logs('GPA_USE', useId)).map((r) => r.action)).toEqual(['approve']);
-  });
-
-  /* ── ⑤ 대표 피드백 고치기 ───────────────────────────────────────── */
+  /* ── ④ 대표 피드백 고치기 ───────────────────────────────────────── */
 
   const makePost = async (byId: number): Promise<number> => {
     const [m] = (await q.query(

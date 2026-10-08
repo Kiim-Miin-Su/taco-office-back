@@ -5,8 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
-import { IsSafeHttpUrl } from '../../common/validation';
+import { IsOptional, Matches } from 'class-validator';
 
 const S = { type: String, nullable: true } as const;
 
@@ -27,8 +26,8 @@ export class GpaCycleDto {
   /* ── C95 · O-150 「4주마다 — GPA 사이클 마감」 — 도장과 판정은 서버다 ── */
   @ApiProperty({ ...S, description: '마감 시각 (KST ISO) — 시드가 켠 옛 닫힘은 null (N-25)' }) closedAt!: string | null;
   @ApiProperty({ ...S, description: '마감한 사람' }) closedByName!: string | null;
-  @ApiProperty({ description: '지금 마감할 수 있는가 — 열려 있고 · 끝날이 지났고 · 승인 대기가 0 이어야 한다' }) canClose!: boolean;
-  @ApiProperty({ ...S, description: '마감이 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null' }) closeBlockedReason!: string | null;
+  @ApiProperty({ description: 'GPA 기능 퇴역 후에는 항상 false — 과거 원장은 읽기 전용' }) canClose!: boolean;
+  @ApiProperty({ ...S, description: '읽기 전용 사유 — GPA 기능 퇴역 이후 고정 문장' }) closeBlockedReason!: string | null;
 }
 
 /**
@@ -82,8 +81,7 @@ export class GpaUseDto {
   @ApiPropertyOptional({ ...S, description: '승인한 날 YYYY-MM-DD (KST)' })
   approvedOn?: string | null;
   @ApiProperty({
-    description: '이 기록에 승인 단추가 열리는가 — 대기 상태이고 **기록한 사람이 내가 아닐 때**. '
-      + '사이클 잠금은 cycle.closed 가 따로 말한다 (D-R39 · 화면이 다시 조합하지 않는다)',
+    description: 'GPA 기능 퇴역 후에는 항상 false — 과거 기록을 승인·되돌리지 않는다.',
   })
   canApprove!: boolean;
 }
@@ -133,60 +131,7 @@ export class GpaBoardDto {
   @ApiProperty({ type: [GpaUseDto], description: '사이클 내 소비 — 날짜·시간 순 (gpTimeline 입력)' }) uses!: GpaUseDto[];
   @ApiProperty({
     type: [GpaLessonDto],
-    description: '이 사이클 창 안의 GPA 회차 — 기록 창 「수업 연결」 줄(날짜·시간 순 · 휴강 제외). 사이클이 없으면 빈 배열',
+    description: '호환용 과거 필드. 신규 GPA 입력 경로가 퇴역했으므로 항상 빈 배열',
   })
   lessons!: GpaLessonDto[];
-}
-
-export class GpaUseCreateDto {
-  @ApiProperty() @IsInt() @Min(1) cycleId!: number;
-  @ApiProperty() @IsInt() @Min(1) studentId!: number;
-  @ApiProperty({ description: '서비스 키 — 포인트는 서버가 규정에서 스냅샷' })
-  @IsIn(['hw', 'prj', 'quiz', 'test', 'self'], { message: '서비스는 원문 5종 중 하나입니다' })
-  svcKey!: string;
-  @ApiProperty({ description: 'YYYY-MM-DD — 사이클 창 안이어야 한다' })
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'onDate는 YYYY-MM-DD 형식입니다' })
-  onDate!: string;
-  @ApiPropertyOptional({ description: 'KST 분 (0~1439)' })
-  @IsOptional() @IsInt() @Min(0) @Max(1439)
-  startMin?: number;
-  @ApiPropertyOptional({ description: "kind='gpa' 회차 SER id — 없는 회차는 404 SER_NOT_FOUND · GPA 가 아닌 수업은 409 GPA_SER_NOT_GPA" })
-  @IsOptional() @IsInt() @Min(1)
-  serId?: number;
-  @ApiPropertyOptional({ type: String, nullable: true, maxLength: 500, description: '선택 기록지 HTTP(S) URL — 원문 500자 이내. 생략/null/공백은 비움' })
-  @IsOptional() @IsString() @MaxLength(500)
-  @IsSafeHttpUrl({ allowBlank: true, message: '기록지 URL은 로그인 정보가 없는 올바른 HTTP(S) 주소여야 합니다' })
-  noteUrl?: string | null;
-}
-
-export class GpaUseStateDto {
-  @ApiProperty({ enum: ['wait', 'ok'], description: 'ok = 승인 · wait = 되돌림' })
-  @IsIn(['wait', 'ok'])
-  state!: 'wait' | 'ok';
-}
-
-export class GpaAllocPutDto {
-  @ApiProperty() @IsInt() @Min(1) cycleId!: number;
-  @ApiProperty() @IsInt() @Min(1) studentId!: number;
-  @ApiProperty({ description: '이 사이클 배정량 — 0 이상 (0 은 배정 회수)' })
-  @IsInt() @Min(0) @Max(32000)
-  points!: number;
-}
-
-/* ══ C95 · O-150 사이클 마감 ═══════════════════════════════════════════════════════════════════
- * 「이월 없음 — 사이클이 끝나면 소멸한다」(D-R29)를 **사람이 도장 찍는 순간**이다. 잔여는 board() 가 세던 그 수(배정 − 사용 − 대기)가
- * 그대로 소멸 포인트다 — 여기서 다시 세지 않는다. 다음 사이클이 없으면 끝날 다음 날부터 4주를 연다(4주마다 하는 일이라 한 번에).
- * ═══════════════════════════════════════════════════════════════════════════════════════ */
-
-export class GpaExpiredRowDto {
-  @ApiProperty() studentId!: number;
-  @ApiProperty() name!: string;
-  @ApiProperty({ description: '소멸한 잔여 (배정 − 승인 사용) — 음수면 초과였다' }) remain!: number;
-}
-
-export class GpaCycleCloseResultDto {
-  @ApiProperty({ type: GpaCycleDto, description: '닫힌 사이클 (도장 찍힘)' }) cycle!: GpaCycleDto;
-  @ApiPropertyOptional({ type: GpaCycleDto, nullable: true, description: '이번에 새로 연 다음 사이클 — 이미 있었으면 null' }) opened?: GpaCycleDto | null;
-  @ApiProperty({ description: '소멸한 포인트 합 (잔여가 양수인 학생만)' }) expiredPoints!: number;
-  @ApiProperty({ type: [GpaExpiredRowDto], description: '학생별 잔여 — 잔여 적은 순' }) students!: GpaExpiredRowDto[];
 }

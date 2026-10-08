@@ -7,12 +7,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { REP_STATE_T_VALUES, SUG_CAT_T_VALUES, SUG_STATE_T_VALUES } from '../../entities/enums';
-import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { PAYOUT_BREAKDOWN_KEYS, type PayoutBreakdownKey } from '../../lib/payout-sheet';
 
-/** 강사가 올리는 요청 갈래 — 내 설정 둘(덱 §8) + 교재 변경 · GPA 회차 요청(N-99 · W11) */
-export const TEACHER_REQ_TYPES = ['wage_change', 'tz_change', 'book_change', 'gpa_request'] as const;
+/** 강사가 올리는 요청 갈래 — 내 설정 둘(덱 §8) + 교재 변경. GPA 신규 요청은 최신 수정사항에서 퇴역했다. */
+export const TEACHER_REQ_TYPES = ['wage_change', 'tz_change', 'book_change'] as const;
 export type TeacherReqType = (typeof TEACHER_REQ_TYPES)[number];
+/** 조회에는 배포 전 생성된 GPA 요청을 원장으로 보존한다. 신규 입력 enum과 섞지 않는다. */
+export const TEACHER_REQ_HISTORY_TYPES = [...TEACHER_REQ_TYPES, 'gpa_request'] as const;
 
 const S = { type: String, nullable: true } as const;
 const N = { type: Number, nullable: true } as const;
@@ -64,7 +65,7 @@ export class TeacherTodoDto {
 /** 올려 둔 요청 한 건 — 「관리자 승인 후 적용」을 화면이 말할 수 있게 (강사 덱 §8) */
 export class TeacherSettingRequestDto {
   @ApiProperty() id!: number;
-  @ApiProperty({ enum: TEACHER_REQ_TYPES }) reqType!: string;
+  @ApiProperty({ enum: TEACHER_REQ_HISTORY_TYPES }) reqType!: string;
   @ApiProperty({ description: '사람이 읽는 요청 이름 — 코드표는 서버가 소유한다 (D-R18)' }) label!: string;
   @ApiPropertyOptional({ ...S, description: '무엇으로 바꿔 달라고 했는지 한 줄' }) asked?: string | null;
   @ApiProperty({ enum: ['pending', 'approved', 'rejected'] }) state!: string;
@@ -96,7 +97,7 @@ export class TeacherSettingsDto {
 
 /** 강사가 올리는 내 설정 변경 요청 — 적용은 관리자 승인 뒤다 (덱 §8) */
 export class TeacherSettingReqCreateDto {
-  @ApiProperty({ enum: TEACHER_REQ_TYPES, description: '시급 · 시간대(덱 §8) · 교재 변경(수업 안내의 교재 행) · GPA 회차 요청(캘린더의 GPA 회차) — N-99' })
+  @ApiProperty({ enum: TEACHER_REQ_TYPES, description: '시급 · 시간대(덱 §8) · 교재 변경(수업 안내의 교재 행)' })
   @IsIn([...TEACHER_REQ_TYPES])
   reqType!: TeacherReqType;
 
@@ -112,8 +113,8 @@ export class TeacherSettingReqCreateDto {
   @IsOptional() @IsString() @MaxLength(500)
   reason?: string;
 
-  /* ── N-99 교재 변경 · GPA 회차 요청 — 학생은 **내 담당 학생만**(서버가 본다) ── */
-  @ApiPropertyOptional({ description: '교재 변경 · GPA 회차 요청의 학생 id' })
+  /* ── N-99 교재 변경 — 학생은 **내 담당 학생만**(서버가 본다) ── */
+  @ApiPropertyOptional({ description: '교재 변경의 학생 id' })
   @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   studentId?: number;
 
@@ -121,52 +122,6 @@ export class TeacherSettingReqCreateDto {
   @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
   issueId?: number;
 
-  @ApiPropertyOptional({ description: 'GPA 회차 요청 — 내 GPA 수업 회차의 규칙 id(SER)' })
-  @IsOptional() @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
-  serId?: number;
-
-  @ApiPropertyOptional({ ...DATE_SCHEMA, description: 'GPA 회차 요청 — 그 회차의 날짜 YYYY-MM-DD(시각은 회차에서 서버가 읽는다)' })
-  @IsOptional() @IsCalendarDate()
-  onDate?: string;
-
-  @ApiPropertyOptional({ maxLength: 8, description: 'GPA 회차 요청 — 서비스 키(GET /teacher/gpa-request-options). 포인트는 승인 때 규정에서 스냅숏' })
-  @IsOptional() @IsString() @MaxLength(8)
-  svcKey?: string;
-}
-
-/** GPA 서비스 규정 한 줄 — 강사 「GPA 회차 요청」 고르기(N-99). 표는 GPASVC 하나다 */
-export class TeacherGpaServiceDto {
-  @ApiProperty() key!: string;
-  @ApiProperty() name!: string;
-  @ApiProperty({ description: '규정 포인트 — 승인 때 GPA 기록에 스냅숏된다' }) point!: number;
-}
-
-/** 요청할 수 있는 GPA 회차의 명단 한 사람 — 그날 명단(serStuOn) 그대로 */
-export class TeacherGpaOccurrenceStudentDto {
-  @ApiProperty() id!: number;
-  @ApiProperty() name!: string;
-}
-
-/** 요청할 수 있는 내 GPA 회차 한 줄 — 쓰기(`gpa_request`)가 받는 것과 같은 판정으로 고른다(N-99) */
-export class TeacherGpaOccurrenceDto {
-  @ApiProperty() serId!: number;
-  @ApiProperty({ ...DATE_SCHEMA }) onDate!: string;
-  @ApiProperty({ description: '시작 분(KST) — 그날 놓인 자리' }) startMin!: number;
-  @ApiProperty({ description: '끝 분(KST)' }) endMin!: number;
-  @ApiProperty({ type: String, nullable: true, description: '규칙 제목 — 없으면 과목 · 종류 이름(화면은 코드표로 적는다)' }) title!: string | null;
-  @ApiProperty({ type: String, nullable: true }) subKey!: string | null;
-  @ApiProperty() kindKey!: string;
-  @ApiProperty({ type: [TeacherGpaOccurrenceStudentDto], description: '그날 명단' }) students!: TeacherGpaOccurrenceStudentDto[];
-}
-
-/** 강사 「GPA 회차 요청」 창 한 벌 — 서비스 규정 · 고를 수 있는 회차(N-99). 화면은 거르지 않고 그린다 */
-export class TeacherGpaRequestOptionsDto {
-  @ApiProperty({ type: [TeacherGpaServiceDto] }) services!: TeacherGpaServiceDto[];
-  @ApiProperty({
-    type: [TeacherGpaOccurrenceDto],
-    description: '내 GPA 수업 회차 중 휴강이 아니고 날짜를 품는 열린 사이클이 있는 것 — 요청 쓰기와 같은 판정',
-  })
-  occurrences!: TeacherGpaOccurrenceDto[];
 }
 
 /** GET /teacher/home — 강사 홈 한 번에 (덱 §7~9 · 강사 전용, 서버가 본인으로 고정) */

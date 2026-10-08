@@ -48,7 +48,6 @@ import { maskEmail, maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { loadState } from '../schedule/schedule.state.repo';
 import { issueScheduleUndoStep } from '../schedule/schedule.undo';
-import { GpaService } from '../gpa/gpa.service';
 import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
 import { STAFF_CREATE_ROLES } from './drawer.dto';
 import type {
@@ -243,8 +242,6 @@ export class DrawerService {
     private readonly schedWrite?: ScheduleWriteService,
     /** 줌 갈래도 같은 이유로 **줌 배정 경로를 그대로 탄다** (C48) */
     private readonly zoom?: ZoomService,
-    /** §14 「GPA 회차 요청」 승인은 **GPA 기록 함수를 그대로** 부른다 — 기록 규칙을 두 벌 만들지 않는다 (N-99) */
-    private readonly gpa?: GpaService,
   ) {}
 
   private q<T = R>(sql: string, p: unknown[] = []): Promise<T[]> {
@@ -1461,7 +1458,7 @@ export class DrawerService {
    *
    *   wage_change → WAGE 새 줄 (from_date = 승인일 · 소급 없음 · D8)
    *   tz_change   → STAFF.tz
-   *   gpa_request → GPA 기록 한 줄(`GpaService.createUse` 그대로 · 승인 대기 wait) — N-99
+   *   gpa_request → 최신 수정사항에서 퇴역. 과거 행은 표시만 하고 처리·되돌리기는 `GPA_RETIRED`로 거절한다.
    *   book_change → **상태와 알림만**(N-99) — 새 교재를 정하지 않으므로 배부는 관리자가 §38 에서 바꾼다(자동 배부 없음)
    *   그 밖        → **적용 대상이 없다.** 상태만 닫는다 — 없는 적용을 지어내지 않는다
    *
@@ -1504,6 +1501,12 @@ export class DrawerService {
           message: '자기가 올린 요청은 자기가 처리할 수 없습니다',
         });
       }
+      if (req.req_type === 'gpa_request') {
+        throw new ConflictException({
+          code: 'GPA_RETIRED',
+          message: 'GPA 신규 기능이 퇴역했습니다 — 과거 요청은 원장으로만 보존되며 처리할 수 없습니다',
+        });
+      }
 
       const payload = req.payload ?? {};
       let applied: string | null = null;
@@ -1541,36 +1544,6 @@ export class DrawerService {
         await m.query(`UPDATE staff SET tz = $2 WHERE id = $1`, [byId, tz]);
         applied = tz;
         effect = { kind: 'tz', staffId: byId, from: prev?.tz ?? null, to: tz };
-      }
-
-      if (approving && req.req_type === 'gpa_request') {
-        // 기록 규칙(사이클 창 · 닫힌 사이클 · 서비스 · GPA 수업 여부 · 포인트 스냅숏)은 GPA 기록 함수 한 곳이다 (N-99)
-        if (!this.gpa) throw new Error('GpaService 가 주입되지 않았습니다');
-        const serId = Number(payload.serId);
-        const onDate = payload.onDate;
-        const startMin = Number(payload.startMin);
-        const studentId = Number(req.student_id);
-        const svcKey = typeof payload.svcKey === 'string' ? payload.svcKey : '';
-        if (!Number.isSafeInteger(serId) || serId <= 0 || !isIsoDate(onDate) || !svcKey
-          || !Number.isInteger(startMin) || startMin < 0 || startMin > 1439 || !Number.isSafeInteger(studentId) || studentId <= 0) {
-          throw new ConflictException({
-            code: 'GPA_REQUEST_INVALID', message: '요청에 적힌 회차를 읽을 수 없습니다 — 강사에게 다시 올려 달라고 하세요',
-          });
-        }
-        const [cycle] = (await m.query(
-          `SELECT id FROM gpa_cycle WHERE from_date <= $1::date AND to_date >= $1::date ORDER BY from_date DESC, id DESC LIMIT 1`,
-          [onDate],
-        )) as Array<{ id: string }>;
-        if (!cycle) {
-          throw new ConflictException({
-            code: 'GPA_CYCLE_NONE', message: `${onDate} 을 품는 GPA 사이클이 없습니다 — GPA 관리에서 사이클을 먼저 여세요`,
-          });
-        }
-        const use = await this.gpa.createUse(
-          byId, { cycleId: Number(cycle.id), studentId, svcKey, onDate, startMin, serId }, m,
-        );
-        applied = `GPA 기록 ${use.points}p · ${reqAskedLine(req.req_type, payload) ?? onDate}`;
-        effect = { kind: 'gpa', useId: use.id };
       }
 
       await m.query(
@@ -1860,20 +1833,10 @@ export class DrawerService {
         await m.query(`UPDATE staff SET tz = $2 WHERE id = $1`, [e.staffId, e.from]);
         reverted = '시간대 되돌림';
       } else if (e.kind === 'gpa') {
-        const [use] = (await m.query(
-          `SELECT id, state, cycle_id FROM gpa_use WHERE id = $1 FOR UPDATE`, [e.useId],
-        )) as Array<{ id: string; state: string; cycle_id: string }>;
-        if (!use) throw stale('그 승인이 넣은 GPA 기록이 이미 없습니다');
-        if (use.state !== 'wait') throw stale('그 GPA 기록이 이미 승인되어 되돌릴 수 없습니다 — GPA 관리에서 먼저 되돌리세요');
-        // GPA 쓰기와 같은 차례 — 대상 줄 FOR UPDATE → 사이클 FOR SHARE (마감과 엇갈리지 않게)
-        const [cycle] = (await m.query(
-          `SELECT closed FROM gpa_cycle WHERE id = $1 FOR SHARE`, [use.cycle_id],
-        )) as Array<{ closed: boolean }>;
-        if (!cycle || cycle.closed) {
-          throw new ConflictException({ code: 'CYCLE_CLOSED', message: '닫힌 사이클입니다 — 잔여는 소멸했고 기록을 바꿀 수 없습니다' });
-        }
-        await m.query(`DELETE FROM gpa_use WHERE id = $1`, [e.useId]);
-        reverted = 'GPA 기록 삭제';
+        throw new ConflictException({
+          code: 'GPA_RETIRED',
+          message: 'GPA 신규 기능이 퇴역했습니다 — 과거 승인 결과와 원장은 되돌리지 않습니다',
+        });
       }
       await m.query(`UPDATE req SET state = 'pending', resolved_by = NULL, reject_reason = NULL WHERE id = $1`, [p.id]);
       await audit(m, 'approval.undo', {

@@ -280,13 +280,11 @@ d('W11 P — 사람별 권한 예외 · §76 권한 표 · 내 지출 신청 · 
     }
   });
 
-  /* ── N-99 강사 「GPA 회차 요청」 창 ─────────────────────────────────────── */
+  /* ── BOC-13 강사 GPA 신규 요청 퇴역 ─────────────────────────────────────── */
 
-  it('「GPA 회차 요청」 창은 강사 전용이다 — 서비스 규정과 고를 회차 두 벌 · 관리 화면 사람은 403', async () => {
-    const opts = await api('get', '/teacher/gpa-request-options', tokens.teacher).expect(200);
-    expect(opts.body).toEqual({ services: expect.any(Array), occurrences: expect.any(Array) });
-    await api('get', '/teacher/gpa-request-options', tokens.mgr).expect(403);
-    // 옛 경로는 없다 — 한 창이 한 번에 읽는다
+  it('「GPA 회차 요청」 계약은 역할과 무관하게 제거되어 404다', async () => {
+    await api('get', '/teacher/gpa-request-options', tokens.teacher).expect(404);
+    await api('get', '/teacher/gpa-request-options', tokens.mgr).expect(404);
     await api('get', '/teacher/gpa-services', tokens.teacher).expect(404);
   });
 

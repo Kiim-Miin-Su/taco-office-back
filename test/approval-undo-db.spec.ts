@@ -23,10 +23,9 @@
 import { DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { dataSourceOptions } from '../src/data-source';
-import { GpaCycle, Lead, Ser, Zacc } from '../src/entities';
+import { Lead, Ser, Zacc } from '../src/entities';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { issueApprovalUndo, readApprovalUndo } from '../src/modules/drawer/approval-undo';
-import { GpaService } from '../src/modules/gpa/gpa.service';
 import { ScheduleWriteService } from '../src/modules/schedule/schedule.write.service';
 import { sign } from '../src/modules/schedule/schedule.undo';
 import { TeacherService } from '../src/modules/teacher/teacher.service';
@@ -100,10 +99,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     await ds.initialize();
     const cfg = { get: (k: string) => (k === 'ZOOM_ENC_KEY' ? '테스트 키' : undefined) } as unknown as ConfigService;
     zoom = new ZoomService(ds.getRepository(Zacc), cfg);
-    drawer = new DrawerService(
-      ds.getRepository(Lead), new ScheduleWriteService(ds), zoom,
-      new GpaService(ds.getRepository(GpaCycle)),
-    );
+    drawer = new DrawerService(ds.getRepository(Lead), new ScheduleWriteService(ds), zoom);
     teacher = new TeacherService(ds.getRepository(Ser));
     await cleanup();
     await q(`DELETE FROM staff WHERE id = ANY($1)`, [STAFF]);
@@ -361,70 +357,45 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       .rejects.toMatchObject({ response: { code: 'BOOK_NOT_IN_USE' } });
   });
 
-  it('GPA 회차 요청 — 내 GPA 회차 · 명단 학생 · 규정 서비스 · 열린 사이클 · 승인하면 GPA 기록 한 줄 · 되돌리면 그 기록이 사라진다', async () => {
-    await expect(teacher.createSettingRequest(T, { reqType: 'gpa_request', serId: SER_CH, onDate: ON, studentId: STU, svcKey: 'quiz' }))
-      .rejects.toMatchObject({ response: { code: 'GPA_SER_NOT_GPA' } });
-    await expect(teacher.createSettingRequest(OTHER, { reqType: 'gpa_request', serId: SER_GPA, onDate: ON, studentId: STU, svcKey: 'quiz' }))
-      .rejects.toMatchObject({ status: 404 });
-    await expect(teacher.createSettingRequest(T, { reqType: 'gpa_request', serId: SER_GPA, onDate: ON, studentId: STU, svcKey: 'nope' }))
-      .rejects.toMatchObject({ status: 404 });
-
-    const made = await teacher.createSettingRequest(T, {
-      reqType: 'gpa_request', serId: SER_GPA, onDate: ON, studentId: STU, svcKey: 'quiz', reason: '내신 대비 · 이 시간대만 됩니다',
-    });
-    expect(made).toMatchObject({ reqType: 'gpa_request', label: 'GPA 회차', asked: `${ON} 20:00–20:40` });
-    await expect(teacher.createSettingRequest(T, { reqType: 'gpa_request', serId: SER_GPA, onDate: ON, studentId: STU, svcKey: 'quiz' }))
-      .rejects.toMatchObject({ response: { code: 'REQ_PENDING' } });
-
+  it('퇴역한 GPA 요청은 과거 대기함에 보이지만 승인·반려가 모두 GPA_RETIRED이고 원장은 바뀌지 않는다', async () => {
+    const [legacy] = await q<{ id: string }>(
+      `INSERT INTO req (staff_id, student_id, req_type, payload)
+       VALUES ($1,$2,'gpa_request',$3::jsonb) RETURNING id`,
+      [T, STU, JSON.stringify({ serId: SER_GPA, onDate: ON, startMin: 1200, endMin: 1240,
+        svcKey: 'quiz', svcName: 'Quiz 대비', studentName: '박하경' })],
+    );
+    const id = Number(legacy.id);
     const inbox = (await drawer.all(BOSS, true, true)).approvals;
-    const card = inbox.inbox.find((r) => r.kind === 'req' && r.id === made.id)!;
-    expect(card).toMatchObject({ title: '박하경 · Quiz 대비', category: 'gpa_request', categoryLabel: 'GPA 요청', asked: `${ON} 20:00–20:40` });
-    expect(inbox.categories.find((c) => c.key === 'gpa_request')?.count).toBeGreaterThanOrEqual(1);
+    expect(inbox.inbox.find((r) => r.kind === 'req' && r.id === id)).toMatchObject({
+      category: 'gpa_request', categoryLabel: 'GPA 요청', asked: `${ON} 20:00–20:40`,
+    });
 
-    const out = await drawer.reviewRequest(made.id, BOSS, { decision: 'approve' }, false);
-    const uses = await q<{ id: string; state: string; points: number; start_min: number; coord_id: string; ser_id: string }>(
-      `SELECT id, state, points, start_min, coord_id, ser_id FROM gpa_use WHERE student_id = $1`, [STU]);
-    expect(uses).toHaveLength(1);
-    expect(uses[0]).toMatchObject({ state: 'wait', points: 2, start_min: 1200, coord_id: String(T), ser_id: String(SER_GPA) });
-    expect(out.applied).toContain('2p');
-
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).resolves.toMatchObject({ reverted: 'GPA 기록 삭제' });
+    await expect(drawer.reviewRequest(id, BOSS, { decision: 'approve' }, false))
+      .rejects.toMatchObject({ response: { code: 'GPA_RETIRED' } });
+    await expect(drawer.reviewRequest(id, BOSS, { decision: 'reject', reason: '퇴역' }, false))
+      .rejects.toMatchObject({ response: { code: 'GPA_RETIRED' } });
+    expect((await req(id)).state).toBe('pending');
     expect(await q(`SELECT id FROM gpa_use WHERE student_id = $1`, [STU])).toHaveLength(0);
-    expect((await req(made.id)).state).toBe('pending');
+    expect(await logCount('REQ', id, 'approve')).toBe(0);
   });
 
-  it('GPA 회차 요청 창 — 쓰기와 같은 판정으로 회차를 고른다(내 GPA 회차 · 휴강 아님 · 열린 사이클 안 · 그날 명단)', async () => {
-    const mine = async (who: number) => (await teacher.gpaRequestOptions(who)).occurrences.filter((o) => o.serId === SER_GPA || o.serId === SER_CH);
-    const opts = await teacher.gpaRequestOptions(T);
-    expect(opts.services).toEqual(expect.arrayContaining([{ key: 'quiz', name: 'Quiz 대비', point: 2 }]));
-    expect(await mine(T)).toEqual([{
-      serId: SER_GPA, onDate: ON, startMin: 1200, endMin: 1240, title: 'GPA 관리', subKey: null, kindKey: 'gpa',
-      students: [{ id: STU, name: '박하경' }],
-    }]);
-    // 남의 강사에게는 없다 — 쓰기의 404 와 같은 경계
-    expect(await mine(OTHER)).toEqual([]);
-    // 사이클이 닫혔으면 · 휴강이면 고를 수 없다(쓰기가 409 로 막는 것과 같다)
-    await q(`UPDATE gpa_cycle SET closed = true, closed_at = now(), closed_by = $2 WHERE id = $1`, [CYCLE, BOSS]);
-    expect(await mine(T)).toEqual([]);
-    await q(`UPDATE gpa_cycle SET closed = false, closed_at = NULL, closed_by = NULL WHERE id = $1`, [CYCLE]);
-    await q(`UPDATE ser_occ SET canceled = true WHERE ser_id = $1`, [SER_GPA]);
-    expect(await mine(T)).toEqual([]);
-  });
-
-  it('GPA 회차 요청 — 승인된 GPA 기록은 되돌리지 않는다(409) · 사이클이 닫혔으면 승인도 409', async () => {
-    const made = await teacher.createSettingRequest(T, { reqType: 'gpa_request', serId: SER_GPA, onDate: ON, studentId: STU, svcKey: 'quiz' });
-    const out = await drawer.reviewRequest(made.id, BOSS, { decision: 'approve' }, false);
-    await q(`UPDATE gpa_use SET state = 'ok', approved_by = $2, approved_at = now() WHERE student_id = $1`, [STU, BOSS]);
-    await expect(drawer.undoApproval(BOSS, out.undoToken!, false, true)).rejects.toMatchObject({ response: { code: 'UNDO_STALE' } });
-    expect(await q(`SELECT id FROM gpa_use WHERE student_id = $1`, [STU])).toHaveLength(1);
-
-    await q(`DELETE FROM gpa_use WHERE student_id = $1`, [STU]);
-    await q(`DELETE FROM req WHERE id = $1`, [made.id]);
-    const again = await teacher.createSettingRequest(T, { reqType: 'gpa_request', serId: SER_GPA, onDate: ON, studentId: STU, svcKey: 'quiz' });
-    await q(`UPDATE gpa_cycle SET closed = true, closed_at = now(), closed_by = $2 WHERE id = $1`, [CYCLE, BOSS]);
-    await expect(drawer.reviewRequest(again.id, BOSS, { decision: 'approve' }, false)).rejects.toMatchObject({ response: { code: 'CYCLE_CLOSED' } });
-    expect((await req(again.id)).state).toBe('pending');
-    expect(await logCount('REQ', again.id, 'approve')).toBe(0);
+  it('배포 직전 발급된 GPA 승인 실행 취소 토큰도 GPA_RETIRED로 거절하고 승인 상태를 보존한다', async () => {
+    const [legacy] = await q<{ id: string }>(
+      `INSERT INTO req (staff_id, student_id, req_type, payload, state, resolved_by)
+       VALUES ($1,$2,'gpa_request','{}'::jsonb,'approved',$3) RETURNING id`, [T, STU, BOSS],
+    );
+    const id = Number(legacy.id);
+    const [logged] = await q<{ id: string }>(
+      `INSERT INTO log (actor_id, entity, entity_id, action, before, after)
+       VALUES ($1,'REQ',$2,'approve','{"state":"pending"}'::jsonb,'{"state":"approved"}'::jsonb) RETURNING id`,
+      [BOSS, id],
+    );
+    const undo = issueApprovalUndo(BOSS, {
+      target: 'req', id, decision: 'approve', logId: Number(logged.id), effect: { kind: 'gpa', useId: 999999 },
+    });
+    await expect(drawer.undoApproval(BOSS, undo.token, false, true))
+      .rejects.toMatchObject({ response: { code: 'GPA_RETIRED' } });
+    expect((await req(id)).state).toBe('approved');
   });
 
   /* ── ⑥ 감사 — 쓰기마다 한 줄, 막히면 0 줄 (N-73) ──────────────────────────── */

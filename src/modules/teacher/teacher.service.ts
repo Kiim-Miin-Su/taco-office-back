@@ -26,7 +26,7 @@ import type {
   TeacherHistoryDto, TeacherHomeDto, TeacherLessonDto,
   TeacherSuggestionCreateDto, TeacherSuggestionDto, TeacherSuggestionsDto,
   TeacherSettingReqCreateDto, TeacherSettingRequestDto, TeacherSettingsDto,
-  TeacherNotiDto, TeacherShellDto, TeacherGpaServiceDto, TeacherGpaOccurrenceDto, TeacherGpaRequestOptionsDto,
+  TeacherNotiDto, TeacherShellDto,
 } from './teacher.dto';
 import { SUGGESTION_MONTHLY_LIMIT, UNAV_DEADLINE_DAYS } from '../../lib/teacher-policy';
 import { audit } from '../../lib/audit';
@@ -327,7 +327,7 @@ export class TeacherService {
     if (!me) throw new NotFoundException('구성원을 찾을 수 없습니다');
 
     let payload: Record<string, unknown>;
-    /** 교재 변경 · GPA 회차 요청은 학생을 **칸으로** 남긴다(§38 가 req.student_id 를 먼저 읽는다 · 이름 스냅숏은 옛 줄의 대체일 뿐) */
+    /** 교재 변경은 학생을 **칸으로** 남긴다(§38 가 req.student_id 를 먼저 읽는다 · 이름 스냅숏은 옛 줄의 대체일 뿐) */
     let studentId: number | null = null;
     if (dto.reqType === 'wage_change') {
       if (dto.rate === undefined) {
@@ -355,10 +355,6 @@ export class TeacherService {
       const book = await this.bookChangePayload(teacherId, dto);
       studentId = book.studentId;
       payload = book.payload;
-    } else if (dto.reqType === 'gpa_request') {
-      const gpa = await this.gpaRequestPayload(teacherId, dto);
-      studentId = gpa.studentId;
-      payload = gpa.payload;
     } else {
       if (!dto.timezone) {
         throw new BadRequestException({ code: 'TZ_REQUIRED', message: '바라는 시간대를 골라 주세요' });
@@ -393,7 +389,7 @@ export class TeacherService {
     return {
       id: Number(r.id), reqType: String(r.req_type),
       label: labelOf(REQ_TYPE_LABEL, String(r.req_type)),
-      // 시급 · 시간대는 「바라는 것」, 교재 변경은 지금 교재, GPA 회차는 그 회차의 날짜 · 시각 — 낱말은 lib/approval 한 곳
+      // 시급 · 시간대는 「바라는 것」, 교재 변경은 지금 교재 — 낱말은 lib/approval 한 곳
       asked: dto.reqType === 'wage_change' || dto.reqType === 'tz_change' ? reqAsked(dto.reqType, p).to : reqAskedLine(dto.reqType, p),
       state: String(r.state), createdOn: String(r.created_on),
       rejectReason: null,
@@ -453,94 +449,6 @@ export class TeacherService {
         subjectName: (issue.subject_name as string | null) ?? null, studentName: String(issue.student_name), message: reason,
       },
     };
-  }
-
-  /**
-   * GPA 회차 요청(N-99) — 강사 캘린더의 GPA 회차 → 학생 · 서비스 · 시각(그 회차). 승인하면 그 내용으로 GPA 기록 한 줄(§14).
-   * 회차는 **내 GPA 수업**이고 휴강이 아니어야 한다 · 학생은 그 회차 명단 · 서비스는 규정표 · 날짜를 품는 **열린** 사이클이 있어야 한다.
-   * 시각은 화면이 보낸 값이 아니라 회차가 그날 놓인 자리(`ser_occ.span`)에서 읽는다 — 옮긴 회차도 그대로 맞는다.
-   */
-  private async gpaRequestPayload(
-    teacherId: number, dto: TeacherSettingReqCreateDto,
-  ): Promise<{ studentId: number; payload: Record<string, unknown> }> {
-    if (!dto.serId || !dto.onDate || !dto.studentId || !dto.svcKey) {
-      throw new BadRequestException({ code: 'GPA_REQUEST_REQUIRED', message: '회차 · 학생 · 서비스를 골라 주세요' });
-    }
-    const [occ] = await this.q(
-      `SELECT o.ser_id, o.canceled, s.kind_key,
-              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
-              (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min
-         FROM ser_occ o JOIN ser s ON s.id = o.ser_id
-        WHERE o.ser_id = $2 AND o.on_date = $3::date AND ${TEACHER_OF} = $1`,
-      [teacherId, dto.serId, dto.onDate],
-    );
-    if (!occ) throw new NotFoundException('내 수업의 그 회차를 찾을 수 없습니다');
-    if (String(occ.kind_key) !== 'gpa') {
-      throw new ConflictException({ code: 'GPA_SER_NOT_GPA', message: 'GPA 수업의 회차만 요청할 수 있습니다' });
-    }
-    if (occ.canceled === true) throw new ConflictException({ code: 'OCC_CANCELED', message: '휴강한 회차입니다' });
-    const [onRoster] = await this.q(
-      `SELECT st.name FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
-        WHERE ss.ser_id = $1 AND ss.student_id = $2 AND ${serStuOn('ss', '$3::date')}`,
-      [dto.serId, dto.studentId, dto.onDate],
-    );
-    if (!onRoster) throw new NotFoundException('그 회차 명단에 없는 학생입니다');
-    const [svc] = await this.q(`SELECT key, name FROM gpasvc WHERE key = $1`, [dto.svcKey]);
-    if (!svc) throw new NotFoundException('서비스 규정을 찾을 수 없습니다');
-    const [cycle] = await this.q(
-      `SELECT id FROM gpa_cycle WHERE from_date <= $1::date AND to_date >= $1::date AND NOT closed LIMIT 1`, [dto.onDate],
-    );
-    if (!cycle) {
-      throw new ConflictException({ code: 'GPA_CYCLE_NONE', message: '그 날짜를 품는 열린 GPA 사이클이 없습니다 — 관리자에게 알려 주세요' });
-    }
-    const [open] = await this.q(
-      `SELECT id FROM req WHERE staff_id = $1 AND req_type = 'gpa_request' AND state = 'pending'
-          AND (payload->>'serId') = $2::text AND payload->>'onDate' = $3 AND student_id = $4 AND payload->>'svcKey' = $5 LIMIT 1`,
-      [teacherId, String(dto.serId), dto.onDate, dto.studentId, dto.svcKey],
-    );
-    if (open) throw new ConflictException({ code: 'REQ_PENDING', message: '같은 회차 · 학생 · 서비스로 올린 요청이 처리 중입니다' });
-    const startMin = Number(occ.start_min);
-    return {
-      studentId: dto.studentId,
-      payload: {
-        serId: dto.serId, onDate: dto.onDate, startMin, endMin: startMin + Number(occ.dur_min),
-        svcKey: String(svc.key), svcName: String(svc.name), studentName: String(onRoster.name),
-      },
-    };
-  }
-
-  /**
-   * 「GPA 회차 요청」 창 한 벌(N-99) — 서비스 규정표 그대로 + 고를 수 있는 내 GPA 회차.
-   * 회차는 `gpaRequestPayload` 가 받는 것과 **같은 판정**으로 고른다: 내 수업(`TEACHER_OF`) · 종류 gpa · 휴강 아님 ·
-   * 날짜를 품는 열린 사이클이 있음. 명단은 그날 명단(`serStuOn`)이다. 화면은 이 목록을 거르지 않고 그린다.
-   */
-  async gpaRequestOptions(teacherId: number): Promise<TeacherGpaRequestOptionsDto> {
-    const services = (await this.q(`SELECT key, name, point FROM gpasvc ORDER BY sort NULLS LAST, key`))
-      .map((r): TeacherGpaServiceDto => ({ key: String(r.key), name: String(r.name), point: Number(r.point) }));
-    const occurrences = (await this.q(
-      `SELECT o.ser_id, to_char(o.on_date,'YYYY-MM-DD') AS on_date,
-              (EXTRACT(EPOCH FROM (lower(o.span) AT TIME ZONE 'Asia/Seoul')::time)/60)::int AS start_min,
-              (EXTRACT(EPOCH FROM (upper(o.span) - lower(o.span)))/60)::int AS dur_min,
-              s.title, s.sub_key, s.kind_key,
-              COALESCE((SELECT json_agg(json_build_object('id', st.id, 'name', st.name) ORDER BY st.name)
-                          FROM ser_stu ss JOIN stu st ON st.id = ss.student_id
-                         WHERE ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}), '[]'::json) AS students
-         FROM ser_occ o
-         JOIN ser s ON s.id = o.ser_id
-        WHERE ${TEACHER_OF} = $1 AND s.kind_key = 'gpa' AND NOT o.canceled
-          AND EXISTS (SELECT 1 FROM gpa_cycle c WHERE c.from_date <= o.on_date AND c.to_date >= o.on_date AND NOT c.closed)
-        ORDER BY o.on_date, start_min`,
-      [teacherId],
-    )).map((r): TeacherGpaOccurrenceDto => {
-      const startMin = Number(r.start_min);
-      return {
-        serId: Number(r.ser_id), onDate: String(r.on_date), startMin, endMin: startMin + Number(r.dur_min),
-        title: (r.title as string | null) ?? null, subKey: (r.sub_key as string | null) ?? null, kindKey: String(r.kind_key),
-        students: ((r.students as Array<{ id: number | string; name: string }> | null) ?? [])
-          .map((st) => ({ id: Number(st.id), name: String(st.name) })),
-      };
-    });
-    return { services, occurrences };
   }
 
   /**

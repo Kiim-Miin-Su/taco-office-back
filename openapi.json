@@ -18807,85 +18807,9 @@
         ]
       }
     },
-    "/teacher/gpa-request-options": {
-      "get": {
-        "description": "회차는 요청 쓰기와 같은 판정(내 GPA 수업 · 휴강 아님 · 열린 사이클 안)으로 서버가 고른다. 명단은 그날 명단.",
-        "operationId": "TeacherController_gpaRequestOptions",
-        "parameters": [],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TeacherGpaRequestOptionsDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "강사 전용"
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "「GPA 회차 요청」 창 — 서비스 규정 · 고를 수 있는 내 GPA 회차 (N-99)",
-        "tags": [
-          "teacher"
-        ]
-      }
-    },
     "/teacher/requests": {
       "post": {
-        "description": "올리기만 한다. **관리자 승인 후 적용**이며 시급은 한 달에 한 번이다 — 판정은 서버. 교재 변경은 새 교재를 정하지 않는다(승인 = 상태 + 알림 · 배부 변경은 관리자가 §38 에서). GPA 회차 요청은 승인하면 그 내용으로 GPA 기록 한 줄이 선다. 학생은 내 담당 학생만.",
+        "description": "올리기만 한다. **관리자 승인 후 적용**이며 시급은 한 달에 한 번이다 — 판정은 서버. 교재 변경은 새 교재를 정하지 않는다(승인 = 상태 + 알림 · 배부 변경은 관리자가 §38 에서). 학생은 내 담당 학생만.",
         "operationId": "TeacherController_createSettingRequest",
         "parameters": [],
         "requestBody": {
@@ -18910,7 +18834,7 @@
             }
           },
           "400": {
-            "description": "code RATE_REQUIRED | TZ_REQUIRED | TZ_UNKNOWN | BOOK_REQUIRED | REASON_REQUIRED | GPA_REQUEST_REQUIRED"
+            "description": "code RATE_REQUIRED | TZ_REQUIRED | TZ_UNKNOWN | BOOK_REQUIRED | REASON_REQUIRED"
           },
           "401": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -18926,10 +18850,10 @@
             "description": "강사 전용"
           },
           "404": {
-            "description": "내 담당 학생이 아님 · 그 학생의 교재 없음 · 내 회차 없음 · 명단에 없는 학생 · 서비스 없음"
+            "description": "내 담당 학생이 아님 · 그 학생의 교재 없음"
           },
           "409": {
-            "description": "code WAGE_REQ_MONTHLY_QUOTA | REQ_PENDING | TZ_SAME | BOOK_NOT_IN_USE | GPA_SER_NOT_GPA | OCC_CANCELED | GPA_CYCLE_NONE"
+            "description": "code WAGE_REQ_MONTHLY_QUOTA | REQ_PENDING | TZ_SAME | BOOK_NOT_IN_USE"
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -18942,7 +18866,7 @@
             }
           }
         },
-        "summary": "강사 요청 — 시급·시간대(덱 §8) · 교재 변경(수업 안내 교재 행) · GPA 회차 요청(캘린더 GPA 회차) — N-99",
+        "summary": "강사 요청 — 시급·시간대(덱 §8) · 교재 변경(수업 안내 교재 행)",
         "tags": [
           "teacher"
         ]
@@ -18950,7 +18874,7 @@
     },
     "/gpa": {
       "get": {
-        "description": "배정 − 사용(ok) − 대기(wait) = 잔여는 서버 한 곳이 계산한다. 학부모 비공개(D-R30) — 발송 경로에 싣지 않는다.",
+        "description": "최신 수정사항으로 신규 GPA 기능은 퇴역했다. 기존 확정 원장만 관리자에게 읽기 전용으로 제공하며 발송 경로에 싣지 않는다.",
         "operationId": "GpaController_board",
         "parameters": [
           {
@@ -19035,424 +18959,7 @@
             }
           }
         },
-        "summary": "GPA 관리 보드 — 사이클·규정·학생별 잔여·타임라인 (v2 §4.5·§82 · N-13 채택)",
-        "tags": [
-          "gpa"
-        ]
-      }
-    },
-    "/gpa/uses": {
-      "post": {
-        "operationId": "GpaController_createUse",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GpaUseCreateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GpaUseDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "code CYCLE_CLOSED(닫힌 사이클) | OUT_OF_CYCLE(창 밖 날짜)"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "회차 소비 기록 — wait 로 등록, 포인트는 규정 스냅샷. 초과는 막지 않고 화면이 붉게 안내한다",
-        "tags": [
-          "gpa"
-        ]
-      }
-    },
-    "/gpa/uses/{id}": {
-      "patch": {
-        "operationId": "GpaController_setUseState",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GpaUseStateDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GpaUseDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "기록 없음"
-          },
-          "409": {
-            "description": "code CYCLE_CLOSED | USE_STATE_UNCHANGED(이미 그 상태 — 승인 도장을 덮지 않는다) | SELF_APPROVAL_FORBIDDEN"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "기록 승인(ok)·되돌림(wait) — 기록한 사람은 승인하지 못한다 · 닫힌 사이클은 잠긴다",
-        "tags": [
-          "gpa"
-        ]
-      },
-      "delete": {
-        "operationId": "GpaController_deleteUse",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OkDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "code CYCLE_CLOSED | USE_APPROVED"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "대기(wait) 기록 삭제 — 승인분은 USE_APPROVED 로 거절",
-        "tags": [
-          "gpa"
-        ]
-      }
-    },
-    "/gpa/allocs": {
-      "put": {
-        "operationId": "GpaController_putAlloc",
-        "parameters": [],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GpaAllocPutDto"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GpaStudentDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "code CYCLE_CLOSED"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "배정 upsert — (사이클, 학생) 하나. 0 은 배정 회수. 담당 코디는 마지막 저장자",
-        "tags": [
-          "gpa"
-        ]
-      }
-    },
-    "/gpa/cycles/{id}/close": {
-      "post": {
-        "description": "열려 있고 끝날이 지났고 승인 대기가 0 일 때만. closed_at/by 도장 · 잔여는 소멸(D-R29 · 이월 없음) · 다음 사이클이 없으면 끝날 다음 날부터 4주를 연다 · LOG.",
-        "operationId": "GpaController_closeCycle",
-        "parameters": [
-          {
-            "name": "id",
-            "required": true,
-            "in": "path",
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GpaCycleCloseResultDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "사이클 없음"
-          },
-          "409": {
-            "description": "code CYCLE_CLOSED(이미 마감) · CYCLE_NOT_ENDED(끝날 전) · CYCLE_HAS_WAIT(승인 대기 남음)"
-          },
-          "500": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorDto"
-                }
-              }
-            }
-          }
-        },
-        "summary": "사이클 마감 — O-150 「4주마다 — GPA 사이클 마감」 (C95)",
+        "summary": "GPA 과거 원장 — 사이클·규정·학생별 잔여·타임라인 (읽기 전용)",
         "tags": [
           "gpa"
         ]
@@ -44937,113 +44444,6 @@
           "reason"
         ]
       },
-      "TeacherGpaServiceDto": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "point": {
-            "type": "number",
-            "description": "규정 포인트 — 승인 때 GPA 기록에 스냅숏된다"
-          }
-        },
-        "required": [
-          "key",
-          "name",
-          "point"
-        ]
-      },
-      "TeacherGpaOccurrenceStudentDto": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "id",
-          "name"
-        ]
-      },
-      "TeacherGpaOccurrenceDto": {
-        "type": "object",
-        "properties": {
-          "serId": {
-            "type": "number"
-          },
-          "onDate": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
-          },
-          "startMin": {
-            "type": "number",
-            "description": "시작 분(KST) — 그날 놓인 자리"
-          },
-          "endMin": {
-            "type": "number",
-            "description": "끝 분(KST)"
-          },
-          "title": {
-            "type": "string",
-            "nullable": true,
-            "description": "규칙 제목 — 없으면 과목 · 종류 이름(화면은 코드표로 적는다)"
-          },
-          "subKey": {
-            "type": "string",
-            "nullable": true
-          },
-          "kindKey": {
-            "type": "string"
-          },
-          "students": {
-            "description": "그날 명단",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TeacherGpaOccurrenceStudentDto"
-            }
-          }
-        },
-        "required": [
-          "serId",
-          "onDate",
-          "startMin",
-          "endMin",
-          "title",
-          "subKey",
-          "kindKey",
-          "students"
-        ]
-      },
-      "TeacherGpaRequestOptionsDto": {
-        "type": "object",
-        "properties": {
-          "services": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TeacherGpaServiceDto"
-            }
-          },
-          "occurrences": {
-            "description": "내 GPA 수업 회차 중 휴강이 아니고 날짜를 품는 열린 사이클이 있는 것 — 요청 쓰기와 같은 판정",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TeacherGpaOccurrenceDto"
-            }
-          }
-        },
-        "required": [
-          "services",
-          "occurrences"
-        ]
-      },
       "TeacherSettingReqCreateDto": {
         "type": "object",
         "properties": {
@@ -45052,10 +44452,9 @@
             "enum": [
               "wage_change",
               "tz_change",
-              "book_change",
-              "gpa_request"
+              "book_change"
             ],
-            "description": "시급 · 시간대(덱 §8) · 교재 변경(수업 안내의 교재 행) · GPA 회차 요청(캘린더의 GPA 회차) — N-99"
+            "description": "시급 · 시간대(덱 §8) · 교재 변경(수업 안내의 교재 행)"
           },
           "rate": {
             "type": "number",
@@ -45071,26 +44470,11 @@
           },
           "studentId": {
             "type": "number",
-            "description": "교재 변경 · GPA 회차 요청의 학생 id"
+            "description": "교재 변경의 학생 id"
           },
           "issueId": {
             "type": "number",
             "description": "교재 변경 — 바꿔 달라는 배부(issue) id. 그 학생의 사용 중인 교재여야 한다"
-          },
-          "serId": {
-            "type": "number",
-            "description": "GPA 회차 요청 — 내 GPA 수업 회차의 규칙 id(SER)"
-          },
-          "onDate": {
-            "type": "string",
-            "format": "date",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "description": "GPA 회차 요청 — 그 회차의 날짜 YYYY-MM-DD(시각은 회차에서 서버가 읽는다)"
-          },
-          "svcKey": {
-            "type": "string",
-            "maxLength": 8,
-            "description": "GPA 회차 요청 — 서비스 키(GET /teacher/gpa-request-options). 포인트는 승인 때 규정에서 스냅숏"
           }
         },
         "required": [
@@ -45131,12 +44515,12 @@
           },
           "canClose": {
             "type": "boolean",
-            "description": "지금 마감할 수 있는가 — 열려 있고 · 끝날이 지났고 · 승인 대기가 0 이어야 한다"
+            "description": "GPA 기능 퇴역 후에는 항상 false — 과거 원장은 읽기 전용"
           },
           "closeBlockedReason": {
             "type": "string",
             "nullable": true,
-            "description": "마감이 막힌 이유 문장 — 화면이 그대로 띄운다. 열려 있으면 null"
+            "description": "읽기 전용 사유 — GPA 기능 퇴역 이후 고정 문장"
           }
         },
         "required": [
@@ -45327,7 +44711,7 @@
           },
           "canApprove": {
             "type": "boolean",
-            "description": "이 기록에 승인 단추가 열리는가 — 대기 상태이고 **기록한 사람이 내가 아닐 때**. 사이클 잠금은 cycle.closed 가 따로 말한다 (D-R39 · 화면이 다시 조합하지 않는다)"
+            "description": "GPA 기능 퇴역 후에는 항상 false — 과거 기록을 승인·되돌리지 않는다."
           }
         },
         "required": [
@@ -45443,7 +44827,7 @@
             }
           },
           "lessons": {
-            "description": "이 사이클 창 안의 GPA 회차 — 기록 창 「수업 연결」 줄(날짜·시간 순 · 휴강 제외). 사이클이 없으면 빈 배열",
+            "description": "호환용 과거 필드. 신규 GPA 입력 경로가 퇴역했으므로 항상 빈 배열",
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/GpaLessonDto"
@@ -45462,140 +44846,6 @@
           "students",
           "uses",
           "lessons"
-        ]
-      },
-      "GpaUseCreateDto": {
-        "type": "object",
-        "properties": {
-          "cycleId": {
-            "type": "number"
-          },
-          "studentId": {
-            "type": "number"
-          },
-          "svcKey": {
-            "type": "string",
-            "description": "서비스 키 — 포인트는 서버가 규정에서 스냅샷"
-          },
-          "onDate": {
-            "type": "string",
-            "description": "YYYY-MM-DD — 사이클 창 안이어야 한다"
-          },
-          "startMin": {
-            "type": "number",
-            "description": "KST 분 (0~1439)"
-          },
-          "serId": {
-            "type": "number",
-            "description": "kind='gpa' 회차 SER id — 없는 회차는 404 SER_NOT_FOUND · GPA 가 아닌 수업은 409 GPA_SER_NOT_GPA"
-          },
-          "noteUrl": {
-            "type": "string",
-            "nullable": true,
-            "maxLength": 500,
-            "description": "선택 기록지 HTTP(S) URL — 원문 500자 이내. 생략/null/공백은 비움"
-          }
-        },
-        "required": [
-          "cycleId",
-          "studentId",
-          "svcKey",
-          "onDate"
-        ]
-      },
-      "GpaUseStateDto": {
-        "type": "object",
-        "properties": {
-          "state": {
-            "type": "string",
-            "enum": [
-              "wait",
-              "ok"
-            ],
-            "description": "ok = 승인 · wait = 되돌림"
-          }
-        },
-        "required": [
-          "state"
-        ]
-      },
-      "GpaAllocPutDto": {
-        "type": "object",
-        "properties": {
-          "cycleId": {
-            "type": "number"
-          },
-          "studentId": {
-            "type": "number"
-          },
-          "points": {
-            "type": "number",
-            "description": "이 사이클 배정량 — 0 이상 (0 은 배정 회수)"
-          }
-        },
-        "required": [
-          "cycleId",
-          "studentId",
-          "points"
-        ]
-      },
-      "GpaExpiredRowDto": {
-        "type": "object",
-        "properties": {
-          "studentId": {
-            "type": "number"
-          },
-          "name": {
-            "type": "string"
-          },
-          "remain": {
-            "type": "number",
-            "description": "소멸한 잔여 (배정 − 승인 사용) — 음수면 초과였다"
-          }
-        },
-        "required": [
-          "studentId",
-          "name",
-          "remain"
-        ]
-      },
-      "GpaCycleCloseResultDto": {
-        "type": "object",
-        "properties": {
-          "cycle": {
-            "description": "닫힌 사이클 (도장 찍힘)",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/GpaCycleDto"
-              }
-            ]
-          },
-          "opened": {
-            "nullable": true,
-            "description": "이번에 새로 연 다음 사이클 — 이미 있었으면 null",
-            "type": "object",
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/GpaCycleDto"
-              }
-            ]
-          },
-          "expiredPoints": {
-            "type": "number",
-            "description": "소멸한 포인트 합 (잔여가 양수인 학생만)"
-          },
-          "students": {
-            "description": "학생별 잔여 — 잔여 적은 순",
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GpaExpiredRowDto"
-            }
-          }
-        },
-        "required": [
-          "cycle",
-          "expiredPoints",
-          "students"
         ]
       },
       "ExecStatDto": {
