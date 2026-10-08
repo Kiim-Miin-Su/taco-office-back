@@ -26,6 +26,7 @@
     "write:coverage": "ts-node -P tsconfig.json scripts/write-coverage.ts",
     "invoice:reprice": "ts-node -P tsconfig.json scripts/invoice-reprice.ts",
     "guardian:reconcile": "ts-node -P tsconfig.json scripts/guardian-contact-reconcile.ts",
+    "gpa:archive": "ts-node -P tsconfig.json scripts/gpa-archive.ts",
     "migration:deploy": "ts-node -P tsconfig.json scripts/deploy-check.ts --run",
     "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts",
     "golive:reset": "ts-node -P tsconfig.json scripts/golive-reset.ts"

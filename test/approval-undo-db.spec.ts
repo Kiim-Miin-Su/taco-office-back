@@ -62,6 +62,10 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
   const made = { tzg: [] as number[], kind: [] as string[], sub: [] as string[], gpasvc: [] as string[] };
 
   const q = <T0 = Record<string, unknown>>(sql: string, p: unknown[] = []) => ds.query(sql, p) as Promise<T0[]>;
+  const gpaQ = <T0 = Record<string, unknown>>(sql: string, p: unknown[] = []) => ds.transaction(async (m) => {
+    await m.query(`SET LOCAL taco.gpa_archive_restore = 'on'`);
+    return m.query(sql, p) as Promise<T0[]>;
+  });
   const logCount = async (entity: string, id: number, action: string) =>
     Number((await q<{ n: string }>(`SELECT count(*)::text n FROM log WHERE entity = $1 AND entity_id = $2 AND action = $3`, [entity, id, action]))[0].n);
   const notiCount = async () => Number((await q<{ n: string }>(`SELECT count(*)::text n FROM noti WHERE to_id = $1`, [T]))[0].n);
@@ -76,7 +80,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
   const cleanup = async () => {
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [STAFF]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [STAFF]);
-    await q(`DELETE FROM gpa_use WHERE student_id = $1`, [STU]);
+    await gpaQ(`DELETE FROM gpa_use WHERE student_id = $1`, [STU]);
     await q(`DELETE FROM req WHERE staff_id = ANY($1)`, [STAFF]);
     await q(`DELETE FROM chreq WHERE ser_id = ANY($1)`, [SERS]);
     await q(`DELETE FROM zlog WHERE zacc_id = ANY($1)`, [[Z1, Z2]]);
@@ -87,7 +91,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     await q(`DELETE FROM ser WHERE id = ANY($1)`, [SERS]);
     await q(`DELETE FROM issue WHERE id = $1`, [ISSUE]);
     await q(`DELETE FROM lib WHERE id = $1`, [LIB]);
-    await q(`DELETE FROM gpa_cycle WHERE id = $1`, [CYCLE]);
+    await gpaQ(`DELETE FROM gpa_cycle WHERE id = $1`, [CYCLE]);
     await q(`DELETE FROM payout WHERE staff_id = ANY($1)`, [STAFF]);
     await q(`DELETE FROM wage WHERE staff_id = ANY($1) OR approved_by = ANY($1)`, [STAFF]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
@@ -119,7 +123,10 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       }
     }
     const once = async (table: 'kind' | 'sub' | 'gpasvc', key: string, sql: string) => {
-      if ((await q(`SELECT key FROM ${table} WHERE key = $1`, [key])).length === 0) { await q(sql); made[table].push(key); }
+      if ((await q(`SELECT key FROM ${table} WHERE key = $1`, [key])).length === 0) {
+        if (table === 'gpasvc') await gpaQ(sql); else await q(sql);
+        made[table].push(key);
+      }
     };
     await once('kind', 'undo_test', `INSERT INTO kind(key,name,color,cap,grp) VALUES('undo_test','되돌림검증','#000000',4,'lesson')`);
     await once('kind', 'gpa', `INSERT INTO kind(key,name,color,cap,grp) VALUES('gpa','GPA','#7C3AED',4,'lesson')`);
@@ -163,7 +170,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       `INSERT INTO ser_occ (ser_id,on_date,teacher_id,span)
        VALUES ($1,$2::date,$3, tstzrange(($2 || ' 20:00+09')::timestamptz, ($2 || ' 20:40+09')::timestamptz, '[)'))`, [SER_GPA, ON, T],
     );
-    await q(`INSERT INTO gpa_cycle (id, no, from_date, to_date, closed) VALUES ($1, 97, '2026-10-25', '2026-11-21', false)`, [CYCLE]);
+    await gpaQ(`INSERT INTO gpa_cycle (id, no, from_date, to_date, closed) VALUES ($1, 97, '2026-10-25', '2026-11-21', false)`, [CYCLE]);
     await q(`INSERT INTO lib (id, code, title, sub_key, se_te) VALUES ($1,'UNDO-LIB','MAP Math Level 3','undo-sub','SE')`, [LIB]);
     await q(`INSERT INTO issue (id, lib_id, student_id, issued_on, state) VALUES ($1,$2,$3,'2026-09-01','ok')`, [ISSUE, LIB, STU]);
   });
@@ -174,7 +181,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     await q(`DELETE FROM zacc WHERE id = ANY($1)`, [[Z1, Z2]]);
     // 이 스위트가 넣은 코드표만 — 원래 있던 줄은 건드리지 않는다
     await q(`DELETE FROM tzg WHERE id = ANY($1)`, [made.tzg]);
-    await q(`DELETE FROM gpasvc WHERE key = ANY($1)`, [made.gpasvc]);
+    await gpaQ(`DELETE FROM gpasvc WHERE key = ANY($1)`, [made.gpasvc]);
     await q(`DELETE FROM sub WHERE key = ANY($1)`, [made.sub]);
     await q(`DELETE FROM kind WHERE key = ANY($1)`, [made.kind]);
     if (ds?.isInitialized) await ds.destroy();

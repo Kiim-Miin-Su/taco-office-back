@@ -45,6 +45,7 @@ d('BOC-13D GPA 과거 원장 projection', () => {
     await q.connect();
     await q.startTransaction();
     try {
+      await q.query(`SET LOCAL taco.gpa_archive_restore = 'on'`);
       const [staff] = await q.query(
         `INSERT INTO staff (name,email,login_id,password_hash,role)
          VALUES ('GPA 과거 담당자','boc13-gpa@test.invalid','boc13-gpa-admin','test-hash','admin') RETURNING id`,

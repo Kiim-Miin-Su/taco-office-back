@@ -5,7 +5,7 @@
  */
 
 /**
- * 컨설팅 회차 기록 · 종료 + GPA 사이클 마감 — C95 (테스트 시나리오 I-91 「회차 기록 — 날짜 3개 고르기」 · I-95 「컨설팅 종료」 · O-150 「4주마다 — GPA 사이클 마감」).
+ * 컨설팅 회차 기록 · 종료 + GPA 역사 조회 — C95와 BOC-13E.
  *
  * 증명하는 것 —
  *   ① 날짜 셋을 한 번에 잡으면 날짜마다 cons_sess(순번은 서버 · 「누가」는 담당 · 학생) · 담당의 할 일 · 시간표 회차가 선다 — 그날 담당의 컨설팅 회차가 이미 있으면
@@ -14,7 +14,7 @@
  *   ② 육하원칙은 보낸 칸만 · 다 적으면 그 회차의 할 일이 접힌다 · 앞으로 잡아 둔 날짜는 「한 회차」가 아니다(기록 ≠ 완료 · N-18).
  *   ③ 종료는 N-18 채택 「필수 항목 + 약정 회차 후 명시 종료」 — 필수 항목이 남으면 409 · 회차가 모자라면 409 · 앞으로 잡아 둔 회차가 있으면 409 ·
  *      되면 stage=done · 종료일 · 학생마다 학부모 안내 행 · cons_event closed · 담당 알림 · 그 뒤 회차·기록은 잠긴다.
- *   ④ GPA 사이클 마감은 끝난 사이클만 · 승인 대기가 남으면 409 · 도장(누가·언제) · 잔여는 소멸 포인트 · 두 번은 409.
+ *   ④ GPA 과거 원장은 읽히지만 마감·사용 writer는 route 404이고 DB 행은 바뀌지 않는다.
  *
  * ⚠ 이 파일은 **표를 비우지 않는다.** 스위트 전용 번호대로 만들고 스스로 치운다.
  */
@@ -30,7 +30,7 @@ import { DEV_URL } from './db';
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
 
-d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95 · O-150)', () => {
+d('컨설팅 회차 기록 · 종료 + GPA 역사 조회 (C95 · I-91 · I-95 · BOC-13E)', () => {
   let app: INestApplication;
   let ds: DataSource;
   let ceoToken = '';
@@ -46,6 +46,10 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
   const cycleIds: number[] = [];
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> => ds.query(sql, p) as Promise<T[]>;
+  const gpaQ = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> => ds.transaction(async (m) => {
+    await m.query(`SET LOCAL taco.gpa_archive_restore = 'on'`);
+    return m.query(sql, p) as Promise<T[]>;
+  });
   const kst = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
   const plus = (iso: string, n: number) => new Date(new Date(`${iso}T00:00:00Z`).getTime() + n * 86400e3).toISOString().slice(0, 10);
   const dow = (iso: string) => new Date(`${iso}T00:00:00Z`).getUTCDay();
@@ -143,9 +147,9 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
       await q(`DELETE FROM ser WHERE id = ANY($1)`, [ids]);
     }
     await q(`DELETE FROM pnoti WHERE student_id = ANY($1)`, [[STU1, STU2]]);
-    await q(`DELETE FROM gpa_use WHERE student_id = ANY($1)`, [[STU1, STU2]]);
-    await q(`DELETE FROM gpa_alloc WHERE student_id = ANY($1)`, [[STU1, STU2]]);
-    await q(`DELETE FROM gpa_cycle WHERE no >= 900 OR closed_by = ANY($1)`, [[CEO, OWNER]]);
+    await gpaQ(`DELETE FROM gpa_use WHERE student_id = ANY($1)`, [[STU1, STU2]]);
+    await gpaQ(`DELETE FROM gpa_alloc WHERE student_id = ANY($1)`, [[STU1, STU2]]);
+    await gpaQ(`DELETE FROM gpa_cycle WHERE no >= 900 OR closed_by = ANY($1)`, [[CEO, OWNER]]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU1, STU2]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[CEO, OWNER, TEACHER]]);
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, OWNER, TEACHER]]);
@@ -322,44 +326,23 @@ d('컨설팅 회차 기록 · 종료 + GPA 사이클 마감 (C95 · I-91 · I-95
     expect((await api('post', `/consulting/${consC}/sessions`).send({ dates: [plus(TODAY, 11)], startMin: 900, endMin: 960, staffId: 9999999 }).expect(404)).body.code).toBe('STAFF_NOT_FOUND');
   });
 
-  /* ── ④ O-150 ─────────────────────────────────────────────────────────────── */
-  it('GPA 사이클 마감은 끝난 사이클만 · 승인 대기가 남으면 409 · 도장과 소멸 포인트 · 두 번은 409 (O-150 · D-R29)', async () => {
-    const [ended] = await q<{ id: string }>(`INSERT INTO gpa_cycle (no, from_date, to_date) VALUES (900, $1::date, $2::date) RETURNING id`, [plus(TODAY, -80), plus(TODAY, -53)]);
-    const [open] = await q<{ id: string }>(`INSERT INTO gpa_cycle (no, from_date, to_date) VALUES (901, $1::date, $2::date) RETURNING id`, [plus(TODAY, 100), plus(TODAY, 127)]);
-    const endedId = Number(ended.id); const openId = Number(open.id);
-    cycleIds.push(endedId, openId);
-    await q(`INSERT INTO gpa_alloc (cycle_id, student_id, coord_id, points) VALUES ($1, $2, $3, 10), ($1, $4, $3, 2)`, [endedId, STU1, OWNER, STU2]);
-    await q(`INSERT INTO gpa_use (cycle_id, student_id, svc_key, points, on_date, coord_id, state)
-             VALUES ($1, $2, 'test', 4, $3::date, $4, 'ok'), ($1, $2, 'hw', 1, $5::date, $4, 'wait'), ($1, $6, 'test', 4, $3::date, $4, 'ok')`,
-      [endedId, STU1, plus(TODAY, -70), OWNER, plus(TODAY, -65), STU2]);
+  /* ── ④ BOC-13E ───────────────────────────────────────────────────────────── */
+  it('GPA 과거 원장은 읽히고 마감·사용 writer는 404이며 DB 행은 그대로다', async () => {
+    const [ended] = await gpaQ<{ id: string }>(`INSERT INTO gpa_cycle (no, from_date, to_date, closed, closed_by, closed_at) VALUES (900, $1::date, $2::date, true, $3, now()) RETURNING id`, [plus(TODAY, -80), plus(TODAY, -53), CEO]);
+    const endedId = Number(ended.id);
+    cycleIds.push(endedId);
+    await gpaQ(`INSERT INTO gpa_alloc (cycle_id, student_id, coord_id, points) VALUES ($1, $2, $3, 10), ($1, $4, $3, 2)`, [endedId, STU1, OWNER, STU2]);
+    await gpaQ(`INSERT INTO gpa_use (cycle_id, student_id, svc_key, points, on_date, coord_id, state, approved_by, approved_at)
+             VALUES ($1, $2, 'hw', 2, $3::date, $4, 'ok', $5, now())`, [endedId, STU1, plus(TODAY, -70), OWNER, CEO]);
+    const before = await q(`SELECT closed, closed_by, closed_at FROM gpa_cycle WHERE id = $1`, [endedId]);
 
-    await api('post', `/gpa/cycles/${endedId}/close`, teacherToken).expect(403);
-    expect((await api('post', `/gpa/cycles/9999999/close`).expect(404)).status).toBe(404);
-    // 끝나지 않은 사이클은 막는다 — 남은 날의 기록을 적을 자리가 없어진다
-    expect((await api('post', `/gpa/cycles/${openId}/close`).expect(409)).body.code).toBe('CYCLE_NOT_ENDED');
-    // 승인 대기가 남았다
-    const blocked = (await api('post', `/gpa/cycles/${endedId}/close`).expect(409)).body;
-    expect(blocked.code).toBe('CYCLE_HAS_WAIT');
-    expect(blocked.message).toContain('승인 대기 1건');
     const board = (await api('get', `/gpa?anchor=${plus(TODAY, -70)}`).expect(200)).body;
-    expect(board.cycle).toMatchObject({ id: endedId, closed: false, closedAt: null, closedByName: null, canClose: false });
-    expect(board.cycle.closeBlockedReason).toContain('승인 대기 1건');
-    const waitId = Number((await q<{ id: string }>(`SELECT id FROM gpa_use WHERE cycle_id = $1 AND state = 'wait'`, [endedId]))[0]!.id);
-    await api('patch', `/gpa/uses/${waitId}`).send({ state: 'ok' }).expect(200);
-    expect((await api('get', `/gpa?anchor=${plus(TODAY, -70)}`).expect(200)).body.cycle).toMatchObject({ canClose: true, closeBlockedReason: null });
-
-    const r = (await api('post', `/gpa/cycles/${endedId}/close`).expect(201)).body;
-    expect(r.cycle).toMatchObject({ id: endedId, closed: true, closedByName: '회차대표', canClose: false, closeBlockedReason: '이미 마감된 사이클입니다' });
-    expect(r.cycle.closedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-    expect(r.opened).toBeNull(); // 뒤에 사이클이 이미 있다
-    // 잔여 = 배정 − 승인 사용 — 학생1 10 − 5 = 5 · 학생2 2 − 4 = −2(초과 · 소멸 아님)
-    expect(r.students).toEqual([{ studentId: STU2, name: '회차학생2', remain: -2 }, { studentId: STU1, name: '회차학생1', remain: 5 }]);
-    expect(r.expiredPoints).toBe(5);
-    const [row] = await q<{ closed: boolean; closed_by: string }>(`SELECT closed, closed_by FROM gpa_cycle WHERE id = $1`, [endedId]);
-    expect(row).toEqual({ closed: true, closed_by: String(CEO) });
-    expect(await count(`SELECT count(*)::int AS n FROM log WHERE actor_id = $1 AND entity = 'GPA_CYCLE' AND action = 'close'`, [CEO])).toBe(1);
-    expect((await api('post', `/gpa/cycles/${endedId}/close`).expect(409)).body.code).toBe('CYCLE_CLOSED');
-    // 닫힌 사이클은 기록도 잠긴다 (C34 그대로)
-    expect((await api('post', '/gpa/uses').send({ cycleId: endedId, studentId: STU1, svcKey: 'hw', onDate: plus(TODAY, -70) }).expect(409)).body.code).toBe('CYCLE_CLOSED');
+    expect(board.cycle).toMatchObject({ id: endedId, closed: true, canClose: false });
+    expect(board.cycle.closeBlockedReason).toContain('과거 원장만 조회');
+    expect(board.lessons).toEqual([]);
+    await api('post', `/gpa/cycles/${endedId}/close`).expect(404);
+    await api('post', '/gpa/uses').send({ cycleId: endedId, studentId: STU1, svcKey: 'hw', onDate: plus(TODAY, -70) }).expect(404);
+    await api('patch', '/gpa/uses/1').send({ state: 'ok' }).expect(404);
+    expect(await q(`SELECT closed, closed_by, closed_at FROM gpa_cycle WHERE id = $1`, [endedId])).toEqual(before);
   });
 });

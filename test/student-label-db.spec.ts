@@ -46,6 +46,8 @@ d('N-137 동명이인 표기 — 학년 · 학교 · 번호 꼬리', () => {
     q = ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
+    // BOC-13E: 역사 projection fixture만 archive guard를 명시적으로 통과한다.
+    await q.query(`SET LOCAL taco.gpa_archive_restore = 'on'`);
   });
   afterEach(async () => {
     if (q?.isTransactionActive) await q.rollbackTransaction();

@@ -114,6 +114,8 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
   const q = ds.createQueryRunner();
   await q.connect();
   await q.startTransaction();
+  // BOC-13E: 개발/시연 fixture만 역사 원장 trigger를 통과한다. 운영 앱 writer는 이 키를 설정하지 않는다.
+  await q.query(`SET LOCAL taco.gpa_archive_restore = 'on'`);
   const done: SeedResult[] = [];
   const add = async (t: string, rows: Record<string, unknown>[]) => {
     done.push({ table: t, rows: await insert(q, t, rows) });

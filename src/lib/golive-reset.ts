@@ -285,6 +285,9 @@ export async function applyGoLive(q: Queryable, keepEmail: string): Promise<GoLi
   if (plan.blockers.length > 0) throw new Error(`운영 전환이 멈춥니다 — ${plan.blockers.join(' · ')}`);
   const ceo = plan.keptCeo.id;
 
+  // BOC-13E: 대표가 DB명·계정을 확인한 최상위 reset transaction만 시험 GPA 원장을 비울 수 있다.
+  await q.query(`SET LOCAL taco.gpa_archive_restore = 'on'`);
+
   // ① 남는 줄 정리 — 지우기 **전에** 한다. CASCADE 가 남는 표로 번지지 않게 가리키는 값을 먼저 끊는다
   for (const f of plan.fixes) {
     const col = quoteIdent(f.column);
