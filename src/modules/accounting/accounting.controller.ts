@@ -28,7 +28,8 @@ import {
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
   WageHistoryDto, WageHistoryQueryDto, WageRowDto, WageWriteDto, MyExpenseListDto,
   PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, AcctPrivacyDto, AcctPrivacyWriteDto,
-  StudentCumulativeDto,
+  StudentCumulativeDto, PaymentEvidenceDto, PaymentEvidenceLedgerDto, PaymentEvidenceQueryDto,
+  PaymentEvidenceIssueDto, PaymentEvidenceCancelDto, PaymentEvidenceBatchIssueDto, PaymentEvidenceBatchResultDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
@@ -83,6 +84,69 @@ export class AccountingController {
   async studentCumulative(@CurrentUser() user: RequestUser): Promise<StudentCumulativeDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.studentCumulative(canSee);
+  }
+
+  @Get('payment-evidence')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '입금 증빙 원장 — 미발행·발행·월 마감 경고 (TBO-55 BO-11AD-01)',
+    description: '관리자 수정사항 p100의 PAY별 증빙 상태다. 외부 국세청/PG 발급을 수행하거나 번호를 만들지 않고, '
+      + '관리자가 외부 발행 완료를 확인한 사실과 당시 출력 snapshot을 기록한다. 이 권고안은 service/migration/기능 문서와 함께 바꿔야 한다.',
+  })
+  @ApiOkResponse({ type: PaymentEvidenceLedgerDto })
+  paymentEvidenceLedger(
+    @CurrentUser() user: RequestUser, @Query() query: PaymentEvidenceQueryDto,
+  ): Promise<PaymentEvidenceLedgerDto> {
+    return this.svc.paymentEvidenceLedger(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), query.month);
+  }
+
+  @Get('payment-evidence/:payId')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '입금 증빙 출력용 상세 — 보존 snapshot과 current 상태' })
+  @ApiOkResponse({ type: PaymentEvidenceDto })
+  paymentEvidence(
+    @CurrentUser() user: RequestUser, @Param('payId', ParseIntPipe) payId: number,
+  ): Promise<PaymentEvidenceDto> {
+    return this.svc.paymentEvidenceDetail(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), payId);
+  }
+
+  @Post('payment-evidence/issue-batch')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '한 달 미발행 증빙 일괄 발행 확인 — actual actor·snapshot·event 원자 저장' })
+  @ApiCreatedResponse({ type: PaymentEvidenceBatchResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_CLOSED | REQUEST_KEY_REUSED | PAYMENT_EVIDENCE_REPLAY_STALE' })
+  issuePaymentEvidenceBatch(
+    @CurrentUser() user: RequestUser, @Body() dto: PaymentEvidenceBatchIssueDto,
+  ): Promise<PaymentEvidenceBatchResultDto> {
+    return this.svc.issuePaymentEvidenceBatch(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto,
+    );
+  }
+
+  @Post('payment-evidence/:payId/issue')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '입금 한 건 증빙 발행 확인 — expectedVersion·requestKey' })
+  @ApiCreatedResponse({ type: PaymentEvidenceDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_CLOSED | PAYMENT_EVIDENCE_STALE | PAYMENT_EVIDENCE_ALREADY_ISSUED | PAYMENT_EVIDENCE_REPLAY_STALE' })
+  issuePaymentEvidence(
+    @CurrentUser() user: RequestUser, @Param('payId', ParseIntPipe) payId: number, @Body() dto: PaymentEvidenceIssueDto,
+  ): Promise<PaymentEvidenceDto> {
+    return this.svc.issuePaymentEvidence(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), payId, dto,
+    );
+  }
+
+  @Post('payment-evidence/:payId/cancel')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '입금 증빙 발행 취소 — snapshot/event 보존·expectedVersion·requestKey' })
+  @ApiCreatedResponse({ type: PaymentEvidenceDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_CLOSED | PAYMENT_EVIDENCE_STALE | PAYMENT_EVIDENCE_NOT_ISSUED | PAYMENT_EVIDENCE_REPLAY_STALE' })
+  cancelPaymentEvidence(
+    @CurrentUser() user: RequestUser, @Param('payId', ParseIntPipe) payId: number, @Body() dto: PaymentEvidenceCancelDto,
+  ): Promise<PaymentEvidenceDto> {
+    return this.svc.cancelPaymentEvidence(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), payId, dto,
+    );
   }
 
 

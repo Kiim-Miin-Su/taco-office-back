@@ -380,6 +380,75 @@ export class PaymentDto {
 }
 
 /**
+ * BO-11AD-01 권고안: 실제 국세청/PG 발급 API가 정해지기 전에는 PAY별 외부 발행 사실과
+ * 출력 snapshot만 기록한다. `printRef`는 내부 재조회 경로이며 외부 증빙 번호를 꾸미지 않는다.
+ */
+export class PaymentEvidenceDto {
+  @ApiProperty() payId!: number;
+  @ApiProperty({ type: Number, nullable: true }) evidenceId!: number | null;
+  @ApiProperty({ ...DATE_SCHEMA }) paidOn!: string;
+  @ApiProperty({ type: Number, nullable: true }) studentId!: number | null;
+  @ApiProperty({ type: String, nullable: true }) studentName!: string | null;
+  @ApiProperty({ description: '입금 내용 — 청구 제목 또는 수기 입금 사유' }) content!: string;
+  @ApiProperty() amount!: number;
+  @ApiProperty({ enum: ['unissued', 'issued'] }) status!: 'unissued' | 'issued';
+  @ApiProperty({ description: '미발행은 0, 첫 발행부터 1씩 증가' }) version!: number;
+  @ApiProperty({ type: String, nullable: true }) issuedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) issuedBy!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledBy!: string | null;
+  @ApiProperty({ type: String, nullable: true }) cancelReason!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '발행 snapshot 내부 재조회 경로' }) printRef!: string | null;
+}
+
+export class PaymentEvidenceLedgerDto {
+  @ApiProperty({ example: '2026-10' }) month!: string;
+  @ApiProperty() unissuedCount!: number;
+  @ApiProperty() issuedCount!: number;
+  @ApiProperty({ description: '월 마감을 막는 미발행 PAY 수' }) monthCloseBlockedCount!: number;
+  @ApiProperty({ type: [PaymentEvidenceDto] }) items!: PaymentEvidenceDto[];
+}
+
+export class PaymentEvidenceQueryDto {
+  @ApiProperty({ example: '2026-10' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month!: string;
+}
+
+export class PaymentEvidenceIssueDto {
+  @ApiProperty({ minimum: 0 })
+  @IsInt() @Min(0)
+  expectedVersion!: number;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class PaymentEvidenceCancelDto extends PaymentEvidenceIssueDto {
+  @ApiProperty({ minLength: 2, maxLength: 200 })
+  @IsString() @MinLength(2) @MaxLength(200)
+  reason!: string;
+}
+
+export class PaymentEvidenceBatchIssueDto {
+  @ApiProperty({ example: '2026-10' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class PaymentEvidenceBatchResultDto {
+  @ApiProperty({ example: '2026-10' }) month!: string;
+  @ApiProperty() issuedCount!: number;
+  @ApiProperty() skippedCount!: number;
+  @ApiProperty({ type: [PaymentEvidenceDto] }) items!: PaymentEvidenceDto[];
+}
+
+/**
  * 입금 한 줄 등록 — **분납은 줄을 늘려서 표현한다** (A-D2 · PLANNING §4-17).
  * 누계·상태 전이·초과 판정은 전부 서버가 한다. 화면은 잔여를 placeholder 로만 보여 준다 (ACCOUNTING §0).
  */

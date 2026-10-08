@@ -54,7 +54,8 @@ import type {
   RateBookDto, RateRowDto, RateWriteDto, StudentRateRowDto, StudentRateWriteDto, ExpenseCreateDto,
   WageHistoryDto, WageRowDto, WageWriteDto, MyExpenseListDto,
   PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, PayoutBonusSlotDto, AcctPrivacyDto, AcctPrivacyWriteDto,
-  StudentCumulativeDto,
+  StudentCumulativeDto, PaymentEvidenceDto, PaymentEvidenceLedgerDto, PaymentEvidenceIssueDto,
+  PaymentEvidenceCancelDto, PaymentEvidenceBatchIssueDto, PaymentEvidenceBatchResultDto,
 } from './accounting.dto';
 import { fileUrlOf, storedFileRef } from '../files/files.service';
 import { ConsultingService } from '../consulting/consulting.service';
@@ -699,6 +700,279 @@ export class AccountingService {
         };
       }),
     };
+  }
+
+  /* ── BO-11AD-01 입금 증빙 원장 ────────────────────────────────────────
+   * 관리자 수정사항 p100의 「끊음으로」는 외부 발급기관 호출 명세가 아니라 발행 상태 칸이다.
+   * 따라서 PAY 원거래를 snapshot으로 보존하고 실제 외부 발행 완료를 확인하는 내부 원장으로 구현한다.
+   * provider 계약이 생기면 adapter/외부 참조를 추가하되 이 event 이력은 과거 감사 자료로 남긴다.
+   */
+  private async paymentEvidenceRow(
+    q: { query: EntityManager['query'] }, payId: number,
+  ): Promise<PaymentEvidenceDto> {
+    const [row] = (await q.query(
+      `SELECT p.id AS pay_id, to_char(p.paid_on,'YYYY-MM-DD') AS paid_on,
+              COALESCE(p.student_id,i.student_id) AS student_id, s.name AS student_name,
+              COALESCE(NULLIF(btrim(i.title),''),NULLIF(btrim(p.reason),''),'입금') AS content,
+              p.amount, d.id AS evidence_id, d.state, d.row_version, d.snapshot, d.issued_at, ib.name AS issued_by,
+              d.canceled_at, cb.name AS canceled_by, d.cancel_reason
+         FROM pay p LEFT JOIN inv i ON i.id=p.inv_id
+         LEFT JOIN stu s ON s.id=COALESCE(p.student_id,i.student_id)
+         LEFT JOIN payment_evidence d ON d.pay_id=p.id
+         LEFT JOIN staff ib ON ib.id=d.issued_by LEFT JOIN staff cb ON cb.id=d.canceled_by
+        WHERE p.id=$1 AND p.paid_on IS NOT NULL AND p.amount>0`,
+      [payId],
+    )) as Array<Record<string, unknown>>;
+    if (!row) throw new NotFoundException({ code: 'PAYMENT_NOT_FOUND', message: '증빙 대상 입금을 찾을 수 없습니다' });
+    const snapshot = row.evidence_id ? row.snapshot as Record<string, unknown> : null;
+    return {
+      payId: Number(row.pay_id), evidenceId: row.evidence_id ? Number(row.evidence_id) : null,
+      paidOn: String(snapshot?.paidOn ?? row.paid_on),
+      studentId: snapshot?.studentId ? Number(snapshot.studentId) : row.student_id ? Number(row.student_id) : null,
+      studentName: (snapshot?.studentName as string | null | undefined) ?? (row.student_name as string | null) ?? null,
+      content: String(snapshot?.content ?? row.content), amount: Number(snapshot?.amount ?? row.amount),
+      status: row.state === 'issued' ? 'issued' : 'unissued', version: row.row_version ? Number(row.row_version) : 0,
+      issuedAt: row.issued_at ? new Date(row.issued_at as string).toISOString() : null,
+      issuedBy: (row.issued_by as string | null) ?? null,
+      canceledAt: row.canceled_at ? new Date(row.canceled_at as string).toISOString() : null,
+      canceledBy: (row.canceled_by as string | null) ?? null,
+      cancelReason: (row.cancel_reason as string | null) ?? null,
+      printRef: row.evidence_id ? `/accounting/payment-evidence/${Number(row.pay_id)}` : null,
+    };
+  }
+
+  async paymentEvidenceLedger(canSeeAmounts: boolean, month: string): Promise<PaymentEvidenceLedgerDto> {
+    if (!canSeeAmounts) throw new ForbiddenException({ code: 'FORBIDDEN', message: '회계 권한이 없습니다' });
+    const ids = (await this.inv.query(
+      `SELECT p.id FROM pay p WHERE p.paid_on >= ($1 || '-01')::date
+        AND p.paid_on < ($1 || '-01')::date + interval '1 month' AND p.amount>0 ORDER BY p.paid_on,p.id`,
+      [month],
+    )) as Array<{ id: string }>;
+    const items: PaymentEvidenceDto[] = [];
+    for (const row of ids) items.push(await this.paymentEvidenceRow(this.inv.manager, Number(row.id)));
+    const issuedCount = items.filter((item) => item.status === 'issued').length;
+    const unissuedCount = items.length - issuedCount;
+    const [blocked] = (await this.inv.query(
+      `SELECT count(*)::int AS count FROM pay p CROSS JOIN payment_evidence_policy policy
+        LEFT JOIN payment_evidence d ON d.pay_id=p.id AND d.state='issued'
+       WHERE policy.id=1 AND p.paid_on >= ($1 || '-01')::date
+         AND p.paid_on < ($1 || '-01')::date + interval '1 month'
+         AND p.entered_at >= policy.effective_at AND p.amount>0 AND d.id IS NULL`, [month],
+    )) as Array<{ count: number }>;
+    return { month, unissuedCount, issuedCount, monthCloseBlockedCount: Number(blocked.count), items };
+  }
+
+  async paymentEvidenceDetail(canSeeAmounts: boolean, payId: number): Promise<PaymentEvidenceDto> {
+    if (!canSeeAmounts) throw new ForbiddenException({ code: 'FORBIDDEN', message: '회계 권한이 없습니다' });
+    return this.paymentEvidenceRow(this.inv.manager, payId);
+  }
+
+  private async claimEvidenceRequest(
+    m: EntityManager, requestKey: string, actorId: number, action: 'issued' | 'canceled' | 'batch_issued',
+    payId: number | null, month: string | null,
+  ): Promise<{ resultCount: number; skippedCount: number } | null> {
+    await m.query(`SELECT pg_advisory_xact_lock(hashtext('payment-evidence'),hashtext($1))`, [requestKey]);
+    const [prior] = (await m.query(
+      `SELECT actor_id,action,pay_id,year_month,result_count,skipped_count
+         FROM payment_evidence_request WHERE request_key=$1`, [requestKey],
+    )) as Array<{
+      actor_id: string; action: string; pay_id: string | null; year_month: string | null;
+      result_count: number; skipped_count: number;
+    }>;
+    if (prior) {
+      if (Number(prior.actor_id) !== actorId || prior.action !== action
+          || (prior.pay_id === null ? null : Number(prior.pay_id)) !== payId || prior.year_month !== month) {
+        throw new ConflictException({ code: 'REQUEST_KEY_REUSED', message: '같은 요청 키를 다른 증빙 작업에 사용할 수 없습니다' });
+      }
+      return { resultCount: Number(prior.result_count), skippedCount: Number(prior.skipped_count) };
+    }
+    await m.query(
+      `INSERT INTO payment_evidence_request(request_key,actor_id,action,pay_id,year_month) VALUES ($1,$2,$3,$4,$5)`,
+      [requestKey, actorId, action, payId, month],
+    );
+    return null;
+  }
+
+  private async evidenceReplay(
+    m: EntityManager, requestKey: string, payId: number,
+  ): Promise<PaymentEvidenceDto> {
+    const [receipt] = (await m.query(
+      `SELECT e.result_version,e.to_state,d.row_version,d.state
+         FROM payment_evidence_event e JOIN payment_evidence d ON d.id=e.payment_evidence_id
+        WHERE e.request_key=$1 AND d.pay_id=$2`, [requestKey, payId],
+    )) as Array<{ result_version: number; to_state: string; row_version: number; state: string }>;
+    if (!receipt || Number(receipt.result_version) !== Number(receipt.row_version) || receipt.to_state !== receipt.state) {
+      throw new ConflictException({
+        code: 'PAYMENT_EVIDENCE_REPLAY_STALE',
+        message: '이 요청 뒤에 증빙 상태가 다시 바뀌었습니다 — 현재 원장을 다시 확인해 주세요',
+      });
+    }
+    return this.paymentEvidenceRow(m, payId);
+  }
+
+  private async lockedEvidenceSource(m: EntityManager, payId: number): Promise<{
+    payId: number; paidOn: string; month: string; studentId: number | null; studentName: string | null;
+    content: string; amount: number; method: string | null;
+  }> {
+    const [seed] = (await m.query(`SELECT to_char(paid_on,'YYYY-MM-DD') AS paid_on FROM pay WHERE id=$1`, [payId])) as Array<{ paid_on: string | null }>;
+    if (!seed?.paid_on) throw new NotFoundException({ code: 'PAYMENT_NOT_FOUND', message: '증빙 대상 입금을 찾을 수 없습니다' });
+    await assertMonthOpenForWrite(m, seed.paid_on);
+    const [row] = (await m.query(
+      `SELECT p.id AS pay_id,to_char(p.paid_on,'YYYY-MM-DD') AS paid_on,to_char(p.paid_on,'YYYY-MM') AS month,
+              COALESCE(p.student_id,i.student_id) AS student_id,s.name AS student_name,
+              COALESCE(NULLIF(btrim(i.title),''),NULLIF(btrim(p.reason),''),'입금') AS content,p.amount,p.method
+         FROM pay p LEFT JOIN inv i ON i.id=p.inv_id LEFT JOIN stu s ON s.id=COALESCE(p.student_id,i.student_id)
+        WHERE p.id=$1 AND p.paid_on IS NOT NULL AND p.amount>0 FOR UPDATE OF p`, [payId],
+    )) as Array<Record<string, unknown>>;
+    if (!row) throw new NotFoundException({ code: 'PAYMENT_NOT_FOUND', message: '증빙 대상 입금을 찾을 수 없습니다' });
+    return {
+      payId: Number(row.pay_id), paidOn: String(row.paid_on), month: String(row.month),
+      studentId: row.student_id ? Number(row.student_id) : null, studentName: (row.student_name as string | null) ?? null,
+      content: String(row.content), amount: Number(row.amount), method: (row.method as string | null) ?? null,
+    };
+  }
+
+  private evidenceVersionError(expectedVersion: number, actualVersion: number): never {
+    throw new ConflictException({
+      code: 'PAYMENT_EVIDENCE_STALE', message: '증빙 상태가 바뀌었습니다 — 다시 불러와 주세요',
+      details: { expectedVersion, actualVersion },
+    });
+  }
+
+  private async issueEvidenceInTransaction(
+    m: EntityManager, actorId: number, payId: number, requestKey: string, expectedVersion?: number,
+  ): Promise<PaymentEvidenceDto> {
+    const source = await this.lockedEvidenceSource(m, payId);
+    const [current] = (await m.query(`SELECT id,state,row_version FROM payment_evidence WHERE pay_id=$1 FOR UPDATE`, [payId])) as Array<{
+      id: string; state: 'issued' | 'canceled'; row_version: number;
+    }>;
+    const actualVersion = current ? Number(current.row_version) : 0;
+    if (expectedVersion !== undefined && expectedVersion !== actualVersion) this.evidenceVersionError(expectedVersion, actualVersion);
+    if (current?.state === 'issued') {
+      throw new ConflictException({ code: 'PAYMENT_EVIDENCE_ALREADY_ISSUED', message: '이미 발행 처리된 입금입니다' });
+    }
+    const snapshot = { ...source };
+    const nextVersion = actualVersion + 1;
+    let evidenceId: number;
+    if (!current) {
+      const [created] = (await m.query(
+        `INSERT INTO payment_evidence(pay_id,state,row_version,snapshot,issued_by,issued_at)
+         VALUES ($1,'issued',1,$2::jsonb,$3,now()) RETURNING id`, [payId, JSON.stringify(snapshot), actorId],
+      )) as Array<{ id: string }>;
+      evidenceId = Number(created.id);
+    } else {
+      evidenceId = Number(current.id);
+      await m.query(
+        `UPDATE payment_evidence SET state='issued',row_version=$2,snapshot=$3::jsonb,issued_by=$4,issued_at=now(),
+          canceled_by=NULL,canceled_at=NULL,cancel_reason=NULL WHERE id=$1`,
+        [evidenceId, nextVersion, JSON.stringify(snapshot), actorId],
+      );
+    }
+    await m.query(
+      `INSERT INTO payment_evidence_event(payment_evidence_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot)
+       VALUES ($1,'issued',$2,'issued',$3,$4,$5,$6::jsonb)`,
+      [evidenceId, current?.state ?? null, actorId, requestKey, nextVersion, JSON.stringify(snapshot)],
+    );
+    await audit(m, 'payment_evidence.issue', {
+      actorId, entityId: evidenceId, after: { payId, month: source.month, version: nextVersion },
+    });
+    return this.paymentEvidenceRow(m, payId);
+  }
+
+  async issuePaymentEvidence(
+    actorId: number, canWrite: boolean, payId: number, dto: PaymentEvidenceIssueDto,
+  ): Promise<PaymentEvidenceDto> {
+    if (!canWrite) throw new ForbiddenException({ code: 'FORBIDDEN', message: '증빙 발행 권한이 없습니다' });
+    return this.inv.manager.transaction(async (m) => {
+      const replay = await this.claimEvidenceRequest(m, dto.requestKey, actorId, 'issued', payId, null);
+      if (replay) return this.evidenceReplay(m, dto.requestKey, payId);
+      const result = await this.issueEvidenceInTransaction(m, actorId, payId, dto.requestKey, dto.expectedVersion);
+      await m.query(`UPDATE payment_evidence_request SET result_count=1 WHERE request_key=$1`, [dto.requestKey]);
+      return result;
+    });
+  }
+
+  async cancelPaymentEvidence(
+    actorId: number, canWrite: boolean, payId: number, dto: PaymentEvidenceCancelDto,
+  ): Promise<PaymentEvidenceDto> {
+    if (!canWrite) throw new ForbiddenException({ code: 'FORBIDDEN', message: '증빙 취소 권한이 없습니다' });
+    return this.inv.manager.transaction(async (m) => {
+      const replay = await this.claimEvidenceRequest(m, dto.requestKey, actorId, 'canceled', payId, null);
+      if (replay) return this.evidenceReplay(m, dto.requestKey, payId);
+      await this.lockedEvidenceSource(m, payId);
+      const [current] = (await m.query(
+        `SELECT id,state,row_version,snapshot FROM payment_evidence WHERE pay_id=$1 FOR UPDATE`, [payId],
+      )) as Array<{ id: string; state: string; row_version: number; snapshot: Record<string, unknown> }>;
+      if (!current || current.state !== 'issued') {
+        throw new ConflictException({ code: 'PAYMENT_EVIDENCE_NOT_ISSUED', message: '발행된 증빙만 취소할 수 있습니다' });
+      }
+      const actualVersion = Number(current.row_version);
+      if (dto.expectedVersion !== actualVersion) this.evidenceVersionError(dto.expectedVersion, actualVersion);
+      const reason = dto.reason.trim();
+      const nextVersion = actualVersion + 1;
+      await m.query(
+        `UPDATE payment_evidence SET state='canceled',row_version=$2,canceled_by=$3,canceled_at=now(),cancel_reason=$4 WHERE id=$1`,
+        [Number(current.id), nextVersion, actorId, reason],
+      );
+      await m.query(
+        `INSERT INTO payment_evidence_event(payment_evidence_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot,reason)
+         VALUES ($1,'canceled','issued','canceled',$2,$3,$4,$5::jsonb,$6)`,
+        [Number(current.id), actorId, dto.requestKey, nextVersion, JSON.stringify(current.snapshot), reason],
+      );
+      await audit(m, 'payment_evidence.cancel', {
+        actorId, entityId: Number(current.id), before: { payId, version: actualVersion },
+        after: { payId, version: nextVersion, reason },
+      });
+      await m.query(`UPDATE payment_evidence_request SET result_count=1 WHERE request_key=$1`, [dto.requestKey]);
+      return this.paymentEvidenceRow(m, payId);
+    });
+  }
+
+  async issuePaymentEvidenceBatch(
+    actorId: number, canWrite: boolean, dto: PaymentEvidenceBatchIssueDto,
+  ): Promise<PaymentEvidenceBatchResultDto> {
+    if (!canWrite) throw new ForbiddenException({ code: 'FORBIDDEN', message: '증빙 발행 권한이 없습니다' });
+    return this.inv.manager.transaction(async (m) => {
+      const replay = await this.claimEvidenceRequest(m, dto.requestKey, actorId, 'batch_issued', null, dto.month);
+      if (replay) {
+        const rows = (await m.query(
+          `SELECT d.pay_id,e.result_version,e.to_state,d.row_version,d.state
+             FROM payment_evidence_event e JOIN payment_evidence d ON d.id=e.payment_evidence_id
+            WHERE e.request_key=$1 ORDER BY d.pay_id`, [dto.requestKey],
+        )) as Array<{ pay_id: string; result_version: number; to_state: string; row_version: number; state: string }>;
+        if (rows.length !== replay.resultCount || rows.some((row) =>
+          Number(row.result_version) !== Number(row.row_version) || row.to_state !== row.state)) {
+          throw new ConflictException({
+            code: 'PAYMENT_EVIDENCE_REPLAY_STALE',
+            message: '일괄 요청 뒤에 일부 증빙 상태가 다시 바뀌었습니다 — 현재 원장을 다시 확인해 주세요',
+          });
+        }
+        const items: PaymentEvidenceDto[] = [];
+        for (const row of rows) items.push(await this.paymentEvidenceRow(m, Number(row.pay_id)));
+        return { month: dto.month, issuedCount: replay.resultCount, skippedCount: replay.skippedCount, items };
+      }
+      await assertMonthOpenForWrite(m, dto.month);
+      const payRows = (await m.query(
+        `SELECT p.id FROM pay p WHERE p.paid_on >= ($1 || '-01')::date
+          AND p.paid_on < ($1 || '-01')::date + interval '1 month' AND p.amount>0 ORDER BY p.id FOR UPDATE`,
+        [dto.month],
+      )) as Array<{ id: string }>;
+      const items: PaymentEvidenceDto[] = [];
+      let skippedCount = 0;
+      for (const row of payRows) {
+        const [current] = (await m.query(`SELECT state FROM payment_evidence WHERE pay_id=$1`, [Number(row.id)])) as Array<{ state: string }>;
+        if (current?.state === 'issued') {
+          skippedCount += 1;
+          continue;
+        }
+        items.push(await this.issueEvidenceInTransaction(m, actorId, Number(row.id), dto.requestKey));
+      }
+      await m.query(
+        `UPDATE payment_evidence_request SET result_count=$2,skipped_count=$3 WHERE request_key=$1`,
+        [dto.requestKey, items.length, skippedCount],
+      );
+      return { month: dto.month, issuedCount: items.length, skippedCount, items };
+    });
   }
 
   /**
@@ -2230,6 +2504,21 @@ export class AccountingService {
       await lockMonthExclusive(m, dto.month);
       if (await this.currentClose(m, dto.month)) {
         throw new ConflictException({ code: 'MONTH_ALREADY_CLOSED', message: '이미 마감된 달입니다' });
+      }
+      // 관리자 수정사항 p95·100·106·109·114: 입금 PAY마다 발행 상태가 있어야 월 마감을 끝낼 수 있다.
+      // 외부 발급기관 연동이 생겨도 이 gate는 내부 증빙 원장의 current `issued` 상태만 본다.
+      const [evidence] = (await m.query(
+        `SELECT count(*)::int AS count FROM pay p CROSS JOIN payment_evidence_policy policy
+          LEFT JOIN payment_evidence d ON d.pay_id=p.id AND d.state='issued'
+         WHERE policy.id=1 AND p.paid_on >= ($1 || '-01')::date AND p.paid_on < ($1 || '-01')::date + interval '1 month'
+           AND p.entered_at >= policy.effective_at AND p.amount>0 AND d.id IS NULL`,
+        [dto.month],
+      )) as Array<{ count: number }>;
+      if (Number(evidence.count) > 0) {
+        throw new ConflictException({
+          code: 'PAYMENT_EVIDENCE_UNISSUED', message: `증빙 미발행 ${Number(evidence.count)}건을 먼저 처리해 주세요`,
+          details: { month: dto.month, count: Number(evidence.count) },
+        });
       }
       const [row] = (await m.query(
         `INSERT INTO month_close (year_month, closed_by) VALUES ($1, $2) RETURNING id`,

@@ -33,6 +33,8 @@ export const AUDIT_WRITES = [
   { key: 'report.write', entity: 'REP', action: 'write', why: '다시 쓰면 결재 도장이 지워진다' },
   // 회계 — 돈
   { key: 'invoice.issue', entity: 'INV', action: 'issue', why: '청구서 발행(낱장 · 일괄 · 등록 확정)' },
+  { key: 'payment_evidence.issue', entity: 'PAY_EVIDENCE', action: 'issue', why: 'PAY 증빙 발행 확인 · 출력 snapshot' },
+  { key: 'payment_evidence.cancel', entity: 'PAY_EVIDENCE', action: 'cancel', why: '발행 취소 · 사유 · 재발행 전 상태' },
   { key: 'expense.review', entity: 'EXPENSE', action: 'review', why: '지출 승인 · 반려 · 확정 금액' },
   { key: 'carry.create', entity: 'CARRY', action: 'create', why: '이월 처리' },
   // 컨설팅 — 돈
