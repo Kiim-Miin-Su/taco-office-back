@@ -56,6 +56,7 @@ d('§64 할 일 완료·기한 HTTP/DB 정합성 (S2-b)', () => {
     todoIds.push(id);
   });
   afterEach(async () => {
+    await q(`DELETE FROM noti WHERE to_id=ANY($1::bigint[]) OR from_id=ANY($1::bigint[])`, [actors]);
     await q(`DELETE FROM log WHERE entity='TODO' AND entity_id=ANY($1::bigint[])`, [todoIds]);
     await q(`DELETE FROM todo WHERE id=ANY($1::bigint[])`, [todoIds]);
     todoIds.length = 0;
@@ -69,10 +70,12 @@ d('§64 할 일 완료·기한 HTTP/DB 정합성 (S2-b)', () => {
     const [before] = await row();
     await api('patch', `/drawer/todos/${id}`).send({ dueOn: '2026-09-28' }).expect(200, { ok: true });
     expect(await row()).toEqual([{ ...before, due_on: '2026-09-28' }]);
-    for (const path of ['/ops', '/drawer']) {
-      const res = await api('get', path).expect(200);
-      expect(res.body.todos.find((t: { id: number }) => t.id === id)).toMatchObject({ dueOn: '2026-09-28', done: false, toId: TEACHER });
-    }
+    const ops = await api('get', '/ops').expect(200);
+    expect(ops.body.todos.find((t: { id: number }) => t.id === id)).toMatchObject({ dueOn: '2026-09-28', done: false, toId: TEACHER });
+    expect((await api('get', '/drawer').expect(200)).body.todos.some((t: { id: number }) => t.id === id)).toBe(false);
+    const received = await api('get', '/drawer', TEACHER).expect(200);
+    expect(received.body.todos.find((t: { id: number }) => t.id === id))
+      .toMatchObject({ dueOn: '2026-09-28', done: false, toId: TEACHER });
     await api('patch', `/drawer/todos/${id}`).send({ dueOn: null }).expect(200);
     expect(await row()).toEqual([{ ...before, due_on: null }]);
     expect(await q(`SELECT actor_id, before, after FROM log WHERE entity='TODO' AND entity_id=$1 ORDER BY id`, [id])).toEqual([
@@ -81,14 +84,16 @@ d('§64 할 일 완료·기한 HTTP/DB 정합성 (S2-b)', () => {
     ]);
   });
 
-  it('done-only는 기존 발신자/수신자 권한과 기한을 보존하고 타인은404다', async () => {
+  it('done-only는 수신자만 멱등 완료하고 actor/target 감사와 발신자 알림을 한 번 남긴다', async () => {
+    await api('patch', `/drawer/todos/${id}`, TEACHER).send({ done: true }).expect(200);
     await api('patch', `/drawer/todos/${id}`, TEACHER).send({ done: true }).expect(200);
     await api('patch', `/drawer/todos/${id}`, OTHER).send({ done: false }).expect(404);
+    await api('patch', `/drawer/todos/${id}`).send({ done: false }).expect(404);
     expect((await row())[0]).toMatchObject({ done: true, due_on: '2026-09-23' });
-    await api('patch', `/drawer/todos/${id}`).send({ done: false }).expect(200);
-    // 생성한 강사가 다른 담당자에게 준 기존 행도 완료 가능하다.
-    await q(`UPDATE todo SET from_id=$2,to_id=$3 WHERE id=$1`, [id, TEACHER, OWNER]);
-    await api('patch', `/drawer/todos/${id}`, TEACHER).send({ done: true }).expect(200);
+    expect(await q(`SELECT actor_id, action, before, after FROM log WHERE entity='TODO' AND entity_id=$1`, [id]))
+      .toEqual([{ actor_id: String(TEACHER), action: 'complete', before: { done: false, fromId: CEO, toId: TEACHER }, after: { done: true, fromId: CEO, toId: TEACHER } }]);
+    expect(await q(`SELECT to_id,from_id,title,category FROM noti WHERE to_id=$1 AND from_id=$2`, [CEO, TEACHER]))
+      .toEqual([{ to_id: String(CEO), from_id: String(TEACHER), title: '할 일 완료', category: 'request' }]);
   });
 
   it.each(['2026-09-25', null])('강사의 기한 %s와 혼합 요청은403이며 done/날짜/LOG가 전부 불변이다', async (dueOn) => {
@@ -99,13 +104,14 @@ d('§64 할 일 완료·기한 HTTP/DB 정합성 (S2-b)', () => {
     expect(await q(`SELECT id FROM log WHERE entity='TODO' AND entity_id=$1`, [id])).toEqual([]);
   });
 
-  it('관리자는 혼합 요청을 한 기록으로 저장하고 동일 값 재전송은 추가 LOG를 남기지 않는다', async () => {
-    const body = { done: true, dueOn: '2026-09-29' };
+  it('관리자는 기한만 수정하고 동일 값 재전송은 추가 LOG를 남기지 않으며 수신자 아닌 done 혼합은 거절한다', async () => {
+    const body = { dueOn: '2026-09-29' };
     await api('patch', `/drawer/todos/${id}`).send(body).expect(200);
     await api('patch', `/drawer/todos/${id}`).send(body).expect(200);
-    expect((await row())[0]).toMatchObject({ done: true, due_on: body.dueOn });
+    await api('patch', `/drawer/todos/${id}`).send({ done: true, dueOn: '2026-09-30' }).expect(404);
+    expect((await row())[0]).toMatchObject({ done: false, due_on: body.dueOn });
     expect(await q(`SELECT before,after FROM log WHERE entity='TODO' AND entity_id=$1`, [id])).toEqual([
-      { before: { done: false, dueOn: '2026-09-23' }, after: body },
+      { before: { done: false, dueOn: '2026-09-23' }, after: { done: false, ...body } },
     ]);
   });
 
@@ -145,7 +151,7 @@ d('§64 할 일 완료·기한 HTTP/DB 정합성 (S2-b)', () => {
   it('기한 저장 뒤 LOG의 NOT NULL 위반이 나면 실제 TODO UPDATE도 rollback한다', async () => {
     const before = await row();
     // HTTP에서는 인증된 actor만 온다. 여기서는 LOG 저장 장애를 실제 DB 제약으로 주입한다.
-    await expect(app.get(DrawerService).patchTodo(id, { done: true, dueOn: null }, null as unknown as number, true))
+    await expect(app.get(DrawerService).patchTodo(id, { dueOn: null }, null as unknown as number, true))
       .rejects.toMatchObject({ driverError: { code: '23502' } });
     expect(await row()).toEqual(before);
     expect(await q(`SELECT id FROM log WHERE entity='TODO' AND entity_id=$1`, [id])).toEqual([]);

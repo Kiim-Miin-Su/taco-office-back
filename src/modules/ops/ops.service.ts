@@ -2309,12 +2309,16 @@ export class OpsService {
   /** 관리자 건의 답변 — 강사 수신 사실, 알림, 감사 줄이 한 트랜잭션에 남는다. */
   async replySuggestion(viewerId: number, id: number, dto: SuggestionReplyDto): Promise<SuggestionDto> {
     const reply = dto.reply.trim();
-    if (!reply) throw new ConflictException({ code: 'SUGGESTION_REPLY_REQUIRED', message: '답변을 적어 주세요' });
+    if (reply.length < 15) throw new BadRequestException({ code: 'SUGGESTION_REPLY_TOO_SHORT', message: '답변은 15자 이상 적어 주세요' });
     await this.lead.manager.transaction(async (em) => {
       const [cur] = (await em.query(
-        `SELECT id, staff_id, reply, reply_by, reply_at FROM suggestion WHERE id = $1 FOR UPDATE`, [id],
+        `SELECT id, staff_id, state, reply, reply_by, reply_at FROM suggestion WHERE id = $1 FOR UPDATE`, [id],
       )) as R[];
       if (!cur) throw new NotFoundException({ code: 'SUGGESTION_NOT_FOUND', message: '건의를 찾을 수 없습니다' });
+      // BOC-02 권고안: 먼저 잠근 한 요청만 답하고, 뒤의 동시/재시도는 최신 행을 다시 읽도록 409로 돌린다.
+      if (cur.state === 'done' || cur.reply != null) {
+        throw new ConflictException({ code: 'SUGGESTION_ALREADY_REPLIED', message: '이미 답변된 건의입니다. 최신 내용을 다시 확인해 주세요' });
+      }
       // TypeORM의 UPDATE ... RETURNING raw 값은 드라이버별로 `[rows, count]`일 수 있다.
       // DB 시계를 먼저 한 번 읽어 화면 사실과 감사 사실에 같은 시각을 쓴다.
       const [clock] = (await em.query(`SELECT now() AS reply_at`)) as R[];
@@ -2484,10 +2488,8 @@ export class OpsService {
         id: leadId(t.id), title: String(t.title), done,
         toName: (t.to_name as string) ?? null, dueOn: due,
         overdueDays: !done && due && due < today ? daysSince(due) : 0,
-        /* 완료 체크가 서는가 — 쓰기(`PATCH /drawer/todos/:id`)와 같은 판정: 전체 권한 · 받은 사람 · 준 사람 (W11 A' 후속).
-           참석자로만 여는 강사는 **자기에게 온 할 일만** 체크한다 — 남의 줄은 체크 칸이 잠긴다(눌러서 404 를 받지 않게) */
-        canToggle: viewer?.canManage === true
-          || (viewer !== undefined && (Number(t.to_id) === viewer.id || Number(t.from_id) === viewer.id)),
+        // BOC-02 권고안: 완료 체크는 역할과 무관하게 받은 사람에게만 선다. 기한 편집은 별도 관리자 경로다.
+        canToggle: viewer !== undefined && Number(t.to_id) === viewer.id,
       };
     });
 

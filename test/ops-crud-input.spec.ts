@@ -32,9 +32,10 @@ describe('운영 CRUD 입력 계약', () => {
     ]) await expect(parse(MarketingPatchDto, body)).rejects.toMatchObject({ status: 400 });
   });
 
-  it('건의 답변은 1~2000자 문자열 한 칸만 받는다', async () => {
-    await expect(parse(SuggestionReplyDto, { reply: '확인했습니다.' })).resolves.toMatchObject({ reply: '확인했습니다.' });
-    for (const reply of ['', 'a'.repeat(2001), 7]) {
+  it('건의 답변은 공백을 제외한 15~2000자 문자열 한 칸만 받는다', async () => {
+    await expect(parse(SuggestionReplyDto, { reply: '  담당자와 확인 후 처리했습니다.  ' }))
+      .resolves.toMatchObject({ reply: '담당자와 확인 후 처리했습니다.' });
+    for (const reply of ['', 'a'.repeat(14), `  ${'a'.repeat(14)}  `, 'a'.repeat(2001), 7]) {
       await expect(parse(SuggestionReplyDto, { reply })).rejects.toMatchObject({ status: 400 });
     }
     await expect(parse(SuggestionReplyDto, { reply: '확인', state: 'done' })).rejects.toMatchObject({ status: 400 });

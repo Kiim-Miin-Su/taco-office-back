@@ -177,6 +177,12 @@ d('운영 잔여 물결 (x5)', () => {
       .toEqual({ title: '건의 답변', link: '/teacher/suggestions' });
     expect((await q.query(`SELECT before, after FROM log WHERE entity='SUGGESTION' AND entity_id=$1 ORDER BY id DESC LIMIT 1`, [id]))[0])
       .toMatchObject({ before: { reply: null, replyBy: null }, after: { replyBy: CEO, replyAt: expect.any(String), state: 'done' } });
+    await expect(svc().replySuggestion(MGR, id, { reply: '이미 답변된 건의에 남긴 두 번째 답변입니다.' }))
+      .rejects.toMatchObject({ response: { code: 'SUGGESTION_ALREADY_REPLIED' } });
+    expect(await q.query(`SELECT count(*)::int AS n FROM log WHERE entity='SUGGESTION' AND entity_id=$1`, [id]))
+      .toEqual([{ n: 1 }]);
+    expect(await q.query(`SELECT count(*)::int AS n FROM noti WHERE to_id=$1 AND title='건의 답변'`, [TEACHER]))
+      .toEqual([{ n: 1 }]);
   });
 
   /* ── ② §59 필터 띠 · 범례 ─────────────────────────────────────────── */

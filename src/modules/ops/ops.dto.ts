@@ -5,6 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { CPL_AREAS, CPL_REQUESTERS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
@@ -991,8 +992,7 @@ export class MeetingTaskDto {
   @ApiPropertyOptional(S) dueOn?: string | null;
   @ApiProperty({ description: '지난 날 수 — 끝난 할 일은 0' }) overdueDays!: number;
   @ApiProperty({
-    description: '보는 사람이 이 할 일의 완료를 체크할 수 있는가 — `PATCH /drawer/todos/:id` 와 같은 판정(운영 권한 · 받은 사람 · 준 사람). '
-      + '참석자로만 여는 강사는 자기에게 온 할 일만 (W11 A\' 후속 · P)',
+    description: '보는 사람이 이 할 일의 완료를 체크할 수 있는가 — BOC-02 권고안과 `PATCH /drawer/todos/:id`가 공유하는 받은 사람 판정.',
   })
   canToggle!: boolean;
 }
@@ -1161,8 +1161,9 @@ export class SuggestionDto {
 
 /** 건의 관리자 답변 — 답변 완료로 옮기고 답변자·시각을 같은 트랜잭션에 남긴다. */
 export class SuggestionReplyDto {
-  @ApiProperty({ maxLength: 2000 })
-  @IsString() @MinLength(1, { message: '답변을 적어 주세요' }) @MaxLength(2000)
+  @ApiProperty({ minLength: 15, maxLength: 2000 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(15, { message: '답변은 15자 이상 적어 주세요' }) @MaxLength(2000)
   reply!: string;
 }
 

@@ -30,7 +30,7 @@ import { payoutConfirmedSql } from '../../lib/rules';
 import { kindGroupLabel } from '../../lib/catalog-words';
 import { chreqApplicable, chreqAsked, isChreqType, type NormalizedChangeRequest } from '../../lib/change-request';
 import { ZoomService } from '../zoom/zoom.service';
-import { NOTI_CATEGORIES, NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
+import { NOTI_CATEGORIES, NOTI_CATEGORY_LABEL, NOTI_TITLE, NOTI_WINDOW_DAYS, notiCategory, notiTone } from '../../lib/noti';
 import { groupByRole, roleLabel } from '../../lib/role-words';
 import { START_MIN, END_MIN, effectiveModeOf, kstAt, kstDateOf, serStuOn, writtenRows } from '../../lib/sql';
 import { TODO_KEEP_ON_CLEAR, TODO_KEEP_REASON, todoClearable, todoGo, todoSourceLabel } from '../../lib/todo';
@@ -642,7 +642,8 @@ export class DrawerService {
     const approvals = apFlow(approvalRows, viewerId, canApprove, canWage, canSeeAll);
     const approvalFlow = approvalFlowProjection(approvalRows, viewerId, flowScope);
 
-    // 할 일 — 강사는 자기 것만 (주고받은 것). 화면이 안 걸러도 서버가 거른다 (D-R39)
+    // BOC-02 권고안: 전역 대기함은 받은 할 일만 내려준다. 발신/전체 운영 목록은 OpsService가 소유한다.
+    // 화면 필터에 기대지 않아 관리자 권한으로도 다른 사람의 받은 할 일이 섞이지 않는다.
     const todos = (await this.q(
       `SELECT t.id, t.title, t.done, t.src, to_char(t.due_on,'YYYY-MM-DD') AS due_on,
               t.from_id, t.to_id, f.name AS from_name, s.name AS to_name,
@@ -653,9 +654,9 @@ export class DrawerService {
          LEFT JOIN staff f ON f.id = t.from_id
          LEFT JOIN staff s ON s.id = t.to_id
          LEFT JOIN ser_occ lo ON lo.ser_id = t.ser_id AND lo.on_date = t.on_date
-        WHERE $2::boolean OR t.to_id = $1 OR t.from_id = $1
+        WHERE t.to_id = $1
         ORDER BY t.done, t.due_on NULLS LAST, t.id`,
-      [viewerId, canSeeAll],
+      [viewerId],
     )).map((r) => ({
       id: Number(r.id), title: String(r.title),
       fromId: num(r.from_id), toId: num(r.to_id),
@@ -1337,13 +1338,18 @@ export class DrawerService {
     }
     return this.anyRepo.manager.transaction(async (m: EntityManager) => {
       const [row] = await m.query(
-        `SELECT done, to_char(due_on,'YYYY-MM-DD') AS due_on FROM todo
-          WHERE id=$1 AND ($3::boolean OR to_id=$2 OR from_id=$2) FOR UPDATE`,
+        `SELECT title, done, from_id, to_id, mt_id, cpl_id, cons_id, plan_id, lead_id, ser_id,
+                to_char(on_date,'YYYY-MM-DD') AS on_date,
+                to_char(due_on,'YYYY-MM-DD') AS due_on
+           FROM todo
+          WHERE id=$1 AND ($3::boolean OR to_id=$2) FOR UPDATE`,
         [id, viewerId, canSeeAll],
-      ) as Array<{ done: boolean; due_on: string | null }>;
+      ) as R[];
       if (!row) return false;
-      const before = { done: row.done, dueOn: row.due_on };
-      const after = { done: dto.done ?? row.done, dueOn: dto.dueOn };
+      // BOC-02 권고안: 완료 상태는 수신자만 바꾼다. 관리자도 기한은 바꿀 수 있지만 done을 우회 변경할 수 없다.
+      if (dto.done !== undefined && num(row.to_id) !== viewerId) return false;
+      const before = { done: row.done === true, dueOn: str(row.due_on) };
+      const after = { done: dto.done ?? before.done, dueOn: dto.dueOn };
       // 같은 값을 재전송하면 업무 변경이 없다. LOG를 늘리지 않고 성공으로 답한다.
       if (before.done === after.done && before.dueOn === after.dueOn) return true;
       const changed = await m.query(
@@ -1351,31 +1357,72 @@ export class DrawerService {
         [id, after.done, after.dueOn],
       );
       if (writtenRows(changed).length === 0) return false;
+      const completionChanged = before.done !== after.done;
+      const auditBefore = completionChanged
+        ? { ...before, fromId: num(row.from_id), toId: num(row.to_id) }
+        : before;
+      const auditAfter = completionChanged
+        ? { ...after, fromId: num(row.from_id), toId: num(row.to_id) }
+        : after;
       await m.query(
         `INSERT INTO log (actor_id,entity,entity_id,action,before,after)
           VALUES ($1,'TODO',$2,'update',$3::jsonb,$4::jsonb)`,
-        [viewerId, id, JSON.stringify(before), JSON.stringify(after)],
+        [viewerId, id, JSON.stringify(auditBefore), JSON.stringify(auditAfter)],
       );
       // W11 · N-86 — 월간 상담을 끝냈으면 다음 달 하나를 잇는다(같은 트랜잭션 · 상담 할 일이 아니면 아무것도 안 한다)
       if (after.done) await continueLeadCare(m, id, viewerId);
+      const fromId = num(row.from_id);
+      if (completionChanged && after.done && fromId !== null && fromId !== viewerId) {
+        const link = todoGo({
+          mtId: row.mt_id, cplId: row.cpl_id, consId: row.cons_id, planId: row.plan_id, leadId: row.lead_id,
+          serId: row.ser_id, onDate: str(row.on_date), drawnOn: null,
+        }) ?? '/ops?tab=todo';
+        await m.query(
+          `INSERT INTO noti (to_id,from_id,title,body,link,category)
+           VALUES ($1,$2,$3,$4,$5,'request')`,
+          [fromId, viewerId, NOTI_TITLE.todoCompleted, `맡긴 할 일이 완료됐습니다 — ${String(row.title)}`, link],
+        );
+      }
       return true;
     });
   }
 
   /**
-   * §15 할 일 체크. 강사는 **자기가 주고받은 것만** 건드린다 (D-R39)
+   * §15 할 일 체크. BOC-02 권고안에 따라 **받은 사람만** 완료 상태를 바꾼다.
    * W11 · N-86 — 끝낸 것이 상담 **월간 상담**이면 같은 트랜잭션에서 다음 달 하나를 잇는다(`ops/lead-care` · 휴원이면 복귀 뒤 · 수강 종료면 멈춤).
    */
   async setTodoDone(id: number, done: boolean, viewerId: number, canSeeAll: boolean): Promise<boolean> {
+    void canSeeAll;
     return this.anyRepo.manager.transaction(async (m: EntityManager) => {
-      const rows = await m.query(
-        `UPDATE todo SET done = $2
-          WHERE id = $1 AND ($4::boolean OR to_id = $3 OR from_id = $3)
-          RETURNING id`,
-        [id, done, viewerId, canSeeAll],
+      const [row] = (await m.query(
+        `SELECT title, done, from_id, to_id, mt_id, cpl_id, cons_id, plan_id, lead_id, ser_id,
+                to_char(on_date,'YYYY-MM-DD') AS on_date
+           FROM todo WHERE id=$1 AND to_id=$2 FOR UPDATE`,
+        [id, viewerId],
+      )) as R[];
+      if (!row) return false;
+      if ((row.done === true) === done) return true;
+      await m.query(`UPDATE todo SET done=$2 WHERE id=$1`, [id, done]);
+      const fromId = num(row.from_id);
+      const toId = num(row.to_id);
+      await m.query(
+        `INSERT INTO log (actor_id,entity,entity_id,action,before,after)
+         VALUES ($1,'TODO',$2,$3,$4::jsonb,$5::jsonb)`,
+        [viewerId, id, done ? 'complete' : 'reopen',
+          JSON.stringify({ done: !done, fromId, toId }), JSON.stringify({ done, fromId, toId })],
       );
-      if (writtenRows(rows).length === 0) return false;
       if (done) await continueLeadCare(m, id, viewerId);
+      if (done && fromId !== null && fromId !== viewerId) {
+        const link = todoGo({
+          mtId: row.mt_id, cplId: row.cpl_id, consId: row.cons_id, planId: row.plan_id, leadId: row.lead_id,
+          serId: row.ser_id, onDate: str(row.on_date), drawnOn: null,
+        }) ?? '/ops?tab=todo';
+        await m.query(
+          `INSERT INTO noti (to_id,from_id,title,body,link,category)
+           VALUES ($1,$2,$3,$4,$5,'request')`,
+          [fromId, viewerId, NOTI_TITLE.todoCompleted, `맡긴 할 일이 완료됐습니다 — ${String(row.title)}`, link],
+        );
+      }
       return true;
     });
   }

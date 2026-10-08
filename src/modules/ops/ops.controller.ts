@@ -411,11 +411,11 @@ export class OpsController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '건의 관리자 답변 — 강사 화면에 답변자·날짜와 함께 전달',
-    description: '답변·답변자·답변 시각·done 상태, 강사 알림과 감사 줄을 한 트랜잭션에 남긴다. 다시 답하면 같은 건의 답변을 고친다.',
+    description: '15자 이상 답변·답변자·답변 시각·done 상태, 강사 알림과 감사 줄을 한 트랜잭션에 남긴다. 이미 답변된 건의와 동시 답변은 409 후 재조회한다.',
   })
   @ApiOkResponse({ type: SuggestionDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST — 답변 형식·길이·허용 밖 필드' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'code SUGGESTION_REPLY_REQUIRED' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code SUGGESTION_ALREADY_REPLIED' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'SUGGESTION_NOT_FOUND' })
   replySuggestion(
     @CurrentUser() user: RequestUser,

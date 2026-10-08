@@ -134,6 +134,7 @@ export const NOTI_TITLE = {
   meetingTodo: '회의 할 일',
   planOwner: '기획 담당 지정',
   planTask: '기획 과제',
+  todoCompleted: '할 일 완료',
   complaintOwner: '컴플레인 담당 지정',
   mktFeedback: '대표 피드백',
   mktReply: '피드백 답변',

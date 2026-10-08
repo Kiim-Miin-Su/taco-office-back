@@ -191,10 +191,10 @@ export class DrawerController {
   }
 
   @Patch('todos/:id')
-  @ApiOperation({ summary: '§15·§64 할 일 완료·기한 변경', description: 'done만 바꾸면 기존 주고받은 범위. dueOn(null 삭제 포함)은 canAdminPage와 canCrudAll이 모두 필요하다. 생략한 필드·제목·담당·출처는 보존한다.' })
+  @ApiOperation({ summary: '§15·§64 할 일 완료·기한 변경', description: 'BOC-02 권고안: done은 받은 사람만 멱등 변경한다. dueOn(null 삭제 포함)은 canAdminPage와 canCrudAll이 모두 필요하다. 생략한 필드·제목·담당·출처는 보존한다.' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST: 안전한 양의 ID, boolean, 실재 날짜 및 허용 필드 검증 실패' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'TODO_DUE_FORBIDDEN: 기한 변경 권한 부족. 혼합 done도 저장하지 않음' })
-  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'NOT_FOUND: 없는 행 또는 기존 완료 범위 밖' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'NOT_FOUND: 없는 행 또는 받은 사람이 아닌 done 변경' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'EMPTY_PATCH: done/dueOn 모두 생략' })
   @ApiOkResponse({ type: OkDto })
   async todoDone(

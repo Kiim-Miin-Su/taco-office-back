@@ -119,9 +119,9 @@ d('강사 참석자의 회의 상세 — 알림 링크는 받는 사람이 열 �
     const tasks = res.body.tasks as Array<{ id: number; canToggle: boolean }>;
     expect(tasks.find((t) => t.id === taskMine)?.canToggle).toBe(true);
     expect(tasks.find((t) => t.id === taskOther)?.canToggle).toBe(false);
-    // 운영 권한이 있는 사람에게는 전부 선다(같은 경로 · 같은 판정)
+    // 운영 권한이 있어도 완료 체크는 수신자에게만 선다(같은 경로 · 같은 판정)
     const mgr = await api('get', `/ops/meetings/${meetingId}`, tokens.mgr).expect(200);
-    expect((mgr.body.tasks as Array<{ canToggle: boolean }>).every((t) => t.canToggle)).toBe(true);
+    expect((mgr.body.tasks as Array<{ canToggle: boolean }>).every((t) => !t.canToggle)).toBe(true);
     // 체크 쓰기도 같은 판정 — 자기 것은 되고 남의 것은 없는 것과 같다(404)
     await api('patch', `/drawer/todos/${taskMine}`, tokens.teacher).send({ done: true }).expect(200);
     await api('patch', `/drawer/todos/${taskOther}`, tokens.teacher).send({ done: true }).expect(404);

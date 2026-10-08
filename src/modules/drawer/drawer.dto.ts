@@ -753,7 +753,7 @@ export class TodoParamsDto {
   id!: number;
 }
 
-/** 완료는 기존 주고받은 범위, 기한은 관리자 두 최종 권한을 요구한다. */
+/** BOC-02 권고안: 완료는 받은 사람만, 기한은 관리자 두 최종 권한을 요구한다. */
 export class TodoPatchDto {
   @ApiPropertyOptional({ type: Boolean, description: '생략 유지, true 완료, false 해제. null 불가' })
   @ValidateIf((_object, value) => value !== undefined) @IsBoolean()
