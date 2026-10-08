@@ -54,7 +54,7 @@ d('회계 잔여 물결 (x5)', () => {
     await q.query(
       `INSERT INTO kind (key,name,color,cap,grp) VALUES ('x5_kind','x5 수업','#333333',4,'lesson') ON CONFLICT (key) DO NOTHING`,
     );
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('x5-sub','x5 과목','#444444') ON CONFLICT (key) DO NOTHING`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ('x5-sub','x5 과목','#A85764','x5_kind') ON CONFLICT (key) DO NOTHING`);
     await q.query(`DELETE FROM rate WHERE kind_key = 'x5_kind'`);
     await q.query(
       `INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ('x5_kind','x5-sub', 50000, '2026-01-01', 1)`,

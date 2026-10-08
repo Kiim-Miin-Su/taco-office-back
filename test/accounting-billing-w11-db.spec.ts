@@ -102,8 +102,8 @@ d('회계 청구 W11 — 진단고사 · 상담 분리 · 분납 일정 · 받�
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('w11-sub','W11 과목','#444444'),
-         ('w11-diag','W11 진단','#555555'), ('w11-intake','W11 입학 상담','#666666')
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('w11-sub','W11 과목','#A85764','w11_class'),
+         ('w11-diag','W11 진단','#B57046','diagx'), ('w11-intake','W11 입학 상담','#4A7FB5','consult')
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(`DELETE FROM rate WHERE sub_key IN ('w11-sub','w11-diag','w11-intake')`);

@@ -85,7 +85,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B, STU_C]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'발행A','10'), ($2,'발행B','10'), ($3,'발행C','10')`, [STU_A, STU_B, STU_C]);
     await q(`INSERT INTO kind (key,name,color,cap,grp) VALUES ($1,'발행 시험','#333333',4,'lesson') ON CONFLICT (key) DO NOTHING`, [KIND]);
-    await q(`INSERT INTO sub (key,name,color) VALUES ($1,'발행 과목','#444444'), ($2,'단가 없는 과목','#555555') ON CONFLICT (key) DO NOTHING`, [SUB_OK, SUB_NORATE]);
+    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'발행 과목','#A85764',$3), ($2,'단가 없는 과목','#B57046',$3) ON CONFLICT (key) DO NOTHING`, [SUB_OK, SUB_NORATE, KIND]);
     await q(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
     await q(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, 50000, '2026-01-01', 1)`, [KIND, SUB_OK]);
     const login = async (email: string) => {

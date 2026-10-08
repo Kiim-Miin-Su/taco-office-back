@@ -80,8 +80,8 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
        VALUES ('class','수업','#4A5461',4,'lesson',true,'dev',1) ON CONFLICT (key) DO NOTHING`,
     );
     await q(
-      `INSERT INTO sub (key,name,color,active,sort)
-       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1) ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO sub (key,name,color,active,sort,kind_key)
+       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1,'class') ON CONFLICT (key) DO NOTHING`,
     );
     for (const person of [
       [TEACHER, '리포트강사', TEACHER_EMAIL, 'teacher'],

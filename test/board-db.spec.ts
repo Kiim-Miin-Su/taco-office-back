@@ -73,9 +73,9 @@ d('§34~§36 현황판 — 안내 대상 · 기간 facet · 날짜 집계 (g4 34
       ON CONFLICT (id) DO NOTHING`, [teacherA, teacherB, teacherC]);
     await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'W4 수업','#123456',8,'lesson',true)
       ON CONFLICT (key) DO NOTHING`, [kindKey]);
-    await q.query(`INSERT INTO sub (key,name,color,sort) VALUES
-      ($1,'W4 Reading','#2266aa',2),($2,'W4 Math','#aa6622',1),($3,'W4 Writing','#22aa66',3)
-      ON CONFLICT (key) DO NOTHING`, [subA, subB, subC]);
+    await q.query(`INSERT INTO sub (key,name,color,sort,kind_key) VALUES
+      ($1,'W4 Reading','#A85764',2,$4),($2,'W4 Math','#B57046',1,$4),($3,'W4 Writing','#4A7FB5',3,$4)
+      ON CONFLICT (key) DO NOTHING`, [subA, subB, subC, kindKey]);
     await q.query(`INSERT INTO zacc (id,label,login_email,login_secret,join_url,meeting_id,meeting_pw_enc,active)
       VALUES ($1,'Study','w4-board-zoom@test','\\x00','https://zoom.example/j/2451','245-100','\\x2a',true)
       ON CONFLICT (id) DO NOTHING`, [zaccId]);

@@ -161,7 +161,7 @@ d('회계 청구 경합 — 중복 발행 · 이월과 다음 달 발행 (7-3 �
     await ds.initialize();
     await ds.query(`INSERT INTO staff (id,name,email,role) VALUES ($1,'경합 대표','w11-bill-race@t.kr','ceo') ON CONFLICT (id) DO NOTHING`, [ACTOR]);
     await ds.query(`INSERT INTO kind (key,name,color,cap,grp) VALUES ($1,'경합 수업','#333333',4,'lesson') ON CONFLICT (key) DO NOTHING`, [KIND]);
-    await ds.query(`INSERT INTO sub (key,name,color) VALUES ($1,'경합 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
+    await ds.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'경합 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
     await ds.query(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
     await ds.query(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, 50000, '2026-01-01', 1)`, [KIND, SUB]);
     await ds.query(`DELETE FROM month_close WHERE year_month = ANY($1::text[])`, [[

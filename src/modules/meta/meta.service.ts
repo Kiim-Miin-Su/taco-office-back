@@ -66,7 +66,7 @@ export class MetaService {
     if (educationGrades.length !== 39) throw new InternalServerErrorException('교육 학년 카탈로그 무결성 오류');
     return {
       kinds: kinds.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, extra: k.extra === true })),
-      subs: subs.map((s) => ({ key: s.key, name: s.name, color: s.color })),
+      subs: subs.map((s) => ({ key: s.key, name: s.name, color: s.color, kindKey: s.kindKey ?? null })),
       educationGrades,
       rooms: rooms.map((r) => ({ id: Number(r.id), branch: r.branch, name: r.name, capacity: r.capacity })),
       zaccs: zaccs.map((z) => ({ id: Number(z.id), label: z.label, meetingId: canSeeRoster ? z.meetingId : null })),

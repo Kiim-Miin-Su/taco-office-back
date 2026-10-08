@@ -29,4 +29,12 @@ export class Sub {
 
   @Column({ type: 'smallint', nullable: true })
   sort: number | null;
+
+  /**
+   * BOC-01D-01 권고안 채택(2026-10-08): 과목은 프로그램 하나에 속한다.
+   * 기존 미연결 과목은 읽기 보존해야 하므로 nullable이며, 신규/변경 방어는 migration trigger와 catalog service가 소유한다.
+   * 정책 변경 시 catalog DTO/service, Meta/OpenAPI/generated Front 타입, 두 DBML과 TBO-55 문서를 함께 갱신한다.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  kindKey: string | null;
 }

@@ -186,7 +186,10 @@ d('④ 옛 수업료 청구서의 진단고사 · 상담 줄과 수강 종료 �
       `INSERT INTO kind (key,name,color,cap,grp) VALUES ('w11fu_class','후속 수업','#333333',4,'lesson'), ('diagx','진단고사','#6F798A',8,'intake')
        ON CONFLICT (key) DO NOTHING`,
     );
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('w11fu-sub','후속 과목','#444444'), ('w11fu-diag','후속 진단','#555555') ON CONFLICT (key) DO NOTHING`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES
+      ('w11fu-sub','후속 과목','#A85764','w11fu_class'),
+      ('w11fu-diag','후속 진단','#B57046','diagx')
+      ON CONFLICT (key) DO NOTHING`);
     await q.query(`DELETE FROM rate WHERE sub_key IN ('w11fu-sub','w11fu-diag')`);
     await q.query(
       `INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES

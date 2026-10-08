@@ -11,7 +11,7 @@ import { Kind } from '../../entities';
 import { audit } from '../../lib/audit';
 import {
   KIND_GROUP_LABEL, type CatalogDto, type KindCreateDto, type KindPatchDto, type KindRowsDto,
-  type SubCreateDto, type SubPatchDto, type SubRowDto,
+  SUBJECT_COLORS, type SubCreateDto, type SubPatchDto, type SubRowDto,
 } from './catalog.dto';
 
 @Injectable()
@@ -29,13 +29,14 @@ export class CatalogService {
          FROM kind k ORDER BY k.sort NULLS LAST, k.key`,
     )) as Array<Record<string, unknown>>;
     const subs = (await this.kinds.query(
-      `SELECT b.key, b.name, b.color, b.active, b.sort,
+      `SELECT b.key, b.name, b.color, b.active, b.sort, b.kind_key,
               (SELECT count(*)::int FROM ser s WHERE s.sub_key = b.key) AS ser_count
          FROM sub b ORDER BY b.sort NULLS LAST, b.key`,
     )) as Array<Record<string, unknown>>;
     return {
       kinds: kinds.map((r) => this.kindRow(r)),
       subs: subs.map((r) => this.subRow(r)),
+      subjectColors: [...SUBJECT_COLORS],
     };
   }
 
@@ -47,6 +48,7 @@ export class CatalogService {
       rep: r.rep === true, repForm: (r.rep_form as string | null) ?? null,
       sort: r.sort === null || r.sort === undefined ? null : Number(r.sort),
       extra: r.extra === true,
+      subjectAssignable: String(r.key) !== 'gpa',
       serCount: Number(r.ser_count ?? 0),
     };
   }
@@ -56,6 +58,7 @@ export class CatalogService {
       key: String(r.key), name: String(r.name), color: String(r.color).trim(),
       active: r.active === true,
       sort: r.sort === null || r.sort === undefined ? null : Number(r.sort),
+      kindKey: (r.kind_key as string | null) ?? null,
       serCount: Number(r.ser_count ?? 0),
     };
   }
@@ -143,14 +146,18 @@ export class CatalogService {
     return this.kinds.manager.transaction(async (m: EntityManager) => {
       const [dup] = (await m.query(`SELECT key FROM sub WHERE key = $1`, [dto.key])) as { key: string }[];
       if (dup) throw new ConflictException({ code: 'SUB_KEY_TAKEN', message: `「${dto.key}」는 이미 있는 코드입니다` });
+      const name = dto.name.trim();
+      const [sameName] = (await m.query(`SELECT key FROM sub WHERE lower(btrim(name)) = lower($1)`, [name])) as { key: string }[];
+      if (sameName) throw new ConflictException({ code: 'SUB_NAME_TAKEN', message: '같은 이름의 과목이 있습니다' });
+      await this.assertSubjectProgram(m, dto.kindKey);
       await m.query(
-        `INSERT INTO sub (key,name,color,active,sort) VALUES ($1,$2,$3,true,$4)`,
-        [dto.key, dto.name.trim(), dto.color, dto.sort ?? null],
+        `INSERT INTO sub (key,name,color,active,sort,kind_key) VALUES ($1,$2,$3,true,$4,$5)`,
+        [dto.key, name, dto.color, dto.sort ?? null, dto.kindKey],
       );
       const made = await this.oneSub(m, dto.key);
       await audit(m, 'catalog.sub', {
         actorId, entityId: CatalogService.KEYED_ENTITY_ID, action: 'create',
-        after: { key: made.key, name: made.name, color: made.color, active: made.active, sort: made.sort ?? null },
+        after: { key: made.key, name: made.name, color: made.color, active: made.active, sort: made.sort ?? null, kindKey: made.kindKey },
       });
       return made;
     });
@@ -160,19 +167,37 @@ export class CatalogService {
   async patchSub(actorId: number, key: string, dto: SubPatchDto): Promise<SubRowDto> {
     return this.kinds.manager.transaction(async (m: EntityManager) => {
       const [cur] = (await m.query(
-        `SELECT key, name, color, active, sort FROM sub WHERE key = $1 FOR UPDATE`, [key],
-      )) as Array<{ key: string; name: string; color: string; active: boolean; sort: number | null }>;
+        `SELECT key, name, color, active, sort, kind_key FROM sub WHERE key = $1 FOR UPDATE`, [key],
+      )) as Array<{ key: string; name: string; color: string; active: boolean; sort: number | null; kind_key: string | null }>;
       if (!cur) throw new NotFoundException({ code: 'SUB_NOT_FOUND', message: '과목을 찾을 수 없습니다' });
       const set: string[] = [];
       const vals: unknown[] = [key];
       const before: Record<string, unknown> = { key };
       const after: Record<string, unknown> = { key };
-      const put = (col: string, old: unknown, v: unknown) => {
+      const put = (col: string, old: unknown, v: unknown, field = col) => {
         vals.push(v); set.push(`${col} = $${vals.length}`);
-        before[col] = old; after[col] = v;
+        before[field] = old; after[field] = v;
       };
-      if (dto.name !== undefined) put('name', cur.name, dto.name.trim());
-      if (dto.color !== undefined) put('color', String(cur.color).trim(), dto.color);
+      if (dto.name !== undefined) {
+        const name = dto.name.trim();
+        const [sameName] = (await m.query(
+          `SELECT key FROM sub WHERE key <> $1 AND lower(btrim(name)) = lower($2)`, [key, name],
+        )) as { key: string }[];
+        if (sameName) throw new ConflictException({ code: 'SUB_NAME_TAKEN', message: '같은 이름의 과목이 있습니다' });
+        put('name', cur.name, name);
+      }
+      if (dto.color !== undefined) {
+        const oldColor = String(cur.color).trim().toUpperCase();
+        const color = dto.color.toUpperCase();
+        if (color !== oldColor && !SUBJECT_COLORS.includes(color as (typeof SUBJECT_COLORS)[number])) {
+          throw new BadRequestException({ code: 'SUB_COLOR_INVALID', message: '과목 색은 정해진 8개 중에서 골라 주세요' });
+        }
+        put('color', oldColor, color);
+      }
+      if (dto.kindKey !== undefined) {
+        if (dto.kindKey !== cur.kind_key) await this.assertSubjectProgram(m, dto.kindKey);
+        put('kind_key', cur.kind_key, dto.kindKey, 'kindKey');
+      }
       if (dto.active !== undefined) put('active', cur.active === true, dto.active);
       if (dto.sort !== undefined) put('sort', cur.sort == null ? null : Number(cur.sort), dto.sort);
       if (!set.length) throw new BadRequestException({ code: 'NOTHING_TO_CHANGE', message: '바꿀 값이 없습니다' });
@@ -184,10 +209,22 @@ export class CatalogService {
 
   private async oneSub(m: EntityManager, key: string): Promise<SubRowDto> {
     const [row] = (await m.query(
-      `SELECT b.key,b.name,b.color,b.active,b.sort,
+      `SELECT b.key,b.name,b.color,b.active,b.sort,b.kind_key,
               (SELECT count(*)::int FROM ser s WHERE s.sub_key = b.key) AS ser_count
          FROM sub b WHERE b.key = $1`, [key],
     )) as Array<Record<string, unknown>>;
     return this.subRow(row);
+  }
+
+  /**
+   * BOC-01D-01 권고안 채택(2026-10-08): 새 과목은 실제 KIND 하나를 가져야 하며 GPA는 과거 원장만 보존한다.
+   * 관계 정책 변경 시 DTO/OpenAPI/generated Front, migration/DBML, 두 PPTX 교차표와 portfolio를 함께 고친다.
+   */
+  private async assertSubjectProgram(m: EntityManager, kindKey: string): Promise<void> {
+    const [kind] = (await m.query(`SELECT key FROM kind WHERE key = $1`, [kindKey])) as { key: string }[];
+    if (!kind) throw new NotFoundException({ code: 'KIND_NOT_FOUND', message: '프로그램을 찾을 수 없습니다' });
+    if (kind.key === 'gpa') {
+      throw new BadRequestException({ code: 'SUB_PROGRAM_RETIRED', message: 'GPA는 과거 기록만 보존하며 새 과목을 연결할 수 없습니다' });
+    }
   }
 }

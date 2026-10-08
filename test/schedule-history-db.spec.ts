@@ -108,7 +108,7 @@ d('§20 이력 — 실제 일정 쓰기의 감사 줄을 읽는다 (drawer.sched
       made.kind.push('hist_test');
     }
     if ((await q(`SELECT key FROM sub WHERE key = 'hist-sub'`)).length === 0) {
-      await q(`INSERT INTO sub (key,name,color) VALUES ('hist-sub','히스토리 과목','#444444')`);
+      await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ('hist-sub','히스토리 과목','#A85764','hist_test')`);
       made.sub.push('hist-sub');
     }
   });

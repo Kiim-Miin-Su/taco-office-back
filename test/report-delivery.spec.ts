@@ -101,8 +101,8 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
        VALUES ('class','정규 수업','#4A5461',4,'lesson',true,'dev',1) ON CONFLICT (key) DO NOTHING`,
     );
     await q(
-      `INSERT INTO sub (key,name,color,active,sort)
-       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1) ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO sub (key,name,color,active,sort,kind_key)
+       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1,'class') ON CONFLICT (key) DO NOTHING`,
     );
     await q(
       `INSERT INTO staff (id,name,email,role,password_hash,active)

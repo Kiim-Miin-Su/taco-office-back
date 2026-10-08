@@ -59,7 +59,7 @@ d('§43 안내 없음 줄 · §44 진단 점수 카드 (g4 43-2 · 44-2)', () =>
       ON CONFLICT (id) DO NOTHING`, [manager, teacher]);
     await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'W4 안내 수업','#123456',8,'lesson',true)
       ON CONFLICT (key) DO NOTHING`, [kindKey]);
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ($1,'W4 Vocabulary','#654321') ON CONFLICT (key) DO NOTHING`, [subKey]);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'W4 Vocabulary','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [subKey, kindKey]);
     const made = await q.query(`INSERT INTO stu (name,grade) VALUES ('안내 하나','G9'),('안내 둘','G10') RETURNING id`);
     [s1, s2] = made.map((r: { id: string }) => Number(r.id));
     await q.query(`INSERT INTO ser (id,kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date,to_date)

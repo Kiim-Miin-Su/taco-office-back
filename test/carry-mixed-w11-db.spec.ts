@@ -92,7 +92,10 @@ d('섞인 옛 수업료 청구서의 이월 (W11 M2 잔여 ③ · 수강 종료�
       `INSERT INTO kind (key,name,color,cap,grp) VALUES ('w11cm_class','섞임 수업','#333333',4,'lesson'), ('diagx','진단고사','#6F798A',8,'intake')
        ON CONFLICT (key) DO NOTHING`,
     );
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('w11cm-sub','섞임 과목','#444444'), ('w11cm-diag','섞임 진단','#555555') ON CONFLICT (key) DO NOTHING`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES
+      ('w11cm-sub','섞임 과목','#A85764','w11cm_class'),
+      ('w11cm-diag','섞임 진단','#B57046','diagx')
+      ON CONFLICT (key) DO NOTHING`);
     await q.query(`DELETE FROM rate WHERE sub_key IN ('w11cm-sub','w11cm-diag')`);
     await q.query(
       `INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES

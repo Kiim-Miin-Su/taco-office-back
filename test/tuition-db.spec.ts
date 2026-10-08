@@ -63,7 +63,7 @@ d('§54 수업료 계산 (C65)', () => {
   /** **단가가 다른 둘째 과목** — 안분이 틀리는 자리를 만들려면 한 학생에게 값이 둘이어야 한다 */
   const otherSubject = async (unitPrice: number) => {
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('tu-sub2','수업료 과목 둘','#555555') ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('tu-sub2','수업료 과목 둘','#B57046','tu_test') ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
       `INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads)
@@ -107,7 +107,7 @@ d('§54 수업료 계산 (C65)', () => {
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('tu-sub','수업료 과목','#444444') ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('tu-sub','수업료 과목','#A85764','tu_test') ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(`DELETE FROM rate WHERE kind_key = 'tu_test'`);
     await q.query(`DELETE FROM sub WHERE key = 'tu-sub2'`);

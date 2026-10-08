@@ -38,7 +38,7 @@ describe('BOC-04E-01 student hub relation persistence', () => {
     subKey = `hub_${suffix}`;
     await q.query(`INSERT INTO kind(key,name,color,cap,grp,rep)
       VALUES ($1,'허브 관계 시험','#345678',4,'lesson',true)`, [kindKey]);
-    await q.query(`INSERT INTO sub(key,name,color) VALUES ($1,'허브 관계 시험','#456789')`, [subKey]);
+    await q.query(`INSERT INTO sub(key,name,color,kind_key) VALUES ($1,'허브 관계 시험','#A85764',$2)`, [subKey, kindKey]);
     const students = await q.query(`INSERT INTO stu(name) VALUES ('허브 관계 A'),('허브 관계 B') RETURNING id`) as Array<{ id: string }>;
     [studentA, studentB] = students.map(row => row.id);
     const [enrollment] = await q.query(`INSERT INTO enr(student_id,kind_key,sub_key,started_on)

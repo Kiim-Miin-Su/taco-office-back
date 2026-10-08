@@ -95,7 +95,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'종료A','10'), ($2,'종료B','10')`, [STU_A, STU_B]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'종료 시험','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
-    await q(`INSERT INTO sub (key,name,color) VALUES ($1,'종료 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
+    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'종료 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
     await q(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
     // 구간 단가 — 1인 60,000 · 2인 45,000 (D-R10 「인원이 늘면 1인 단가가 내려간다」)
     await q(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, $3, '2026-01-01', 1), ($1, $2, $4, '2026-01-01', 2)`, [KIND, SUB, SOLO, DUO]);

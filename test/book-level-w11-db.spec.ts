@@ -49,7 +49,7 @@ d('교재 레벨 낱말 — 강사 수업 안내 · §44 안내 학생별 (W11 A
       ON CONFLICT (id) DO NOTHING`, [manager, teacher]);
     await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'W11 레벨 수업','#123456',8,'lesson',true)
       ON CONFLICT (key) DO NOTHING`, [kindKey]);
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ($1,'W11 Reading','#654321') ON CONFLICT (key) DO NOTHING`, [subKey]);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'W11 Reading','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [subKey, kindKey]);
     [student] = (await q.query(`INSERT INTO stu (name,grade) VALUES ('레벨 학생','G9') RETURNING id`))
       .map((r: { id: string }) => Number(r.id));
     await q.query(`INSERT INTO ser (id,kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date,to_date)

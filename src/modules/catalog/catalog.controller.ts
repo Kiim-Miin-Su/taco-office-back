@@ -10,6 +10,7 @@ import {
   ApiOperation, ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
+import { ApiErrorDto } from '../../common/http.dto';
 import { Perm, type RequestUser } from '../../common/perm';
 import {
   CatalogDto, KindCreateDto, KindPatchDto, KindRowsDto, SubCreateDto, SubPatchDto, SubRowDto,
@@ -60,9 +61,11 @@ export class CatalogController {
 
   @Post('subs')
   @Perm('canCrudAll')
-  @ApiOperation({ summary: '과목 추가' })
+  @ApiOperation({ summary: '과목 추가 — 프로그램 하나·중복 없는 이름·서버가 주는 8색' })
   @ApiCreatedResponse({ type: SubRowDto })
-  @ApiConflictResponse({ description: 'code SUB_KEY_TAKEN' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code SUB_KEY_TAKEN | SUB_NAME_TAKEN' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'code SUB_PROGRAM_RETIRED | SUB_COLOR_INVALID' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'code KIND_NOT_FOUND' })
   async createSub(@CurrentUser() user: RequestUser, @Body() dto: SubCreateDto): Promise<SubRowDto> {
     return this.svc.createSub(user.id, dto);
   }
@@ -71,7 +74,9 @@ export class CatalogController {
   @Perm('canCrudAll')
   @ApiOperation({ summary: '과목 고치기 — 끄면 새 수업에서 고를 수 없고, 이미 도는 수업은 그대로 둔다' })
   @ApiOkResponse({ type: SubRowDto })
-  @ApiNotFoundResponse({ description: 'code SUB_NOT_FOUND' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'code SUB_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code SUB_NAME_TAKEN' })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'code SUB_PROGRAM_RETIRED | SUB_COLOR_INVALID' })
   async patchSub(@CurrentUser() user: RequestUser, @Param('key') key: string, @Body() dto: SubPatchDto): Promise<SubRowDto> {
     return this.svc.patchSub(user.id, key, dto);
   }

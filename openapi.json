@@ -21693,7 +21693,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "code SUB_PROGRAM_RETIRED | SUB_COLOR_INVALID",
             "content": {
               "application/json": {
                 "schema": {
@@ -21723,7 +21723,7 @@
             }
           },
           "404": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "code KIND_NOT_FOUND",
             "content": {
               "application/json": {
                 "schema": {
@@ -21733,7 +21733,14 @@
             }
           },
           "409": {
-            "description": "code SUB_KEY_TAKEN"
+            "description": "code SUB_KEY_TAKEN | SUB_NAME_TAKEN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -21746,7 +21753,7 @@
             }
           }
         },
-        "summary": "과목 추가",
+        "summary": "과목 추가 — 프로그램 하나·중복 없는 이름·서버가 주는 8색",
         "tags": [
           "catalog"
         ]
@@ -21787,7 +21794,7 @@
             }
           },
           "400": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "code SUB_PROGRAM_RETIRED | SUB_COLOR_INVALID",
             "content": {
               "application/json": {
                 "schema": {
@@ -21817,10 +21824,17 @@
             }
           },
           "404": {
-            "description": "code SUB_NOT_FOUND"
+            "description": "code SUB_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           },
           "409": {
-            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "description": "code SUB_NAME_TAKEN",
             "content": {
               "application/json": {
                 "schema": {
@@ -24549,6 +24563,11 @@
           },
           "color": {
             "type": "string"
+          },
+          "kindKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "과목이 속한 단일 프로그램. 미연결 legacy는 null"
           }
         },
         "required": [
@@ -47965,6 +47984,10 @@
             "type": "boolean",
             "description": "추가 수업인가 — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 별도 줄 (C94-d · C-38)"
           },
+          "subjectAssignable": {
+            "type": "boolean",
+            "description": "새 과목의 소유 프로그램으로 선택할 수 있는가. GPA 과거 원장은 false"
+          },
           "serCount": {
             "type": "number",
             "description": "이 프로그램으로 돌고 있는 수업 규칙 수 — 0 이 아니면 코드를 바꿀 수 없다"
@@ -47979,6 +48002,7 @@
           "grpLabel",
           "rep",
           "extra",
+          "subjectAssignable",
           "serCount"
         ]
       },
@@ -48000,6 +48024,11 @@
           "sort": {
             "type": "number",
             "nullable": true
+          },
+          "kindKey": {
+            "type": "string",
+            "nullable": true,
+            "description": "과목이 속한 단일 프로그램. 미연결 legacy는 null"
           },
           "serCount": {
             "type": "number",
@@ -48028,11 +48057,29 @@
             "items": {
               "$ref": "#/components/schemas/SubRowDto"
             }
+          },
+          "subjectColors": {
+            "type": "array",
+            "description": "새 과목·색 변경에서 고르는 최종 8색",
+            "items": {
+              "type": "string",
+              "enum": [
+                "#A85764",
+                "#B57046",
+                "#4A7FB5",
+                "#3E8E5E",
+                "#7C5CB5",
+                "#C08A2E",
+                "#2F8F8A",
+                "#8B6B5A"
+              ]
+            }
           }
         },
         "required": [
           "kinds",
-          "subs"
+          "subs",
+          "subjectColors"
         ]
       },
       "KindCreateDto": {
@@ -48134,11 +48181,27 @@
             "type": "string"
           },
           "name": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "kindKey": {
+            "type": "string",
+            "description": "과목이 속한 단일 프로그램(kind.key)"
           },
           "color": {
             "type": "string",
-            "description": "#RRGGBB"
+            "enum": [
+              "#A85764",
+              "#B57046",
+              "#4A7FB5",
+              "#3E8E5E",
+              "#7C5CB5",
+              "#C08A2E",
+              "#2F8F8A",
+              "#8B6B5A"
+            ],
+            "description": "최종 관리자 수정사항 p6의 8색"
           },
           "sort": {
             "type": "number"
@@ -48147,6 +48210,7 @@
         "required": [
           "key",
           "name",
+          "kindKey",
           "color"
         ]
       },
@@ -48154,10 +48218,17 @@
         "type": "object",
         "properties": {
           "name": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "kindKey": {
+            "type": "string",
+            "description": "새 프로그램. 기존 미연결/불일치 기록은 그대로 읽고 자동 병합하지 않는다"
           },
           "color": {
-            "type": "string"
+            "type": "string",
+            "description": "바꿀 때는 최종 8색만 허용. 기존 legacy 색을 그대로 보내는 것은 보존"
           },
           "active": {
             "type": "boolean",

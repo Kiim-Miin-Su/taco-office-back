@@ -78,7 +78,7 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color,active,sort) VALUES ('inv-sub','청구 과목','#222222',true,900)
+      `INSERT INTO sub (key,name,color,active,sort,kind_key) VALUES ('inv-sub','청구 과목','#A85764',true,900,'inv_test')
        ON CONFLICT (key) DO NOTHING`,
     );
     const [stu] = (await q.query(`INSERT INTO stu (name, grade) VALUES ('청구 학생','G8') RETURNING id`)) as Array<{ id: string }>;
@@ -181,7 +181,7 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
        VALUES ('inv_test', NULL, 30000, '2026-01-01', 1)`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color,active,sort) VALUES ('inv-sub2','둘째 과목','#333333',true,901)
+      `INSERT INTO sub (key,name,color,active,sort,kind_key) VALUES ('inv-sub2','둘째 과목','#B57046',true,901,'inv_test')
        ON CONFLICT (key) DO NOTHING`,
     );
     const [s2] = (await q.query(
@@ -209,7 +209,7 @@ d('§53 청구서 발행 — 줄은 서버가 만든다 (C50)', () => {
        VALUES ('inv_test', NULL, 30000, '2026-01-01', 1)`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color,active,sort) VALUES ('inv-sub2','둘째 과목','#333333',true,901)
+      `INSERT INTO sub (key,name,color,active,sort,kind_key) VALUES ('inv-sub2','둘째 과목','#B57046',true,901,'inv_test')
        ON CONFLICT (key) DO NOTHING`,
     );
     const [s2] = (await q.query(

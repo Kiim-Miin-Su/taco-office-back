@@ -26,6 +26,7 @@ export class SubDto {
   @ApiProperty() key!: string;
   @ApiProperty() name!: string;
   @ApiProperty() color!: string;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '과목이 속한 단일 프로그램. 미연결 legacy는 null' }) kindKey?: string | null;
 }
 
 /** 최종 관리자 p20~22의 세 교육체계 학년 한 줄. 화면은 대응 문구나 정렬을 다시 계산하지 않는다. */

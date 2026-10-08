@@ -148,7 +148,7 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
 
     // ── 기준 정보
     await add('kind', KINDS.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, rep_form: k.repForm, sort: k.sort })));
-    await add('sub', SUBS.map((s, i) => ({ key: s.key, name: s.name, color: s.color, active: true, sort: i + 1 })));
+    await add('sub', SUBS.map((s, i) => ({ key: s.key, name: s.name, color: s.color, active: true, sort: i + 1, kind_key: s.kindKey })));
     await add('room', ROOMS.map((r) => ({ id: r.id, branch: r.branch, name: r.name, capacity: r.capacity, active: true })));
     await add('tzg', TZGS);
     const secret = Buffer.from('seed-not-a-real-secret');

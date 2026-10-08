@@ -63,6 +63,8 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
       ($4,'자료 권한 강사','book-teacher-override@test','teacher',true,true),
       ($5,'자료 알림 매니저','book-manager-recipient@test','manager',true,true)
       ON CONFLICT (id) DO NOTHING`, [owner, coordinator, deniedCoordinator, teacherOverride, managerRecipient]);
+    await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ('class','수업','#4A5461',4,'lesson',true)
+      ON CONFLICT (key) DO NOTHING`);
     const [a] = await q.query(`INSERT INTO stu (name,grade) VALUES ('교재 학생 A','G9') RETURNING id`);
     const [b] = await q.query(`INSERT INTO stu (name,grade) VALUES ('교재 학생 B','G10') RETURNING id`);
     studentA = Number(a.id); studentB = Number(b.id);
@@ -74,7 +76,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
   it('선택 정보를 null로 지우면 재조회와 LOG에 남고 기존 진도 쪽수는 보존한다', async () => {
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('t52-book','교재 검수','#123456') ON CONFLICT (key) DO NOTHING`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ('t52-book','교재 검수','#A85764','class') ON CONFLICT (key) DO NOTHING`);
     await svc().patchBook(owner, libA, { subKey: 't52-book', level: 'F', grade: 'G9' });
     const issue = await svc().createIssue(owner, { studentId: studentA, libId: libA, state: 'ok', progressPage: 55 });
     const cleared = { subKey: null, level: null, grade: null, pages: null };
@@ -99,7 +101,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
   });
 
   it('수정 요청에서 생략한 선택 정보는 저장된 값을 보존한다', async () => {
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('t52-book','교재 검수','#123456') ON CONFLICT (key) DO NOTHING`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ('t52-book','교재 검수','#A85764','class') ON CONFLICT (key) DO NOTHING`);
     await svc().patchBook(owner, libA, { subKey: 't52-book', level: 'F', grade: 'G9' });
     await svc().patchBook(owner, libA, { title: '제목만 수정' });
     expect((await svc().all()).items.find((book) => book.id === libA))
@@ -134,7 +136,7 @@ d('§38·§41 교재 저장 수직 계약 (C77)', () => {
 
   it('문맥 배정은 실제 수업·학년·현재 판을 검증하고 멱등·버전·알림·DB guard를 한 원장에 묶는다', async () => {
     const subKey = `boc04d3b-${studentA}`;
-    await q.query(`INSERT INTO sub(key,name,color,active) VALUES ($1,'배정 과목','#315efb',true)`, [subKey]);
+    await q.query(`INSERT INTO sub(key,name,color,active,kind_key) VALUES ($1,'배정 과목','#A85764',true,'class')`, [subKey]);
     await q.query(`UPDATE lib SET sub_key=$2,grade_from=9,grade_to=12 WHERE id=$1`, [libA, subKey]);
     const version = await svc().addVersion(owner, libA, {
       edition: 'assignment-v1',

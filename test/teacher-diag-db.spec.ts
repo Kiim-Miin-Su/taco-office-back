@@ -89,7 +89,7 @@ d('진단 리포트 작성 (C61)', () => {
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('diag_test_sub','진단 시험 과목','#736CAE')
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('diag_test_sub','진단 시험 과목','#A85764','diag_test')
        ON CONFLICT (key) DO NOTHING`,
     );
     serMine = await makeSeries(MINE, null, A);      // 시리즈 담당이 나

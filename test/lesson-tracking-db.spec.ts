@@ -67,7 +67,7 @@ d('§79 학생 트래킹 (C55)', () => {
        ON CONFLICT (key) DO UPDATE SET cap = 4, rep = true`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('sat-math','SAT Math','#9C7A38')
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('sat-math','SAT Math','#9C7A38','class')
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
@@ -348,7 +348,7 @@ d('§12 준비 줄 (C82-b)', () => {
        ON CONFLICT (key) DO UPDATE SET cap = 4`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('sat-math','SAT Math','#9C7A38') ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('sat-math','SAT Math','#9C7A38','class') ON CONFLICT (key) DO NOTHING`,
     );
     const [a] = (await q.query(`INSERT INTO stu (name, grade) VALUES ('준비학생','고1') RETURNING id`)) as Array<{ id: string }>;
     stuA = Number(a.id);

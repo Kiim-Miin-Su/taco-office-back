@@ -77,7 +77,7 @@ d('상담 배치안 초안 · 보류 연장 · 2차/진단 일정 (23-15 · 23-1
     const [room] = await q<{ id: string }>(`INSERT INTO room (branch, name) VALUES ('테스트', 'W3P 상담실') RETURNING id`);
     ROOM = Number(room.id);
     // 스위트 전용 과목과 단가 셋 — 1인 77,000 · 2인 50,000(구간은 1인만 본다) · 내일부터 99,000(「당시」 단가가 아니다)
-    await q(`INSERT INTO sub (key, name, color, active, sort) VALUES ($1, 'W3P Reading', '#445566', true, 999)`, [SUB]);
+    await q(`INSERT INTO sub (key, name, color, active, sort, kind_key) VALUES ($1, 'W3P Reading', '#A85764', true, 999, 'class')`, [SUB]);
     await q(
       `INSERT INTO rate (kind_key, sub_key, heads, unit_price, from_date) VALUES
          ('class', $1, 1, 77000, '2020-01-01'), ('class', $1, 2, 50000, '2020-01-01'), ('class', $1, 1, 99000, $2::date)`,

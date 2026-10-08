@@ -130,7 +130,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     };
     await once('kind', 'undo_test', `INSERT INTO kind(key,name,color,cap,grp) VALUES('undo_test','되돌림검증','#000000',4,'lesson')`);
     await once('kind', 'gpa', `INSERT INTO kind(key,name,color,cap,grp) VALUES('gpa','GPA','#7C3AED',4,'lesson')`);
-    await once('sub', 'undo-sub', `INSERT INTO sub(key,name,color) VALUES('undo-sub','MAP Math','#2563EB')`);
+    await once('sub', 'undo-sub', `INSERT INTO sub(key,name,color,kind_key) VALUES('undo-sub','UNDO MAP Math','#A85764','undo_test')`);
     await once('gpasvc', 'quiz', `INSERT INTO gpasvc(key,name,point) VALUES('quiz','Quiz 대비',2)`);
     // 줌 계정 둘 — 비밀 칸은 아무 바이트(이 스위트는 비밀을 읽지 않는다)
     // 앞 실행이 남긴 계정이 있으면 그 배정 · 사용 기록부터 걷고 지운다(zassign 은 계정을 RESTRICT 로 잡는다)
@@ -339,7 +339,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
       .rejects.toMatchObject({ response: { code: 'REQ_PENDING' } });
     const [row] = await q<{ student_id: string; payload: Record<string, unknown> }>(`SELECT student_id, payload FROM req WHERE id = $1`, [made.id]);
     expect(Number(row.student_id)).toBe(STU);
-    expect(row.payload).toMatchObject({ issueId: ISSUE, bookTitle: 'MAP Math Level 3', subjectName: 'MAP Math', studentName: '박하경', message: '너무 어렵습니다' });
+    expect(row.payload).toMatchObject({ issueId: ISSUE, bookTitle: 'MAP Math Level 3', subjectName: 'UNDO MAP Math', studentName: '박하경', message: '너무 어렵습니다' });
 
     // 홈 「교재 변경 요청 중」 · 수업 안내 교재 행의 단추 상태 — 서버가 센다
     expect((await teacher.home(T)).todo.openBookChanges).toBe(1);
@@ -347,7 +347,7 @@ d('§14 결재 되돌리기 (N-84) · 강사 요청 두 갈래 (N-99) · 결재 
     // §14 카드 — 회색 제목 「학생 · 과목」 · 분류 「교재 변경」 · 사유 인용 줄
     const inbox = (await drawer.all(BOSS, true, true)).approvals.inbox;
     const card = inbox.find((r) => r.kind === 'req' && r.id === made.id)!;
-    expect(card).toMatchObject({ title: '박하경 · MAP Math', category: 'book_change', reason: '너무 어렵습니다', asked: 'MAP Math Level 3', canAct: true });
+    expect(card).toMatchObject({ title: '박하경 · UNDO MAP Math', category: 'book_change', reason: '너무 어렵습니다', asked: 'MAP Math Level 3', canAct: true });
 
     const out = await drawer.reviewRequest(made.id, BOSS, { decision: 'approve' }, false);
     expect(out).toMatchObject({ state: 'approved', applied: null });

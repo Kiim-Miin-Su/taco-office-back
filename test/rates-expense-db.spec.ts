@@ -95,7 +95,7 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
     await q(`DELETE FROM rate WHERE kind_key = ANY($1)`, [[KIND, EXTRA]]);
     await q(`DELETE FROM kind WHERE key = ANY($1)`, [[KIND, EXTRA]]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'단가 시험','#333333',4,'lesson',true)`, [KIND]);
-    await q(`INSERT INTO sub (key,name,color) VALUES ($1,'단가 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
+    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'단가 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
     await q(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, $3, '2026-01-01', 1), ($1, $2, $4, '2026-01-01', 2)`, [KIND, SUB, SOLO, DUO]);
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())

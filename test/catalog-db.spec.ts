@@ -49,6 +49,21 @@ d('§18 프로그램·과목 관리 (C48)', () => {
   });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 
+  let savepointSeq = 0;
+  const blockedBy = async (sql: string): Promise<string> => {
+    const point = `catalog_guard_${++savepointSeq}`;
+    await q.query(`SAVEPOINT ${point}`);
+    try {
+      await q.query(sql);
+      return '';
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    } finally {
+      await q.query(`ROLLBACK TO SAVEPOINT ${point}`);
+      await q.query(`RELEASE SAVEPOINT ${point}`);
+    }
+  };
+
   it('프로그램을 만들면 묶음 이름은 서버가 붙인다 — 화면에 코드표를 복사하지 않는다 (D-R18)', async () => {
     const out = await svc().createKind(ACTOR, { key: 'cat_a', name: '검증 수업', color: '#112233', cap: 5, grp: 'lesson' });
     expect(out).toMatchObject({ key: 'cat_a', grp: 'lesson', grpLabel: '수업', rep: false, serCount: 0 });
@@ -87,10 +102,51 @@ d('§18 프로그램·과목 관리 (C48)', () => {
   });
 
   it('과목은 끄는 것으로 물러난다 — 지우기가 없다', async () => {
-    await svc().createSub(ACTOR, { key: 'cat-sub', name: '검증 과목', color: '#445566' });
+    await svc().createKind(ACTOR, { key: 'cat_sub_owner', name: '과목 소유', color: '#112233', cap: 5, grp: 'lesson' });
+    await svc().createSub(ACTOR, { key: 'cat-sub', name: '검증 과목', color: '#A85764', kindKey: 'cat_sub_owner' });
     const off = await svc().patchSub(ACTOR, 'cat-sub', { active: false });
     expect(off).toMatchObject({ key: 'cat-sub', active: false });
     expect(typeof (svc() as unknown as Record<string, unknown>).deleteSub).toBe('undefined');
+  });
+
+  it('BO-01D-01 과목은 프로그램 하나를 저장하고 다시 읽는다', async () => {
+    await svc().createKind(ACTOR, { key: 'cat_subject', name: '과목 프로그램', color: '#112233', cap: 5, grp: 'lesson' });
+    const made = await svc().createSub(ACTOR, {
+      key: 'cat-linked', name: '연결 과목', color: '#A85764', kindKey: 'cat_subject',
+    });
+    expect(made).toMatchObject({ key: 'cat-linked', kindKey: 'cat_subject' });
+    expect((await svc().all()).subs.find((row) => row.key === 'cat-linked')).toMatchObject({ kindKey: 'cat_subject' });
+  });
+
+  it('BO-01D-01 같은 이름은 대소문자와 바깥 공백을 무시해 409로 막는다', async () => {
+    await svc().createKind(ACTOR, { key: 'cat_names', name: '이름 프로그램', color: '#112233', cap: 5, grp: 'lesson' });
+    await svc().createSub(ACTOR, {
+      key: 'cat-name-a', name: 'AP Biology', color: '#A85764', kindKey: 'cat_names',
+    });
+    await expect(svc().createSub(ACTOR, {
+      key: 'cat-name-b', name: '  ap biology  ', color: '#B57046', kindKey: 'cat_names',
+    })).rejects.toMatchObject({ response: { code: 'SUB_NAME_TAKEN' } });
+  });
+
+  it('BO-01D-01 프로그램 변경과 8색만 허용하며 legacy 색의 무변경은 보존한다', async () => {
+    await svc().createKind(ACTOR, { key: 'cat_color_a', name: '색 A', color: '#112233', cap: 5, grp: 'lesson' });
+    await svc().createKind(ACTOR, { key: 'cat_color_b', name: '색 B', color: '#112233', cap: 5, grp: 'lesson' });
+    await svc().createSub(ACTOR, { key: 'cat-color', name: '색 과목', color: '#A85764', kindKey: 'cat_color_a' });
+    await expect(svc().patchSub(ACTOR, 'cat-color', { kindKey: 'cat_color_b', color: '#4A7FB5' }))
+      .resolves.toMatchObject({ kindKey: 'cat_color_b', color: '#4A7FB5' });
+    await expect(svc().patchSub(ACTOR, 'cat-color', { color: '#123456' }))
+      .rejects.toMatchObject({ response: { code: 'SUB_COLOR_INVALID' } });
+  });
+
+  it('BO-01D-01 직접 SQL도 신규 미연결·임의색·같은 이름을 막는다', async () => {
+    await svc().createKind(ACTOR, { key: 'cat_db_guard', name: 'DB 방어', color: '#112233', cap: 5, grp: 'lesson' });
+    expect(await blockedBy(`INSERT INTO sub(key,name,color,active) VALUES ('cat-db-none','DB 미연결','#A85764',true)`))
+      .toMatch(/SUB_PROGRAM_REQUIRED/);
+    expect(await blockedBy(`INSERT INTO sub(key,name,color,active,kind_key) VALUES ('cat-db-color','DB 임의색','#123456',true,'cat_db_guard')`))
+      .toMatch(/SUB_COLOR_INVALID/);
+    await q.query(`INSERT INTO sub(key,name,color,active,kind_key) VALUES ('cat-db-name','DB 같은 이름','#A85764',true,'cat_db_guard')`);
+    expect(await blockedBy(`INSERT INTO sub(key,name,color,active,kind_key) VALUES ('cat-db-name2','  db 같은 이름  ','#B57046',true,'cat_db_guard')`))
+      .toMatch(/sub_name_normalized_uniq/);
   });
 
   it('없는 것은 없다고 말한다', async () => {
@@ -122,7 +178,8 @@ d('§18 프로그램·과목 관리 (C48)', () => {
   });
 
   it('N-73 과목 만들기 · 끄기는 SUB 감사 줄이 남는다 — 끄기는 after.active=false 다', async () => {
-    await svc().createSub(ACTOR, { key: 'cat-log', name: '감사 과목', color: '#445566' });
+    await svc().createKind(ACTOR, { key: 'cat_log_owner', name: '감사 과목 소유', color: '#112233', cap: 5, grp: 'lesson' });
+    await svc().createSub(ACTOR, { key: 'cat-log', name: '감사 과목', color: '#A85764', kindKey: 'cat_log_owner' });
     await svc().patchSub(ACTOR, 'cat-log', { active: false });
     const rows = await logs('SUB', 'cat-log');
     expect(rows.map((r) => r.action)).toEqual(['create', 'patch']);

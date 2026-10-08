@@ -93,7 +93,7 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
        ON CONFLICT (id) DO NOTHING`,
     );
     await q.query(`INSERT INTO kind (key,name,color,cap,grp) VALUES ('w11c2_class','W11 사후 수업','#333333',4,'lesson') ON CONFLICT (key) DO NOTHING`);
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('w11c2-sub','W11 사후 과목','#444444') ON CONFLICT (key) DO NOTHING`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ('w11c2-sub','W11 사후 과목','#A85764','w11c2_class') ON CONFLICT (key) DO NOTHING`);
     const [s] = (await q.query(`INSERT INTO stu (name, grade) VALUES ('사후 학생','G9') RETURNING id`)) as Array<{ id: string }>;
     stuId = Number(s.id);
     await q.query(

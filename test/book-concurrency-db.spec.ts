@@ -122,7 +122,7 @@ d('C77 교재 LIB-first 동시성', () => {
     const subKey = `book-${suffix}`.slice(0, 20);
     madeKinds.push(kindKey); madeSubs.push(subKey);
     await ds.query(`INSERT INTO kind(key,name,color,cap,grp,rep) VALUES($1,'동시 배정','#334455',4,'lesson',true)`, [kindKey]);
-    await ds.query(`INSERT INTO sub(key,name,color) VALUES($1,'동시 과목','#556677')`, [subKey]);
+    await ds.query(`INSERT INTO sub(key,name,color,kind_key) VALUES($1,'동시 과목','#A85764',$2)`, [subKey, kindKey]);
     const [student] = await ds.query(`INSERT INTO stu(name,grade) VALUES('동시 배정 학생','G9') RETURNING id`);
     const studentId = Number(student.id); madeStudents.push(studentId);
     const [book] = await ds.query(

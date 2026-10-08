@@ -57,7 +57,7 @@ d('§55 들어온 돈 — 기간 · 달력 · 분류별 · 미수 전체 (w5)', 
     )) as Array<{ id: string }>;
     if (gpa) {
       await q.query(
-        `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq) VALUES ($1,'cf-gpa','GPA',1,$2,$2,0)`,
+        `INSERT INTO inv_line (inv_id, sub_key, label, count, unit_price, amount, seq) VALUES ($1,'gpa-care','GPA',1,$2,$2,0)`,
         [Number(r.id), amount],
       );
     }
@@ -74,9 +74,9 @@ d('§55 들어온 돈 — 기간 · 달력 · 분류별 · 미수 전체 (w5)', 
     await q.startTransaction();
     for (const t of ['pay', 'inv_line', 'carry', 'inv']) await q.query(`DELETE FROM ${t}`);
     await q.query(`INSERT INTO kind (key,name,color,cap,grp) VALUES ('gpa','GPA','#111111',4,'lesson') ON CONFLICT (key) DO NOTHING`);
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('cf-gpa','GPA 관리','#222222') ON CONFLICT (key) DO NOTHING`);
-    await q.query(`DELETE FROM rate WHERE sub_key = 'cf-gpa'`);
-    await q.query(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ('gpa','cf-gpa',100000,'2026-01-01',1)`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ('gpa-care','GPA 관리','#556B8E','gpa') ON CONFLICT (key) DO NOTHING`);
+    await q.query(`DELETE FROM rate WHERE sub_key = 'gpa-care'`);
+    await q.query(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ('gpa','gpa-care',100000,'2026-01-01',1)`);
 
     // ── 원본 §55 컷의 8월 ──
     const a = await stu('강라율'); const b = await stu('이하린'); const c = await stu('고은성');

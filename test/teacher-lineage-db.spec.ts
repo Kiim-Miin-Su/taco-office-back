@@ -110,7 +110,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
     );
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'계보학생1','10','테스트고'), ($2,'계보학생2','11','테스트고')`, [STU1, STU2]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'계보 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
-    await q(`INSERT INTO sub (key,name,color) VALUES ($1,'계보 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
+    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'계보 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
     const login = async (email: string) => {
       const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;

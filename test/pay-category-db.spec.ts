@@ -86,20 +86,20 @@ d('§55 입금 분류 여섯 (C71)', () => {
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('pc-gpa','GPA 관리','#222222') ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('gpa-care','GPA 관리','#556B8E','gpa') ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
       `INSERT INTO kind (key,name,color,cap,grp) VALUES ('pc_les','보통 수업','#333333',4,'lesson')
        ON CONFLICT (key) DO NOTHING`,
     );
     await q.query(
-      `INSERT INTO sub (key,name,color) VALUES ('pc-les','보통 과목','#444444') ON CONFLICT (key) DO NOTHING`,
+      `INSERT INTO sub (key,name,color,kind_key) VALUES ('pc-les','보통 과목','#A85764','pc_les') ON CONFLICT (key) DO NOTHING`,
     );
-    // 과목이 어느 종류에 속하는지는 **단가표가 안다** — `sub` 에는 종류 칸이 없다
-    await q.query(`DELETE FROM rate WHERE sub_key IN ('pc-gpa','pc-les')`);
+    // BOC-01D-01 이후 과목 소유 프로그램은 `sub.kind_key`가 정본이고 단가표도 같은 짝을 사용한다.
+    await q.query(`DELETE FROM rate WHERE sub_key IN ('gpa-care','pc-les')`);
     await q.query(
       `INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads)
-       VALUES ('gpa','pc-gpa', 120000, '2026-01-01', 1), ('pc_les','pc-les', 80000, '2026-01-01', 1)`,
+       VALUES ('gpa','gpa-care', 120000, '2026-01-01', 1), ('pc_les','pc-les', 80000, '2026-01-01', 1)`,
     );
   });
   afterEach(async () => {
@@ -144,7 +144,7 @@ d('§55 입금 분류 여섯 (C71)', () => {
   /* ── ③ GPA 관리비 ───────────────────────────────────────────────── */
 
   it('수업료 중 **GPA 수업에서 나온 것**이 「GPA 관리비」다 — 청구 종류는 그대로 tuition 이다', async () => {
-    await paid('tuition', 'pc-gpa', 120_000);
+    await paid('tuition', 'gpa-care', 120_000);
     await paid('tuition', 'pc-les', 80_000);
     const v = await all();
     expect(v.payments.map((p) => p.category).sort()).toEqual(['gpa', 'tuition']);
@@ -176,7 +176,7 @@ d('§55 입금 분류 여섯 (C71)', () => {
   });
 
   it('칩의 건수 합은 입금 줄 수와 같다 — 어느 줄도 분류를 못 받지 않는다', async () => {
-    await paid('tuition', 'pc-gpa');
+    await paid('tuition', 'gpa-care');
     await paid('consulting', null);
     await loosePay();
     const v = await all();

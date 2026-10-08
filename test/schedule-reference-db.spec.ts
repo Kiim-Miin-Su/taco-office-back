@@ -35,7 +35,7 @@ d('일정 DB 참조 계약 — 직접 쓰기도 방어한다', () => {
     await q.connect();
     await q.startTransaction();
     await q.query(`INSERT INTO kind (key,name,color,cap,grp) VALUES ('fk_test','FK','#000000',1,'lesson')`);
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ('fk_test','FK','#000000')`);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ('fk_test','FK','#A85764','fk_test')`);
     await q.query(`INSERT INTO staff (id,name,email,role) VALUES (-770,'FK','fk-test@t.kr','ceo')`);
     await q.query(`INSERT INTO room (id,branch,name) VALUES (-770,'FK','FK')`);
     await q.query(`INSERT INTO stu (id,name) VALUES (-770,'FK')`);

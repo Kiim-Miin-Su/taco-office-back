@@ -57,8 +57,8 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
       ON CONFLICT (id) DO NOTHING`, [manager, teacherA]);
     await q.query(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'C98 수업','#123456',8,'lesson',true)
       ON CONFLICT (key) DO NOTHING`, [kindKey]);
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ($1,'SAT Reading','#654321')
-      ON CONFLICT (key) DO NOTHING`, [subKey]);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'C98 SAT Reading','#A85764',$2)
+      ON CONFLICT (key) DO NOTHING`, [subKey, kindKey]);
     await q.query(`INSERT INTO zacc (id,label,login_email,login_secret,join_url,meeting_id,meeting_pw_enc,active)
       VALUES ($1,'Study','zoom-c98@test','\\x00','https://zoom.example/j/9988','998-877','\\x2a2a2a',true)
       ON CONFLICT (id) DO NOTHING`, [zaccId]);
@@ -145,7 +145,7 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
       ['student', 'grade', 'teacher', 'subject', 'mode', 'startOn', 'books'],
     );
     expect(withBooks?.autoFill?.facts.map((f) => f.value)).toEqual(
-      ['고은설', 'G9', '김재훈', 'SAT Reading', '온라인', TODAY, 'SAT Reading Bible'],
+      ['고은설', 'G9', '김재훈', 'C98 SAT Reading', '온라인', TODAY, 'SAT Reading Bible'],
     );
     expect(withBooks?.autoFill?.facts.every((f) => f.filled)).toBe(true);
     // 교재가 없으면 값은 null 이고 문장은 서버가 준다
@@ -345,12 +345,12 @@ d('§43 자동 채움 · 복사 · 줌 안내 (C98 · F-60 · F-61 · F-63)', ()
       `INSERT INTO room (branch, name) VALUES ('c98','3호') RETURNING id`,
     )) as Array<{ id: string }>;
     await q.query(`UPDATE ser_occ SET room_id = $2 WHERE ser_id = $1`, [serId, Number(room.id)]);
-    const expected = { serTitle: null, subName: 'SAT Reading', kindName: 'C98 수업', startMin: 600, roomName: '3호' };
+    const expected = { serTitle: null, subName: 'C98 SAT Reading', kindName: 'C98 수업', startMin: 600, roomName: '3호' };
 
     const all = await svc().all();
     expect(all.guides.find((g) => g.studentId === students[0])).toMatchObject(expected);
     // §43 매번 줄 — 과목·강의실 (시각은 이미 있다)
-    expect(all.perLesson.find((row) => row.serId === serId)).toMatchObject({ subName: 'SAT Reading', roomName: '3호', startMin: 600 });
+    expect(all.perLesson.find((row) => row.serId === serId)).toMatchObject({ subName: 'C98 SAT Reading', roomName: '3호', startMin: 600 });
     // §44 학생별
     expect((await svc().students()).items.find((x) => x.studentId === students[0])!.latestGuide).toMatchObject(expected);
     // §45 이력 — 사건(안내 작성)의 안내와 안 한 것 둘 다 (N-90 · 줄 하나 = 사건 하나)

@@ -90,7 +90,7 @@ d('등록 확정 — 한 트랜잭션에 일곱 가지 (C91 · A-05 · A-06 · A
     );
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'등록A','G10','테스트고')`, [STU_EXISTING]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'등록 시험','#333333',4,'lesson',true), ($2,'단가 없음','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND, KIND_NORATE]);
-    await q(`INSERT INTO sub (key,name,color) VALUES ($1,'등록 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
+    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'등록 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
     await q(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, $3, '2026-01-01', 1), ($1, NULL, $4, '2026-01-01', 1)`, [KIND, SUB, RATE_SUB, RATE_KIND]);
     const [lib] = await q<{ id: string }>(`INSERT INTO lib (code, title, sub_key, pages, grade_from, grade_to) VALUES ('EN-TEST', '등록 교재', $1, 100, 9, 12) RETURNING id`, [SUB]);
     LIB = Number(lib.id);

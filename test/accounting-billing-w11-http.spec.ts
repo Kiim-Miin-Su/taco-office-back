@@ -88,7 +88,7 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'청구A','10'), ($2,'청구B','10')`, [STU_A, STU_B]);
     await q(`INSERT INTO kind (key,name,color,cap,grp) VALUES ($1,'청구 시험','#333333',4,'lesson') ON CONFLICT (key) DO NOTHING`, [KIND]);
-    await q(`INSERT INTO sub (key,name,color) VALUES ($1,'청구 과목','#444444') ON CONFLICT (key) DO NOTHING`, [SUB]);
+    await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'청구 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);
     await q(`DELETE FROM rate WHERE kind_key = $1`, [KIND]);
     await q(`INSERT INTO rate (kind_key, sub_key, unit_price, from_date, heads) VALUES ($1, $2, 50000, '2026-01-01', 1)`, [KIND, SUB]);
     const login = async (loginId: string) => {

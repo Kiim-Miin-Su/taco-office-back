@@ -5,14 +5,20 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import { KIND_GROUPS } from '../../lib/catalog-words';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 /* 묶음 낱말은 `lib/catalog-words` 하나에서 온다 — 서랍(§18)과 이 화면이 같은 표를 쓴다 (D-R18) */
 export { KIND_GROUPS, KIND_GROUP_LABEL } from '../../lib/catalog-words';
 
 /** 리포트 서식 — 원문 §18 의 「리포트」 표시가 붙는 프로그램만 고른다 */
 export const REP_FORMS = ['dev', 'assess'] as const;
+
+/** 최종 관리자 수정사항 p6의 과목 색 8개. Catalog 응답도 이 배열을 그대로 내려 Front에 사본을 두지 않는다. */
+export const SUBJECT_COLORS = [
+  '#A85764', '#B57046', '#4A7FB5', '#3E8E5E', '#7C5CB5', '#C08A2E', '#2F8F8A', '#8B6B5A',
+] as const;
 
 export class KindRowsDto {
   @ApiProperty({ description: '코드 — 한 번 정하면 바꾸지 않는다. 시간표가 이 낱말로 저장돼 있다' }) key!: string;
@@ -25,6 +31,7 @@ export class KindRowsDto {
   @ApiPropertyOptional({ type: String, nullable: true, enum: REP_FORMS }) repForm?: string | null;
   @ApiPropertyOptional({ type: Number, nullable: true }) sort?: number | null;
   @ApiProperty({ description: '추가 수업인가 — 시간표 「추가」 배지 · §54 「추가」 칸 · 청구서 별도 줄 (C94-d · C-38)' }) extra!: boolean;
+  @ApiProperty({ description: '새 과목의 소유 프로그램으로 선택할 수 있는가. GPA 과거 원장은 false' }) subjectAssignable!: boolean;
   @ApiProperty({ description: '이 프로그램으로 돌고 있는 수업 규칙 수 — 0 이 아니면 코드를 바꿀 수 없다' }) serCount!: number;
 }
 
@@ -34,12 +41,14 @@ export class SubRowDto {
   @ApiProperty() color!: string;
   @ApiProperty() active!: boolean;
   @ApiPropertyOptional({ type: Number, nullable: true }) sort?: number | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '과목이 속한 단일 프로그램. 미연결 legacy는 null' }) kindKey?: string | null;
   @ApiProperty({ description: '이 과목으로 돌고 있는 수업 규칙 수' }) serCount!: number;
 }
 
 export class CatalogDto {
   @ApiProperty({ type: [KindRowsDto] }) kinds!: KindRowsDto[];
   @ApiProperty({ type: [SubRowDto] }) subs!: SubRowDto[];
+  @ApiProperty({ enum: SUBJECT_COLORS, isArray: true, description: '새 과목·색 변경에서 고르는 최종 8색' }) subjectColors!: string[];
 }
 
 const KEY = /^[a-z][a-z0-9_]{1,15}$/;
@@ -76,14 +85,30 @@ export class SubCreateDto {
   @IsString() @Matches(/^[a-z][a-z0-9-]{1,19}$/, { message: '코드는 영문 소문자로 시작하는 2~20자입니다' })
   key!: string;
 
-  @ApiProperty() @IsString() @MaxLength(40) name!: string;
-  @ApiProperty({ description: '#RRGGBB' }) @IsString() @Matches(HEX) color!: string;
+  @ApiProperty({ minLength: 1, maxLength: 40 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1, { message: '과목 이름을 적어 주세요' }) @MaxLength(40)
+  name!: string;
+  @ApiProperty({ description: '과목이 속한 단일 프로그램(kind.key)' })
+  @IsString() @Matches(KEY, { message: '프로그램 코드 형식이 올바르지 않습니다' })
+  kindKey!: string;
+  @ApiProperty({ enum: SUBJECT_COLORS, description: '최종 관리자 수정사항 p6의 8색' })
+  @IsString() @IsIn(SUBJECT_COLORS as unknown as string[])
+  color!: string;
   @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) sort?: number;
 }
 
 export class SubPatchDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) name?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @Matches(HEX) color?: string;
+  @ApiPropertyOptional({ minLength: 1, maxLength: 40 })
+  @IsOptional() @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1, { message: '과목 이름을 적어 주세요' }) @MaxLength(40)
+  name?: string;
+  @ApiPropertyOptional({ description: '새 프로그램. 기존 미연결/불일치 기록은 그대로 읽고 자동 병합하지 않는다' })
+  @IsOptional() @IsString() @Matches(KEY)
+  kindKey?: string;
+  @ApiPropertyOptional({ description: '바꿀 때는 최종 8색만 허용. 기존 legacy 색을 그대로 보내는 것은 보존' })
+  @IsOptional() @IsString() @Matches(HEX)
+  color?: string;
   @ApiPropertyOptional({ description: '끄면 새 수업에서 고를 수 없다. 이미 도는 수업은 건드리지 않는다' })
   @IsOptional() @IsBoolean() active?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) sort?: number;

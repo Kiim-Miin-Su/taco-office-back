@@ -94,16 +94,16 @@ d('C96 — 회의 잡기 · 기획 올리기 · 기간/갈래 (N-46 ②③ · J-
       `INSERT INTO zacc (id, label, login_email, login_secret, join_url, meeting_id, meeting_pw_enc, active)
        VALUES ($1,'C96 Zoom','c96-zoom@t.kr','\\x00','https://z.example/c96','999','\\x00',true)`, [ZACC],
     );
-    for (const key of MT_TYPES) {
-      await q(
-        `INSERT INTO sub (key, name, color) VALUES ($1,$2,'#334455') ON CONFLICT (key) DO NOTHING`,
-        [MT_TYPE_SUB[key], `C96 ${key}`],
-      );
-    }
     await q(
       `INSERT INTO kind (key, name, color, cap, grp, rep, extra) VALUES ('meeting','회의','#856C4A',10,'meeting',false,false)
        ON CONFLICT (key) DO NOTHING`,
     );
+    for (const key of MT_TYPES) {
+      await q(
+        `INSERT INTO sub (key, name, color, kind_key) VALUES ($1,$2,'#A85764','meeting') ON CONFLICT (key) DO NOTHING`,
+        [MT_TYPE_SUB[key], `C96 ${key}`],
+      );
+    }
 
     [{ max: mtBase }] = await q<{ max: number }>(`SELECT COALESCE(max(id), 0)::int AS max FROM mtrec`);
 

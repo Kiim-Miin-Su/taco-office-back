@@ -96,7 +96,7 @@ d('줌 배정 — 정본은 ZASSIGN, ser_occ 는 투영이다 (C48)', () => {
       `INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ('zoom_test','줌검증','#000000',4,'lesson',false)
        ON CONFLICT (key) DO NOTHING`,
     );
-    await q.query(`INSERT INTO sub (key,name,color) VALUES ($1,$1,'#000000') ON CONFLICT (key) DO NOTHING`, [subKey]);
+    await q.query(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,$2,'#A85764','zoom_test') ON CONFLICT (key) DO NOTHING`, [subKey, `Zoom ${subKey}`]);
     const [r] = (await q.query(
       `INSERT INTO ser (kind_key, sub_key, mode, start_min, end_min, rrule, from_date, to_date)
        VALUES ('zoom_test', $1, 'online', $2::int, $2::int + 60, 'WEEKLY:MO,TU,WE,TH,FR,SA,SU',
