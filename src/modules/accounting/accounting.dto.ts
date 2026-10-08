@@ -448,6 +448,121 @@ export class PaymentEvidenceBatchResultDto {
   @ApiProperty({ type: [PaymentEvidenceDto] }) items!: PaymentEvidenceDto[];
 }
 
+/* ── BO-11AD-03 실제 강사료 지급 원장 ───────────────────────────────────
+ * `PAYOUT`/`PAYOUT_LINE`은 계산 확정 snapshot이고, 아래 DTO는 실제 계좌이체의 current/event 원장이다.
+ * 계좌번호·뒤 4자리는 BO-Q9 계좌 보호 계약이 소유하므로 이 단계에서 기존 데이터로 추정하지 않는다.
+ */
+export class PayoutDisbursementEventDto {
+  @ApiProperty({ enum: ['paid', 'canceled'] }) action!: 'paid' | 'canceled';
+  @ApiProperty({ type: String, nullable: true, enum: ['paid', 'canceled'] }) fromState!: 'paid' | 'canceled' | null;
+  @ApiProperty({ enum: ['paid', 'canceled'] }) toState!: 'paid' | 'canceled';
+  @ApiProperty() version!: number;
+  @ApiProperty() actor!: string;
+  @ApiProperty({ type: String, format: 'date', nullable: true }) paidOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, enum: ['bank_transfer'] }) method!: 'bank_transfer' | null;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty() createdAt!: string;
+}
+
+export class PayoutDisbursementDto {
+  @ApiProperty() payoutId!: number;
+  @ApiProperty() staffId!: number;
+  @ApiProperty() staffName!: string;
+  @ApiProperty({ example: '2026-09' }) yearMonth!: string;
+  @ApiProperty({ description: '확정 정산의 시수 snapshot' }) hours!: string;
+  @ApiProperty() gross!: number;
+  @ApiProperty({ description: '리포트·수업 지각 차감 합' }) deduction!: number;
+  @ApiProperty() incomeTax!: number;
+  @ApiProperty() localTax!: number;
+  @ApiProperty({ description: '소득세 + 지방소득세' }) withholding!: number;
+  @ApiProperty() net!: number;
+  @ApiProperty({ enum: ['unpaid', 'paid'] }) status!: 'unpaid' | 'paid';
+  @ApiProperty({ description: '미지급은 0, 지급·취소 때마다 1 증가' }) version!: number;
+  @ApiProperty({ type: String, format: 'date', nullable: true }) paidOn!: string | null;
+  @ApiProperty({ type: String, nullable: true }) paidAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) paidBy!: string | null;
+  @ApiProperty({ type: String, nullable: true, enum: ['bank_transfer'] }) method!: 'bank_transfer' | null;
+  @ApiProperty({ type: String, nullable: true }) canceledAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledBy!: string | null;
+  @ApiProperty({ type: String, nullable: true }) cancelReason!: string | null;
+  @ApiProperty({ description: '확정 정산이면 true. 실제 권한은 endpoint에서 다시 검증한다' }) canPay!: boolean;
+  @ApiProperty({ description: '현재 지급 상태이면 true. 실제 권한은 endpoint에서 다시 검증한다' }) canCancel!: boolean;
+  @ApiProperty({ type: [PayoutDisbursementEventDto], description: '지급·취소·재지급 전체 불변 이력' })
+  events!: PayoutDisbursementEventDto[];
+}
+
+export class PayoutDisbursementMonthDto {
+  @ApiProperty({ example: '2026-09' }) month!: string;
+  @ApiProperty() totalCount!: number;
+  @ApiProperty() paidCount!: number;
+  @ApiProperty() totalAmount!: number;
+  @ApiProperty() paidAmount!: number;
+  @ApiProperty() unpaidAmount!: number;
+  @ApiProperty({ type: [PayoutDisbursementDto] }) items!: PayoutDisbursementDto[];
+}
+
+export class PayoutDisbursementLedgerDto {
+  @ApiProperty({ type: [PayoutDisbursementMonthDto], description: '확정 정산이 있는 최근 두 달' })
+  months!: PayoutDisbursementMonthDto[];
+}
+
+export class PayoutDisbursementPayDto {
+  @ApiProperty({ minimum: 0 })
+  @IsInt() @Min(0)
+  expectedVersion!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '실제 이체일. 미래 날짜는 서버가 거절한다' })
+  @IsCalendarDate()
+  paidOn!: string;
+
+  @ApiProperty({ enum: ['bank_transfer'], description: '최신 수정사항 p104의 계좌이체. 계좌 참조는 BO-Q9에서 연결한다' })
+  @IsIn(['bank_transfer'])
+  method!: 'bank_transfer';
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class PayoutDisbursementCancelDto {
+  @ApiProperty({ minimum: 0 })
+  @IsInt() @Min(0)
+  expectedVersion!: number;
+
+  @ApiProperty({ minLength: 2, maxLength: 200 })
+  @IsString() @MinLength(2) @MaxLength(200)
+  reason!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class PayoutDisbursementBatchPayDto {
+  @ApiProperty({ example: '2026-09' })
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month!: string;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '미지급 전원의 실제 이체일' })
+  @IsCalendarDate()
+  paidOn!: string;
+
+  @ApiProperty({ enum: ['bank_transfer'] })
+  @IsIn(['bank_transfer'])
+  method!: 'bank_transfer';
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class PayoutDisbursementBatchResultDto {
+  @ApiProperty({ example: '2026-09' }) month!: string;
+  @ApiProperty() paidCount!: number;
+  @ApiProperty() skippedCount!: number;
+  @ApiProperty({ type: [PayoutDisbursementDto] }) items!: PayoutDisbursementDto[];
+}
+
 /**
  * 입금 한 줄 등록 — **분납은 줄을 늘려서 표현한다** (A-D2 · PLANNING §4-17).
  * 누계·상태 전이·초과 판정은 전부 서버가 한다. 화면은 잔여를 placeholder 로만 보여 준다 (ACCOUNTING §0).

@@ -5778,6 +5778,383 @@
         ]
       }
     },
+    "/accounting/payout-ledger": {
+      "get": {
+        "description": "관리자 수정사항 p104의 지급 인원·시수·총액·차감·원천징수·차인지급액·지급일·처리자다. `payout`/`payout_line`의 확정 계산을 바꾸지 않고 별도 실제 송금 current/event 원장을 읽는다. 계좌번호·뒤 4자리는 BO-Q9 계좌 보호 계약 전까지 추정하지 않는다. 이 권고안은 service/migration/기능 문서와 함께 바꿔야 한다.",
+        "operationId": "AccountingController_payoutDisbursementLedger",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutDisbursementLedgerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "실제 강사료 지급 원장 — 확정 정산이 있는 최근 두 달 (TBO-55 BO-11AD-03)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/payout-ledger/pay-batch": {
+      "post": {
+        "operationId": "AccountingController_payPayoutDisbursementBatch",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutDisbursementBatchPayDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutDisbursementBatchResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "PAYOUT_PAYMENT_FUTURE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PAYOUT_BATCH_EMPTY | REQUEST_KEY_REUSED | PAYOUT_DISBURSEMENT_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "한 달 미지급 확정 정산 일괄 계좌이체 기록 — actual actor·snapshot·event 원자 저장",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/payout-ledger/{payoutId}/pay": {
+      "post": {
+        "operationId": "AccountingController_payPayoutDisbursement",
+        "parameters": [
+          {
+            "name": "payoutId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutDisbursementPayDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutDisbursementDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "PAYOUT_PAYMENT_FUTURE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PAYOUT_NOT_CONFIRMED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PAYOUT_ALREADY_PAID | PAYOUT_DISBURSEMENT_STALE | REQUEST_KEY_REUSED | PAYOUT_DISBURSEMENT_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "확정 정산 한 건의 실제 계좌이체 기록 — 계산 확정 snapshot은 불변",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/payout-ledger/{payoutId}/cancel": {
+      "post": {
+        "operationId": "AccountingController_cancelPayoutDisbursement",
+        "parameters": [
+          {
+            "name": "payoutId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PayoutDisbursementCancelDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PayoutDisbursementDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "PAYOUT_NOT_CONFIRMED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PAYOUT_NOT_PAID | PAYOUT_DISBURSEMENT_STALE | REQUEST_KEY_REUSED | PAYOUT_DISBURSEMENT_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "실제 지급 취소 — 사유와 actor를 보존하고 같은 확정 정산의 재지급을 연다",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/payouts": {
       "get": {
         "description": "세는 것은 lib/payout-sheet 한 곳(강사 히스토리와 같다). 리포트를 쓴 수업만 시수·금액에 들고, 미작성은 빠지며 얼마가 빠지는지 센다. 휴강은 시수에 잡히지 않는다. 저장된 초안이 계산과 다르면 줄에 함께 보인다. 가산(N-93)은 같은 함수가 더하고, 확정된 달은 저장값(근거 줄)을 그대로 읽는다(N-36). 앞선 확정 달의 회차를 확정 뒤에 쓰면 다음 미확정 달에 보정 줄로 얹힌다(N-51). 시급 비공개(N-94)가 켜지면 줄 금액은 비공개 열람 · 본인만 보고 합계는 그대로다.",
@@ -32151,6 +32528,361 @@
           "canSeeAmounts",
           "canClose",
           "canReopen"
+        ]
+      },
+      "PayoutDisbursementEventDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "paid",
+              "canceled"
+            ]
+          },
+          "fromState": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "paid",
+              "canceled"
+            ]
+          },
+          "toState": {
+            "type": "string",
+            "enum": [
+              "paid",
+              "canceled"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "paidOn": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "method": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "bank_transfer"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "fromState",
+          "toState",
+          "version",
+          "actor",
+          "paidOn",
+          "method",
+          "reason",
+          "createdAt"
+        ]
+      },
+      "PayoutDisbursementDto": {
+        "type": "object",
+        "properties": {
+          "payoutId": {
+            "type": "number"
+          },
+          "staffId": {
+            "type": "number"
+          },
+          "staffName": {
+            "type": "string"
+          },
+          "yearMonth": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "hours": {
+            "type": "string",
+            "description": "확정 정산의 시수 snapshot"
+          },
+          "gross": {
+            "type": "number"
+          },
+          "deduction": {
+            "type": "number",
+            "description": "리포트·수업 지각 차감 합"
+          },
+          "incomeTax": {
+            "type": "number"
+          },
+          "localTax": {
+            "type": "number"
+          },
+          "withholding": {
+            "type": "number",
+            "description": "소득세 + 지방소득세"
+          },
+          "net": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unpaid",
+              "paid"
+            ]
+          },
+          "version": {
+            "type": "number",
+            "description": "미지급은 0, 지급·취소 때마다 1 증가"
+          },
+          "paidOn": {
+            "type": "string",
+            "format": "date",
+            "nullable": true
+          },
+          "paidAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "paidBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "method": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "bank_transfer"
+            ]
+          },
+          "canceledAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "canceledBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "cancelReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "canPay": {
+            "type": "boolean",
+            "description": "확정 정산이면 true. 실제 권한은 endpoint에서 다시 검증한다"
+          },
+          "canCancel": {
+            "type": "boolean",
+            "description": "현재 지급 상태이면 true. 실제 권한은 endpoint에서 다시 검증한다"
+          },
+          "events": {
+            "description": "지급·취소·재지급 전체 불변 이력",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutDisbursementEventDto"
+            }
+          }
+        },
+        "required": [
+          "payoutId",
+          "staffId",
+          "staffName",
+          "yearMonth",
+          "hours",
+          "gross",
+          "deduction",
+          "incomeTax",
+          "localTax",
+          "withholding",
+          "net",
+          "status",
+          "version",
+          "paidOn",
+          "paidAt",
+          "paidBy",
+          "method",
+          "canceledAt",
+          "canceledBy",
+          "cancelReason",
+          "canPay",
+          "canCancel",
+          "events"
+        ]
+      },
+      "PayoutDisbursementMonthDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "totalCount": {
+            "type": "number"
+          },
+          "paidCount": {
+            "type": "number"
+          },
+          "totalAmount": {
+            "type": "number"
+          },
+          "paidAmount": {
+            "type": "number"
+          },
+          "unpaidAmount": {
+            "type": "number"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutDisbursementDto"
+            }
+          }
+        },
+        "required": [
+          "month",
+          "totalCount",
+          "paidCount",
+          "totalAmount",
+          "paidAmount",
+          "unpaidAmount",
+          "items"
+        ]
+      },
+      "PayoutDisbursementLedgerDto": {
+        "type": "object",
+        "properties": {
+          "months": {
+            "description": "확정 정산이 있는 최근 두 달",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutDisbursementMonthDto"
+            }
+          }
+        },
+        "required": [
+          "months"
+        ]
+      },
+      "PayoutDisbursementBatchPayDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "paidOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "미지급 전원의 실제 이체일"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "bank_transfer"
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "month",
+          "paidOn",
+          "method",
+          "requestKey"
+        ]
+      },
+      "PayoutDisbursementBatchResultDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "example": "2026-09"
+          },
+          "paidCount": {
+            "type": "number"
+          },
+          "skippedCount": {
+            "type": "number"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutDisbursementDto"
+            }
+          }
+        },
+        "required": [
+          "month",
+          "paidCount",
+          "skippedCount",
+          "items"
+        ]
+      },
+      "PayoutDisbursementPayDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 0
+          },
+          "paidOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "실제 이체일. 미래 날짜는 서버가 거절한다"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "bank_transfer"
+            ],
+            "description": "최신 수정사항 p104의 계좌이체. 계좌 참조는 BO-Q9에서 연결한다"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "paidOn",
+          "method",
+          "requestKey"
+        ]
+      },
+      "PayoutDisbursementCancelDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "reason",
+          "requestKey"
         ]
       },
       "PayoutSheetRowDto": {

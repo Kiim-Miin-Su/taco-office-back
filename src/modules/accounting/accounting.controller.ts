@@ -30,6 +30,8 @@ import {
   PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, AcctPrivacyDto, AcctPrivacyWriteDto,
   StudentCumulativeDto, PaymentEvidenceDto, PaymentEvidenceLedgerDto, PaymentEvidenceQueryDto,
   PaymentEvidenceIssueDto, PaymentEvidenceCancelDto, PaymentEvidenceBatchIssueDto, PaymentEvidenceBatchResultDto,
+  PayoutDisbursementDto, PayoutDisbursementLedgerDto, PayoutDisbursementPayDto,
+  PayoutDisbursementCancelDto, PayoutDisbursementBatchPayDto, PayoutDisbursementBatchResultDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
@@ -164,6 +166,64 @@ export class AccountingController {
   async tuition(@CurrentUser() user: RequestUser, @Query() query: TuitionQueryDto): Promise<TuitionDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.tuition(query.month ?? todayKst().slice(0, 7), canSee, isRole(user.role) && canCeoCloseMonth(user.role));
+  }
+
+  @Get('payout-ledger')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '실제 강사료 지급 원장 — 확정 정산이 있는 최근 두 달 (TBO-55 BO-11AD-03)',
+    description: '관리자 수정사항 p104의 지급 인원·시수·총액·차감·원천징수·차인지급액·지급일·처리자다. '
+      + '`payout`/`payout_line`의 확정 계산을 바꾸지 않고 별도 실제 송금 current/event 원장을 읽는다. '
+      + '계좌번호·뒤 4자리는 BO-Q9 계좌 보호 계약 전까지 추정하지 않는다. 이 권고안은 service/migration/기능 문서와 함께 바꿔야 한다.',
+  })
+  @ApiOkResponse({ type: PayoutDisbursementLedgerDto })
+  payoutDisbursementLedger(@CurrentUser() user: RequestUser): Promise<PayoutDisbursementLedgerDto> {
+    return this.svc.payoutDisbursementLedger(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms));
+  }
+
+  @Post('payout-ledger/pay-batch')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '한 달 미지급 확정 정산 일괄 계좌이체 기록 — actual actor·snapshot·event 원자 저장' })
+  @ApiCreatedResponse({ type: PayoutDisbursementBatchResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'PAYOUT_PAYMENT_FUTURE' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'PAYOUT_BATCH_EMPTY | REQUEST_KEY_REUSED | PAYOUT_DISBURSEMENT_REPLAY_STALE' })
+  payPayoutDisbursementBatch(
+    @CurrentUser() user: RequestUser, @Body() dto: PayoutDisbursementBatchPayDto,
+  ): Promise<PayoutDisbursementBatchResultDto> {
+    return this.svc.payPayoutDisbursementBatch(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto,
+    );
+  }
+
+  @Post('payout-ledger/:payoutId/pay')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '확정 정산 한 건의 실제 계좌이체 기록 — 계산 확정 snapshot은 불변' })
+  @ApiCreatedResponse({ type: PayoutDisbursementDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'PAYOUT_PAYMENT_FUTURE' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'PAYOUT_NOT_CONFIRMED' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'PAYOUT_ALREADY_PAID | PAYOUT_DISBURSEMENT_STALE | REQUEST_KEY_REUSED | PAYOUT_DISBURSEMENT_REPLAY_STALE' })
+  payPayoutDisbursement(
+    @CurrentUser() user: RequestUser, @Param('payoutId', ParseIntPipe) payoutId: number,
+    @Body() dto: PayoutDisbursementPayDto,
+  ): Promise<PayoutDisbursementDto> {
+    return this.svc.payPayoutDisbursement(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), payoutId, dto,
+    );
+  }
+
+  @Post('payout-ledger/:payoutId/cancel')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '실제 지급 취소 — 사유와 actor를 보존하고 같은 확정 정산의 재지급을 연다' })
+  @ApiCreatedResponse({ type: PayoutDisbursementDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'PAYOUT_NOT_CONFIRMED' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'PAYOUT_NOT_PAID | PAYOUT_DISBURSEMENT_STALE | REQUEST_KEY_REUSED | PAYOUT_DISBURSEMENT_REPLAY_STALE' })
+  cancelPayoutDisbursement(
+    @CurrentUser() user: RequestUser, @Param('payoutId', ParseIntPipe) payoutId: number,
+    @Body() dto: PayoutDisbursementCancelDto,
+  ): Promise<PayoutDisbursementDto> {
+    return this.svc.cancelPayoutDisbursement(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), payoutId, dto,
+    );
   }
 
   @Get('payouts')

@@ -56,6 +56,9 @@ import type {
   PayoutBonusBookDto, PayoutBonusRuleDto, PayoutBonusRuleWriteDto, PayoutBonusSlotDto, AcctPrivacyDto, AcctPrivacyWriteDto,
   StudentCumulativeDto, PaymentEvidenceDto, PaymentEvidenceLedgerDto, PaymentEvidenceIssueDto,
   PaymentEvidenceCancelDto, PaymentEvidenceBatchIssueDto, PaymentEvidenceBatchResultDto,
+  PayoutDisbursementDto, PayoutDisbursementLedgerDto, PayoutDisbursementMonthDto,
+  PayoutDisbursementPayDto, PayoutDisbursementCancelDto, PayoutDisbursementBatchPayDto,
+  PayoutDisbursementBatchResultDto,
 } from './accounting.dto';
 import { fileUrlOf, storedFileRef } from '../files/files.service';
 import { ConsultingService } from '../consulting/consulting.service';
@@ -972,6 +975,330 @@ export class AccountingService {
         [dto.requestKey, items.length, skippedCount],
       );
       return { month: dto.month, issuedCount: items.length, skippedCount, items };
+    });
+  }
+
+  /* ── BO-11AD-03 실제 강사료 지급 원장 ────────────────────────────────
+   * 권고안 채택(2026-10-09): `payout`/`payout_line`은 계산 확정과 시수 잠금의 근거다.
+   * 실제 계좌이체는 별도 current/event/request 원장에 기록해 지급 취소·재지급이 확정 금액을 바꾸지 않게 한다.
+   * 계좌번호·뒤 4자리는 BO-Q9가 소유하므로 기존 강사 정보로 추정하지 않는다. 정책을 바꾸면
+   * DTO/Swagger→OpenAPI→생성 Front 타입, migration/DBML, 두 수정사항 대조표와 portfolio를 같이 고친다.
+   */
+  private async payoutDisbursementRow(
+    q: { query: EntityManager['query'] }, payoutId: number,
+  ): Promise<PayoutDisbursementDto> {
+    const [row] = (await q.query(
+      `SELECT po.id AS payout_id,po.staff_id,s.name AS staff_name,po.year_month,po.hours,po.gross,
+              po.late_rep_cut,po.late_cls_cut,po.income_tax,po.local_tax,po.net,po.confirmed_by,po.confirmed_at,
+              d.id AS disbursement_id,d.state,d.row_version,d.snapshot,to_char(d.paid_on,'YYYY-MM-DD') AS paid_on,
+              d.method,d.paid_at,pb.name AS paid_by,d.canceled_at,cb.name AS canceled_by,d.cancel_reason
+         FROM payout po JOIN staff s ON s.id=po.staff_id
+         LEFT JOIN payout_disbursement d ON d.payout_id=po.id
+         LEFT JOIN staff pb ON pb.id=d.paid_by LEFT JOIN staff cb ON cb.id=d.canceled_by
+        WHERE po.id=$1 AND po.confirmed_by IS NOT NULL`, [payoutId],
+    )) as Array<Record<string, unknown>>;
+    if (!row) {
+      throw new NotFoundException({ code: 'PAYOUT_NOT_CONFIRMED', message: '확정된 정산을 찾을 수 없습니다' });
+    }
+    const snapshot = row.disbursement_id ? row.snapshot as Record<string, unknown> : null;
+    const state = row.state as string | null;
+    const incomeTax = Number(snapshot?.incomeTax ?? row.income_tax);
+    const localTax = Number(snapshot?.localTax ?? row.local_tax);
+    const events = row.disbursement_id ? (await q.query(
+      `SELECT e.action,e.from_state,e.to_state,e.result_version,a.name AS actor,
+              to_char(e.paid_on,'YYYY-MM-DD') AS paid_on,e.method,e.reason,e.created_at
+         FROM payout_disbursement_event e JOIN staff a ON a.id=e.actor_id
+        WHERE e.payout_disbursement_id=$1 ORDER BY e.result_version`, [Number(row.disbursement_id)],
+    )) as Array<Record<string, unknown>> : [];
+    return {
+      payoutId: Number(row.payout_id), staffId: Number(snapshot?.staffId ?? row.staff_id),
+      staffName: String(snapshot?.staffName ?? row.staff_name), yearMonth: String(snapshot?.yearMonth ?? row.year_month),
+      hours: String(snapshot?.hours ?? row.hours), gross: Number(snapshot?.gross ?? row.gross),
+      deduction: Number(snapshot?.deduction ?? (Number(row.late_rep_cut) + Number(row.late_cls_cut))),
+      incomeTax, localTax, withholding: Number(snapshot?.withholding ?? (incomeTax + localTax)),
+      net: Number(snapshot?.net ?? row.net), status: state === 'paid' ? 'paid' : 'unpaid',
+      version: row.row_version ? Number(row.row_version) : 0,
+      paidOn: row.paid_on ? String(row.paid_on) : null,
+      paidAt: row.paid_at ? new Date(row.paid_at as string).toISOString() : null,
+      paidBy: (row.paid_by as string | null) ?? null,
+      method: row.method === 'bank_transfer' ? 'bank_transfer' : null,
+      canceledAt: row.canceled_at ? new Date(row.canceled_at as string).toISOString() : null,
+      canceledBy: (row.canceled_by as string | null) ?? null,
+      cancelReason: (row.cancel_reason as string | null) ?? null,
+      canPay: state !== 'paid', canCancel: state === 'paid',
+      events: events.map((event) => ({
+        action: event.action as 'paid' | 'canceled',
+        fromState: event.from_state as 'paid' | 'canceled' | null,
+        toState: event.to_state as 'paid' | 'canceled', version: Number(event.result_version),
+        actor: String(event.actor), paidOn: (event.paid_on as string | null) ?? null,
+        method: event.method === 'bank_transfer' ? 'bank_transfer' : null,
+        reason: (event.reason as string | null) ?? null,
+        createdAt: new Date(event.created_at as string).toISOString(),
+      })),
+    };
+  }
+
+  private async payoutDisbursementMonth(
+    q: { query: EntityManager['query'] }, month: string,
+  ): Promise<PayoutDisbursementMonthDto> {
+    const ids = (await q.query(
+      `SELECT po.id FROM payout po JOIN staff s ON s.id=po.staff_id
+        WHERE po.year_month=$1 AND po.confirmed_by IS NOT NULL ORDER BY s.name,po.id`, [month],
+    )) as Array<{ id: string }>;
+    const items: PayoutDisbursementDto[] = [];
+    for (const row of ids) items.push(await this.payoutDisbursementRow(q, Number(row.id)));
+    const paid = items.filter((item) => item.status === 'paid');
+    const sum = (rows: PayoutDisbursementDto[]) => rows.reduce((total, item) => total + item.net, 0);
+    return {
+      month, totalCount: items.length, paidCount: paid.length,
+      totalAmount: sum(items), paidAmount: sum(paid), unpaidAmount: sum(items.filter((item) => item.status !== 'paid')),
+      items,
+    };
+  }
+
+  async payoutDisbursementLedger(canWrite: boolean): Promise<PayoutDisbursementLedgerDto> {
+    if (!canWrite) throw new ForbiddenException({ code: 'FORBIDDEN', message: '실제 지급 원장 권한이 없습니다' });
+    const rows = (await this.inv.query(
+      `SELECT DISTINCT year_month FROM payout WHERE confirmed_by IS NOT NULL ORDER BY year_month DESC LIMIT 2`,
+    )) as Array<{ year_month: string }>;
+    const months: PayoutDisbursementMonthDto[] = [];
+    for (const row of rows) months.push(await this.payoutDisbursementMonth(this.inv.manager, row.year_month));
+    return { months };
+  }
+
+  private async claimPayoutDisbursementRequest(
+    m: EntityManager, requestKey: string, actorId: number, action: 'paid' | 'canceled' | 'batch_paid',
+    payoutId: number | null, month: string | null, paidOn: string | null, method: 'bank_transfer' | null,
+  ): Promise<{ resultCount: number; skippedCount: number } | null> {
+    await m.query(`SELECT pg_advisory_xact_lock(hashtext('payout-disbursement'),hashtext($1))`, [requestKey]);
+    const [prior] = (await m.query(
+      `SELECT actor_id,action,payout_id,year_month,to_char(paid_on,'YYYY-MM-DD') AS paid_on,method,result_count,skipped_count
+         FROM payout_disbursement_request WHERE request_key=$1`, [requestKey],
+    )) as Array<Record<string, unknown>>;
+    if (prior) {
+      if (Number(prior.actor_id) !== actorId || prior.action !== action
+          || (prior.payout_id === null ? null : Number(prior.payout_id)) !== payoutId
+          || prior.year_month !== month || prior.paid_on !== paidOn || prior.method !== method) {
+        throw new ConflictException({ code: 'REQUEST_KEY_REUSED', message: '같은 요청 키를 다른 실제 지급 작업에 사용할 수 없습니다' });
+      }
+      return { resultCount: Number(prior.result_count), skippedCount: Number(prior.skipped_count) };
+    }
+    await m.query(
+      `INSERT INTO payout_disbursement_request(request_key,actor_id,action,payout_id,year_month,paid_on,method)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [requestKey, actorId, action, payoutId, month, paidOn, method],
+    );
+    return null;
+  }
+
+  private async payoutDisbursementReplay(
+    m: EntityManager, requestKey: string, payoutId: number, reason?: string,
+  ): Promise<PayoutDisbursementDto> {
+    const [receipt] = (await m.query(
+      `SELECT e.result_version,e.to_state,e.reason,d.row_version,d.state
+         FROM payout_disbursement_event e JOIN payout_disbursement d ON d.id=e.payout_disbursement_id
+        WHERE e.request_key=$1 AND d.payout_id=$2`, [requestKey, payoutId],
+    )) as Array<Record<string, unknown>>;
+    if (reason !== undefined && receipt?.reason !== reason) {
+      throw new ConflictException({ code: 'REQUEST_KEY_REUSED', message: '같은 요청 키를 다른 취소 사유에 사용할 수 없습니다' });
+    }
+    if (!receipt || Number(receipt.result_version) !== Number(receipt.row_version) || receipt.to_state !== receipt.state) {
+      throw new ConflictException({
+        code: 'PAYOUT_DISBURSEMENT_REPLAY_STALE',
+        message: '이 요청 뒤에 실제 지급 상태가 다시 바뀌었습니다 — 현재 원장을 다시 확인해 주세요',
+      });
+    }
+    return this.payoutDisbursementRow(m, payoutId);
+  }
+
+  private payoutDisbursementVersionError(expectedVersion: number, actualVersion: number): never {
+    throw new ConflictException({
+      code: 'PAYOUT_DISBURSEMENT_STALE', message: '실제 지급 상태가 바뀌었습니다 — 다시 불러와 주세요',
+      details: { expectedVersion, actualVersion },
+    });
+  }
+
+  private async lockedPayoutSnapshot(m: EntityManager, payoutId: number): Promise<Record<string, unknown>> {
+    const [row] = (await m.query(
+      `SELECT po.id AS payout_id,po.staff_id,s.name AS staff_name,po.year_month,po.hours,po.gross,
+              po.late_rep_cut,po.late_cls_cut,po.income_tax,po.local_tax,po.net,po.confirmed_at,cf.name AS confirmed_by
+         FROM payout po JOIN staff s ON s.id=po.staff_id LEFT JOIN staff cf ON cf.id=po.confirmed_by
+        WHERE po.id=$1 FOR UPDATE OF po`, [payoutId],
+    )) as Array<Record<string, unknown>>;
+    if (!row || row.confirmed_at === null) {
+      throw new ConflictException({ code: 'PAYOUT_NOT_CONFIRMED', message: '정산 확정 뒤에만 실제 지급할 수 있습니다' });
+    }
+    const incomeTax = Number(row.income_tax);
+    const localTax = Number(row.local_tax);
+    return {
+      payoutId: Number(row.payout_id), staffId: Number(row.staff_id), staffName: String(row.staff_name),
+      yearMonth: String(row.year_month), hours: String(row.hours), gross: Number(row.gross),
+      deduction: Number(row.late_rep_cut) + Number(row.late_cls_cut),
+      incomeTax, localTax, withholding: incomeTax + localTax, net: Number(row.net),
+      confirmedAt: new Date(row.confirmed_at as string).toISOString(), confirmedBy: (row.confirmed_by as string | null) ?? null,
+    };
+  }
+
+  private async payPayoutInTransaction(
+    m: EntityManager, actorId: number, payoutId: number, requestKey: string, paidOn: string,
+    method: 'bank_transfer', expectedVersion?: number,
+  ): Promise<PayoutDisbursementDto> {
+    const source = await this.lockedPayoutSnapshot(m, payoutId);
+    const [current] = (await m.query(
+      `SELECT id,state,row_version,snapshot FROM payout_disbursement WHERE payout_id=$1 FOR UPDATE`, [payoutId],
+    )) as Array<{ id: string; state: string; row_version: number; snapshot: Record<string, unknown> }>;
+    const actualVersion = current ? Number(current.row_version) : 0;
+    if (expectedVersion !== undefined && expectedVersion !== actualVersion) {
+      this.payoutDisbursementVersionError(expectedVersion, actualVersion);
+    }
+    if (current?.state === 'paid') {
+      throw new ConflictException({ code: 'PAYOUT_ALREADY_PAID', message: '이미 실제 지급한 정산입니다' });
+    }
+    const snapshot = current?.snapshot ?? source;
+    const nextVersion = actualVersion + 1;
+    let disbursementId: number;
+    if (!current) {
+      const [created] = (await m.query(
+        `INSERT INTO payout_disbursement(payout_id,state,row_version,snapshot,paid_on,method,paid_by,paid_at)
+         VALUES ($1,'paid',1,$2::jsonb,$3,$4,$5,now()) RETURNING id`,
+        [payoutId, JSON.stringify(snapshot), paidOn, method, actorId],
+      )) as Array<{ id: string }>;
+      disbursementId = Number(created.id);
+    } else {
+      disbursementId = Number(current.id);
+      await m.query(
+        `UPDATE payout_disbursement SET state='paid',row_version=$2,paid_on=$3,method=$4,paid_by=$5,paid_at=now(),
+          canceled_by=NULL,canceled_at=NULL,cancel_reason=NULL WHERE id=$1`,
+        [disbursementId, nextVersion, paidOn, method, actorId],
+      );
+    }
+    await m.query(
+      `INSERT INTO payout_disbursement_event(
+         payout_disbursement_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot,paid_on,method)
+       VALUES ($1,'paid',$2,'paid',$3,$4,$5,$6::jsonb,$7,$8)`,
+      [disbursementId, current?.state ?? null, actorId, requestKey, nextVersion, JSON.stringify(snapshot), paidOn, method],
+    );
+    await audit(m, 'payout_disbursement.pay', {
+      actorId, entityId: disbursementId,
+      before: current ? { payoutId, state: current.state, version: actualVersion } : null,
+      after: { payoutId, state: 'paid', version: nextVersion, paidOn, method },
+    });
+    return this.payoutDisbursementRow(m, payoutId);
+  }
+
+  async payPayoutDisbursement(
+    actorId: number, canWrite: boolean, payoutId: number, dto: PayoutDisbursementPayDto,
+  ): Promise<PayoutDisbursementDto> {
+    if (!canWrite) throw new ForbiddenException({ code: 'FORBIDDEN', message: '실제 지급 처리 권한이 없습니다' });
+    if (dto.paidOn > todayKst()) {
+      throw new BadRequestException({ code: 'PAYOUT_PAYMENT_FUTURE', message: '미래 날짜로 실제 지급을 기록할 수 없습니다' });
+    }
+    return this.inv.manager.transaction(async (m) => {
+      const replay = await this.claimPayoutDisbursementRequest(
+        m, dto.requestKey, actorId, 'paid', payoutId, null, dto.paidOn, dto.method,
+      );
+      if (replay) return this.payoutDisbursementReplay(m, dto.requestKey, payoutId);
+      const item = await this.payPayoutInTransaction(
+        m, actorId, payoutId, dto.requestKey, dto.paidOn, dto.method, dto.expectedVersion,
+      );
+      await m.query(`UPDATE payout_disbursement_request SET result_count=1 WHERE request_key=$1`, [dto.requestKey]);
+      return item;
+    });
+  }
+
+  async cancelPayoutDisbursement(
+    actorId: number, canWrite: boolean, payoutId: number, dto: PayoutDisbursementCancelDto,
+  ): Promise<PayoutDisbursementDto> {
+    if (!canWrite) throw new ForbiddenException({ code: 'FORBIDDEN', message: '실제 지급 취소 권한이 없습니다' });
+    const reason = dto.reason.trim();
+    return this.inv.manager.transaction(async (m) => {
+      const replay = await this.claimPayoutDisbursementRequest(
+        m, dto.requestKey, actorId, 'canceled', payoutId, null, null, null,
+      );
+      if (replay) return this.payoutDisbursementReplay(m, dto.requestKey, payoutId, reason);
+      await this.lockedPayoutSnapshot(m, payoutId);
+      const [current] = (await m.query(
+        `SELECT id,state,row_version,snapshot FROM payout_disbursement WHERE payout_id=$1 FOR UPDATE`, [payoutId],
+      )) as Array<{ id: string; state: string; row_version: number; snapshot: Record<string, unknown> }>;
+      if (!current || current.state !== 'paid') {
+        throw new ConflictException({ code: 'PAYOUT_NOT_PAID', message: '현재 실제 지급 상태인 정산만 취소할 수 있습니다' });
+      }
+      const actualVersion = Number(current.row_version);
+      if (dto.expectedVersion !== actualVersion) this.payoutDisbursementVersionError(dto.expectedVersion, actualVersion);
+      const nextVersion = actualVersion + 1;
+      await m.query(
+        `UPDATE payout_disbursement SET state='canceled',row_version=$2,canceled_by=$3,canceled_at=now(),cancel_reason=$4 WHERE id=$1`,
+        [Number(current.id), nextVersion, actorId, reason],
+      );
+      await m.query(
+        `INSERT INTO payout_disbursement_event(
+           payout_disbursement_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot,reason)
+         VALUES ($1,'canceled','paid','canceled',$2,$3,$4,$5::jsonb,$6)`,
+        [Number(current.id), actorId, dto.requestKey, nextVersion, JSON.stringify(current.snapshot), reason],
+      );
+      await audit(m, 'payout_disbursement.cancel', {
+        actorId, entityId: Number(current.id), before: { payoutId, state: 'paid', version: actualVersion },
+        after: { payoutId, state: 'canceled', version: nextVersion, reason },
+      });
+      await m.query(`UPDATE payout_disbursement_request SET result_count=1 WHERE request_key=$1`, [dto.requestKey]);
+      return this.payoutDisbursementRow(m, payoutId);
+    });
+  }
+
+  async payPayoutDisbursementBatch(
+    actorId: number, canWrite: boolean, dto: PayoutDisbursementBatchPayDto,
+  ): Promise<PayoutDisbursementBatchResultDto> {
+    if (!canWrite) throw new ForbiddenException({ code: 'FORBIDDEN', message: '실제 지급 처리 권한이 없습니다' });
+    if (dto.paidOn > todayKst()) {
+      throw new BadRequestException({ code: 'PAYOUT_PAYMENT_FUTURE', message: '미래 날짜로 실제 지급을 기록할 수 없습니다' });
+    }
+    return this.inv.manager.transaction(async (m) => {
+      const replay = await this.claimPayoutDisbursementRequest(
+        m, dto.requestKey, actorId, 'batch_paid', null, dto.month, dto.paidOn, dto.method,
+      );
+      if (replay) {
+        const rows = (await m.query(
+          `SELECT d.payout_id,e.result_version,e.to_state,d.row_version,d.state
+             FROM payout_disbursement_event e JOIN payout_disbursement d ON d.id=e.payout_disbursement_id
+            WHERE e.request_key=$1 ORDER BY d.payout_id`, [dto.requestKey],
+        )) as Array<Record<string, unknown>>;
+        if (rows.length !== replay.resultCount || rows.some((row) =>
+          Number(row.result_version) !== Number(row.row_version) || row.to_state !== row.state)) {
+          throw new ConflictException({
+            code: 'PAYOUT_DISBURSEMENT_REPLAY_STALE',
+            message: '일괄 지급 뒤에 일부 상태가 다시 바뀌었습니다 — 현재 원장을 다시 확인해 주세요',
+          });
+        }
+        const items: PayoutDisbursementDto[] = [];
+        for (const row of rows) items.push(await this.payoutDisbursementRow(m, Number(row.payout_id)));
+        return { month: dto.month, paidCount: replay.resultCount, skippedCount: replay.skippedCount, items };
+      }
+      const payouts = (await m.query(
+        `SELECT id FROM payout WHERE year_month=$1 AND confirmed_by IS NOT NULL ORDER BY id FOR UPDATE`, [dto.month],
+      )) as Array<{ id: string }>;
+      if (payouts.length === 0) {
+        throw new ConflictException({ code: 'PAYOUT_BATCH_EMPTY', message: '그 달에 확정된 정산이 없습니다' });
+      }
+      const items: PayoutDisbursementDto[] = [];
+      let skippedCount = 0;
+      for (const row of payouts) {
+        const payoutId = Number(row.id);
+        const [current] = (await m.query(
+          `SELECT state FROM payout_disbursement WHERE payout_id=$1`, [payoutId],
+        )) as Array<{ state: string }>;
+        if (current?.state === 'paid') {
+          skippedCount += 1;
+          continue;
+        }
+        items.push(await this.payPayoutInTransaction(
+          m, actorId, payoutId, dto.requestKey, dto.paidOn, dto.method,
+        ));
+      }
+      await m.query(
+        `UPDATE payout_disbursement_request SET result_count=$2,skipped_count=$3 WHERE request_key=$1`,
+        [dto.requestKey, items.length, skippedCount],
+      );
+      return { month: dto.month, paidCount: items.length, skippedCount, items };
     });
   }
 
