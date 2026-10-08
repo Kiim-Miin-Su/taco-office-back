@@ -42,13 +42,60 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   const STUDENT = RUN + 5;
   const REVIEWER = RUN + 6;
   const STUDENT2 = RUN + 7;
+  const LIB = RUN + 8;
+  const ISSUE = RUN + 9;
+  const SER_DIAG = RUN + 10;
   const TEACHER_EMAIL = `report-teacher-${RUN}@t.kr`;
   const OTHER_EMAIL = `report-other-${RUN}@t.kr`;
   const MANAGER_EMAIL = `report-manager-${RUN}@t.kr`;
   const REVIEWER_EMAIL = `report-reviewer-${RUN}@t.kr`;
   const DATE = '2025-01-02';
+  const DIAG_DATE = '2025-01-03';
   const PW = 'report-write-1234';
   const body = { content: '미분 응용 문제를 풀었습니다.', progress: '수학 II 42p까지', homework: '43~45p 풀기' };
+  const structuredGroup = (expectedVersion: number) => ({
+    formatVersion: 1,
+    expectedVersion,
+    language: 'ko',
+    structuredBody: {
+      kind: 'group',
+      content: '두 학생이 같은 개념을 서로 설명하고 예제 풀이 과정을 비교하며 핵심 공식을 적용하는 연습을 충분히 진행했고 풀이 근거도 문장으로 정리했습니다.',
+      progress: { issueId: ISSUE, fromPage: 12, toPage: 18 },
+      homework: { issueId: ISSUE, fromPage: 19, toPage: 24, amount: '홀수 문제 전부' },
+      students: [
+        { studentId: STUDENT, comment: '풀이 과정을 또박또박 설명했고 계산 실수를 스스로 찾아 바로잡는 모습이 좋았습니다.' },
+        { studentId: STUDENT2, comment: '새 공식을 예제에 적용하는 속도가 빨라졌고 친구의 설명에도 집중해 질문했습니다.' },
+      ],
+    },
+  });
+  const diagnosticBody = (expectedVersion: number) => ({
+    formatVersion: 1,
+    expectedVersion,
+    language: 'ko',
+    structuredBody: {
+      kind: 'diagnostic',
+      students: [
+        {
+          studentId: STUDENT,
+          mathScore: 90,
+          englishScore: 80,
+          mathMistakes: '이차함수 최댓값 조건을 한 번 놓쳤습니다.',
+          englishMistakes: '가정법 시제 일치를 한 문항에서 혼동했습니다.',
+          interview: { fluency: 70, vocabulary: 80, grammar: 90 },
+          overall: '세 영역의 강점과 오답 원인을 함께 확인했고 다음 학습 순서를 구체적으로 안내했습니다.',
+        },
+        {
+          studentId: STUDENT2,
+          mathScore: 75,
+          englishScore: 85,
+          mathMistakes: '도형 보조선을 긋는 순서를 다시 확인했습니다.',
+          englishMistakes: '관계대명사 목적격 생략 조건을 복습했습니다.',
+          interview: { fluency: 80, vocabulary: 90, grammar: 70 },
+          overall: '과목별 오답과 인터뷰 결과를 기준으로 우선 보완할 내용을 설명했습니다.',
+        },
+      ],
+    },
+  });
 
   const q = <T = Record<string, unknown>>(sql: string, p: unknown[] = []): Promise<T[]> =>
     ds.query(sql, p) as Promise<T[]>;
@@ -56,11 +103,14 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   async function clean(): Promise<void> {
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
-    await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)`, [SER]);
-    await q(`DELETE FROM rep WHERE ser_id=$1`, [SER]);
-    await q(`DELETE FROM exc WHERE ser_id=$1`, [SER]);
-    await q(`DELETE FROM ser_occ WHERE ser_id=$1`, [SER]);
-    await q(`DELETE FROM ser WHERE id=$1`, [SER]);
+    await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=ANY($1))`, [[SER, SER_DIAG]]);
+    await q(`DELETE FROM rep WHERE ser_id=ANY($1)`, [[SER, SER_DIAG]]);
+    await q(`DELETE FROM stu_kinder_marker WHERE student_id=ANY($1)`, [[STUDENT, STUDENT2]]);
+    await q(`DELETE FROM issue WHERE id=$1`, [ISSUE]);
+    await q(`DELETE FROM lib WHERE id=$1`, [LIB]);
+    await q(`DELETE FROM exc WHERE ser_id=ANY($1)`, [[SER, SER_DIAG]]);
+    await q(`DELETE FROM ser_occ WHERE ser_id=ANY($1)`, [[SER, SER_DIAG]]);
+    await q(`DELETE FROM ser WHERE id=ANY($1)`, [[SER, SER_DIAG]]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STUDENT, STUDENT2]]);
     await q(`DELETE FROM staff WHERE id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
   }
@@ -77,11 +127,15 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     const hash = await bcrypt.hash(PW, 4);
     await q(
       `INSERT INTO kind (key,name,color,cap,grp,rep,rep_form,sort)
-       VALUES ('class','수업','#4A5461',4,'lesson',true,'dev',1) ON CONFLICT (key) DO NOTHING`,
+       VALUES ('class','수업','#4A5461',4,'lesson',true,'dev',1),
+              ('diagx','진단고사','#6F798A',8,'intake',true,'diagnostic',2)
+       ON CONFLICT (key) DO NOTHING`,
     );
     await q(
       `INSERT INTO sub (key,name,color,active,sort,kind_key)
-       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1,'class') ON CONFLICT (key) DO NOTHING`,
+       VALUES ('ap-chem','AP Chem','#2E6BFF',true,1,'class'),
+              ('diag','진단','#6F798A',true,2,'diagx')
+       ON CONFLICT (key) DO NOTHING`,
     );
     for (const person of [
       [TEACHER, '리포트강사', TEACHER_EMAIL, 'teacher'],
@@ -99,6 +153,10 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       `INSERT INTO stu (id, name, grade) VALUES ($1, '리포트학생', '고2'), ($2, '학년없는학생', NULL)`,
       [STUDENT, STUDENT2],
     );
+    await q(`INSERT INTO lib (id,code,title,sub_key,pages) VALUES ($1,$2,'구조화 리포트 교재','ap-chem',200)`,
+      [LIB, `REPORT-${RUN}`]);
+    await q(`INSERT INTO issue (id,lib_id,student_id,issued_on,state) VALUES ($1,$2,$3,$4,'ok')`,
+      [ISSUE, LIB, STUDENT, DATE]);
     await q(
       `INSERT INTO ser (id, kind_key, sub_key, teacher_id, mode, start_min, end_min, rrule, from_date, to_date, title)
        VALUES ($1, 'class', 'ap-chem', $2, 'offline', 540, 600, 'ONCE', $3, $3, '리포트 계약 테스트')`,
@@ -121,7 +179,6 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       `INSERT INTO rep_stu (rep_id, student_id, deliver) VALUES ($1,$2,true), ($1,$3,true)`,
       [repId, STUDENT, STUDENT2],
     );
-
     const login = async (email: string) => {
       const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PW }).expect(201);
       return res.body.accessToken as string;
@@ -137,9 +194,10 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`,
       [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(
-      `UPDATE rep SET body='{}'::jsonb, state='none', written_at=NULL, submitted_at=NULL,
-                      reviewed_at=NULL, reviewer_id=NULL, reject_reason=NULL WHERE id=$1`,
-      [repId],
+      `UPDATE rep SET body='{}'::jsonb, format_version=0, row_version=0, last_writer_id=NULL,
+                      state='none', written_at=NULL, submitted_at=NULL,
+                      reviewed_at=NULL, reviewer_id=NULL, reject_reason=NULL WHERE ser_id=ANY($1)`,
+      [[SER, SER_DIAG]],
     );
     await q(`DELETE FROM exc WHERE ser_id=$1`, [SER]);
   });
@@ -162,6 +220,26 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     .post(`/reports/${SER}/${DATE}/review`).set('Authorization', `Bearer ${token}`).send(value);
   const remind = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
     .post('/reports/reminders').set('Authorization', `Bearer ${token}`).send(value);
+  const seedDiagnostic = async (): Promise<void> => {
+    await q(
+      `INSERT INTO ser (id,kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date,to_date,title)
+       VALUES ($1,'diagx','diag',$2,'offline',600,660,'ONCE',$3,$3,'진단 리포트 계약 테스트')`,
+      [SER_DIAG, TEACHER, DIAG_DATE],
+    );
+    await q(
+      `INSERT INTO ser_occ (ser_id,on_date,teacher_id,canceled,span)
+       VALUES ($1,$2,$3,false,tstzrange(($2::date+time '10:00') AT TIME ZONE 'Asia/Seoul',
+         ($2::date+time '11:00') AT TIME ZONE 'Asia/Seoul','[)'))`,
+      [SER_DIAG, DIAG_DATE, TEACHER],
+    );
+    const [diagRep] = await q<{ id: string }>(
+      `INSERT INTO rep (ser_id,on_date,teacher_id,kind_key,lang,body,state)
+       VALUES ($1,$2,$3,'diagx','ko','{}'::jsonb,'none') RETURNING id::text`,
+      [SER_DIAG, DIAG_DATE, TEACHER],
+    );
+    await q(`INSERT INTO rep_stu(rep_id,student_id,deliver) VALUES ($1,$2,true),($1,$3,true)`,
+      [Number(diagRep.id), STUDENT, STUDENT2]);
+  };
 
   it('§47은 미제출 초안과 반려를 모두 조치 대상으로 보지만 반려의 정산 작성 인정은 보존한다', async () => {
     await q(`UPDATE rep SET body=$2::jsonb, state='rej', written_at=now(), submitted_at=now(),
@@ -419,7 +497,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
         let completed = false;
         second = Promise.resolve(api(action === 'draft' ? 'put' : 'post', `${ref}/${action}`,
           action === 'review' ? managerToken : teacherToken)
-          .send(action === 'review' ? { decision: 'approve' } : body));
+          .send(action === 'review' ? { decision: 'approve', expectedVersion: 1 } : body));
         void second.then(() => { completed = true; }, () => { completed = true; });
         const pid = await Promise.race([started, second.then(() => { throw new Error('리포트 잠금에 도달하지 못함'); })]);
         let blocked = false;
@@ -479,7 +557,14 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       exportFiles: [],
       subjectName: 'AP Chem',
       body: { content: '', progress: '', homework: '' },
+      formatVersion: 0,
+      version: 0,
+      formKind: 'group',
+      structuredBody: null,
     });
+    expect(res.body.bookOptions).toEqual([expect.objectContaining({
+      issueId: ISSUE, issueVersion: 1, libId: LIB, title: '구조화 리포트 교재', studentIds: [STUDENT],
+    })]);
     expect(res.body.fields.map((field: { key: string }) => field.key)).toEqual(['content', 'progress', 'homework']);
   });
 
@@ -511,6 +596,90 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     expect(row.body).toEqual({ content: '', progress: '', homework: '' });
   });
 
+  it('구조화 그룹 초안은 명단·교재 snapshot과 실제 actor를 저장하고 stale version을 거절한다', async () => {
+    const structured = structuredGroup(0);
+    const saved = await put(managerToken, structured).expect(200);
+    expect(saved.body).toMatchObject({
+      formatVersion: 1, version: 1, formKind: 'group', lastWriterId: MANAGER,
+      structuredBody: {
+        kind: 'group',
+        progress: { issueId: ISSUE, libId: LIB, issueVersion: 1, title: '구조화 리포트 교재', fromPage: 12, toPage: 18 },
+        homework: { issueId: ISSUE, amount: '홀수 문제 전부' },
+      },
+    });
+    const [stored] = await q<{ format_version: number; row_version: string; last_writer_id: string; body: Record<string, unknown> }>(
+      `SELECT format_version,row_version::text,last_writer_id::text,body FROM rep WHERE id=$1`, [repId],
+    );
+    expect(stored).toMatchObject({ format_version: 1, row_version: '1', last_writer_id: String(MANAGER) });
+    expect(stored.body).toEqual(saved.body.structuredBody);
+
+    const stale = await put(managerToken, structured).expect(409);
+    expect(stale.body.code).toBe('REPORT_VERSION_CONFLICT');
+  });
+
+  it('구조화 제출·승인은 version을 증가시키고 학생별 snapshot 전문과 최초 제출시각을 보존한다', async () => {
+    const submitted = await submit(teacherToken, structuredGroup(0)).expect(201);
+    expect(submitted.body).toMatchObject({
+      formatVersion: 1, version: 1, state: 'wait', firstSubmittedAt: expect.any(String),
+      lastWriterId: TEACHER,
+    });
+    expect(submitted.body.exportFiles).toHaveLength(2);
+    expect(submitted.body.exportFiles[0].plainText).toContain('학생별 의견');
+    expect(submitted.body.exportFiles[0].plainText).toContain('홀수 문제 전부');
+    expect(submitted.body.exportFiles[0].plainText).not.toContain('새 공식을 예제에 적용하는 속도');
+
+    expect((await review(managerToken, { decision: 'approve', expectedVersion: 0 }).expect(409)).body.code)
+      .toBe('REPORT_VERSION_CONFLICT');
+    const approved = await review(managerToken, { decision: 'approve', expectedVersion: 1 }).expect(201);
+    expect(approved.body).toMatchObject({ version: 2, state: 'ok', firstSubmittedAt: submitted.body.firstSubmittedAt });
+    const [stored] = await q<{ row_version: string; submitted_at: string; format_version: number }>(
+      `SELECT row_version::text,submitted_at::text,format_version FROM rep WHERE id=$1`, [repId],
+    );
+    expect(stored).toMatchObject({ row_version: '2', format_version: 1 });
+    expect(stored.submitted_at).toBeTruthy();
+  });
+
+  it('진단 제출은 Interview 3점수와 세 영역 평균을 소수 첫째 자리로 저장한다', async () => {
+    await seedDiagnostic();
+    try {
+      const submitted = await request(app.getHttpServer())
+        .post(`/reports/${SER_DIAG}/${DIAG_DATE}/submit`)
+        .set('Authorization', `Bearer ${teacherToken}`)
+        .send(diagnosticBody(0))
+        .expect(201);
+
+      expect(submitted.body).toMatchObject({
+        formatVersion: 1,
+        version: 1,
+        formKind: 'diagnostic',
+        structuredBody: {
+          kind: 'diagnostic',
+          students: [
+            { studentId: STUDENT, interview: { average: 80 }, totalAverage: 83.3 },
+            { studentId: STUDENT2, interview: { average: 80 }, totalAverage: 80 },
+          ],
+        },
+      });
+      expect(JSON.stringify(submitted.body.structuredBody)).not.toContain('level');
+      expect(submitted.body.exportFiles[0].plainText).toContain('⑥ 전체 평균\n83.3');
+
+      const [stored] = await q<{ format_version: number; row_version: string; body: {
+        students: Array<{ interview: { average: number }; totalAverage: number }>;
+      } }>(
+        `SELECT format_version,row_version::text,body FROM rep WHERE ser_id=$1 AND on_date=$2`,
+        [SER_DIAG, DIAG_DATE],
+      );
+      expect(stored).toMatchObject({ format_version: 1, row_version: '1' });
+      expect(stored.body.students.map((student) => [student.interview.average, student.totalAverage]))
+        .toEqual([[80, 83.3], [80, 80]]);
+    } finally {
+      await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=$1)`, [SER_DIAG]);
+      await q(`DELETE FROM rep WHERE ser_id=$1`, [SER_DIAG]);
+      await q(`DELETE FROM ser_occ WHERE ser_id=$1`, [SER_DIAG]);
+      await q(`DELETE FROM ser WHERE id=$1`, [SER_DIAG]);
+    }
+  });
+
   it('DTO에 없는 입력 키와 빈 제출을 각각 막는다', async () => {
     await put(teacherToken, { ...body, understanding: '구 입력' }).expect(400);
     const blank = await submit(teacherToken, { ...body, progress: '  ' }).expect(400);
@@ -535,16 +704,16 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
 
   it('승인 권한·대기 상태·반려 사유를 막고 승인 이력을 원자적으로 남긴다', async () => {
     await submit(teacherToken, body).expect(201);
-    expect((await review(teacherToken, { decision: 'approve' }).expect(403)).body.code)
+    expect((await review(teacherToken, { decision: 'approve', expectedVersion: 1 }).expect(403)).body.code)
       .toBe('REPORT_REVIEW_FORBIDDEN');
-    expect((await review(managerToken, { decision: 'approve', reason: '불필요' }).expect(400)).body.code)
+    expect((await review(managerToken, { decision: 'approve', reason: '불필요', expectedVersion: 1 }).expect(400)).body.code)
       .toBe('APPROVE_REASON_FORBIDDEN');
-    expect((await review(managerToken, { decision: 'reject', reason: '  ' }).expect(400)).body.code)
+    expect((await review(managerToken, { decision: 'reject', reason: '  ', expectedVersion: 1 }).expect(400)).body.code)
       .toBe('REJECT_REASON_REQUIRED');
 
-    const approved = await review(managerToken, { decision: 'approve' }).expect(201);
+    const approved = await review(managerToken, { decision: 'approve', expectedVersion: 1 }).expect(201);
     expect(approved.body).toMatchObject({ state: 'ok', canReview: false, rejectReason: null });
-    expect((await review(managerToken, { decision: 'approve' }).expect(409)).body.code)
+    expect((await review(managerToken, { decision: 'approve', expectedVersion: 2 }).expect(409)).body.code)
       .toBe('REPORT_NOT_WAITING');
 
     const [row] = await q<{ reviewer_id: string; reviewed_at: string; reject_reason: string | null }>(
@@ -568,7 +737,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
       await submit(managerToken, body).expect(201);
       expect((await get(managerToken).expect(200)).body)
         .toMatchObject({ teacherId: MANAGER, state: 'wait', canReview: true });
-      const approved = await review(managerToken, { decision: 'approve' }).expect(201);
+      const approved = await review(managerToken, { decision: 'approve', expectedVersion: 1 }).expect(201);
       expect(approved.body).toMatchObject({ teacherId: MANAGER, state: 'ok', canReview: false });
       const [stored] = await q<{ teacher_id: string; reviewer_id: string; state: string }>(
         'SELECT teacher_id::text, reviewer_id::text, state FROM rep WHERE id=$1', [repId],
@@ -578,7 +747,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
         [MANAGER, repId])).toHaveLength(1);
       expect(await q(`SELECT 1 FROM noti WHERE to_id=$1 AND from_id=$1 AND link='/reports'`,
         [MANAGER])).toHaveLength(1);
-      expect((await review(managerToken, { decision: 'approve' }).expect(409)).body.code)
+      expect((await review(managerToken, { decision: 'approve', expectedVersion: 2 }).expect(409)).body.code)
         .toBe('REPORT_NOT_WAITING');
     } finally {
       await q('UPDATE rep SET teacher_id=$2 WHERE id=$1', [repId, TEACHER]);
@@ -600,14 +769,16 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     expect(list.body.items.some((item: { serId: number }) => item.serId === SER)).toBe(true);
     expect((await get(reviewerToken).expect(200)).body).toMatchObject({ canEdit: false, canReview: true });
     expect((await get(reviewerToken).expect(200)).body).toMatchObject({ canExport: false, exportFiles: [] });
-    expect((await review(reviewerToken, { decision: 'approve' }).expect(201)).body.state).toBe('ok');
+    expect((await review(reviewerToken, { decision: 'approve', expectedVersion: 1 }).expect(201)).body.state).toBe('ok');
     expect((await get(reviewerToken).expect(200)).body).toMatchObject({ state: 'ok', canReview: false });
   });
 
   it('반려 사유가 상세에 보이고 재제출은 최초 제출 시각을 보존한다', async () => {
     const first = await submit(teacherToken, body).expect(201);
     const firstAt = first.body.submittedAt as string;
-    const rejected = await review(managerToken, { decision: 'reject', reason: ' 진도를 보완해 주세요. ' }).expect(201);
+    const rejected = await review(managerToken, {
+      decision: 'reject', reason: ' 진도를 보완해 주세요. ', expectedVersion: 1,
+    }).expect(201);
     expect(rejected.body).toMatchObject({ state: 'rej', rejectReason: '진도를 보완해 주세요.', canEdit: true });
 
     const again = await submit(teacherToken, { ...body, progress: '수학 II 45p까지' }).expect(201);
@@ -619,6 +790,10 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     await expect(q(`UPDATE rep SET state='wait' WHERE id=$1`, [repId])).rejects.toThrow();
     await expect(q(
       `UPDATE rep SET state='rej', written_at=now(), submitted_at=now(), reject_reason='사유' WHERE id=$1`,
+      [repId],
+    )).rejects.toThrow();
+    await expect(q(
+      `UPDATE rep SET format_version=1, body='{"kind":"unknown"}'::jsonb WHERE id=$1`,
       [repId],
     )).rejects.toThrow();
   });

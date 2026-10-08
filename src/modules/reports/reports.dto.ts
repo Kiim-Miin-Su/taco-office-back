@@ -4,10 +4,10 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiExtraModels, ApiProperty, ApiPropertyOptional, getSchemaPath } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min,
+  ArrayMaxSize, ArrayMinSize, IsArray, IsDefined, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min,
   IsUUID, Matches, ValidateIf, ValidateNested,
 } from 'class-validator';
 import {
@@ -15,6 +15,10 @@ import {
 } from '../../lib/rules';
 import { DATE_SCHEMA, ID_SCHEMA, IsCalendarDate, ToHttpInteger } from '../../common/validation';
 import { FileRefDto } from '../files/files.dto';
+import {
+  REPORT_DEVELOPMENT_LEVELS, REPORT_FORM_KINDS,
+  type ReportDevelopmentLevel, type ReportFormKind,
+} from './report-structured';
 
 const EXPORT_REVISION_PATTERN = /^[a-f0-9]{64}$/;
 const EXPORT_REVISION_SCHEMA = {
@@ -161,8 +165,238 @@ export class ReportBodyDto {
   homework!: string;
 }
 
-/** 임시저장과 제출이 같은 입력 모양을 쓴다. 단, 제출은 rules.ts 가 빈 칸을 막는다. */
-export class ReportUpsertDto extends ReportBodyDto {}
+export class ReportMaterialDto {
+  @ApiProperty(ID_SCHEMA) @Type(() => Number) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  issueId!: number;
+
+  @ApiProperty({ minimum: 1 }) @Type(() => Number) @IsInt() @Min(1)
+  fromPage!: number;
+
+  @ApiProperty({ minimum: 1 }) @Type(() => Number) @IsInt() @Min(1)
+  toPage!: number;
+
+  @ApiPropertyOptional({ type: String, maxLength: 100, nullable: true }) @IsOptional() @IsString() @MaxLength(100)
+  amount?: string | null;
+
+  @ApiPropertyOptional({ readOnly: true, type: 'integer', nullable: true }) @IsOptional()
+  libId?: number | null;
+
+  @ApiPropertyOptional({ readOnly: true, type: 'integer', nullable: true }) @IsOptional()
+  versId?: number | null;
+
+  @ApiPropertyOptional({ readOnly: true, type: 'integer', nullable: true }) @IsOptional()
+  issueVersion?: number | null;
+
+  @ApiPropertyOptional({ readOnly: true, type: String, nullable: true }) @IsOptional()
+  code?: string | null;
+
+  @ApiPropertyOptional({ readOnly: true, type: String, nullable: true }) @IsOptional()
+  title?: string | null;
+
+  @ApiPropertyOptional({ readOnly: true, type: String, nullable: true }) @IsOptional()
+  edition?: string | null;
+}
+
+export class ReportGroupStudentDto {
+  @ApiProperty(ID_SCHEMA) @Type(() => Number) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  studentId!: number;
+
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  comment!: string;
+}
+
+export class ReportDevelopmentValueDto {
+  @ApiProperty({ enum: REPORT_DEVELOPMENT_LEVELS, nullable: true })
+  @ValidateIf((_object, value) => value !== null) @IsIn(REPORT_DEVELOPMENT_LEVELS)
+  level!: ReportDevelopmentLevel | null;
+
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  observation!: string;
+}
+
+export class ReportDevelopmentDto {
+  @ApiProperty({ type: ReportDevelopmentValueDto }) @IsDefined() @ValidateNested() @Type(() => ReportDevelopmentValueDto)
+  language!: ReportDevelopmentValueDto;
+
+  @ApiProperty({ type: ReportDevelopmentValueDto }) @IsDefined() @ValidateNested() @Type(() => ReportDevelopmentValueDto)
+  math!: ReportDevelopmentValueDto;
+
+  @ApiProperty({ type: ReportDevelopmentValueDto }) @IsDefined() @ValidateNested() @Type(() => ReportDevelopmentValueDto)
+  emotional!: ReportDevelopmentValueDto;
+
+  @ApiProperty({ type: ReportDevelopmentValueDto }) @IsDefined() @ValidateNested() @Type(() => ReportDevelopmentValueDto)
+  physical!: ReportDevelopmentValueDto;
+}
+
+export class ReportInterviewDto {
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 100, nullable: true })
+  @ValidateIf((_object, value) => value !== null) @Type(() => Number) @IsInt() @Min(0) @Max(100)
+  fluency!: number | null;
+
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 100, nullable: true })
+  @ValidateIf((_object, value) => value !== null) @Type(() => Number) @IsInt() @Min(0) @Max(100)
+  vocabulary!: number | null;
+
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 100, nullable: true })
+  @ValidateIf((_object, value) => value !== null) @Type(() => Number) @IsInt() @Min(0) @Max(100)
+  grammar!: number | null;
+
+  @ApiPropertyOptional({ readOnly: true, type: 'number', nullable: true, description: '세 점수 평균, 소수 첫째 자리' })
+  @IsOptional()
+  average?: number | null;
+}
+
+export class ReportDiagnosticStudentDto {
+  @ApiProperty(ID_SCHEMA) @Type(() => Number) @IsInt() @Min(1) @Max(Number.MAX_SAFE_INTEGER)
+  studentId!: number;
+
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 100, nullable: true })
+  @ValidateIf((_object, value) => value !== null) @Type(() => Number) @IsInt() @Min(0) @Max(100)
+  mathScore!: number | null;
+
+  @ApiProperty({ type: 'integer', minimum: 0, maximum: 100, nullable: true })
+  @ValidateIf((_object, value) => value !== null) @Type(() => Number) @IsInt() @Min(0) @Max(100)
+  englishScore!: number | null;
+
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  mathMistakes!: string;
+
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  englishMistakes!: string;
+
+  @ApiProperty({ type: ReportInterviewDto }) @IsDefined() @ValidateNested() @Type(() => ReportInterviewDto)
+  interview!: ReportInterviewDto;
+
+  @ApiPropertyOptional({ readOnly: true, type: 'number', nullable: true, description: 'Math·English·Interview 세 영역 평균, 소수 첫째 자리' })
+  @IsOptional()
+  totalAverage?: number | null;
+
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000)
+  overall!: string;
+}
+
+export class ReportStructuredBodyBaseDto {
+  @ApiProperty({ enum: REPORT_FORM_KINDS }) @IsIn(REPORT_FORM_KINDS)
+  kind!: ReportFormKind;
+}
+
+export class ReportIndividualBodyDto extends ReportStructuredBodyBaseDto {
+  @ApiProperty({ enum: ['individual'] }) @IsIn(['individual']) declare kind: 'individual';
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000) content!: string;
+  @ApiProperty({ type: ReportMaterialDto, nullable: true }) @IsDefined() @ValidateIf((_o, value) => value !== null)
+  @ValidateNested() @Type(() => ReportMaterialDto) progress!: ReportMaterialDto | null;
+  @ApiProperty({ type: ReportMaterialDto, nullable: true }) @IsDefined() @ValidateIf((_o, value) => value !== null)
+  @ValidateNested() @Type(() => ReportMaterialDto) homework!: ReportMaterialDto | null;
+}
+
+export class ReportGroupBodyDto extends ReportStructuredBodyBaseDto {
+  @ApiProperty({ enum: ['group'] }) @IsIn(['group']) declare kind: 'group';
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000) content!: string;
+  @ApiProperty({ type: ReportMaterialDto, nullable: true }) @IsDefined() @ValidateIf((_o, value) => value !== null)
+  @ValidateNested() @Type(() => ReportMaterialDto) progress!: ReportMaterialDto | null;
+  @ApiProperty({ type: ReportMaterialDto, nullable: true }) @IsDefined() @ValidateIf((_o, value) => value !== null)
+  @ValidateNested() @Type(() => ReportMaterialDto) homework!: ReportMaterialDto | null;
+  @ApiProperty({ type: [ReportGroupStudentDto] }) @IsArray() @ArrayMinSize(1)
+  @ValidateNested({ each: true }) @Type(() => ReportGroupStudentDto)
+  students!: ReportGroupStudentDto[];
+}
+
+export class ReportKinderBodyDto extends ReportStructuredBodyBaseDto {
+  @ApiProperty({ enum: ['kinder'] }) @IsIn(['kinder']) declare kind: 'kinder';
+  @ApiProperty({ type: ReportDevelopmentDto }) @IsDefined() @ValidateNested() @Type(() => ReportDevelopmentDto)
+  development!: ReportDevelopmentDto;
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000) overall!: string;
+}
+
+export class ReportMockBodyDto extends ReportStructuredBodyBaseDto {
+  @ApiProperty({ enum: ['mock'] }) @IsIn(['mock']) declare kind: 'mock';
+  @ApiProperty({ type: ReportDevelopmentDto }) @IsDefined() @ValidateNested() @Type(() => ReportDevelopmentDto)
+  development!: ReportDevelopmentDto;
+  @ApiProperty({ maxLength: 2000 }) @IsString() @MaxLength(2000) overall!: string;
+}
+
+export class ReportDiagnosticBodyDto extends ReportStructuredBodyBaseDto {
+  @ApiProperty({ enum: ['diagnostic'] }) @IsIn(['diagnostic']) declare kind: 'diagnostic';
+  @ApiProperty({ type: [ReportDiagnosticStudentDto] }) @IsArray() @ArrayMinSize(1)
+  @ValidateNested({ each: true }) @Type(() => ReportDiagnosticStudentDto)
+  students!: ReportDiagnosticStudentDto[];
+}
+
+export type ReportStructuredBodyDto =
+  | ReportIndividualBodyDto
+  | ReportGroupBodyDto
+  | ReportKinderBodyDto
+  | ReportMockBodyDto
+  | ReportDiagnosticBodyDto;
+
+const REPORT_STRUCTURED_BODY_SCHEMA = {
+  oneOf: [
+    ReportIndividualBodyDto, ReportGroupBodyDto, ReportKinderBodyDto, ReportMockBodyDto, ReportDiagnosticBodyDto,
+  ].map((model) => ({ $ref: getSchemaPath(model) })),
+  discriminator: {
+    propertyName: 'kind',
+    mapping: {
+      individual: getSchemaPath(ReportIndividualBodyDto),
+      group: getSchemaPath(ReportGroupBodyDto),
+      kinder: getSchemaPath(ReportKinderBodyDto),
+      mock: getSchemaPath(ReportMockBodyDto),
+      diagnostic: getSchemaPath(ReportDiagnosticBodyDto),
+    },
+  },
+};
+
+/**
+ * 기존 호출은 세 문자열을 그대로 허용한다. 새 구조화 호출은 formatVersion=1·expectedVersion·language·structuredBody를
+ * 함께 보내며 두 형태를 섞으면 service가 거절한다. 배포 뒤 legacy 화면도 expectedVersion을 보내도록 Front를 갱신한다.
+ */
+@ApiExtraModels(
+  ReportMaterialDto, ReportGroupStudentDto, ReportDevelopmentValueDto, ReportDevelopmentDto,
+  ReportInterviewDto, ReportDiagnosticStudentDto, ReportIndividualBodyDto, ReportGroupBodyDto,
+  ReportKinderBodyDto, ReportMockBodyDto, ReportDiagnosticBodyDto,
+)
+export class ReportUpsertDto {
+  @ApiPropertyOptional({ enum: [1], description: '구조화 양식은 1. 없으면 기존 3문자열 입력' })
+  @ValidateIf((_object, value) => value !== undefined) @Type(() => Number) @IsIn([1])
+  formatVersion?: 1;
+
+  @ApiPropertyOptional({ minimum: 0, description: '화면이 읽은 ReportDetailDto.version. 구조화 쓰기는 필수' })
+  @ValidateIf((_object, value) => value !== undefined) @Type(() => Number) @IsInt() @Min(0)
+  expectedVersion?: number;
+
+  @ApiPropertyOptional({ enum: ['ko', 'en'], description: '구조화 리포트 언어. formatVersion=1일 때 필수' })
+  @ValidateIf((_object, value) => value !== undefined) @IsIn(['ko', 'en'])
+  language?: 'ko' | 'en';
+
+  @ApiPropertyOptional(REPORT_STRUCTURED_BODY_SCHEMA)
+  @ValidateIf((object: ReportUpsertDto) => object.formatVersion === 1)
+  @IsDefined() @ValidateNested()
+  @Type(() => ReportStructuredBodyBaseDto, {
+    discriminator: {
+      property: 'kind',
+      subTypes: [
+        { value: ReportIndividualBodyDto, name: 'individual' },
+        { value: ReportGroupBodyDto, name: 'group' },
+        { value: ReportKinderBodyDto, name: 'kinder' },
+        { value: ReportMockBodyDto, name: 'mock' },
+        { value: ReportDiagnosticBodyDto, name: 'diagnostic' },
+      ],
+    },
+    keepDiscriminatorProperty: true,
+  })
+  structuredBody?: ReportStructuredBodyDto;
+
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @ValidateIf((object: ReportUpsertDto) => object.formatVersion !== 1) @IsString() @MaxLength(2000)
+  content?: string;
+
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @ValidateIf((object: ReportUpsertDto) => object.formatVersion !== 1) @IsString() @MaxLength(2000)
+  progress?: string;
+
+  @ApiPropertyOptional({ maxLength: 2000 })
+  @ValidateIf((object: ReportUpsertDto) => object.formatVersion !== 1) @IsString() @MaxLength(2000)
+  homework?: string;
+}
 
 export class ReportReviewDto {
   @ApiProperty({ enum: ['approve', 'reject'] })
@@ -172,6 +406,10 @@ export class ReportReviewDto {
   @ApiPropertyOptional({ maxLength: 2000, description: '반려 시 필수 (D-R13)' })
   @IsOptional() @IsString() @MaxLength(2000)
   reason?: string;
+
+  @ApiProperty({ minimum: 0, description: '화면이 읽은 ReportDetailDto.version' })
+  @Type(() => Number) @IsInt() @Min(0)
+  expectedVersion!: number;
 }
 
 export class ReportFieldDto {
@@ -189,8 +427,32 @@ export class ReportExportFileDto {
   @ApiProperty(EXPORT_REVISION_SCHEMA) revision!: string;
 }
 
+export class ReportBookOptionDto {
+  @ApiProperty(ID_SCHEMA) issueId!: number;
+  @ApiProperty({ minimum: 1 }) issueVersion!: number;
+  @ApiProperty(ID_SCHEMA) libId!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true }) versId!: number | null;
+  @ApiProperty() code!: string;
+  @ApiProperty() title!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) edition!: string | null;
+  @ApiProperty({ type: [Number], description: '현재 리포트 명단 중 이 배부 교재를 가진 학생 ID' }) studentIds!: number[];
+}
+
+@ApiExtraModels(
+  ReportIndividualBodyDto, ReportGroupBodyDto, ReportKinderBodyDto, ReportMockBodyDto, ReportDiagnosticBodyDto,
+)
 export class ReportDetailDto extends ReportRowDto {
   @ApiProperty({ type: ReportBodyDto }) body!: ReportBodyDto;
+  @ApiProperty({ enum: [0, 1], description: '0=기존 3문자열, 1=구조화 양식' }) formatVersion!: 0 | 1;
+  @ApiProperty({ minimum: 0, description: '저장·제출·승인/반려마다 증가하는 optimistic version' }) version!: number;
+  @ApiPropertyOptional({ enum: REPORT_FORM_KINDS, nullable: true, description: '서버가 종류·명단·실제 시작 시각 Kinder marker로 판정한 양식' })
+  formKind!: ReportFormKind | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: 'Kinder 양식 판정에 사용한 marker version' })
+  kinderMarkerVersion!: number | null;
+  @ApiPropertyOptional({ ...REPORT_STRUCTURED_BODY_SCHEMA, nullable: true, description: 'formatVersion=1일 때 저장된 양식 snapshot' })
+  structuredBody!: ReportStructuredBodyDto | null;
+  @ApiProperty({ type: [ReportBookOptionDto], description: '현재 명단의 사용 중 배부 교재. 저장 시 서버가 identity·표시 snapshot을 확정한다' })
+  bookOptions!: ReportBookOptionDto[];
   @ApiProperty({ type: [ReportFieldDto], description: '화면이 순서·문구·제한을 재정의하지 않고 그대로 그린다' })
   fields!: ReportFieldDto[];
   @ApiProperty({ description: '현재 사용자·회차·상태 기준 저장 가능 여부' }) canEdit!: boolean;
@@ -204,8 +466,13 @@ export class ReportDetailDto extends ReportRowDto {
   @ApiProperty() lang!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) writtenAt?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) submittedAt?: string | null;
+  @ApiPropertyOptional({ type: String, nullable: true, description: '최초 제출 시각. 재제출해도 바뀌지 않는다' })
+  firstSubmittedAt?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) reviewedAt?: string | null;
   @ApiPropertyOptional({ type: String, nullable: true }) rejectReason?: string | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '마지막 본문 저장 actor. 대상 강사와 다를 수 있다' })
+  lastWriterId?: number | null;
+  @ApiPropertyOptional({ type: String, nullable: true }) lastWriterName?: string | null;
 }
 
 export class ReportDeliveryFileInputDto {

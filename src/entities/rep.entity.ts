@@ -36,9 +36,19 @@ export class Rep {
   @Column({ type: 'varchar', length: 2, default: 'ko' })
   lang: string;
 
-  /** 고정 5개 섹션 중 강사 입력 3칸 (D-R15 · D-R40) — {content, progress, homework} */
+  /** formatVersion=0은 기존 3칸, 1은 BOC-07 종류별 구조화 snapshot이다. */
   @Column({ type: 'jsonb' })
   body: Record<string, unknown>;
+
+  @Column({ type: 'smallint', default: 0 })
+  formatVersion: number;
+
+  @Column({ type: 'bigint', default: 0 })
+  rowVersion: number;
+
+  /** 대상 강사와 별개인 마지막 실제 작성 actor. 관리자 대리 작성도 숨기지 않는다. */
+  @Column({ type: 'bigint', nullable: true })
+  lastWriterId: number | null;
 
   @Column({ type: 'enum', enum: REP_STATE_T_VALUES, enumName: 'rep_state_t', default: 'none' })
   state: 'na'|'plan'|'none'|'draft'|'wait'|'ok'|'rej';

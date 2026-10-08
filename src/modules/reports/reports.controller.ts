@@ -18,8 +18,9 @@ import {
 } from './reports.dto';
 import { ReportsService } from './reports.service';
 
-const reportWriteDescription = '입력은 content/progress/homework 3칸이다. 부모 SER 잠금 후 최신 일정·출결·담당자와 REP 상태를 검증한다. 상태/권한 오류는 저장하지 않으며 최신 상세·목록을 다시 조회해야 한다.';
-const reportWriteBadRequest = { type: ApiErrorDto, description: '입력 검증 오류, REPORT_FIELD_REQUIRED(제출 필수), REPORT_NOT_ALLOWED, REPORT_CANCELED, REPORT_NOT_ENDED.' };
+const reportWriteDescription = '기존 formatVersion=0은 content/progress/homework 3칸을 유지한다. 새 formatVersion=1은 상세의 formKind·version·bookOptions로 구조화 본문을 보내며 서버가 학생 명단, Kinder 표시, 교재 snapshot, 진단 평균을 확정한다. 부모 SER 잠금 후 최신 일정·출결·담당자와 REP 상태를 검증한다. 오류 시 저장하지 않고 최신 상세를 다시 조회한다.';
+const reportWriteBadRequest = { type: ApiErrorDto, description: '입력 검증 오류, REPORT_FIELD_REQUIRED/REPORT_STRUCTURED_INPUT_REQUIRED/REPORT_VERSION_REQUIRED 및 양식별 제출 필수값, REPORT_NOT_ALLOWED, REPORT_CANCELED, REPORT_NOT_ENDED.' };
+const reportWriteConflict = { type: ApiErrorDto, description: 'REPORT_LOCKED/REPORT_VERSION_CONFLICT/REPORT_FORMAT_CONFLICT/REPORT_FORM_CHANGED/REPORT_STUDENTS_CHANGED/REPORT_MATERIAL_CHANGED: 최신 상태·양식·명단·교재가 화면 snapshot과 다름.' };
 const reportMissing = { type: ApiErrorDto, description: 'REPORT_NOT_FOUND: 리포트가 없음. 최신 목록에서 다시 선택한다.' };
 
 @ApiTags('reports')
@@ -166,7 +167,7 @@ export class ReportsController {
   @ApiOperation({ summary: '리포트 임시저장 — 빈 칸을 허용한다', description: reportWriteDescription })
   @ApiBadRequestResponse(reportWriteBadRequest)
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_FORBIDDEN: 현재 담당 강사 또는 전체 관리 권한이 필요함.' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_LOCKED: 제출 대기/승인 상태는 수정할 수 없음.' })
+  @ApiConflictResponse(reportWriteConflict)
   @ApiNotFoundResponse(reportMissing)
   @ApiOkResponse({ type: ReportDetailDto })
   saveDraft(
@@ -180,10 +181,10 @@ export class ReportsController {
   }
 
   @Post(':serId/:onDate/submit')
-  @ApiOperation({ summary: '리포트 제출 — 3개 입력을 모두 채워야 하며 정산 기준 시각을 최초 1회만 저장한다', description: reportWriteDescription })
+  @ApiOperation({ summary: '리포트 제출 — 양식별 필수값을 검증하고 최초 제출시각을 한 번만 저장한다', description: reportWriteDescription })
   @ApiBadRequestResponse(reportWriteBadRequest)
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_FORBIDDEN: 현재 담당 강사 또는 전체 관리 권한이 필요함.' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_LOCKED: 제출 대기/승인 상태는 수정할 수 없음.' })
+  @ApiConflictResponse(reportWriteConflict)
   @ApiNotFoundResponse(reportMissing)
   @ApiCreatedResponse({ type: ReportDetailDto })
   submit(
@@ -198,10 +199,10 @@ export class ReportsController {
 
   @Post(':serId/:onDate/review')
   @ApiOperation({ summary: '제출된 리포트 승인/반려 — 반려 사유 필수, 승인 여부는 정산과 독립',
-    description: '부모 SER → REP 잠금으로 최신 상태·담당자를 읽는다. wait와 canApprove를 검증하며 취소 여부를 추가 승인 조건으로 삼지 않는다. 오류 시 저장하지 않고 최신 상세·목록을 조회한다.' })
+    description: '화면이 읽은 expectedVersion과 부모 SER → REP 잠금 뒤 최신 version·상태·담당자를 비교한다. wait와 canApprove를 검증하며 취소 여부를 추가 승인 조건으로 삼지 않는다. 오류 시 저장하지 않고 최신 상세·목록을 조회한다.' })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: '입력 검증 오류, APPROVE_REASON_FORBIDDEN, REJECT_REASON_REQUIRED.' })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_REVIEW_FORBIDDEN: 승인 권한이 필요함.' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_NOT_WAITING: 현재 승인 대기 상태가 아님.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_VERSION_CONFLICT/REPORT_NOT_WAITING: 화면 version이 오래됐거나 현재 승인 대기 상태가 아님.' })
   @ApiNotFoundResponse(reportMissing)
   @ApiCreatedResponse({ type: ReportDetailDto })
   review(

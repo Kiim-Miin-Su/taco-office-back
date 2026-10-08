@@ -25,7 +25,8 @@ import { audit } from '../../lib/audit';
 import type {
   ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportQueryDto,
   ReportReminderCreateDto, ReportReminderResultDto, ReportReviewDto, ReportRowDto,
-  ReportSendGroupDto, ReportSendHistoryDto, ReportSendHistoryListDto, ReportSendSpan, ReportUpsertDto, UnwrittenDto,
+  ReportMaterialDto, ReportSendGroupDto, ReportSendHistoryDto, ReportSendHistoryListDto, ReportSendSpan,
+  ReportStructuredBodyDto, ReportUpsertDto, UnwrittenDto,
   WeeklyBundleDto, WeeklyBundleListDto, WeeklySummaryWriteDto,
 } from './reports.dto';
 import { REPORT_FILE_STORE, type ReportFileStore } from './report-file.store';
@@ -35,6 +36,11 @@ import { addDays } from '../../lib/kst';
 import { lockScheduleSeries } from '../schedule/schedule.state.repo';
 import type { FileRefDto } from '../files/files.dto';
 import { storedFileRef } from '../files/files.service';
+import { issueActiveSql } from '../../lib/book';
+import {
+  REPORT_DEVELOPMENT_AREAS, diagnosticReportAverages, reportFormKind, structuredReportPlainText,
+  type ReportFormKind,
+} from './report-structured';
 
 interface Row {
   id: string;
@@ -58,12 +64,32 @@ interface Row {
 
 interface DetailRow extends Row {
   body: unknown;
+  format_version: number;
+  row_version: string;
+  last_writer_id: string | null;
+  last_writer_name: string | null;
+  kinder_marker_version: number | null;
+  book_options: Array<{
+    issueId: number; issueVersion: number; libId: number; versId: number | null;
+    code: string; title: string; edition: string | null; studentIds: number[];
+  }> | null;
   subject_name: string;
   lang: string;
   written_at: string | null;
   submitted_at: string | null;
   reviewed_at: string | null;
   reject_reason: string | null;
+}
+
+interface ReportMaterialRow {
+  issue_id: string;
+  issue_version: number;
+  student_id: string;
+  lib_id: string;
+  vers_id: string | null;
+  code: string;
+  title: string;
+  edition: string | null;
 }
 
 interface SendHistoryRow {
@@ -224,7 +250,8 @@ export class ReportsService {
                    to_char(upper(o.span) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS end_min_utc,
                    COALESCE(r.kind_key, s.kind_key) AS kind_key, s.sub_key,
                    COALESCE(o.teacher_id, r.teacher_id) AS teacher_id, t.name AS teacher_name, r.state,
-                   r.body, r.lang, COALESCE(sb.name, s.title, k.name) AS subject_name,
+                   r.body, r.format_version, r.row_version, r.last_writer_id, lw.name AS last_writer_name,
+                   r.lang, COALESCE(sb.name, s.title, k.name) AS subject_name,
                    k.rep AS reportable,
                    ${REPORT_CANCELED_SQL} AS canceled,
                    COALESCE(upper(o.span) <= now(), false) AS ended,
@@ -232,6 +259,23 @@ export class ReportsService {
                    to_char(r.submitted_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS submitted_at,
                    to_char(r.reviewed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS reviewed_at,
                    r.reject_reason,
+                   (SELECT marker.version
+                      FROM rep_stu marker_rs
+                      JOIN LATERAL (
+                        SELECT m.version,m.marked FROM stu_kinder_marker m
+                         WHERE m.student_id=marker_rs.student_id AND m.effective_from<=lower(o.span)
+                         ORDER BY m.effective_from DESC,m.version DESC LIMIT 1
+                      ) marker ON marker.marked
+                     WHERE marker_rs.rep_id=r.id ORDER BY marker.version DESC LIMIT 1) AS kinder_marker_version,
+                   COALESCE((
+                     SELECT json_agg(json_build_object(
+                       'issueId',i.id,'issueVersion',i.row_version,'libId',i.lib_id,'versId',i.vers_id,
+                       'code',l.code,'title',l.title,'edition',v.edition,'studentIds',json_build_array(i.student_id)
+                     ) ORDER BY l.title,i.id)
+                       FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
+                      WHERE i.student_id IN (SELECT rsb.student_id FROM rep_stu rsb WHERE rsb.rep_id=r.id)
+                        AND ${issueActiveSql('i')}
+                   ), '[]'::json) AS book_options,
                    COALESCE((
                      SELECT json_agg(json_build_object(
                        'id', st.id, 'name', st.name, 'grade', st.grade, 'deliver', rs.deliver,
@@ -249,6 +293,7 @@ export class ReportsService {
               JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
               LEFT JOIN sub sb ON sb.key = s.sub_key
               LEFT JOIN staff t ON t.id = COALESCE(o.teacher_id, r.teacher_id)
+              LEFT JOIN staff lw ON lw.id = r.last_writer_id
              WHERE ${where}
              ORDER BY date, start_min, r.id
              ${lock ? 'FOR UPDATE OF r' : ''}`;
@@ -283,6 +328,19 @@ export class ReportsService {
     };
   }
 
+  private structuredBody(raw: unknown, formatVersion: number): ReportStructuredBodyDto | null {
+    if (formatVersion !== 1 || !raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const kind = (raw as { kind?: unknown }).kind;
+    return typeof kind === 'string' && ['individual', 'group', 'kinder', 'mock', 'diagnostic'].includes(kind)
+      ? raw as ReportStructuredBodyDto
+      : null;
+  }
+
+  private formKind(r: DetailRow): ReportFormKind | null {
+    const stored = this.structuredBody(r.body, Number(r.format_version));
+    return stored?.kind ?? reportFormKind(r.kind_key, r.students?.length ?? 0, r.kinder_marker_version !== null);
+  }
+
   private canEdit(r: DetailRow, actorId: number, canCrudAll: boolean): boolean {
     return reportWriteIssue({
       actorId,
@@ -298,6 +356,7 @@ export class ReportsService {
   private toDetail(r: DetailRow, actorId: number, canCrudAll: boolean, canApprove = canCrudAll): ReportDetailDto {
     const row = this.toRow(r, new Date());
     const body = this.body(r.body);
+    const structuredBody = this.structuredBody(r.body, Number(r.format_version));
     const canExport = canExportReport({
       actorId,
       teacherId: r.teacher_id ? Number(r.teacher_id) : null,
@@ -307,6 +366,16 @@ export class ReportsService {
     return {
       ...row,
       body,
+      formatVersion: Number(r.format_version) === 1 ? 1 : 0,
+      version: Number(r.row_version),
+      formKind: this.formKind(r),
+      kinderMarkerVersion: r.kinder_marker_version === null ? null : Number(r.kinder_marker_version),
+      structuredBody,
+      bookOptions: (r.book_options ?? []).map((book) => ({
+        issueId: Number(book.issueId), issueVersion: Number(book.issueVersion), libId: Number(book.libId),
+        versId: book.versId === null ? null : Number(book.versId), code: String(book.code), title: String(book.title),
+        edition: book.edition === null ? null : String(book.edition), studentIds: book.studentIds.map(Number),
+      })),
       fields: REPORT_FIELDS.map((field) => ({ ...field })),
       canEdit: this.canEdit(r, actorId, canCrudAll),
       // 자기가 쓴 리포트에는 승인 단추가 서지 않는다 — 쓰기 경로와 같은 판정을 쓴다(D-R39)
@@ -322,15 +391,20 @@ export class ReportsService {
           subjectName: r.subject_name,
           startMin: row.startMin,
         });
-        const plainText = reportPlainText({
-          date: row.date,
-          studentName: student.name,
-          studentGrade: student.grade,
-          subjectName: r.subject_name,
-          startMin: row.startMin,
-          endMin: row.endMin,
-          body,
-        });
+        const plainText = structuredBody
+          ? structuredReportPlainText({
+            date: row.date, studentId: student.id, studentName: student.name, studentGrade: student.grade,
+            subjectName: r.subject_name, startMin: row.startMin, endMin: row.endMin, body: structuredBody,
+          })
+          : reportPlainText({
+            date: row.date,
+            studentName: student.name,
+            studentGrade: student.grade,
+            subjectName: r.subject_name,
+            startMin: row.startMin,
+            endMin: row.endMin,
+            body,
+          });
         // 조회·상세·발송 검증이 같은 출력 버전을 공유한다. 클라이언트는 재계산하지 않는다.
         const revision = createHash('sha256').update(JSON.stringify([fileName, plainText])).digest('hex');
         return { studentId: student.id, fileName, plainText, revision };
@@ -340,8 +414,11 @@ export class ReportsService {
       lang: r.lang,
       writtenAt: r.written_at,
       submittedAt: r.submitted_at,
+      firstSubmittedAt: r.submitted_at,
       reviewedAt: r.reviewed_at,
       rejectReason: r.reject_reason,
+      lastWriterId: r.last_writer_id ? Number(r.last_writer_id) : null,
+      lastWriterName: r.last_writer_name,
     };
   }
 
@@ -350,6 +427,174 @@ export class ReportsService {
       ReportsService.detailSql('r.ser_id = $1 AND r.on_date = $2', lock), [serId, onDate],
     );
     return rows[0] ?? null;
+  }
+
+  private assertReportVersion(row: DetailRow, expectedVersion: number | undefined, required: boolean): void {
+    if (required && expectedVersion === undefined) {
+      throw new BadRequestException({ code: 'REPORT_VERSION_REQUIRED', message: '최신 리포트 version을 함께 보내야 합니다' });
+    }
+    if (expectedVersion !== undefined && expectedVersion !== Number(row.row_version)) {
+      throw new ConflictException({
+        code: 'REPORT_VERSION_CONFLICT', message: '리포트가 다른 곳에서 바뀌었습니다. 최신 내용을 다시 확인해 주세요',
+        expectedVersion, actualVersion: Number(row.row_version),
+      });
+    }
+  }
+
+  private assertStudentSnapshot(actual: readonly number[], sent: readonly number[]): void {
+    const normalized = [...new Set(sent)].sort((a, b) => a - b);
+    const current = [...actual].sort((a, b) => a - b);
+    if (normalized.length !== sent.length || JSON.stringify(normalized) !== JSON.stringify(current)) {
+      throw new ConflictException({
+        code: 'REPORT_STUDENTS_CHANGED', message: '수업 학생 명단이 바뀌었습니다. 최신 리포트를 다시 열어 주세요',
+        studentIds: current,
+      });
+    }
+  }
+
+  private async reportMaterial(
+    q: Queryer,
+    value: ReportMaterialDto | null,
+    studentIds: readonly number[],
+    required: boolean,
+    requireAmount: boolean,
+  ): Promise<ReportMaterialDto | null> {
+    if (!value) {
+      if (required) {
+        throw new BadRequestException({ code: 'REPORT_MATERIAL_REQUIRED', message: '교재와 쪽 범위를 입력해 주세요' });
+      }
+      return null;
+    }
+    if (value.toPage < value.fromPage) {
+      throw new BadRequestException({ code: 'REPORT_PAGE_RANGE_INVALID', message: '끝 쪽은 시작 쪽보다 앞설 수 없습니다' });
+    }
+    if (required && requireAmount && !value.amount?.trim()) {
+      throw new BadRequestException({ code: 'REPORT_HOMEWORK_AMOUNT_REQUIRED', message: '숙제 분량을 입력해 주세요' });
+    }
+    const [book] = await q.query<ReportMaterialRow[]>(
+      `SELECT i.id AS issue_id,i.row_version AS issue_version,i.student_id,i.lib_id,i.vers_id,
+              l.code,l.title,v.edition
+         FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
+        WHERE i.id=$1 AND i.student_id=ANY($2::bigint[]) AND ${issueActiveSql('i')}
+        FOR SHARE OF i,l`,
+      [value.issueId, studentIds],
+    );
+    if (!book) {
+      throw new ConflictException({
+        code: 'REPORT_MATERIAL_CHANGED', message: '선택한 배부 교재가 현재 명단에서 사용 중이 아닙니다. 다시 선택해 주세요',
+      });
+    }
+    return {
+      issueId: Number(book.issue_id), issueVersion: Number(book.issue_version), libId: Number(book.lib_id),
+      versId: book.vers_id === null ? null : Number(book.vers_id), code: book.code, title: book.title,
+      edition: book.edition, fromPage: value.fromPage, toPage: value.toPage,
+      amount: value.amount?.trim() || null,
+    };
+  }
+
+  private requiredText(value: string, min: number, code: string, message: string): void {
+    if (value.trim().length < min) throw new BadRequestException({ code, message });
+  }
+
+  private async structuredBodyForWrite(
+    q: Queryer,
+    row: DetailRow,
+    dto: ReportUpsertDto,
+    action: ReportWriteAction,
+  ): Promise<ReportStructuredBodyDto> {
+    if (dto.formatVersion !== 1 || !dto.structuredBody || !dto.language) {
+      throw new BadRequestException({
+        code: 'REPORT_STRUCTURED_INPUT_REQUIRED', message: '구조화 양식·언어·formatVersion을 함께 보내야 합니다',
+      });
+    }
+    if (dto.content !== undefined || dto.progress !== undefined || dto.homework !== undefined) {
+      throw new BadRequestException({ code: 'REPORT_FORMAT_MIXED', message: '기존 3칸 입력과 구조화 양식을 섞을 수 없습니다' });
+    }
+    this.assertReportVersion(row, dto.expectedVersion, true);
+    if (Number(row.format_version) === 0 && row.state !== 'none') {
+      throw new ConflictException({
+        code: 'REPORT_FORMAT_CONFLICT', message: '기존 양식으로 작성한 리포트는 그 양식을 유지합니다',
+      });
+    }
+    const expectedKind = this.formKind(row);
+    if (!expectedKind || dto.structuredBody.kind !== expectedKind) {
+      throw new ConflictException({
+        code: 'REPORT_FORM_CHANGED', message: '수업 종류나 Kinder 표시가 바뀌었습니다. 최신 양식을 다시 열어 주세요',
+        expectedKind,
+      });
+    }
+    const studentIds = (row.students ?? []).map((student) => Number(student.id));
+    const submitting = action === 'submit';
+    const source = dto.structuredBody;
+    if (source.kind === 'individual' || source.kind === 'group') {
+      if (submitting) this.requiredText(source.content, 60, 'REPORT_CONTENT_REQUIRED', '수업 내용을 60자 이상 입력해 주세요');
+      const progress = await this.reportMaterial(q, source.progress, studentIds, submitting, false);
+      const homework = await this.reportMaterial(q, source.homework, studentIds, submitting, true);
+      if (source.kind === 'group') {
+        this.assertStudentSnapshot(studentIds, source.students.map((student) => student.studentId));
+        if (submitting) {
+          for (const student of source.students) {
+            this.requiredText(student.comment, 40, 'REPORT_STUDENT_COMMENT_REQUIRED', '학생별 의견을 40자 이상 입력해 주세요');
+          }
+        }
+        return { ...source, content: source.content.trim(), progress, homework,
+          students: source.students.map((student) => ({ ...student, comment: student.comment.trim() })) };
+      }
+      return { ...source, content: source.content.trim(), progress, homework };
+    }
+    if (source.kind === 'kinder' || source.kind === 'mock') {
+      for (const key of REPORT_DEVELOPMENT_AREAS) {
+        const item = source.development[key];
+        if (submitting && (!item.level || item.observation.trim().length < 30)) {
+          throw new BadRequestException({
+            code: 'REPORT_DEVELOPMENT_REQUIRED', message: '4영역 평가와 관찰을 각각 30자 이상 입력해 주세요', field: key,
+          });
+        }
+      }
+      if (submitting) this.requiredText(source.overall, 60, 'REPORT_OVERALL_REQUIRED', '종합 소견을 60자 이상 입력해 주세요');
+      return {
+        ...source,
+        development: {
+          language: { ...source.development.language, observation: source.development.language.observation.trim() },
+          math: { ...source.development.math, observation: source.development.math.observation.trim() },
+          emotional: { ...source.development.emotional, observation: source.development.emotional.observation.trim() },
+          physical: { ...source.development.physical, observation: source.development.physical.observation.trim() },
+        },
+        overall: source.overall.trim(),
+      };
+    }
+    this.assertStudentSnapshot(studentIds, source.students.map((student) => student.studentId));
+    return {
+      ...source,
+      students: source.students.map((student) => {
+        const scores = [
+          student.mathScore, student.englishScore, student.interview.fluency,
+          student.interview.vocabulary, student.interview.grammar,
+        ];
+        if (submitting && scores.some((score) => score === null)) {
+          throw new BadRequestException({ code: 'REPORT_SCORE_REQUIRED', message: 'Math·English·Interview 점수를 모두 입력해 주세요' });
+        }
+        if (submitting) {
+          this.requiredText(student.mathMistakes, 1, 'REPORT_MISTAKES_REQUIRED', '과목별 오답 내용을 입력해 주세요');
+          this.requiredText(student.englishMistakes, 1, 'REPORT_MISTAKES_REQUIRED', '과목별 오답 내용을 입력해 주세요');
+          this.requiredText(student.overall, 1, 'REPORT_OVERALL_REQUIRED', '종합 소견을 입력해 주세요');
+        }
+        const complete = scores.every((score): score is number => score !== null);
+        const averages = complete ? diagnosticReportAverages({
+          mathScore: student.mathScore!, englishScore: student.englishScore!,
+          interview: {
+            fluency: student.interview.fluency!, vocabulary: student.interview.vocabulary!, grammar: student.interview.grammar!,
+          },
+        }) : null;
+        return {
+          ...student,
+          mathMistakes: student.mathMistakes.trim(), englishMistakes: student.englishMistakes.trim(),
+          interview: { ...student.interview, average: averages?.interviewAverage ?? null },
+          totalAverage: averages?.totalAverage ?? null,
+          overall: student.overall.trim(),
+        };
+      }),
+    };
   }
 
   private static kstYesterday(now = new Date()): string {
@@ -1167,11 +1412,26 @@ export class ReportsService {
       });
       if (issue) this.throwWriteIssue(issue);
 
-      const body: ReportBody = { content: dto.content, progress: dto.progress, homework: dto.homework };
-      const emptyField = reportBodyIssue(body, action);
-      if (emptyField) {
-        const field = REPORT_FIELDS.find((item) => item.key === emptyField)!;
-        throw new BadRequestException({ code: 'REPORT_FIELD_REQUIRED', message: `${field.label}을(를) 채워야 제출됩니다` });
+      const structured = dto.formatVersion === 1;
+      let body: ReportBody | ReportStructuredBodyDto;
+      if (structured) {
+        body = await this.structuredBodyForWrite(q, row, dto, action);
+      } else {
+        if (dto.structuredBody !== undefined || dto.language !== undefined) {
+          throw new BadRequestException({ code: 'REPORT_FORMAT_MIXED', message: '기존 3칸 입력과 구조화 양식을 섞을 수 없습니다' });
+        }
+        if (Number(row.format_version) !== 0) {
+          throw new ConflictException({
+            code: 'REPORT_FORMAT_CONFLICT', message: '구조화 양식으로 시작한 리포트는 기존 3칸 양식으로 바꿀 수 없습니다',
+          });
+        }
+        this.assertReportVersion(row, dto.expectedVersion, false);
+        body = { content: dto.content ?? '', progress: dto.progress ?? '', homework: dto.homework ?? '' };
+        const emptyField = reportBodyIssue(body, action);
+        if (emptyField) {
+          const field = REPORT_FIELDS.find((item) => item.key === emptyField)!;
+          throw new BadRequestException({ code: 'REPORT_FIELD_REQUIRED', message: `${field.label}을(를) 채워야 제출됩니다` });
+        }
       }
 
       const nextState: RepStateDb = action === 'submit' ? 'wait' : 'draft';
@@ -1183,9 +1443,13 @@ export class ReportsService {
                 submitted_at = CASE WHEN $4::boolean THEN COALESCE(submitted_at, now()) ELSE submitted_at END,
                 reviewed_at = NULL,
                 reviewer_id = NULL,
-                reject_reason = NULL
+                reject_reason = NULL,
+                format_version = $5::smallint,
+                lang = CASE WHEN $5::smallint=1 THEN $6 ELSE lang END,
+                row_version = row_version + 1,
+                last_writer_id = $7
           WHERE id = $1`,
-        [row.id, JSON.stringify(body), nextState, action === 'submit'],
+        [row.id, JSON.stringify(body), nextState, action === 'submit', structured ? 1 : 0, dto.language ?? row.lang, actorId],
       );
       // N-73 — 다시 쓰면 결재 도장(reviewed_at · 반려 사유)이 지워진다. 무엇이 지워졌는지를 같은 트랜잭션에 남긴다.
       // 본문은 싣지 않는다(학생 기록 원문 — 원장은 「누가 언제 상태를 바꿨나」만 답한다).
@@ -1193,7 +1457,10 @@ export class ReportsService {
         actorId,
         entityId: row.id,
         before: { state: row.state, reviewedAt: row.reviewed_at, rejectReason: row.reject_reason },
-        after: { state: nextState, submitted: action === 'submit' },
+        after: {
+          state: nextState, submitted: action === 'submit', formatVersion: structured ? 1 : 0,
+          version: Number(row.row_version) + 1, targetTeacherId: row.teacher_id,
+        },
       });
       const saved = await this.loadDetail(q, serId, onDate);
       if (!saved) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
@@ -1230,12 +1497,15 @@ export class ReportsService {
         teacherId: row.teacher_id, actorId,
       });
       if (issue) this.throwReviewIssue(issue);
+      // 권한·상태를 먼저 막아 권한 없는 actor에게 현재 version을 충돌 응답으로 노출하지 않는다.
+      this.assertReportVersion(row, dto.expectedVersion, true);
 
       const state: RepStateDb = dto.decision === 'approve' ? 'ok' : 'rej';
       const rejectReason = dto.decision === 'reject' ? dto.reason!.trim() : null;
       await q.query(
         `UPDATE rep
-            SET state = $2::rep_state_t, reviewed_at = now(), reviewer_id = $3, reject_reason = $4
+            SET state = $2::rep_state_t, reviewed_at = now(), reviewer_id = $3, reject_reason = $4,
+                row_version = row_version + 1
           WHERE id = $1`,
         [row.id, state, actorId, rejectReason],
       );
