@@ -259,3 +259,27 @@ export function hasPerm(
 ): boolean {
   return permsOf(role, overrides)[name];
 }
+
+/**
+ * TBO-55 BOC-11D-01 보호 계좌 capability.
+ * 최종 관리자 수정사항 p110의 “대표·회계 권한”을 현재 `canMoney` 결론으로 해석하되,
+ * 금액 줄 표시용 `ACCT_PRIVACY/canHide`를 계좌 권한으로 재사용하지 않는다. 정책을 바꾸면
+ * protected account DTO/controller/service, Front A27, migration/DBML, 두 수정사항 대조표와 portfolio를 함께 갱신한다.
+ */
+export function canReadProtectedAccount(
+  role: Role, overrides?: Partial<Record<PermName, boolean | null>> | null,
+): boolean {
+  return hasPerm(role, 'canMoney', overrides);
+}
+
+export function canWriteProtectedAccount(
+  role: Role, overrides?: Partial<Record<PermName, boolean | null>> | null,
+): boolean {
+  return canReadProtectedAccount(role, overrides) && hasPerm(role, 'canCrudAll', overrides);
+}
+
+export function canRevealProtectedAccount(
+  role: Role, overrides?: Partial<Record<PermName, boolean | null>> | null,
+): boolean {
+  return canReadProtectedAccount(role, overrides) && canCeoSetPermOverride(role);
+}

@@ -22,6 +22,8 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
   let ds: DataSource;
   let ceoToken = '';
   let teacherToken = '';
+  let previousKeyVersion: string | undefined;
+  let previousKeyV1: string | undefined;
   const payoutIds: number[] = [];
 
   const CEO = 9948201;
@@ -43,6 +45,16 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
         SELECT id FROM payout WHERE staff_id=ANY($1::bigint[]))`, [[TEACHER, TEACHER_2, TEACHER_3]]);
       await m.query(`DELETE FROM payout_disbursement_request WHERE actor_id=$1`, [CEO]);
       await m.query(`ALTER TABLE payout_disbursement_event ENABLE TRIGGER payout_disbursement_event_immutable`);
+      await m.query(`ALTER TABLE protected_account DISABLE TRIGGER protected_account_no_delete`);
+      await m.query(`ALTER TABLE protected_account_event DISABLE TRIGGER protected_account_event_immutable`);
+      await m.query(`ALTER TABLE protected_account_request DISABLE TRIGGER protected_account_request_immutable`);
+      await m.query(`DELETE FROM protected_account_event WHERE actor_id=$1`, [CEO]);
+      await m.query(`DELETE FROM protected_account_request WHERE actor_id=$1`, [CEO]);
+      await m.query(`DELETE FROM protected_account WHERE purpose='teacher_payout' AND target_id=ANY($1::bigint[])`,
+        [[TEACHER, TEACHER_2, TEACHER_3]]);
+      await m.query(`ALTER TABLE protected_account_request ENABLE TRIGGER protected_account_request_immutable`);
+      await m.query(`ALTER TABLE protected_account_event ENABLE TRIGGER protected_account_event_immutable`);
+      await m.query(`ALTER TABLE protected_account ENABLE TRIGGER protected_account_no_delete`);
     });
     await q(`DELETE FROM log WHERE actor_id=$1 AND entity='PAYOUT_PAY'`, [CEO]);
     await q(`DELETE FROM payout WHERE staff_id=ANY($1::bigint[])`, [[TEACHER, TEACHER_2, TEACHER_3]]);
@@ -50,6 +62,10 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
   };
 
   beforeAll(async () => {
+    previousKeyVersion = process.env.TACO_ACCOUNT_ENC_KEY_VERSION;
+    previousKeyV1 = process.env.TACO_ACCOUNT_ENC_KEY_V1;
+    process.env.TACO_ACCOUNT_ENC_KEY_VERSION = 'v1';
+    process.env.TACO_ACCOUNT_ENC_KEY_V1 = 'test-only-payout-account-key-v1';
     const mod = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = mod.createNestApplication();
     app.use(cookieParser());
@@ -88,6 +104,14 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
       .post('/auth/login').send({ loginId, password: PASSWORD }).expect(201)).body.accessToken as string;
     ceoToken = await login('boc11-payout-ceo@t.kr');
     teacherToken = await login('boc11-payout-teacher@t.kr');
+    for (const [targetId, accountNumber] of [
+      [TEACHER, '100000000001'], [TEACHER_2, '100000000002'], [TEACHER_3, '100000000003'],
+    ] as const) {
+      await request(app.getHttpServer()).post('/accounting/protected-accounts').set(auth(ceoToken)).send({
+        purpose: 'teacher_payout', targetId, bank: '지급은행', accountNumber, holder: `강사${targetId}`,
+        expectedVersion: 0, requestKey: randomUUID(),
+      }).expect(201);
+    }
   });
 
   afterAll(async () => {
@@ -95,6 +119,10 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
       if (ds?.isInitialized) await cleanup();
     } finally {
       await app?.close();
+      if (previousKeyVersion === undefined) delete process.env.TACO_ACCOUNT_ENC_KEY_VERSION;
+      else process.env.TACO_ACCOUNT_ENC_KEY_VERSION = previousKeyVersion;
+      if (previousKeyV1 === undefined) delete process.env.TACO_ACCOUNT_ENC_KEY_V1;
+      else process.env.TACO_ACCOUNT_ENC_KEY_V1 = previousKeyV1;
     }
   });
 
@@ -109,13 +137,18 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
       .set(auth(ceoToken)).expect(200)).body as PayoutDisbursementLedgerDto;
     expect(ledger.months.map((row) => row.month)).toEqual([MONTH, PREVIOUS]);
     expect(ledger.months[0]).toMatchObject({ totalCount: 3, paidCount: 0, totalAmount: 887223, paidAmount: 0, unpaidAmount: 887223 });
-    expect(ledger.months[0]?.items[0]).toMatchObject({ status: 'unpaid', version: 0, method: null, canPay: true, canCancel: false });
+    expect(ledger.months[0]?.items[0]).toMatchObject({
+      status: 'unpaid', version: 0, method: null, accountReady: true, canPay: true, canCancel: false,
+    });
   });
 
   it('개별 지급·멱등 재시도·stale 취소·취소·재지급이 snapshot과 event를 보존한다', async () => {
     const key = randomUUID();
     const paid = (await pay(payoutIds[0]!, 0, key).expect(201)).body;
-    expect(paid).toMatchObject({ payoutId: payoutIds[0], status: 'paid', version: 1, paidOn: '2001-06-10', paidBy: '지급대표', method: 'bank_transfer' });
+    expect(paid).toMatchObject({
+      payoutId: payoutIds[0], status: 'paid', version: 1, paidOn: '2001-06-10', paidBy: '지급대표',
+      method: 'bank_transfer', accountReady: true, accountLast4: '0001',
+    });
     expect(paid).toMatchObject({ hours: '8.00', gross: 400000, deduction: 5000, withholding: 13035, net: 381965 });
     expect((await pay(payoutIds[0]!, 0, key).expect(201)).body).toMatchObject({ status: 'paid', version: 1 });
 

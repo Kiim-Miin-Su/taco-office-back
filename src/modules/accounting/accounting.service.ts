@@ -983,7 +983,8 @@ export class AccountingService {
   /* ── BO-11AD-03 실제 강사료 지급 원장 ────────────────────────────────
    * 권고안 채택(2026-10-09): `payout`/`payout_line`은 계산 확정과 시수 잠금의 근거다.
    * 실제 계좌이체는 별도 current/event/request 원장에 기록해 지급 취소·재지급이 확정 금액을 바꾸지 않게 한다.
-   * 계좌번호·뒤 4자리는 BO-Q9가 소유하므로 기존 강사 정보로 추정하지 않는다. 정책을 바꾸면
+   * BOC-11D-01부터 활성 `teacher_payout` 보호 계좌를 row lock으로 확인하고 id·version·last4만 snapshot한다.
+   * 원문은 이 서비스가 읽지 않는다. 정책을 바꾸면
    * DTO/Swagger→OpenAPI→생성 Front 타입, migration/DBML, 두 수정사항 대조표와 portfolio를 같이 고친다.
    */
   private async payoutDisbursementRow(
@@ -993,10 +994,13 @@ export class AccountingService {
       `SELECT po.id AS payout_id,po.staff_id,s.name AS staff_name,po.year_month,po.hours,po.gross,
               po.late_rep_cut,po.late_cls_cut,po.income_tax,po.local_tax,po.net,po.confirmed_by,po.confirmed_at,
               d.id AS disbursement_id,d.state,d.row_version,d.snapshot,to_char(d.paid_on,'YYYY-MM-DD') AS paid_on,
-              d.method,d.paid_at,pb.name AS paid_by,d.canceled_at,cb.name AS canceled_by,d.cancel_reason
+              d.method,d.paid_at,pb.name AS paid_by,d.canceled_at,cb.name AS canceled_by,d.cancel_reason,
+              d.account_id,d.account_version,d.account_last4,
+              pa.id AS active_account_id,pa.row_version AS active_account_version,pa.last4 AS active_account_last4
          FROM payout po JOIN staff s ON s.id=po.staff_id
          LEFT JOIN payout_disbursement d ON d.payout_id=po.id
          LEFT JOIN staff pb ON pb.id=d.paid_by LEFT JOIN staff cb ON cb.id=d.canceled_by
+         LEFT JOIN protected_account pa ON pa.purpose='teacher_payout' AND pa.target_id=po.staff_id AND pa.state='active'
         WHERE po.id=$1 AND po.confirmed_by IS NOT NULL`, [payoutId],
     )) as Array<Record<string, unknown>>;
     if (!row) {
@@ -1008,10 +1012,16 @@ export class AccountingService {
     const localTax = Number(snapshot?.localTax ?? row.local_tax);
     const events = row.disbursement_id ? (await q.query(
       `SELECT e.action,e.from_state,e.to_state,e.result_version,a.name AS actor,
-              to_char(e.paid_on,'YYYY-MM-DD') AS paid_on,e.method,e.reason,e.created_at
+              to_char(e.paid_on,'YYYY-MM-DD') AS paid_on,e.method,e.reason,e.created_at,
+              e.account_id,e.account_version,e.account_last4
          FROM payout_disbursement_event e JOIN staff a ON a.id=e.actor_id
         WHERE e.payout_disbursement_id=$1 ORDER BY e.result_version`, [Number(row.disbursement_id)],
     )) as Array<Record<string, unknown>> : [];
+    const accountFromPayment = state === 'paid';
+    const accountId = accountFromPayment ? row.account_id : row.active_account_id;
+    const accountVersion = accountFromPayment ? row.account_version : row.active_account_version;
+    const accountLast4 = accountFromPayment ? row.account_last4 : row.active_account_last4;
+    const accountReady = accountId != null && accountVersion != null && accountLast4 != null;
     return {
       payoutId: Number(row.payout_id), staffId: Number(snapshot?.staffId ?? row.staff_id),
       staffName: String(snapshot?.staffName ?? row.staff_name), yearMonth: String(snapshot?.yearMonth ?? row.year_month),
@@ -1027,7 +1037,10 @@ export class AccountingService {
       canceledAt: row.canceled_at ? new Date(row.canceled_at as string).toISOString() : null,
       canceledBy: (row.canceled_by as string | null) ?? null,
       cancelReason: (row.cancel_reason as string | null) ?? null,
-      canPay: state !== 'paid', canCancel: state === 'paid',
+      accountId: accountId == null ? null : Number(accountId),
+      accountVersion: accountVersion == null ? null : Number(accountVersion),
+      accountLast4: accountLast4 == null ? null : String(accountLast4), accountReady,
+      canPay: state !== 'paid' && accountReady, canCancel: state === 'paid',
       events: events.map((event) => ({
         action: event.action as 'paid' | 'canceled',
         fromState: event.from_state as 'paid' | 'canceled' | null,
@@ -1035,6 +1048,9 @@ export class AccountingService {
         actor: String(event.actor), paidOn: (event.paid_on as string | null) ?? null,
         method: event.method === 'bank_transfer' ? 'bank_transfer' : null,
         reason: (event.reason as string | null) ?? null,
+        accountId: event.account_id == null ? null : Number(event.account_id),
+        accountVersion: event.account_version == null ? null : Number(event.account_version),
+        accountLast4: event.account_last4 == null ? null : String(event.account_last4),
         createdAt: new Date(event.created_at as string).toISOString(),
       })),
     };
@@ -1146,6 +1162,16 @@ export class AccountingService {
     method: 'bank_transfer', expectedVersion?: number,
   ): Promise<PayoutDisbursementDto> {
     const source = await this.lockedPayoutSnapshot(m, payoutId);
+    const [account] = (await m.query(`SELECT id,row_version,last4 FROM protected_account
+      WHERE purpose='teacher_payout' AND target_id=$1 AND state='active' FOR SHARE`, [Number(source.staffId)])) as Array<{
+        id: string; row_version: number; last4: string;
+      }>;
+    if (!account) {
+      throw new ConflictException({
+        code: 'PAYOUT_ACCOUNT_REQUIRED', message: '활성 강사 지급 계좌를 먼저 등록해 주세요',
+        details: { staffId: Number(source.staffId) },
+      });
+    }
     const [current] = (await m.query(
       `SELECT id,state,row_version,snapshot FROM payout_disbursement WHERE payout_id=$1 FOR UPDATE`, [payoutId],
     )) as Array<{ id: string; state: string; row_version: number; snapshot: Record<string, unknown> }>;
@@ -1156,34 +1182,49 @@ export class AccountingService {
     if (current?.state === 'paid') {
       throw new ConflictException({ code: 'PAYOUT_ALREADY_PAID', message: '이미 실제 지급한 정산입니다' });
     }
+    // 권고안 채택(BOC-11D-01): 확정 정산 snapshot은 기존 지급 원장의 불변 근거로 유지하고,
+    // 지급 시점 계좌는 전용 account_* 컬럼과 event에만 남긴다. 이 경계를 바꾸면
+    // migration/DBML/DTO/OpenAPI/Frontend/두 수정사항 대조표/portfolio를 함께 갱신한다.
     const snapshot = current?.snapshot ?? source;
     const nextVersion = actualVersion + 1;
     let disbursementId: number;
     if (!current) {
       const [created] = (await m.query(
-        `INSERT INTO payout_disbursement(payout_id,state,row_version,snapshot,paid_on,method,paid_by,paid_at)
-         VALUES ($1,'paid',1,$2::jsonb,$3,$4,$5,now()) RETURNING id`,
-        [payoutId, JSON.stringify(snapshot), paidOn, method, actorId],
+        `INSERT INTO payout_disbursement(
+           payout_id,state,row_version,snapshot,paid_on,method,paid_by,paid_at,account_id,account_version,account_last4)
+         VALUES ($1,'paid',1,$2::jsonb,$3,$4,$5,now(),$6,$7,$8) RETURNING id`,
+        [payoutId, JSON.stringify(snapshot), paidOn, method, actorId, account.id, account.row_version, account.last4],
       )) as Array<{ id: string }>;
       disbursementId = Number(created.id);
     } else {
       disbursementId = Number(current.id);
       await m.query(
         `UPDATE payout_disbursement SET state='paid',row_version=$2,paid_on=$3,method=$4,paid_by=$5,paid_at=now(),
+          account_id=$6,account_version=$7,account_last4=$8,
           canceled_by=NULL,canceled_at=NULL,cancel_reason=NULL WHERE id=$1`,
-        [disbursementId, nextVersion, paidOn, method, actorId],
+        [
+          disbursementId, nextVersion, paidOn, method, actorId,
+          account.id, account.row_version, account.last4,
+        ],
       );
     }
     await m.query(
       `INSERT INTO payout_disbursement_event(
-         payout_disbursement_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot,paid_on,method)
-       VALUES ($1,'paid',$2,'paid',$3,$4,$5,$6::jsonb,$7,$8)`,
-      [disbursementId, current?.state ?? null, actorId, requestKey, nextVersion, JSON.stringify(snapshot), paidOn, method],
+         payout_disbursement_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot,paid_on,method,
+         account_id,account_version,account_last4)
+       VALUES ($1,'paid',$2,'paid',$3,$4,$5,$6::jsonb,$7,$8,$9,$10,$11)`,
+      [
+        disbursementId, current?.state ?? null, actorId, requestKey, nextVersion, JSON.stringify(snapshot), paidOn, method,
+        account.id, account.row_version, account.last4,
+      ],
     );
     await audit(m, 'payout_disbursement.pay', {
       actorId, entityId: disbursementId,
       before: current ? { payoutId, state: current.state, version: actualVersion } : null,
-      after: { payoutId, state: 'paid', version: nextVersion, paidOn, method },
+      after: {
+        payoutId, state: 'paid', version: nextVersion, paidOn, method,
+        accountId: Number(account.id), accountVersion: Number(account.row_version), accountLast4: String(account.last4),
+      },
     });
     return this.payoutDisbursementRow(m, payoutId);
   }
@@ -1220,8 +1261,12 @@ export class AccountingService {
       if (replay) return this.payoutDisbursementReplay(m, dto.requestKey, payoutId, reason);
       await this.lockedPayoutSnapshot(m, payoutId);
       const [current] = (await m.query(
-        `SELECT id,state,row_version,snapshot FROM payout_disbursement WHERE payout_id=$1 FOR UPDATE`, [payoutId],
-      )) as Array<{ id: string; state: string; row_version: number; snapshot: Record<string, unknown> }>;
+        `SELECT id,state,row_version,snapshot,account_id,account_version,account_last4
+          FROM payout_disbursement WHERE payout_id=$1 FOR UPDATE`, [payoutId],
+      )) as Array<{
+        id: string; state: string; row_version: number; snapshot: Record<string, unknown>;
+        account_id: string | null; account_version: number | null; account_last4: string | null;
+      }>;
       if (!current || current.state !== 'paid') {
         throw new ConflictException({ code: 'PAYOUT_NOT_PAID', message: '현재 실제 지급 상태인 정산만 취소할 수 있습니다' });
       }
@@ -1234,9 +1279,13 @@ export class AccountingService {
       );
       await m.query(
         `INSERT INTO payout_disbursement_event(
-           payout_disbursement_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot,reason)
-         VALUES ($1,'canceled','paid','canceled',$2,$3,$4,$5::jsonb,$6)`,
-        [Number(current.id), actorId, dto.requestKey, nextVersion, JSON.stringify(current.snapshot), reason],
+           payout_disbursement_id,action,from_state,to_state,actor_id,request_key,result_version,snapshot,reason,
+           account_id,account_version,account_last4)
+         VALUES ($1,'canceled','paid','canceled',$2,$3,$4,$5::jsonb,$6,$7,$8,$9)`,
+        [
+          Number(current.id), actorId, dto.requestKey, nextVersion, JSON.stringify(current.snapshot), reason,
+          current.account_id, current.account_version, current.account_last4,
+        ],
       );
       await audit(m, 'payout_disbursement.cancel', {
         actorId, entityId: Number(current.id), before: { payoutId, state: 'paid', version: actualVersion },

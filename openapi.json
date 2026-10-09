@@ -5778,7 +5778,7 @@
     },
     "/accounting/adjustments": {
       "get": {
-        "description": "최종 관리자 수정사항 p106·112의 전용 원장이다. pending/rejected는 INV 금액을 바꾸지 않고, 대표 승인 뒤 approved 합계만 적용 월 tuition 청구액에서 차감한다. 실제 환불 송금 완료는 BO-Q9 전까지 기록하지 않는다. 이 권고안은 invoice-adjustments.service/migration/Front/기능 문서를 함께 바꿔야 한다.",
+        "description": "최종 관리자 수정사항 p106·112의 전용 원장이다. pending/rejected는 INV 금액을 바꾸지 않고, 대표 승인 뒤 approved 합계만 적용 월 tuition 청구액에서 차감한다. 실제 환불 송금 완료는 BOC-11D-02에서 기록한다. 이 권고안은 invoice-adjustments.service/migration/Front/기능 문서를 함께 바꿔야 한다.",
         "operationId": "AccountingController_adjustmentLedger",
         "parameters": [
           {
@@ -6842,6 +6842,381 @@
         ]
       }
     },
+    "/accounting/protected-accounts": {
+      "get": {
+        "description": "최종 관리자 수정사항 p95·p110·p115의 계좌 화면이다. 일반 응답은 대상·version·뒤 4자리만 반환하고 은행·계좌번호·예금주 원문은 별도 사유 있는 reveal에서만 반환한다. ACCT_PRIVACY/canHide와 섞지 않는다. 권고안 변경 시 perm/crypto/service/migration/Front A27/지급 원장/기능 문서를 함께 바꾼다.",
+        "operationId": "AccountingController_protectedAccountLedger",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtectedAccountLedgerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 환불·강사 지급 보호 계좌 — masked 목록·대상·capability (TBO-55 BOC-11D-01)",
+        "tags": [
+          "accounting"
+        ]
+      },
+      "post": {
+        "operationId": "AccountingController_writeProtectedAccount",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtectedAccountWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtectedAccountWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "보호 계좌 생성·수정·삭제 뒤 재등록 — AES-GCM·version·requestKey",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/protected-accounts/{accountId}/delete": {
+      "post": {
+        "operationId": "AccountingController_deleteProtectedAccount",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtectedAccountActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtectedAccountWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "보호 계좌 삭제 — secret purge·immutable event·expectedVersion",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/protected-accounts/{accountId}/reveal": {
+      "post": {
+        "operationId": "AccountingController_revealProtectedAccount",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProtectedAccountActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtectedAccountSecretDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "보호 계좌 원문 확인 — 별도 capability·사유·value-less 감사",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/tuition": {
       "get": {
         "description": "원문 §54 의 「연동: **청구서 생성 시 이 계산 결과를 씁니다**」가 이 화면의 정체다 — 청구서가 쓰는 바로 그 계산(`invoice-lines.ts`)을 미리 보는 자리라, 단가를 여기서 다시 세지 않는다 (D-R22). 세는 것도 나누는 것도 서버다 — 화면이 회차를 세면 취소·「그날만 빠진」을 빠뜨리고(D-R21), 화면이 %를 내면 머리 칸과 갈린다 (D-R37). 결강은 금액에서 빠지고 「넘길 돈」으로 따로 선다.",
@@ -6938,7 +7313,7 @@
     },
     "/accounting/payout-ledger": {
       "get": {
-        "description": "관리자 수정사항 p104의 지급 인원·시수·총액·차감·원천징수·차인지급액·지급일·처리자다. `payout`/`payout_line`의 확정 계산을 바꾸지 않고 별도 실제 송금 current/event 원장을 읽는다. 계좌번호·뒤 4자리는 BO-Q9 계좌 보호 계약 전까지 추정하지 않는다. 이 권고안은 service/migration/기능 문서와 함께 바꿔야 한다.",
+        "description": "관리자 수정사항 p104의 지급 인원·시수·총액·차감·원천징수·차인지급액·지급일·처리자다. `payout`/`payout_line`의 확정 계산을 바꾸지 않고 별도 실제 송금 current/event 원장을 읽는다. BOC-11D-01부터 활성 강사 지급 보호 계좌를 요구하고 처리 당시 id·version·뒤 4자리만 snapshot한다. 이 권고안은 service/migration/계좌 Front/기능 문서와 함께 바꿔야 한다.",
         "operationId": "AccountingController_payoutDisbursementLedger",
         "parameters": [],
         "responses": {
@@ -7105,7 +7480,7 @@
             }
           }
         },
-        "summary": "한 달 미지급 확정 정산 일괄 계좌이체 기록 — actual actor·snapshot·event 원자 저장",
+        "summary": "한 달 미지급 확정 정산 일괄 계좌이체 — 전원 활성 보호 계좌·actual actor·snapshot",
         "tags": [
           "accounting"
         ]
@@ -7206,7 +7581,7 @@
             }
           }
         },
-        "summary": "확정 정산 한 건의 실제 계좌이체 기록 — 계산 확정 snapshot은 불변",
+        "summary": "확정 정산 한 건의 실제 계좌이체 — 활성 보호 계좌 snapshot·계산 확정 불변",
         "tags": [
           "accounting"
         ]
@@ -33765,7 +34140,7 @@
           },
           "refundDue": {
             "type": "number",
-            "description": "현재 납부액이 조정 뒤 청구액을 넘는 금액. BO-Q9 전에는 송금 완료를 뜻하지 않는다"
+            "description": "현재 납부액이 조정 뒤 청구액을 넘는 금액. BOC-11D-02 전에는 송금 완료를 뜻하지 않는다"
           },
           "requestedById": {
             "type": "number"
@@ -34199,6 +34574,339 @@
           "reason"
         ]
       },
+      "ProtectedAccountTargetDto": {
+        "type": "object",
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "student_refund",
+              "teacher_payout"
+            ]
+          },
+          "targetId": {
+            "type": "number"
+          },
+          "targetName": {
+            "type": "string"
+          },
+          "targetTag": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "purpose",
+          "targetId",
+          "targetName",
+          "targetTag"
+        ]
+      },
+      "ProtectedAccountEventDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated",
+              "deleted",
+              "revealed"
+            ]
+          },
+          "fromState": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "active",
+              "deleted"
+            ]
+          },
+          "toState": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "fromState",
+          "toState",
+          "version",
+          "actor",
+          "reason",
+          "createdAt"
+        ]
+      },
+      "ProtectedAccountDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "student_refund",
+              "teacher_payout"
+            ]
+          },
+          "targetId": {
+            "type": "number"
+          },
+          "targetName": {
+            "type": "string"
+          },
+          "targetTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "deleted"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "last4": {
+            "type": "string",
+            "nullable": true,
+            "description": "활성 계좌의 뒤 4자리. 삭제 상태는 null"
+          },
+          "maskedAccountNumber": {
+            "type": "string",
+            "nullable": true,
+            "description": "일반 응답은 뒤 4자리만 표시한다"
+          },
+          "updatedBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "canUpdate": {
+            "type": "boolean"
+          },
+          "canDelete": {
+            "type": "boolean"
+          },
+          "canReveal": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProtectedAccountEventDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "purpose",
+          "targetId",
+          "targetName",
+          "targetTag",
+          "state",
+          "version",
+          "last4",
+          "maskedAccountNumber",
+          "updatedBy",
+          "updatedAt",
+          "canUpdate",
+          "canDelete",
+          "canReveal",
+          "events"
+        ]
+      },
+      "ProtectedAccountLedgerDto": {
+        "type": "object",
+        "properties": {
+          "canRead": {
+            "type": "boolean"
+          },
+          "canWrite": {
+            "type": "boolean"
+          },
+          "canReveal": {
+            "type": "boolean"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProtectedAccountTargetDto"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProtectedAccountDto"
+            }
+          }
+        },
+        "required": [
+          "canRead",
+          "canWrite",
+          "canReveal",
+          "targets",
+          "items"
+        ]
+      },
+      "ProtectedAccountWriteDto": {
+        "type": "object",
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "student_refund",
+              "teacher_payout"
+            ]
+          },
+          "targetId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "bank": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "accountNumber": {
+            "type": "string",
+            "minLength": 4,
+            "maxLength": 60,
+            "description": "숫자·공백·하이픈 입력. 서버가 숫자만 정규화해 암호화한다"
+          },
+          "holder": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 0,
+            "description": "새 계좌 0, 수정·삭제 후 재등록은 현재 version"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "purpose",
+          "targetId",
+          "bank",
+          "accountNumber",
+          "holder",
+          "expectedVersion",
+          "requestKey"
+        ]
+      },
+      "ProtectedAccountWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ProtectedAccountDto"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "같은 actor/action/payload/requestKey 재시도면 true"
+          }
+        },
+        "required": [
+          "item",
+          "replayed"
+        ]
+      },
+      "ProtectedAccountActionDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "reason",
+          "requestKey"
+        ]
+      },
+      "ProtectedAccountSecretDto": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "number"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "student_refund",
+              "teacher_payout"
+            ]
+          },
+          "targetId": {
+            "type": "number"
+          },
+          "targetName": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "bank": {
+            "type": "string"
+          },
+          "accountNumber": {
+            "type": "string"
+          },
+          "holder": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "같은 원문 확인 요청의 정확한 재시도면 true"
+          }
+        },
+        "required": [
+          "accountId",
+          "purpose",
+          "targetId",
+          "targetName",
+          "version",
+          "bank",
+          "accountNumber",
+          "holder",
+          "replayed"
+        ]
+      },
       "TuitionRowDto": {
         "type": "object",
         "properties": {
@@ -34507,6 +35215,20 @@
             "type": "string",
             "nullable": true
           },
+          "accountId": {
+            "type": "number",
+            "nullable": true,
+            "description": "지급 당시 보호 계좌 id. BOC-11D-01 이전 이력은 null"
+          },
+          "accountVersion": {
+            "type": "number",
+            "nullable": true
+          },
+          "accountLast4": {
+            "type": "string",
+            "nullable": true,
+            "description": "지급 당시 계좌 뒤 4자리 snapshot"
+          },
           "createdAt": {
             "type": "string"
           }
@@ -34520,6 +35242,9 @@
           "paidOn",
           "method",
           "reason",
+          "accountId",
+          "accountVersion",
+          "accountLast4",
           "createdAt"
         ]
       },
@@ -34606,9 +35331,27 @@
             "type": "string",
             "nullable": true
           },
+          "accountId": {
+            "type": "number",
+            "nullable": true,
+            "description": "미지급은 현재 활성 지급 계좌, 지급 이력은 처리 당시 계좌 id"
+          },
+          "accountVersion": {
+            "type": "number",
+            "nullable": true
+          },
+          "accountLast4": {
+            "type": "string",
+            "nullable": true,
+            "description": "현재 또는 처리 당시 계좌 뒤 4자리"
+          },
+          "accountReady": {
+            "type": "boolean",
+            "description": "활성 강사 지급 계좌가 있거나 이미 지급 snapshot이 있으면 true"
+          },
           "canPay": {
             "type": "boolean",
-            "description": "확정 정산이면 true. 실제 권한은 endpoint에서 다시 검증한다"
+            "description": "확정 정산이고 활성 지급 계좌가 있으면 true. endpoint가 계좌를 다시 잠그고 검증한다"
           },
           "canCancel": {
             "type": "boolean",
@@ -34643,6 +35386,10 @@
           "canceledAt",
           "canceledBy",
           "cancelReason",
+          "accountId",
+          "accountVersion",
+          "accountLast4",
+          "accountReady",
           "canPay",
           "canCancel",
           "events"
@@ -34778,7 +35525,7 @@
             "enum": [
               "bank_transfer"
             ],
-            "description": "최신 수정사항 p104의 계좌이체. 계좌 참조는 BO-Q9에서 연결한다"
+            "description": "최신 수정사항 p104의 계좌이체. 활성 강사 지급 보호 계좌를 서버가 확인한다"
           },
           "requestKey": {
             "type": "string",

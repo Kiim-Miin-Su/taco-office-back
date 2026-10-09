@@ -450,7 +450,7 @@ export class PaymentEvidenceBatchResultDto {
 
 /* ── BO-11AD-03 실제 강사료 지급 원장 ───────────────────────────────────
  * `PAYOUT`/`PAYOUT_LINE`은 계산 확정 snapshot이고, 아래 DTO는 실제 계좌이체의 current/event 원장이다.
- * 계좌번호·뒤 4자리는 BO-Q9 계좌 보호 계약이 소유하므로 이 단계에서 기존 데이터로 추정하지 않는다.
+ * 계좌번호 원문은 BOC-11D-01 보호 계좌 계약이 소유하며 지급 원장에는 처리 당시 id·version·뒤 4자리만 남긴다.
  */
 export class PayoutDisbursementEventDto {
   @ApiProperty({ enum: ['paid', 'canceled'] }) action!: 'paid' | 'canceled';
@@ -461,6 +461,11 @@ export class PayoutDisbursementEventDto {
   @ApiProperty({ type: String, format: 'date', nullable: true }) paidOn!: string | null;
   @ApiProperty({ type: String, nullable: true, enum: ['bank_transfer'] }) method!: 'bank_transfer' | null;
   @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: '지급 당시 보호 계좌 id. BOC-11D-01 이전 이력은 null' })
+  accountId!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) accountVersion!: number | null;
+  @ApiProperty({ type: String, nullable: true, description: '지급 당시 계좌 뒤 4자리 snapshot' })
+  accountLast4!: string | null;
   @ApiProperty() createdAt!: string;
 }
 
@@ -485,7 +490,13 @@ export class PayoutDisbursementDto {
   @ApiProperty({ type: String, nullable: true }) canceledAt!: string | null;
   @ApiProperty({ type: String, nullable: true }) canceledBy!: string | null;
   @ApiProperty({ type: String, nullable: true }) cancelReason!: string | null;
-  @ApiProperty({ description: '확정 정산이면 true. 실제 권한은 endpoint에서 다시 검증한다' }) canPay!: boolean;
+  @ApiProperty({ type: Number, nullable: true, description: '미지급은 현재 활성 지급 계좌, 지급 이력은 처리 당시 계좌 id' })
+  accountId!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) accountVersion!: number | null;
+  @ApiProperty({ type: String, nullable: true, description: '현재 또는 처리 당시 계좌 뒤 4자리' })
+  accountLast4!: string | null;
+  @ApiProperty({ description: '활성 강사 지급 계좌가 있거나 이미 지급 snapshot이 있으면 true' }) accountReady!: boolean;
+  @ApiProperty({ description: '확정 정산이고 활성 지급 계좌가 있으면 true. endpoint가 계좌를 다시 잠그고 검증한다' }) canPay!: boolean;
   @ApiProperty({ description: '현재 지급 상태이면 true. 실제 권한은 endpoint에서 다시 검증한다' }) canCancel!: boolean;
   @ApiProperty({ type: [PayoutDisbursementEventDto], description: '지급·취소·재지급 전체 불변 이력' })
   events!: PayoutDisbursementEventDto[];
@@ -515,7 +526,7 @@ export class PayoutDisbursementPayDto {
   @IsCalendarDate()
   paidOn!: string;
 
-  @ApiProperty({ enum: ['bank_transfer'], description: '최신 수정사항 p104의 계좌이체. 계좌 참조는 BO-Q9에서 연결한다' })
+  @ApiProperty({ enum: ['bank_transfer'], description: '최신 수정사항 p104의 계좌이체. 활성 강사 지급 보호 계좌를 서버가 확인한다' })
   @IsIn(['bank_transfer'])
   method!: 'bank_transfer';
 
@@ -605,7 +616,7 @@ export class InvoiceAdjustmentDto {
   @ApiProperty({ description: '첫 요청 때 고정한 청구 원금 snapshot' }) originalInvoiceAmount!: number;
   @ApiProperty({ description: '현재 INV.amount. pending/rejected는 바꾸지 않는다' }) invoiceAmount!: number;
   @ApiProperty() paidAmount!: number;
-  @ApiProperty({ description: '현재 납부액이 조정 뒤 청구액을 넘는 금액. BO-Q9 전에는 송금 완료를 뜻하지 않는다' })
+  @ApiProperty({ description: '현재 납부액이 조정 뒤 청구액을 넘는 금액. BOC-11D-02 전에는 송금 완료를 뜻하지 않는다' })
   refundDue!: number;
   @ApiProperty() requestedById!: number;
   @ApiProperty() requestedBy!: string;
@@ -685,6 +696,123 @@ export class InvoiceAdjustmentReasonActionDto extends InvoiceAdjustmentActionDto
 export class InvoiceAdjustmentWriteResultDto {
   @ApiProperty({ type: InvoiceAdjustmentDto }) item!: InvoiceAdjustmentDto;
   @ApiProperty({ description: '같은 actor/action/payload/requestKey 재시도면 true' }) replayed!: boolean;
+}
+
+/* ── BOC-11D-01 보호 계좌 ──────────────────────────────────────────────
+ * 최종 관리자 수정사항 p95·p110·p115의 학생 환불·강사 지급 계좌 계약이다.
+ * 은행·계좌번호·예금주는 암호화 payload에만 들어가며 일반 응답은 뒤 4자리만 반환한다.
+ * 정책 변경 시 전용 capability/crypto/service/migration/generated Front/Figma A27/문서/portfolio를 함께 갱신한다.
+ */
+export const PROTECTED_ACCOUNT_PURPOSES = ['student_refund', 'teacher_payout'] as const;
+export type ProtectedAccountPurpose = (typeof PROTECTED_ACCOUNT_PURPOSES)[number];
+export type ProtectedAccountState = 'active' | 'deleted';
+
+export class ProtectedAccountTargetDto {
+  @ApiProperty({ enum: PROTECTED_ACCOUNT_PURPOSES }) purpose!: ProtectedAccountPurpose;
+  @ApiProperty() targetId!: number;
+  @ApiProperty() targetName!: string;
+  @ApiProperty({ type: String, nullable: true }) targetTag!: string | null;
+}
+
+export class ProtectedAccountEventDto {
+  @ApiProperty({ enum: ['created', 'updated', 'deleted', 'revealed'] })
+  action!: 'created' | 'updated' | 'deleted' | 'revealed';
+  @ApiProperty({ type: String, nullable: true, enum: ['active', 'deleted'] })
+  fromState!: ProtectedAccountState | null;
+  @ApiProperty({ enum: ['active', 'deleted'] }) toState!: ProtectedAccountState;
+  @ApiProperty() version!: number;
+  @ApiProperty() actor!: string;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty() createdAt!: string;
+}
+
+export class ProtectedAccountDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: PROTECTED_ACCOUNT_PURPOSES }) purpose!: ProtectedAccountPurpose;
+  @ApiProperty() targetId!: number;
+  @ApiProperty() targetName!: string;
+  @ApiProperty({ type: String, nullable: true }) targetTag!: string | null;
+  @ApiProperty({ enum: ['active', 'deleted'] }) state!: ProtectedAccountState;
+  @ApiProperty() version!: number;
+  @ApiProperty({ type: String, nullable: true, description: '활성 계좌의 뒤 4자리. 삭제 상태는 null' })
+  last4!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '일반 응답은 뒤 4자리만 표시한다' })
+  maskedAccountNumber!: string | null;
+  @ApiProperty() updatedBy!: string;
+  @ApiProperty() updatedAt!: string;
+  @ApiProperty() canUpdate!: boolean;
+  @ApiProperty() canDelete!: boolean;
+  @ApiProperty() canReveal!: boolean;
+  @ApiProperty({ type: [ProtectedAccountEventDto] }) events!: ProtectedAccountEventDto[];
+}
+
+export class ProtectedAccountLedgerDto {
+  @ApiProperty() canRead!: boolean;
+  @ApiProperty() canWrite!: boolean;
+  @ApiProperty() canReveal!: boolean;
+  @ApiProperty({ type: [ProtectedAccountTargetDto] }) targets!: ProtectedAccountTargetDto[];
+  @ApiProperty({ type: [ProtectedAccountDto] }) items!: ProtectedAccountDto[];
+}
+
+export class ProtectedAccountWriteDto {
+  @ApiProperty({ enum: PROTECTED_ACCOUNT_PURPOSES })
+  @IsIn(PROTECTED_ACCOUNT_PURPOSES as unknown as string[])
+  purpose!: ProtectedAccountPurpose;
+
+  @ApiProperty({ ...ID_SCHEMA })
+  @ToHttpInteger() @IsInt() @Min(1)
+  targetId!: number;
+
+  @ApiProperty({ minLength: 1, maxLength: 80 })
+  @IsString() @MinLength(1) @MaxLength(80)
+  bank!: string;
+
+  @ApiProperty({ minLength: 4, maxLength: 60, description: '숫자·공백·하이픈 입력. 서버가 숫자만 정규화해 암호화한다' })
+  @IsString() @MinLength(4) @MaxLength(60) @Matches(/^[0-9 -]+$/, { message: '계좌번호는 숫자, 공백, 하이픈만 사용할 수 있습니다' })
+  accountNumber!: string;
+
+  @ApiProperty({ minLength: 1, maxLength: 80 })
+  @IsString() @MinLength(1) @MaxLength(80)
+  holder!: string;
+
+  @ApiProperty({ minimum: 0, description: '새 계좌 0, 수정·삭제 후 재등록은 현재 version' })
+  @ToHttpInteger() @IsInt() @Min(0)
+  expectedVersion!: number;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class ProtectedAccountActionDto {
+  @ApiProperty({ minimum: 1 })
+  @ToHttpInteger() @IsInt() @Min(1)
+  expectedVersion!: number;
+
+  @ApiProperty({ minLength: 2, maxLength: 200 })
+  @IsString() @MinLength(2) @MaxLength(200)
+  reason!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class ProtectedAccountWriteResultDto {
+  @ApiProperty({ type: ProtectedAccountDto }) item!: ProtectedAccountDto;
+  @ApiProperty({ description: '같은 actor/action/payload/requestKey 재시도면 true' }) replayed!: boolean;
+}
+
+export class ProtectedAccountSecretDto {
+  @ApiProperty() accountId!: number;
+  @ApiProperty({ enum: PROTECTED_ACCOUNT_PURPOSES }) purpose!: ProtectedAccountPurpose;
+  @ApiProperty() targetId!: number;
+  @ApiProperty() targetName!: string;
+  @ApiProperty() version!: number;
+  @ApiProperty() bank!: string;
+  @ApiProperty() accountNumber!: string;
+  @ApiProperty() holder!: string;
+  @ApiProperty({ description: '같은 원문 확인 요청의 정확한 재시도면 true' }) replayed!: boolean;
 }
 
 /**

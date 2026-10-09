@@ -14,6 +14,7 @@ import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import {
   Perm, canCeoApproveCorrection, canCeoApproveInvoiceAdjustment, canCeoCloseMonth, canCeoConfirmPayout,
   canCeoFileExpenseForOther, canCeoSetAcctPrivacy, canCeoSetDelinquencyPolicy, canCeoVoidInvoice,
+  canReadProtectedAccount, canRevealProtectedAccount, canWriteProtectedAccount,
   hasPerm, isRole, type RequestUser,
 } from '../../common/perm';
 import {
@@ -38,12 +39,15 @@ import {
   DelinquencySuspensionLedgerDto, DelinquencyPolicyWriteDto, DelinquencyPolicyDto,
   DelinquencySuspensionActionDto, DelinquencySuspensionWriteResultDto,
   DelinquencyReminderBatchDto, DelinquencyReminderBatchResultDto,
+  ProtectedAccountLedgerDto, ProtectedAccountWriteDto, ProtectedAccountWriteResultDto,
+  ProtectedAccountActionDto, ProtectedAccountSecretDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
 import { InvoiceAdjustmentsService } from './invoice-adjustments.service';
 import { StudentWithdrawService } from './withdraw.service';
 import { DelinquencySuspensionsService } from './delinquency-suspensions.service';
+import { ProtectedAccountsService } from './protected-accounts.service';
 
 /** 회계 비공개(N-94)의 보는 사람 — 비공개 열람(canHide · 사람별 예외 반영)과 본인 번호 */
 const viewerOf = (user: RequestUser): AcctViewer => ({
@@ -66,6 +70,7 @@ export class AccountingController {
     private readonly svc: AccountingService,
     private readonly adjustments: InvoiceAdjustmentsService,
     private readonly delinquency: DelinquencySuspensionsService,
+    private readonly protectedAccounts: ProtectedAccountsService,
     private readonly withdrawSvc: StudentWithdrawService,
   ) {}
 
@@ -190,7 +195,7 @@ export class AccountingController {
   @ApiOperation({
     summary: '청구 조정 원장 — 할인·환불·형제 할인·이월 (TBO-55 BO-11BD-01)',
     description: '최종 관리자 수정사항 p106·112의 전용 원장이다. pending/rejected는 INV 금액을 바꾸지 않고, '
-      + '대표 승인 뒤 approved 합계만 적용 월 tuition 청구액에서 차감한다. 실제 환불 송금 완료는 BO-Q9 전까지 기록하지 않는다. '
+      + '대표 승인 뒤 approved 합계만 적용 월 tuition 청구액에서 차감한다. 실제 환불 송금 완료는 BOC-11D-02에서 기록한다. '
       + '이 권고안은 invoice-adjustments.service/migration/Front/기능 문서를 함께 바꿔야 한다.',
   })
   @ApiOkResponse({ type: InvoiceAdjustmentLedgerDto })
@@ -338,6 +343,81 @@ export class AccountingController {
     );
   }
 
+  @Get('protected-accounts')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '학생 환불·강사 지급 보호 계좌 — masked 목록·대상·capability (TBO-55 BOC-11D-01)',
+    description: '최종 관리자 수정사항 p95·p110·p115의 계좌 화면이다. 일반 응답은 대상·version·뒤 4자리만 반환하고 '
+      + '은행·계좌번호·예금주 원문은 별도 사유 있는 reveal에서만 반환한다. ACCT_PRIVACY/canHide와 섞지 않는다. '
+      + '권고안 변경 시 perm/crypto/service/migration/Front A27/지급 원장/기능 문서를 함께 바꾼다.',
+  })
+  @ApiOkResponse({ type: ProtectedAccountLedgerDto })
+  protectedAccountLedger(@CurrentUser() user: RequestUser): Promise<ProtectedAccountLedgerDto> {
+    if (!isRole(user.role)) {
+      return this.protectedAccounts.ledger(false, false, false);
+    }
+    return this.protectedAccounts.ledger(
+      canReadProtectedAccount(user.role, user.perms),
+      canWriteProtectedAccount(user.role, user.perms),
+      canRevealProtectedAccount(user.role, user.perms),
+    );
+  }
+
+  @Post('protected-accounts')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '보호 계좌 생성·수정·삭제 뒤 재등록 — AES-GCM·version·requestKey' })
+  @ApiCreatedResponse({ type: ProtectedAccountWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  writeProtectedAccount(
+    @CurrentUser() user: RequestUser, @Body() dto: ProtectedAccountWriteDto,
+  ): Promise<ProtectedAccountWriteResultDto> {
+    return this.protectedAccounts.write(
+      user.id,
+      isRole(user.role) && canWriteProtectedAccount(user.role, user.perms),
+      isRole(user.role) && canRevealProtectedAccount(user.role, user.perms),
+      dto,
+    );
+  }
+
+  @Post('protected-accounts/:accountId/delete')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '보호 계좌 삭제 — secret purge·immutable event·expectedVersion' })
+  @ApiCreatedResponse({ type: ProtectedAccountWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  deleteProtectedAccount(
+    @CurrentUser() user: RequestUser, @Param('accountId', ParseIntPipe) accountId: number,
+    @Body() dto: ProtectedAccountActionDto,
+  ): Promise<ProtectedAccountWriteResultDto> {
+    return this.protectedAccounts.remove(
+      user.id,
+      isRole(user.role) && canWriteProtectedAccount(user.role, user.perms),
+      isRole(user.role) && canRevealProtectedAccount(user.role, user.perms),
+      accountId,
+      dto,
+    );
+  }
+
+  @Post('protected-accounts/:accountId/reveal')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '보호 계좌 원문 확인 — 별도 capability·사유·value-less 감사' })
+  @ApiCreatedResponse({ type: ProtectedAccountSecretDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  revealProtectedAccount(
+    @CurrentUser() user: RequestUser, @Param('accountId', ParseIntPipe) accountId: number,
+    @Body() dto: ProtectedAccountActionDto,
+  ): Promise<ProtectedAccountSecretDto> {
+    return this.protectedAccounts.reveal(
+      user.id,
+      isRole(user.role) && canWriteProtectedAccount(user.role, user.perms),
+      isRole(user.role) && canRevealProtectedAccount(user.role, user.perms),
+      accountId,
+      dto,
+    );
+  }
+
 
   @Get('tuition')
   @Perm('canMoney')
@@ -361,7 +441,8 @@ export class AccountingController {
     summary: '실제 강사료 지급 원장 — 확정 정산이 있는 최근 두 달 (TBO-55 BO-11AD-03)',
     description: '관리자 수정사항 p104의 지급 인원·시수·총액·차감·원천징수·차인지급액·지급일·처리자다. '
       + '`payout`/`payout_line`의 확정 계산을 바꾸지 않고 별도 실제 송금 current/event 원장을 읽는다. '
-      + '계좌번호·뒤 4자리는 BO-Q9 계좌 보호 계약 전까지 추정하지 않는다. 이 권고안은 service/migration/기능 문서와 함께 바꿔야 한다.',
+      + 'BOC-11D-01부터 활성 강사 지급 보호 계좌를 요구하고 처리 당시 id·version·뒤 4자리만 snapshot한다. '
+      + '이 권고안은 service/migration/계좌 Front/기능 문서와 함께 바꿔야 한다.',
   })
   @ApiOkResponse({ type: PayoutDisbursementLedgerDto })
   payoutDisbursementLedger(@CurrentUser() user: RequestUser): Promise<PayoutDisbursementLedgerDto> {
@@ -370,7 +451,7 @@ export class AccountingController {
 
   @Post('payout-ledger/pay-batch')
   @Perm('canMoney')
-  @ApiOperation({ summary: '한 달 미지급 확정 정산 일괄 계좌이체 기록 — actual actor·snapshot·event 원자 저장' })
+  @ApiOperation({ summary: '한 달 미지급 확정 정산 일괄 계좌이체 — 전원 활성 보호 계좌·actual actor·snapshot' })
   @ApiCreatedResponse({ type: PayoutDisbursementBatchResultDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'PAYOUT_PAYMENT_FUTURE' })
   @ApiConflictResponse({ type: ApiErrorDto, description: 'PAYOUT_BATCH_EMPTY | REQUEST_KEY_REUSED | PAYOUT_DISBURSEMENT_REPLAY_STALE' })
@@ -384,7 +465,7 @@ export class AccountingController {
 
   @Post('payout-ledger/:payoutId/pay')
   @Perm('canMoney')
-  @ApiOperation({ summary: '확정 정산 한 건의 실제 계좌이체 기록 — 계산 확정 snapshot은 불변' })
+  @ApiOperation({ summary: '확정 정산 한 건의 실제 계좌이체 — 활성 보호 계좌 snapshot·계산 확정 불변' })
   @ApiCreatedResponse({ type: PayoutDisbursementDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'PAYOUT_PAYMENT_FUTURE' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'PAYOUT_NOT_CONFIRMED' })

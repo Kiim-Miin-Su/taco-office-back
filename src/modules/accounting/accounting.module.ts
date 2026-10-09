@@ -12,11 +12,15 @@ import { AccountingService } from './accounting.service';
 import { InvoiceAdjustmentsService } from './invoice-adjustments.service';
 import { StudentWithdrawService } from './withdraw.service';
 import { DelinquencySuspensionsService } from './delinquency-suspensions.service';
+import { ProtectedAccountsService } from './protected-accounts.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Inv])],
   controllers: [AccountingController],
   exports: [AccountingService],
-  providers: [AccountingService, InvoiceAdjustmentsService, DelinquencySuspensionsService, StudentWithdrawService],
+  providers: [
+    AccountingService, InvoiceAdjustmentsService, DelinquencySuspensionsService, ProtectedAccountsService,
+    StudentWithdrawService,
+  ],
 })
 export class AccountingModule {}
