@@ -47,6 +47,15 @@ import {
   StudentSchoolOptionDto,
   StudentSchoolSearchQueryDto,
 } from './modules/students/student-registration.dto';
+import {
+  BookSaleCancelDto,
+  BookSaleCreateDto,
+  BookSaleDto,
+  BookSaleFeePolicySnapshotDto,
+  BookSaleLedgerDto,
+  BookSaleMethodSummaryDto,
+  BookSaleWriteResultDto,
+} from './modules/accounting/accounting.dto';
 
 /**
  * **DTO 가 단일 출처다.** 여기서 만든 openapi.json 을 프론트가 읽어 타입을 생성한다.
@@ -117,6 +126,18 @@ export function buildOpenApi(app: INestApplication) {
       StudentReactivationPreviewDto,
       StudentReactivationResultDto,
       StudentRegistrationConflictDto,
+      /*
+       * BOC-11F Front → DTO 단계: 실제 판매·PAY transaction이 연결되기 전에
+       * request/response schema를 생성 타입으로 고정한다. runtime path는 Backend 단계에서만 열고,
+       * 그전 Front는 저장 성공을 표시하지 않는다.
+       */
+      BookSaleFeePolicySnapshotDto,
+      BookSaleDto,
+      BookSaleMethodSummaryDto,
+      BookSaleLedgerDto,
+      BookSaleCreateDto,
+      BookSaleCancelDto,
+      BookSaleWriteResultDto,
     ],
   });
   SwaggerModule.setup('api/docs', app, doc);

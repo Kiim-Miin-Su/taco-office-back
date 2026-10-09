@@ -2145,6 +2145,128 @@ export class HourlyRateWriteResultDto {
   @ApiProperty({ description: '같은 actor/action/payload/requestKey의 정확한 재시도면 true' }) replayed!: boolean;
 }
 
+/* ── TBO-55 BOC-11F 교재 판매·결제 수수료 원장 ────────────────────────────
+ * 최종 관리자 수정사항 p94·99·101·115의 계좌·현금 판매와 수단별 지급수수료·순수납 계약이다.
+ * 권고안: 초기 계좌·현금 수수료는 0원이되 효력기간·version policy와 판매 snapshot을 남긴다.
+ * 정책을 바꾸면 book-sales service·migration/DBML·generated Front·A22·기능/시나리오·portfolio를 함께 바꾼다.
+ */
+export const BOOK_SALE_PAYMENT_METHODS = ['transfer', 'cash'] as const;
+export type BookSalePaymentMethod = (typeof BOOK_SALE_PAYMENT_METHODS)[number];
+export type BookSaleState = 'completed' | 'canceled';
+
+export class BookSaleFeePolicySnapshotDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() version!: number;
+  @ApiProperty({ enum: BOOK_SALE_PAYMENT_METHODS }) paymentMethod!: BookSalePaymentMethod;
+  @ApiProperty({ enum: ['fixed', 'rate_bps'], description: 'fixed=건당 원, rate_bps=1/10000 비율' }) calculation!: 'fixed' | 'rate_bps';
+  @ApiProperty({ minimum: 0 }) value!: number;
+  @ApiProperty({ ...DATE_SCHEMA }) effectiveFrom!: string;
+  @ApiProperty({ type: String, nullable: true, format: 'date' }) effectiveTo!: string | null;
+}
+
+export class BookSaleDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ type: String, nullable: true }) studentTag!: string | null;
+  @ApiProperty() bookId!: number;
+  @ApiProperty() bookCode!: string;
+  @ApiProperty() bookTitle!: string;
+  @ApiProperty({ type: String, nullable: true }) bookEdition!: string | null;
+  @ApiProperty({ description: '판매 당시 표시 스냅숏' }) bookLabel!: string;
+  @ApiProperty({ ...DATE_SCHEMA }) soldOn!: string;
+  @ApiProperty({ minimum: 1, maximum: 1000 }) quantity!: number;
+  @ApiProperty({ minimum: 0, maximum: 1_000_000_000 }) unitPrice!: number;
+  @ApiProperty({ minimum: 0, maximum: 2_000_000_000 }) totalAmount!: number;
+  @ApiProperty({ enum: BOOK_SALE_PAYMENT_METHODS }) paymentMethod!: BookSalePaymentMethod;
+  @ApiProperty({ minimum: 0 }) feeAmount!: number;
+  @ApiProperty({ minimum: 0 }) netAmount!: number;
+  @ApiProperty({ type: BookSaleFeePolicySnapshotDto }) feePolicy!: BookSaleFeePolicySnapshotDto;
+  @ApiProperty() payId!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '취소 보정 PAY id' }) correctionPayId!: number | null;
+  @ApiProperty({ enum: ['completed', 'canceled'] }) status!: BookSaleState;
+  @ApiProperty({ minimum: 1 }) version!: number;
+  @ApiProperty({ type: String, nullable: true }) memo!: string | null;
+  @ApiProperty() createdBy!: string;
+  @ApiProperty() createdAt!: string;
+  @ApiProperty({ type: String, nullable: true }) canceledBy!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledReason!: string | null;
+  @ApiProperty({ description: '서버가 상태·월마감·증빙을 반영해 판정' }) canCancel!: boolean;
+}
+
+export class BookSaleMethodSummaryDto {
+  @ApiProperty({ enum: BOOK_SALE_PAYMENT_METHODS }) paymentMethod!: BookSalePaymentMethod;
+  @ApiProperty({ minimum: 0 }) count!: number;
+  @ApiProperty({ minimum: 0 }) amount!: number;
+  @ApiProperty({ minimum: 0, maximum: 100, description: '금액 비중, 소수 첫째 자리' }) ratio!: number;
+  @ApiProperty({ minimum: 0 }) feeAmount!: number;
+  @ApiProperty({ minimum: 0 }) netAmount!: number;
+}
+
+export class BookSaleLedgerDto {
+  @ApiProperty({ description: '현재 actor가 저장할 수 있는지' }) canCreate!: boolean;
+  @ApiProperty({ type: [BookSaleDto] }) items!: BookSaleDto[];
+  @ApiProperty({ minimum: 0 }) totalCount!: number;
+  @ApiProperty({ minimum: 0 }) totalAmount!: number;
+  @ApiProperty({ minimum: 0 }) totalFeeAmount!: number;
+  @ApiProperty({ minimum: 0 }) totalNetAmount!: number;
+  @ApiProperty({ type: [BookSaleMethodSummaryDto] }) methods!: BookSaleMethodSummaryDto[];
+}
+
+export class BookSaleCreateDto {
+  @ApiProperty({ ...ID_SCHEMA })
+  @ToHttpInteger() @IsInt() @Min(1)
+  studentId!: number;
+
+  @ApiProperty({ ...ID_SCHEMA })
+  @ToHttpInteger() @IsInt() @Min(1)
+  bookId!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '실제 판매·입금일. 미래는 거절' })
+  @IsCalendarDate()
+  soldOn!: string;
+
+  @ApiProperty({ minimum: 1, maximum: 1000 })
+  @ToHttpInteger() @IsInt() @Min(1) @Max(1000)
+  quantity!: number;
+
+  @ApiProperty({ minimum: 0, maximum: 1_000_000_000 })
+  @ToHttpInteger() @IsInt() @Min(0) @Max(1_000_000_000)
+  unitPrice!: number;
+
+  @ApiProperty({ enum: BOOK_SALE_PAYMENT_METHODS })
+  @IsIn(BOOK_SALE_PAYMENT_METHODS as unknown as string[])
+  paymentMethod!: BookSalePaymentMethod;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional() @IsString() @MaxLength(500)
+  memo?: string;
+
+  @ApiProperty({ format: 'uuid', description: '판매·PAY를 하나로 수렴시키는 멱등 키' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class BookSaleCancelDto {
+  @ApiProperty({ minimum: 1 })
+  @ToHttpInteger() @IsInt() @Min(1)
+  expectedVersion!: number;
+
+  @ApiProperty({ minLength: 2, maxLength: 500 })
+  @IsString() @MinLength(2) @MaxLength(500)
+  reason!: string;
+
+  @ApiProperty({ format: 'uuid', description: '취소·보정 PAY를 하나로 수렴시키는 멱등 키' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class BookSaleWriteResultDto {
+  @ApiProperty({ type: BookSaleDto }) item!: BookSaleDto;
+  @ApiProperty({ description: '같은 actor/action/payload/requestKey의 정확한 재시도면 true' }) replayed!: boolean;
+}
+
 /** `POST /accounting/rates` — 기본 단가 한 줄. 같은 (종류·과목·인원·날짜)는 409 RATE_DUPLICATE (`rate_tier_key`) */
 export class RateWriteDto {
   @ApiProperty({ description: '종류 코드 — §18 프로그램의 KIND' })

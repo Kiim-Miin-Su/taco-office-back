@@ -59484,6 +59484,387 @@
             "default": 1
           }
         }
+      },
+      "BookSaleFeePolicySnapshotDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "version": {
+            "type": "number"
+          },
+          "paymentMethod": {
+            "type": "string",
+            "enum": [
+              "transfer",
+              "cash"
+            ]
+          },
+          "calculation": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "rate_bps"
+            ],
+            "description": "fixed=건당 원, rate_bps=1/10000 비율"
+          },
+          "value": {
+            "type": "number",
+            "minimum": 0
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "effectiveTo": {
+            "type": "string",
+            "nullable": true,
+            "format": "date"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "paymentMethod",
+          "calculation",
+          "value",
+          "effectiveFrom",
+          "effectiveTo"
+        ]
+      },
+      "BookSaleDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "studentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "bookId": {
+            "type": "number"
+          },
+          "bookCode": {
+            "type": "string"
+          },
+          "bookTitle": {
+            "type": "string"
+          },
+          "bookEdition": {
+            "type": "string",
+            "nullable": true
+          },
+          "bookLabel": {
+            "type": "string",
+            "description": "판매 당시 표시 스냅숏"
+          },
+          "soldOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "unitPrice": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000000000
+          },
+          "totalAmount": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2000000000
+          },
+          "paymentMethod": {
+            "type": "string",
+            "enum": [
+              "transfer",
+              "cash"
+            ]
+          },
+          "feeAmount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "netAmount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "feePolicy": {
+            "$ref": "#/components/schemas/BookSaleFeePolicySnapshotDto"
+          },
+          "payId": {
+            "type": "number"
+          },
+          "correctionPayId": {
+            "type": "number",
+            "nullable": true,
+            "description": "취소 보정 PAY id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "canceled"
+            ]
+          },
+          "version": {
+            "type": "number",
+            "minimum": 1
+          },
+          "memo": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "canceledBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "canceledAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "canceledReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "canCancel": {
+            "type": "boolean",
+            "description": "서버가 상태·월마감·증빙을 반영해 판정"
+          }
+        },
+        "required": [
+          "id",
+          "studentId",
+          "studentName",
+          "studentTag",
+          "bookId",
+          "bookCode",
+          "bookTitle",
+          "bookEdition",
+          "bookLabel",
+          "soldOn",
+          "quantity",
+          "unitPrice",
+          "totalAmount",
+          "paymentMethod",
+          "feeAmount",
+          "netAmount",
+          "feePolicy",
+          "payId",
+          "correctionPayId",
+          "status",
+          "version",
+          "memo",
+          "createdBy",
+          "createdAt",
+          "canceledBy",
+          "canceledAt",
+          "canceledReason",
+          "canCancel"
+        ]
+      },
+      "BookSaleMethodSummaryDto": {
+        "type": "object",
+        "properties": {
+          "paymentMethod": {
+            "type": "string",
+            "enum": [
+              "transfer",
+              "cash"
+            ]
+          },
+          "count": {
+            "type": "number",
+            "minimum": 0
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "ratio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "금액 비중, 소수 첫째 자리"
+          },
+          "feeAmount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "netAmount": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "paymentMethod",
+          "count",
+          "amount",
+          "ratio",
+          "feeAmount",
+          "netAmount"
+        ]
+      },
+      "BookSaleLedgerDto": {
+        "type": "object",
+        "properties": {
+          "canCreate": {
+            "type": "boolean",
+            "description": "현재 actor가 저장할 수 있는지"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookSaleDto"
+            }
+          },
+          "totalCount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "totalAmount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "totalFeeAmount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "totalNetAmount": {
+            "type": "number",
+            "minimum": 0
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BookSaleMethodSummaryDto"
+            }
+          }
+        },
+        "required": [
+          "canCreate",
+          "items",
+          "totalCount",
+          "totalAmount",
+          "totalFeeAmount",
+          "totalNetAmount",
+          "methods"
+        ]
+      },
+      "BookSaleCreateDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "bookId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "soldOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "실제 판매·입금일. 미래는 거절"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "unitPrice": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1000000000
+          },
+          "paymentMethod": {
+            "type": "string",
+            "enum": [
+              "transfer",
+              "cash"
+            ]
+          },
+          "memo": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "판매·PAY를 하나로 수렴시키는 멱등 키"
+          }
+        },
+        "required": [
+          "studentId",
+          "bookId",
+          "soldOn",
+          "quantity",
+          "unitPrice",
+          "paymentMethod",
+          "requestKey"
+        ]
+      },
+      "BookSaleCancelDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 500
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "취소·보정 PAY를 하나로 수렴시키는 멱등 키"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "reason",
+          "requestKey"
+        ]
+      },
+      "BookSaleWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/BookSaleDto"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "같은 actor/action/payload/requestKey의 정확한 재시도면 true"
+          }
+        },
+        "required": [
+          "item",
+          "replayed"
+        ]
       }
     }
   },
