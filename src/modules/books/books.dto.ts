@@ -13,7 +13,7 @@ import {
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { HIST_ACTIONS } from '../../lib/history';
 import {
-  BOOK_EXAM_TAGS, BOOK_GRADE_MAX, BOOK_GRADE_MIN, BOOK_GRADES, BOOK_LEVELS, BOOK_UNCLASSIFIED, bookGradeKey,
+  BOOK_EXAM_TAGS, BOOK_GRADE_MAX, BOOK_GRADE_MIN, BOOK_GRADES, BOOK_LEVELS, BOOK_PROGRESS_ETA_STATUSES, BOOK_UNCLASSIFIED, bookGradeKey,
   ISSUE_CREATE_STATES, ISSUE_FORMS, ISSUE_STATES, ISSUE_TRANSITION_STATES, PACK_STATES, PACK_TYPES,
 } from '../../lib/book';
 import { FileUploadDto } from '../files/files.dto';
@@ -383,6 +383,12 @@ export class BookProgressStudentDto {
   @ApiPropertyOptional(N) stalledDays?: number | null;
   @ApiProperty() stalled!: boolean;
   @ApiProperty() homeworkPages28d!: number;
+  @ApiProperty({ enum: BOOK_PROGRESS_ETA_STATUSES, description: 'BO-Q08-ETA 서버 판정. 화면은 이 상태를 다시 계산하지 않는다.' })
+  completionEstimateStatus!: string;
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true }) estimatedCompletionOn?: string | null;
+  @ApiPropertyOptional(N) estimatedRemainingLessons?: number | null;
+  @ApiPropertyOptional(N) estimatedPagesPerLesson?: number | null;
+  @ApiProperty() completionEstimateSampleCount!: number;
 }
 
 export class BookProgressDto {

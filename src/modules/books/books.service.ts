@@ -17,7 +17,7 @@ import {
   BOOK_EXAM_TAG_LABEL, BOOK_EXAM_TAGS, BOOK_GRADES, BOOK_LEVELS, BOOK_UNCLASSIFIED,
   ISSUE_FORM_LABEL, ISSUE_FORMS, ISSUE_STATE_LABEL, issueFormLabel, PACK_STATE_LABEL, PACK_TYPE_LABEL, bookExamTagLabel, bookGradeCovers, bookGradeFromKey, bookGradeKey,
   bookGradeRangeIssue, bookGradeRangeLabel, bookLevelLabel, bookLevelShown, isIssueTerminal, issueActiveSql, issueTransitionIssue, packTransitionIssue,
-  progressIssue, progressPercent, type IssueState, type IssueTransitionState, type PackState, type PackType,
+  estimateBookCompletion, progressIssue, progressPercent, type IssueState, type IssueTransitionState, type PackState, type PackType,
 } from '../../lib/book';
 import type {
   BookAssignmentCreateDto, BookAssignmentOptionsDto, BookHistoryDto, BookHistoryQueryDto, BookHistoryRowDto, BookHoldersDto, BookIssueCreateDto, BookIssueDiagDto, BookIssueDto,
@@ -712,11 +712,31 @@ export class BooksService {
     }
     for (const issue of allIssues) issue.progressHistory = progressByIssue.get(issue.id) ?? [];
     const active = rows.filter((r) => r.id != null);
+    const upcomingRows = active.length ? await this.q(
+      `SELECT i.id AS issue_id,o.id AS occurrence_id,to_char(lower(o.span) AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS lesson_on
+         FROM issue i
+         JOIN ser sr ON sr.teacher_id=i.teacher_id AND sr.sub_key=i.sub_key
+         JOIN ser_stu ss ON ss.ser_id=sr.id AND ss.student_id=i.student_id
+         JOIN ser_occ o ON o.ser_id=sr.id AND ${serStuOn('ss', 'o.on_date')}
+        WHERE i.id=ANY($1::bigint[]) AND o.canceled=false AND o.teacher_id=i.teacher_id
+          AND lower(o.span)>=now()
+        ORDER BY issue_id,lower(o.span),o.id`,
+      [active.map((row) => Number(row.id))],
+    ) : [];
+    const upcomingByIssue = new Map<number, string[]>();
+    for (const row of upcomingRows) {
+      const issueId = Number(row.issue_id);
+      const lessons = upcomingByIssue.get(issueId) ?? [];
+      lessons.push(String(row.lesson_on));
+      upcomingByIssue.set(issueId, lessons);
+    }
     const bookMap = new Map<number, {
       libId: number; title: string; level: string | null; studentCount: number; values: number[]; pages: number | null;
       students: Array<{
         studentId: number; name: string; progressPage: number | null; percent: number | null; elapsedDays: number | null;
         lastProgressOn: string | null; stalledDays: number | null; stalled: boolean; homeworkPages28d: number;
+        completionEstimateStatus: string; estimatedCompletionOn: string | null; estimatedRemainingLessons: number | null;
+        estimatedPagesPerLesson: number | null; completionEstimateSampleCount: number;
       }>;
     }>();
     for (const r of active) {
@@ -744,11 +764,23 @@ export class BooksService {
           || event.homeworkToPage === null || event.homeworkToPage === undefined) return sum;
         return sum + event.homeworkToPage - event.homeworkFromPage + 1;
       }, 0);
+      const completionEstimate = estimateBookCompletion({
+        today: todayKst(),
+        totalPages: r.pages == null ? null : Number(r.pages),
+        progressPage: r.progress_page == null ? null : Number(r.progress_page),
+        history,
+        upcomingLessonOn: upcomingByIssue.get(Number(r.id)) ?? [],
+      });
       old.students.push({
         studentId: Number(r.student_id), name: String(r.name),
         progressPage: r.progress_page == null ? null : Number(r.progress_page), percent: p,
         elapsedDays: issuedOn ? Math.max(0, Math.floor((Date.parse(`${todayKst()}T00:00:00Z`) - Date.parse(`${issuedOn}T00:00:00Z`)) / 86_400_000)) : null,
         lastProgressOn, stalledDays, stalled: stalledDays !== null && stalledDays >= 14, homeworkPages28d,
+        completionEstimateStatus: completionEstimate.status,
+        estimatedCompletionOn: completionEstimate.completionOn,
+        estimatedRemainingLessons: completionEstimate.remainingLessons,
+        estimatedPagesPerLesson: completionEstimate.pagesPerLesson,
+        completionEstimateSampleCount: completionEstimate.sampleCount,
       });
       bookMap.set(libId, old);
     }

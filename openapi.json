@@ -45847,13 +45847,43 @@
           },
           "homeworkPages28d": {
             "type": "number"
+          },
+          "completionEstimateStatus": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "complete",
+              "missing_input",
+              "insufficient_history",
+              "schedule_unavailable"
+            ],
+            "description": "BO-Q08-ETA 서버 판정. 화면은 이 상태를 다시 계산하지 않는다."
+          },
+          "estimatedCompletionOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "nullable": true
+          },
+          "estimatedRemainingLessons": {
+            "type": "number",
+            "nullable": true
+          },
+          "estimatedPagesPerLesson": {
+            "type": "number",
+            "nullable": true
+          },
+          "completionEstimateSampleCount": {
+            "type": "number"
           }
         },
         "required": [
           "studentId",
           "name",
           "stalled",
-          "homeworkPages28d"
+          "homeworkPages28d",
+          "completionEstimateStatus",
+          "completionEstimateSampleCount"
         ]
       },
       "BookProgressDto": {

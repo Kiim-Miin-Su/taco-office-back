@@ -71,6 +71,73 @@ export function progressIssue(page: number, pages: number | null): string | null
   return null;
 }
 
+export const BOOK_PROGRESS_ETA_STATUSES = [
+  'ready', 'complete', 'missing_input', 'insufficient_history', 'schedule_unavailable',
+] as const;
+export type BookProgressEtaStatus = (typeof BOOK_PROGRESS_ETA_STATUSES)[number];
+
+export type BookProgressEtaEvent = {
+  lessonOn: string;
+  progressFromPage?: number | null;
+  progressToPage?: number | null;
+};
+
+export type BookProgressEta = {
+  status: BookProgressEtaStatus;
+  sampleCount: number;
+  pagesPerLesson: number | null;
+  remainingLessons: number | null;
+  completionOn: string | null;
+};
+
+/**
+ * BO-Q08-ETA 권고안(2026-10-09): 같은 ISSUE의 최근 56일·최근 8회 양수 진도 중 최소 3회를 쓴다.
+ * 0진도·취소·기록 누락과 이전 교재 ISSUE는 표본에 섞지 않는다. 필요한 회차는 올림하고, 실제로 투영된
+ * 같은 학생·강사·과목 회차가 부족하면 날짜를 만들지 않는다. 정책 변경 시 Book DTO/service/Front,
+ * 두 수정사항 대조표, BOC-08 시나리오와 portfolio를 같은 청크에서 갱신한다.
+ */
+export function estimateBookCompletion(input: {
+  today: string;
+  totalPages: number | null;
+  progressPage: number | null;
+  history: readonly BookProgressEtaEvent[];
+  upcomingLessonOn: readonly string[];
+}): BookProgressEta {
+  const { today, totalPages, progressPage } = input;
+  if (totalPages === null || totalPages <= 0 || progressPage === null || progressPage < 0) {
+    return { status: 'missing_input', sampleCount: 0, pagesPerLesson: null, remainingLessons: null, completionOn: null };
+  }
+  if (progressPage >= totalPages) {
+    return { status: 'complete', sampleCount: 0, pagesPerLesson: null, remainingLessons: 0, completionOn: today };
+  }
+  const floor = new Date(`${today}T00:00:00Z`);
+  floor.setUTCDate(floor.getUTCDate() - 55);
+  const floorDay = floor.toISOString().slice(0, 10);
+  const samples = input.history
+    .filter((event) => event.lessonOn >= floorDay && event.lessonOn <= today
+      && event.progressFromPage != null && event.progressToPage != null
+      && event.progressToPage >= event.progressFromPage)
+    .sort((a, b) => b.lessonOn.localeCompare(a.lessonOn))
+    .slice(0, 8)
+    .map((event) => event.progressToPage! - event.progressFromPage! + 1)
+    .filter((pages) => pages > 0);
+  if (samples.length < 3) {
+    return { status: 'insufficient_history', sampleCount: samples.length, pagesPerLesson: null, remainingLessons: null, completionOn: null };
+  }
+  const rawPagesPerLesson = samples.reduce((sum, pages) => sum + pages, 0) / samples.length;
+  const remainingLessons = Math.ceil((totalPages - progressPage) / rawPagesPerLesson);
+  const pagesPerLesson = Math.round(rawPagesPerLesson * 10) / 10;
+  // 같은 날 두 회차도 각각 한 번의 진도 기회이므로 날짜 중복을 제거하지 않는다.
+  const upcoming = input.upcomingLessonOn.filter((day) => day >= today).sort();
+  if (upcoming.length < remainingLessons) {
+    return { status: 'schedule_unavailable', sampleCount: samples.length, pagesPerLesson, remainingLessons, completionOn: null };
+  }
+  return {
+    status: 'ready', sampleCount: samples.length, pagesPerLesson, remainingLessons,
+    completionOn: upcoming[remainingLessons - 1],
+  };
+}
+
 export function packTransitionIssue(from: PackState, to: PackState): string | null {
   if (from === 'pending' && to === 'delivered') return null;
   if (from === 'delivered' && to === 'received') return null;

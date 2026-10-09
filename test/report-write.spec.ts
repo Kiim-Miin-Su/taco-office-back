@@ -641,7 +641,10 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     ]);
     const progressBook = tracking.books.find((book: { libId: number }) => book.libId === LIB);
     expect(progressBook.students.find((student: { studentId: number }) => student.studentId === STUDENT))
-      .toMatchObject({ lastProgressOn: DATE, stalled: true, homeworkPages28d: 0 });
+      .toMatchObject({
+        lastProgressOn: DATE, stalled: true, homeworkPages28d: 0,
+        completionEstimateStatus: 'insufficient_history', completionEstimateSampleCount: 0,
+      });
 
     const stale = await put(managerToken, structured).expect(409);
     expect(stale.body.code).toBe('REPORT_VERSION_CONFLICT');

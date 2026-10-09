@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { isIssueActive, isIssueTerminal, issueActiveSql, issueTransitionIssue, packTransitionIssue, progressIssue, progressPercent } from '../src/lib/book';
+import { estimateBookCompletion, isIssueActive, isIssueTerminal, issueActiveSql, issueTransitionIssue, packTransitionIssue, progressIssue, progressPercent } from '../src/lib/book';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import {
@@ -24,6 +24,44 @@ describe('교재 진도 단일 판정', () => {
     expect(progressIssue(1.5, 100)).toContain('0 이상의 정수');
     expect(progressIssue(101, 100)).toContain('100쪽');
     expect(progressIssue(100, 100)).toBeNull();
+  });
+});
+
+describe('BO-Q08-ETA 완료 예상일', () => {
+  const history = [
+    { lessonOn: '2026-10-08', progressFromPage: 31, progressToPage: 40 },
+    { lessonOn: '2026-10-01', progressFromPage: 21, progressToPage: 30 },
+    { lessonOn: '2026-09-24', progressFromPage: 11, progressToPage: 20 },
+  ];
+  const upcomingLessonOn = ['2026-10-10', '2026-10-17', '2026-10-24', '2026-10-31', '2026-11-07', '2026-11-14'];
+
+  it('최근 양수 진도 3회와 실제 예정 회차로 완료일을 계산한다', () => {
+    expect(estimateBookCompletion({ today: '2026-10-09', totalPages: 100, progressPage: 40, history, upcomingLessonOn }))
+      .toEqual({ status: 'ready', sampleCount: 3, pagesPerLesson: 10, remainingLessons: 6, completionOn: '2026-11-14' });
+  });
+
+  it('표본이 3회 미만이면 예상치를 만들지 않는다', () => {
+    expect(estimateBookCompletion({ today: '2026-10-09', totalPages: 100, progressPage: 40, history: history.slice(0, 2), upcomingLessonOn }))
+      .toMatchObject({ status: 'insufficient_history', sampleCount: 2, completionOn: null });
+  });
+
+  it('필요 회차보다 실제 예정 회차가 적으면 날짜 대신 필요 회차를 반환한다', () => {
+    expect(estimateBookCompletion({ today: '2026-10-09', totalPages: 100, progressPage: 40, history, upcomingLessonOn: upcomingLessonOn.slice(0, 1) }))
+      .toEqual({ status: 'schedule_unavailable', sampleCount: 3, pagesPerLesson: 10, remainingLessons: 6, completionOn: null });
+  });
+
+  it('56일 밖 기록과 진도 누락은 표본에서 제외한다', () => {
+    const result = estimateBookCompletion({
+      today: '2026-10-09', totalPages: 100, progressPage: 40, upcomingLessonOn,
+      history: [history[0], history[1], { lessonOn: '2026-08-01', progressFromPage: 1, progressToPage: 10 },
+        { lessonOn: '2026-10-07', progressFromPage: null, progressToPage: null }],
+    });
+    expect(result).toMatchObject({ status: 'insufficient_history', sampleCount: 2 });
+  });
+
+  it('이미 끝난 교재는 오늘을 완료일로 반환한다', () => {
+    expect(estimateBookCompletion({ today: '2026-10-09', totalPages: 100, progressPage: 100, history: [], upcomingLessonOn: [] }))
+      .toEqual({ status: 'complete', sampleCount: 0, pagesPerLesson: null, remainingLessons: 0, completionOn: '2026-10-09' });
   });
 });
 
