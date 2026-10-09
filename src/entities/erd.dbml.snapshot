@@ -1,3 +1,4 @@
+// TBO55-BOC11F-R108 (2026-10-09): BOC-11F 권고안 채택 — 교재 판매는 기존 LIB/VERS와 invoice 없는 PAY를 원 transaction으로 연결하고, 판매/current·UUID REQUEST·append-only EVENT·결제수단별 수수료 POLICY를 분리한다. 초기 계좌이체·현금 수수료는 각 0원이지만 배포일 효력 policy version과 판매 snapshot을 남긴다. 취소는 원 PAY를 보존하고 현재 열린 월의 음수 보정 PAY를 추가하며 version 경합·증빙 발행·월마감을 검사한다. DB는 기간 비중첩, receipt, 정책·PAY·감사 불변을 방어한다. v4.90/144표, migration1768700000000 로컬 upgrade120·down/up·권한·멱등·동시 생성/취소·직접쓰기 회귀 검증, 운영 미적용. 정책 변경 시 accounting DTO/controller/service·OpenAPI/generated Front A22·migration/두 DBML·P-BOC11F·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11E-R107 (2026-10-09): BOC-11E 권고안 채택 — 기존 RATE/STURATE 회당 이력을 보존하고 일반·Kinder·그룹·학생 예외의 시간당 정책을 POLICY current, UUID REQUEST, append-only EVENT로 분리한다. 학생 예외가 우선하며 actual occurrence date/span, explicit Kinder marker, exact group roster count로 청구한다. identity별 기간 비중첩·version+1·receipt·audit immutable과 superseded/retired terminal 전이를 DB가 방어하고 확정 청구·급여 snapshot은 바꾸지 않는다. v4.89/140표, migration1768600000000 로컬 fresh119·권한·멱등·stale·직접쓰기·terminal 재전이·30/60/90분·급여 불변 회귀 검증, 운영 미적용. 정책 변경 시 invoice-lines·accounting DTO/service·generated Front A26·migration/두 DBML·P-BOC11E·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D2-R106 (2026-10-09): BOC-11D-02 권고안 채택 — 승인 조정의 전후 환불 예정액 증가분을 실제 학생 환불액으로 서버 계산한다. 수납 PAY는 유지하고 STUDENT_REFUND_DISBURSEMENT current, UUID REQUEST, append-only EVENT를 분리하며 지급 당시 source adjustment version·금액·보호 계좌 id/version/last4를 보존한다. 지급 완료 뒤에는 먼저 환불 지급을 취소해야 원천 조정 취소가 가능하다. v4.88/137표, migration1768500000000 로컬 fresh118·repeat0·down/up·권한·멱등·stale·직접쓰기·취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 조정 전이·보호 계좌·accounting DTO/service/Front A24·A27·migration/두 DBML·P-BOC11D2·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D1-R105 (2026-10-09): BOC-11D-01 권고안 채택 — 학생 환불·강사 지급 계좌를 purpose+target 단일 current, UUID REQUEST, append-only EVENT로 분리하고 AES-256-GCM ciphertext/key version/last4만 저장한다. 일반 DTO는 last4만, 원문 확인은 사유 있는 별도 capability와 value-less 감사만 남긴다. 삭제는 secret을 purge하고 current identity/version은 보존한다. 실제 강사 지급은 활성 계좌를 잠그고 id/version/last4를 current/event에 snapshot하며 확정 급여 JSON은 불변이다. v4.87/134표, migration1768400000000 로컬 fresh117·권한·멱등·stale·키누락/오키·직접쓰기·지급 취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 capability/crypto/accounting DTO/service/Front A27·지급 원장·migration/두 DBML·P-BOC11D1·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
@@ -3483,3 +3484,113 @@ Ref: HOURLY_RATE_POLICY_REQUEST.result_policy_id > HOURLY_RATE_POLICY.id [delete
 Ref: HOURLY_RATE_POLICY_EVENT.policy_id > HOURLY_RATE_POLICY.id [delete: restrict]
 Ref: HOURLY_RATE_POLICY_EVENT.actor_id > STAFF.id [delete: restrict]
 Ref: HOURLY_RATE_POLICY_EVENT.request_key > HOURLY_RATE_POLICY_REQUEST.request_key [delete: restrict]
+
+// v4.89 → v4.90 (2026-10-09 · TBO-55 BOC-11F 권고안 채택) — 교재 판매·결제 수단별 수수료와 취소 보정 원장.
+//   + BOOK_SALE_FEE_POLICY — transfer/cash별 fixed/rate_bps, version, 효력기간 immutable 정책.
+//   + BOOK_SALE — LIB/VERS 표시 snapshot, 서버 계산 합계·수수료·순수납, 원 PAY와 취소 보정 PAY current.
+//   + BOOK_SALE_REQUEST/EVENT — UUID 멱등 요청, actual actor, expected/result version과 append-only 상태·금액 receipt.
+//   + 기간 EXCLUDE, current/event receipt, completed→canceled 단일 전이, policy/PAY/audit immutable·직접 PAY 삭제 방어.
+//   + 표 +4(140 → 144) · migration 1(1768700000000-book-sales) · 운영 미적용.
+
+Table BOOK_SALE_FEE_POLICY {
+  id bigint [pk, increment]
+  payment_method varchar(16) [not null, note: 'transfer | cash']
+  calculation varchar(12) [not null, note: 'fixed | rate_bps']
+  value int [not null, note: 'fixed는 원/건, rate_bps는 1/10000 비율']
+  policy_version int [not null]
+  effective_from date [not null]
+  effective_to date
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (payment_method, policy_version) [unique, name: 'book_sale_fee_policy_version_unique']
+    (payment_method, effective_from, policy_version) [name: 'book_sale_fee_policy_lookup_idx']
+  }
+}
+
+Table BOOK_SALE {
+  id bigint [pk, increment]
+  student_id bigint [not null]
+  book_id bigint [not null]
+  book_code varchar(30) [not null]
+  book_title varchar(120) [not null]
+  book_edition varchar(80)
+  book_label varchar(260) [not null, note: '판매 당시 교재 표시 snapshot']
+  sold_on date [not null]
+  quantity int [not null]
+  unit_price int [not null]
+  total_amount int [not null]
+  payment_method varchar(16) [not null, note: 'transfer | cash']
+  fee_policy_id bigint [not null]
+  fee_policy_version int [not null]
+  fee_amount int [not null]
+  net_amount int [not null]
+  pay_id bigint [not null, unique, note: 'invoice 없는 원 판매 PAY']
+  correction_pay_id bigint [unique, note: '취소 시 현재 열린 월의 음수 보정 PAY']
+  status varchar(12) [not null, note: 'completed | canceled']
+  row_version int [not null]
+  memo varchar(500)
+  created_by bigint [not null]
+  created_at timestamptz [not null, default: `now()`]
+  canceled_by bigint
+  canceled_at timestamptz
+  cancel_reason varchar(500)
+
+  indexes {
+    (sold_on, id) [name: 'book_sale_ledger_idx']
+    (student_id, sold_on, id) [name: 'book_sale_student_idx']
+  }
+}
+
+Table BOOK_SALE_REQUEST {
+  request_key uuid [pk]
+  actor_id bigint [not null]
+  action varchar(12) [not null, note: 'created | canceled']
+  sale_id bigint [not null]
+  expected_version int [not null]
+  payload_sha256 char(64) [not null]
+  result_version int [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (sale_id, created_at) [name: 'book_sale_request_sale_idx']
+  }
+}
+
+Table BOOK_SALE_EVENT {
+  id bigint [pk, increment]
+  sale_id bigint [not null]
+  action varchar(12) [not null, note: 'created | canceled']
+  from_status varchar(12)
+  to_status varchar(12) [not null]
+  actor_id bigint [not null]
+  request_key uuid [not null, unique]
+  result_version int [not null]
+  total_amount int [not null]
+  fee_amount int [not null]
+  net_amount int [not null]
+  pay_id bigint [not null]
+  correction_pay_id bigint
+  reason varchar(500)
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (sale_id, result_version) [unique, name: 'book_sale_event_version_unique']
+    (sale_id, created_at, id) [name: 'book_sale_event_sale_idx']
+  }
+}
+
+Ref: BOOK_SALE.student_id > STU.id [delete: restrict]
+Ref: BOOK_SALE.book_id > LIB.id [delete: restrict]
+Ref: BOOK_SALE.fee_policy_id > BOOK_SALE_FEE_POLICY.id [delete: restrict]
+Ref: BOOK_SALE.pay_id > PAY.id [delete: restrict]
+Ref: BOOK_SALE.correction_pay_id > PAY.id [delete: restrict]
+Ref: BOOK_SALE.created_by > STAFF.id [delete: restrict]
+Ref: BOOK_SALE.canceled_by > STAFF.id [delete: restrict]
+Ref: BOOK_SALE_REQUEST.actor_id > STAFF.id [delete: restrict]
+Ref: BOOK_SALE_REQUEST.sale_id > BOOK_SALE.id [delete: restrict]
+Ref: BOOK_SALE_EVENT.sale_id > BOOK_SALE.id [delete: restrict]
+Ref: BOOK_SALE_EVENT.actor_id > STAFF.id [delete: restrict]
+Ref: BOOK_SALE_EVENT.request_key > BOOK_SALE_REQUEST.request_key [delete: restrict]
+Ref: BOOK_SALE_EVENT.pay_id > PAY.id [delete: restrict]
+Ref: BOOK_SALE_EVENT.correction_pay_id > PAY.id [delete: restrict]

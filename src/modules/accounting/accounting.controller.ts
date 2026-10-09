@@ -44,6 +44,7 @@ import {
   StudentRefundDto, StudentRefundLedgerDto, StudentRefundQueryDto,
   StudentRefundPayDto, StudentRefundCancelDto,
   HourlyRateCreateDto, HourlyRateReplaceDto, HourlyRateRetireDto, HourlyRateWriteResultDto,
+  BookSaleCancelDto, BookSaleCreateDto, BookSaleDto, BookSaleLedgerDto, BookSaleWriteResultDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
@@ -53,6 +54,7 @@ import { DelinquencySuspensionsService } from './delinquency-suspensions.service
 import { ProtectedAccountsService } from './protected-accounts.service';
 import { StudentRefundsService } from './student-refunds.service';
 import { HourlyRatesService } from './hourly-rates.service';
+import { BookSalesService } from './book-sales.service';
 
 /** 회계 비공개(N-94)의 보는 사람 — 비공개 열람(canHide · 사람별 예외 반영)과 본인 번호 */
 const viewerOf = (user: RequestUser): AcctViewer => ({
@@ -78,8 +80,58 @@ export class AccountingController {
     private readonly protectedAccounts: ProtectedAccountsService,
     private readonly studentRefunds: StudentRefundsService,
     private readonly hourlyRates: HourlyRatesService,
+    private readonly bookSales: BookSalesService,
     private readonly withdrawSvc: StudentWithdrawService,
   ) {}
+
+  @Get('book-sales')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '교재 판매·결제 수단별 수수료 원장 (TBO-55 BOC-11F)',
+    description: '관리자 p94·99·101·115의 계좌·현금 판매와 지급수수료·순수납을 서버 snapshot으로 반환한다.',
+  })
+  @ApiOkResponse({ type: BookSaleLedgerDto })
+  bookSaleLedger(@CurrentUser() user: RequestUser): Promise<BookSaleLedgerDto> {
+    return this.bookSales.ledger(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms));
+  }
+
+  @Get('book-sales/:id')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '교재 판매 상세·policy/PAY snapshot' })
+  @ApiOkResponse({ type: BookSaleDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'BOOK_SALE_NOT_FOUND' })
+  bookSaleDetail(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number,
+  ): Promise<BookSaleDto> {
+    return this.bookSales.detail(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), id);
+  }
+
+  @Post('book-sales')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '교재 판매·invoice 없는 PAY 원자적 생성' })
+  @ApiCreatedResponse({ type: BookSaleWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND | BOOK_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_CLOSED | BOOK_SALE_FEE_POLICY_REQUIRED | BOOK_SALE_KEY_REUSED' })
+  @ApiUnprocessableEntityResponse({ type: ApiErrorDto })
+  createBookSale(
+    @CurrentUser() user: RequestUser, @Body() dto: BookSaleCreateDto,
+  ): Promise<BookSaleWriteResultDto> {
+    return this.bookSales.create(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto);
+  }
+
+  @Post('book-sales/:id/cancel')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '교재 판매 취소·원본 PAY 보존·음수 보정 PAY 생성' })
+  @ApiCreatedResponse({ type: BookSaleWriteResultDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'BOOK_SALE_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'MONTH_CLOSED | BOOK_SALE_STALE | BOOK_SALE_KEY_REUSED | BOOK_SALE_EVIDENCE_ISSUED' })
+  cancelBookSale(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: BookSaleCancelDto,
+  ): Promise<BookSaleWriteResultDto> {
+    return this.bookSales.cancel(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), id, dto);
+  }
 
   /**
    * ⚠️ 2026-09-12 (C36-a) 교정 — 종전 `canCrudAll` 은 **원문과 달랐다.**

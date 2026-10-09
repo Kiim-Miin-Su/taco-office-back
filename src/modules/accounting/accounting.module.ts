@@ -15,6 +15,7 @@ import { DelinquencySuspensionsService } from './delinquency-suspensions.service
 import { ProtectedAccountsService } from './protected-accounts.service';
 import { StudentRefundsService } from './student-refunds.service';
 import { HourlyRatesService } from './hourly-rates.service';
+import { BookSalesService } from './book-sales.service';
 
 @Module({
   imports: [TypeOrmModule.forFeature([Inv])],
@@ -22,7 +23,7 @@ import { HourlyRatesService } from './hourly-rates.service';
   exports: [AccountingService],
   providers: [
     AccountingService, InvoiceAdjustmentsService, DelinquencySuspensionsService, ProtectedAccountsService, StudentRefundsService,
-    HourlyRatesService,
+    HourlyRatesService, BookSalesService,
     StudentWithdrawService,
   ],
 })

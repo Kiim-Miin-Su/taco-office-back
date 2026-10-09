@@ -1950,6 +1950,13 @@ export class AccountingService {
         paid_on: string | null; method: string | null; reason: string | null; request_key: string | null;
       }>;
       if (!pay) throw new NotFoundException('입금 기록을 찾을 수 없습니다');
+      const [bookSale] = await m.query(`SELECT id FROM book_sale WHERE pay_id=$1 OR correction_pay_id=$1 LIMIT 1`, [payId]) as Array<{ id: string }>;
+      if (bookSale) {
+        throw new ConflictException({
+          code: 'BOOK_SALE_PAYMENT_LOCKED',
+          message: '교재 판매에 연결된 입금은 지울 수 없습니다 — 판매 취소로 보정해 주세요',
+        });
+      }
       const before = JSON.stringify({
         invId: pay.inv_id == null ? null : Number(pay.inv_id),
         studentId: pay.student_id == null ? null : Number(pay.student_id),
