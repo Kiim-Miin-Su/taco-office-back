@@ -28,7 +28,7 @@ import {
 } from '../../lib/recurrence';
 import {
   rosterPricing, GUIDE_DONE_DB, cancelPolicyIssue, CANCEL_POLICY_MESSAGE, CANCEL_TREAT_LABEL,
-  ATTENDANCE_CANCEL_REASON_LABEL, PARENT_NOTICE_CANCEL_REASONS,
+  ATTENDANCE_CANCEL_REASON_LABEL, PARENT_NOTICE_CANCEL_REASONS, REPORT_UNWRITTEN_CANDIDATE_DB,
   type AttendanceCancelReason, type CancelTreat,
 } from '../../lib/rules';
 import { isIsoDate } from '../../lib/kst';
@@ -110,6 +110,29 @@ async function referencedSeries(q: QueryRunner, serIds: number[]): Promise<numbe
     .join(' UNION ');
   const rows = (await q.query(union, [serIds])) as Array<{ ser_id: string }>;
   return [...new Set(rows.map((r) => Number(r.ser_id)))].sort((a, b) => a - b);
+}
+
+/**
+ * 일정 투영이 새 규칙에 만든 빈 REP 예약행은 그 일정 쓰기의 파생물이다. 이 행까지 외부 참조로 세면
+ * reportable 수업의 split/create는 발급 직후에도 undo가 항상 409가 된다. BO-12C 권고안에 따라
+ * 작성·제출·진도·PDF가 전혀 없는 예약행만 제거하고, 사람이 손댄 리포트는 기존 UNDO_HAS_REFS로 막는다.
+ */
+async function deleteDisposableProjectedReports(q: QueryRunner, serIds: number[]): Promise<void> {
+  if (!serIds.length) return;
+  const removable = `
+    SELECT r.id FROM rep r
+     WHERE r.ser_id=ANY($1::bigint[])
+       AND r.state=ANY($2::rep_state_t[]) AND r.state<>'draft'::rep_state_t
+       AND r.body='{}'::jsonb
+       AND r.written_at IS NULL AND r.submitted_at IS NULL AND r.reviewed_at IS NULL
+       AND r.reviewer_id IS NULL AND r.reject_reason IS NULL
+       AND NOT EXISTS (SELECT 1 FROM rep_stu rs WHERE rs.rep_id=r.id AND (rs.comment IS NOT NULL OR NOT rs.deliver))
+       AND NOT EXISTS (SELECT 1 FROM rep_book_progress rbp WHERE rbp.rep_id=r.id)
+       AND NOT EXISTS (SELECT 1 FROM pdflog p WHERE p.rep_id=r.id)`;
+  await q.query(`WITH removable AS (${removable}) DELETE FROM rep_stu rs USING removable x WHERE rs.rep_id=x.id`, [
+    serIds, REPORT_UNWRITTEN_CANDIDATE_DB,
+  ]);
+  await q.query(`DELETE FROM rep r WHERE r.id IN (${removable})`, [serIds, REPORT_UNWRITTEN_CANDIDATE_DB]);
 }
 
 async function notifyCancel(
@@ -1218,6 +1241,7 @@ export class ScheduleWriteService {
        */
       const keepIds = new Set(payload.before.SER.map((row) => row.id));
       const willDelete = current.SER.map((row) => row.id).filter((id) => !keepIds.has(id));
+      await deleteDisposableProjectedReports(q, willDelete);
       const blocked = await referencedSeries(q, willDelete);
       if (blocked.length) {
         throw new ConflictException({

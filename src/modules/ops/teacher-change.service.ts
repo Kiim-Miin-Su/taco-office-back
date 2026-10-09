@@ -144,7 +144,11 @@ export class TeacherChangeService {
           stage: current.stage, teacherChanged: Boolean(current.teacher_changed),
           ownerId: current.owner_id == null ? null : Number(current.owner_id), action: current.action,
         } : null;
-        if (JSON.stringify(normalized) !== JSON.stringify(payload.complaint.after)) {
+        // JSONB는 객체 키 순서를 보존하지 않는다. 직렬화 문자열 비교를 쓰면 내용이 같아도
+        // key order만 달라 실제 브라우저 undo가 409가 된다. BO-12C 권고안의 의미 필드를 직접 비교한다.
+        const expected = payload.complaint.after;
+        if (!normalized || normalized.stage !== expected.stage || normalized.teacherChanged !== expected.teacherChanged
+          || normalized.ownerId !== expected.ownerId || normalized.action !== expected.action) {
           throw new ConflictException({ code: 'TEACHER_CHANGE_UNDO_COMPLAINT_CHANGED', message: '교체 뒤 컴플레인이 다시 바뀌어 실행 취소할 수 없습니다' });
         }
       }

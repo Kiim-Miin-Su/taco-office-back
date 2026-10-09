@@ -308,6 +308,57 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect((await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2 }).expect(400)).body.code).toBe('NOTHING_TO_CHANGE');
   });
 
+  it('컴플레인 기반 whole-class 교체의 undo는 JSONB 키 순서와 무관하게 의미 필드를 비교하고 원래 상태를 복구한다', async () => {
+    const s = await makeSeries('WEEKLY:MO', 1080, T_A, [STU1, STU2], '교체 undo 컴플레인');
+    const cpl = (await api('post', '/ops/complaints').send({
+      area: 'teacher', studentId: STU1, body: '교체 시험 — undo 컴플레인',
+    }).expect(201)).body;
+    cplIds.push(cpl.id);
+    const preview = (await api('post', '/ops/teacher-change/preview').send({
+      fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, cplId: cpl.id, scope: 'student_classes',
+    }).expect(201)).body;
+    expect(preview).toMatchObject({ requiresWholeClass: true, scope: 'student_classes' });
+    const requestKey = randomUUID();
+    const applied = (await api('post', '/ops/teacher-change').send({
+      fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, cplId: cpl.id,
+      scope: 'whole_class', requestKey, expectedVersion: preview.version,
+    }).expect(201)).body;
+    expect(applied).toMatchObject({ requestKey, rowVersion: 1, undoAvailable: true });
+    expect((await q<{ stage: string; teacher_changed: boolean }>(`SELECT stage,teacher_changed FROM cpl WHERE id=$1`, [cpl.id]))[0])
+      .toEqual({ stage: 'acting', teacher_changed: true });
+
+    const [operation] = await q<{ undo_payload: { complaint: { after: { stage: string; teacherChanged: boolean; ownerId: number | null; action: string | null } } } }>(
+      `SELECT undo_payload FROM teacher_change_operation WHERE request_key=$1`, [requestKey],
+    );
+    const [current] = await q<{ stage: string; teacher_changed: boolean; owner_id: string | null; action: string | null }>(
+      `SELECT stage,teacher_changed,owner_id,action FROM cpl WHERE id=$1`, [cpl.id],
+    );
+    expect({
+      stage: current!.stage,
+      teacherChanged: Boolean(current!.teacher_changed),
+      ownerId: current!.owner_id == null ? null : Number(current!.owner_id),
+      action: current!.action,
+    }).toEqual(operation!.undo_payload.complaint.after);
+
+    const newSerIds = applied.series.map((row: { newSerId: number | null; serId: number }) => row.newSerId ?? row.serId);
+    const [projected] = await q<{ reports: number; guides: number; parent_notices: number }>(`
+      SELECT (SELECT count(*)::int FROM rep WHERE ser_id=ANY($1)) AS reports,
+             (SELECT count(*)::int FROM guide WHERE ser_id=ANY($1)) AS guides,
+             (SELECT count(*)::int FROM pnoti WHERE ser_id=ANY($1)) AS parent_notices
+    `, [newSerIds]);
+    expect(projected).toMatchObject({ guides: 2, parent_notices: 2 });
+    expect(projected!.reports).toBeGreaterThan(0);
+
+    const undone = await api('post', `/ops/teacher-change/${requestKey}/undo`).send({ expectedVersion: 1 });
+    expect(undone.body)
+      .toMatchObject({ requestKey, rowVersion: 2, state: 'undone' });
+    expect(undone.status).toBe(201);
+    expect((await q<{ stage: string; teacher_changed: boolean; owner_id: string | null; action: string | null }>(
+      `SELECT stage,teacher_changed,owner_id,action FROM cpl WHERE id=$1`, [cpl.id],
+    ))[0]).toEqual({ stage: 'received', teacher_changed: false, owner_id: null, action: null });
+    expect((await q<{ teacher_id: string }>(`SELECT teacher_id FROM ser WHERE id=$1`, [s]))[0]?.teacher_id).toBe(String(T_A));
+  });
+
   /* ── ③ N-132 · D-45 ───────────────────────────────────────────────────── */
   it('그날만 대강은 회차 예외 하나다 — 다음 회차는 원래 강사 · 정산 시트에서 그날만 대강에게 간다 · 새 강사가 그 시각에 바쁘면 409 로 아무것도 남지 않는다 (N-132 · D-45)', async () => {
     const s3 = await makeSeries('WEEKLY:TH', 900, T_A, [STU1], '교체 S3');
