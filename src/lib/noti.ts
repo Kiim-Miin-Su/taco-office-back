@@ -110,6 +110,10 @@ export const NOTI_TITLE = {
   invoiceAdjustmentRejected: '청구 조정 반려',
   invoiceAdjustmentCanceled: '청구 조정 반영 취소',
   invoiceAdjustmentRestored: '청구 조정 되돌리기',
+  delinquencyPolicyChanged: '연체 정지 기준 변경',
+  delinquencyReminderRecorded: '연체 납입 독촉 기록',
+  delinquencySuspended: '연체 수강 정지',
+  delinquencyReleased: '연체 수강 정지 해제',
   // 교재 · 안내
   bookReceived: '자료 수령 확인',
   bookAssigned: '교재 배정',

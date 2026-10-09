@@ -38,6 +38,7 @@ import { START_MIN, END_MIN, endMinOf, kstAt, kstDateOf, serStuOn, startMinOf, s
 import type { AuditKey } from '../../lib/audit';
 import { assertClosedOccUnchanged, closedMonths, closedOccSnapshot, monthOf } from '../../lib/month-close';
 import { assertKinderRosterWrite, lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
+import { assertNoSuspendedScheduleExpansion, lockDelinquencyScheduleWrite } from '../../lib/delinquency-suspension.db';
 import { loadState, persist } from './schedule.state.repo';
 import { issueScheduleUndoStep, readScheduleUndo, sameScheduleState } from './schedule.undo';
 import { assertScheduleReferences, assertZaccAssignable } from './schedule.references';
@@ -541,6 +542,11 @@ export class ScheduleWriteService {
       // 명단/회차 예외도 이 잠금을 공유하며 persist/project/commit까지 유지한다.
       const before = await loadState(q, serIds, { forWrite: true });
       const { after, log, effScope } = await reduce(before, q);
+
+      // BOC-11C 권고안: schedule과 정지 전이를 한 순서로 세운 뒤, 기존 일정 축소/취소는 허용하고
+      // 새 생성·복사·이동·복원·명단 확장만 409로 막는다. 정책 변경 시 기능 정본과 DB trigger도 같이 바꾼다.
+      await lockDelinquencyScheduleWrite(q);
+      await assertNoSuspendedScheduleExpansion(q, before, after);
 
       const timeIssue = scheduleTimeIssue(after);
       if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
@@ -1193,6 +1199,8 @@ export class ScheduleWriteService {
       if (timeIssue) throw new BadRequestException({ code: 'BAD_RANGE', message: timeIssue });
       await assertScheduleReferences(q, payload.before);
       await assertKinderRosterWrite(q, payload.before);
+      await lockDelinquencyScheduleWrite(q);
+      await assertNoSuspendedScheduleExpansion(q, current, payload.before);
       /*
        * 되돌리기가 **지우게 될** 규칙 — 되돌릴 `create`, 휴강의 보강 회차가 여기 든다.
        * 그 사이 누가 출결·리포트를 적었으면 즉시 NO ACTION FK 가 막아 **500** 이 난다.

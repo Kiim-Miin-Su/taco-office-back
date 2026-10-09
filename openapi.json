@@ -5206,6 +5206,576 @@
         ]
       }
     },
+    "/accounting/delinquency-suspensions": {
+      "get": {
+        "description": "최종 관리자 수정사항 p101·107·113의 서버 정본이다. 기본 14일 이상은 후보로만 자동 등재하고 실제 정지·해제는 관리자 action이다. STU_PAUSE·INV·PAY·월마감은 바꾸지 않는다. 권고안 변경 시 delinquency service/schedule guard/migration/Front/기능 문서를 함께 바꾼다.",
+        "operationId": "AccountingController_delinquencyLedger",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelinquencySuspensionLedgerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "연체 aging·수강 정지 후보/current/event 원장 (TBO-55 BOC-11C)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/delinquency-suspensions/policy": {
+      "post": {
+        "operationId": "AccountingController_writeDelinquencyPolicy",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelinquencyPolicyWriteDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelinquencyPolicyDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "연체 정지 후보 기준 변경 — 대표 판정·version·requestKey",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/delinquency-suspensions/{studentId}/remind": {
+      "post": {
+        "operationId": "AccountingController_remindDelinquency",
+        "parameters": [
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelinquencySuspensionActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelinquencySuspensionWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "납입 독촉 내부 이력 — 외부 발송 완료를 추정하지 않음",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/delinquency-suspensions/remind-batch": {
+      "post": {
+        "operationId": "AccountingController_remindDelinquencyBatch",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelinquencyReminderBatchDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelinquencyReminderBatchResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "납입 독촉 내부 이력 일괄 기록 — 전 학생 all-or-nothing·개별 멱등키",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/delinquency-suspensions/{studentId}/suspend": {
+      "post": {
+        "operationId": "AccountingController_suspendDelinquency",
+        "parameters": [
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelinquencySuspensionActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelinquencySuspensionWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "연체 수강 정지 — 기존 일정 보존·신규 일정 공통 차단",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/delinquency-suspensions/{studentId}/release": {
+      "post": {
+        "operationId": "AccountingController_releaseDelinquency",
+        "parameters": [
+          {
+            "name": "studentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelinquencySuspensionActionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelinquencySuspensionWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "입금 확인 뒤 연체 수강 정지 해제 — 기한 지난 잔액 0 재검증",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/adjustments": {
       "get": {
         "description": "최종 관리자 수정사항 p106·112의 전용 원장이다. pending/rejected는 INV 금액을 바꾸지 않고, 대표 승인 뒤 approved 합계만 적용 월 tuition 청구액에서 차감한다. 실제 환불 송금 완료는 BO-Q9 전까지 기록하지 않는다. 이 권고안은 invoice-adjustments.service/migration/Front/기능 문서를 함께 바꿔야 한다.",
@@ -32653,6 +33223,400 @@
           "asOf",
           "recentMonths",
           "canSeeAmounts",
+          "items"
+        ]
+      },
+      "DelinquencyPolicyDto": {
+        "type": "object",
+        "properties": {
+          "thresholdDays": {
+            "type": "number",
+            "description": "후보 기준. overdueDays가 이 값 이상이면 자동 후보다."
+          },
+          "version": {
+            "type": "number",
+            "description": "정책 낙관 잠금 version"
+          },
+          "updatedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "updatedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "canChange": {
+            "type": "boolean",
+            "description": "현재 actor가 전역 기준을 바꿀 수 있는가"
+          }
+        },
+        "required": [
+          "thresholdDays",
+          "version",
+          "updatedAt",
+          "updatedBy",
+          "canChange"
+        ]
+      },
+      "DelinquencyAgingBucketDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "1_30",
+              "31_60",
+              "61_90",
+              "91_plus"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "studentCount": {
+            "type": "number"
+          },
+          "outstanding": {
+            "type": "number",
+            "nullable": true
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "studentCount",
+          "outstanding"
+        ]
+      },
+      "DelinquencySuspensionEventDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "reminded",
+              "suspended",
+              "released"
+            ]
+          },
+          "fromState": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "candidate",
+              "suspended",
+              "released"
+            ]
+          },
+          "toState": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "candidate",
+              "suspended",
+              "released"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "actorId": {
+            "type": "number"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "overdueDays": {
+            "type": "number"
+          },
+          "outstanding": {
+            "type": "number",
+            "nullable": true
+          },
+          "affectedSeriesCount": {
+            "type": "number"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "fromState",
+          "toState",
+          "version",
+          "actorId",
+          "actor",
+          "reason",
+          "overdueDays",
+          "outstanding",
+          "affectedSeriesCount",
+          "createdAt"
+        ]
+      },
+      "DelinquencySuspensionItemDto": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "studentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "contact": {
+            "type": "string",
+            "nullable": true,
+            "description": "대표 보호자·납부자 우선의 마스킹 연락처"
+          },
+          "overdueDays": {
+            "type": "number"
+          },
+          "outstanding": {
+            "type": "number",
+            "nullable": true
+          },
+          "overdueInvoiceCount": {
+            "type": "number"
+          },
+          "affectedSeriesCount": {
+            "type": "number"
+          },
+          "affectedSeries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "candidate",
+              "suspended",
+              "released"
+            ]
+          },
+          "stateLabel": {
+            "type": "string"
+          },
+          "version": {
+            "type": "number"
+          },
+          "suspendedAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "suspendedBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "canRemind": {
+            "type": "boolean"
+          },
+          "canSuspend": {
+            "type": "boolean"
+          },
+          "canRelease": {
+            "type": "boolean"
+          },
+          "releaseBlockedReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DelinquencySuspensionEventDto"
+            }
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName",
+          "studentTag",
+          "contact",
+          "overdueDays",
+          "outstanding",
+          "overdueInvoiceCount",
+          "affectedSeriesCount",
+          "affectedSeries",
+          "state",
+          "stateLabel",
+          "version",
+          "suspendedAt",
+          "suspendedBy",
+          "canRemind",
+          "canSuspend",
+          "canRelease",
+          "releaseBlockedReason",
+          "events"
+        ]
+      },
+      "DelinquencySuspensionLedgerDto": {
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "KST 판정 기준일"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/DelinquencyPolicyDto"
+          },
+          "totalReceivable": {
+            "type": "number",
+            "nullable": true,
+            "description": "모든 open 청구 잔액"
+          },
+          "totalOverdue": {
+            "type": "number",
+            "nullable": true,
+            "description": "기한이 지난 open 청구 잔액"
+          },
+          "aging": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DelinquencyAgingBucketDto"
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DelinquencySuspensionItemDto"
+            }
+          }
+        },
+        "required": [
+          "asOf",
+          "policy",
+          "totalReceivable",
+          "totalOverdue",
+          "aging",
+          "items"
+        ]
+      },
+      "DelinquencyPolicyWriteDto": {
+        "type": "object",
+        "properties": {
+          "thresholdDays": {
+            "type": "number"
+          },
+          "expectedVersion": {
+            "type": "number"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "thresholdDays",
+          "expectedVersion",
+          "requestKey"
+        ]
+      },
+      "DelinquencySuspensionActionDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "description": "정지·해제 사유. 공백을 제거해 2~200자."
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "requestKey"
+        ]
+      },
+      "DelinquencySuspensionWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/DelinquencySuspensionItemDto"
+          },
+          "replayed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "item",
+          "replayed"
+        ]
+      },
+      "DelinquencyReminderBatchItemDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string",
+            "description": "정지·해제 사유. 공백을 제거해 2~200자."
+          },
+          "studentId": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "requestKey",
+          "studentId"
+        ]
+      },
+      "DelinquencyReminderBatchDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DelinquencyReminderBatchItemDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "DelinquencyReminderBatchResultDto": {
+        "type": "object",
+        "properties": {
+          "remindedCount": {
+            "type": "number"
+          },
+          "replayedCount": {
+            "type": "number"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DelinquencySuspensionWriteResultDto"
+            }
+          }
+        },
+        "required": [
+          "remindedCount",
+          "replayedCount",
           "items"
         ]
       },

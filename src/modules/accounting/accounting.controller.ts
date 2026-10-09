@@ -13,7 +13,7 @@ import { CurrentUser } from '../../auth/current-user.decorator';
 import { ApiErrorDto, OkDto } from '../../common/http.dto';
 import {
   Perm, canCeoApproveCorrection, canCeoApproveInvoiceAdjustment, canCeoCloseMonth, canCeoConfirmPayout,
-  canCeoFileExpenseForOther, canCeoSetAcctPrivacy, canCeoVoidInvoice,
+  canCeoFileExpenseForOther, canCeoSetAcctPrivacy, canCeoSetDelinquencyPolicy, canCeoVoidInvoice,
   hasPerm, isRole, type RequestUser,
 } from '../../common/perm';
 import {
@@ -35,11 +35,15 @@ import {
   PayoutDisbursementCancelDto, PayoutDisbursementBatchPayDto, PayoutDisbursementBatchResultDto,
   InvoiceAdjustmentLedgerDto, InvoiceAdjustmentQueryDto, InvoiceAdjustmentCreateDto,
   InvoiceAdjustmentActionDto, InvoiceAdjustmentReasonActionDto, InvoiceAdjustmentWriteResultDto,
+  DelinquencySuspensionLedgerDto, DelinquencyPolicyWriteDto, DelinquencyPolicyDto,
+  DelinquencySuspensionActionDto, DelinquencySuspensionWriteResultDto,
+  DelinquencyReminderBatchDto, DelinquencyReminderBatchResultDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
 import { InvoiceAdjustmentsService } from './invoice-adjustments.service';
 import { StudentWithdrawService } from './withdraw.service';
+import { DelinquencySuspensionsService } from './delinquency-suspensions.service';
 
 /** 회계 비공개(N-94)의 보는 사람 — 비공개 열람(canHide · 사람별 예외 반영)과 본인 번호 */
 const viewerOf = (user: RequestUser): AcctViewer => ({
@@ -61,6 +65,7 @@ export class AccountingController {
   constructor(
     private readonly svc: AccountingService,
     private readonly adjustments: InvoiceAdjustmentsService,
+    private readonly delinquency: DelinquencySuspensionsService,
     private readonly withdrawSvc: StudentWithdrawService,
   ) {}
 
@@ -94,6 +99,90 @@ export class AccountingController {
   async studentCumulative(@CurrentUser() user: RequestUser): Promise<StudentCumulativeDto> {
     const canSee = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
     return this.svc.studentCumulative(canSee);
+  }
+
+  @Get('delinquency-suspensions')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '연체 aging·수강 정지 후보/current/event 원장 (TBO-55 BOC-11C)',
+    description: '최종 관리자 수정사항 p101·107·113의 서버 정본이다. 기본 14일 이상은 후보로만 자동 등재하고 '
+      + '실제 정지·해제는 관리자 action이다. STU_PAUSE·INV·PAY·월마감은 바꾸지 않는다. '
+      + '권고안 변경 시 delinquency service/schedule guard/migration/Front/기능 문서를 함께 바꾼다.',
+  })
+  @ApiOkResponse({ type: DelinquencySuspensionLedgerDto })
+  delinquencyLedger(@CurrentUser() user: RequestUser): Promise<DelinquencySuspensionLedgerDto> {
+    const canWrite = isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms);
+    const canChange = isRole(user.role) && canCeoSetDelinquencyPolicy(user.role);
+    return this.delinquency.ledger(canWrite, canChange);
+  }
+
+  @Post('delinquency-suspensions/policy')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '연체 정지 후보 기준 변경 — 대표 판정·version·requestKey' })
+  @ApiCreatedResponse({ type: DelinquencyPolicyDto })
+  @ApiForbiddenResponse({ type: ApiErrorDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  writeDelinquencyPolicy(
+    @CurrentUser() user: RequestUser, @Body() dto: DelinquencyPolicyWriteDto,
+  ): Promise<DelinquencyPolicyDto> {
+    return this.delinquency.writePolicy(
+      user.id, isRole(user.role) && canCeoSetDelinquencyPolicy(user.role), dto,
+    );
+  }
+
+  @Post('delinquency-suspensions/:studentId/remind')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '납입 독촉 내부 이력 — 외부 발송 완료를 추정하지 않음' })
+  @ApiCreatedResponse({ type: DelinquencySuspensionWriteResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  remindDelinquency(
+    @CurrentUser() user: RequestUser, @Param('studentId', ParseIntPipe) studentId: number,
+    @Body() dto: DelinquencySuspensionActionDto,
+  ): Promise<DelinquencySuspensionWriteResultDto> {
+    return this.delinquency.transition(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), studentId, 'remind', dto,
+    );
+  }
+
+  @Post('delinquency-suspensions/remind-batch')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '납입 독촉 내부 이력 일괄 기록 — 전 학생 all-or-nothing·개별 멱등키' })
+  @ApiCreatedResponse({ type: DelinquencyReminderBatchResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  remindDelinquencyBatch(
+    @CurrentUser() user: RequestUser, @Body() dto: DelinquencyReminderBatchDto,
+  ): Promise<DelinquencyReminderBatchResultDto> {
+    return this.delinquency.remindBatch(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto,
+    );
+  }
+
+  @Post('delinquency-suspensions/:studentId/suspend')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '연체 수강 정지 — 기존 일정 보존·신규 일정 공통 차단' })
+  @ApiCreatedResponse({ type: DelinquencySuspensionWriteResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  suspendDelinquency(
+    @CurrentUser() user: RequestUser, @Param('studentId', ParseIntPipe) studentId: number,
+    @Body() dto: DelinquencySuspensionActionDto,
+  ): Promise<DelinquencySuspensionWriteResultDto> {
+    return this.delinquency.transition(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), studentId, 'suspend', dto,
+    );
+  }
+
+  @Post('delinquency-suspensions/:studentId/release')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '입금 확인 뒤 연체 수강 정지 해제 — 기한 지난 잔액 0 재검증' })
+  @ApiCreatedResponse({ type: DelinquencySuspensionWriteResultDto })
+  @ApiConflictResponse({ type: ApiErrorDto })
+  releaseDelinquency(
+    @CurrentUser() user: RequestUser, @Param('studentId', ParseIntPipe) studentId: number,
+    @Body() dto: DelinquencySuspensionActionDto,
+  ): Promise<DelinquencySuspensionWriteResultDto> {
+    return this.delinquency.transition(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), studentId, 'release', dto,
+    );
   }
 
   @Get('adjustments')

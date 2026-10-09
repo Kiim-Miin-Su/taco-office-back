@@ -157,6 +157,13 @@ export const canCeoApproveCorrection = (r: Role): boolean => ceoGate(r);
 export const canCeoApproveInvoiceAdjustment = (r: Role): boolean => ceoGate(r);
 
 /**
+ * TBO-55 BO-Q8 연체 수강 정지의 전역 후보 기준일을 바꿀 수 있는가.
+ * 독촉·정지·해제는 canMoney가 소유하지만 전역 정책 변경은 대표 판정으로 분리한다.
+ * 현재 관리자·매니저 기본 권한 유지 결정은 ceoGate 한 줄이 소유한다.
+ */
+export const canCeoSetDelinquencyPolicy = (r: Role): boolean => ceoGate(r);
+
+/**
  * 회계 탭 줄의 **시급 비공개 · 컨설팅 비공개** 스위치를 켜고 끄는가 — 대표 판정
  * (N-94 채택 · W11 M2 · 원문 슬라이드 77 「강사 시급 공개 지정 · 내역 비공개 지정 — 대표만」). 켠 뒤 누가 보는가는 `canHide` 다.
  */

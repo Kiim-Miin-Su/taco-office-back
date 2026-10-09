@@ -1,3 +1,4 @@
+// TBO55-BOC11C-R104 (2026-10-09): BOC-11C 권고안 채택 — 기본 14일은 연체 후보만 만들고 실제 독촉·정지·해제는 관리자가 처리한다. 기존 일정은 보존하고 정지 중 신규 생성·복사·이동·명단 확대·undo를 공용 잠금과 DB trigger로 막는다. POLICY/current/event 네 표가 actual actor·UUID requestKey·payload hash·version·threshold/잔액/영향 수업 snapshot을 보존하며, 입금 확인 뒤 기한 경과 잔액 0일 때만 해제한다. v4.86/131표, migration1768300000000 로컬 권한·batch 멱등·stale·직접쓰기·일정·Kinder 인접 회귀 검증, 운영 미적용. 정책 변경 시 accounting DTO/service/Front·schedule guard·migration/두 DBML·P-BOC11C·두 수정사항 대조표·Figma A25·scenario·portfolio를 함께 수정한다.
 // TBO55-BO11BD01-R103 (2026-10-09): BO-11BD-01 권고안 채택 — 할인·환불·형제 할인·이월 신청을 적용 월의 단일 유효 tuition INV에 연결하고 BASE 원금 snapshot, ADJUSTMENT current, EVENT 불변 이력으로 승인·반려·반영 취소·되돌리기를 저장한다. pending/rejected는 금액 불변, approved 합계만 차감하며 초과 납부 차액은 refundDue로만 표시하고 실제 환불 송금은 BO-Q9에 남긴다. v4.85/127표, migration1768200000000 로컬 fresh/upgrade/repeat/down-up·권한·멱등·stale·월마감·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 조정 DTO/service/Front·migration/두 DBML·P-BO11BD01·두 수정사항 대조표·Figma A24·scenario·portfolio를 함께 수정한다.
 // TBO55-BO11AD03-R102 (2026-10-09): BO-11AD-03 권고안 채택 — 확정 PAYOUT/PAYOUT_LINE 계산 snapshot과 실제 송금을 분리하고 PAYOUT_DISBURSEMENT current, REQUEST 멱등 원장, EVENT 불변 이력으로 지급·취소·재지급을 저장한다. 계좌 식별자는 BO-Q9 보호 계약 전까지 추정·저장하지 않으며 bank_transfer와 actual actor/date/version을 보존한다. v4.84/124표, migration1768100000000 로컬 적용·권한·stale·동시 지급·취소·일괄 재지급·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 지급 DTO/service/Front·migration/DBML·P-BO11AD03·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
 // TBO55-BO11AD01-R101 (2026-10-09): BO-11AD-01 권고안 채택 — PAY별 외부 증빙 발행 확인을 PAYMENT_EVIDENCE current, REQUEST 멱등 원장, EVENT 불변 이력으로 저장한다. 외부 국세청/PG 발급 번호는 만들지 않으며 발행 당시 snapshot과 actual actor/version을 보존한다. POLICY 적용시각 이전 PAY는 과거 상태를 추정하지 않고 월 마감 gate에서 보존하며 이후 등록된 양수 PAY만 current issued를 요구한다. v4.83/121표, migration1768000000000 로컬 적용·권한·stale·동시 발행·취소·일괄 발행·월마감 race 검증, 운영 미적용. 정책 변경 시 증빙 DTO/service/Front·migration/DBML·P-BO11AD01·두 수정사항 대조표·Figma 대응표·scenario·portfolio를 함께 수정한다.
@@ -3167,3 +3168,78 @@ Ref: INVOICE_ADJUSTMENT.decided_by > STAFF.id [delete: restrict]
 Ref: INVOICE_ADJUSTMENT.canceled_by > STAFF.id [delete: restrict]
 Ref: INVOICE_ADJUSTMENT_EVENT.invoice_adjustment_id > INVOICE_ADJUSTMENT.id [delete: restrict]
 Ref: INVOICE_ADJUSTMENT_EVENT.actor_id > STAFF.id [delete: restrict]
+
+// v4.85 → v4.86 (2026-10-09 · TBO-55 BOC-11C 권고안 채택) — 연체 후보 정책과 수강 정지 current/event 원장.
+//   + DELINQUENCY_POLICY/EVENT — 기본 14일 후보 기준의 current와 실제 actor·멱등 변경 이력.
+//   + DELINQUENCY_SUSPENSION/EVENT — 학생별 suspended/released current와 독촉·정지·해제 snapshot 불변 이력.
+//   + 일정 guard — 기존 일정은 보존하고 SER_STU 확대, SER 시간 확대·이동, EXC 복원·이동의 직접 SQL을 차단한다.
+//   표 +4(127 → 131) · migration 1(1768300000000-delinquency-suspension) · 운영 미적용.
+
+Table DELINQUENCY_POLICY {
+  id smallint [pk, note: '전역 정책 단일 행 id=1']
+  threshold_days int [not null, default: 14, note: '1~365일. 후보 기준이며 자동 정지는 하지 않는다']
+  row_version int [not null, default: 1]
+  updated_by bigint
+  updated_at timestamptz [not null, default: `now()`]
+}
+
+Table DELINQUENCY_POLICY_EVENT {
+  id bigint [pk, increment]
+  actor_id bigint [not null]
+  request_key uuid [not null, unique]
+  payload_sha256 char(64) [not null]
+  threshold_before int [not null]
+  threshold_after int [not null]
+  result_version int [not null, unique]
+  created_at timestamptz [not null, default: `now()`]
+}
+
+Table DELINQUENCY_SUSPENSION {
+  student_id bigint [pk]
+  state varchar(12) [not null, note: 'suspended | released']
+  row_version int [not null]
+  threshold_snapshot int [not null]
+  overdue_days_snapshot int [not null]
+  outstanding_snapshot bigint [not null]
+  suspended_by bigint [not null]
+  suspended_at timestamptz [not null]
+  suspend_reason varchar(200) [not null]
+  released_by bigint
+  released_at timestamptz
+  release_reason varchar(200)
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (state, student_id) [name: 'delinquency_suspension_state_idx']
+  }
+}
+
+Table DELINQUENCY_SUSPENSION_EVENT {
+  id bigint [pk, increment]
+  student_id bigint [not null]
+  action varchar(12) [not null, note: 'reminded | suspended | released']
+  from_state varchar(12)
+  to_state varchar(12)
+  actor_id bigint [not null]
+  request_key uuid [not null, unique]
+  payload_sha256 char(64) [not null]
+  result_version int [not null]
+  overdue_days int [not null]
+  outstanding bigint [not null]
+  affected_series_count int [not null]
+  reason varchar(200)
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (student_id, result_version) [unique, name: 'delinquency_state_event_version_unique', note: '정지·해제 action에만 적용하는 partial unique index']
+    (student_id, created_at, id) [name: 'delinquency_event_student_idx']
+  }
+}
+
+Ref: DELINQUENCY_POLICY.updated_by > STAFF.id [delete: restrict]
+Ref: DELINQUENCY_POLICY_EVENT.actor_id > STAFF.id [delete: restrict]
+Ref: DELINQUENCY_SUSPENSION.student_id > STU.id [delete: restrict]
+Ref: DELINQUENCY_SUSPENSION.suspended_by > STAFF.id [delete: restrict]
+Ref: DELINQUENCY_SUSPENSION.released_by > STAFF.id [delete: restrict]
+Ref: DELINQUENCY_SUSPENSION_EVENT.student_id > STU.id [delete: restrict]
+Ref: DELINQUENCY_SUSPENSION_EVENT.actor_id > STAFF.id [delete: restrict]

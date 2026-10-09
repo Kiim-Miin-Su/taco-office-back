@@ -951,6 +951,106 @@ export class StudentCumulativeDto {
   items!: StudentCumulativeRowDto[];
 }
 
+/* ── TBO-55 BOC-11C 연체 수강 정지·해제 ─────────────────────────── */
+
+export type DelinquencySuspensionState = 'candidate' | 'suspended' | 'released';
+export type DelinquencySuspensionAction = 'reminded' | 'suspended' | 'released';
+
+export class DelinquencyPolicyDto {
+  @ApiProperty({ description: '후보 기준. overdueDays가 이 값 이상이면 자동 후보다.' }) thresholdDays!: number;
+  @ApiProperty({ description: '정책 낙관 잠금 version' }) version!: number;
+  @ApiProperty({ type: String, nullable: true }) updatedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) updatedBy!: string | null;
+  @ApiProperty({ description: '현재 actor가 전역 기준을 바꿀 수 있는가' }) canChange!: boolean;
+}
+
+export class DelinquencyAgingBucketDto {
+  @ApiProperty({ enum: ['1_30', '31_60', '61_90', '91_plus'] }) key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty() studentCount!: number;
+  @ApiProperty({ type: Number, nullable: true }) outstanding!: number | null;
+}
+
+export class DelinquencySuspensionEventDto {
+  @ApiProperty({ enum: ['reminded', 'suspended', 'released'] }) action!: DelinquencySuspensionAction;
+  @ApiProperty({ type: String, nullable: true, enum: ['candidate', 'suspended', 'released'] }) fromState!: string | null;
+  @ApiProperty({ type: String, nullable: true, enum: ['candidate', 'suspended', 'released'] }) toState!: string | null;
+  @ApiProperty() version!: number;
+  @ApiProperty() actorId!: number;
+  @ApiProperty() actor!: string;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty() overdueDays!: number;
+  @ApiProperty({ type: Number, nullable: true }) outstanding!: number | null;
+  @ApiProperty() affectedSeriesCount!: number;
+  @ApiProperty() createdAt!: string;
+}
+
+export class DelinquencySuspensionItemDto {
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ type: String, nullable: true }) studentTag!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '대표 보호자·납부자 우선의 마스킹 연락처' }) contact!: string | null;
+  @ApiProperty() overdueDays!: number;
+  @ApiProperty({ type: Number, nullable: true }) outstanding!: number | null;
+  @ApiProperty() overdueInvoiceCount!: number;
+  @ApiProperty() affectedSeriesCount!: number;
+  @ApiProperty({ type: [String] }) affectedSeries!: string[];
+  @ApiProperty({ enum: ['candidate', 'suspended', 'released'] }) state!: DelinquencySuspensionState;
+  @ApiProperty() stateLabel!: string;
+  @ApiProperty() version!: number;
+  @ApiProperty({ type: String, nullable: true }) suspendedAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) suspendedBy!: string | null;
+  @ApiProperty() canRemind!: boolean;
+  @ApiProperty() canSuspend!: boolean;
+  @ApiProperty() canRelease!: boolean;
+  @ApiProperty({ type: String, nullable: true }) releaseBlockedReason!: string | null;
+  @ApiProperty({ type: [DelinquencySuspensionEventDto] }) events!: DelinquencySuspensionEventDto[];
+}
+
+export class DelinquencySuspensionLedgerDto {
+  @ApiProperty({ ...DATE_SCHEMA, description: 'KST 판정 기준일' }) asOf!: string;
+  @ApiProperty({ type: DelinquencyPolicyDto }) policy!: DelinquencyPolicyDto;
+  @ApiProperty({ type: Number, nullable: true, description: '모든 open 청구 잔액' }) totalReceivable!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '기한이 지난 open 청구 잔액' }) totalOverdue!: number | null;
+  @ApiProperty({ type: [DelinquencyAgingBucketDto] }) aging!: DelinquencyAgingBucketDto[];
+  @ApiProperty({ type: [DelinquencySuspensionItemDto] }) items!: DelinquencySuspensionItemDto[];
+}
+
+export class DelinquencyPolicyWriteDto {
+  @ApiProperty() @IsInt() @Min(1) @Max(365) thresholdDays!: number;
+  @ApiProperty() @IsInt() @Min(1) expectedVersion!: number;
+  @ApiProperty({ format: 'uuid' }) @IsUUID() requestKey!: string;
+}
+
+export class DelinquencySuspensionActionDto {
+  @ApiProperty() @IsInt() @Min(0) expectedVersion!: number;
+  @ApiProperty({ format: 'uuid' }) @IsUUID() requestKey!: string;
+  @ApiPropertyOptional({ description: '정지·해제 사유. 공백을 제거해 2~200자.' })
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(200)
+  reason?: string;
+}
+
+export class DelinquencySuspensionWriteResultDto {
+  @ApiProperty({ type: DelinquencySuspensionItemDto }) item!: DelinquencySuspensionItemDto;
+  @ApiProperty() replayed!: boolean;
+}
+
+export class DelinquencyReminderBatchItemDto extends DelinquencySuspensionActionDto {
+  @ApiProperty() @IsInt() @Min(1) studentId!: number;
+}
+
+export class DelinquencyReminderBatchDto {
+  @ApiProperty({ type: [DelinquencyReminderBatchItemDto], minItems: 1, maxItems: 100 })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => DelinquencyReminderBatchItemDto)
+  items!: DelinquencyReminderBatchItemDto[];
+}
+
+export class DelinquencyReminderBatchResultDto {
+  @ApiProperty() remindedCount!: number;
+  @ApiProperty() replayedCount!: number;
+  @ApiProperty({ type: [DelinquencySuspensionWriteResultDto] }) items!: DelinquencySuspensionWriteResultDto[];
+}
+
 /* ══ §54 수업료 계산 (C65) ═══════════════════════════════════════════════
  * 원문 슬라이드 54 — 「데이터 RATE(단가), STURATE(학생별 예외), ENR」 ·
  * 「동작 단가 수정 시 전체 재계산」 · 「규칙 그룹 수업은 인원이 늘면 1인 단가가 내려가고
