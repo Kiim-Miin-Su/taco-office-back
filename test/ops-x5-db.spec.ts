@@ -17,6 +17,7 @@
  *   ⑥ §61 기한 상태 칩 낱말 「기한 승인」 (61-3)
  */
 import { DataSource, QueryRunner } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead, Ser } from '../src/entities';
 import { makeOpsService } from './ops-svc';
@@ -90,6 +91,7 @@ d('운영 잔여 물결 (x5)', () => {
 
   it('활동 한 줄은 목록과 같은 모양 — 낱말은 서버 · 날짜 기본 오늘 · 담당 기본 나 · 감사 줄 (59-3)', async () => {
     const row = await svc().createMarketing(MGR, true, {
+      requestKey: randomUUID(),
       title: '  학습실 하루 · 30초 릴스  ', channel: 'instagram', item: 'video',
       url: 'https://instagram.com/p/abc', memo: '  조회 1.2천  ',
     });
@@ -111,15 +113,16 @@ d('운영 잔여 물결 (x5)', () => {
 
   it('담당과 날짜를 고르면 그대로 · 빈 URL · 빈 메모는 비움 (59-3 · N-29 ②)', async () => {
     const row = await svc().createMarketing(CEO, true, {
+      requestKey: randomUUID(),
       title: '검색광고 · 대치 국제학교 키워드', channel: 'naver_ad', item: 'ad', url: '   ', onDate: day(-2), byId: MGR, memo: '   ',
     });
     expect(row).toMatchObject({ byId: MGR, onDate: day(-2), url: null, channelLabel: '네이버 광고', itemLabel: '광고 집행', memo: null });
   });
 
   it('새로 적을 때는 원문 넷 · 넷만 고른다 — 옛 코드(`naver` · `flyer` …)는 읽히기만 한다 (W11 · N-29 ①)', async () => {
-    await expect(svc().createMarketing(CEO, true, { title: '옛 채널', channel: 'naver', item: 'post' }))
+    await expect(svc().createMarketing(CEO, true, { requestKey: randomUUID(), title: '옛 채널', channel: 'naver', item: 'post' }))
       .rejects.toMatchObject({ response: { code: 'MKT_WORD_UNKNOWN' } });
-    await expect(svc().createMarketing(CEO, true, { title: '옛 항목', channel: 'naver_blog', item: 'blog' }))
+    await expect(svc().createMarketing(CEO, true, { requestKey: randomUUID(), title: '옛 항목', channel: 'naver_blog', item: 'blog' }))
       .rejects.toMatchObject({ response: { code: 'MKT_WORD_UNKNOWN' } });
     // 표가 마지막으로 막는다 — 원문 넷과 옛 코드 밖의 낱말은 CHECK 가 거절한다
     await q.query(`SAVEPOINT words`);
@@ -129,11 +132,11 @@ d('운영 잔여 물결 (x5)', () => {
   });
 
   it('빈 제목 · 그만둔 담당 · 없는 담당은 막힌다 — 한 줄도 안 남는다 (59-3)', async () => {
-    await expect(svc().createMarketing(CEO, true, { title: '   ', channel: 'naver_ad', item: 'ad' }))
+    await expect(svc().createMarketing(CEO, true, { requestKey: randomUUID(), title: '   ', channel: 'naver_ad', item: 'ad' }))
       .rejects.toMatchObject({ response: { code: 'MKT_TITLE_REQUIRED' } });
-    await expect(svc().createMarketing(CEO, true, { title: '문의 응대', channel: 'kakao', item: 'reply', byId: GONE }))
+    await expect(svc().createMarketing(CEO, true, { requestKey: randomUUID(), title: '문의 응대', channel: 'kakao', item: 'reply', byId: GONE }))
       .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
-    await expect(svc().createMarketing(CEO, true, { title: '문의 응대', channel: 'kakao', item: 'reply', byId: 9_999_999 }))
+    await expect(svc().createMarketing(CEO, true, { requestKey: randomUUID(), title: '문의 응대', channel: 'kakao', item: 'reply', byId: 9_999_999 }))
       .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
     const [n] = (await q.query(`SELECT count(*)::int AS n FROM mkt`)) as Array<{ n: number }>;
     expect(n.n).toBe(0);
@@ -141,9 +144,11 @@ d('운영 잔여 물결 (x5)', () => {
 
   it('마케팅 활동은 보낸 칸만 고친다 — 담당 검증·앞뒤 감사·목록 재조회가 함께 맞는다', async () => {
     const made = await svc().createMarketing(CEO, true, {
+      requestKey: randomUUID(),
       title: '수정 전', channel: 'kakao', item: 'reply', onDate: day(-2), byId: CEO, memo: '전 메모',
     });
     const changed = await svc().patchMarketing(MGR, true, made.id, {
+      requestKey: randomUUID(), expectedVersion: made.version,
       title: '  수정 후  ', channel: 'naver_blog', item: 'post', byId: MGR, memo: null,
     });
     expect(changed).toMatchObject({
@@ -153,9 +158,57 @@ d('운영 잔여 물결 (x5)', () => {
     expect((await svc().all(CEO, true, true)).marketing.find((m) => m.id === made.id)).toEqual(changed);
     const [log] = await q.query(`SELECT before, after FROM log WHERE entity='MKT' AND entity_id=$1 AND action='edit'`, [made.id]);
     expect(log).toMatchObject({ before: { title: '수정 전', byId: CEO, memo: '전 메모' }, after: { title: '수정 후', byId: MGR, memo: null } });
-    await expect(svc().patchMarketing(CEO, true, made.id, { byId: GONE }))
+    await expect(svc().patchMarketing(CEO, true, made.id, { requestKey: randomUUID(), expectedVersion: changed.version, byId: GONE }))
       .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
     expect((await q.query(`SELECT by_id FROM mkt WHERE id=$1`, [made.id]))[0].by_id).toBe(String(MGR));
+  });
+
+  it('create/patch requestKey 재시도는 한 번만 쓰고 stale version과 key 재사용은 409다', async () => {
+    const createKey = randomUUID();
+    const command = { requestKey: createKey, title: '멱등 활동', channel: 'instagram', item: 'video' };
+    const first = await svc().createMarketing(MGR, true, command);
+    const replay = await svc().createMarketing(MGR, true, command);
+    expect(replay).toEqual(first);
+    expect((await q.query(`SELECT count(*)::int AS n FROM mkt WHERE id=$1`, [first.id]))[0].n).toBe(1);
+    expect((await q.query(`SELECT count(*)::int AS n FROM log WHERE entity='MKT' AND entity_id=$1 AND action='create'`, [first.id]))[0].n).toBe(1);
+    await expect(svc().createMarketing(MGR, true, { ...command, title: '다른 활동' }))
+      .rejects.toMatchObject({ response: { code: 'MKT_REQUEST_REUSED' } });
+
+    const patchKey = randomUUID();
+    const patch = { requestKey: patchKey, expectedVersion: first.version, memo: '한 번만' };
+    const changed = await svc().patchMarketing(MGR, true, first.id, patch);
+    expect(changed.version).toBe(first.version + 1);
+    expect(await svc().patchMarketing(MGR, true, first.id, patch)).toEqual(changed);
+    expect((await q.query(`SELECT count(*)::int AS n FROM log WHERE entity='MKT' AND entity_id=$1 AND action='edit'`, [first.id]))[0].n).toBe(1);
+    await expect(svc().patchMarketing(MGR, true, first.id, {
+      requestKey: randomUUID(), expectedVersion: first.version, title: '낡은 편집',
+    })).rejects.toMatchObject({ response: { code: 'MKT_VERSION_CONFLICT' } });
+
+    await q.query(`SAVEPOINT mkt_direct_update`);
+    await expect(q.query(`UPDATE mkt SET title='직접 덮어쓰기' WHERE id=$1`, [first.id])).rejects.toThrow(/marketing version must advance exactly once/);
+    await q.query(`ROLLBACK TO SAVEPOINT mkt_direct_update`);
+    await q.query(`SAVEPOINT mkt_receipt_mutation`);
+    await expect(q.query(`UPDATE mkt_write_req SET result_version=result_version+1 WHERE request_key=$1`, [patchKey]))
+      .rejects.toThrow(/marketing request receipts are immutable/);
+    await q.query(`ROLLBACK TO SAVEPOINT mkt_receipt_mutation`);
+  });
+
+  it('최근 30일 projection은 PPT 순서·채널별 최신 4건·서버 요약과 비용 권한을 함께 적용한다', async () => {
+    for (let i = 0; i < 5; i += 1) await mkt('naver_blog', 'post', day(-i), i % 2 ? CEO : MGR, `블로그 ${i}`);
+    await mkt('instagram', 'video', day(-1), MGR, '인스타');
+    await mkt('naver_ad', 'ad', day(-2), CEO, '광고');
+    await mkt('kakao', 'reply', day(-3), null, '카카오');
+    await mkt('youtube', 'video', day(-1), MGR, '옛 채널');
+    await mkt('kakao', 'reply', day(-30), MGR, '범위 밖');
+
+    const overview = await svc().marketingOverview(false);
+    expect(overview).toMatchObject({
+      from: day(-29), to: day(0), activityCount: 9, activeChannelCount: 4, channelCount: 4, actorCount: 2,
+      latest: { title: '블로그 0', cost: null }, canSeeAmounts: false,
+    });
+    expect(overview.channels.map((channel) => channel.key)).toEqual(['naver_blog', 'instagram', 'naver_ad', 'kakao']);
+    expect(overview.channels[0]?.latest).toHaveLength(4);
+    expect(overview.channels[0]?.latest.map((row) => row.title)).toEqual(['블로그 0', '블로그 1', '블로그 2', '블로그 3']);
   });
 
   it('관리자 건의 답변은 done·답변자·시각·알림·감사로 남고 강사 재조회에 보인다', async () => {

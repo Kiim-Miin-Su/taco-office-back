@@ -23,6 +23,7 @@ import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import { AppModule } from '../src/app.module';
 import { payoutSheet } from '../src/lib/payout-sheet';
 import { NOTI_TITLE } from '../src/lib/noti';
@@ -69,6 +70,15 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   const api = (m: 'post' | 'patch' | 'get', p: string, t = ceoToken) =>
     request(app.getHttpServer())[m](p).set('Authorization', `Bearer ${t}`).timeout({ response: 10000, deadline: 20000 });
 
+  const applyTeacherChange = async (body: Record<string, unknown>) => {
+    const preview = (await api('post', '/ops/teacher-change/preview').send({ ...body, scope: 'student_classes' }).expect(201)).body;
+    return (await api('post', '/ops/teacher-change').send({
+      ...body,
+      scope: preview.requiresWholeClass ? 'whole_class' : 'student_classes',
+      requestKey: randomUUID(), expectedVersion: preview.version,
+    }).expect(201)).body;
+  };
+
   const makeSeries = async (rrule: string, startMin: number, teacherId: number, students: number[], title: string, subKey = SUB) => {
     const res = await api('post', '/schedule').send({
       kindKey: KIND, subKey, mode: 'offline', fromDate: START, toDate: null, rrule, startMin, endMin: startMin + 60,
@@ -112,6 +122,7 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
   });
 
   async function cleanup() {
+    await q(`DELETE FROM teacher_change_operation WHERE actor_id = ANY($1) OR undone_by = ANY($1)`, [[CEO, T_A, T_B, ADMIN]]);
     const sers = await q<{ id: string }>(
       `SELECT id FROM ser WHERE kind_key = $1 OR teacher_id = ANY($2) OR id IN (SELECT ser_id FROM ser_stu WHERE student_id = ANY($3))`,
       [KIND, [T_A, T_B, ADMIN], [STU1, STU2, STU_OLD]],
@@ -236,7 +247,9 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
       .toEqual({ teacher_id: String(T_A), row_version: 1 });
 
     // 실제 — 규칙이 갈린다 (D-R16): 옛 규칙은 전날까지 · 새 규칙은 새 강사
-    const r = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, cplId: cpl.id, memo: '학부모 요청' }).expect(201)).body;
+    const r = await applyTeacherChange({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, cplId: cpl.id, memo: '학부모 요청' });
+    expect(r).toMatchObject({ scope: 'whole_class', requiresWholeClass: true, actor: { id: CEO, name: '교체대표' }, rowVersion: 1, undoAvailable: true });
+    expect(r.assets).toMatchObject({ series: 1, occurrences: r.occurrences, complaints: 1 });
     expect(r.preview).toBe(false);
     const newId = Number(r.series[0].newSerId);
     serIds.push(newId);
@@ -288,7 +301,7 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(r.steps[5].note).toContain('새 강사 교체B · 원래 강사 교체A');
 
     // D-46 — 학생 없이 그 강사의 나머지 전부 (S2) · 두 번째는 바꿀 것이 없다
-    const all = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2 }).expect(201)).body;
+    const all = await applyTeacherChange({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2 });
     expect(all.series.map((s: { serId: number }) => s.serId)).toEqual([s2]);
     serIds.push(Number(all.series[0].newSerId));
     expect(all.cpl).toBeNull();
@@ -302,7 +315,7 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(s4).toBeGreaterThan(0);
 
     // B 는 그 시각에 제 수업이 있다 → EXCLUDE 409 · 예외 0 · 안내 0
-    const busy = await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'day', date: THU1, serIds: [s3] }).expect(409);
+    const busy = await api('post', '/ops/teacher-change/preview').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'day', date: THU1, serIds: [s3] }).expect(409);
     expect(busy.body.code).toBe('RESOURCE_CONFLICT');
     expect(busy.body.message).toContain(`같은 시간에 강사·강의실·줌이 이미 잡혀 있습니다 — 교체 과목 · ${+THU1.slice(5, 7)}/${+THU1.slice(8, 10)} 15:00–16:00 · 교체B`);
     expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM exc WHERE ser_id = $1`, [s3]))[0]!.n).toBe(0);
@@ -310,7 +323,11 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect((await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: ADMIN, mode: 'day', date: plus(THU1, 2) }).expect(400)).body.code).toBe('NOTHING_TO_CHANGE'); // 토요일 — A 의 수업이 없다
 
     // 관리자가 대강 — 그날 하나만
-    const r = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: ADMIN, mode: 'day', date: THU1 }).expect(201)).body;
+    const body = { fromTeacherId: T_A, toTeacherId: ADMIN, mode: 'day', date: THU1 } as const;
+    const pre = (await api('post', '/ops/teacher-change/preview').send({ ...body, scope: 'student_classes' }).expect(201)).body;
+    const requestKey = randomUUID();
+    const command = { ...body, scope: 'student_classes', requestKey, expectedVersion: pre.version };
+    const r = (await api('post', '/ops/teacher-change').send(command).expect(201)).body;
     expect(r.series).toHaveLength(1);
     expect(r.series[0]).toMatchObject({ serId: s3, newSerId: null, occurrences: 1, firstOn: THU1 });
     expect(r.occurrences).toBe(1);
@@ -330,6 +347,24 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(aSheet.lessons.some((l) => l.serId === s3 && l.onDate === THU2)).toBe(true);
     expect(r.payout).toEqual([{ month, occurrences: 1, fromConfirmed: false, toConfirmed: false }]);
     expect(r.steps[0].note).toContain('이날만 대강');
+
+    // same-key retry는 같은 receipt로 수렴하고, 명단이 바뀐 오래된 preview는 409 뒤 어느 쓰기도 하지 않는다.
+    expect((await api('post', '/ops/teacher-change').send(command).expect(201)).body).toEqual(r);
+    const stalePreview = (await api('post', '/ops/teacher-change/preview').send({ ...body, date: THU2, serIds: [s3], scope: 'student_classes' }).expect(201)).body;
+    await q(`INSERT INTO ser_stu(ser_id,student_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [s3, STU2]);
+    const stale = await api('post', '/ops/teacher-change').send({
+      ...body, date: THU2, serIds: [s3], scope: 'whole_class', requestKey: randomUUID(), expectedVersion: stalePreview.version,
+    }).expect(409);
+    expect(stale.body.code).toBe('TEACHER_CHANGE_VERSION_CONFLICT');
+    await q(`DELETE FROM ser_stu WHERE ser_id=$1 AND student_id=$2`, [s3, STU2]);
+
+    // 교체 작업 원장의 version으로 일정·미발송 안내를 한 transaction에서 되돌린다.
+    const undone = (await api('post', `/ops/teacher-change/${requestKey}/undo`).send({ expectedVersion: 1 }).expect(201)).body;
+    expect(undone).toMatchObject({ requestKey, rowVersion: 2, state: 'undone', actor: { id: CEO, name: '교체대표' } });
+    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM exc WHERE ser_id=$1`, [s3]))[0]!.n).toBe(0);
+    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM guide WHERE ser_id=$1 AND reason='teacher_change'`, [s3]))[0]!.n).toBe(0);
+    expect((await q<{ n: number }>(`SELECT count(*)::int AS n FROM pnoti WHERE ser_id=$1`, [s3]))[0]!.n).toBe(0);
+    expect((await api('post', `/ops/teacher-change/${requestKey}/undo`).send({ expectedVersion: 2 }).expect(409)).body.code).toBe('TEACHER_CHANGE_ALREADY_UNDONE');
   });
 
   /* ── ④ CR-BE-01 — 옮긴 회차의 명단과 교재는 같은 기준일이다 ─────────────── */
@@ -406,7 +441,7 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
     expect(await snapshot()).toEqual(before);
 
     // 일치 — 같은 학생을 함께 보내면 그대로 성공한다(컴플레인의 학생으로 고정)
-    const r = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: TUE, serIds: [s7], cplId: cpl.id, studentId: STU1 }).expect(201)).body;
+    const r = await applyTeacherChange({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: TUE, serIds: [s7], cplId: cpl.id, studentId: STU1 });
     expect(r.series.map((s: { serId: number }) => s.serId)).toEqual([s7]);
     serIds.push(Number(r.series[0].newSerId));
     expect(r.cpl).toMatchObject({ id: cpl.id, stage: 'acting', teacherChanged: true });

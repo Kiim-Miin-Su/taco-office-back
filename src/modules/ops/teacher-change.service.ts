@@ -23,7 +23,8 @@
  *   CR-BE-02 · 학생 A 의 `cplId` 와 학생 B 의 `studentId` 를 함께 보내면 B 의 수업을 바꾸면서 A 의 컴플레인을 완료 처리할 수 있었다.
  *     컴플레인에 학생이 있으면 대상은 **그 학생으로 고정**하고, 다른 학생을 함께 보낸 요청은 어느 쓰기도 하기 전에 400 `CPL_STUDENT_MISMATCH` 로 거절한다.
  */
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { DataSource, EntityManager, QueryRunner } from 'typeorm';
 import { ruleLabel } from '../../lib/recurrence';
 import { NOTI_TITLE } from '../../lib/noti';
@@ -34,7 +35,11 @@ import type { UnavWarnDto } from '../schedule/schedule.dto';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import { histSql } from '../../lib/history';
-import type { TcBookDto, TcPayoutMonthDto, TcSeriesDto, TcStaffDto, TcStepDto, TeacherChangeDto, TeacherChangeResultDto } from './teacher-change.dto';
+import { todayKst } from '../../lib/kst';
+import type {
+  TcBookDto, TcPayoutMonthDto, TcSeriesDto, TcStaffDto, TcStepDto, TeacherChangeDto, TeacherChangeResultDto,
+  TeacherChangeUndoResultDto,
+} from './teacher-change.dto';
 
 class PreviewRollback extends Error {
   constructor(public readonly result: TeacherChangeResultDto) { super('preview'); }
@@ -59,6 +64,23 @@ interface BookAssignmentRow {
   row_version: number;
 }
 
+interface TeacherChangeUndoPayload {
+  scheduleTokens: string[];
+  guideIds: number[];
+  parentNoticeIds: number[];
+  notificationIds: number[];
+  books: Array<{ issueId: number; fromTeacherId: number; toTeacherId: number; appliedVersion: number }>;
+  complaint: null | {
+    id: number;
+    before: { stage: string; teacherChanged: boolean; ownerId: number | null; action: string | null };
+    after: { stage: string; teacherChanged: boolean; ownerId: number | null; action: string | null };
+  };
+}
+
+interface TeacherChangeWork { result: TeacherChangeResultDto; undo: TeacherChangeUndoPayload }
+
+const sha256 = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
 @Injectable()
 export class TeacherChangeService {
   constructor(
@@ -70,16 +92,150 @@ export class TeacherChangeService {
   preview(userId: number, dto: TeacherChangeDto): Promise<TeacherChangeResultDto> { return this.run(userId, dto, true); }
   apply(userId: number, dto: TeacherChangeDto): Promise<TeacherChangeResultDto> { return this.run(userId, dto, false); }
 
+  async undo(userId: number, requestKey: string, expectedVersion: number): Promise<TeacherChangeUndoResultDto> {
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      await lockKinderRosterPolicyWrite(q);
+      const [operation] = (await q.manager.query(
+        `SELECT actor_id,state,row_version,undo_payload FROM teacher_change_operation WHERE request_key=$1 FOR UPDATE`,
+        [requestKey],
+      )) as Array<{ actor_id: string; state: string; row_version: number; undo_payload: TeacherChangeUndoPayload }>;
+      if (!operation) throw new NotFoundException({ code: 'TEACHER_CHANGE_NOT_FOUND', message: '강사 교체 작업을 찾을 수 없습니다' });
+      if (Number(operation.actor_id) !== userId) {
+        throw new ForbiddenException({ code: 'TEACHER_CHANGE_UNDO_ACTOR', message: '강사 교체를 실행한 관리자만 실행 취소할 수 있습니다' });
+      }
+      if (Number(operation.row_version) !== expectedVersion) {
+        throw new ConflictException({
+          code: 'TEACHER_CHANGE_UNDO_VERSION_CONFLICT', message: '강사 교체 작업 상태가 바뀌었습니다. 다시 읽어 주세요',
+          expectedVersion, actualVersion: Number(operation.row_version),
+        });
+      }
+      if (operation.state === 'undone') {
+        throw new ConflictException({ code: 'TEACHER_CHANGE_ALREADY_UNDONE', message: '이미 실행 취소한 강사 교체입니다' });
+      }
+      const payload = operation.undo_payload;
+      if (payload.parentNoticeIds.length) {
+        const [sent] = (await q.manager.query(
+          `SELECT id FROM pnoti WHERE id=ANY($1) AND sent_at IS NOT NULL LIMIT 1`, [payload.parentNoticeIds],
+        )) as Array<{ id: string }>;
+        if (sent) throw new ConflictException({ code: 'TEACHER_CHANGE_UNDO_DELIVERED', message: '학부모 안내가 이미 발송되어 교체를 실행 취소할 수 없습니다' });
+      }
+      if (payload.guideIds.length) {
+        const [changed] = (await q.manager.query(
+          `SELECT id FROM guide WHERE id=ANY($1) AND state<>'draft'::guide_state_t LIMIT 1`, [payload.guideIds],
+        )) as Array<{ id: string }>;
+        if (changed) throw new ConflictException({ code: 'TEACHER_CHANGE_UNDO_GUIDE_CHANGED', message: '교체 안내 초안이 이미 수정되거나 발송되어 실행 취소할 수 없습니다' });
+      }
+      for (const book of payload.books) {
+        const [current] = (await q.manager.query(
+          `SELECT teacher_id,row_version FROM issue WHERE id=$1 FOR UPDATE`, [book.issueId],
+        )) as Array<{ teacher_id: string | null; row_version: number }>;
+        if (!current || Number(current.teacher_id) !== book.toTeacherId || Number(current.row_version) !== book.appliedVersion) {
+          throw new ConflictException({ code: 'TEACHER_CHANGE_UNDO_BOOK_CHANGED', message: '교체 뒤 교재 담당이 다시 바뀌어 실행 취소할 수 없습니다', issueId: book.issueId });
+        }
+      }
+      if (payload.complaint) {
+        const [current] = (await q.manager.query(
+          `SELECT stage,teacher_changed,owner_id,action FROM cpl WHERE id=$1 FOR UPDATE`, [payload.complaint.id],
+        )) as Array<{ stage: string; teacher_changed: boolean; owner_id: string | null; action: string | null }>;
+        const normalized = current ? {
+          stage: current.stage, teacherChanged: Boolean(current.teacher_changed),
+          ownerId: current.owner_id == null ? null : Number(current.owner_id), action: current.action,
+        } : null;
+        if (JSON.stringify(normalized) !== JSON.stringify(payload.complaint.after)) {
+          throw new ConflictException({ code: 'TEACHER_CHANGE_UNDO_COMPLAINT_CHANGED', message: '교체 뒤 컴플레인이 다시 바뀌어 실행 취소할 수 없습니다' });
+        }
+      }
+
+      if (payload.parentNoticeIds.length) await q.manager.query(`DELETE FROM pnoti WHERE id=ANY($1)`, [payload.parentNoticeIds]);
+      if (payload.guideIds.length) await q.manager.query(`DELETE FROM guide WHERE id=ANY($1)`, [payload.guideIds]);
+      for (const book of payload.books) {
+        await q.manager.query(`UPDATE issue SET teacher_id=$2,row_version=row_version+1 WHERE id=$1`, [book.issueId, book.fromTeacherId]);
+        await q.manager.query(histSql(), ['issue', book.issueId, 'teacher_swap_undo', userId]);
+        await q.manager.query(
+          `INSERT INTO log(actor_id,entity,entity_id,action,before,after) VALUES($1,'ISSUE',$2,'teacher-change-undo',$3::jsonb,$4::jsonb)`,
+          [userId, book.issueId, JSON.stringify({ teacherId: book.toTeacherId, rowVersion: book.appliedVersion }),
+            JSON.stringify({ teacherId: book.fromTeacherId, rowVersion: book.appliedVersion + 1, requestKey })],
+        );
+      }
+      if (payload.complaint) {
+        const before = payload.complaint.before;
+        await q.manager.query(
+          `UPDATE cpl SET stage=$2,teacher_changed=$3,owner_id=$4,action=$5 WHERE id=$1`,
+          [payload.complaint.id, before.stage, before.teacherChanged, before.ownerId, before.action],
+        );
+      }
+      for (const token of [...payload.scheduleTokens].reverse()) await this.schedule.undo(userId, token, undefined, q);
+
+      if (payload.notificationIds.length) {
+        await q.manager.query(
+          `INSERT INTO noti(to_id,from_id,body,link,category,title)
+           SELECT DISTINCT n.to_id,$2::bigint,'강사 교체가 실행 취소되었습니다',n.link,'schedule','강사 교체 실행 취소'
+             FROM noti n WHERE n.id=ANY($1)`,
+          [payload.notificationIds, userId],
+        );
+      }
+      await q.manager.query(
+        `INSERT INTO log(actor_id,entity,entity_id,action,before,after)
+          VALUES($1,'TEACHER_CHANGE',$1,'teacher-change-undo',$2::jsonb,$3::jsonb)`,
+        [userId, JSON.stringify({ requestKey, state: 'applied', rowVersion: 1 }), JSON.stringify({ requestKey, state: 'undone', rowVersion: 2 })],
+      );
+      const [changed] = writtenRows<{ row_version: number; undone_at: string }>(await q.manager.query(
+        `UPDATE teacher_change_operation SET state='undone',row_version=2,undone_by=$2,undone_at=now()
+          WHERE request_key=$1 RETURNING row_version,undone_at`,
+        [requestKey, userId],
+      ));
+      const actor = await this.staff(q.manager, userId);
+      await q.commitTransaction();
+      return { requestKey, rowVersion: Number(changed.row_version), state: 'undone', actor: { id: actor.id, name: actor.name }, undoneAt: changed.undone_at };
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      throw error;
+    } finally {
+      await q.release();
+    }
+  }
+
   private async run(userId: number, dto: TeacherChangeDto, preview: boolean): Promise<TeacherChangeResultDto> {
     const q = this.ds.createQueryRunner();
     await q.connect();
     await q.startTransaction();
     try {
       await lockKinderRosterPolicyWrite(q);
-      const result = await this.body(q, userId, dto, preview);
-      if (preview) throw new PreviewRollback(result);
+      const commandFingerprint = sha256({
+        fromTeacherId: dto.fromTeacherId, toTeacherId: dto.toTeacherId, mode: dto.mode, date: dto.date,
+        serIds: dto.serIds ? [...dto.serIds].sort((a, b) => a - b) : null,
+        studentId: dto.studentId ?? null, cplId: dto.cplId ?? null, memo: dto.memo?.trim() ?? null,
+        scope: dto.scope ?? 'student_classes', expectedVersion: dto.expectedVersion ?? null,
+      });
+      if (!preview && dto.requestKey) {
+        await q.manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`teacher-change:${dto.requestKey}`]);
+        const [prior] = (await q.manager.query(
+          `SELECT command_fingerprint,state,result FROM teacher_change_operation WHERE request_key=$1 FOR UPDATE`,
+          [dto.requestKey],
+        )) as Array<{ command_fingerprint: string; state: string; result: TeacherChangeResultDto }>;
+        if (prior) {
+          if (prior.command_fingerprint !== commandFingerprint) {
+            throw new ConflictException({ code: 'TEACHER_CHANGE_REQUEST_REUSED', message: '같은 requestKey를 다른 강사 교체에 다시 사용할 수 없습니다' });
+          }
+          if (prior.state === 'undone') {
+            throw new ConflictException({ code: 'TEACHER_CHANGE_ALREADY_UNDONE', message: '이미 실행 취소한 강사 교체입니다' });
+          }
+          await q.commitTransaction();
+          return prior.result;
+        }
+      }
+      const work = await this.body(q, userId, dto, preview);
+      if (preview) throw new PreviewRollback(work.result);
+      await q.manager.query(
+        `INSERT INTO teacher_change_operation(request_key,actor_id,command_fingerprint,expected_version,result,undo_payload)
+         VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb)`,
+        [dto.requestKey, userId, commandFingerprint, dto.expectedVersion, JSON.stringify(work.result), JSON.stringify(work.undo)],
+      );
       await q.commitTransaction();
-      return result;
+      return work.result;
     } catch (e) {
       await q.rollbackTransaction();
       if (e instanceof PreviewRollback) return e.result;
@@ -89,19 +245,28 @@ export class TeacherChangeService {
     }
   }
 
-  private async body(q: QueryRunner, userId: number, dto: TeacherChangeDto, preview: boolean): Promise<TeacherChangeResultDto> {
+  private async body(q: QueryRunner, userId: number, dto: TeacherChangeDto, preview: boolean): Promise<TeacherChangeWork> {
     const m: EntityManager = q.manager;
+    if (dto.mode === 'day' && dto.date < todayKst()) {
+      throw new BadRequestException({ code: 'TEACHER_CHANGE_PAST_DAY', message: '지난 날짜에는 하루 대강을 만들 수 없습니다' });
+    }
     if (dto.fromTeacherId === dto.toTeacherId) throw new BadRequestException({ code: 'SAME_TEACHER', message: '원래 강사와 새 강사가 같습니다' });
     const from = await this.staff(m, dto.fromTeacherId);
     const to = await this.staff(m, dto.toTeacherId);
+    const actor = await this.staff(m, userId);
     if (!to.active) throw new BadRequestException({ code: 'STAFF_INACTIVE', message: `${to.name} 은(는) 활동 중이 아닙니다 — 그만둔 사람에게 수업을 줄 수 없습니다` });
 
     /* ── 컴플레인 — 있으면 잠그고, 학생이 있으면 그 학생의 수업으로 **고정**한다 (J-97 · CR-BE-02) ── */
-    let cplRow: { id: number; stage: string; studentId: number | null } | null = null;
+    let cplRow: { id: number; stage: string; studentId: number | null; teacherChanged: boolean; ownerId: number | null; action: string | null } | null = null;
     if (dto.cplId) {
-      const [c] = (await m.query(`SELECT id, stage, student_id FROM cpl WHERE id = $1 FOR UPDATE`, [dto.cplId])) as Array<{ id: string; stage: string; student_id: string | null }>;
+      const [c] = (await m.query(`SELECT id,stage,student_id,teacher_changed,owner_id,action FROM cpl WHERE id = $1 FOR UPDATE`, [dto.cplId])) as Array<{
+        id: string; stage: string; student_id: string | null; teacher_changed: boolean; owner_id: string | null; action: string | null;
+      }>;
       if (!c) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
-      cplRow = { id: Number(c.id), stage: c.stage, studentId: c.student_id == null ? null : Number(c.student_id) };
+      cplRow = {
+        id: Number(c.id), stage: c.stage, studentId: c.student_id == null ? null : Number(c.student_id),
+        teacherChanged: Boolean(c.teacher_changed), ownerId: c.owner_id == null ? null : Number(c.owner_id), action: c.action,
+      };
       // 학생 A 의 컴플레인에 학생 B 를 실어 보내면 B 의 수업을 바꾸며 A 의 컴플레인이 완료된다 — 어느 쓰기도 하기 전에 거절한다 (CR-BE-02)
       if (cplRow.studentId != null && dto.studentId != null && dto.studentId !== cplRow.studentId) {
         throw new BadRequestException({
@@ -116,9 +281,33 @@ export class TeacherChangeService {
     /* ── ① 대상 — 그날(day) 또는 그 날부터(from)의 원래 강사 회차 ── */
     const targets = await this.targets(m, dto, from.id, studentId);
     if (!targets.length) {
+      if (!preview && dto.expectedVersion) {
+        throw new ConflictException({ code: 'TEACHER_CHANGE_VERSION_CONFLICT', message: '미리보기 뒤 대상 수업이 바뀌었습니다. 다시 미리 봐 주세요' });
+      }
       throw new BadRequestException({
         code: 'NOTHING_TO_CHANGE',
         message: dto.mode === 'day' ? `${md(dto.date)} 에 ${from.name} 의 수업이 없습니다` : `${md(dto.date)} 부터 ${from.name} 이(가) 맡은 수업이 없습니다`,
+      });
+    }
+    const inspection = await this.inspectTargets(m, targets, dto, from.id, to.id, cplRow);
+    if (!preview && (!dto.requestKey || !dto.expectedVersion)) {
+      throw new BadRequestException({ code: 'TEACHER_CHANGE_RECEIPT_REQUIRED', message: '미리보기의 version과 새 requestKey로 교체를 확정해 주세요' });
+    }
+    const scope = dto.scope ?? 'student_classes';
+    const requiresWholeClass = studentId !== null && inspection.rosters.some((roster) => roster.studentIds.length > 1);
+    if (!preview && requiresWholeClass && scope !== 'whole_class') {
+      throw new ConflictException({
+        code: 'TEACHER_CHANGE_WHOLE_CLASS_REQUIRED',
+        message: '그룹 수업은 학생 한 명만 떼어 교체할 수 없습니다. 미리 본 동일 명단의 반 전체 교체를 확인해 주세요',
+        series: inspection.rosters.filter((roster) => roster.studentIds.length > 1),
+      });
+    }
+    if (!preview && dto.expectedVersion !== inspection.version) {
+      throw new ConflictException({
+        code: 'TEACHER_CHANGE_VERSION_CONFLICT',
+        message: '미리보기 뒤 대상 수업·명단·교재가 바뀌었습니다. 다시 미리 봐 주세요',
+        expectedVersion: dto.expectedVersion,
+        actualVersion: inspection.version,
       });
     }
     const unavailable: UnavWarnDto[] = [];
@@ -126,6 +315,7 @@ export class TeacherChangeService {
     /** 규칙마다 실제로 살아 있는 규칙(from 이면 갈라진 새 규칙)과 **명단 기준일 하나** — 명단·학부모 안내·교재가 전부 이것을 본다 (CR-BE-01) */
     const live: LiveTarget[] = [];
     const touchedAll: number[] = [];
+    const scheduleTokens: string[] = [];
     for (const t of targets) {
       let written;
       try {
@@ -148,6 +338,7 @@ export class TeacherChangeService {
         throw e;
       }
       unavailable.push(...written.unavailable);
+      if (written.undoToken) scheduleTokens.push(written.undoToken);
       const newSerId = written.serIds.find((id) => id !== t.serId) ?? null;
       const liveId = newSerId ?? t.serId;
       const rosterDate = this.rosterDate(t);
@@ -177,6 +368,7 @@ export class TeacherChangeService {
 
     /* ── ③ 학부모 안내 (PNOTI parent) — 첫 바뀐 회차에 학생마다 한 줄 · 발송처는 아직 없다 (N-42) ── */
     let parentNotices = 0;
+    const parentNoticeIds: number[] = [];
     for (const [i, s] of series.entries()) {
       const { liveId, rosterDate } = live[i]!;
       const label = s.subName ?? (s.title || s.kindName);
@@ -192,6 +384,7 @@ export class TeacherChangeService {
         [liveId, rosterDate, body],
       )) as Array<{ id: string }>;
       parentNotices += rows.length;
+      parentNoticeIds.push(...rows.map((row) => Number(row.id)));
     }
 
     /* ── ④ 교재 이관 — 이전 강사 소유 배정만 · 다른 강사/legacy 배정은 추정하지 않는다 ── */
@@ -220,6 +413,7 @@ export class TeacherChangeService {
     const what = `${series.map((s) => s.subName ?? (s.title || s.kindName)).filter((v, i, a) => a.indexOf(v) === i).join(' · ')}${studentNames.length ? ` (${studentNames.slice(0, 3).join(' · ')}${studentNames.length > 3 ? ` 외 ${studentNames.length - 3}명` : ''})` : ''}`;
     const when = dto.mode === 'day' ? `${md(dto.date)} 하루 대강` : `${md(dto.date)}부터`;
     let notifiedTeachers = 0;
+    const notificationIds: number[] = [];
     const link = `/schedule?date=${dto.date}`;
     for (const [who, text, title] of [
       // 새 강사에게는 **누구에게서** 넘겨받는지도 적는다 — 「이전 강사 → 교체 강사」 readback 의 첫 줄 (TEACHER-LINEAGE 2026-09-29)
@@ -232,6 +426,7 @@ export class TeacherChangeService {
         [who, userId, text, link, title],
       )) as Array<{ id: string }>;
       notifiedTeachers += rows.length;
+      notificationIds.push(...rows.map((row) => Number(row.id)));
     }
     const staffRows = (await m.query(
       `INSERT INTO noti (to_id, from_id, body, link, category, title)
@@ -240,9 +435,11 @@ export class TeacherChangeService {
         cplRow ? '/ops?tab=complaint' : link, from.id, to.id, NOTI_TITLE.teacherChange],
     )) as Array<{ id: string }>;
     const notifiedStaff = staffRows.length;
+    notificationIds.push(...staffRows.map((row) => Number(row.id)));
 
     /* ── 컴플레인 도장 · LOG ── */
     let cpl: TeacherChangeResultDto['cpl'] = null;
+    let complaintUndo: TeacherChangeUndoPayload['complaint'] = null;
     if (cplRow) {
       // UPDATE … RETURNING 은 [rows, affected] 로 온다 (C85-a 의 그 함정) — writtenRows 로 편다
       const [row] = writtenRows<{ stage: string }>(await m.query(
@@ -254,6 +451,17 @@ export class TeacherChangeService {
       ));
       if (!row) throw new NotFoundException({ code: 'CPL_NOT_FOUND', message: '컴플레인을 찾을 수 없습니다' });
       cpl = { id: cplRow.id, stage: row.stage, teacherChanged: true };
+      const [afterComplaint] = (await m.query(
+        `SELECT stage,teacher_changed,owner_id,action FROM cpl WHERE id=$1`, [cplRow.id],
+      )) as Array<{ stage: string; teacher_changed: boolean; owner_id: string | null; action: string | null }>;
+      complaintUndo = {
+        id: cplRow.id,
+        before: { stage: cplRow.stage, teacherChanged: cplRow.teacherChanged, ownerId: cplRow.ownerId, action: cplRow.action },
+        after: {
+          stage: afterComplaint.stage, teacherChanged: Boolean(afterComplaint.teacher_changed),
+          ownerId: afterComplaint.owner_id == null ? null : Number(afterComplaint.owner_id), action: afterComplaint.action,
+        },
+      };
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'CPL',$2,'teacher-change',$3::jsonb,$4::jsonb)`,
         [userId, cplRow.id, JSON.stringify({ stage: cplRow.stage, teacherChanged: false }), JSON.stringify({ stage: row.stage, teacherChanged: true, from: from.id, to: to.id, date: dto.date, mode: dto.mode, preview })],
@@ -279,13 +487,93 @@ export class TeacherChangeService {
       { key: 'payout', label: '정산 시수', count: occurrences, note: payout.length ? payout.map((p) => `${+p.month.slice(5)}월 ${p.occurrences}회 → ${to.name}${p.fromConfirmed || p.toConfirmed ? ' (확정된 달 — 되돌리지 않습니다)' : ''}`).join(' · ') : '옮겨 간 회차가 없습니다' },
       { key: 'notify', label: '선생님 전달', count: notifiedTeachers, note: `새 강사 ${to.name}${from.active && from.id !== userId ? ` · 원래 강사 ${from.name}` : ''} · 관리자 ${notifiedStaff}명` },
     ];
-    return { preview, mode: dto.mode, date: dto.date, fromTeacher: from, toTeacher: to, series, occurrences, guideDrafts: guideIds.length, parentNotices, books: bookRows, payout, notifiedTeachers, notifiedStaff, unavailable, cpl, steps };
+    const result: TeacherChangeResultDto = {
+      preview, mode: dto.mode, date: dto.date, fromTeacher: from, toTeacher: to, series, occurrences,
+      guideDrafts: guideIds.length, parentNotices, books: bookRows, payout, notifiedTeachers, notifiedStaff, unavailable, cpl, steps,
+      scope, requiresWholeClass, version: inspection.version, actor: { id: actor.id, name: actor.name },
+      assets: {
+        series: series.length, occurrences, guideDrafts: guideIds.length, parentNotices, books: bookRows.length,
+        notifications: notifiedTeachers + notifiedStaff, complaints: cpl ? 1 : 0,
+      },
+      requestKey: preview ? null : dto.requestKey!, rowVersion: preview ? null : 1, undoAvailable: !preview,
+    };
+    return {
+      result,
+      undo: {
+        scheduleTokens,
+        guideIds: guideIds.map(Number),
+        parentNoticeIds,
+        notificationIds,
+        books: bookRows.filter((book) => book.transferred).map((book) => ({
+          issueId: book.issueId, fromTeacherId: from.id, toTeacherId: to.id,
+          appliedVersion: inspection.bookVersions.get(book.issueId)! + 1,
+        })),
+        complaint: complaintUndo,
+      },
+    };
   }
 
   private async staff(m: EntityManager, id: number): Promise<TcStaffDto> {
     const [st] = (await m.query(`SELECT id, name, active FROM staff WHERE id = $1`, [id])) as Array<{ id: string; name: string; active: boolean }>;
     if (!st) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: `구성원 ${id} 을(를) 찾을 수 없습니다` });
     return { id: Number(st.id), name: st.name, active: Boolean(st.active) };
+  }
+
+  /**
+   * BO-12C 권고안: preview/apply가 같은 SER 번호만 비교하면 명단·회차 예외·교재 담당 변경을 놓친다.
+   * 그래서 실제 교체 입력이 읽는 수업/회차/실효 명단/활성 교재 version/컴플레인 상태를 정렬한 뒤 하나의 불투명 sha256으로 묶는다.
+   * 정책을 바꿀 때는 DTO/OpenAPI/generated Front, TeacherChangeWizard, operation migration/DBML, BO-12C 시나리오와 portfolio를 함께 갱신한다.
+   */
+  private async inspectTargets(
+    m: EntityManager,
+    targets: Target[],
+    dto: TeacherChangeDto,
+    fromId: number,
+    toId: number,
+    cpl: { id: number; stage: string; studentId: number | null; teacherChanged: boolean; ownerId: number | null; action: string | null } | null,
+  ): Promise<{
+    version: string;
+    rosters: Array<{ serId: number; onDate: string; studentIds: number[] }>;
+    bookVersions: Map<number, number>;
+  }> {
+    const rosters: Array<{ serId: number; onDate: string; studentIds: number[] }> = [];
+    for (const target of targets) {
+      const rows = (await m.query(
+        `SELECT ss.student_id FROM ser_stu ss WHERE ss.ser_id=$1 AND ${serStuOn('ss', '$2::date')} ORDER BY ss.student_id`,
+        [target.serId, target.onDate],
+      )) as Array<{ student_id: string }>;
+      rosters.push({ serId: target.serId, onDate: target.onDate, studentIds: rows.map((row) => Number(row.student_id)) });
+    }
+    const studentIds = [...new Set(rosters.flatMap((roster) => roster.studentIds))].sort((a, b) => a - b);
+    const subKeys = [...new Set(targets.flatMap((target) => target.subKey ? [target.subKey] : []))].sort();
+    const books = studentIds.length && subKeys.length
+      ? (await m.query(
+        `SELECT id,student_id,teacher_id,sub_key,state,row_version FROM issue
+          WHERE student_id=ANY($1) AND sub_key=ANY($2) AND ${issueActiveSql('issue')} ORDER BY id`,
+        [studentIds, subKeys],
+      )) as Array<{ id: string; student_id: string; teacher_id: string | null; sub_key: string; state: string; row_version: number }>
+      : [];
+    const bookVersions = new Map(books.map((book) => [Number(book.id), Number(book.row_version)]));
+    const occurrenceRows = (await m.query(
+      `SELECT o.ser_id,to_char(o.on_date,'YYYY-MM-DD') AS on_date,to_char(${kstDateOf('lower(o.span)')},'YYYY-MM-DD') AS cal_date,
+              o.canceled,${TEACHER_OF} AS teacher_id,s.teacher_id AS series_teacher_id,s.from_date,s.to_date,s.rrule,s.start_min,s.end_min
+         FROM ser_occ o JOIN ser s ON s.id=o.ser_id
+        WHERE (o.ser_id,o.on_date) IN (SELECT x.ser_id,x.on_date FROM jsonb_to_recordset($1::jsonb) x(ser_id bigint,on_date date))
+        ORDER BY o.ser_id,o.on_date`,
+      [JSON.stringify(targets.map((target) => ({ ser_id: target.serId, on_date: target.onDate })))],
+    )) as unknown[];
+    const state = {
+      command: { fromId, toId, mode: dto.mode, date: dto.date, serIds: dto.serIds ? [...dto.serIds].sort((a, b) => a - b) : null },
+      targets: targets.map((target) => ({ ...target })),
+      occurrences: occurrenceRows,
+      rosters,
+      books: books.map((book) => ({
+        id: Number(book.id), studentId: Number(book.student_id), teacherId: book.teacher_id == null ? null : Number(book.teacher_id),
+        subKey: book.sub_key, state: book.state, version: Number(book.row_version),
+      })),
+      complaint: cpl,
+    };
+    return { version: sha256(state), rosters, bookVersions };
   }
 
   /**

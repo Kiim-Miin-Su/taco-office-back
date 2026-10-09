@@ -173,6 +173,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
   });
 
   async function cleanup() {
+    await q(`DELETE FROM teacher_change_operation WHERE actor_id = ANY($1) OR undone_by = ANY($1)`, [[CEO, T_A, T_B]]);
     const sers = await q<{ id: string }>(
       `SELECT id FROM ser WHERE kind_key = $1 OR teacher_id = ANY($2) OR id IN (SELECT ser_id FROM ser_stu WHERE student_id = ANY($3))`,
       [KIND, [T_A, T_B], [STU1, STU2]],
@@ -226,7 +227,11 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
     )).toEqual([{ teacher_id: String(T_A), row_version: 1 }]);
     expect(await q(`SELECT id FROM hist WHERE entity='issue' AND ref_id=$1 AND action='teacher_swap'`, [transferIssueId])).toEqual([]);
 
-    const r = (await api('post', '/ops/teacher-change').send({ fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, serIds: [s1], memo: '학부모 요청' }).expect(201)).body;
+    const command = { fromTeacherId: T_A, toTeacherId: T_B, mode: 'from', date: MON2, serIds: [s1], memo: '학부모 요청', scope: 'student_classes' } as const;
+    const preview = (await api('post', '/ops/teacher-change/preview').send(command).expect(201)).body;
+    const r = (await api('post', '/ops/teacher-change').send({
+      ...command, requestKey: randomUUID(), expectedVersion: preview.version,
+    }).expect(201)).body;
     newS1 = Number(r.series[0].newSerId);
     serIds.push(newS1);
     expect(r.guideDrafts).toBe(2);

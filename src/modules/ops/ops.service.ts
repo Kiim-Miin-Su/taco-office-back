@@ -5,13 +5,14 @@
  */
 
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { lockKinderRosterPolicyWrite } from '../../lib/kinder-roster.db';
 import { ZoomService } from '../zoom/zoom.service';
-import { daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
+import { addDays, daysUntil, overdueDays as daysSince, todayKst } from '../../lib/kst';
 import { kstAt } from '../../lib/sql';
 import { NOTI_TITLE } from '../../lib/noti';
 import { todoGo, todoLessonGo, todoSourceLabel } from '../../lib/todo';
@@ -78,12 +79,15 @@ import type {
   MeetingAgendaDto, MeetingAgendaImportDto, MeetingAgendaImportResultDto, MeetingAgendaWriteDto,
   MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MeetingTaskDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, MeetingDto, OpsCountDto, OpsQueryDto,
-  MarketingCreateDto, MarketingDto,
+  MarketingCreateDto, MarketingDto, MarketingOverviewDto,
   MarketingPatchDto, PlanOwnerPatchDto, SuggestionDto, SuggestionReplyDto,
   PlanCreateDto, PlanCreateResultDto,
 } from './ops.dto';
 
 type R = Record<string, unknown>;
+
+const commandSha256 = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const MARKETING_BOARD_ORDER = ['naver_blog', 'instagram', 'naver_ad', 'kakao'] as const;
 
 /**
  * 원본 §61 rework 카드의 **「보완 N」** — 세는 칸을 파지 않고 **감사 줄을 센다** (S6 · D-R22).
@@ -381,7 +385,7 @@ export class OpsService {
    */
   private async marketingRows(where: string, params: unknown[], canSeeAmounts: boolean): Promise<MarketingDto[]> {
     return (await this.q(
-      `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.memo, m.by_id, b.name AS by_name,
+      `SELECT m.id, m.channel, m.item, m.url, m.result, m.title, m.memo, m.by_id, m.row_version, b.name AS by_name,
               to_char(m.on_date,'YYYY-MM-DD') AS on_date
          FROM mkt m LEFT JOIN staff b ON b.id = m.by_id
         ${where}
@@ -394,7 +398,7 @@ export class OpsService {
       const item = String(r.item);
       const title = (r.title as string) ?? null;
       return {
-        id: Number(r.id), channel, item, url: (r.url as string) ?? null,
+        id: Number(r.id), channel, item, url: (r.url as string) ?? null, version: Number(r.row_version ?? 1),
         // 낱말은 여기서 한 번만 만든다 — 화면이 코드를 한글로 옮기지 않는다 (D-R18 · C53)
         channelLabel: mktChannelLabel(channel), itemLabel: mktItemLabel(item),
         title, name: mktTitle(title, channel, item),
@@ -409,6 +413,34 @@ export class OpsService {
         costPerEnroll: canSeeAmounts && enrolled > 0 ? Math.round(cost / enrolled) : null,
       };
     });
+  }
+
+  /**
+   * BO-12D 권고안: 관리자 수정사항 p117의 최근 30일 네 채널 보드는 서버 projection을 정본으로 쓴다.
+   * 기간·정렬·4건 제한을 화면에 복제하지 않으며, 보드 순서는 원본 화면(블로그→인스타→광고→카카오)을 보존한다.
+   */
+  async marketingOverview(canSeeAmounts: boolean): Promise<MarketingOverviewDto> {
+    const to = todayKst();
+    const from = addDays(to, -29);
+    const rows = await this.marketingRows(`WHERE m.on_date BETWEEN $1::date AND $2::date`, [from, to], canSeeAmounts);
+    const latestFirst = [...rows].sort((a, b) => (b.onDate ?? '').localeCompare(a.onDate ?? '') || b.id - a.id);
+    const channels = MARKETING_BOARD_ORDER.map((key) => ({
+      key,
+      label: MKT_CHANNEL_LABEL[key],
+      latest: latestFirst.filter((row) => row.channel === key).slice(0, 4),
+    }));
+    const activeKeys = new Set(latestFirst.filter((row) => MARKETING_BOARD_ORDER.includes(row.channel as typeof MARKETING_BOARD_ORDER[number])).map((row) => row.channel));
+    return {
+      from,
+      to,
+      activityCount: latestFirst.length,
+      activeChannelCount: activeKeys.size,
+      channelCount: MARKETING_BOARD_ORDER.length,
+      actorCount: new Set(latestFirst.flatMap((row) => row.byId == null ? [] : [row.byId])).size,
+      latest: latestFirst[0] ?? null,
+      channels,
+      canSeeAmounts,
+    };
   }
 
   /** 건의 목록과 답변 쓰기 응답의 단일 읽기 모양. 강사 화면과 같은 답변자·날짜를 싣는다. */
@@ -461,7 +493,23 @@ export class OpsService {
     const onDate = dto.onDate ?? todayKst();
     const url = dto.url?.trim() ? dto.url.trim() : null;
     const memo = dto.memo?.trim() ? dto.memo.trim() : null;
+    const fingerprint = commandSha256({ action: 'create', title, channel: dto.channel, item: dto.item, url, onDate, byId, memo });
     const id = await this.lead.manager.transaction(async (em) => {
+      await em.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`marketing:${dto.requestKey}`]);
+      const [prior] = (await em.query(
+        `SELECT mkt_id,action,command_fingerprint,result_version,actor_id FROM mkt_write_req WHERE request_key=$1 FOR UPDATE`,
+        [dto.requestKey],
+      )) as Array<{ mkt_id: string; action: string; command_fingerprint: string; result_version: number; actor_id: string }>;
+      if (prior) {
+        if (prior.action !== 'create' || prior.command_fingerprint !== fingerprint || Number(prior.actor_id) !== viewerId) {
+          throw new ConflictException({ code: 'MKT_REQUEST_REUSED', message: '이미 다른 마케팅 저장에 사용한 요청 키입니다' });
+        }
+        const [current] = await em.query(`SELECT row_version FROM mkt WHERE id=$1 FOR SHARE`, [prior.mkt_id]) as Array<{ row_version: number }>;
+        if (!current || Number(current.row_version) !== Number(prior.result_version)) {
+          throw new ConflictException({ code: 'MKT_REQUEST_STALE', message: '재시도한 뒤 활동이 다시 변경되었습니다. 최신 내용을 불러와 주세요' });
+        }
+        return Number(prior.mkt_id);
+      }
       // 담당은 같은 트랜잭션에서 잠가 읽는다 — 확인과 저장 사이에 「사용 중지」가 커밋되지 않게 (CR-BE-04 · lib/staff-lock)
       const by = await lockActiveStaff(em, byId);
       if (!by) throw new NotFoundException({ code: 'STAFF_NOT_FOUND', message: '그 담당자를 찾을 수 없습니다' });
@@ -473,6 +521,11 @@ export class OpsService {
         `INSERT INTO log (actor_id, entity, entity_id, action, after) VALUES ($1, 'MKT', $2, 'create', $3::jsonb)`,
         [viewerId, row.id, JSON.stringify({ title, channel: dto.channel, item: dto.item, url, onDate, byId, memo })],
       );
+      await em.query(
+        `INSERT INTO mkt_write_req(request_key,mkt_id,action,command_fingerprint,result_version,actor_id)
+         VALUES($1,$2,'create',$3,1,$4)`,
+        [dto.requestKey, row.id, fingerprint, viewerId],
+      );
       return leadId(row.id);
     });
     const [created] = await this.marketingRows('WHERE m.id = $1', [id], canSeeAmounts);
@@ -481,7 +534,8 @@ export class OpsService {
 
   /** §59 활동 수정 — 행 잠금, 앞뒤 감사, 담당 검증을 한 트랜잭션에 묶는다. */
   async patchMarketing(viewerId: number, canSeeAmounts: boolean, id: number, dto: MarketingPatchDto): Promise<MarketingDto> {
-    if (!Object.keys(dto).length) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 내용을 보내 주세요' });
+    const businessKeys = Object.keys(dto).filter((key) => key !== 'requestKey' && key !== 'expectedVersion');
+    if (!businessKeys.length) throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 내용을 보내 주세요' });
     const title = dto.title === undefined ? undefined : dto.title.trim();
     if (dto.title !== undefined && !title) {
       throw new ConflictException({ code: 'MKT_TITLE_REQUIRED', message: '무엇을 했는지 적어 주세요' });
@@ -490,12 +544,38 @@ export class OpsService {
       || (dto.item !== undefined && !MKT_ITEMS.includes(dto.item))) {
       throw new ConflictException({ code: 'MKT_WORD_UNKNOWN', message: '채널과 항목은 목록에서 고르세요' });
     }
+    const normalized = {
+      action: 'patch', id, expectedVersion: dto.expectedVersion,
+      title, channel: dto.channel, item: dto.item,
+      url: dto.url === undefined ? undefined : dto.url?.trim() || null,
+      onDate: dto.onDate, byId: dto.byId,
+      memo: dto.memo === undefined ? undefined : dto.memo?.trim() || null,
+    };
+    const fingerprint = commandSha256(normalized);
     await this.lead.manager.transaction(async (em) => {
+      await em.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`marketing:${dto.requestKey}`]);
+      const [prior] = (await em.query(
+        `SELECT mkt_id,action,command_fingerprint,result_version,actor_id FROM mkt_write_req WHERE request_key=$1 FOR UPDATE`,
+        [dto.requestKey],
+      )) as Array<{ mkt_id: string; action: string; command_fingerprint: string; result_version: number; actor_id: string }>;
+      if (prior) {
+        if (prior.action !== 'patch' || Number(prior.mkt_id) !== id || prior.command_fingerprint !== fingerprint || Number(prior.actor_id) !== viewerId) {
+          throw new ConflictException({ code: 'MKT_REQUEST_REUSED', message: '이미 다른 마케팅 저장에 사용한 요청 키입니다' });
+        }
+        const [current] = await em.query(`SELECT row_version FROM mkt WHERE id=$1 FOR SHARE`, [id]) as Array<{ row_version: number }>;
+        if (!current || Number(current.row_version) !== Number(prior.result_version)) {
+          throw new ConflictException({ code: 'MKT_REQUEST_STALE', message: '재시도한 뒤 활동이 다시 변경되었습니다. 최신 내용을 불러와 주세요' });
+        }
+        return;
+      }
       const [cur] = (await em.query(
-        `SELECT id, title, channel, item, url, to_char(on_date,'YYYY-MM-DD') AS on_date, by_id, memo
+        `SELECT id, title, channel, item, url, to_char(on_date,'YYYY-MM-DD') AS on_date, by_id, memo, row_version
            FROM mkt WHERE id = $1 FOR UPDATE`, [id],
       )) as R[];
       if (!cur) throw new NotFoundException({ code: 'MKT_NOT_FOUND', message: '마케팅 활동을 찾을 수 없습니다' });
+      if (Number(cur.row_version) !== dto.expectedVersion) {
+        throw new ConflictException({ code: 'MKT_VERSION_CONFLICT', message: '다른 사람이 먼저 수정했습니다. 최신 내용을 불러와 다시 시도해 주세요' });
+      }
       if (dto.byId != null) {
         // 활동 중 확인은 잠금과 함께 — 비활성화 UPDATE 와 충돌하는 FOR SHARE (CR-BE-04)
         const by = await lockActiveStaff(em, dto.byId);
@@ -513,6 +593,7 @@ export class OpsService {
       if (dto.onDate !== undefined) put('on_date', dto.onDate ?? null, '::date');
       if (dto.byId !== undefined) put('by_id', dto.byId);
       if (dto.memo !== undefined) put('memo', dto.memo?.trim() || null);
+      sets.push(`row_version = row_version + 1`);
       await em.query(`UPDATE mkt SET ${sets.join(', ')} WHERE id = $1`, params);
       const after = {
         title: title ?? cur.title, channel: dto.channel ?? cur.channel, item: dto.item ?? cur.item,
@@ -528,6 +609,11 @@ export class OpsService {
           title: cur.title, channel: cur.channel, item: cur.item, url: cur.url,
           onDate: cur.on_date, byId: leadId(cur.by_id, true), memo: cur.memo,
         }), JSON.stringify(after)],
+      );
+      await em.query(
+        `INSERT INTO mkt_write_req(request_key,mkt_id,action,command_fingerprint,result_version,actor_id)
+         VALUES($1,$2,'patch',$3,$4,$5)`,
+        [dto.requestKey, id, fingerprint, dto.expectedVersion + 1, viewerId],
       );
     });
     const [updated] = await this.marketingRows('WHERE m.id = $1', [id], canSeeAmounts);

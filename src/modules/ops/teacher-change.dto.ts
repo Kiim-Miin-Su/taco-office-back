@@ -13,13 +13,15 @@
  * 순서대로 부르고 단계마다의 결과를 `steps` 로 돌려준다 — 화면은 체크를 세지 않는다(D-R37). 미리보기는 같은 트랜잭션을 되돌린다.
  */
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, IsArray, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsHash, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { DATE_SCHEMA, IsCalendarDate } from '../../common/validation';
 import { UnavWarnDto } from '../schedule/schedule.dto';
 
 const ID_MAX = Number.MAX_SAFE_INTEGER;
 export const TEACHER_CHANGE_MODES = ['day', 'from'] as const;
 export type TeacherChangeMode = (typeof TEACHER_CHANGE_MODES)[number];
+export const TEACHER_CHANGE_SCOPES = ['student_classes', 'whole_class'] as const;
+export type TeacherChangeScope = (typeof TEACHER_CHANGE_SCOPES)[number];
 
 export class TeacherChangeDto {
   @ApiProperty({ description: '원래 강사 (STAFF) — 퇴사한 강사면 비활성이어도 된다' })
@@ -46,6 +48,35 @@ export class TeacherChangeDto {
 
   @ApiPropertyOptional({ maxLength: 300, description: '알림·안내에 실을 한 줄' })
   @IsOptional() @IsString() @MaxLength(300) memo?: string;
+
+  @ApiPropertyOptional({ enum: TEACHER_CHANGE_SCOPES, description: '그룹 수업 apply는 preview와 같은 명단을 확인한 whole_class가 필수다.' })
+  @IsOptional() @IsIn(TEACHER_CHANGE_SCOPES) scope?: TeacherChangeScope;
+
+  @ApiPropertyOptional({ format: 'uuid', description: 'apply 멱등 키. preview에는 보내지 않는다.' })
+  @IsOptional() @IsUUID('4') requestKey?: string;
+
+  @ApiPropertyOptional({ minLength: 64, maxLength: 64, description: 'preview가 돌려준 대상·명단·자산 상태 버전' })
+  @IsOptional() @IsHash('sha256') expectedVersion?: string;
+}
+
+export class TeacherChangeUndoDto {
+  @ApiProperty({ minimum: 1, description: '적용 결과의 rowVersion' })
+  @IsInt() @Min(1) expectedVersion!: number;
+}
+
+export class TcActorDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
+}
+
+export class TcAssetCountsDto {
+  @ApiProperty() series!: number;
+  @ApiProperty() occurrences!: number;
+  @ApiProperty() guideDrafts!: number;
+  @ApiProperty() parentNotices!: number;
+  @ApiProperty() books!: number;
+  @ApiProperty() notifications!: number;
+  @ApiProperty() complaints!: number;
 }
 
 export class TcStaffDto {
@@ -119,4 +150,20 @@ export class TeacherChangeResultDto {
   @ApiProperty({ type: [UnavWarnDto], description: '새 강사의 불가 시간에 걸치는 회차 — 막지 않고 알린다 (A-07)' }) unavailable!: UnavWarnDto[];
   @ApiPropertyOptional({ type: TcComplaintDto, nullable: true }) cpl!: TcComplaintDto | null;
   @ApiProperty({ type: [TcStepDto], description: '여섯 단계의 결과 — 화면은 이 목록을 체크로 그린다' }) steps!: TcStepDto[];
+  @ApiProperty({ enum: TEACHER_CHANGE_SCOPES }) scope!: TeacherChangeScope;
+  @ApiProperty({ description: '학생 기준 대상 중 그룹 수업이 있어 apply에 whole_class가 필요한가' }) requiresWholeClass!: boolean;
+  @ApiProperty({ minLength: 64, maxLength: 64, description: 'apply의 expectedVersion으로 그대로 보내는 불투명 상태 버전' }) version!: string;
+  @ApiProperty({ type: TcActorDto, description: '실제 HTTP actor' }) actor!: TcActorDto;
+  @ApiProperty({ type: TcAssetCountsDto }) assets!: TcAssetCountsDto;
+  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true, description: 'apply 멱등 키. preview는 null' }) requestKey!: string | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '적용 작업 원장의 version. preview는 null' }) rowVersion!: number | null;
+  @ApiProperty({ description: '현재 결과를 실행 취소할 수 있는가' }) undoAvailable!: boolean;
+}
+
+export class TeacherChangeUndoResultDto {
+  @ApiProperty({ format: 'uuid' }) requestKey!: string;
+  @ApiProperty() rowVersion!: number;
+  @ApiProperty({ enum: ['undone'] }) state!: 'undone';
+  @ApiProperty({ type: TcActorDto }) actor!: TcActorDto;
+  @ApiProperty({ format: 'date-time' }) undoneAt!: string;
 }

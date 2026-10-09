@@ -48,4 +48,8 @@ export class Mkt {
   /** 메모 한 줄 — 원문 §59 카드 제목 아래 「상담 예약 4건 전환」 · 「일 예산 5만 · CTR 3.1%」 (N-29 ② · MMEMO = MKT 의 한 칸) */
   @Column({ type: 'varchar', length: 120, nullable: true })
   memo: string | null;
+
+  /** BO-12D 관리자 동시 편집 방지. UPDATE는 DB trigger가 정확히 +1만 허용한다. */
+  @Column({ type: 'integer', default: 1 })
+  rowVersion: number;
 }

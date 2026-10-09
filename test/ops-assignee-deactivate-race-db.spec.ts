@@ -22,6 +22,7 @@
  * id 로만 지운다(전역 DELETE 없음).
  */
 import { DataSource, QueryRunner } from 'typeorm';
+import { randomUUID } from 'node:crypto';
 import { dataSourceOptions } from '../src/data-source';
 import { Lead } from '../src/entities';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
@@ -151,10 +152,10 @@ d('담당 지정 ↔ 계정 비활성화 경쟁 (CR-BE-04 · lib/staff-lock)', (
   });
 
   it('deactivate-first · 마케팅 담당(수정·등록): 같은 기다림 · 같은 404 · 행은 그대로', async () => {
-    const row = await svc().createMarketing(CEO, true, { title: '담당 경합 활동', channel: 'naver_blog', item: 'post', byId: MGR });
+    const row = await svc().createMarketing(CEO, true, { requestKey: randomUUID(), title: '담당 경합 활동', channel: 'naver_blog', item: 'post', byId: MGR });
     mkts.push(row.id);
     const deact = await holdDeactivation(NEXT);
-    const patch = svc().patchMarketing(CEO, true, row.id, { byId: NEXT }).then(() => 'ok' as const, (e: unknown) => e);
+    const patch = svc().patchMarketing(CEO, true, row.id, { requestKey: randomUUID(), expectedVersion: row.version, byId: NEXT }).then(() => 'ok' as const, (e: unknown) => e);
     try {
       await waitForLockWaiter();
       expect(await mktBy(row.id)).toBe(MGR);
@@ -166,7 +167,7 @@ d('담당 지정 ↔ 계정 비활성화 경쟁 (CR-BE-04 · lib/staff-lock)', (
 
     // 이미 커밋된 비활성 담당으로 새로 만들기도 404 — 행이 생기지 않는다
     const before = Number((await ds.query(`SELECT count(*)::int AS n FROM mkt WHERE by_id = $1`, [NEXT]))[0].n);
-    await expect(svc().createMarketing(CEO, true, { title: '그만둔 담당', channel: 'naver_blog', item: 'post', byId: NEXT }))
+    await expect(svc().createMarketing(CEO, true, { requestKey: randomUUID(), title: '그만둔 담당', channel: 'naver_blog', item: 'post', byId: NEXT }))
       .rejects.toMatchObject({ response: { code: 'STAFF_NOT_FOUND' } });
     expect(Number((await ds.query(`SELECT count(*)::int AS n FROM mkt WHERE by_id = $1`, [NEXT]))[0].n)).toBe(before);
   });

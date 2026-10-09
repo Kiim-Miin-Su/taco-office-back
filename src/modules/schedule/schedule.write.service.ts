@@ -1177,15 +1177,24 @@ export class ScheduleWriteService {
    * Ctrl/⌘+Z — 토큰이 가리키는 행만 잠그고, 발급 직후 상태와 현재 상태가 같을 때만 복원한다.
    * 화면 캐시를 되감는 기능이 아니다. DB 복원과 재투영이 한 트랜잭션으로 끝나야 한다.
    */
-  async undo(actorId: number, token: string, inside?: (q: QueryRunner) => Promise<void>): Promise<WriteResultDto> {
+  async undo(
+    actorId: number,
+    token: string,
+    inside?: (q: QueryRunner) => Promise<void>,
+    /** 강사 교체처럼 여러 일정 쓰기와 후속 자산을 하나로 되돌릴 때 쓰는 최상위 transaction. */
+    outer?: QueryRunner,
+  ): Promise<WriteResultDto> {
     const payload = readScheduleUndo(token, actorId);
     if (!payload) {
       throw new BadRequestException({ code: 'BAD_UNDO_TOKEN', message: '되돌리기 시간이 지났거나 토큰이 올바르지 않습니다' });
     }
     const ids = [...new Set([...payload.before.SER, ...payload.after.SER].map((row) => row.id))];
-    const q = this.ds.createQueryRunner();
-    await q.connect();
-    await q.startTransaction();
+    const q = outer ?? this.ds.createQueryRunner();
+    const ownsTransaction = outer === undefined;
+    if (ownsTransaction) {
+      await q.connect();
+      await q.startTransaction();
+    }
     try {
       await lockKinderRosterPolicyWrite(q);
       const current = await loadState(q, ids, { forWrite: true });
@@ -1284,13 +1293,13 @@ export class ScheduleWriteService {
         unavailable: await unavailableOverlaps(q, touched),
         studentOverlaps: [],
       };
-      await q.commitTransaction();
+      if (ownsTransaction) await q.commitTransaction();
       return result;
     } catch (error) {
-      await q.rollbackTransaction();
+      if (ownsTransaction && q.isTransactionActive) await q.rollbackTransaction();
       throw error;
     } finally {
-      await q.release();
+      if (ownsTransaction) await q.release();
     }
   }
 }

@@ -12838,9 +12838,187 @@
         ]
       }
     },
+    "/ops/teacher-change/{requestKey}/undo": {
+      "post": {
+        "description": "원 실행 actor만 가능하다. 이후 일정/교재/컴플레인/안내가 바뀌거나 학부모 안내가 발송됐으면 409로 전부 보존한다.",
+        "operationId": "OpsController_teacherChangeUndo",
+        "parameters": [
+          {
+            "name": "requestKey",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherChangeUndoDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherChangeUndoResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "TEACHER_CHANGE_UNDO_VERSION_CONFLICT | TEACHER_CHANGE_ALREADY_UNDONE | TEACHER_CHANGE_UNDO_*_CHANGED | UNDO_STALE"
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "강사 교체 전체 실행 취소 — 일정·안내 초안·미발송 학부모 안내·교재 담당·컴플레인을 한 transaction으로 복원",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/ops/marketing-overview": {
+      "get": {
+        "description": "KST 오늘 포함 30일을 서버에서 고정하고 관리자 수정사항 p117 순서로 채널별 최신 4건과 요약을 반환한다. 날짜 없는 옛 행은 최근 집계에서 제외한다.",
+        "operationId": "OpsController_marketingOverview",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketingOverviewDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "BO-12D 최근 30일 마케팅 네 채널 projection",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
     "/ops/marketing": {
       "post": {
-        "description": "날짜를 안 주면 오늘, 담당을 안 주면 나다. 채널·항목은 지금 코드 일곱·일곱이다(원문 어휘 맞춤은 열린 결정 N-29 ①). 그만둔 사람은 담당이 될 수 없다. 응답은 GET /ops 의 marketing 줄과 같은 모양이다. 감사 줄(LOG MKT create)이 같은 트랜잭션이다.",
+        "description": "날짜를 안 주면 오늘, 담당을 안 주면 나다. 채널·항목은 지금 코드 일곱·일곱이다(원문 어휘 맞춤은 열린 결정 N-29 ①). 그만둔 사람은 담당이 될 수 없다. requestKey 재시도는 한 행으로 수렴한다. 응답은 GET /ops 의 marketing 줄과 같은 모양이다. 감사 줄(LOG MKT create)이 같은 트랜잭션이다.",
         "operationId": "OpsController_createMarketing",
         "parameters": [],
         "requestBody": {
@@ -12898,7 +13076,7 @@
             "description": "STAFF_NOT_FOUND — 담당이 없거나 그만둔 사람"
           },
           "409": {
-            "description": "code MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN"
+            "description": "code MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN | MKT_REQUEST_REUSED | MKT_REQUEST_STALE"
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -12919,7 +13097,7 @@
     },
     "/ops/marketing/{id}": {
       "patch": {
-        "description": "활동 이름·채널·항목·URL·날짜·담당·메모만 고친다. 성과 숫자는 받지 않으며 앞뒤 값과 감사 줄이 같은 트랜잭션에 남는다.",
+        "description": "활동 이름·채널·항목·URL·날짜·담당·메모만 고친다. expectedVersion으로 동시 편집을 막고 requestKey 재시도는 한 번만 쓴다. 성과 숫자는 받지 않으며 앞뒤 값과 감사 줄이 같은 트랜잭션에 남는다.",
         "operationId": "OpsController_patchMarketing",
         "parameters": [
           {
@@ -12993,7 +13171,7 @@
             }
           },
           "409": {
-            "description": "code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN",
+            "description": "code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN | MKT_VERSION_CONFLICT | MKT_REQUEST_REUSED | MKT_REQUEST_STALE",
             "content": {
               "application/json": {
                 "schema": {
@@ -41457,6 +41635,11 @@
             "type": "string",
             "nullable": true,
             "description": "메모 한 줄 — 적은 적이 없으면 null"
+          },
+          "version": {
+            "type": "number",
+            "minimum": 1,
+            "description": "동시 수정 방지 version"
           }
         },
         "required": [
@@ -41465,7 +41648,8 @@
           "item",
           "channelLabel",
           "itemLabel",
-          "name"
+          "name",
+          "version"
         ]
       },
       "MfbPostDto": {
@@ -43527,6 +43711,25 @@
             "type": "string",
             "maxLength": 300,
             "description": "알림·안내에 실을 한 줄"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "student_classes",
+              "whole_class"
+            ],
+            "description": "그룹 수업 apply는 preview와 같은 명단을 확인한 whole_class가 필수다."
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "apply 멱등 키. preview에는 보내지 않는다."
+          },
+          "expectedVersion": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "preview가 돌려준 대상·명단·자산 상태 버전"
           }
         },
         "required": [
@@ -43751,6 +43954,56 @@
           "note"
         ]
       },
+      "TcActorDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "TcAssetCountsDto": {
+        "type": "object",
+        "properties": {
+          "series": {
+            "type": "number"
+          },
+          "occurrences": {
+            "type": "number"
+          },
+          "guideDrafts": {
+            "type": "number"
+          },
+          "parentNotices": {
+            "type": "number"
+          },
+          "books": {
+            "type": "number"
+          },
+          "notifications": {
+            "type": "number"
+          },
+          "complaints": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "series",
+          "occurrences",
+          "guideDrafts",
+          "parentNotices",
+          "books",
+          "notifications",
+          "complaints"
+        ]
+      },
       "TeacherChangeResultDto": {
         "type": "object",
         "properties": {
@@ -43834,6 +44087,49 @@
             "items": {
               "$ref": "#/components/schemas/TcStepDto"
             }
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "student_classes",
+              "whole_class"
+            ]
+          },
+          "requiresWholeClass": {
+            "type": "boolean",
+            "description": "학생 기준 대상 중 그룹 수업이 있어 apply에 whole_class가 필요한가"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "apply의 expectedVersion으로 그대로 보내는 불투명 상태 버전"
+          },
+          "actor": {
+            "description": "실제 HTTP actor",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TcActorDto"
+              }
+            ]
+          },
+          "assets": {
+            "$ref": "#/components/schemas/TcAssetCountsDto"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "nullable": true,
+            "description": "apply 멱등 키. preview는 null"
+          },
+          "rowVersion": {
+            "type": "number",
+            "nullable": true,
+            "description": "적용 작업 원장의 version. preview는 null"
+          },
+          "undoAvailable": {
+            "type": "boolean",
+            "description": "현재 결과를 실행 취소할 수 있는가"
           }
         },
         "required": [
@@ -43851,12 +44147,147 @@
           "notifiedTeachers",
           "notifiedStaff",
           "unavailable",
-          "steps"
+          "steps",
+          "scope",
+          "requiresWholeClass",
+          "version",
+          "actor",
+          "assets",
+          "undoAvailable"
+        ]
+      },
+      "TeacherChangeUndoDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1,
+            "description": "적용 결과의 rowVersion"
+          }
+        },
+        "required": [
+          "expectedVersion"
+        ]
+      },
+      "TeacherChangeUndoResultDto": {
+        "type": "object",
+        "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "rowVersion": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "undone"
+            ]
+          },
+          "actor": {
+            "$ref": "#/components/schemas/TcActorDto"
+          },
+          "undoneAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "requestKey",
+          "rowVersion",
+          "state",
+          "actor",
+          "undoneAt"
+        ]
+      },
+      "MarketingChannelBoardDto": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "latest": {
+            "description": "해당 채널 최신 4건",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketingDto"
+            }
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "latest"
+        ]
+      },
+      "MarketingOverviewDto": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "activityCount": {
+            "type": "number"
+          },
+          "activeChannelCount": {
+            "type": "number"
+          },
+          "channelCount": {
+            "type": "number"
+          },
+          "actorCount": {
+            "type": "number"
+          },
+          "latest": {
+            "nullable": true,
+            "type": "object",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MarketingDto"
+              }
+            ]
+          },
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketingChannelBoardDto"
+            }
+          },
+          "canSeeAmounts": {
+            "type": "boolean",
+            "description": "집행 비용을 볼 수 있는가"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "activityCount",
+          "activeChannelCount",
+          "channelCount",
+          "actorCount",
+          "channels",
+          "canSeeAmounts"
         ]
       },
       "MarketingCreateDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "same-key retry는 같은 활동으로 수렴한다"
+          },
           "title": {
             "type": "string",
             "maxLength": 120,
@@ -43908,6 +44339,7 @@
           }
         },
         "required": [
+          "requestKey",
           "title",
           "channel",
           "item"
@@ -43916,6 +44348,16 @@
       "MarketingPatchDto": {
         "type": "object",
         "properties": {
+          "requestKey": {
+            "type": "string",
+            "format": "uuid",
+            "description": "same-key retry는 같은 수정 결과로 수렴한다"
+          },
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1,
+            "description": "화면이 읽은 MarketingDto.version"
+          },
           "title": {
             "type": "string",
             "maxLength": 120,
@@ -43965,7 +44407,11 @@
             "maxLength": 120,
             "description": "메모 — null 또는 빈 문자열이면 비운다"
           }
-        }
+        },
+        "required": [
+          "requestKey",
+          "expectedVersion"
+        ]
       },
       "MfbCommentWriteDto": {
         "type": "object",

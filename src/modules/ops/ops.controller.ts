@@ -4,7 +4,7 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, HttpCode, NotFoundException, Param, ParseIntPipe, Patch, Post, Put, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, NotFoundException, Param, ParseIntPipe, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, canCeoApprovePlan, canCeoComment, hasPerm, isRole, type RequestUser } from '../../common/perm';
@@ -17,12 +17,12 @@ import {
   MeetingAgendaDto, MeetingAgendaImportDto, MeetingAgendaImportResultDto, MeetingAgendaWriteDto,
   MeetingAttendDto, MeetingDetailDto, MeetingNoticeResultDto, MeetingTaskCreateDto, MinutesWriteDto,
   MeetingCreateDto, MeetingCreateResultDto, OpsQueryDto, PlanCreateDto, PlanCreateResultDto, PlanTaskCreateDto,
-  MarketingCreateDto, MarketingDto, MarketingPatchDto, SuggestionDto, SuggestionReplyDto,
+  MarketingCreateDto, MarketingDto, MarketingOverviewDto, MarketingPatchDto, SuggestionDto, SuggestionReplyDto,
 } from './ops.dto';
 import { OpsService } from './ops.service';
 import { EnrollResultDto, LeadEnrollDto } from './enroll.dto';
 import { LeadEnrollService } from './enroll.service';
-import { TeacherChangeDto, TeacherChangeResultDto } from './teacher-change.dto';
+import { TeacherChangeDto, TeacherChangeResultDto, TeacherChangeUndoDto, TeacherChangeUndoResultDto } from './teacher-change.dto';
 import { TeacherChangeService } from './teacher-change.service';
 
 @ApiTags('ops')
@@ -261,7 +261,34 @@ export class OpsController {
     return this.tcSvc.apply(user.id, dto);
   }
 
+  @Post('teacher-change/:requestKey/undo')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: '강사 교체 전체 실행 취소 — 일정·안내 초안·미발송 학부모 안내·교재 담당·컴플레인을 한 transaction으로 복원',
+    description: '원 실행 actor만 가능하다. 이후 일정/교재/컴플레인/안내가 바뀌거나 학부모 안내가 발송됐으면 409로 전부 보존한다.',
+  })
+  @ApiCreatedResponse({ type: TeacherChangeUndoResultDto })
+  @ApiConflictResponse({ description: 'TEACHER_CHANGE_UNDO_VERSION_CONFLICT | TEACHER_CHANGE_ALREADY_UNDONE | TEACHER_CHANGE_UNDO_*_CHANGED | UNDO_STALE' })
+  teacherChangeUndo(
+    @CurrentUser() user: RequestUser,
+    @Param('requestKey', new ParseUUIDPipe({ version: '4' })) requestKey: string,
+    @Body() dto: TeacherChangeUndoDto,
+  ): Promise<TeacherChangeUndoResultDto> {
+    return this.tcSvc.undo(user.id, requestKey, dto.expectedVersion);
+  }
+
   /* ══ §59 「+ 오늘 한 것」 (x5 · g6 59-3) ═══════════════════════════════ */
+
+  @Get('marketing-overview')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({
+    summary: 'BO-12D 최근 30일 마케팅 네 채널 projection',
+    description: 'KST 오늘 포함 30일을 서버에서 고정하고 관리자 수정사항 p117 순서로 채널별 최신 4건과 요약을 반환한다. 날짜 없는 옛 행은 최근 집계에서 제외한다.',
+  })
+  @ApiOkResponse({ type: MarketingOverviewDto })
+  marketingOverview(@CurrentUser() user: RequestUser): Promise<MarketingOverviewDto> {
+    return this.svc.marketingOverview(isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms));
+  }
 
   @Post('marketing')
   @Perm('canAdminPage', 'canCrudAll')
@@ -269,10 +296,10 @@ export class OpsController {
     summary: '§59 「+ 오늘 한 것」 — 마케팅 활동 한 줄 · URL 첨부',
     description:
       '날짜를 안 주면 오늘, 담당을 안 주면 나다. 채널·항목은 지금 코드 일곱·일곱이다(원문 어휘 맞춤은 열린 결정 N-29 ①). '
-      + '그만둔 사람은 담당이 될 수 없다. 응답은 GET /ops 의 marketing 줄과 같은 모양이다. 감사 줄(LOG MKT create)이 같은 트랜잭션이다.',
+      + '그만둔 사람은 담당이 될 수 없다. requestKey 재시도는 한 행으로 수렴한다. 응답은 GET /ops 의 marketing 줄과 같은 모양이다. 감사 줄(LOG MKT create)이 같은 트랜잭션이다.',
   })
   @ApiCreatedResponse({ type: MarketingDto })
-  @ApiConflictResponse({ description: 'code MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN' })
+  @ApiConflictResponse({ description: 'code MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN | MKT_REQUEST_REUSED | MKT_REQUEST_STALE' })
   @ApiNotFoundResponse({ description: 'STAFF_NOT_FOUND — 담당이 없거나 그만둔 사람' })
   createMarketing(@CurrentUser() user: RequestUser, @Body() dto: MarketingCreateDto): Promise<MarketingDto> {
     return this.svc.createMarketing(user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), dto);
@@ -282,11 +309,11 @@ export class OpsController {
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '§59 마케팅 활동 수정 — 보낸 칸만',
-    description: '활동 이름·채널·항목·URL·날짜·담당·메모만 고친다. 성과 숫자는 받지 않으며 앞뒤 값과 감사 줄이 같은 트랜잭션에 남는다.',
+    description: '활동 이름·채널·항목·URL·날짜·담당·메모만 고친다. expectedVersion으로 동시 편집을 막고 requestKey 재시도는 한 번만 쓴다. 성과 숫자는 받지 않으며 앞뒤 값과 감사 줄이 같은 트랜잭션에 남는다.',
   })
   @ApiOkResponse({ type: MarketingDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST — 형식·허용 밖 필드' })
-  @ApiConflictResponse({ type: ApiErrorDto, description: 'code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'code EMPTY_PATCH | MKT_TITLE_REQUIRED | MKT_WORD_UNKNOWN | MKT_VERSION_CONFLICT | MKT_REQUEST_REUSED | MKT_REQUEST_STALE' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'MKT_NOT_FOUND | STAFF_NOT_FOUND' })
   patchMarketing(
     @CurrentUser() user: RequestUser,

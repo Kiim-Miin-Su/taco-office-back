@@ -7,7 +7,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import { TODO_SRC_T_VALUES } from '../../entities/enums';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateIf } from 'class-validator';
 import { CPL_AREAS, CPL_REQUESTERS, CPL_SEVERITIES, CPL_STAGES } from '../../lib/complaint-words';
 import { INTAKE_FUNNEL_STAGES, LEAD_AFTERCARE_KEYS, LEAD_CARD_ACTION_KEYS, LEAD_REASON_KINDS, LEAD_SOURCES, LEAD_TOUCH_KINDS } from '../../lib/intake-words';
 import { MFB_ANSWER_KINDS, MFB_KINDS, MFB_STATES, MKT_CHANNELS, MKT_ITEMS } from '../../lib/marketing-words';
@@ -899,6 +899,25 @@ export class MarketingDto {
   @ApiPropertyOptional({ ...N, description: '등록당 비용' }) costPerEnroll?: number | null;
   /* W11 · N-29 ② — 원문 §59 카드 제목 아래 한 줄(「상담 예약 4건 전환」 · 「일 예산 5만 · CTR 3.1%」). MMEMO = MKT 의 한 칸 */
   @ApiPropertyOptional({ ...S, description: '메모 한 줄 — 적은 적이 없으면 null' }) memo?: string | null;
+  @ApiProperty({ minimum: 1, description: '동시 수정 방지 version' }) version!: number;
+}
+
+export class MarketingChannelBoardDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() label!: string;
+  @ApiProperty({ type: [MarketingDto], description: '해당 채널 최신 4건' }) latest!: MarketingDto[];
+}
+
+export class MarketingOverviewDto {
+  @ApiProperty({ ...DATE_SCHEMA }) from!: string;
+  @ApiProperty({ ...DATE_SCHEMA }) to!: string;
+  @ApiProperty() activityCount!: number;
+  @ApiProperty() activeChannelCount!: number;
+  @ApiProperty() channelCount!: number;
+  @ApiProperty() actorCount!: number;
+  @ApiPropertyOptional({ type: MarketingDto, nullable: true }) latest!: MarketingDto | null;
+  @ApiProperty({ type: [MarketingChannelBoardDto] }) channels!: MarketingChannelBoardDto[];
+  @ApiProperty({ description: '집행 비용을 볼 수 있는가' }) canSeeAmounts!: boolean;
 }
 
 /**
@@ -909,6 +928,8 @@ export class MarketingDto {
  * 메모 한 줄(MMEMO · N-29 ②)을 받는다. 성과(노출·문의·등록·비용)는 받지 않는다 — 나중에 적는 값이다.
  */
 export class MarketingCreateDto {
+  @ApiProperty({ format: 'uuid', description: 'same-key retry는 같은 활동으로 수렴한다' })
+  @IsUUID('4') requestKey!: string;
   @ApiProperty({ maxLength: 120, description: '활동 이름 — 카드 제목' })
   @IsString() @MinLength(1, { message: '무엇을 했는지 적어 주세요' }) @MaxLength(120)
   title!: string;
@@ -941,6 +962,11 @@ export class MarketingCreateDto {
 
 /** §59 활동 수정 — 보낸 칸만 고치고 성과 숫자는 이 경로에서 받지 않는다. */
 export class MarketingPatchDto {
+  @ApiProperty({ format: 'uuid', description: 'same-key retry는 같은 수정 결과로 수렴한다' })
+  @IsUUID('4') requestKey!: string;
+
+  @ApiProperty({ minimum: 1, description: '화면이 읽은 MarketingDto.version' })
+  @IsInt() @Min(1) expectedVersion!: number;
   @ApiPropertyOptional({ maxLength: 120, description: '활동 이름 — 빈 문자열은 허용하지 않는다' })
   @ValidateIf((_object, value) => value !== undefined)
   @IsString() @MinLength(1, { message: '무엇을 했는지 적어 주세요' }) @MaxLength(120)

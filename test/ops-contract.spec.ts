@@ -237,9 +237,9 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     for (const handler of [
       'all', 'createLead', 'patchLead', 'moveLeadStage', 'addLeadTouch', 'failLead', 'resumeLead', 'comment', 'reply', 'editPost',
       'planDetail', 'decidePlanDue', 'reviewPlan',
-      'patchMarketing', 'patchPlanOwner', 'replySuggestion',
+      'marketingOverview', 'createMarketing', 'patchMarketing', 'patchPlanOwner', 'replySuggestion',
       'sendMeetingNotice', 'writeMinutes', 'assignMeetingTask',
-      'createComplaint', 'patchComplaint', 'teacherChangePreview', 'teacherChange',
+      'createComplaint', 'patchComplaint', 'teacherChangePreview', 'teacherChange', 'teacherChangeUndo',
     ] as const) {
       expect(app.get(Reflector).get(PERM_KEY, OpsController.prototype[handler])).toEqual(['canAdminPage', 'canCrudAll']);
     }
@@ -310,9 +310,10 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
       '/ops/leads/{id}/enroll/preview', '/ops/leads/{id}/enroll',
       // §67 컴플레인 접수·처리 · 강사 교체 미리보기·실제 (C93 · J-96 · J-97). 검색 GET·query 계약은 그대로 0이다
       '/ops/complaints', '/ops/complaints/{id}', '/ops/teacher-change/preview', '/ops/teacher-change',
+      '/ops/teacher-change/{requestKey}/undo',
       // §60 대표 피드백 — 코멘트·답변·답 고치기 (C53). 검색 GET·query 계약은 그대로 0이다.
       // §59 「+ 오늘 한 것」·활동 수정 (x5 · 59-3) — 쓰기 경로다. 검색 GET·query 계약은 여전히 0이다
-      '/ops/marketing', '/ops/marketing/{id}',
+      '/ops/marketing-overview', '/ops/marketing', '/ops/marketing/{id}',
       '/ops/marketing/{id}/comments', '/ops/marketing/{id}/replies', '/ops/marketing/feedback/{id}',
       // §65 기획 보고서 — 상세·본문/담당 고치기·단계 이동·기한 결재·최종 결재 (C56 · S6)
       // 늘어난 둘은 **결재까지 가는 길**이지 검색이 아니다 — stage='review' 로 가는 길이 없어
@@ -396,9 +397,10 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
     const ops = openApi.components?.schemas?.OpsDto;
     if (!marketing || '$ref' in marketing || !ops || '$ref' in ops) throw new Error('Ops 비용 schema 누락');
     // 기존 10 + C53 의 6 — channelLabel · itemLabel · title · name · byId · byName + x5 의 1 — onDate(§59 「+ 오늘 한 것」 응답·기간)
-    // + W11 N-29 ② 의 1 — memo(카드 제목 아래 한 줄 · 선택 · 옛 행 null)
-    expect(Object.keys(marketing.properties ?? {})).toHaveLength(18);
+    // + W11 N-29 ② 의 1 — memo + BO-12D 동시 편집 방지 version
+    expect(Object.keys(marketing.properties ?? {})).toHaveLength(19);
     expect(marketing.required ?? []).not.toContain('memo');
+    expect(marketing.required ?? []).toContain('version');
     // 낱말은 서버가 만든다 — 화면이 코드를 옮기지 않는다 (D-R18)
     for (const field of ['channelLabel', 'itemLabel', 'name']) {
       expect(marketing.properties?.[field]).toMatchObject({ type: 'string' });
@@ -478,7 +480,7 @@ describe('GET /ops — 실제 controller·Reflector·PermGuard, 인증 사용자
         channelLabel: '네이버', itemLabel: 'ads', name: '네이버 · ads',
         // 한 날 — 대역 행에 on_date 칸이 없어 null (x5 · 목록과 「+ 오늘 한 것」 응답이 같은 변환)
         // 메모 한 줄(W11 · N-29 ②) — 대역 행에 memo 칸이 없어 null(적은 적이 없다)
-        title: null, memo: null, onDate: null, byId: null, byName: null,
+        title: null, memo: null, onDate: null, byId: null, byName: null, version: 1,
         ...(sample.result === null ? { impressions: null, clicks: null, inquiries: null } : metrics),
         enrolled: sample.enrolled,
         cost: canMoney ? sample.cost : null,
