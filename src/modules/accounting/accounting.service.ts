@@ -3314,7 +3314,7 @@ export class AccountingService {
   }
 
   /** 단가표 전체 — 종류 → 과목 → 인원 → 최근순. 「살아 있는 줄」(`current`)은 서버가 판정한다 (D-R37) */
-  async rateBook(today = todayKst()): Promise<RateBookDto> {
+  async rateBook(today = todayKst()): Promise<Omit<RateBookDto, 'hourlyRates'>> {
     const rates = (await this.inv.query(
       `${AccountingService.RATE_SELECT}
        ORDER BY k.sort NULLS LAST, k.name, sb.name NULLS FIRST, r.heads, r.from_date DESC, r.id DESC`, [today],

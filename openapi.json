@@ -10387,6 +10387,301 @@
         ]
       }
     },
+    "/accounting/hourly-rates": {
+      "post": {
+        "description": "기존 회당 RATE/STURATE를 바꾸지 않는다. 오늘 이후 실제 수업에만 적용하며 같은 identity 기간 중복은 거절한다.",
+        "operationId": "AccountingController_createHourlyRate",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HourlyRateCreateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HourlyRateWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HOURLY_RATE_SCOPE_SHAPE | HOURLY_RATE_REASON_REQUIRED | HOURLY_RATE_BAD_PERIOD",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "STUDENT_NOT_FOUND | KIND_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "HOURLY_RATE_RETROACTIVE | HOURLY_RATE_OVERLAP | HOURLY_RATE_KEY_REUSED | HOURLY_RATE_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "시간당 기준 단가 생성 — 일반·Kinder·그룹·학생 예외",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/hourly-rates/{id}": {
+      "patch": {
+        "description": "진행 중 정책은 내일 이후부터만 교체한다. 기존 행은 기간 종료 또는 future void 처리하고 새 행과 두 event를 한 transaction에 남긴다.",
+        "operationId": "AccountingController_replaceHourlyRate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HourlyRateReplaceDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HourlyRateWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "HOURLY_RATE_BAD_PERIOD",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "HOURLY_RATE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "HOURLY_RATE_STALE | HOURLY_RATE_NOT_ACTIVE | HOURLY_RATE_REPLACE_FUTURE_ONLY | HOURLY_RATE_OVERLAP | HOURLY_RATE_KEY_REUSED | HOURLY_RATE_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "시간당 기준 단가 교체 — 과거 기간은 보존하고 미래 적용 줄을 생성",
+        "tags": [
+          "accounting"
+        ]
+      },
+      "delete": {
+        "description": "미래 정책은 void, 진행 중 정책은 오늘까지 유효하게 종료한다. 실제 행과 감사 event는 삭제하지 않는다.",
+        "operationId": "AccountingController_retireHourlyRate",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HourlyRateRetireDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HourlyRateWriteResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "HOURLY_RATE_NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "HOURLY_RATE_STALE | HOURLY_RATE_NOT_ACTIVE | HOURLY_RATE_KEY_REUSED | HOURLY_RATE_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "시간당 기준 단가 종료 — 과거 이력 보존",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/wages": {
       "get": {
         "description": "적용일 내림차순. 「지금」 줄은 오늘 이하의 마지막 줄 — 회차의 시급(lib/payout-sheet)과 같은 정의다. 미래 날짜 줄은 예약이다.",
@@ -38335,6 +38630,202 @@
           "current"
         ]
       },
+      "HourlyRatePolicyEventDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "created",
+              "superseded",
+              "retired"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "hourlyAmount": {
+            "type": "number"
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "effectiveTo": {
+            "type": "string",
+            "nullable": true,
+            "format": "date"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "voided": {
+            "type": "boolean"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "version",
+          "hourlyAmount",
+          "effectiveFrom",
+          "effectiveTo",
+          "reason",
+          "voided",
+          "actor",
+          "createdAt"
+        ]
+      },
+      "HourlyRatePolicyDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "general",
+              "kinder",
+              "group",
+              "student"
+            ]
+          },
+          "studentId": {
+            "type": "number",
+            "nullable": true
+          },
+          "studentName": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "studentKinderMarked": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "조회 시점의 명시 Kinder 표시. 학생 정책이 아니면 null"
+          },
+          "kindKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "kindName": {
+            "type": "string",
+            "nullable": true
+          },
+          "capacity": {
+            "type": "number",
+            "nullable": true,
+            "description": "그룹 정원. 다른 scope는 null"
+          },
+          "hourlyAmount": {
+            "type": "number",
+            "description": "학생 1명 기준 시간당 원 단위 금액"
+          },
+          "totalHourlyAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "그룹이면 hourlyAmount × capacity, 다른 scope는 null"
+          },
+          "basisHourlyAmount": {
+            "type": "number",
+            "nullable": true,
+            "description": "학생 예외의 현재 일반/Kinder 기준 시간당 금액"
+          },
+          "basisPercent": {
+            "type": "number",
+            "nullable": true,
+            "description": "학생 예외 ÷ 기준 단가 × 100, 소수 첫째 자리"
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "effectiveTo": {
+            "type": "string",
+            "nullable": true,
+            "format": "date"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "version": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "current",
+              "ended",
+              "voided"
+            ]
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "updatedBy": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "canEdit": {
+            "type": "boolean"
+          },
+          "canRetire": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HourlyRatePolicyEventDto"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "studentId",
+          "studentName",
+          "studentTag",
+          "studentKinderMarked",
+          "kindKey",
+          "kindName",
+          "capacity",
+          "hourlyAmount",
+          "totalHourlyAmount",
+          "basisHourlyAmount",
+          "basisPercent",
+          "effectiveFrom",
+          "effectiveTo",
+          "reason",
+          "version",
+          "state",
+          "createdBy",
+          "updatedBy",
+          "createdAt",
+          "updatedAt",
+          "canEdit",
+          "canRetire",
+          "events"
+        ]
+      },
       "RateBookDto": {
         "type": "object",
         "properties": {
@@ -38351,11 +38842,162 @@
             "items": {
               "$ref": "#/components/schemas/StudentRateRowDto"
             }
+          },
+          "hourlyRates": {
+            "description": "시간당 일반·Kinder·그룹·학생 예외 정책과 전체 변경 이력",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HourlyRatePolicyDto"
+            }
           }
         },
         "required": [
           "rates",
-          "studentRates"
+          "studentRates",
+          "hourlyRates"
+        ]
+      },
+      "HourlyRateCreateDto": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "general",
+              "kinder",
+              "group",
+              "student"
+            ]
+          },
+          "studentId": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "student scope에서만 필수"
+          },
+          "kindKey": {
+            "type": "string",
+            "description": "학생 예외를 특정 수업 종류에만 적용. 비우면 전체"
+          },
+          "capacity": {
+            "type": "number",
+            "minimum": 2,
+            "maximum": 100,
+            "description": "group scope에서만 필수"
+          },
+          "hourlyAmount": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100000000,
+            "description": "학생 1명 기준 원/시간"
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "오늘 이후 실제 수업일부터 적용"
+          },
+          "effectiveTo": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "학생 예외는 필수"
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "scope",
+          "hourlyAmount",
+          "effectiveFrom",
+          "requestKey"
+        ]
+      },
+      "HourlyRateWriteResultDto": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/HourlyRatePolicyDto"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "같은 actor/action/payload/requestKey의 정확한 재시도면 true"
+          }
+        },
+        "required": [
+          "item",
+          "replayed"
+        ]
+      },
+      "HourlyRateReplaceDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "hourlyAmount": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100000000
+          },
+          "effectiveFrom": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "진행 중 정책은 내일부터만 교체한다"
+          },
+          "effectiveTo": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "hourlyAmount",
+          "effectiveFrom",
+          "reason",
+          "requestKey"
+        ]
+      },
+      "HourlyRateRetireDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "reason",
+          "requestKey"
         ]
       },
       "RateWriteDto": {

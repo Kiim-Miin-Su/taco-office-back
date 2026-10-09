@@ -1,3 +1,4 @@
+// TBO55-BOC11E-R107 (2026-10-09): BOC-11E 권고안 채택 — 기존 RATE/STURATE 회당 이력을 보존하고 일반·Kinder·그룹·학생 예외의 시간당 정책을 POLICY current, UUID REQUEST, append-only EVENT로 분리한다. 학생 예외가 우선하며 actual occurrence date/span, explicit Kinder marker, exact group roster count로 청구한다. identity별 기간 비중첩·version+1·receipt·audit immutable과 superseded/retired terminal 전이를 DB가 방어하고 확정 청구·급여 snapshot은 바꾸지 않는다. v4.89/140표, migration1768600000000 로컬 fresh119·권한·멱등·stale·직접쓰기·terminal 재전이·30/60/90분·급여 불변 회귀 검증, 운영 미적용. 정책 변경 시 invoice-lines·accounting DTO/service·generated Front A26·migration/두 DBML·P-BOC11E·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D2-R106 (2026-10-09): BOC-11D-02 권고안 채택 — 승인 조정의 전후 환불 예정액 증가분을 실제 학생 환불액으로 서버 계산한다. 수납 PAY는 유지하고 STUDENT_REFUND_DISBURSEMENT current, UUID REQUEST, append-only EVENT를 분리하며 지급 당시 source adjustment version·금액·보호 계좌 id/version/last4를 보존한다. 지급 완료 뒤에는 먼저 환불 지급을 취소해야 원천 조정 취소가 가능하다. v4.88/137표, migration1768500000000 로컬 fresh118·repeat0·down/up·권한·멱등·stale·직접쓰기·취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 조정 전이·보호 계좌·accounting DTO/service/Front A24·A27·migration/두 DBML·P-BOC11D2·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D1-R105 (2026-10-09): BOC-11D-01 권고안 채택 — 학생 환불·강사 지급 계좌를 purpose+target 단일 current, UUID REQUEST, append-only EVENT로 분리하고 AES-256-GCM ciphertext/key version/last4만 저장한다. 일반 DTO는 last4만, 원문 확인은 사유 있는 별도 capability와 value-less 감사만 남긴다. 삭제는 secret을 purge하고 current identity/version은 보존한다. 실제 강사 지급은 활성 계좌를 잠그고 id/version/last4를 current/event에 snapshot하며 확정 급여 JSON은 불변이다. v4.87/134표, migration1768400000000 로컬 fresh117·권한·멱등·stale·키누락/오키·직접쓰기·지급 취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 capability/crypto/accounting DTO/service/Front A27·지급 원장·migration/두 DBML·P-BOC11D1·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11C-R104 (2026-10-09): BOC-11C 권고안 채택 — 기본 14일은 연체 후보만 만들고 실제 독촉·정지·해제는 관리자가 처리한다. 기존 일정은 보존하고 정지 중 신규 생성·복사·이동·명단 확대·undo를 공용 잠금과 DB trigger로 막는다. POLICY/current/event 네 표가 actual actor·UUID requestKey·payload hash·version·threshold/잔액/영향 수업 snapshot을 보존하며, 입금 확인 뒤 기한 경과 잔액 0일 때만 해제한다. v4.86/131표, migration1768300000000 로컬 권한·batch 멱등·stale·직접쓰기·일정·Kinder 인접 회귀 검증, 운영 미적용. 정책 변경 시 accounting DTO/service/Front·schedule guard·migration/두 DBML·P-BOC11C·두 수정사항 대조표·Figma A25·scenario·portfolio를 함께 수정한다.
@@ -3407,3 +3408,78 @@ Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.student_refund_disbursement_id > STUDENT_
 Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.actor_id > STAFF.id [delete: restrict]
 Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.request_key > STUDENT_REFUND_DISBURSEMENT_REQUEST.request_key [delete: restrict]
 Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.account_id > PROTECTED_ACCOUNT.id [delete: restrict]
+
+// v4.88 → v4.89 (2026-10-09 · TBO-55 BOC-11E 권고안 채택) — 실제 시간 기준 수업료 정책.
+//   + HOURLY_RATE_POLICY — 일반·Kinder·그룹 정원·학생/종류 예외 identity, 효력기간, 원/시간 current와 version.
+//   + HOURLY_RATE_POLICY_REQUEST/EVENT — UUID 멱등 요청과 생성·교체·종료의 actual actor·snapshot 불변 이력.
+//   + identity별 기간 EXCLUDE, current receipt, identity/version-step, hard delete·audit immutable, superseded/retired terminal guard.
+//   + 표 +3(137 → 140) · migration 1(1768600000000-hourly-rate-policy) · 운영 미적용.
+
+Table HOURLY_RATE_POLICY {
+  id bigint [pk, increment]
+  scope varchar(12) [not null, note: 'general | kinder | group | student']
+  student_id bigint [note: 'student scope에서만 필수']
+  kind_key varchar(16) [note: 'student 예외를 특정 수업 종류에 한정할 때만 사용']
+  capacity int [note: 'group scope의 2~100명 정원']
+  hourly_amount int [not null, note: '학생 1명 기준 1~100000000원/시간']
+  effective_from date [not null]
+  effective_to date
+  reason varchar(200)
+  row_version int [not null, default: 1]
+  voided boolean [not null, default: false]
+  created_by bigint [not null]
+  updated_by bigint [not null]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (scope, student_id, kind_key, capacity, effective_from, id) [name: 'hourly_rate_policy_lookup_idx']
+  }
+}
+
+Table HOURLY_RATE_POLICY_REQUEST {
+  request_key uuid [pk]
+  actor_id bigint [not null]
+  action varchar(12) [not null, note: 'created | replaced | retired']
+  source_policy_id bigint
+  expected_version int [not null]
+  payload_sha256 char(64) [not null]
+  result_policy_id bigint [not null]
+  result_version int [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (source_policy_id, created_at) [name: 'hourly_rate_policy_request_source_idx']
+  }
+}
+
+Table HOURLY_RATE_POLICY_EVENT {
+  id bigint [pk, increment]
+  policy_id bigint [not null]
+  action varchar(12) [not null, note: 'created | superseded | retired']
+  actor_id bigint [not null]
+  request_key uuid [not null]
+  result_version int [not null]
+  hourly_amount int [not null]
+  effective_from date [not null]
+  effective_to date
+  reason varchar(200)
+  voided boolean [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (policy_id, result_version) [unique, name: 'hourly_rate_policy_event_version_unique']
+    (policy_id, created_at, id) [name: 'hourly_rate_policy_event_policy_idx']
+  }
+}
+
+Ref: HOURLY_RATE_POLICY.student_id > STU.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY.kind_key > KIND.key [delete: restrict]
+Ref: HOURLY_RATE_POLICY.created_by > STAFF.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY.updated_by > STAFF.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY_REQUEST.actor_id > STAFF.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY_REQUEST.source_policy_id > HOURLY_RATE_POLICY.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY_REQUEST.result_policy_id > HOURLY_RATE_POLICY.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY_EVENT.policy_id > HOURLY_RATE_POLICY.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY_EVENT.actor_id > STAFF.id [delete: restrict]
+Ref: HOURLY_RATE_POLICY_EVENT.request_key > HOURLY_RATE_POLICY_REQUEST.request_key [delete: restrict]

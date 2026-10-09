@@ -1994,14 +1994,156 @@ export class StudentRateRowDto {
   @ApiProperty({ description: '오늘 기준으로 그 학생·종류에 살아 있는 줄인가' }) current!: boolean;
 }
 
+const KIND_KEY = /^[a-z][a-z0-9_]{1,15}$/;
+const SUB_KEY = /^[a-z][a-z0-9-]{1,19}$/;
+
 /** `GET /accounting/rates` — 단가표와 학생별 예외를 한 번에 */
 export class RateBookDto {
   @ApiProperty({ type: [RateRowDto], description: '종류 → 과목 → 인원 → 최근순' }) rates!: RateRowDto[];
   @ApiProperty({ type: [StudentRateRowDto], description: '학생 이름 → 최근순' }) studentRates!: StudentRateRowDto[];
+  @ApiProperty({ type: () => [HourlyRatePolicyDto], description: '시간당 일반·Kinder·그룹·학생 예외 정책과 전체 변경 이력' })
+  hourlyRates!: HourlyRatePolicyDto[];
 }
 
-const KIND_KEY = /^[a-z][a-z0-9_]{1,15}$/;
-const SUB_KEY = /^[a-z][a-z0-9-]{1,19}$/;
+/* ── TBO-55 BOC-11E 시간당 수업료 정책 ───────────────────────────────
+ * 최종 관리자 수정사항 p108·p115의 기준 단가 정본이다. 기존 RATE/STURATE는 회당 역사로
+ * 보존하고, 실제 수업 시간에 적용하는 신규 정책만 이 계약으로 생성·교체·종료한다.
+ * 정책을 바꾸면 invoice-lines·hourly-rates service·migration/DBML·generated Front·A26·문서를 함께 바꾼다.
+ */
+export const HOURLY_RATE_SCOPES = ['general', 'kinder', 'group', 'student'] as const;
+export type HourlyRateScope = (typeof HOURLY_RATE_SCOPES)[number];
+export type HourlyRateState = 'scheduled' | 'current' | 'ended' | 'voided';
+
+export class HourlyRatePolicyEventDto {
+  @ApiProperty({ enum: ['created', 'superseded', 'retired'] }) action!: 'created' | 'superseded' | 'retired';
+  @ApiProperty() version!: number;
+  @ApiProperty() hourlyAmount!: number;
+  @ApiProperty({ ...DATE_SCHEMA }) effectiveFrom!: string;
+  @ApiProperty({ type: String, nullable: true, format: 'date' }) effectiveTo!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty() voided!: boolean;
+  @ApiProperty() actor!: string;
+  @ApiProperty() createdAt!: string;
+}
+
+export class HourlyRatePolicyDto {
+  @ApiProperty() id!: number;
+  @ApiProperty({ enum: HOURLY_RATE_SCOPES }) scope!: HourlyRateScope;
+  @ApiProperty({ type: Number, nullable: true }) studentId!: number | null;
+  @ApiProperty({ type: String, nullable: true }) studentName!: string | null;
+  @ApiProperty({ type: String, nullable: true }) studentTag!: string | null;
+  @ApiProperty({ type: Boolean, nullable: true, description: '조회 시점의 명시 Kinder 표시. 학생 정책이 아니면 null' })
+  studentKinderMarked!: boolean | null;
+  @ApiProperty({ type: String, nullable: true }) kindKey!: string | null;
+  @ApiProperty({ type: String, nullable: true }) kindName!: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: '그룹 정원. 다른 scope는 null' }) capacity!: number | null;
+  @ApiProperty({ description: '학생 1명 기준 시간당 원 단위 금액' }) hourlyAmount!: number;
+  @ApiProperty({ type: Number, nullable: true, description: '그룹이면 hourlyAmount × capacity, 다른 scope는 null' })
+  totalHourlyAmount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '학생 예외의 현재 일반/Kinder 기준 시간당 금액' })
+  basisHourlyAmount!: number | null;
+  @ApiProperty({ type: Number, nullable: true, description: '학생 예외 ÷ 기준 단가 × 100, 소수 첫째 자리' })
+  basisPercent!: number | null;
+  @ApiProperty({ ...DATE_SCHEMA }) effectiveFrom!: string;
+  @ApiProperty({ type: String, nullable: true, format: 'date' }) effectiveTo!: string | null;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty() version!: number;
+  @ApiProperty({ enum: ['scheduled', 'current', 'ended', 'voided'] }) state!: HourlyRateState;
+  @ApiProperty() createdBy!: string;
+  @ApiProperty() updatedBy!: string;
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
+  @ApiProperty() canEdit!: boolean;
+  @ApiProperty() canRetire!: boolean;
+  @ApiProperty({ type: [HourlyRatePolicyEventDto] }) events!: HourlyRatePolicyEventDto[];
+}
+
+export class HourlyRateCreateDto {
+  @ApiProperty({ enum: HOURLY_RATE_SCOPES })
+  @IsIn(HOURLY_RATE_SCOPES as unknown as string[])
+  scope!: HourlyRateScope;
+
+  @ApiPropertyOptional({ ...ID_SCHEMA, description: 'student scope에서만 필수' })
+  @ValidateIf((o: HourlyRateCreateDto) => o.scope === 'student' || o.studentId !== undefined)
+  @ToHttpInteger() @IsInt() @Min(1)
+  studentId?: number;
+
+  @ApiPropertyOptional({ description: '학생 예외를 특정 수업 종류에만 적용. 비우면 전체' })
+  @ValidateIf((o: HourlyRateCreateDto) => o.kindKey !== undefined)
+  @IsString() @Matches(KIND_KEY, { message: '종류 코드가 아닙니다' })
+  kindKey?: string;
+
+  @ApiPropertyOptional({ minimum: 2, maximum: 100, description: 'group scope에서만 필수' })
+  @ValidateIf((o: HourlyRateCreateDto) => o.scope === 'group' || o.capacity !== undefined)
+  @ToHttpInteger() @IsInt() @Min(2) @Max(100)
+  capacity?: number;
+
+  @ApiProperty({ minimum: 1, maximum: 100_000_000, description: '학생 1명 기준 원/시간' })
+  @ToHttpInteger() @IsInt() @Min(1) @Max(100_000_000)
+  hourlyAmount!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '오늘 이후 실제 수업일부터 적용' })
+  @IsCalendarDate()
+  effectiveFrom!: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA })
+  @IsOptional() @IsCalendarDate()
+  effectiveTo?: string;
+
+  @ApiPropertyOptional({ minLength: 1, maxLength: 200, description: '학생 예외는 필수' })
+  @ValidateIf((o: HourlyRateCreateDto) => o.scope === 'student' || o.reason !== undefined)
+  @IsString() @MinLength(1) @MaxLength(200)
+  reason?: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class HourlyRateReplaceDto {
+  @ApiProperty({ minimum: 1 })
+  @ToHttpInteger() @IsInt() @Min(1)
+  expectedVersion!: number;
+
+  @ApiProperty({ minimum: 1, maximum: 100_000_000 })
+  @ToHttpInteger() @IsInt() @Min(1) @Max(100_000_000)
+  hourlyAmount!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA, description: '진행 중 정책은 내일부터만 교체한다' })
+  @IsCalendarDate()
+  effectiveFrom!: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA })
+  @IsOptional() @IsCalendarDate()
+  effectiveTo?: string;
+
+  @ApiProperty({ minLength: 2, maxLength: 200 })
+  @IsString() @MinLength(2) @MaxLength(200)
+  reason!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class HourlyRateRetireDto {
+  @ApiProperty({ minimum: 1 })
+  @ToHttpInteger() @IsInt() @Min(1)
+  expectedVersion!: number;
+
+  @ApiProperty({ minLength: 2, maxLength: 200 })
+  @IsString() @MinLength(2) @MaxLength(200)
+  reason!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class HourlyRateWriteResultDto {
+  @ApiProperty({ type: HourlyRatePolicyDto }) item!: HourlyRatePolicyDto;
+  @ApiProperty({ description: '같은 actor/action/payload/requestKey의 정확한 재시도면 true' }) replayed!: boolean;
+}
 
 /** `POST /accounting/rates` — 기본 단가 한 줄. 같은 (종류·과목·인원·날짜)는 409 RATE_DUPLICATE (`rate_tier_key`) */
 export class RateWriteDto {

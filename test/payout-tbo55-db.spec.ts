@@ -49,6 +49,12 @@ d('TBO-55 BO-09D-02 공용 급여 계산기 — 실제 DB projection', () => {
       await q.query(`INSERT INTO staff(id,name,email,role,active) VALUES
         ($1,'T55 급여 강사','t55-pay-teacher@test.local','teacher',true),
         ($2,'T55 급여 대표','t55-pay-ceo@test.local','ceo',true)`, [teacher, actor]);
+      // 격리 fresh DB에서도 seed 순서에 기대지 않도록 이 시나리오가 쓰는 종류를 직접 소유한다.
+      await q.query(`INSERT INTO kind(key,name,color,cap,grp,rep,sort) VALUES
+        ('class','T55 일반','#0F766E',20,'lesson',true,989),
+        ('mock','T55 모의','#64748B',20,'lesson',true,990),
+        ('diagx','T55 진단','#7C3AED',20,'lesson',true,991)
+        ON CONFLICT(key) DO NOTHING`);
       await q.query(`INSERT INTO stu(id,name,grade) VALUES
         ($1,'명시 Kinder','G9'),($2,'일반 학생A','K'),($3,'일반 학생B','G10')`, students);
       await q.query(`INSERT INTO wage(staff_id,rate,from_date,reason) VALUES($1,40000,$2::date,'T55')`, [teacher, previousDate]);

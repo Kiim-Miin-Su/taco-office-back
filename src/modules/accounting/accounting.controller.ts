@@ -43,6 +43,7 @@ import {
   ProtectedAccountActionDto, ProtectedAccountSecretDto,
   StudentRefundDto, StudentRefundLedgerDto, StudentRefundQueryDto,
   StudentRefundPayDto, StudentRefundCancelDto,
+  HourlyRateCreateDto, HourlyRateReplaceDto, HourlyRateRetireDto, HourlyRateWriteResultDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
@@ -51,6 +52,7 @@ import { StudentWithdrawService } from './withdraw.service';
 import { DelinquencySuspensionsService } from './delinquency-suspensions.service';
 import { ProtectedAccountsService } from './protected-accounts.service';
 import { StudentRefundsService } from './student-refunds.service';
+import { HourlyRatesService } from './hourly-rates.service';
 
 /** 회계 비공개(N-94)의 보는 사람 — 비공개 열람(canHide · 사람별 예외 반영)과 본인 번호 */
 const viewerOf = (user: RequestUser): AcctViewer => ({
@@ -75,6 +77,7 @@ export class AccountingController {
     private readonly delinquency: DelinquencySuspensionsService,
     private readonly protectedAccounts: ProtectedAccountsService,
     private readonly studentRefunds: StudentRefundsService,
+    private readonly hourlyRates: HourlyRatesService,
     private readonly withdrawSvc: StudentWithdrawService,
   ) {}
 
@@ -954,8 +957,54 @@ export class AccountingController {
     description: '청구서·§54·명단 가격이 읽는 바로 그 두 표다. 「살아 있는 줄」은 서버가 오늘 기준으로 판정한다 (D-R37).',
   })
   @ApiOkResponse({ type: RateBookDto })
-  rateBook(): Promise<RateBookDto> {
-    return this.svc.rateBook(todayKst());
+  async rateBook(): Promise<RateBookDto> {
+    const [legacy, hourlyRates] = await Promise.all([this.svc.rateBook(todayKst()), this.hourlyRates.list()]);
+    return { ...legacy, hourlyRates };
+  }
+
+  @Post('hourly-rates')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '시간당 기준 단가 생성 — 일반·Kinder·그룹·학생 예외',
+    description: '기존 회당 RATE/STURATE를 바꾸지 않는다. 오늘 이후 실제 수업에만 적용하며 같은 identity 기간 중복은 거절한다.',
+  })
+  @ApiCreatedResponse({ type: HourlyRateWriteResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'HOURLY_RATE_SCOPE_SHAPE | HOURLY_RATE_REASON_REQUIRED | HOURLY_RATE_BAD_PERIOD' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STUDENT_NOT_FOUND | KIND_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'HOURLY_RATE_RETROACTIVE | HOURLY_RATE_OVERLAP | HOURLY_RATE_KEY_REUSED | HOURLY_RATE_REPLAY_STALE' })
+  createHourlyRate(@CurrentUser() user: RequestUser, @Body() dto: HourlyRateCreateDto): Promise<HourlyRateWriteResultDto> {
+    return this.hourlyRates.create(user.id, dto);
+  }
+
+  @Patch('hourly-rates/:id')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '시간당 기준 단가 교체 — 과거 기간은 보존하고 미래 적용 줄을 생성',
+    description: '진행 중 정책은 내일 이후부터만 교체한다. 기존 행은 기간 종료 또는 future void 처리하고 새 행과 두 event를 한 transaction에 남긴다.',
+  })
+  @ApiOkResponse({ type: HourlyRateWriteResultDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'HOURLY_RATE_BAD_PERIOD' })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'HOURLY_RATE_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'HOURLY_RATE_STALE | HOURLY_RATE_NOT_ACTIVE | HOURLY_RATE_REPLACE_FUTURE_ONLY | HOURLY_RATE_OVERLAP | HOURLY_RATE_KEY_REUSED | HOURLY_RATE_REPLAY_STALE' })
+  replaceHourlyRate(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: HourlyRateReplaceDto,
+  ): Promise<HourlyRateWriteResultDto> {
+    return this.hourlyRates.replace(user.id, id, dto);
+  }
+
+  @Delete('hourly-rates/:id')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '시간당 기준 단가 종료 — 과거 이력 보존',
+    description: '미래 정책은 void, 진행 중 정책은 오늘까지 유효하게 종료한다. 실제 행과 감사 event는 삭제하지 않는다.',
+  })
+  @ApiOkResponse({ type: HourlyRateWriteResultDto })
+  @ApiNotFoundResponse({ type: ApiErrorDto, description: 'HOURLY_RATE_NOT_FOUND' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'HOURLY_RATE_STALE | HOURLY_RATE_NOT_ACTIVE | HOURLY_RATE_KEY_REUSED | HOURLY_RATE_REPLAY_STALE' })
+  retireHourlyRate(
+    @CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Body() dto: HourlyRateRetireDto,
+  ): Promise<HourlyRateWriteResultDto> {
+    return this.hourlyRates.retire(user.id, id, dto);
   }
 
   @Post('rates')

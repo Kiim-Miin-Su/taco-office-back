@@ -66,6 +66,17 @@ const LIVE = `(NOT o.canceled OR ${TREAT} = 'deduct')
 const DROPPED = `((o.canceled AND COALESCE(${TREAT}, 'carry') = 'carry')
         OR ${STU_OUT})`;
 
+/** 실제 회차일의 유효 명단. 기존 RATE 인원 구간과 시간당 그룹 정원이 같은 정본을 읽는다. */
+const OCCURRENCE_HEADS = `(SELECT count(*) FROM ser_stu x
+  WHERE x.ser_id=se.id AND ${serStuOn('x', 'o.on_date')})`;
+/** 학년·나이 추정 없이 실제 시작 시각의 마지막 명시 표식만 Kinder를 판정한다. */
+const KINDER_AT_ACTUAL_START = `COALESCE((SELECT m.marked FROM stu_kinder_marker m
+  WHERE m.student_id=$1 AND m.effective_from<=lower(o.span)
+  ORDER BY m.effective_from DESC,m.version DESC LIMIT 1),false)`;
+/** 분 단위 회차에도 원 단위가 결정적으로 같도록 시간당 금액을 실제 span에 비례시키고 버림한다. */
+const HOURLY_OCCURRENCE_AMOUNT = (alias: string): string =>
+  `floor(${alias}.hourly_amount::numeric * extract(epoch FROM (upper(o.span)-lower(o.span))) / 3600)::int`;
+
 /**
  * 그 학생의 **컨설팅 계약이 덮는 회차**인가 (PB-05).
  *
@@ -146,6 +157,27 @@ const sqlFor = (slice: LineSlice, invType: LineInvType): string => `
            -- 추가 수업(KIND.extra)은 줄 이름부터 갈라 「별도로 잡힌다」 (C-38)
            CASE WHEN k.extra THEN k.name || COALESCE(' · ' || sb.name, '') ELSE COALESCE(sb.name, k.name) END AS label,
            COALESCE(
+             -- BOC-11E 권고안: 학생 시간당 예외가 일반·Kinder·그룹 기준보다 우선한다. 과거 RATE/STURATE는 fallback이다.
+             (SELECT ${HOURLY_OCCURRENCE_AMOUNT('hp')} FROM hourly_rate_policy hp
+               WHERE hp.scope='student' AND hp.student_id=$1 AND NOT hp.voided
+                 AND (hp.kind_key IS NULL OR hp.kind_key=se.kind_key)
+                 AND hp.effective_from<=${drawnDateOf('o')}
+                 AND (hp.effective_to IS NULL OR hp.effective_to>=${drawnDateOf('o')})
+               ORDER BY hp.kind_key NULLS LAST,hp.effective_from DESC,hp.id DESC
+               LIMIT 1),
+             -- 일반 class만 새 기본 정책을 읽는다. 진단·상담 등 별도 종류는 명시 학생 예외가 없으면 legacy 단가를 유지한다.
+             (SELECT ${HOURLY_OCCURRENCE_AMOUNT('hp')} FROM hourly_rate_policy hp
+               WHERE se.kind_key='class' AND NOT hp.voided
+                 AND hp.scope=CASE
+                   WHEN ${OCCURRENCE_HEADS}>=2 THEN 'group'
+                   WHEN ${KINDER_AT_ACTUAL_START} THEN 'kinder'
+                   ELSE 'general'
+                 END
+                 AND (hp.scope<>'group' OR hp.capacity=${OCCURRENCE_HEADS})
+                 AND hp.effective_from<=${drawnDateOf('o')}
+                 AND (hp.effective_to IS NULL OR hp.effective_to>=${drawnDateOf('o')})
+               ORDER BY hp.effective_from DESC,hp.id DESC
+               LIMIT 1),
              (SELECT su.unit_price FROM sturate su
                WHERE su.student_id = $1
                  AND (su.kind_key IS NULL OR su.kind_key = se.kind_key)
@@ -157,7 +189,7 @@ const sqlFor = (slice: LineSlice, invType: LineInvType): string => `
                WHERE r.kind_key = se.kind_key
                  AND (r.sub_key IS NULL OR r.sub_key = se.sub_key)
                  -- 인원은 **그 날짜의 명단**이다 — 수강 종료한 학생이 빠지면 남은 학생의 구간이 다시 잡힌다 (C94-c · N-136)
-                 AND r.heads <= (SELECT count(*) FROM ser_stu x WHERE x.ser_id = se.id AND ${serStuOn('x', 'o.on_date')})
+                 AND r.heads <= ${OCCURRENCE_HEADS}
                  AND r.from_date <= ${drawnDateOf('o')}
                ORDER BY r.sub_key NULLS LAST, r.heads DESC, r.from_date DESC
                LIMIT 1)
