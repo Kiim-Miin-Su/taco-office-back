@@ -30,6 +30,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
 import { ATTENDANCE_CANCEL_REASON_LABEL, CANCEL_TREAT_LABEL } from '../src/lib/rules';
+import { TeacherService } from '../src/modules/teacher/teacher.service';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -579,8 +580,9 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
     await api('delete', `/schedule/${id}`)
       .send({ scope: 'this', onDate: from, cancelKind: 'academy', cancelTreat: 'carry' })
       .expect(200);
-    const hist = await api('get', '/teacher/history', teacherToken).query({ month: from.slice(0, 7) }).expect(200);
-    const row = (hist.body.lessons as Array<{ serId: number; onDate: string; canceled: boolean; pay: number | null }>)
+    // 공식 HTTP는 KST 직전 달만 허용한다. 이 회귀는 미래 fixture 월의 정산 계산 자체를 서비스에서 좁게 검증한다.
+    const hist = await app.get(TeacherService).history(TEACHER, from.slice(0, 7));
+    const row = (hist.lessons as Array<{ serId: number; onDate: string; canceled: boolean; pay: number | null }>)
       .find((r) => r.serId === id && r.onDate === from);
     expect(row).toBeDefined();
     expect(row!.canceled).toBe(true);

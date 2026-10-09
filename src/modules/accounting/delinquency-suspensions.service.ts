@@ -318,7 +318,7 @@ export class DelinquencySuspensionsService {
           : `${snapshot.student_name} 학생의 수강 정지가 해제되었습니다`;
       await m.query(`INSERT INTO noti(to_id,from_id,title,body,link,category)
         SELECT id,$1,$2,$3,$4,'request' FROM staff
-         WHERE active AND role<>'teacher' AND id<>$1`, [actorId, title, body, `/accounting?tab=suspensions&student=${studentId}`]);
+         WHERE active AND role<>'teacher' AND id<>$1`, [actorId, title, body, '/accounting?tab=suspensions']);
     return { item: await this.one(m, studentId, canWrite), replayed: false };
   }
 

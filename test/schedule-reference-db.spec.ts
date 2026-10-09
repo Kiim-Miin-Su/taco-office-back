@@ -45,6 +45,9 @@ d('일정 DB 참조 계약 — 직접 쓰기도 방어한다', () => {
     await q.query(`INSERT INTO exc (id,ser_id,on_date,teacher_id,room_id,by_id)
       VALUES (-770,-770,'2026-09-11',-770,-770,-770)`);
     await q.query(`INSERT INTO exc_stu_out (exc_id,student_id) VALUES (-770,-770)`);
+    // 신규 지연 도메인 제약을 먼저 평가한 뒤 참조 DDL 자체를 검증한다.
+    await q.query(`SET CONSTRAINTS ALL IMMEDIATE`);
+    await q.query(`SET CONSTRAINTS ALL DEFERRED`);
   });
   afterEach(async () => {
     if (q?.isTransactionActive) await q.rollbackTransaction();

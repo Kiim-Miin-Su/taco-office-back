@@ -176,22 +176,22 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     await standardWeek();
     await plan();
     const [happy, m1] = await careRows();
-    expect(await drawer().patchTodo(Number(happy.id), { done: true }, ADMIN, true)).toBe(true);
+    expect(await drawer().patchTodo(Number(happy.id), { done: true }, OWNER, true)).toBe(true);
     expect(await monthlies()).toEqual([['2026-04-11', false]]);
 
-    expect(await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true)).toBe(true);
+    expect(await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true)).toBe(true);
     expect(await monthlies()).toEqual([['2026-04-11', true], ['2026-05-11', false]]);
     const next = (await careRows()).at(-1)!;
-    expect([next.title, Number(next.to_id), Number(next.from_id), next.src]).toEqual(['월간 상담 — 사후 학생', OWNER, ADMIN, 'lead']);
+    expect([next.title, Number(next.to_id), Number(next.from_id), next.src]).toEqual(['월간 상담 — 사후 학생', OWNER, OWNER, 'lead']);
 
     // 같은 체크를 다시 보내도 · 풀었다 다시 끝내도 하나
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
-    await drawer().patchTodo(Number(m1.id), { done: false }, ADMIN, true);
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
+    await drawer().patchTodo(Number(m1.id), { done: false }, OWNER, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
     expect(await monthlies()).toEqual([['2026-04-11', true], ['2026-05-11', false]]);
 
     // 기한과 함께 끝내는 길(§64 기한 변경)도 같다 — 끝낸 월간의 달 + 1
-    await drawer().patchTodo(Number(next.id), { done: true, dueOn: '2026-05-13' }, ADMIN, true);
+    await drawer().patchTodo(Number(next.id), { done: true, dueOn: '2026-05-13' }, OWNER, true);
     expect(await monthlies()).toEqual([['2026-04-11', true], ['2026-05-13', true], ['2026-06-11', false]]);
   });
 
@@ -200,7 +200,7 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     await plan();
     await pause('2026-05-01', '2026-06-20');
     const m1 = (await careRows()).find((r) => r.care === 'monthly')!;
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
     expect(await monthlies()).toEqual([['2026-04-11', true], ['2026-07-11', false]]);
   });
 
@@ -209,7 +209,7 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     await plan();
     await pause('2026-05-01', null);
     const m1 = (await careRows()).find((r) => r.care === 'monthly')!;
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
     expect(await monthlies()).toEqual([['2026-04-11', true], [null, false]]);
   });
 
@@ -218,7 +218,7 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     await plan();
     await q.query(`UPDATE enr SET ended_on = '2026-04-30' WHERE student_id = $1`, [stuId]);
     const m1 = (await careRows()).find((r) => r.care === 'monthly')!;
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
     expect(await monthlies()).toEqual([['2026-04-11', true]]);
   });
 
@@ -227,7 +227,7 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     await plan();
     await q.query(`UPDATE lead SET owner_id = ${GONE} WHERE id = $1`, [leadId]);
     const m1 = (await careRows()).find((r) => r.care === 'monthly')!;
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
     expect((await careRows()).at(-1)).toMatchObject({ care: 'monthly', due_on: '2026-05-11', to_id: null });
   });
 
@@ -243,10 +243,10 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     expect(before.stageDue).toMatchObject({ task: '해피콜', dueOn: '2026-03-18', tone: 'danger' });
 
     const [happy, m1] = await careRows();
-    await drawer().patchTodo(Number(happy.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(happy.id), { done: true }, OWNER, true);
     expect((await leadView()).stageDue).toMatchObject({ task: '월간 상담', dueOn: '2026-04-11' });
 
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
     const after = await leadView();
     // 「월간」 줄은 **첫** 월간이다 — 다음 달이 이어져 열려 있어도 카드는 「완료」 · 띠는 「정기 관리 중」(원문 §23 박시온 카드)
     expect(after.aftercare!.slice(0, 2).map((r) => r.value)).toEqual(['완료 03-18', '완료']);
@@ -267,7 +267,7 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     const [manual] = (await q.query(
       `INSERT INTO todo (title, from_id, to_id, src, done) VALUES ('손으로 쓴 일', ${ADMIN}, ${OWNER}, 'manual', true) RETURNING id`,
     )) as Array<{ id: string }>;
-    const rows = (await drawer().all(ADMIN, true, true)).todos;
+    const rows = (await drawer().all(OWNER, true, true)).todos;
     const care = rows.filter((t) => t.src === 'lead');
     expect(care.map((t) => [t.srcLabel, t.clearable, t.clearBlockedReason, t.go])).toEqual([
       ['상담', false, TODO_KEEP_REASON, `/intake?lead=${leadId}`],
@@ -281,8 +281,8 @@ d('등록 뒤 사후 관리 — 담당의 할 일 (W11 · N-86)', () => {
     await standardWeek();
     await plan();
     const [happy, m1] = await careRows();
-    await drawer().patchTodo(Number(happy.id), { done: true }, ADMIN, true);
-    await drawer().patchTodo(Number(m1.id), { done: true }, ADMIN, true);
+    await drawer().patchTodo(Number(happy.id), { done: true }, OWNER, true);
+    await drawer().patchTodo(Number(m1.id), { done: true }, OWNER, true);
     const [manual] = (await q.query(
       `INSERT INTO todo (title, from_id, to_id, src, done) VALUES ('손으로 쓴 일', ${ADMIN}, ${OWNER}, 'manual', true) RETURNING id`,
     )) as Array<{ id: string }>;

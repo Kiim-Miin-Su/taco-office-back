@@ -18,6 +18,11 @@ d('BO-09E-01 Kinder roster deferred DB guard', () => {
     const url = assertScratch(TEST_URL);
     ds = new DataSource({ ...dataSourceOptions, url, ssl: false, name: `kinder-roster-${Date.now()}` } as typeof dataSourceOptions);
     await ds.initialize();
+    // migration-only scratch에서도 도메인 정본 키를 명시해 전체 스위트 실행 순서에 기대지 않는다.
+    await ds.query(`INSERT INTO kind(key,name,color,cap,grp,rep) VALUES
+      ('class','수업','#4A5461',4,'lesson',true),
+      ('diagx','진단고사','#6F798A',8,'intake',true)
+      ON CONFLICT (key) DO NOTHING`);
   });
   afterAll(async () => { if (ds?.isInitialized) await ds.destroy(); });
 

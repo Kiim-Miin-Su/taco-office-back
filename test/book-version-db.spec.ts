@@ -191,10 +191,10 @@ d('§39 판 · §40 이력 (C52)', () => {
       (SELECT count(*)::int FROM hist) AS history`, [libId])).toEqual(before);
   });
 
-  it('이력 유형 9개는 선택해도 사라지지 않고 목록만 해당 유형으로 좁아진다', async () => {
+  it('이력 유형 10개는 선택해도 사라지지 않고 목록만 해당 유형으로 좁아진다', async () => {
     await svc().addVersion(81, libId, { edition: 'v2026.03' });
     const board = await svc().historyBoard({ span: 'all', action: 'book_upload' });
-    expect(board.actions).toHaveLength(9);
+    expect(board.actions).toHaveLength(10);
     expect(board.actions.find((action) => action.key === 'book_upload')?.count).toBe(1);
     expect(board.actions.find((action) => action.key === 'teacher_swap')?.count).toBe(0);
     expect(board.items.every((item) => item.action === 'book_upload')).toBe(true);

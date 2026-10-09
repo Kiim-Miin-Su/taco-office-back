@@ -120,7 +120,12 @@ d('담당 지정 ↔ 계정 비활성화 경쟁 (CR-BE-04 · lib/staff-lock)', (
       }
       if (mkts.length) {
         await ds.query(`DELETE FROM log WHERE entity = 'MKT' AND entity_id = ANY($1::bigint[])`, [mkts]);
-        await ds.query(`DELETE FROM mkt WHERE id = ANY($1::bigint[])`, [mkts]);
+        await ds.transaction(async (m) => {
+          await m.query(`ALTER TABLE mkt_write_req DISABLE TRIGGER mkt_write_req_immutable`);
+          await m.query(`DELETE FROM mkt_write_req WHERE mkt_id = ANY($1::bigint[])`, [mkts]);
+          await m.query(`DELETE FROM mkt WHERE id = ANY($1::bigint[])`, [mkts]);
+          await m.query(`ALTER TABLE mkt_write_req ENABLE TRIGGER mkt_write_req_immutable`);
+        });
       }
       await ds.query(`DELETE FROM log WHERE entity = 'STAFF' AND entity_id = ${NEXT}`);
       await ds.query(`DELETE FROM noti WHERE to_id IN (${CEO},${MGR},${NEXT}) OR from_id IN (${CEO},${MGR},${NEXT})`);

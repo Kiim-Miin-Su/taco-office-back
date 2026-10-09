@@ -49,6 +49,8 @@ d('동시성 — DB 가 마지막에 막는다 (D-R43)', () => {
     }>;
     if (now !== dbNameOf(URL!)) throw new Error(`엉뚱한 DB 에 붙어 있다: '${now}'`);
     await ds.query('TRUNCATE ser_occ, inv, inv_line, rep RESTART IDENTITY CASCADE');
+    // 청구 경합 fixture는 다른 스위트의 seed/truncate 순서와 무관하게 자기 FK 부모를 소유한다.
+    await ds.query(`INSERT INTO stu(id,name) VALUES(1,'동시성 학생') ON CONFLICT (id) DO NOTHING`);
   });
 
   /* ══ ① 겹침 — 같은 강의실에 두 수업 ═══════════════════════════════ */

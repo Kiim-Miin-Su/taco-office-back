@@ -18,6 +18,7 @@ import {
   StudentSchoolCreateDto,
 } from '../src/modules/students/student-registration.dto';
 import { StudentsService } from '../src/modules/students/students.service';
+import { StudentKinderService } from '../src/modules/students/student-kinder.service';
 
 const KEY = '00000000-0000-4000-8000-000000000301';
 const period = { from: '2026-10-07', fromPrecision: 'day', to: null, toPrecision: null, memo: undefined };
@@ -55,7 +56,10 @@ describe('BOC-03D-01 학생 신규 등록 DTO/OpenAPI 계약', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [StudentsController],
-      providers: [{ provide: StudentsService, useValue: {} }],
+      providers: [
+        { provide: StudentsService, useValue: {} },
+        { provide: StudentKinderService, useValue: {} },
+      ],
     }).compile();
     app = module.createNestApplication();
     await app.init();
@@ -143,7 +147,10 @@ describe('BOC-03D-02 학생 재활성화·경합 오류 생성 계약', () => {
   beforeAll(async () => {
     const module = await Test.createTestingModule({
       controllers: [StudentsController],
-      providers: [{ provide: StudentsService, useValue: {} }],
+      providers: [
+        { provide: StudentsService, useValue: {} },
+        { provide: StudentKinderService, useValue: {} },
+      ],
     }).compile();
     app = module.createNestApplication();
     await app.init();

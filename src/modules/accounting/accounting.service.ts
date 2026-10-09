@@ -742,7 +742,9 @@ export class AccountingService {
       canceledAt: row.canceled_at ? new Date(row.canceled_at as string).toISOString() : null,
       canceledBy: (row.canceled_by as string | null) ?? null,
       cancelReason: (row.cancel_reason as string | null) ?? null,
-      printRef: row.evidence_id ? `/accounting/payment-evidence/${Number(row.pay_id)}` : null,
+      // 권고안: 증빙 상세은 회계 수납 증빙 탭의 기존 모달이 소유한다.
+      // 별도 동적 route를 만들지 않고 실제 Front 진입점으로 연결해 딥링크 드리프트를 막는다.
+      printRef: row.evidence_id ? '/accounting?tab=receipts' : null,
     };
   }
 

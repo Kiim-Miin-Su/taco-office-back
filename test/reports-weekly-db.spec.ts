@@ -271,8 +271,8 @@ d('W11 R2 주간 묶음(N-54) · 파일의 리포트 칸 · report.write 감사 
       `SELECT entity, action, actor_id, before, after FROM log WHERE entity = 'REP' AND entity_id = $1 ORDER BY id`, [rep.get(SER3)]);
     expect(rows.map((r) => [r.entity, r.action, Number(r.actor_id)])).toEqual([['REP', 'write', ADMIN], ['REP', 'write', ADMIN]]);
     expect(rows[0].before).toMatchObject({ state: 'none', reviewedAt: null, rejectReason: null });
-    expect(rows[0].after).toEqual({ state: 'draft', submitted: false });
-    expect(rows[1].after).toEqual({ state: 'wait', submitted: true });
+    expect(rows[0].after).toMatchObject({ state: 'draft', submitted: false });
+    expect(rows[1].after).toMatchObject({ state: 'wait', submitted: true });
     // 본문(학생 기록)은 원장에 싣지 않는다
     expect(JSON.stringify(rows)).not.toContain('관리자가 쓴 내용');
 

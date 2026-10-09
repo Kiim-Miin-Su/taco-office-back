@@ -80,6 +80,17 @@ export const SEEDED_TABLES = [
   'gtpl', 'vers', 'hist', 'file', 'stu_pause', 'month_close',
   // W11 M2 — 정산 근거 줄 · 가산 규칙 · 회계 비공개 스위치 · 인수인계 메모 (N-36 · N-93 · N-94) — 시드는 안 넣는다(규칙 · 스위치는 대표가 정한다)
   'payout_line', 'payout_bonus_rule', 'acct_privacy', 'note',
+  // TBO-55 신규 writer/current/event. dev --reset은 제품 writer가 만든 회귀 자료를 모두 비운다.
+  'stu_kinder_marker', 'teacher_private_note', 'teacher_private_note_write_req',
+  'material_request', 'material_request_file', 'material_request_event', 'rep_book_progress',
+  'invoice_adjustment_base', 'invoice_adjustment', 'invoice_adjustment_event',
+  'payment_evidence', 'payment_evidence_request', 'payment_evidence_event',
+  'payout_disbursement', 'payout_disbursement_request', 'payout_disbursement_event',
+  'delinquency_policy_event', 'delinquency_suspension', 'delinquency_suspension_event',
+  'protected_account', 'protected_account_request', 'protected_account_event',
+  'student_refund_disbursement', 'student_refund_disbursement_request', 'student_refund_disbursement_event',
+  'hourly_rate_policy', 'hourly_rate_policy_request', 'hourly_rate_policy_event',
+  'book_sale', 'book_sale_request', 'book_sale_event', 'mkt_write_req', 'teacher_change_operation',
   // 기록만 쌓이는 표들 — 안 비우면 dev DB 에 옛 QA 흔적이 끝없이 남는다
   'att', 'att_late', 'lead_stage_log', 'lead_touch', 'log', 'pdflog', 'rsend', 'zlog',
   // DQ3 보호자 발송 원장 — 시드는 안 넣는다(보낸 적 없는 발송을 지어내지 않는다)
@@ -145,6 +156,11 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
         (5,'활동 증빙 자료'),(6,'여권 사본'),(7,'재학 증명서')) AS x(seq,label)
       WHERE t.cons_type='admissions' AND t.version=1
       ON CONFLICT (template_id,seq) DO NOTHING`);
+
+    // BOC-11C: STAFF를 CASCADE reset하면 nullable updated_by FK 때문에 단일 정책 행도 함께 비워진다.
+    // 개발/QA reset 뒤 서버가 409 POLICY_MISSING이 되지 않도록 migration 기본값과 같은 v1을 복원한다.
+    await q.query(`INSERT INTO delinquency_policy(id,threshold_days,row_version)
+      VALUES (1,14,1) ON CONFLICT (id) DO NOTHING`);
 
     // ── 기준 정보
     await add('kind', KINDS.map((k) => ({ key: k.key, name: k.name, color: k.color, cap: k.cap, grp: k.grp, rep: k.rep, rep_form: k.repForm, sort: k.sort })));

@@ -25,6 +25,9 @@ d('일정 시간 DB 최종 방어', () => {
       VALUES(-780,'time_test','offline',600,660,'ONCE','2026-09-11')`);
     await q.query(`INSERT INTO exc(id,ser_id,on_date) VALUES(-780,-780,'2026-09-11')`);
     await q.query(`INSERT INTO ser_occ(id,ser_id,on_date,span) VALUES(-780,-780,'2026-09-11','[2026-09-11 10:00+09,2026-09-11 11:00+09)')`);
+    // Kinder/연체 지연 검사를 먼저 확정해 pending trigger event가 DDL 회귀를 가리지 않게 한다.
+    await q.query(`SET CONSTRAINTS ALL IMMEDIATE`);
+    await q.query(`SET CONSTRAINTS ALL DEFERRED`);
   });
   afterEach(async () => { if(q?.isTransactionActive) await q.rollbackTransaction(); if(q && !q.isReleased) await q.release(); });
   afterAll(async () => { if(ds?.isInitialized) await ds.destroy(); });

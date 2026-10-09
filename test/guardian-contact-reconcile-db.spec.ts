@@ -44,6 +44,11 @@ describe('ST1-b3b guardian contact reconciliation safety CLI', () => {
   });
   beforeEach(async () => {
     extraGuardian = null;
+    // 공유 scratch의 다른 fixture가 RESTART IDENTITY 뒤 명시 ID를 쓸 수 있으므로 현재 max로 다시 맞춘다.
+    for (const table of ['staff', 'stu', 'guardian', 'guardian_contact']) {
+      await ds.query(`SELECT setval(pg_get_serial_sequence($1, 'id'),
+        GREATEST((SELECT COALESCE(MAX(id), 1) FROM ${table}), 1), true)`, [table]);
+    }
     const suffix = randomUUID();
     const [staff] = await ds.query(`INSERT INTO staff(name,login_id,role)
       VALUES ('복구 검증자',$1,'admin') RETURNING id`, [`reconcile-${suffix}`]) as Array<{ id: string }>;

@@ -12,6 +12,7 @@ import { PermGuard, type RequestUser } from '../src/common/perm';
 import { ApiErrorFilter } from '../src/common/filters/api-error.filter';
 import { StudentsController } from '../src/modules/students/students.controller';
 import { StudentsService } from '../src/modules/students/students.service';
+import { StudentKinderService } from '../src/modules/students/student-kinder.service';
 import { buildOpenApi } from '../src/openapi';
 
 describe('학생 목록/상세 HTTP 계약', () => {
@@ -19,7 +20,13 @@ describe('학생 목록/상세 HTTP 계약', () => {
   const service = { list: jest.fn(async () => ({ items: [], total: 0, page: 1, pageSize: 10, grades: [], educationGrades: [] })),
     detail: jest.fn(async () => ({ id: 7 })), hub: jest.fn(async () => ({ studentId: 7 })) };
   beforeAll(async () => {
-    const module = await Test.createTestingModule({ controllers: [StudentsController], providers: [{ provide: StudentsService, useValue: service }] }).compile();
+    const module = await Test.createTestingModule({
+      controllers: [StudentsController],
+      providers: [
+        { provide: StudentsService, useValue: service },
+        { provide: StudentKinderService, useValue: {} },
+      ],
+    }).compile();
     app = module.createNestApplication();
     app.use((req: Request & { user?: RequestUser }, _res: Response, next: NextFunction) => {
       if (req.headers['x-fixture-role']) req.user = { id: 1, name: 'fixture', role: String(req.headers['x-fixture-role']) };

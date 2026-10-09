@@ -31,8 +31,9 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
   const TEACHER_2 = 9948203;
   const TEACHER_3 = 9948204;
   const PASSWORD = 'boc11-payout-1234';
-  const MONTH = '2001-05';
-  const PREVIOUS = '2001-04';
+  // 격리 DB의 시드 월과 관계없이 이 스위트의 두 확정 월이 최신 두 달이 되게 고정한다.
+  const MONTH = '2098-05';
+  const PREVIOUS = '2098-04';
   const q = <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> =>
     ds.query(sql, params) as Promise<T[]>;
 

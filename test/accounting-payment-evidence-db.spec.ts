@@ -103,7 +103,7 @@ d('BO-11AD-01 입금 증빙 원장', () => {
     const issued = (await request(app.getHttpServer()).post(`/accounting/payment-evidence/${payIds[0]}/issue`)
       .set(auth(ceoToken)).send({ expectedVersion: 0, requestKey: issueRequestKey }).expect(201)).body;
     expect(issued).toMatchObject({ payId: payIds[0], status: 'issued', version: 1, studentName: '증빙학생', amount: 120000 });
-    expect(issued.printRef).toBe(`/accounting/payment-evidence/${payIds[0]}`);
+    expect(issued.printRef).toBe('/accounting?tab=receipts');
     expect((await request(app.getHttpServer()).post(`/accounting/payment-evidence/${payIds[0]}/issue`)
       .set(auth(ceoToken)).send({ expectedVersion: 0, requestKey: issueRequestKey }).expect(201)).body)
       .toMatchObject({ status: 'issued', version: 1 });

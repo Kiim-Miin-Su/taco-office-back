@@ -34,7 +34,13 @@ import { maskEmail } from '../modules/notify/sender';
  * 회계 비공개 스위치(acct_privacy · N-94)는 대표가 정한 **설정**이라 남긴다 — 켠 사람이 지워지면 `set_by` 만 빈다(시각은 남는다).
  * 가산 규칙(payout_bonus_rule · N-93)은 시급(wage)처럼 시험 기간 값일 수 있어 남기지 않는다.
  */
-export const GOLIVE_KEEP_TABLES: readonly string[] = ['kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl', 'book_subject', 'book_category', 'acct_privacy', 'country', 'country_timezone', 'education_grade', 'school'];
+export const GOLIVE_KEEP_TABLES: readonly string[] = [
+  'kind', 'sub', 'room', 'tzg', 'zacc', 'gpasvc', 'holiday', 'gtpl', 'book_subject', 'book_category',
+  'acct_privacy', 'country', 'country_timezone', 'education_grade', 'school',
+  // 권고안: 운영 전환은 업무 fixture를 지우되 서비스의 서버 정본 정책은 보존한다.
+  // 정책 초기화는 각 정책 writer/version 절차로 수행하고 이 reset에서 직접 삭제하지 않는다.
+  'payment_evidence_policy', 'delinquency_policy', 'hourly_rate_policy', 'book_sale_fee_policy',
+];
 /** 절대 건드리지 않는 표 — 스키마 이력 */
 export const GOLIVE_UNTOUCHED: readonly string[] = ['migrations'];
 /** 한 줄(남길 대표)만 남기는 표 */

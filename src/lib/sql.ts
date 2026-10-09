@@ -133,7 +133,7 @@ export interface CheckConstraintSql {
  * 안 맞으면 `null` 을 돌려주고 부르는 쪽이 「못 읽었다」고 **말한다** — 틀린 식으로 세지 않는다.
  */
 export function parseCheckConstraint(sql: string): CheckConstraintSql | null {
-  const m = /ALTER\s+TABLE\s+(?:ONLY\s+)?"?(\w+)"?\s+ADD\s+CONSTRAINT\s+"?(\w+)"?\s+CHECK\s*\(([\s\S]+)\)\s*(?:NOT\s+VALID)?\s*;?\s*$/i
+  const m = /ALTER\s+TABLE\s+(?:ONLY\s+)?"?(\w+)"?\s+[\s\S]*?\bADD\s+CONSTRAINT\s+"?(\w+)"?\s+CHECK\s*\(([\s\S]+)\)\s*(?:NOT\s+VALID)?\s*;?\s*$/i
     .exec(sql.trim());
   if (!m) return null;
   const [, table, name, expr] = m;

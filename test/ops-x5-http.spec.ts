@@ -20,6 +20,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DEV_URL } from './db';
+import { randomUUID } from 'node:crypto';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -65,7 +66,12 @@ d('「+ 오늘 한 것」 HTTP (x5 · 59-3)', () => {
     try {
       if (ds?.isInitialized) {
         await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[CEO, TEACHER]]);
-        await q(`DELETE FROM mkt WHERE title LIKE 'X5 HTTP%'`);
+        await ds.transaction(async (m) => {
+          await m.query(`ALTER TABLE mkt_write_req DISABLE TRIGGER mkt_write_req_immutable`);
+          await m.query(`DELETE FROM mkt_write_req WHERE mkt_id IN (SELECT id FROM mkt WHERE title LIKE 'X5 HTTP%')`);
+          await m.query(`DELETE FROM mkt WHERE title LIKE 'X5 HTTP%'`);
+          await m.query(`ALTER TABLE mkt_write_req ENABLE TRIGGER mkt_write_req_immutable`);
+        });
         await q(`DELETE FROM staff WHERE id = ANY($1)`, [[CEO, TEACHER]]);
       }
     } finally {
@@ -99,7 +105,7 @@ d('「+ 오늘 한 것」 HTTP (x5 · 59-3)', () => {
   });
 
   it('대표는 201 — 응답은 목록과 같은 모양 · 날짜 기본 오늘 · 담당 기본 나', async () => {
-    const res = await post({ title: `${TITLE} 1`, channel: 'instagram', item: 'video', url: 'https://instagram.com/p/x5', memo: '조회 1.2천' }).expect(201);
+    const res = await post({ requestKey: randomUUID(), title: `${TITLE} 1`, channel: 'instagram', item: 'video', url: 'https://instagram.com/p/x5', memo: '조회 1.2천' }).expect(201);
     expect(res.body).toMatchObject({
       title: `${TITLE} 1`, channelLabel: '인스타그램', itemLabel: '릴스·영상', byId: CEO, byName: 'X5대표',
       url: 'https://instagram.com/p/x5', memo: '조회 1.2천',
