@@ -260,6 +260,16 @@ export class InvoiceAdjustmentsService {
           code: 'INVOICE_ADJUSTMENT_INVALID_TRANSITION', message: `${STATE_LABEL[fromState]} 상태에서는 이 처리를 할 수 없습니다`,
         });
       }
+      if (action === 'cancel') {
+        const [paidRefund] = await m.query(`SELECT id FROM student_refund_disbursement
+          WHERE invoice_adjustment_id=$1 AND state='paid'`, [id]) as Row[];
+        if (paidRefund) {
+          throw new ConflictException({
+            code: 'STUDENT_REFUND_CANCEL_REQUIRED',
+            message: '실제 지급한 학생 환불을 먼저 취소한 뒤 조정 반영을 취소해 주세요',
+          });
+        }
+      }
       const before = Number(current.invoice_amount);
       const amount = Number(current.amount);
       const changesInvoice = action === 'approve' || action === 'cancel' || (action === 'undo' && fromState === 'canceled');

@@ -1,3 +1,4 @@
+// TBO55-BOC11D2-R106 (2026-10-09): BOC-11D-02 권고안 채택 — 승인 조정의 전후 환불 예정액 증가분을 실제 학생 환불액으로 서버 계산한다. 수납 PAY는 유지하고 STUDENT_REFUND_DISBURSEMENT current, UUID REQUEST, append-only EVENT를 분리하며 지급 당시 source adjustment version·금액·보호 계좌 id/version/last4를 보존한다. 지급 완료 뒤에는 먼저 환불 지급을 취소해야 원천 조정 취소가 가능하다. v4.88/137표, migration1768500000000 로컬 fresh118·repeat0·down/up·권한·멱등·stale·직접쓰기·취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 조정 전이·보호 계좌·accounting DTO/service/Front A24·A27·migration/두 DBML·P-BOC11D2·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D1-R105 (2026-10-09): BOC-11D-01 권고안 채택 — 학생 환불·강사 지급 계좌를 purpose+target 단일 current, UUID REQUEST, append-only EVENT로 분리하고 AES-256-GCM ciphertext/key version/last4만 저장한다. 일반 DTO는 last4만, 원문 확인은 사유 있는 별도 capability와 value-less 감사만 남긴다. 삭제는 secret을 purge하고 current identity/version은 보존한다. 실제 강사 지급은 활성 계좌를 잠그고 id/version/last4를 current/event에 snapshot하며 확정 급여 JSON은 불변이다. v4.87/134표, migration1768400000000 로컬 fresh117·권한·멱등·stale·키누락/오키·직접쓰기·지급 취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 capability/crypto/accounting DTO/service/Front A27·지급 원장·migration/두 DBML·P-BOC11D1·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11C-R104 (2026-10-09): BOC-11C 권고안 채택 — 기본 14일은 연체 후보만 만들고 실제 독촉·정지·해제는 관리자가 처리한다. 기존 일정은 보존하고 정지 중 신규 생성·복사·이동·명단 확대·undo를 공용 잠금과 DB trigger로 막는다. POLICY/current/event 네 표가 actual actor·UUID requestKey·payload hash·version·threshold/잔액/영향 수업 snapshot을 보존하며, 입금 확인 뒤 기한 경과 잔액 0일 때만 해제한다. v4.86/131표, migration1768300000000 로컬 권한·batch 멱등·stale·직접쓰기·일정·Kinder 인접 회귀 검증, 운영 미적용. 정책 변경 시 accounting DTO/service/Front·schedule guard·migration/두 DBML·P-BOC11C·두 수정사항 대조표·Figma A25·scenario·portfolio를 함께 수정한다.
 // TBO55-BO11BD01-R103 (2026-10-09): BO-11BD-01 권고안 채택 — 할인·환불·형제 할인·이월 신청을 적용 월의 단일 유효 tuition INV에 연결하고 BASE 원금 snapshot, ADJUSTMENT current, EVENT 불변 이력으로 승인·반려·반영 취소·되돌리기를 저장한다. pending/rejected는 금액 불변, approved 합계만 차감하며 초과 납부 차액은 refundDue로만 표시하고 실제 환불 송금은 BO-Q9에 남긴다. v4.85/127표, migration1768200000000 로컬 fresh/upgrade/repeat/down-up·권한·멱등·stale·월마감·직접쓰기 방어 검증, 운영 미적용. 정책 변경 시 조정 DTO/service/Front·migration/두 DBML·P-BO11BD01·두 수정사항 대조표·Figma A24·scenario·portfolio를 함께 수정한다.
@@ -3325,3 +3326,84 @@ Ref: PROTECTED_ACCOUNT_REQUEST.actor_id > STAFF.id [delete: restrict]
 Ref: PROTECTED_ACCOUNT_EVENT.account_id > PROTECTED_ACCOUNT.id [delete: restrict]
 Ref: PROTECTED_ACCOUNT_EVENT.actor_id > STAFF.id [delete: restrict]
 Ref: PROTECTED_ACCOUNT_EVENT.request_key > PROTECTED_ACCOUNT_REQUEST.request_key [delete: restrict]
+
+// v4.87 → v4.88 (2026-10-09 · TBO-55 BOC-11D-02 권고안 채택) — 승인 조정의 실제 학생 환불 지급 원장.
+//   + STUDENT_REFUND_DISBURSEMENT — 원천 조정별 단일 current와 지급·취소·재지급 상태, 서버 계산 금액, source/account snapshot.
+//   + STUDENT_REFUND_DISBURSEMENT_REQUEST/EVENT — UUID 멱등 요청과 actual actor, version, 상태·금액·계좌 불변 이력.
+//   + 지급 완료 상태에서는 원천 조정 취소를 차단하고 current receipt/source/account 일치를 지연 trigger로 방어한다.
+//   + 표 +3(134 → 137) · migration 1(1768500000000-student-refund-disbursement) · 운영 미적용.
+
+Table STUDENT_REFUND_DISBURSEMENT {
+  id bigint [pk, increment]
+  invoice_adjustment_id bigint [not null, unique]
+  state varchar(12) [not null, note: 'paid | canceled']
+  row_version int [not null]
+  amount int [not null, note: '현재 승인 전이가 새로 만든 환불 예정액 증가분']
+  source_adjustment_version int [not null]
+  paid_on date [not null]
+  method varchar(24) [not null, note: 'bank_transfer']
+  paid_by bigint [not null]
+  paid_at timestamptz [not null]
+  account_id bigint [not null]
+  account_version int [not null]
+  account_last4 char(4) [not null]
+  canceled_by bigint
+  canceled_at timestamptz
+  cancel_reason varchar(200)
+  updated_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (state, invoice_adjustment_id) [name: 'student_refund_disbursement_state_idx']
+  }
+}
+
+Table STUDENT_REFUND_DISBURSEMENT_REQUEST {
+  request_key uuid [pk]
+  actor_id bigint [not null]
+  action varchar(12) [not null, note: 'paid | canceled']
+  invoice_adjustment_id bigint [not null]
+  expected_version int [not null]
+  payload_sha256 char(64) [not null]
+  result_version int [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (invoice_adjustment_id, created_at) [name: 'student_refund_disbursement_request_source_idx']
+  }
+}
+
+Table STUDENT_REFUND_DISBURSEMENT_EVENT {
+  id bigint [pk, increment]
+  student_refund_disbursement_id bigint [not null]
+  action varchar(12) [not null, note: 'paid | canceled']
+  from_state varchar(12)
+  to_state varchar(12) [not null]
+  actor_id bigint [not null]
+  request_key uuid [not null, unique]
+  result_version int [not null]
+  amount int [not null]
+  source_adjustment_version int [not null]
+  paid_on date
+  method varchar(24)
+  reason varchar(200)
+  account_id bigint [not null]
+  account_version int [not null]
+  account_last4 char(4) [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (student_refund_disbursement_id, result_version) [unique, name: 'student_refund_disbursement_event_version_unique']
+    (student_refund_disbursement_id, created_at, id) [name: 'student_refund_disbursement_event_current_idx']
+  }
+}
+
+Ref: STUDENT_REFUND_DISBURSEMENT.invoice_adjustment_id > INVOICE_ADJUSTMENT.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT.paid_by > STAFF.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT.account_id > PROTECTED_ACCOUNT.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT.canceled_by > STAFF.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT_REQUEST.actor_id > STAFF.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT_REQUEST.invoice_adjustment_id > INVOICE_ADJUSTMENT.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.student_refund_disbursement_id > STUDENT_REFUND_DISBURSEMENT.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.actor_id > STAFF.id [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.request_key > STUDENT_REFUND_DISBURSEMENT_REQUEST.request_key [delete: restrict]
+Ref: STUDENT_REFUND_DISBURSEMENT_EVENT.account_id > PROTECTED_ACCOUNT.id [delete: restrict]

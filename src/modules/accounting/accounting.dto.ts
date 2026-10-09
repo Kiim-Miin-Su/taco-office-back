@@ -815,6 +815,109 @@ export class ProtectedAccountSecretDto {
   @ApiProperty({ description: '같은 원문 확인 요청의 정확한 재시도면 true' }) replayed!: boolean;
 }
 
+/* ── BOC-11D-02 학생 실제 환불 지급 원장 ─────────────────────────────
+ * 승인된 청구 조정이 새로 만든 환불 예정액 증가분만 지급 대상으로 삼는다.
+ * 수납 PAY를 음수로 재사용하지 않고 실제 송금 current/request/event를 별도로 보존한다.
+ * 정책 변경 시 조정 전이·보호 계좌·migration/DBML/generated Front/A24·A27/문서/portfolio를 함께 갱신한다.
+ */
+export type StudentRefundState = 'unpaid' | 'paid' | 'canceled';
+
+export class StudentRefundEventDto {
+  @ApiProperty({ enum: ['paid', 'canceled'] }) action!: 'paid' | 'canceled';
+  @ApiProperty({ type: String, nullable: true, enum: ['paid', 'canceled'] }) fromState!: 'paid' | 'canceled' | null;
+  @ApiProperty({ enum: ['paid', 'canceled'] }) toState!: 'paid' | 'canceled';
+  @ApiProperty() version!: number;
+  @ApiProperty() amount!: number;
+  @ApiProperty() sourceAdjustmentVersion!: number;
+  @ApiProperty() actor!: string;
+  @ApiProperty({ type: String, nullable: true }) paidOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, enum: ['bank_transfer'] }) method!: 'bank_transfer' | null;
+  @ApiProperty({ type: String, nullable: true }) reason!: string | null;
+  @ApiProperty({ type: Number, nullable: true }) accountId!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) accountVersion!: number | null;
+  @ApiProperty({ type: String, nullable: true, description: '지급 당시 보호 계좌 뒤 4자리 snapshot' }) accountLast4!: string | null;
+  @ApiProperty() createdAt!: string;
+}
+
+export class StudentRefundDto {
+  @ApiProperty() adjustmentId!: number;
+  @ApiProperty() invoiceId!: number;
+  @ApiProperty() studentId!: number;
+  @ApiProperty() studentName!: string;
+  @ApiProperty({ type: String, nullable: true }) studentTag!: string | null;
+  @ApiProperty({ example: '2026-10' }) yearMonth!: string;
+  @ApiProperty({ ...DATE_SCHEMA }) effectiveOn!: string;
+  @ApiProperty() adjustmentKindLabel!: string;
+  @ApiProperty() adjustmentReason!: string;
+  @ApiProperty({ description: '현재 승인 전이가 새로 만든 환불 예정액 증가분' }) amount!: number;
+  @ApiProperty() sourceAdjustmentVersion!: number;
+  @ApiProperty({ enum: ['unpaid', 'paid', 'canceled'] }) status!: StudentRefundState;
+  @ApiProperty({ minimum: 0, description: '아직 지급 전이면 0' }) version!: number;
+  @ApiProperty() accountReady!: boolean;
+  @ApiProperty({ type: String, nullable: true, description: '현재 지급 가능한 활성 계좌 뒤 4자리' }) activeAccountLast4!: string | null;
+  @ApiProperty({ type: Number, nullable: true, description: '지급 당시 보호 계좌 id snapshot' }) accountId!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) accountVersion!: number | null;
+  @ApiProperty({ type: String, nullable: true }) accountLast4!: string | null;
+  @ApiProperty({ type: String, nullable: true }) paidOn!: string | null;
+  @ApiProperty({ type: String, nullable: true, enum: ['bank_transfer'] }) method!: 'bank_transfer' | null;
+  @ApiProperty({ type: String, nullable: true }) paidBy!: string | null;
+  @ApiProperty({ type: String, nullable: true }) canceledAt!: string | null;
+  @ApiProperty({ type: String, nullable: true }) cancelReason!: string | null;
+  @ApiProperty() canPay!: boolean;
+  @ApiProperty() canCancel!: boolean;
+  @ApiProperty({ type: [StudentRefundEventDto] }) events!: StudentRefundEventDto[];
+}
+
+export class StudentRefundLedgerDto {
+  @ApiProperty({ example: '2026-10' }) month!: string;
+  @ApiProperty() totalCount!: number;
+  @ApiProperty() totalAmount!: number;
+  @ApiProperty() paidCount!: number;
+  @ApiProperty() paidAmount!: number;
+  @ApiProperty() unpaidAmount!: number;
+  @ApiProperty() canWrite!: boolean;
+  @ApiProperty({ type: [StudentRefundDto] }) items!: StudentRefundDto[];
+}
+
+export class StudentRefundQueryDto {
+  @ApiPropertyOptional({ example: '2026-10', description: '비우면 서버 KST 현재 달' })
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '달은 YYYY-MM 입니다' })
+  month?: string;
+}
+
+export class StudentRefundPayDto {
+  @ApiProperty({ minimum: 0, description: '아직 지급 전 0, 지급 취소 뒤 재지급은 현재 version' })
+  @ToHttpInteger() @IsInt() @Min(0)
+  expectedVersion!: number;
+
+  @ApiProperty({ ...DATE_SCHEMA })
+  @IsCalendarDate()
+  paidOn!: string;
+
+  @ApiProperty({ enum: ['bank_transfer'] })
+  @IsIn(['bank_transfer'])
+  method!: 'bank_transfer';
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
+export class StudentRefundCancelDto {
+  @ApiProperty({ minimum: 1 })
+  @ToHttpInteger() @IsInt() @Min(1)
+  expectedVersion!: number;
+
+  @ApiProperty({ minLength: 2, maxLength: 200 })
+  @IsString() @MinLength(2) @MaxLength(200)
+  reason!: string;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  requestKey!: string;
+}
+
 /**
  * 입금 한 줄 등록 — **분납은 줄을 늘려서 표현한다** (A-D2 · PLANNING §4-17).
  * 누계·상태 전이·초과 판정은 전부 서버가 한다. 화면은 잔여를 placeholder 로만 보여 준다 (ACCOUNTING §0).

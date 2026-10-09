@@ -7217,6 +7217,302 @@
         ]
       }
     },
+    "/accounting/student-refunds": {
+      "get": {
+        "description": "승인 전후 환불 예정액 증가분을 서버가 계산하고 실제 계좌이체 current/event와 분리한다. 수납 PAY를 음수 환불로 바꾸지 않으며 지급 시점의 조정 version·금액·보호 계좌 version/뒤4자리를 보존한다. 권고안 변경 시 조정 전이·보호 계좌·migration/Front A24·A27/두 수정사항 대조표/portfolio를 함께 바꾼다.",
+        "operationId": "AccountingController_studentRefundLedger",
+        "parameters": [
+          {
+            "name": "month",
+            "required": false,
+            "in": "query",
+            "description": "비우면 서버 KST 현재 달",
+            "schema": {
+              "example": "2026-10",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRefundLedgerDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 실제 환불 지급 원장 — 승인 조정의 환불 증가분 (TBO-55 BOC-11D-02)",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/student-refunds/{adjustmentId}/pay": {
+      "post": {
+        "operationId": "AccountingController_payStudentRefund",
+        "parameters": [
+          {
+            "name": "adjustmentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentRefundPayDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRefundDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "STUDENT_REFUND_PAYMENT_FUTURE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "STUDENT_REFUND_NOT_DUE | STUDENT_REFUND_ACCOUNT_REQUIRED | STUDENT_REFUND_STALE | STUDENT_REFUND_ALREADY_PAID | STUDENT_REFUND_KEY_REUSED | STUDENT_REFUND_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 환불 계좌이체 기록 — source/account snapshot·expectedVersion·requestKey",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
+    "/accounting/student-refunds/{adjustmentId}/cancel": {
+      "post": {
+        "operationId": "AccountingController_cancelStudentRefund",
+        "parameters": [
+          {
+            "name": "adjustmentId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StudentRefundCancelDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StudentRefundDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "STUDENT_REFUND_NOT_PAID | STUDENT_REFUND_STALE | STUDENT_REFUND_KEY_REUSED | STUDENT_REFUND_REPLAY_STALE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "학생 실제 환불 취소 — 사유·actor·이력 보존 뒤 재지급 허용",
+        "tags": [
+          "accounting"
+        ]
+      }
+    },
     "/accounting/tuition": {
       "get": {
         "description": "원문 §54 의 「연동: **청구서 생성 시 이 계산 결과를 씁니다**」가 이 화면의 정체다 — 청구서가 쓰는 바로 그 계산(`invoice-lines.ts`)을 미리 보는 자리라, 단가를 여기서 다시 세지 않는다 (D-R22). 세는 것도 나누는 것도 서버다 — 화면이 회차를 세면 취소·「그날만 빠진」을 빠뜨리고(D-R21), 화면이 %를 내면 머리 칸과 갈린다 (D-R37). 결강은 금액에서 빠지고 「넘길 돈」으로 따로 선다.",
@@ -34905,6 +35201,329 @@
           "accountNumber",
           "holder",
           "replayed"
+        ]
+      },
+      "StudentRefundEventDto": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "paid",
+              "canceled"
+            ]
+          },
+          "fromState": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "paid",
+              "canceled"
+            ]
+          },
+          "toState": {
+            "type": "string",
+            "enum": [
+              "paid",
+              "canceled"
+            ]
+          },
+          "version": {
+            "type": "number"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "sourceAdjustmentVersion": {
+            "type": "number"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "paidOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "method": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "bank_transfer"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "accountId": {
+            "type": "number",
+            "nullable": true
+          },
+          "accountVersion": {
+            "type": "number",
+            "nullable": true
+          },
+          "accountLast4": {
+            "type": "string",
+            "nullable": true,
+            "description": "지급 당시 보호 계좌 뒤 4자리 snapshot"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "fromState",
+          "toState",
+          "version",
+          "amount",
+          "sourceAdjustmentVersion",
+          "actor",
+          "paidOn",
+          "method",
+          "reason",
+          "accountId",
+          "accountVersion",
+          "accountLast4",
+          "createdAt"
+        ]
+      },
+      "StudentRefundDto": {
+        "type": "object",
+        "properties": {
+          "adjustmentId": {
+            "type": "number"
+          },
+          "invoiceId": {
+            "type": "number"
+          },
+          "studentId": {
+            "type": "number"
+          },
+          "studentName": {
+            "type": "string"
+          },
+          "studentTag": {
+            "type": "string",
+            "nullable": true
+          },
+          "yearMonth": {
+            "type": "string",
+            "example": "2026-10"
+          },
+          "effectiveOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "adjustmentKindLabel": {
+            "type": "string"
+          },
+          "adjustmentReason": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "description": "현재 승인 전이가 새로 만든 환불 예정액 증가분"
+          },
+          "sourceAdjustmentVersion": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unpaid",
+              "paid",
+              "canceled"
+            ]
+          },
+          "version": {
+            "type": "number",
+            "minimum": 0,
+            "description": "아직 지급 전이면 0"
+          },
+          "accountReady": {
+            "type": "boolean"
+          },
+          "activeAccountLast4": {
+            "type": "string",
+            "nullable": true,
+            "description": "현재 지급 가능한 활성 계좌 뒤 4자리"
+          },
+          "accountId": {
+            "type": "number",
+            "nullable": true,
+            "description": "지급 당시 보호 계좌 id snapshot"
+          },
+          "accountVersion": {
+            "type": "number",
+            "nullable": true
+          },
+          "accountLast4": {
+            "type": "string",
+            "nullable": true
+          },
+          "paidOn": {
+            "type": "string",
+            "nullable": true
+          },
+          "method": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "bank_transfer"
+            ]
+          },
+          "paidBy": {
+            "type": "string",
+            "nullable": true
+          },
+          "canceledAt": {
+            "type": "string",
+            "nullable": true
+          },
+          "cancelReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "canPay": {
+            "type": "boolean"
+          },
+          "canCancel": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRefundEventDto"
+            }
+          }
+        },
+        "required": [
+          "adjustmentId",
+          "invoiceId",
+          "studentId",
+          "studentName",
+          "studentTag",
+          "yearMonth",
+          "effectiveOn",
+          "adjustmentKindLabel",
+          "adjustmentReason",
+          "amount",
+          "sourceAdjustmentVersion",
+          "status",
+          "version",
+          "accountReady",
+          "activeAccountLast4",
+          "accountId",
+          "accountVersion",
+          "accountLast4",
+          "paidOn",
+          "method",
+          "paidBy",
+          "canceledAt",
+          "cancelReason",
+          "canPay",
+          "canCancel",
+          "events"
+        ]
+      },
+      "StudentRefundLedgerDto": {
+        "type": "object",
+        "properties": {
+          "month": {
+            "type": "string",
+            "example": "2026-10"
+          },
+          "totalCount": {
+            "type": "number"
+          },
+          "totalAmount": {
+            "type": "number"
+          },
+          "paidCount": {
+            "type": "number"
+          },
+          "paidAmount": {
+            "type": "number"
+          },
+          "unpaidAmount": {
+            "type": "number"
+          },
+          "canWrite": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StudentRefundDto"
+            }
+          }
+        },
+        "required": [
+          "month",
+          "totalCount",
+          "totalAmount",
+          "paidCount",
+          "paidAmount",
+          "unpaidAmount",
+          "canWrite",
+          "items"
+        ]
+      },
+      "StudentRefundPayDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 0,
+            "description": "아직 지급 전 0, 지급 취소 뒤 재지급은 현재 version"
+          },
+          "paidOn": {
+            "type": "string",
+            "format": "date",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "bank_transfer"
+            ]
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "paidOn",
+          "method",
+          "requestKey"
+        ]
+      },
+      "StudentRefundCancelDto": {
+        "type": "object",
+        "properties": {
+          "expectedVersion": {
+            "type": "number",
+            "minimum": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 200
+          },
+          "requestKey": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "required": [
+          "expectedVersion",
+          "reason",
+          "requestKey"
         ]
       },
       "TuitionRowDto": {

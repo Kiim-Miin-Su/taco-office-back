@@ -41,6 +41,8 @@ import {
   DelinquencyReminderBatchDto, DelinquencyReminderBatchResultDto,
   ProtectedAccountLedgerDto, ProtectedAccountWriteDto, ProtectedAccountWriteResultDto,
   ProtectedAccountActionDto, ProtectedAccountSecretDto,
+  StudentRefundDto, StudentRefundLedgerDto, StudentRefundQueryDto,
+  StudentRefundPayDto, StudentRefundCancelDto,
 } from './accounting.dto';
 import { todayKst } from '../../lib/kst';
 import { AccountingService, type AcctViewer } from './accounting.service';
@@ -48,6 +50,7 @@ import { InvoiceAdjustmentsService } from './invoice-adjustments.service';
 import { StudentWithdrawService } from './withdraw.service';
 import { DelinquencySuspensionsService } from './delinquency-suspensions.service';
 import { ProtectedAccountsService } from './protected-accounts.service';
+import { StudentRefundsService } from './student-refunds.service';
 
 /** 회계 비공개(N-94)의 보는 사람 — 비공개 열람(canHide · 사람별 예외 반영)과 본인 번호 */
 const viewerOf = (user: RequestUser): AcctViewer => ({
@@ -71,6 +74,7 @@ export class AccountingController {
     private readonly adjustments: InvoiceAdjustmentsService,
     private readonly delinquency: DelinquencySuspensionsService,
     private readonly protectedAccounts: ProtectedAccountsService,
+    private readonly studentRefunds: StudentRefundsService,
     private readonly withdrawSvc: StudentWithdrawService,
   ) {}
 
@@ -415,6 +419,53 @@ export class AccountingController {
       isRole(user.role) && canRevealProtectedAccount(user.role, user.perms),
       accountId,
       dto,
+    );
+  }
+
+  @Get('student-refunds')
+  @Perm('canMoney')
+  @ApiOperation({
+    summary: '학생 실제 환불 지급 원장 — 승인 조정의 환불 증가분 (TBO-55 BOC-11D-02)',
+    description: '승인 전후 환불 예정액 증가분을 서버가 계산하고 실제 계좌이체 current/event와 분리한다. '
+      + '수납 PAY를 음수 환불로 바꾸지 않으며 지급 시점의 조정 version·금액·보호 계좌 version/뒤4자리를 보존한다. '
+      + '권고안 변경 시 조정 전이·보호 계좌·migration/Front A24·A27/두 수정사항 대조표/portfolio를 함께 바꾼다.',
+  })
+  @ApiOkResponse({ type: StudentRefundLedgerDto })
+  studentRefundLedger(
+    @CurrentUser() user: RequestUser, @Query() query: StudentRefundQueryDto,
+  ): Promise<StudentRefundLedgerDto> {
+    return this.studentRefunds.ledger(
+      isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms),
+      query.month,
+    );
+  }
+
+  @Post('student-refunds/:adjustmentId/pay')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '학생 환불 계좌이체 기록 — source/account snapshot·expectedVersion·requestKey' })
+  @ApiCreatedResponse({ type: StudentRefundDto })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'STUDENT_REFUND_PAYMENT_FUTURE' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'STUDENT_REFUND_NOT_DUE | STUDENT_REFUND_ACCOUNT_REQUIRED | STUDENT_REFUND_STALE | STUDENT_REFUND_ALREADY_PAID | STUDENT_REFUND_KEY_REUSED | STUDENT_REFUND_REPLAY_STALE' })
+  payStudentRefund(
+    @CurrentUser() user: RequestUser, @Param('adjustmentId', ParseIntPipe) adjustmentId: number,
+    @Body() dto: StudentRefundPayDto,
+  ): Promise<StudentRefundDto> {
+    return this.studentRefunds.pay(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), adjustmentId, dto,
+    );
+  }
+
+  @Post('student-refunds/:adjustmentId/cancel')
+  @Perm('canMoney')
+  @ApiOperation({ summary: '학생 실제 환불 취소 — 사유·actor·이력 보존 뒤 재지급 허용' })
+  @ApiCreatedResponse({ type: StudentRefundDto })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'STUDENT_REFUND_NOT_PAID | STUDENT_REFUND_STALE | STUDENT_REFUND_KEY_REUSED | STUDENT_REFUND_REPLAY_STALE' })
+  cancelStudentRefund(
+    @CurrentUser() user: RequestUser, @Param('adjustmentId', ParseIntPipe) adjustmentId: number,
+    @Body() dto: StudentRefundCancelDto,
+  ): Promise<StudentRefundDto> {
+    return this.studentRefunds.cancel(
+      user.id, isRole(user.role) && hasPerm(user.role, 'canMoney', user.perms), adjustmentId, dto,
     );
   }
 
