@@ -31,6 +31,7 @@ export const AUDIT_WRITES = [
   { key: 'schedule.undo', entity: 'SER', action: 'undo', why: '되돌리기 — 누가 언제 되살렸는지' },
   // 리포트 — 결재 도장을 지우는 쓰기
   { key: 'report.write', entity: 'REP', action: 'write', why: '다시 쓰면 결재 도장이 지워진다' },
+  { key: 'report.material.create', entity: 'REP', action: 'material_create', why: '리포트에서 새 교재·자료와 학생별 배부를 함께 만든다(T11)' },
   // 회계 — 돈
   { key: 'invoice.issue', entity: 'INV', action: 'issue', why: '청구서 발행(낱장 · 일괄 · 등록 확정)' },
   { key: 'payment_evidence.issue', entity: 'PAY_EVIDENCE', action: 'issue', why: 'PAY 증빙 발행 확인 · 출력 snapshot' },

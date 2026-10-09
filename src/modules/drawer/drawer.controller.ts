@@ -170,10 +170,10 @@ export class DrawerController {
   @Post('staff')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
-    summary: '「+ 구성원」 — 강사·매니저 계정을 만든다 (C97 · D-41 · W8 · W10)',
+    summary: '「+ 구성원」 — 강사·매니저·관리자 계정을 만든다 (C97 · D-41 · W8 · W10)',
     description: '이름 · 아이디(형식 자유 · 띄어쓰기 없음 · 대소문자 무시 유일) · 임시 비밀번호 · 이메일(선택 · 유일) · 역할 둘 · 직함 · 시간대(tzg) · 휴대폰 · 입사일 · '
       + '기본 시급(적으면 같은 트랜잭션에 WAGE 한 줄 · 소급 없음). **아이디와 임시 비밀번호는 매니저가 정한다**(W10) — 비밀번호는 해시로만 저장하고 '
-      + '응답 · 기록에 싣지 않는다. 첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 건다. 대표·관리자 계정은 이 길로 만들지 않는다.',
+      + '응답 · 기록에 싣지 않는다. 첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 건다. manager/admin/ceo가 같은 길을 쓰며 대표 계정은 만들지 않는다.',
   })
   @ApiCreatedResponse({ type: MemberDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드) | LOGIN_ID_RULE | PASSWORD_RULE | STAFF_PHONE_INVALID' })

@@ -5,9 +5,9 @@
  */
 
 import { ApiExtraModels, ApiProperty, ApiPropertyOptional, getSchemaPath } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
-  ArrayMaxSize, ArrayMinSize, IsArray, IsDefined, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min,
+  ArrayMaxSize, ArrayMinSize, IsArray, IsDefined, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength,
   IsUUID, Matches, ValidateIf, ValidateNested,
 } from 'class-validator';
 import {
@@ -438,6 +438,29 @@ export class ReportBookOptionDto {
   @ApiProperty({ type: [Number], description: '현재 리포트 명단 중 이 배부 교재를 가진 학생 ID' }) studentIds!: number[];
 }
 
+export const REPORT_MATERIAL_KINDS = ['regular', 'supplementary', 'personal'] as const;
+export type ReportMaterialKind = (typeof REPORT_MATERIAL_KINDS)[number];
+
+/** T11 리포트 작성 중 자료 등록. 이름과 종류만 사람이 정하고 코드·문맥은 서버가 확정한다. */
+export class ReportMaterialCreateDto {
+  @ApiProperty({ enum: REPORT_MATERIAL_KINDS })
+  @IsIn(REPORT_MATERIAL_KINDS)
+  kind!: ReportMaterialKind;
+
+  @ApiProperty({ minLength: 1, maxLength: 120 })
+  @Transform(({ value }) => typeof value === 'string' ? value.trim() : value)
+  @IsString() @MinLength(1) @MaxLength(120)
+  title!: string;
+
+  @ApiProperty({ minimum: 0, description: '화면이 읽은 ReportDetailDto.version' })
+  @Type(() => Number) @IsInt() @Min(0)
+  expectedVersion!: number;
+
+  @ApiProperty({ format: 'uuid', description: '재시도·동시 클릭을 한 건으로 묶는 요청 키' })
+  @IsUUID()
+  requestKey!: string;
+}
+
 @ApiExtraModels(
   ReportIndividualBodyDto, ReportGroupBodyDto, ReportKinderBodyDto, ReportMockBodyDto, ReportDiagnosticBodyDto,
 )
@@ -473,6 +496,11 @@ export class ReportDetailDto extends ReportRowDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '마지막 본문 저장 actor. 대상 강사와 다를 수 있다' })
   lastWriterId?: number | null;
   @ApiPropertyOptional({ type: String, nullable: true }) lastWriterName?: string | null;
+}
+
+export class ReportMaterialCreateResultDto {
+  @ApiProperty({ type: ReportDetailDto }) detail!: ReportDetailDto;
+  @ApiProperty(ID_SCHEMA) selectedIssueId!: number;
 }
 
 export class ReportDeliveryFileInputDto {

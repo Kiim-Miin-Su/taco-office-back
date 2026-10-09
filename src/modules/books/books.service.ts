@@ -120,7 +120,8 @@ export class BooksService {
      */
     // 차례대로 묻는다 — 한 연결(바깥 트랜잭션)에서 동시에 묻는 것은 pg 가 없애 가는 사용법이다(DeprecationWarning)
     const rows = await this.q(
-      `SELECT l.id, l.code, l.title, l.sub_key, l.level, l.grade, l.pages, l.se_te, s.name AS sub_name,
+      `SELECT l.id, l.code, l.title, l.material_kind, l.created_by, creator.name AS created_by_name,
+              l.sub_key, l.level, l.grade, l.pages, l.se_te, s.name AS sub_name,
               l.book_subject_key, bs.name AS book_subject_name, bs.color AS book_subject_color,
               l.book_category_key, bc.name AS book_category_name,
               l.book_level, l.grade_from, l.grade_to, l.exam_tag,
@@ -128,6 +129,7 @@ export class BooksService {
               top.edition AS latest_edition, top.id AS latest_vers_id,
               (SELECT count(*)::int FROM issue i WHERE i.lib_id = l.id) AS issue_count
          FROM lib l
+         LEFT JOIN staff creator ON creator.id = l.created_by
          LEFT JOIN sub s ON s.key = l.sub_key
          LEFT JOIN book_subject bs ON bs.key = l.book_subject_key
          LEFT JOIN book_category bc ON bc.key = l.book_category_key
@@ -151,6 +153,9 @@ export class BooksService {
       const gradeTo = optNum(r.grade_to);
       return {
         id: Number(r.id), code: String(r.code), title: String(r.title),
+        materialKind: String(r.material_kind),
+        createdBy: r.created_by == null ? null : Number(r.created_by),
+        createdByName: optText(r.created_by_name),
         subKey: (r.sub_key as string) ?? null, subName: (r.sub_name as string) ?? null,
         level: (r.level as string) ?? null, grade: (r.grade as string) ?? null,
         pages: r.pages === null || r.pages === undefined ? null : Number(r.pages),

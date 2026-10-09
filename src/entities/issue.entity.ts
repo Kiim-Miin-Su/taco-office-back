@@ -26,6 +26,10 @@ export class Issue {
   @Column({ type: 'bigint', nullable: true })
   versId: number | null;
 
+  /** T11 자료가 만들어진 정확한 리포트 회차. 일반 교재 배정은 NULL이다. */
+  @Column({ type: 'bigint', nullable: true })
+  sourceRepId: number | null;
+
   @Column({ type: 'bigint' })
   studentId: number;
 

@@ -103,6 +103,7 @@ d('W8 · W10 §17 사용자 표 CRUD — 만들기(아이디 · 임시 비밀번
     );
     await q(`INSERT INTO tzg (id, name, tz) VALUES (1,'한국 (KST)','Asia/Seoul'), (2,'미국 동부','America/New_York') ON CONFLICT (id) DO NOTHING`);
     tokens.ceo = await login('w8b-ceo@t.kr');
+    tokens.admin = await login('w8b-admin@t.kr');
     tokens.mgr = await login('w8b-mgr@t.kr');
     tokens.teacher = await login('w8b-t@t.kr');
     tokens.teacher2 = await login('w8b-t2@t.kr');
@@ -151,6 +152,22 @@ d('W8 · W10 §17 사용자 표 CRUD — 만들기(아이디 · 임시 비밀번
     // 그 아이디(대소문자 무시) · 임시 비밀번호로 들어오고 첫 설정 대상이다
     const first = await request(app.getHttpServer()).post('/auth/login').send({ loginId: 'W8B-NEW-1.KIM', password: TEMP }).expect(201);
     expect(first.body.user).toMatchObject({ id: res.body.id, mustChangeCredentials: true });
+  });
+
+  it('계정 생성 권한 — manager/admin/ceo는 강사·매니저·관리자를 만들고 CEO는 만들지 못한다 (2026-10-10 대표 결정)', async () => {
+    for (const actor of ['mgr', 'admin', 'ceo'] as const) {
+      for (const role of ['teacher', 'manager', 'admin'] as const) {
+        const loginId = `w8b-new-${actor}-${role}`;
+        const made = await api('post', '/drawer/staff', tokens[actor]).send({
+          name: `${actor}-${role}`, loginId, password: TEMP, role,
+        }).expect(201);
+        expect(made.body).toMatchObject({ loginId, role, mustChangeCredentials: true, active: true });
+        expect(JSON.stringify(made.body)).not.toContain(TEMP);
+      }
+      await api('post', '/drawer/staff', tokens[actor]).send({
+        name: `${actor}-ceo`, loginId: `w8b-new-${actor}-ceo`, password: TEMP, role: 'ceo',
+      }).expect(400);
+    }
   });
 
   it('만들기 — 이메일은 선택이다: 비우거나 빼면 null 로 서고 그 아이디로 들어온다 · 한글 아이디도 된다 (답변 2026-09-26)', async () => {

@@ -24,6 +24,7 @@ import { NOTI_TITLE } from '../../lib/noti';
 import { audit } from '../../lib/audit';
 import type {
   ReportDeliveryCreateDto, ReportDeliveryQueueDto, ReportDetailDto, ReportQueryDto,
+  ReportMaterialCreateDto, ReportMaterialCreateResultDto,
   ReportReminderCreateDto, ReportReminderResultDto, ReportReviewDto, ReportRowDto,
   ReportMaterialDto, ReportSendGroupDto, ReportSendHistoryDto, ReportSendHistoryListDto, ReportSendSpan,
   ReportStructuredBodyDto, ReportUpsertDto, UnwrittenDto,
@@ -274,6 +275,7 @@ export class ReportsService {
                      ) ORDER BY l.title,i.id)
                        FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
                       WHERE i.student_id IN (SELECT rsb.student_id FROM rep_stu rsb WHERE rsb.rep_id=r.id)
+                        AND (i.source_rep_id IS NULL OR i.source_rep_id=r.id)
                         AND ${issueActiveSql('i')}
                    ), '[]'::json) AS book_options,
                    COALESCE((
@@ -456,6 +458,7 @@ export class ReportsService {
     q: Queryer,
     value: ReportMaterialDto | null,
     studentIds: readonly number[],
+    reportId: number,
     required: boolean,
     requireAmount: boolean,
   ): Promise<ReportMaterialDto | null> {
@@ -475,9 +478,10 @@ export class ReportsService {
       `SELECT i.id AS issue_id,i.row_version AS issue_version,i.student_id,i.lib_id,i.vers_id,
               l.code,l.title,l.pages,v.edition
          FROM issue i JOIN lib l ON l.id=i.lib_id LEFT JOIN vers v ON v.id=i.vers_id
-        WHERE i.id=$1 AND i.student_id=ANY($2::bigint[]) AND ${issueActiveSql('i')}
+        WHERE i.id=$1 AND i.student_id=ANY($2::bigint[])
+          AND (i.source_rep_id IS NULL OR i.source_rep_id=$3) AND ${issueActiveSql('i')}
         FOR SHARE OF i,l`,
-      [value.issueId, studentIds],
+      [value.issueId, studentIds, reportId],
     );
     if (!book) {
       throw new ConflictException({
@@ -534,8 +538,8 @@ export class ReportsService {
     if (source.kind === 'individual' || source.kind === 'group') {
       await this.lockReportMaterials(q, [source.progress, source.homework]);
       if (submitting) this.requiredText(source.content, 60, 'REPORT_CONTENT_REQUIRED', '수업 내용을 60자 이상 입력해 주세요');
-      const progress = await this.reportMaterial(q, source.progress, studentIds, submitting, false);
-      const homework = await this.reportMaterial(q, source.homework, studentIds, submitting, true);
+      const progress = await this.reportMaterial(q, source.progress, studentIds, Number(row.id), submitting, false);
+      const homework = await this.reportMaterial(q, source.homework, studentIds, Number(row.id), submitting, true);
       if (source.kind === 'group') {
         this.assertStudentSnapshot(studentIds, source.students.map((student) => student.studentId));
         if (submitting) {
@@ -1139,6 +1143,130 @@ export class ReportsService {
       this.throwWriteIssue('REPORT_FORBIDDEN');
     }
     return this.toDetail(row, actorId, canCrudAll, canApprove);
+  }
+
+  /**
+   * T11 권고안 채택: 이름·종류만 받고 코드, 생성자, 리포트 회차와 학생별 ISSUE는 서버가 한 번에 확정한다.
+   * 일반 교재는 같은 LIB 카탈로그에 들어가며, 보충·개인 자료도 생성 actor와 정확한 REP 문맥을 보존한다.
+   * 판·학년은 입력받지 않았으므로 임의 값을 만들지 않는다. 정책 변경 시 DTO/Front/migration/DBML/T11 문서를 함께 바꾼다.
+   */
+  async createMaterial(
+    serId: number,
+    onDate: string,
+    dto: ReportMaterialCreateDto,
+    actorId: number,
+    canCrudAll: boolean,
+    canApprove: boolean,
+  ): Promise<ReportMaterialCreateResultDto> {
+    const q = this.ds.createQueryRunner();
+    await q.connect();
+    await q.startTransaction();
+    try {
+      await lockScheduleSeries(q, [serId]);
+      await q.query(`SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, [`report-material:${dto.requestKey}`]);
+      const row = await this.loadDetail(q, serId, onDate, true);
+      if (!row) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
+
+      const fingerprint = createHash('sha256').update(JSON.stringify({
+        serId, onDate, expectedVersion: dto.expectedVersion, kind: dto.kind, title: dto.title,
+      })).digest('hex');
+      const [replayed] = await q.query(
+        `SELECT actor_id,rep_id,fingerprint,selected_issue_id FROM report_material_req WHERE request_key=$1 FOR UPDATE`,
+        [dto.requestKey],
+      ) as Array<{
+        actor_id: string; rep_id: string; fingerprint: string; selected_issue_id: string;
+      }>;
+      if (replayed) {
+        if (Number(replayed.actor_id) !== actorId || Number(replayed.rep_id) !== Number(row.id)
+          || replayed.fingerprint !== fingerprint) {
+          throw new ConflictException({
+            code: 'REPORT_MATERIAL_REQUEST_KEY_REUSED',
+            message: '같은 요청 키를 다른 자료 등록에 사용할 수 없습니다',
+          });
+        }
+        await q.commitTransaction();
+        return { detail: this.toDetail(row, actorId, canCrudAll, canApprove), selectedIssueId: Number(replayed.selected_issue_id) };
+      }
+
+      const issue = reportWriteIssue({
+        actorId,
+        teacherId: row.teacher_id ? Number(row.teacher_id) : null,
+        canCrudAll,
+        reportable: row.reportable,
+        canceled: row.canceled,
+        ended: row.ended,
+        state: row.state,
+      });
+      if (issue) this.throwWriteIssue(issue);
+      this.assertReportVersion(row, dto.expectedVersion, true);
+      const formKind = this.formKind(row);
+      if (formKind !== 'individual' && formKind !== 'group') {
+        throw new BadRequestException({
+          code: 'REPORT_MATERIAL_FORM_UNSUPPORTED',
+          message: '일반 또는 그룹 리포트에서만 교재·자료를 추가할 수 있습니다',
+        });
+      }
+      if (!row.teacher_id || !row.sub_key || !row.students?.length) {
+        throw new ConflictException({
+          code: 'REPORT_MATERIAL_CONTEXT_MISSING',
+          message: '담당 강사·과목·학생이 확정된 리포트에서만 자료를 추가할 수 있습니다',
+        });
+      }
+
+      const [{ id: libIdRaw }] = await q.query(
+        `SELECT nextval(pg_get_serial_sequence('lib','id'))::text AS id`,
+      ) as Array<{ id: string }>;
+      const libId = Number(libIdRaw);
+      const code = `T11-${dto.kind === 'regular' ? 'R' : dto.kind === 'supplementary' ? 'S' : 'P'}-${libId}`;
+      try {
+        await q.query(
+          `INSERT INTO lib (id,code,title,sub_key,material_kind,created_by)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [libId, code, dto.title, row.sub_key, dto.kind, actorId],
+        );
+      } catch (error) {
+        const db = error as { code?: string; constraint?: string };
+        if (db.code === '23505' && ['lib_report_regular_name_unique', 'lib_report_scoped_name_unique'].includes(db.constraint ?? '')) {
+          throw new ConflictException({
+            code: 'REPORT_MATERIAL_DUPLICATE',
+            message: '같은 과목과 자료 종류에 이미 같은 이름이 있습니다',
+          });
+        }
+        throw error;
+      }
+
+      // 현 구조화 그룹 리포트의 진도·숙제는 공통 한 칸이다. 현재 명단의 첫 학생을 canonical ISSUE로 삼고
+      // source_rep_id로 회차 전체에 묶는다. 학생별 ISSUE를 임의로 늘리면 같은 이름 단추가 인원수만큼 생긴다.
+      const [created] = await q.query(
+        `INSERT INTO issue (
+           lib_id,vers_id,student_id,teacher_id,sub_key,source_rep_id,issued_on,state,
+           requested_by,approved_by,delivered_at,reason
+         ) VALUES ($1,NULL,$2,$3,$4,$5,$6,'ok',$7,$7,now(),'리포트 작성 중 추가')
+         RETURNING id::text`,
+        [libId, row.students[0].id, Number(row.teacher_id), row.sub_key, Number(row.id), row.date, actorId],
+      ) as Array<{ id: string }>;
+      const selectedIssueId = Number(created.id);
+      await q.query(
+        `INSERT INTO report_material_req (request_key,actor_id,rep_id,lib_id,selected_issue_id,fingerprint)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [dto.requestKey, actorId, row.id, libId, selectedIssueId, fingerprint],
+      );
+      await audit(q, 'report.material.create', {
+        actorId,
+        entityId: row.id,
+        before: null,
+        after: { libId, selectedIssueId, kind: dto.kind, targetTeacherId: Number(row.teacher_id) },
+      });
+      const saved = await this.loadDetail(q, serId, onDate);
+      if (!saved) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
+      await q.commitTransaction();
+      return { detail: this.toDetail(saved, actorId, canCrudAll, canApprove), selectedIssueId };
+    } catch (error) {
+      if (q.isTransactionActive) await q.rollbackTransaction();
+      throw error;
+    } finally {
+      await q.release();
+    }
   }
 
   /** §48·§49 — KST 하루의 전달 대상과 D-R8 차단 사유를 학생 단위로 묶는다. */

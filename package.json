@@ -29,7 +29,8 @@
     "gpa:archive": "ts-node -P tsconfig.json scripts/gpa-archive.ts",
     "migration:deploy": "ts-node -P tsconfig.json scripts/deploy-check.ts --run",
     "deploy:check": "ts-node -P tsconfig.json scripts/deploy-check.ts",
-    "golive:reset": "ts-node -P tsconfig.json scripts/golive-reset.ts"
+    "golive:reset": "ts-node -P tsconfig.json scripts/golive-reset.ts",
+    "accounts:provision": "ts-node -P tsconfig.json scripts/provision-initial-accounts.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

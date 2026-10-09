@@ -1384,10 +1384,15 @@ Table LIB {
   grade_from        smallint    [note: 'v4.54 · 학년 범위 시작 — K = 0 · G1~G12 = 1~12 · grade_to 와 함께 비거나 함께 찬다(lib_grade_range)']
   grade_to          smallint    [note: 'v4.54 · 학년 범위 끝 — grade_from 이상 · 12 이하']
   exam_tag          varchar(12) [note: 'v4.54 · sat | map | isee_ssat — lib_exam_tag_words CHECK · 원문 카드 칩 SAT · MAP · ISEE / SSAT']
+  material_kind     varchar(16) [not null, default: 'regular', note: 'v4.82 · T11 regular | supplementary | personal. 기존 교재는 regular']
+  created_by        bigint      [ref: > STAFF.id, note: 'v4.82 · 리포트에서 만든 자료의 실제 actor. 기존 카탈로그 교재는 NULL']
   Note: '''
   교재. 시드 8건. 카드에 코드·쪽수·배부 횟수·판·SE/TE 표시.
   v4.54 · W11 N-47 두 층 분류 칸 여섯(migration 1764300000000) — 옛 칸 sub_key · level · grade 는 그대로(CHECK 없음). 새 칸이 비면 화면 낱말은 옛 원문(level · grade)으로 돌아간다(중립색).
   두 칸 FK 는 인라인 ref 로 적을 수 없어 여기 적는다 — lib_book_category_fk FOREIGN KEY (book_subject_key, book_category_key) REFERENCES BOOK_CATEGORY(subject_key, key).
+  v4.82 · T11 권고안: 강사가 리포트에서 만든 일반 교재는 같은 관리자 카탈로그에 합류한다. 보충·개인 자료도 LIB 정본을
+  재사용하되 created_by와 material_kind를 보존하고, 판·학년은 원문 입력이 없으므로 만들지 않는다. 일반은 과목별 이름,
+  보충·개인은 actor·과목·종류별 이름이 유일하다(migration 1769100000000).
   '''
 }
 
@@ -1437,16 +1442,35 @@ Table ISSUE {
   reissued_from bigint    [ref: > ISSUE.id, unique, note: '종료된 배정에서 명시 재배정한 계보. 자기 참조 금지']
   teacher_id  bigint      [ref: > STAFF.id, note: 'v4.69 · 신규 문맥 배정의 실제 담당 강사. legacy는 NULL 유지']
   sub_key     varchar(20) [ref: > SUB.key, note: 'v4.69 · 신규 문맥 배정의 실제 수업 과목. teacher_id와 함께 NULL 또는 함께 값']
+  source_rep_id bigint    [ref: > REP.id, note: 'v4.82 · T11 리포트 작성 중 만든 자료의 정확한 원본 REP. 일반 배정은 NULL']
   row_version integer     [not null, default: 1, note: 'v4.69 · 문맥 배정 상태/진도/회수 낙관적 version · CHECK >=1']
   indexes {
     (student_id, lib_id) [name: 'issue_active_legacy_book_unique', note: 'wait|auto|ok AND teacher_id/sub_key NULL partial unique']
     (student_id, lib_id, teacher_id, sub_key) [name: 'issue_active_assignment_unique', note: 'wait|auto|ok AND teacher_id/sub_key NOT NULL partial unique']
     (student_id, state, id) [name: 'issue_student_state_idx', note: '실제 SQL은 id DESC · 학생 허브 사용 교재 count']
+    (source_rep_id, id) [name: 'issue_source_rep_idx', note: 'source_rep_id IS NOT NULL partial index']
   }
   Note: '''
   교재 배정·승인·전달·회수·진도 원장. 상태/시각 순서와 progress>=0은 migration CHECK다.
   v4.69 신규 문맥 배정만 실제 현재·장래 SER/SER_STU, 활성 담당, LIB 과목, 정본 학년 범위와 현재 VERS를 검사한다. legacy 행은 강사·과목을 추정하지 않는다.
   문맥 신원이나 vers_id가 바뀌는 때만 현재 문맥을 다시 검사한다. 이후 새 판이 생겨도 과거 배정의 승인·진도·회수는 저장한 vers_id 스냅숏을 유지한다.
+  v4.82 · T11 자료는 source_rep_id가 가리키는 REP의 실제 담당·과목·명단과 일치해야 하며 vers_id를 임의로 만들지 않는다.
+  구조화 그룹 리포트의 진도·숙제는 공통 한 칸이므로 첫 학생 ISSUE 하나를 canonical 선택지로 만들고 source_rep_id로 회차 전체에 묶는다.
+  '''
+}
+
+Table REPORT_MATERIAL_REQ {
+  request_key      uuid        [pk]
+  actor_id         bigint      [not null, ref: > STAFF.id]
+  rep_id           bigint      [not null, ref: > REP.id]
+  lib_id           bigint      [not null, ref: > LIB.id]
+  selected_issue_id bigint     [not null, ref: > ISSUE.id]
+  fingerprint      char(64)    [not null, note: 'ser/date/version/kind/title SHA-256 lowercase hex']
+  created_at       timestamptz [not null, default: `now()`]
+  indexes { (rep_id, created_at, request_key) [name: 'report_material_req_rep_idx'] }
+  Note: '''
+  v4.82 · T11 자료 등록 멱등 원장. 같은 actor·REP·payload·request_key는 최초 LIB/ISSUE 결과로 수렴하고,
+  키 재사용은 REPORT_MATERIAL_REQUEST_KEY_REUSED 409다. LIB·ISSUE·LOG와 같은 최상위 transaction에서 기록한다.
   '''
 }
 

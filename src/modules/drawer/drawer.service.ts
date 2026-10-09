@@ -51,7 +51,7 @@ import type { TeacherGuidesDto, TeacherHomeDto, TeacherSuggestionsDto } from '..
 import { loadState } from '../schedule/schedule.state.repo';
 import { issueScheduleUndoStep } from '../schedule/schedule.undo';
 import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
-import { STAFF_CREATE_ROLES } from './drawer.dto';
+import { STAFF_MANAGEABLE_ROLES } from './drawer.dto';
 import { MATERIAL_REQUEST_KIND_LABEL } from '../material-requests/material-requests.dto';
 import type {
   ApprovalUndoResultDto, ChangeReqResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
@@ -925,7 +925,7 @@ export class DrawerService {
          ) w ON true
         WHERE $3::boolean OR s.id = $4
         ORDER BY s.active DESC, s.id`,
-      [todayKst(), canWage, canSeeAll, viewerId, [...STAFF_CREATE_ROLES]],
+      [todayKst(), canWage, canSeeAll, viewerId, [...STAFF_MANAGEABLE_ROLES]],
     )).map((r) => ({
       id: Number(r.id), name: String(r.name), loginId: String(r.login_id), email: str(r.email),
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
@@ -1157,7 +1157,7 @@ export class DrawerService {
               to_char(hired_on,'YYYY-MM-DD') AS hired_on, ${permCols()},
               (role = 'teacher' AND active) AS wageable, (role::text = ANY($2::text[])) AS manageable
          FROM staff WHERE id = $1`,
-      [id, [...STAFF_CREATE_ROLES]],
+      [id, [...STAFF_MANAGEABLE_ROLES]],
     );
     if (!r) throw staffNotFound();
     const wage = canWage ? await this.q(
@@ -1189,7 +1189,7 @@ export class DrawerService {
       `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active, must_change_credentials,
               to_char(hired_on,'YYYY-MM-DD') AS hired_on, (role::text = ANY($2::text[])) AS manageable, ${permCols()}
          FROM staff WHERE id = $1 FOR UPDATE`,
-      [id, [...STAFF_CREATE_ROLES]],
+      [id, [...STAFF_MANAGEABLE_ROLES]],
     )) as Array<Record<string, unknown>>;
     if (!row) throw staffNotFound();
     if (row.manageable !== true) {

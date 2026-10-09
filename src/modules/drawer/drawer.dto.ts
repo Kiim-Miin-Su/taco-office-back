@@ -494,8 +494,15 @@ export class MemberPermDto {
   @ApiProperty({ description: '지금 실제로 쓰이는 값 — 예외가 있으면 예외, 없으면 역할' }) effective!: boolean;
 }
 
-/** 새 구성원이 될 수 있는 역할 — 대표·관리자 계정은 이 길로 만들지 않는다(권한 상승 경로를 두지 않는다 · C97) */
-export const STAFF_CREATE_ROLES = ['teacher', 'manager'] as const;
+/**
+ * 새 구성원이 될 수 있는 역할 — 대표 계정만 제외한다.
+ * 2026-10-10 대표 결정: manager/admin/ceo는 강사·매니저·관리자 계정을 만들 수 있다.
+ * 관리자와 매니저의 현재 기본 권한은 같고, 실제 actor의 권한 한도는 서비스 `permGrantIssue`가 계속 검사한다.
+ */
+export const STAFF_CREATE_ROLES = ['teacher', 'manager', 'admin'] as const;
+
+/** 기존 수정·초기화·중지·삭제 보호 범위는 유지한다 — 이번 결정은 계정 생성 역할만 넓힌다. */
+export const STAFF_MANAGEABLE_ROLES = ['teacher', 'manager'] as const;
 
 /** 이메일 칸 — 빈 글은 null(비움)로 받는다. 적었으면 앞뒤 공백 없이 소문자(W10) */
 const emailOrNull = ({ value }: { value: unknown }) =>
@@ -526,8 +533,8 @@ export class StaffCreateDto {
   @ValidateIf((_o, v) => v !== undefined && v !== null) @IsEmail({}, { message: '이메일 형식이 아닙니다' }) @MaxLength(120)
   email?: string | null;
 
-  @ApiProperty({ enum: [...STAFF_CREATE_ROLES], description: '강사 · 매니저 — 대표·관리자는 만들지 않는다' })
-  @IsIn([...STAFF_CREATE_ROLES], { message: '역할은 강사 · 매니저 중 하나입니다' })
+  @ApiProperty({ enum: [...STAFF_CREATE_ROLES], description: '강사 · 매니저 · 관리자 — 대표 계정은 만들지 않는다' })
+  @IsIn([...STAFF_CREATE_ROLES], { message: '역할은 강사 · 매니저 · 관리자 중 하나입니다' })
   role!: string;
 
   @ApiPropertyOptional({ ...S, maxLength: 20, description: '직함 — 권한과 무관 (D-R39)' })
@@ -609,8 +616,8 @@ export class StaffPatchDto {
   @ValidateIf((_o, v) => v !== undefined) @IsString() @MinLength(1) @MaxLength(40)
   tz?: string;
 
-  @ApiPropertyOptional({ enum: [...STAFF_CREATE_ROLES], description: '강사 · 매니저 — 대표·관리자로는 못 바꾼다. 자기 역할은 403 SELF_ROLE' })
-  @ValidateIf((_o, v) => v !== undefined) @IsIn([...STAFF_CREATE_ROLES], { message: '역할은 강사 · 매니저 중 하나입니다' })
+  @ApiPropertyOptional({ enum: [...STAFF_MANAGEABLE_ROLES], description: '강사 · 매니저 — 대표·관리자로는 못 바꾼다. 자기 역할은 403 SELF_ROLE' })
+  @ValidateIf((_o, v) => v !== undefined) @IsIn([...STAFF_MANAGEABLE_ROLES], { message: '역할은 강사 · 매니저 중 하나입니다' })
   role?: string;
 
   @ApiPropertyOptional({ ...DATE_SCHEMA, description: '입사일 YYYY-MM-DD' })

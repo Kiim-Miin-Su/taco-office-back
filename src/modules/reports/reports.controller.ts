@@ -12,6 +12,7 @@ import { hasPerm, isRole, Perm, type RequestUser } from '../../common/perm';
 import {
   ReportDeliveryCreateDto, ReportDeliveryQueryDto, ReportDeliveryQueueDto, ReportDeliveryResultDto,
   ReportDetailDto, ReportDeliveryHistoryQueryDto, ReportListDto, ReportRefDto, ReportResendDto,
+  ReportMaterialCreateDto, ReportMaterialCreateResultDto,
   ReportReviewDto, ReportSendHistoryListDto, ReportSendRefDto, ReportUpsertDto, UnwrittenDto,
   ReportQueryDto, ReportReminderCreateDto, ReportReminderResultDto, ReportTeacherQueryDto,
   WeeklyBundleDto, WeeklyBundleListDto, WeeklyQueryDto, WeeklySummaryWriteDto,
@@ -161,6 +162,26 @@ export class ReportsController {
   @ApiOkResponse({ type: ReportDetailDto })
   detail(@CurrentUser() user: RequestUser, @Param() ref: ReportRefDto): Promise<ReportDetailDto> {
     return this.svc.detail(ref.serId, ref.onDate, user.id, this.canCrudAll(user), this.canApprove(user));
+  }
+
+  @Post(':serId/:onDate/materials')
+  @ApiOperation({
+    summary: 'T11 리포트 작성 중 교재·자료 등록',
+    description: '일반 교재·보충 자료·개인 자료의 이름만 받는다. 서버가 코드·생성자·실제 리포트 회차·학생별 배부를 한 트랜잭션으로 확정하며 일반 교재는 관리자 카탈로그에도 즉시 보인다.',
+  })
+  @ApiBadRequestResponse({ type: ApiErrorDto, description: 'REPORT_MATERIAL_FORM_UNSUPPORTED 또는 입력 검증 오류.' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'REPORT_FORBIDDEN: 현재 담당 강사 또는 전체 관리 권한이 필요함.' })
+  @ApiConflictResponse({ type: ApiErrorDto, description: 'REPORT_VERSION_CONFLICT, REPORT_MATERIAL_DUPLICATE, REPORT_MATERIAL_REQUEST_KEY_REUSED 또는 리포트 문맥 변경.' })
+  @ApiNotFoundResponse(reportMissing)
+  @ApiCreatedResponse({ type: ReportMaterialCreateResultDto })
+  createMaterial(
+    @CurrentUser() user: RequestUser,
+    @Param() ref: ReportRefDto,
+    @Body() dto: ReportMaterialCreateDto,
+  ): Promise<ReportMaterialCreateResultDto> {
+    return this.svc.createMaterial(
+      ref.serId, ref.onDate, dto, user.id, this.canCrudAll(user), this.canApprove(user),
+    );
   }
 
   @Put(':serId/:onDate/draft')

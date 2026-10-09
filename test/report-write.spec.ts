@@ -103,6 +103,9 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   async function clean(): Promise<void> {
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM report_material_req WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM issue WHERE lib_id IN (SELECT id FROM lib WHERE created_by = ANY($1))`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM lib WHERE created_by = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=ANY($1))`, [[SER, SER_DIAG]]);
     await q(`DELETE FROM rep WHERE ser_id=ANY($1)`, [[SER, SER_DIAG]]);
     await q(`DELETE FROM stu_kinder_marker WHERE student_id=ANY($1)`, [[STUDENT, STUDENT2]]);
@@ -193,6 +196,9 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     await q(`DELETE FROM log WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM noti WHERE to_id = ANY($1) OR from_id = ANY($1)`,
       [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM report_material_req WHERE actor_id = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM issue WHERE lib_id IN (SELECT id FROM lib WHERE created_by = ANY($1))`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
+    await q(`DELETE FROM lib WHERE created_by = ANY($1)`, [[TEACHER, OTHER, MANAGER, REVIEWER]]);
     await q(`DELETE FROM rep_book_progress WHERE rep_id IN (SELECT id FROM rep WHERE ser_id=ANY($1))`, [[SER, SER_DIAG]]);
     await q(
       `UPDATE rep SET body='{}'::jsonb, format_version=0, row_version=0, last_writer_id=NULL,
@@ -218,6 +224,8 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     .put(`/reports/${SER}/${DATE}/draft`).set('Authorization', `Bearer ${token}`).send(value);
   const submit = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
     .post(`/reports/${SER}/${DATE}/submit`).set('Authorization', `Bearer ${token}`).send(value);
+  const material = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
+    .post(`/reports/${SER}/${DATE}/materials`).set('Authorization', `Bearer ${token}`).send(value);
   const review = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
     .post(`/reports/${SER}/${DATE}/review`).set('Authorization', `Bearer ${token}`).send(value);
   const remind = (token: string, value: Record<string, unknown>) => request(app.getHttpServer())
@@ -573,6 +581,64 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
   it('담당이 아닌 강사는 조회·저장할 수 없다', async () => {
     expect((await get(otherToken).expect(403)).body.code).toBe('REPORT_FORBIDDEN');
     expect((await put(otherToken, body).expect(403)).body.code).toBe('REPORT_FORBIDDEN');
+  });
+
+  it('T11 자료는 종류별 LIB·학생별 ISSUE를 만들고 즉시 선택 가능한 상세과 관리자 카탈로그에 보인다', async () => {
+    const requestKey = '10000000-0000-4000-8000-000000000001';
+    const created = await material(teacherToken, {
+      kind: 'regular', title: ' 리포트 즉시 교재 ', expectedVersion: 0, requestKey,
+    }).expect(201);
+    expect(created.body.selectedIssueId).toEqual(expect.any(Number));
+    expect(created.body.detail.bookOptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ issueId: created.body.selectedIssueId, title: '리포트 즉시 교재', versId: null }),
+    ]));
+
+    const [lib] = await q<{ id: string; code: string; title: string; material_kind: string; created_by: string }>(
+      `SELECT id::text,code,title,material_kind,created_by::text FROM lib WHERE title='리포트 즉시 교재'`,
+    );
+    expect(lib).toMatchObject({ title: '리포트 즉시 교재', material_kind: 'regular', created_by: String(TEACHER) });
+    expect(lib.code).toMatch(/^T11-R-/);
+    const issues = await q<{ source_rep_id: string; vers_id: string | null }>(
+      `SELECT source_rep_id::text,vers_id::text FROM issue WHERE lib_id=$1 ORDER BY student_id`, [lib.id],
+    );
+    expect(issues).toEqual([{ source_rep_id: String(repId), vers_id: null }]);
+
+    const replay = await material(teacherToken, {
+      kind: 'regular', title: '리포트 즉시 교재', expectedVersion: 0, requestKey,
+    }).expect(201);
+    expect(replay.body.selectedIssueId).toBe(created.body.selectedIssueId);
+    expect(await q(`SELECT 1 FROM lib WHERE title='리포트 즉시 교재'`)).toHaveLength(1);
+
+    const shelf = await request(app.getHttpServer()).get('/books')
+      .set('Authorization', `Bearer ${managerToken}`).expect(200);
+    expect(shelf.body.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: Number(lib.id), materialKind: 'regular', createdBy: TEACHER }),
+    ]));
+  });
+
+  it('T11은 요청 키 재사용·중복 이름·타인 작성과 회차가 다른 직접 ISSUE 쓰기를 거절한다', async () => {
+    const firstKey = '10000000-0000-4000-8000-000000000002';
+    await material(teacherToken, {
+      kind: 'supplementary', title: '단원 보충지', expectedVersion: 0, requestKey: firstKey,
+    }).expect(201);
+    expect((await material(teacherToken, {
+      kind: 'supplementary', title: '다른 이름', expectedVersion: 0, requestKey: firstKey,
+    }).expect(409)).body.code).toBe('REPORT_MATERIAL_REQUEST_KEY_REUSED');
+    expect((await material(teacherToken, {
+      kind: 'supplementary', title: '단원 보충지', expectedVersion: 0,
+      requestKey: '10000000-0000-4000-8000-000000000003',
+    }).expect(409)).body.code).toBe('REPORT_MATERIAL_DUPLICATE');
+    await material(otherToken, {
+      kind: 'personal', title: '타인 자료', expectedVersion: 0,
+      requestKey: '10000000-0000-4000-8000-000000000004',
+    }).expect(403);
+
+    const [lib] = await q<{ id: string }>(`SELECT id::text FROM lib WHERE title='단원 보충지'`);
+    await expect(q(
+      `INSERT INTO issue (lib_id,student_id,teacher_id,sub_key,source_rep_id,issued_on,state)
+       VALUES ($1,$2,$3,'ap-chem',NULL,$4,'ok')`,
+      [lib.id, STUDENT2, TEACHER, DATE],
+    )).rejects.toThrow(/report material must match/);
   });
 
   it('임시저장은 빈 값을 허용하고 REP.body에 세 키만 쓴다', async () => {

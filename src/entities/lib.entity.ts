@@ -16,6 +16,8 @@ import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 @Check('lib_book_level_words', "book_level IS NULL OR book_level IN ('foundation','practice','master')")
 @Check('lib_grade_range', '(grade_from IS NULL AND grade_to IS NULL) OR (grade_from IS NOT NULL AND grade_to IS NOT NULL AND grade_from BETWEEN 0 AND 12 AND grade_to BETWEEN 0 AND 12 AND grade_from <= grade_to)')
 @Check('lib_exam_tag_words', "exam_tag IS NULL OR exam_tag IN ('sat','map','isee_ssat')")
+@Check('lib_material_kind_words', "material_kind IN ('regular','supplementary','personal')")
+@Check('lib_scoped_material_creator', "material_kind='regular' OR created_by IS NOT NULL")
 @Entity({ name: 'lib' })
 export class Lib {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -26,6 +28,14 @@ export class Lib {
 
   @Column({ type: 'varchar', length: 120 })
   title: string;
+
+  /** T11 리포트 작성 중 등록한 자료의 종류. 기존 관리자 교재는 regular이다. */
+  @Column({ type: 'varchar', length: 16, default: 'regular' })
+  materialKind: string;
+
+  /** T11 생성 actor. 기존 관리자 교재는 NULL로 보존한다. */
+  @Column({ type: 'bigint', nullable: true })
+  createdBy: number | null;
 
   @Column({ type: 'varchar', length: 20, nullable: true })
   subKey: string | null;

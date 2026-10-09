@@ -27,6 +27,10 @@ export class BookDto {
   @ApiProperty({ description: '교재 코드 — 카드에 그대로 보인다' }) code!: string;
   @ApiProperty() id!: number;
   @ApiProperty() title!: string;
+  @ApiProperty({ enum: ['regular', 'supplementary', 'personal'], description: '일반 교재 · 보충 자료 · 개인 자료' })
+  materialKind!: string;
+  @ApiPropertyOptional(N) createdBy?: number | null;
+  @ApiPropertyOptional(S) createdByName?: string | null;
   @ApiPropertyOptional(S) subKey?: string | null;
   @ApiPropertyOptional(S) subName?: string | null;
   @ApiPropertyOptional(S) level?: string | null;
