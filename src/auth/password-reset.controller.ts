@@ -69,7 +69,10 @@ export class PasswordResetController {
     type: ApiErrorDto,
     description: 'RESET_CODE_INVALID(계정 · 코드 문제를 가르지 않는 한 문장 · 틀린 횟수는 남는다) · SAME_AS_CURRENT(두 코드를 확인한 뒤에만)',
   })
-  @ApiServiceUnavailableResponse(unavailable)
+  @ApiServiceUnavailableResponse({
+    ...unavailable,
+    description: `${unavailable.description} | INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전, 기존 자격 유지`,
+  })
   async complete(@Body() dto: PasswordResetCompleteDto): Promise<void> {
     await this.reset.complete(dto);
   }

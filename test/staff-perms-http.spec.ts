@@ -206,6 +206,47 @@ d('W11 P — 사람별 권한 예외 · §76 권한 표 · 내 지출 신청 · 
 
   /* ── N-98 ─────────────────────────────────────────────────────────────── */
 
+  it('R118 — 제한된 매니저의 자격 탈취를 HTTP에서 막고 STAFF·감사 이력을 보존한다', async () => {
+    const snapshot = () => q(
+      `SELECT login_id, email, phone, role, password_hash, must_change_credentials, credentials_changed_at,
+              (SELECT count(*)::int FROM log WHERE entity='STAFF' AND entity_id=$1) AS log_count
+         FROM staff WHERE id=$1`, [MGR2],
+    );
+    const [profile] = await q<{ title: string | null }>('SELECT title FROM staff WHERE id=$1', [MGR2]);
+    try {
+      await q('UPDATE staff SET can_money=false WHERE id=$1', [MGR]);
+      await q('UPDATE staff SET can_money=NULL WHERE id=$1', [MGR2]);
+      const before = await snapshot();
+      const denied = await api('post', `/drawer/staff/${MGR2}/password-reset`, tokens.mgr)
+        .send({ password: 'R118-temp-control-123' }).expect(403);
+      expect(denied.body.code).toBe('PERM_GRANT_FORBIDDEN');
+      for (const patch of [
+        { loginId: 'pp-r118-stolen' }, { email: 'pp-r118@example.test' }, { phone: '01012345678' },
+        { email: null }, { email: '' }, { role: 'teacher', email: 'pp-r118@example.test' },
+      ]) {
+        const response = await api('patch', `/drawer/staff/${MGR2}`, tokens.mgr).send(patch).expect(403);
+        expect(response.body.code).toBe('PERM_GRANT_FORBIDDEN');
+      }
+      expect(await snapshot()).toEqual(before);
+
+      const drawer = await api('get', '/drawer', tokens.mgr).expect(200);
+      const rows = drawer.body.members as Array<Record<string, unknown>>;
+      expect(rows.find((row) => row.id === MGR2)).toMatchObject({ canEdit: true, canResetPassword: false });
+      expect(rows.find((row) => row.id === TEACHER)).toMatchObject({ canResetPassword: true });
+      expect(rows.find((row) => row.id === ADMIN)).toMatchObject({ canEdit: false, canResetPassword: false });
+
+      const changed = await api('patch', `/drawer/staff/${MGR2}`, tokens.mgr)
+        .send({ title: 'R118 업무 프로필' }).expect(200);
+      expect(changed.body).toMatchObject({ title: 'R118 업무 프로필', canEdit: true, canResetPassword: false });
+      const [after] = await q<{ title: string }>('SELECT title FROM staff WHERE id=$1', [MGR2]);
+      expect(after.title).toBe('R118 업무 프로필');
+      expect(await login('pp-mgr2@t.kr')).toEqual(expect.any(String));
+    } finally {
+      await q('UPDATE staff SET can_money=NULL WHERE id=$1', [MGR]);
+      await q('UPDATE staff SET title=$2 WHERE id=$1', [MGR2, profile.title]);
+    }
+  });
+
   it('§76 표 · 부제 · 역할 설명 줄은 서버 문장이다 — 옛 직함 낱말 없음 · 사람별 예외가 「지금」에 반영된다', async () => {
     const ceo = await api('get', '/permissions').expect(200);
     expect(ceo.body.sub).toBe('지금 대표 화면입니다 · 14가지 가능 / 0가지 잠김');

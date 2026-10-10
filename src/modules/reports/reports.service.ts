@@ -1133,15 +1133,20 @@ export class ReportsService {
     }
   }
 
+  /** 권고안(R118): 성공 요청 키는 권한 증명이 아니다. 상세·멱등 응답은 모두 현재 담당/권한을 확인한다. */
+  private assertDetailAccess(row: DetailRow, actorId: number, canCrudAll: boolean, canApprove: boolean): void {
+    const submittedForReview = row.state === 'wait' || row.state === 'ok' || row.state === 'rej';
+    if (actorId !== Number(row.teacher_id) && !canCrudAll && !(canApprove && submittedForReview)) {
+      this.throwWriteIssue('REPORT_FORBIDDEN');
+    }
+  }
+
   async detail(
     serId: number, onDate: string, actorId: number, canCrudAll: boolean, canApprove = canCrudAll,
   ): Promise<ReportDetailDto> {
     const row = await this.loadDetail(this.ds, serId, onDate);
     if (!row) throw new NotFoundException({ code: 'REPORT_NOT_FOUND', message: '리포트를 찾을 수 없습니다' });
-    const submittedForReview = row.state === 'wait' || row.state === 'ok' || row.state === 'rej';
-    if (actorId !== Number(row.teacher_id) && !canCrudAll && !(canApprove && submittedForReview)) {
-      this.throwWriteIssue('REPORT_FORBIDDEN');
-    }
+    this.assertDetailAccess(row, actorId, canCrudAll, canApprove);
     return this.toDetail(row, actorId, canCrudAll, canApprove);
   }
 
@@ -1184,6 +1189,7 @@ export class ReportsService {
             message: '같은 요청 키를 다른 자료 등록에 사용할 수 없습니다',
           });
         }
+        this.assertDetailAccess(row, actorId, canCrudAll, canApprove);
         await q.commitTransaction();
         return { detail: this.toDetail(row, actorId, canCrudAll, canApprove), selectedIssueId: Number(replayed.selected_issue_id) };
       }

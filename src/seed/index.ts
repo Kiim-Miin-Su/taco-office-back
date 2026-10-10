@@ -82,7 +82,8 @@ export const SEEDED_TABLES = [
   'payout_line', 'payout_bonus_rule', 'acct_privacy', 'note',
   // TBO-55 신규 writer/current/event. dev --reset은 제품 writer가 만든 회귀 자료를 모두 비운다.
   'stu_kinder_marker', 'teacher_private_note', 'teacher_private_note_write_req',
-  'material_request', 'material_request_file', 'material_request_event', 'rep_book_progress',
+  // R118: R116 자료 생성 receipt도 개발 reset의 명시 범위다. CASCADE 부수효과에 맡기지 않는다.
+  'material_request', 'material_request_file', 'material_request_event', 'rep_book_progress', 'report_material_req',
   'invoice_adjustment_base', 'invoice_adjustment', 'invoice_adjustment_event',
   'payment_evidence', 'payment_evidence_request', 'payment_evidence_event',
   'payout_disbursement', 'payout_disbursement_request', 'payout_disbursement_event',

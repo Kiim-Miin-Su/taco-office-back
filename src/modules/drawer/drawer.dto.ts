@@ -301,7 +301,7 @@ export class MemberDto {
   canEdit?: boolean;
   @ApiPropertyOptional({ description: '수정 창에서 역할을 바꿀 수 있는가 — canEdit 이고 **자기 줄이 아닐 때만** (자기 역할은 못 바꾼다)' })
   canChangeRole?: boolean;
-  @ApiPropertyOptional({ description: '「비밀번호 초기화」 — canEdit 이고 자기 줄이 아닐 때만 (자기 것은 첫 설정 흐름으로 바꾼다)' })
+  @ApiPropertyOptional({ description: '「비밀번호 초기화」 — canEdit이고 자기 줄이 아니며 대상의 모든 현재 권한을 actor도 가질 때만. 자격 writer와 같은 한도를 쓴다.' })
   canResetPassword?: boolean;
   @ApiPropertyOptional({ description: '「사용 중지」·「다시 사용」 — canEdit 이고 자기 줄이 아닐 때만' })
   canToggleActive?: boolean;

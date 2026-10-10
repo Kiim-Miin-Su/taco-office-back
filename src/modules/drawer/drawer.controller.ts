@@ -19,7 +19,7 @@ import {
   Param, ParseIntPipe, Patch, Post, Query,
 } from '@nestjs/common';
 import {
-  ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags, getSchemaPath,
+  ApiBadRequestResponse, ApiBody, ApiConflictResponse, ApiCreatedResponse, ApiExtraModels, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiServiceUnavailableResponse, ApiTags, getSchemaPath,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import type { EntityManager } from 'typeorm';
@@ -78,9 +78,12 @@ export class DrawerController {
   @ApiOperation({ summary: '서랍 여덟 칸을 한 번에 — 승인함/결재 흐름 정규화 포함 (D-R26 · D-R34)' })
   @ApiOkResponse({ type: DrawerDto })
   all(@CurrentUser() user: RequestUser, @Query() q: DrawerQueryDto): Promise<DrawerDto> {
-    const { canApprove, canSeeAll, canWage, canManageStaff, canSetPerms, canHide, canMoney, approvalFlowScope: flowScope } = this.gate(user);
+    const { canApprove, canSeeAll, canWage, canManageStaff, canSetPerms, canHide, canMoney, viewerPerms, approvalFlowScope: flowScope } = this.gate(user);
     // notiWindow=all 은 **보여 주는 범위**만 넓힌다 — 지운 적이 없으므로 예전 것이 그대로 나온다 (N-7 · D-16)
-    return this.svc.all(user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope, canWage, canManageStaff, canSetPerms, canHide, canMoney);
+    return this.svc.all(
+      user.id, canApprove, canSeeAll, q.notiWindow === 'all', flowScope,
+      canWage, canManageStaff, canSetPerms, canHide, canMoney, viewerPerms,
+    );
   }
 
   /* ══ §17 구성원 (C97 · 테스트 시나리오 D-41) · 사용자 표 CRUD (W8 · 대표 지시 2026-09-26) ═══════════ */
@@ -178,6 +181,7 @@ export class DrawerController {
   @ApiCreatedResponse({ type: MemberDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드) | LOGIN_ID_RULE | PASSWORD_RULE | STAFF_PHONE_INVALID' })
   @ApiConflictResponse({ description: 'code STAFF_LOGIN_ID_TAKEN | STAFF_EMAIL_TAKEN | TZ_UNKNOWN | WAGE_SAME_DAY' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전. 계정 생성 없이 거절한다.' })
   @ApiForbiddenResponse({
     description: 'code WAGE_SET_FORBIDDEN — 시급을 적었는데 canWage 가 없다 (S4) · PERM_GRANT_FORBIDDEN — 새 계정이 받을 권한 중 '
       + '내게 없는 것이 있다(사람별 예외로 좁혀진 사람은 매니저 계정을 만들 수 없다 · W11 A\' 후속)',
@@ -194,7 +198,8 @@ export class DrawerController {
   @ApiOperation({
     summary: '§17 「수정」 — 강사·매니저 줄의 이름 · 아이디 · 이메일 · 휴대폰 · 직함 · 시간대 · 역할 · 입사일 (W8 · W10)',
     description: '보낸 칸만 바꾼다. 대표·관리자 줄은 403 STAFF_PROTECTED, 자기 역할은 403 SELF_ROLE. 이메일을 바꾸거나 비우면 이메일 확인이, 휴대폰을 바꾸면 '
-      + '휴대폰 확인이 풀리고 첫 설정을 다시 건다(N-104). 아이디는 연락처가 아니라서 바꿔도 첫 설정은 그대로다(W10). 시급은 「시급 수정」에서만.',
+      + '휴대폰 확인이 풀리고 첫 설정을 다시 건다(N-104). 아이디는 연락처가 아니라서 바꿔도 첫 설정은 그대로다(W10). '
+      + '대상이 actor에게 없는 권한을 가지면 아이디·이메일·휴대폰 변경은 403 PERM_GRANT_FORBIDDEN이다. 이름·직함 등 프로필 수정은 유지한다. 시급은 「시급 수정」에서만.',
   })
   @ApiOkResponse({ type: MemberDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드 · 역할 ceo/admin) | LOGIN_ID_RULE | STAFF_PHONE_INVALID' })
@@ -213,23 +218,27 @@ export class DrawerController {
   @ApiOperation({
     summary: '§17 「비밀번호 초기화」 — 매니저가 적은 임시 비밀번호로 바꾸고 첫 설정을 다시 건다 (W8 · W10)',
     description: '자기 것은 403 SELF_RESET(첫 설정 흐름으로 바꾼다), 대표·관리자 줄은 403 STAFF_PROTECTED. 그 계정의 이전 로그인은 끊긴다(credentials_changed_at). '
+      + '대상이 actor에게 없는 권한을 가지면 403 PERM_GRANT_FORBIDDEN이다(임시 비밀번호를 이용한 권한 제한 우회 차단). '
       + '응답은 그 줄(MemberDto) — 비밀번호는 응답 · 기록(log) 어디에도 없다.',
   })
   @ApiCreatedResponse({ type: MemberDto })
   @ApiBadRequestResponse({ type: ApiErrorDto, description: 'BAD_REQUEST(형식 · 허용 밖 필드) | PASSWORD_RULE' })
-  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_RESET' })
+  @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_RESET | PERM_GRANT_FORBIDDEN' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전. 기존 자격은 유지한다.' })
   @ApiNotFoundResponse({ type: ApiErrorDto, description: 'STAFF_NOT_FOUND' })
   resetStaffPassword(
     @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Body() dto: StaffPasswordResetDto,
   ): Promise<MemberDto> {
-    return this.svc.resetStaffPassword(user.id, this.gate(user).canWage, p.id, dto.password);
+    const g = this.gate(user);
+    return this.svc.resetStaffPassword(user.id, g.canWage, p.id, dto.password, g.viewerPerms);
   }
 
   @Patch('staff/:id/active')
   @Perm('canAdminPage', 'canCrudAll')
   @ApiOperation({
     summary: '§17 「사용 중지」·「다시 사용」 (W8)',
-    description: '사용 중지된 계정은 다음 요청부터 인증이 막히고 로그인도 안 된다(기존 활성 검사). 자기 것은 403 SELF_ACTIVE, 대표·관리자 줄은 403 STAFF_PROTECTED. 같은 값이면 그대로 돌려준다.',
+    description: '사용 중지되면 인증·로그인이 막히며 기존 Access·Refresh를 폐기한다. 재활성화해도 옛 세션은 살아나지 않고 새 로그인이 필요하다. '
+      + '자기 것은 403 SELF_ACTIVE, 대표·관리자 줄은 403 STAFF_PROTECTED. 같은 값이면 그대로 돌려준다.',
   })
   @ApiOkResponse({ type: MemberDto })
   @ApiForbiddenResponse({ type: ApiErrorDto, description: 'STAFF_PROTECTED | SELF_ACTIVE' })
@@ -237,7 +246,8 @@ export class DrawerController {
   setStaffActive(
     @CurrentUser() user: RequestUser, @Param() p: StaffParamsDto, @Body() dto: StaffActiveDto,
   ): Promise<MemberDto> {
-    return this.svc.setStaffActive(user.id, this.gate(user).canWage, p.id, dto.active);
+    const g = this.gate(user);
+    return this.svc.setStaffActive(user.id, g.canWage, p.id, dto.active, g.viewerPerms);
   }
 
   @Delete('staff/:id')

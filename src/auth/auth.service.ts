@@ -23,6 +23,8 @@ export interface JwtPayload {
   perms?: Partial<Record<PermName, boolean | null>> | null;
   /** 발급 시각(초) — jsonwebtoken 이 넣는다. 자격이 다시 정해진 시각보다 앞선 토큰을 끊는 데 쓴다 (W8) */
   iat?: number;
+  /** 내부 자격 버전 — STAFF.credentialsChangedAt의 ms 값. 업무 DTO에는 내보내지 않는다. */
+  cv?: number;
 }
 
 /** Access/Refresh가 공유한다. ORM에 누락 식별자를 전달하면 조건이 무시될 수 있다. */
@@ -61,21 +63,41 @@ export class AuthService {
    *
    * 초기 비밀번호는 계정을 만든 사람도 안다 — 첫 설정 · 관리자 비밀번호 초기화 · 운영 전환이
    * `credentials_changed_at` 을 찍으면 그보다 **먼저 발급된** Access · Refresh 는 전부 끊긴다(만든 사람의 세션 포함).
-   * `iat` 는 초 단위라 같은 초 안의 비교는 허용 쪽으로 기운다(floor) — 방금 발급한 새 토큰이 스스로 끊기지 않게.
-   * 재설정 시각이 있는데 `iat` 가 없는 토큰은 판정할 수 없으니 끊는다.
+   * 권고안 채택(R118-06): 새 토큰은 발급 때 읽은 STAFF의 ms 자격 버전과 현재 값을 비교한다.
+   * 같은 초 reset·늦은 로그인 발급 경합도 닫는다. cv가 없는 옛 토큰은 변경 다음 초 이후만 허용한다.
+   * DB timestamp를 JS Date로 읽는 기존 ms 정밀도를 사용한다. 같은 1ms의 복수 reset을 구별하려면
+   * 별도 단조 증가 DB 버전이 필요하며 그 변경은 인증·migration·운영 인계·portfolio를 함께 갱신한다.
    */
-  private assertIssuedAfterReset(s: Staff, iat: unknown): void {
-    if (!s.credentialsChangedAt) return;
-    const cutoff = Math.floor(new Date(s.credentialsChangedAt).getTime() / 1000);
-    if (typeof iat !== 'number' || !Number.isFinite(iat) || iat < cutoff) {
+  private assertIssuedAfterReset(s: Staff, iat: unknown, cv?: unknown): void {
+    const currentVersion = this.credentialVersion(s);
+    if (cv !== undefined) {
+      if (typeof cv !== 'number' || !Number.isSafeInteger(cv) || cv < 0 || cv !== currentVersion) {
+        throw new UnauthorizedException('다시 로그인해 주세요');
+      }
+      return;
+    }
+    if (!s.credentialsChangedAt) {
+      return;
+    }
+    const cutoff = Math.floor(currentVersion / 1000);
+    if (typeof iat !== 'number' || !Number.isSafeInteger(iat) || iat <= cutoff) {
       throw new UnauthorizedException('다시 로그인해 주세요');
     }
   }
 
+  /** 세션 시계 대신 DB의 자격 변경 버전을 사용해 stale STAFF로 뒤늦게 만든 토큰도 구별한다. */
+  private credentialVersion(s: Staff): number {
+    const version = s.credentialsChangedAt ? new Date(s.credentialsChangedAt).getTime() : 0;
+    if (!Number.isSafeInteger(version) || version < 0) {
+      throw new UnauthorizedException('다시 로그인해 주세요');
+    }
+    return version;
+  }
+
   /** 서명된 옛 권한을 재사용하지 않는다. PermGuard와 모든 service가 같은 현재 사용자로 판정한다. */
-  async currentUser(id: number, iat?: number): Promise<RequestUser> {
+  async currentUser(id: number, iat?: number, cv?: unknown): Promise<RequestUser> {
     const s = await this.activeStaff(id);
-    this.assertIssuedAfterReset(s, iat);
+    this.assertIssuedAfterReset(s, iat, cv);
     return {
       id: Number(s.id), name: s.name, role: s.role, perms: this.overridesOf(s),
       // 첫 설정 잠금은 토큰이 아니라 현재 STAFF 가 정한다 — OnboardingGuard 가 이 값만 본다
@@ -145,6 +167,7 @@ export class AuthService {
       name: s.name,
       role: s.role,
       perms: this.overridesOf(s),
+      cv: this.credentialVersion(s),
     };
   }
 
@@ -157,7 +180,7 @@ export class AuthService {
 
   signRefresh(s: Staff): string {
     return this.jwt.sign(
-      { sub: Number(s.id) },
+      { sub: Number(s.id), cv: this.credentialVersion(s) },
       {
         secret: process.env.JWT_REFRESH_SECRET ?? 'dev-only-change-me-too',
         expiresIn: (process.env.JWT_REFRESH_EXPIRES ?? '14d') as Expires,
@@ -168,8 +191,9 @@ export class AuthService {
   async refresh(token: string) {
     let sub: unknown;
     let iat: unknown;
+    let cv: unknown;
     try {
-      ({ sub, iat } = this.jwt.verify<{ sub?: unknown; iat?: unknown }>(token, {
+      ({ sub, iat, cv } = this.jwt.verify<{ sub?: unknown; iat?: unknown; cv?: unknown }>(token, {
         secret: process.env.JWT_REFRESH_SECRET ?? 'dev-only-change-me-too',
       }));
     } catch {
@@ -177,7 +201,7 @@ export class AuthService {
     }
     const s = await this.activeStaff(sub);
     // Refresh 도 같은 재설정 시각으로 끊는다 — Access 만 끊으면 쿠키로 새 Access 를 다시 받아 간다
-    this.assertIssuedAfterReset(s, iat);
+    this.assertIssuedAfterReset(s, iat, cv);
     return { accessToken: this.signAccess(s) };
   }
 

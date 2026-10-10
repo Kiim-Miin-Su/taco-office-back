@@ -229,7 +229,8 @@ export class FilesService {
               EXISTS (
                 SELECT 1 FROM cons_file cf JOIN cons c ON c.id=cf.cons_id
                  WHERE cf.file_id=f.id AND c.deleted_at IS NULL
-                   AND (c.share='all' OR c.owner_id=$3 OR (c.share='picked' AND EXISTS (
+                   -- 권고안(R118): csCanFull과 같이 최초 등록자는 담당자 변경 뒤에도 전체 내용을 읽는다.
+                   AND (c.share='all' OR c.owner_id=$3 OR c.created_by=$3 OR (c.share='picked' AND EXISTS (
                      SELECT 1 FROM cons_pick cp WHERE cp.cons_id=c.id AND cp.staff_id=$3
                    )))
               ) AS consulting_full_access

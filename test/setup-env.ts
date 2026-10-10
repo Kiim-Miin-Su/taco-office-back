@@ -23,3 +23,6 @@ export const SENDER_ENV_KEYS = [
 ] as const;
 
 for (const key of SENDER_ENV_KEYS) process.env[key] = '';
+
+// 초기 자격 검증도 실제 서버 비밀번호를 읽지 않는다. 제품 코드에는 기본값을 두지 않는다(R118).
+process.env.TACO_INITIAL_PASSWORD = 'isolated-bootstrap-fixture-1234!';

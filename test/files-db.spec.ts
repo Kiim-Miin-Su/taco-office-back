@@ -13,7 +13,7 @@
  *   ③ 한도를 넘으면 조용히 자르지 않고 **거절한다** (그리고 표도 거절한다)
  *   ④ 가리키는 주소는 `/files/{id}` — 저장소가 어디인지 주소 모양으로 갈린다
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { FileRow } from '../src/entities';
@@ -185,6 +185,31 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
       .resolves.toMatchObject({ kind: 'lib-te' });
   });
 
+  it.each(['private', 'money_only'])('담당·업로더가 바뀐 %s 컨설팅도 최초 등록자는 파일을 계속 읽는다', async (share) => {
+    const OTHER = 75;
+    await q.query(`INSERT INTO staff(id,name,email,role) VALUES ($1,'변경 담당자','file75@t.kr','manager')
+      ON CONFLICT(id) DO NOTHING`, [OTHER]);
+    const [template] = await q.query(`SELECT id FROM cons_template WHERE cons_type='admissions' AND active`);
+    const [cons] = await q.query(`INSERT INTO cons(cons_type,stage,contract_step,share,owner_id,created_by,template_id)
+      VALUES ('admissions','contract',1,$1,$2,$3,$4) RETURNING id`, [share, OTHER, ME, template.id]);
+    await q.query(`INSERT INTO cons_write_req(request_key,action,cons_id,fingerprint,result_version,actor_id)
+      VALUES ($1,'create',$2,repeat('a',64),1,$3)`, [randomUUID(), cons.id, ME]);
+    const bytes = Buffer.from('최초 등록자가 확인할 합성 계약서');
+    const ref = await svc().upload(OTHER, { kind: 'cons-contract', name: '계약서.pdf', base64: bytes.toString('base64') });
+    await q.query(`INSERT INTO cons_file(file_id,cons_id,role,created_by) VALUES ($1,$2,'draft',$3)`, [ref.id, cons.id, OTHER]);
+    const creator = { id: ME, name: '최초 등록자', role: 'manager', perms: { canHide: false } };
+
+    await expect(svc().readAuthorized(creator, ref.id)).resolves.toMatchObject({ data: bytes });
+    await expect(svc().readAuthorized({ ...creator, id: 76 }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+    await expect(svc().readAuthorized({ ...creator, perms: { canHide: false, canCrudAll: false } }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+
+    await q.query(`UPDATE cons SET deleted_at=now(),deleted_by=$2 WHERE id=$1`, [cons.id, OTHER]);
+    await expect(svc().readAuthorized(creator, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+  });
+
   it('한도를 넘으면 자르지 않고 거절한다 — 그리고 표도 거절한다', async () => {
     const big = Buffer.alloc(FILE_MAX_BYTES + 1, 7);
     await expect(svc().upload(ME, { kind: 'lib-se', name: '큰교재.pdf', base64: big.toString('base64') }))
@@ -222,6 +247,8 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
    */
   it('리포트 PNG — 발송에 든 리포트의 담당 강사만 연다 (ref_id 는 RSEND id · 보안 0925)', async () => {
     const AUTHOR = 73, OTHER = 74, COLLIDE = 9_730_001;
+    // 신규 격리 DB에서도 seed 학생 1번에 의존하지 않도록 이 트랜잭션의 합성 학생을 사용한다.
+    const [student] = await q.query(`INSERT INTO stu(name,grade) VALUES ('파일 권한 합성 학생','G1') RETURNING id`);
     await q.query(
       `INSERT INTO staff (id,name,email,role) VALUES ($1,'쓴 강사','file73@t.kr','teacher'), ($2,'남 강사','file74@t.kr','teacher')
        ON CONFLICT (id) DO NOTHING`, [AUTHOR, OTHER],
@@ -245,8 +272,8 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
     );
     await q.query(
       `INSERT INTO rsend (id,student_id,on_date,rep_ids,channel,body,sent_by,request_key)
-       VALUES ($1,1,'2026-09-01',$2::jsonb,'blob','본문',$3,'00000000-0000-4000-8000-000000009731')`,
-      [COLLIDE, JSON.stringify([Number(authorRep.id)]), ME],
+       VALUES ($1,$4,'2026-09-01',$2::jsonb,'blob','본문',$3,'00000000-0000-4000-8000-000000009731')`,
+      [COLLIDE, JSON.stringify([Number(authorRep.id)]), ME, student.id],
     );
     const ref = await svc().upload(null, { kind: 'report-png', name: '20260901_학생.png', base64: Buffer.from('png').toString('base64') });
     await q.query(`INSERT INTO pdflog (kind,ref_id,file_url) VALUES ('report_png',$1,$2)`, [COLLIDE, ref.url]);

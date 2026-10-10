@@ -167,6 +167,13 @@ d('BO-11BD-01 청구 조정 승인 원장', () => {
     await transition(tooLarge.id, 'approve', 1).expect(409)
       .expect(({ body }) => expect(body.code).toBe('INVOICE_ADJUSTMENT_EXCEEDS_INVOICE'));
     await transition(tooLarge.id, 'reject', 1, '금액 초과').expect(201);
+
+    // R118: 동일 청구서의 승인·반려 이력이 늘어도 환불예정은 INV 초과수납액 한 번이다.
+    const ledger = (await request(app.getHttpServer()).get(`/accounting/adjustments?month=${MONTH}`)
+      .set(auth(adminToken)).expect(200)).body as InvoiceAdjustmentLedgerDto;
+    expect(ledger.items.filter((item) => item.invoiceId === invoiceId)).toHaveLength(3);
+    expect(ledger.refundDue).toBe(50000);
+    expect(ledger.approvedAmount).toBe(50000);
   });
 
   it('pending 조정은 월 마감을 막고 마감 뒤 신규 조정을 막는다', async () => {

@@ -365,18 +365,35 @@ d('W8 · W10 §17 사용자 표 CRUD — 만들기(아이디 · 임시 비밀번
   });
 
   /* ── 5. 사용 중지 ─────────────────────────────────────────────────────── */
-  it('사용 중지 — 그 계정은 다음 요청부터 막히고 로그인도 안 된다 · 다시 사용하면 돌아온다 · 자기·대표 403', async () => {
+  it('사용 중지 — 옛 Access·Refresh는 재활성화 뒤에도 폐기되고 새 로그인만 허용한다 · 자기·대표 403', async () => {
     const id = await make('w8b-new-act');
     const off = await api('patch', `/drawer/staff/${id}/active`).send({ active: false }).expect(200);
     expect(off.body).toMatchObject({ id, active: false });
     const [log] = await q<{ action: string }>(`SELECT action FROM log WHERE entity = 'STAFF' AND entity_id = $1 AND action IN ('deactivate','activate') ORDER BY id`, [id]);
     expect(log.action).toBe('deactivate');
-    // 이미 받은 토큰도 다음 요청에서 막힌다 — 기존 활성 검사(요청마다 STAFF 를 다시 읽는다)
+    const beforeStop = await request(app.getHttpServer()).post('/auth/login')
+      .send({ loginId: 'w8b-t@t.kr', password: PW }).expect(201);
+    const oldAccess = beforeStop.body.accessToken as string;
+    const oldCookie = (beforeStop.headers['set-cookie'] as unknown as string[])
+      .map((value) => value.split(';')[0]).join('; ');
+    // 이미 받은 토큰도 다음 요청에서 막힌다 — 중지가 자격 버전을 바꾸고 재활성화는 그 버전을 보존한다.
     await api('patch', `/drawer/staff/${TEACHER}/active`).send({ active: false }).expect(200);
-    await api('get', '/drawer', tokens.teacher).expect(401);
+    await api('get', '/auth/me', oldAccess).expect(401);
+    await request(app.getHttpServer()).post('/auth/refresh').set('Cookie', oldCookie).expect(401);
     await request(app.getHttpServer()).post('/auth/login').send({ loginId: 'w8b-t@t.kr', password: PW }).expect(401);
+    const version = () => q<{ credentials_changed_at: Date }>(
+      'SELECT credentials_changed_at FROM staff WHERE id=$1', [TEACHER],
+    );
+    const stopped = await version();
+    expect(stopped[0].credentials_changed_at).toBeInstanceOf(Date);
+    await api('patch', `/drawer/staff/${TEACHER}/active`).send({ active: false }).expect(200);
+    expect(await version()).toEqual(stopped);
     await api('patch', `/drawer/staff/${TEACHER}/active`).send({ active: true }).expect(200);
+    expect(await version()).toEqual(stopped);
+    await api('get', '/auth/me', oldAccess).expect(401);
+    await request(app.getHttpServer()).post('/auth/refresh').set('Cookie', oldCookie).expect(401);
     tokens.teacher = await login('w8b-t@t.kr');
+    await api('get', '/auth/me', tokens.teacher).expect(200);
     await api('patch', `/drawer/staff/${MGR}/active`).send({ active: false }).expect(403).expect((r) => expect(r.body.code).toBe('SELF_ACTIVE'));
     await api('patch', `/drawer/staff/${CEO}/active`).send({ active: false }).expect(403).expect((r) => expect(r.body.code).toBe('STAFF_PROTECTED'));
     await api('patch', `/drawer/staff/${id}/active`).send({ active: 'no' }).expect(400);

@@ -18,8 +18,9 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, QueryRunner, Repository } from 'typeorm';
 import { Lead } from '../../entities';
 import {
-  PERM_OVERRIDE_COLUMN, PERM_OVERRIDE_KEYS, PERM_OVERRIDE_LABEL, isRole, permGrantBlockedMessage, permGrantIssue, permsOf,
-  type ApprovalFlowScope, type PermFlags, type PermOverrideKey,
+  PERM_FLAG_LABEL, PERM_OVERRIDE_COLUMN, PERM_OVERRIDE_KEYS, PERM_OVERRIDE_LABEL,
+  isRole, permGrantBlockedMessage, permGrantIssue, permsOf,
+  type ApprovalFlowScope, type PermFlags, type PermName, type PermOverrideKey,
 } from '../../common/perm';
 import {
   apFlow, approvalFlowProjection, approvalPlanVisible, labelOf, reqAsked, reqAskedLine, reqTitle, requesterReason, toApState,
@@ -210,10 +211,13 @@ function staffPhoneOf(raw: string | null | undefined): string | null {
  * §17 줄마다의 단추 — **서버가 가른다** (W8 · D-R39). 보는 이가 매니저 이상(canManage)이고 그 줄이 강사·매니저일 때만
  * 「수정」이 서고, 자기 줄은 역할 · 초기화 · 사용 중지 · 삭제가 빠진다. 대표·관리자 줄에는 아무것도 서지 않는다.
  */
-function staffRowFlags(canManage: boolean, manageable: boolean, self: boolean) {
+function staffRowFlags(canManage: boolean, manageable: boolean, self: boolean, canControlCredentials: boolean) {
   const edit = canManage && manageable;
   const other = edit && !self;
-  return { canEdit: edit, canChangeRole: other, canResetPassword: other, canToggleActive: other, canDelete: other };
+  return {
+    canEdit: edit, canChangeRole: other, canResetPassword: other && canControlCredentials,
+    canToggleActive: other, canDelete: other,
+  };
 }
 
 /** 권한 예외 칸 이름 — SELECT 에 넣는 칸도 이 표에서만 온다 (N-68 · `common/perm/perm-matrix`) */
@@ -825,6 +829,8 @@ export class DrawerService {
     canHide = true,
     /** 지출을 심사할 수 있는가 — §75 지출 갈래(H-83)에서 남의 지출 줄을 싣는 판정 · 쓰기(POST expenses/:id/review)의 @Perm('canMoney') 과 같다 */
     canMoney = false,
+    /** 구성원 초기화 단추도 자격 writer와 동일한 현재 actor 권한으로 판정한다. */
+    viewerPerms: PermFlags | null = null,
   ): Promise<DrawerDto> {
     const approvalRows = await this.approvalRows(viewerId, flowScope, canMoney);
     // 변경 요청 줄은 시간표를 쓸 수 있어야 단추가 선다 — 쓰기(reviewChangeRequest)와 같은 판정 (P1 CROSS-CUT · D-R39)
@@ -938,7 +944,9 @@ export class DrawerService {
       phone: str(r.phone),
       hiredOn: str(r.hired_on),
       // 「수정」·「비밀번호 초기화」·「사용 중지」·「삭제」가 서는 줄도 표가 가른다(강사·매니저 · 자기 줄 제외) — W8
-      ...staffRowFlags(canManageStaff, r.manageable === true, Number(r.id) === viewerId),
+      ...staffRowFlags(
+        canManageStaff, r.manageable === true, Number(r.id) === viewerId, this.credentialControlIssue(r, viewerPerms) === null,
+      ),
       // N-68 — 권한 예외는 구성원을 다루는 사람에게만 싣고, 토글은 대표 판정 · 강사·매니저 줄 · 자기 줄 아님일 때만 선다
       canEditPerms: canManageStaff && canSetPerms && r.manageable === true && Number(r.id) !== viewerId,
       perms: canManageStaff ? memberPerms(r) : null,
@@ -1142,7 +1150,7 @@ export class DrawerService {
     });
     // 만든 줄의 시급도 **볼 수 있는 사람에게만** 싣는다 — 여기서만 true 를 박으면 목록과 응답이 갈린다 (D-R39)
     // 비밀번호는 싣지 않는다 — 넘겨줄 비밀번호는 적은 화면만 안다(W10)
-    return this.memberOne(id, canWage, viewerId, true);
+    return this.memberOne(id, canWage, viewerId, true, false, viewerPerms);
   }
 
   /**
@@ -1150,7 +1158,7 @@ export class DrawerService {
    * 부르는 곳은 전부 매니저 이상 경로(`@Perm('canAdminPage','canCrudAll')`)다.
    */
   private async memberOne(
-    id: number, canWage: boolean, viewerId: number, canManage: boolean, canSetPerms = false,
+    id: number, canWage: boolean, viewerId: number, canManage: boolean, canSetPerms = false, viewerPerms: PermFlags | null = null,
   ): Promise<MemberDto> {
     const [r] = await this.q(
       `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active, must_change_credentials,
@@ -1172,7 +1180,9 @@ export class DrawerService {
       mustChangeCredentials: r.must_change_credentials === true,
       phone: canManage ? str(r.phone) : null,
       hiredOn: str(r.hired_on),
-      ...staffRowFlags(canManage, r.manageable === true, Number(r.id) === viewerId),
+      ...staffRowFlags(
+        canManage, r.manageable === true, Number(r.id) === viewerId, this.credentialControlIssue(r, viewerPerms) === null,
+      ),
       canEditPerms: canManage && canSetPerms && r.manageable === true && Number(r.id) !== viewerId,
       perms: canManage ? memberPerms(r) : null,
     };
@@ -1196,6 +1206,28 @@ export class DrawerService {
       throw new ForbiddenException({ code: 'STAFF_PROTECTED', message: '대표·관리자 계정은 여기서 바꿀 수 없습니다' });
     }
     return row;
+  }
+
+  /**
+   * 권고안 채택: 자격 변경은 대상 계정을 통제할 수 있는 권한을 넘기는 일이다. 생성·승격 때만 한도를 검사하면
+   * 제한된 매니저가 넓은 권한 계정의 임시 비밀번호/연락처를 바꾸어 같은 한도를 우회할 수 있다.
+   * 잠근 STAFF의 현재 역할·예외 전체와 실제 actor를 비교한다. 이름·직함 등 업무 프로필은 이 제한에 넣지 않는다.
+   * 판정은 기존 permGrantIssue를 재사용하며 변경 시 계정 DTO/Swagger·Front 오류 안내·권한 회귀·문서를 함께 검수한다.
+   */
+  private credentialControlIssue(row: R, viewerPerms: PermFlags | null): PermName | null {
+    const role = row.role;
+    const target = isRole(role) ? permsOf(role, overridesOfRow(row)) : null;
+    return target && viewerPerms ? permGrantIssue(viewerPerms, null, target) : 'canAdminPage';
+  }
+
+  private assertCredentialControl(row: R, viewerPerms: PermFlags | null): void {
+    const grant = this.credentialControlIssue(row, viewerPerms);
+    if (grant) {
+      throw new ForbiddenException({
+        code: 'PERM_GRANT_FORBIDDEN',
+        message: `대상 계정에는 내게 없는 ${PERM_FLAG_LABEL[grant]}이 있습니다 — 아이디·연락처·비밀번호는 해당 권한을 가진 담당자에게 요청하세요`,
+      });
+    }
   }
 
   /**
@@ -1244,6 +1276,9 @@ export class DrawerService {
       const permKeys = Object.keys(permChanged) as PermOverrideKey[];
       if (Object.keys(changed).length === 0 && permKeys.length === 0) {
         throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 항목이 없습니다' });
+      }
+      if (['loginId', 'email', 'phone'].some((key) => key in changed)) {
+        this.assertCredentialControl(row, perm.viewer);
       }
       if ('role' in changed && id === viewerId) {
         throw new ForbiddenException({ code: 'SELF_ROLE', message: '자기 역할은 바꿀 수 없습니다 — 다른 매니저 이상에게 부탁하세요' });
@@ -1349,7 +1384,7 @@ export class DrawerService {
         await audit(m, 'staff.perms', { actorId: viewerId, entityId: id, before: permBefore, after: permAfter });
       }
     });
-    return this.memberOne(id, canWage, viewerId, true, perm.canSet);
+    return this.memberOne(id, canWage, viewerId, true, perm.canSet, perm.viewer);
   }
 
   /**
@@ -1357,7 +1392,9 @@ export class DrawerService {
    * 세션을 끊는 시각(credentials_changed_at)도 적는다 — 그 전에 받은 토큰은 인증에서 막힌다(W8-A).
    * 자기 것은 첫 설정 흐름으로 바꾼다(SELF_RESET). 응답은 그 줄(MemberDto)이고 비밀번호는 싣지 않는다.
    */
-  async resetStaffPassword(viewerId: number, canWage: boolean, id: number, password: string): Promise<MemberDto> {
+  async resetStaffPassword(
+    viewerId: number, canWage: boolean, id: number, password: string, viewerPerms: PermFlags | null = null,
+  ): Promise<MemberDto> {
     if (id === viewerId) {
       throw new ForbiddenException({ code: 'SELF_RESET', message: '자기 비밀번호는 여기서 초기화하지 않습니다 — 로그인한 뒤 첫 설정 화면에서 바꾸세요' });
     }
@@ -1365,6 +1402,7 @@ export class DrawerService {
     const hash = await bcrypt.hash(password, 10);
     await this.anyRepo.manager.transaction(async (m: EntityManager) => {
       const row = await this.lockManageable(m, id);
+      this.assertCredentialControl(row, viewerPerms);
       await m.query(
         `UPDATE staff SET password_hash = $2, must_change_credentials = true, credentials_changed_at = now() WHERE id = $1`,
         [id, hash],
@@ -1375,24 +1413,33 @@ export class DrawerService {
         [viewerId, id, JSON.stringify({ mustChangeCredentials: row.must_change_credentials === true }), JSON.stringify({ mustChangeCredentials: true })],
       );
     });
-    return this.memberOne(id, canWage, viewerId, true);
+    return this.memberOne(id, canWage, viewerId, true, false, viewerPerms);
   }
 
   /** 「사용 중지」·「다시 사용」 — 같은 값이면 아무것도 적지 않고 그대로 돌려준다(두 번 눌러도 같다) */
-  async setStaffActive(viewerId: number, canWage: boolean, id: number, active: boolean): Promise<MemberDto> {
+  async setStaffActive(
+    viewerId: number, canWage: boolean, id: number, active: boolean, viewerPerms: PermFlags | null = null,
+  ): Promise<MemberDto> {
     if (id === viewerId) {
       throw new ForbiddenException({ code: 'SELF_ACTIVE', message: '자기 계정은 사용 중지할 수 없습니다' });
     }
     await this.anyRepo.manager.transaction(async (m: EntityManager) => {
       const row = await this.lockManageable(m, id);
       if ((row.active === true) === active) return;
-      await m.query(`UPDATE staff SET active = $2 WHERE id = $1`, [id, active]);
+      // 권고안 채택(R118-06): 중지는 기존 세션도 폐기한다. 재활성화 때 유출된 옛 Refresh가 부활하면 안 된다.
+      // 같은 상태는 위에서 반환하고, 다시 활성화할 때는 폐기 버전을 유지해 새 로그인만 받는다.
+      await m.query(
+        `UPDATE staff SET active = $2,
+                          credentials_changed_at = CASE WHEN $2::boolean THEN credentials_changed_at ELSE now() END
+          WHERE id = $1`,
+        [id, active],
+      );
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,$3,$4::jsonb,$5::jsonb)`,
         [viewerId, id, active ? 'activate' : 'deactivate', JSON.stringify({ active: !active }), JSON.stringify({ active })],
       );
     });
-    return this.memberOne(id, canWage, viewerId, true);
+    return this.memberOne(id, canWage, viewerId, true, false, viewerPerms);
   }
 
   /**

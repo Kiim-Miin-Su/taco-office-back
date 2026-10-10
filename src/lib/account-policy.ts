@@ -3,6 +3,7 @@
  * 책임/재사용: 계정의 초기 비밀번호 · 비밀번호 규칙 · 아이디 규칙 · 이메일/휴대폰 정규화를 한 곳에서 소유한다. 계정 만들기 · 비밀번호 초기화 · 첫 설정 · 비밀번호 찾기 · 운영 전환 스크립트가 같이 쓴다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
+import { ServiceUnavailableException } from '@nestjs/common';
 
 /**
  * 계정 정책 한 곳 (W8 · W10 · 대표 지시 2026-09-26).
@@ -14,13 +15,20 @@
  *
  * 비밀번호 규칙은 하나다 — 매니저가 정하는 임시 비밀번호도, 본인이 정하는 새 비밀번호도 같은 `passwordIssue` 를 지난다.
  *
- * 운영 초기 비밀번호(`INITIAL_PASSWORD`)는 이제 **운영 전환 스크립트(대표 계정)만** 쓴다 — 계정 만들기 · 비밀번호 초기화는
- * 매니저가 적은 임시 비밀번호를 쓴다(W10 · 답변 2026-09-26). 값은 여기 하나이고 운영에서는 서버 환경 변수 `TACO_INITIAL_PASSWORD` 로 덮는다
- * (화면 번들 · 응답 · 기록에는 싣지 않는다). 대표 · 매니저의 초기 계정은 나중에 정한다(대표 지시 2026-09-26).
+ * 운영 초기 비밀번호는 서버 전용 TACO_INITIAL_PASSWORD만 사용한다(R118). 코드에는 실제 초기 자격을 두지 않는다.
+ * 최초 발급/운영 전환 도구는 값이 없으면 쓰기 전에 거절한다. 일반 생성/초기화도 재사용 금지를 검증할 설정이 필요하다.
  */
 
-/** 운영 초기 비밀번호 — 서버 전용 값. 운영 전환 스크립트가 남기는 대표 계정을 이것으로 되돌리고 첫 로그인 때 반드시 바꾸게 한다 */
-export const INITIAL_PASSWORD: string = process.env.TACO_INITIAL_PASSWORD?.trim() || 'tnacademy1234!';
+/** 서버 설정이 없을 때 기존 로그인·조회는 유지하고, 비밀번호 쓰기는 아래 공용 정책에서 차단한다. */
+export const INITIAL_PASSWORD: string = process.env.TACO_INITIAL_PASSWORD?.trim() ?? '';
+
+/** 권고안(R118): Git 기본값 대신 서버 설정을 요구하며 원문 비밀번호는 예외에도 포함하지 않는다. */
+export function requireInitialPassword(value = INITIAL_PASSWORD): string {
+  if (!value || value.length < 8 || Buffer.byteLength(value, 'utf8') > 72 || !/[A-Za-z]/.test(value) || !/\d/.test(value)) {
+    throw new Error('INITIAL_PASSWORD_REQUIRED');
+  }
+  return value;
+}
 
 export const PASSWORD_MIN = 8;
 /** bcrypt 는 72바이트 뒤를 버린다 — 그보다 긴 비밀번호는 뒤가 다른 두 값이 같은 해시가 된다 */
@@ -41,10 +49,22 @@ export type PasswordIssue = 'TOO_SHORT' | 'TOO_LONG' | 'NEEDS_LETTER_AND_DIGIT' 
  * 문장은 `PASSWORD_ISSUE_MESSAGE` 한 곳이 만든다.
  */
 export function passwordIssue(pw: string): PasswordIssue | null {
+  // 권고안(R118): 설정 누락을 빈 금지값으로 해석하면 초기 비밀번호 재사용을 허용한다.
+  // 비밀번호 쓰기 경계만 503으로 닫고, 기존 해시 로그인·조회 및 CLI의 설정 오류 계약은 유지한다.
+  let initialPassword: string;
+  try {
+    initialPassword = requireInitialPassword();
+  } catch {
+    throw new ServiceUnavailableException({
+      code: 'INITIAL_PASSWORD_REQUIRED', message: '비밀번호 정책 설정을 확인할 수 없습니다 — 관리자에게 알려 주세요',
+    });
+  }
   if (pw.length < PASSWORD_MIN) return 'TOO_SHORT';
   if (Buffer.byteLength(pw, 'utf8') > PASSWORD_MAX_BYTES) return 'TOO_LONG';
   if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return 'NEEDS_LETTER_AND_DIGIT';
-  if (pw === INITIAL_PASSWORD) return 'SAME_AS_INITIAL';
+  if (pw === initialPassword) {
+    return 'SAME_AS_INITIAL';
+  }
   return null;
 }
 

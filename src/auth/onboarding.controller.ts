@@ -80,7 +80,7 @@ export class OnboardingController {
     type: ApiErrorDto,
     description: `${notRequired} · SAME_AS_CURRENT · EMAIL_TAKEN · CODE_NOT_REQUESTED · CODE_EXPIRED · CODE_LOCKED · CODE_MISMATCH(틀린 횟수는 남는다)`,
   })
-  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'AUTH_CODE_SECRET_MISSING — 운영에 코드 비밀 값이 없어 코드를 확인할 수 없다(N-105)' })
+  @ApiServiceUnavailableResponse({ type: ApiErrorDto, description: 'AUTH_CODE_SECRET_MISSING — 운영 코드 비밀 값 없음(N-105) | INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전, 기존 자격 유지' })
   async complete(
     @CurrentUser() user: RequestUser,
     @Body() dto: OnboardingCompleteDto,

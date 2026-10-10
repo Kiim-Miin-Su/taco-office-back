@@ -62,7 +62,7 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
   const cleanupNewStaff = async () => {
     const rows = await q<{ id: string }>(
       `SELECT id FROM staff WHERE lower(login_id) = ANY($1) OR lower(email) = $2`,
-      [[NEW_LOGIN.toLowerCase(), 'other-c97', 'mars-c97', 'x-c97'], NEW_EMAIL],
+      [[NEW_LOGIN.toLowerCase(), 'other-c97', 'mars-c97', 'adm2-c97', 'x-c97'], NEW_EMAIL],
     );
     for (const r of rows) {
       await q(`DELETE FROM wage WHERE staff_id = $1`, [r.id]);
@@ -178,7 +178,7 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     expect(asTeacher.members.every((m: { wageable?: boolean; wageRate?: number | null }) => m.wageable === false && m.wageRate === null)).toBe(true);
   });
 
-  it('구성원 추가의 거절 — 같은 아이디(대소문자 무시) · 같은 이메일 409 · 모르는 시간대 409 · 대표·관리자 역할은 DTO 가 400 · 강사 403 (아이디 · 임시 비밀번호 규칙의 400 은 staff-crud-w8-db.spec)', async () => {
+  it('구성원 추가 — 중복·시간대·대표·강사는 거절하고 매니저의 관리자 생성은 허용한다', async () => {
     const base = { password: TEMP_PW };
     await api('post', '/drawer/staff').send({ ...base, name: '중복', loginId: NEW_LOGIN.toUpperCase(), role: 'manager' }).expect(409)
       .expect((r) => expect(r.body.code).toBe('STAFF_LOGIN_ID_TAKEN'));
@@ -187,10 +187,13 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
     await api('post', '/drawer/staff').send({ ...base, name: '화성', loginId: 'mars-c97', role: 'teacher', tz: 'Mars/Olympus' }).expect(409)
       .expect((r) => expect(r.body.code).toBe('TZ_UNKNOWN'));
     await api('post', '/drawer/staff').send({ ...base, name: '대표', loginId: 'ceo2-c97', role: 'ceo' }).expect(400);
-    await api('post', '/drawer/staff').send({ ...base, name: '관리', loginId: 'adm2-c97', role: 'admin' }).expect(400);
+    // AUTH-INIT-01: 매니저 이상은 CEO를 제외한 모든 역할을 생성한다. 과거 C97의 admin 금지 기대를 대체한다.
+    const admin = await api('post', '/drawer/staff').send({ ...base, name: '관리', loginId: 'adm2-c97', role: 'admin' }).expect(201);
+    expect(admin.body).toMatchObject({ role: 'admin', mustChangeCredentials: true });
+    expect(await q(`SELECT role FROM staff WHERE id = $1`, [admin.body.id])).toEqual([{ role: 'admin' }]);
     await api('post', '/drawer/staff', teacherToken).send({ ...base, name: '강사가', loginId: 't-c97', role: 'teacher' }).expect(403);
     // 거절은 아무것도 남기지 않는다
-    expect(await q(`SELECT id FROM staff WHERE login_id IN ('other-c97','mars-c97','ceo2-c97','adm2-c97','t-c97')`)).toEqual([]);
+    expect(await q(`SELECT id FROM staff WHERE login_id IN ('other-c97','mars-c97','ceo2-c97','t-c97')`)).toEqual([]);
     // 서비스로 곧장 불러도 역할 밖은 DTO 가 아니라 표(role_t)가 막는다 — 값이 enum 밖이면 22P02
     const svc = new DrawerService(ds.getRepository(Lead));
     await expect(svc.createStaff(MANAGER, true, { name: 'x', loginId: 'x-c97', password: TEMP_PW, role: 'nope' })).rejects.toBeTruthy();

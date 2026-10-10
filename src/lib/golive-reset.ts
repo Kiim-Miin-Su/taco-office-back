@@ -22,7 +22,7 @@
  * NOT NULL 칸은 남는 대표로, 그 밖은 **아무것도 바꾸기 전에** 멈춘다. 전부 한 트랜잭션이다.
  */
 import bcrypt from 'bcryptjs';
-import { INITIAL_PASSWORD, normalizeEmail } from './account-policy';
+import { requireInitialPassword, normalizeEmail } from './account-policy';
 import { writtenRows } from './sql';
 import { quoteIdent, STAFF_SOFT_REFS, type FkDeleteRule } from './staff-refs';
 // 가린 이메일은 발송 원장과 같은 규칙 한 벌을 쓴다(부수효과 없는 순수 함수)
@@ -286,6 +286,7 @@ export interface GoLiveResult {
  * 끝에 남긴 표의 줄 수가 그대로인지 · 비운 표가 비었는지 다시 센다 — 하나라도 어긋나면 던져서 통째로 되돌린다.
  */
 export async function applyGoLive(q: Queryable, keepEmail: string): Promise<GoLiveResult> {
+  const initialPassword = requireInitialPassword();
   const plan = await planGoLive(q, keepEmail);
   if (plan.keepEmailProblem || !plan.keptCeo) throw new Error(plan.keepEmailProblem ?? '남길 대표를 찾지 못했습니다');
   if (plan.blockers.length > 0) throw new Error(`운영 전환이 멈춥니다 — ${plan.blockers.join(' · ')}`);
@@ -318,7 +319,7 @@ export async function applyGoLive(q: Queryable, keepEmail: string): Promise<GoLi
   }
 
   // ③ 남길 대표 — 초기 비밀번호 + 첫 설정(아이디·비밀번호 변경 · 휴대폰·이메일 확인)을 다시 건다. 이전 세션은 끊긴다
-  const hash = await bcrypt.hash(INITIAL_PASSWORD, 10);
+  const hash = await bcrypt.hash(initialPassword, 10);
   // UPDATE … RETURNING 은 드라이버가 [행, 수] 로 돌려준다 — 세는 함수 하나(lib/sql.writtenRows)로 읽는다
   const reset = writtenRows<{ id: string }>(await q.query(
     `UPDATE staff SET password_hash = $2, must_change_credentials = true, email_verified = false, phone_verified = false,

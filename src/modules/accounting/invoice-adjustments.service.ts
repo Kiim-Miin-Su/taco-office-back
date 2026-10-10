@@ -114,10 +114,13 @@ export class InvoiceAdjustmentsService {
         a.effective_on DESC,a.id DESC`, [targetMonth]) as Row[];
     const history = await this.events(this.ds, rows.map((row) => Number(row.id)));
     const items = rows.map((row) => this.shape(row, canApprove, history.get(Number(row.id)) ?? []));
+    // R118 권고안: 환불예정액은 조정 행이 아닌 청구서의 초과수납액이다.
+    // 같은 청구서의 신청·승인 이력이 여러 개여도 총액에는 한 번만 반영한다.
+    const refundByInvoice = new Map(items.map((item) => [item.invoiceId, item.refundDue]));
     return {
       month: targetMonth, pendingCount: items.filter((item) => item.state === 'pending').length,
       approvedAmount: items.filter((item) => item.state === 'approved').reduce((sum, item) => sum + item.amount, 0),
-      refundDue: items.reduce((sum, item) => sum + item.refundDue, 0), canRequest, canApprove, items,
+      refundDue: [...refundByInvoice.values()].reduce((sum, amount) => sum + amount, 0), canRequest, canApprove, items,
     };
   }
 

@@ -641,6 +641,27 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
     )).rejects.toThrow(/report material must match/);
   });
 
+  it('T11 성공 키를 재사용해도 담당이 바뀐 강사는 상세 본문을 재조회할 수 없다', async () => {
+    const command = {
+      kind: 'personal', title: '담당 변경 전 자료', expectedVersion: 0,
+      requestKey: '10000000-0000-4000-8000-000000000118',
+    };
+    const first = (await material(teacherToken, command).expect(201)).body;
+    await q(`UPDATE ser_occ SET teacher_id=$3 WHERE ser_id=$1 AND on_date=$2`, [SER, DATE, OTHER]);
+    try {
+      await get(teacherToken).expect(403).expect(({ body: result }) => expect(result.code).toBe('REPORT_FORBIDDEN'));
+      const denied = await material(teacherToken, command).expect(403);
+      expect(denied.body.code).toBe('REPORT_FORBIDDEN');
+      expect(denied.body).not.toHaveProperty('detail');
+      expect(await q(`SELECT 1 FROM report_material_req WHERE request_key=$1`, [command.requestKey])).toHaveLength(1);
+      expect(await q(`SELECT 1 FROM issue WHERE id=$1`, [first.selectedIssueId])).toHaveLength(1);
+    } finally {
+      await q(`UPDATE ser_occ SET teacher_id=$3 WHERE ser_id=$1 AND on_date=$2`, [SER, DATE, TEACHER]);
+    }
+    const retry = await material(teacherToken, command).expect(201);
+    expect(retry.body.selectedIssueId).toBe(first.selectedIssueId);
+  });
+
   it('임시저장은 빈 값을 허용하고 REP.body에 세 키만 쓴다', async () => {
     const saved = await put(teacherToken, { content: '', progress: '', homework: '' }).expect(200);
     expect(saved.body).toMatchObject({

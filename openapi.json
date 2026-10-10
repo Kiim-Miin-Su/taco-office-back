@@ -722,7 +722,7 @@
             }
           },
           "503": {
-            "description": "AUTH_CODE_SECRET_MISSING — 운영에 코드 비밀 값이 없어 코드를 확인할 수 없다(N-105)",
+            "description": "AUTH_CODE_SECRET_MISSING — 운영 코드 비밀 값 없음(N-105) | INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전, 기존 자격 유지",
             "content": {
               "application/json": {
                 "schema": {
@@ -1010,7 +1010,7 @@
             }
           },
           "503": {
-            "description": "SENDER_NOT_CONFIGURED(발송 설정 없음) · AUTH_CODE_SECRET_MISSING(운영에 코드 비밀 값 없음 · N-105) — 계정과 무관한 서버 상태",
+            "description": "SENDER_NOT_CONFIGURED(발송 설정 없음) · AUTH_CODE_SECRET_MISSING(운영에 코드 비밀 값 없음 · N-105) — 계정과 무관한 서버 상태 | INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전, 기존 자격 유지",
             "content": {
               "application/json": {
                 "schema": {
@@ -24294,6 +24294,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전. 계정 생성 없이 거절한다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           }
         },
         "summary": "「+ 구성원」 — 강사·매니저·관리자 계정을 만든다 (C97 · D-41 · W8 · W10)",
@@ -24304,7 +24314,7 @@
     },
     "/drawer/staff/{id}": {
       "patch": {
-        "description": "보낸 칸만 바꾼다. 대표·관리자 줄은 403 STAFF_PROTECTED, 자기 역할은 403 SELF_ROLE. 이메일을 바꾸거나 비우면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀리고 첫 설정을 다시 건다(N-104). 아이디는 연락처가 아니라서 바꿔도 첫 설정은 그대로다(W10). 시급은 「시급 수정」에서만.",
+        "description": "보낸 칸만 바꾼다. 대표·관리자 줄은 403 STAFF_PROTECTED, 자기 역할은 403 SELF_ROLE. 이메일을 바꾸거나 비우면 이메일 확인이, 휴대폰을 바꾸면 휴대폰 확인이 풀리고 첫 설정을 다시 건다(N-104). 아이디는 연락처가 아니라서 바꿔도 첫 설정은 그대로다(W10). 대상이 actor에게 없는 권한을 가지면 아이디·이메일·휴대폰 변경은 403 PERM_GRANT_FORBIDDEN이다. 이름·직함 등 프로필 수정은 유지한다. 시급은 「시급 수정」에서만.",
         "operationId": "DrawerController_updateStaff",
         "parameters": [
           {
@@ -24500,7 +24510,7 @@
     },
     "/drawer/staff/{id}/password-reset": {
       "post": {
-        "description": "자기 것은 403 SELF_RESET(첫 설정 흐름으로 바꾼다), 대표·관리자 줄은 403 STAFF_PROTECTED. 그 계정의 이전 로그인은 끊긴다(credentials_changed_at). 응답은 그 줄(MemberDto) — 비밀번호는 응답 · 기록(log) 어디에도 없다.",
+        "description": "자기 것은 403 SELF_RESET(첫 설정 흐름으로 바꾼다), 대표·관리자 줄은 403 STAFF_PROTECTED. 그 계정의 이전 로그인은 끊긴다(credentials_changed_at). 대상이 actor에게 없는 권한을 가지면 403 PERM_GRANT_FORBIDDEN이다(임시 비밀번호를 이용한 권한 제한 우회 차단). 응답은 그 줄(MemberDto) — 비밀번호는 응답 · 기록(log) 어디에도 없다.",
         "operationId": "DrawerController_resetStaffPassword",
         "parameters": [
           {
@@ -24556,7 +24566,7 @@
             }
           },
           "403": {
-            "description": "STAFF_PROTECTED | SELF_RESET",
+            "description": "STAFF_PROTECTED | SELF_RESET | PERM_GRANT_FORBIDDEN",
             "content": {
               "application/json": {
                 "schema": {
@@ -24594,6 +24604,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "INITIAL_PASSWORD_REQUIRED — 서버 비밀번호 정책 설정 누락/불완전. 기존 자격은 유지한다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
           }
         },
         "summary": "§17 「비밀번호 초기화」 — 매니저가 적은 임시 비밀번호로 바꾸고 첫 설정을 다시 건다 (W8 · W10)",
@@ -24604,7 +24624,7 @@
     },
     "/drawer/staff/{id}/active": {
       "patch": {
-        "description": "사용 중지된 계정은 다음 요청부터 인증이 막히고 로그인도 안 된다(기존 활성 검사). 자기 것은 403 SELF_ACTIVE, 대표·관리자 줄은 403 STAFF_PROTECTED. 같은 값이면 그대로 돌려준다.",
+        "description": "사용 중지되면 인증·로그인이 막히며 기존 Access·Refresh를 폐기한다. 재활성화해도 옛 세션은 살아나지 않고 새 로그인이 필요하다. 자기 것은 403 SELF_ACTIVE, 대표·관리자 줄은 403 STAFF_PROTECTED. 같은 값이면 그대로 돌려준다.",
         "operationId": "DrawerController_setStaffActive",
         "parameters": [
           {
@@ -55729,7 +55749,7 @@
           },
           "canResetPassword": {
             "type": "boolean",
-            "description": "「비밀번호 초기화」 — canEdit 이고 자기 줄이 아닐 때만 (자기 것은 첫 설정 흐름으로 바꾼다)"
+            "description": "「비밀번호 초기화」 — canEdit이고 자기 줄이 아니며 대상의 모든 현재 권한을 actor도 가질 때만. 자격 writer와 같은 한도를 쓴다."
           },
           "canToggleActive": {
             "type": "boolean",

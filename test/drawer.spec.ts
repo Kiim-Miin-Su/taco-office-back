@@ -23,6 +23,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
+import { permsOf } from '../src/common/perm';
 import { isKnownApWord } from '../src/lib/approval';
 import { addDays, todayKst } from '../src/lib/kst';
 import { tierFor } from '../src/lib/rules';
@@ -136,7 +137,7 @@ describe('§75 역할별 projection 위임 — DB 독립', () => {
     // H-83 — 열째 인자 canMoney: §75 지출 갈래에 남의 지출 줄을 싣는가(지출 심사의 @Perm('canMoney') 과 같다 · 강사 외 전부)
     expect(svc.all).toHaveBeenCalledWith(
       1, role !== 'teacher', role !== 'teacher', false, scope, role !== 'teacher', role !== 'teacher', role !== 'teacher', role !== 'teacher',
-      role !== 'teacher',
+      role !== 'teacher', permsOf(role),
     );
   });
 });
