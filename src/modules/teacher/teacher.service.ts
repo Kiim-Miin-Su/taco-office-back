@@ -834,6 +834,8 @@ export class TeacherService {
        */
       const books = await this.q(
         `SELECT i.id AS issue_id, i.student_id, i.state, l.code, l.title, l.sub_key, l.level, l.book_level, l.se_te,
+                CASE WHEN i.teacher_id=$2 AND i.state='ok' THEN v.se_file_id END AS se_file_id,
+                CASE WHEN i.teacher_id=$2 AND i.state='ok' THEN v.te_file_id END AS te_file_id,
                 to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
                 to_char(i.returned_on,'YYYY-MM-DD') AS returned_on,
                 i.reissued_from,
@@ -842,6 +844,7 @@ export class TeacherService {
                            AND q.staff_id = $2 AND (q.payload->>'issueId') = i.id::text) AS change_pending,
                 (i.state = 'ok') AS in_use
            FROM issue i JOIN lib l ON l.id = i.lib_id
+           LEFT JOIN vers v ON v.id=i.vers_id AND v.lib_id=i.lib_id
           WHERE i.student_id = ANY($1) AND i.state IN ('wait','auto','ok','returned')
           ORDER BY (i.returned_on IS NOT NULL), i.issued_on DESC NULLS FIRST, i.id DESC`,
         [ids, teacherId],
@@ -850,6 +853,8 @@ export class TeacherService {
         const state = String(b.state) as IssueState;
         byStudent.get(Number(b.student_id))?.books.push({
           issueId: Number(b.issue_id), code: String(b.code), title: String(b.title),
+          seFileId: b.se_file_id == null ? null : Number(b.se_file_id),
+          teFileId: b.te_file_id == null ? null : Number(b.te_file_id),
           // 레벨은 서가와 같은 낱말 — 코드표 레벨(N-47)이 있으면 그 낱말, 아직이면 옛 원문(lib/book 한 함수 · W11 A')
           subKey: (b.sub_key as string) ?? null, level: bookLevelShown(b.book_level as string | null, b.level as string | null),
           seTe: String(b.se_te ?? 'SE'),

@@ -1402,11 +1402,25 @@ Table FILE {
   name        varchar(200)[not null]
   mime        varchar(100)[not null, note: '클라이언트 입력이 아니라 서버가 파일 이름으로 판정']
   bytes       int         [not null]
-  sha256      char(64)    [not null]
-  data        bytea       [not null]
+  sha256      char(64)    [note: 'DB 본문일 때 필수. Blob PDF는 서버가 전체 해시를 계산하지 않아 NULL']
+  data        bytea       [note: '기존 파일 본문. Blob 교재 PDF에서는 NULL']
+  blob_path   varchar(300)[unique, note: '신규 교재 PDF 전용 private Vercel Blob 경로. 원본 URL/서명 URL 아님']
   uploaded_by bigint      [ref: > STAFF.id]
   uploaded_at timestamptz [not null, default: `now()`]
-  Note: 'Neon 파일 본문. 원본 3MB(base64 JSON 약 4MB)·실제 bytes·sha256 형식은 migration CHECK. 시드 15건.'
+  Note: '기존 Neon bytea 파일은 보존. 신규 교재 PDF만 private Blob에 두고 메타데이터를 저장한다. DB 본문 3MB, Blob PDF 파일당 50MB. file_storage_shape/file_size_cap/file_bytes_match 검사.'
+}
+
+Table BOOK_PDF_UPLOAD {
+  id               uuid        [pk]
+  actor_id         bigint      [not null, ref: > STAFF.id]
+  kind             varchar(6)  [not null, note: 'lib-se 또는 lib-te']
+  original_name    varchar(200)[not null]
+  expected_bytes   int         [not null]
+  blob_path        varchar(300)[not null, unique]
+  expires_at       timestamptz [not null]
+  consumed_file_id bigint      [unique, ref: > FILE.id]
+  created_at       timestamptz [not null, default: `now()`]
+  Note: '서버가 발급한 일회용 업로드 의도. 완료 확인 후 VERS와 같은 트랜잭션에서 FILE 메타데이터로 바꾸고 소비한다. consumed_file_id FK는 FILE 삭제 시 ON DELETE CASCADE.'
 }
 
 Table VERS {

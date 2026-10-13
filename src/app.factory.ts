@@ -22,11 +22,12 @@ import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
 import { assertCookieConfig, configuredCorsOrigins } from './auth/cookie';
 import { buildOpenApi } from './openapi';
+import { httpDiagnostics } from './common/http-diagnostics';
 
 export const API_PREFIX = 'api/v1';
 export const API_BODY_MAX_BYTES = 4 * 1024 * 1024;
 /** 교차 출처 프런트가 인증 다운로드의 원래 파일명을 읽는 데 필요한 응답 헤더. */
-export const CORS_EXPOSED_HEADERS = ['Content-Disposition'] as const;
+export const CORS_EXPOSED_HEADERS = ['Content-Disposition', 'X-Request-Id'] as const;
 /** rewrite·직접 API 어느 경로로 불러도 개인정보 응답을 저장하지 않는 공통 경계. */
 export const API_SECURITY_HEADERS = {
   'Cache-Control': 'no-store',
@@ -65,6 +66,7 @@ export async function createApp(server?: Express): Promise<INestApplication> {
     : await NestFactory.create(AppModule, opts);
 
   app.setGlobalPrefix(API_PREFIX);
+  app.use(httpDiagnostics);
   configureApiBodyParser(app);
   app.use(cookieParser());
   app.use(apiSecurityHeaders);

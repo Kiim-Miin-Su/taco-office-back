@@ -13,6 +13,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { httpRequestId } from '../http-diagnostics';
 
 /**
  * 모든 에러를 **한 형태**로 내보낸다. 프론트 인터셉터가 한 군데에서만 해석하면 되도록.
@@ -65,14 +66,17 @@ export class ApiErrorFilter implements ExceptionFilter {
     const res = host.switchToHttp().getResponse<Response>();
 
     const pgCode = (err as { code?: string })?.code;
-    if (pgCode && PG_MAP[pgCode]) {
+    if (pgCode && Object.prototype.hasOwnProperty.call(PG_MAP, pgCode)) {
       const constraint = (err as { constraint?: string }).constraint ?? '';
-      const m = CONSTRAINT_MAP[constraint]
+      const m = (Object.prototype.hasOwnProperty.call(CONSTRAINT_MAP, constraint) ? CONSTRAINT_MAP[constraint] : null)
         ?? (pgCode === '23514' && SCHEDULE_TIME_CHECKS.has(constraint)
           ? { status: HttpStatus.BAD_REQUEST, code: 'BAD_RANGE', message: '수업 시각은 같은 날 안의 정수 분이며 길이는 10~480분이어야 합니다' }
           : PG_MAP[pgCode]!);
-      // 어느 제약이 걸렸는지 남긴다 — "충돌났다" 만으로는 운영에서 못 고친다
-      this.log.warn(`${pgCode} ${(err as { constraint?: string }).constraint ?? ''}`);
+      // 알려진 코드 소유 제약만 남긴다. 예외 객체의 원시 constraint 문자열은 비밀값일 수 있다.
+      const knownConstraint = Object.prototype.hasOwnProperty.call(CONSTRAINT_MAP, constraint)
+        || SCHEDULE_TIME_CHECKS.has(constraint) ? constraint : 'other';
+      this.log.warn(`${pgCode} ${knownConstraint}`);
+      if (res.locals) res.locals.httpDiagnosticCode = m.code;
       res.status(m.status).json({ code: m.code, message: m.message });
       return;
     }
@@ -81,14 +85,18 @@ export class ApiErrorFilter implements ExceptionFilter {
       const body = err.getResponse();
       const message =
         typeof body === 'string' ? body : ((body as { message?: unknown }).message ?? err.message);
+      const code = (body as { code?: string })?.code ?? httpCode(err.getStatus());
+      if (res.locals) res.locals.httpDiagnosticCode = code;
       res.status(err.getStatus()).json({
-        code: (body as { code?: string })?.code ?? httpCode(err.getStatus()),
+        code,
         message: Array.isArray(message) ? message.join('\n') : message,
       });
       return;
     }
 
-    this.log.error(err instanceof Error ? err.stack : String(err));
+    // 원시 stack/message에는 SQL 입력·주민번호·토큰이 섞일 수 있다. HTTP 진단의 requestId/code로 좁혀 추적한다.
+    this.log.error(`INTERNAL unexpected error requestId=${httpRequestId(res) ?? 'unavailable'}`);
+    if (res.locals) res.locals.httpDiagnosticCode = 'INTERNAL';
     res
       .status(HttpStatus.INTERNAL_SERVER_ERROR)
       .json({ code: 'INTERNAL', message: '처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요' });

@@ -85,6 +85,9 @@ describe('FILE kind별 중앙 권한표', () => {
     expect(canReadStoredFile(manager, 'lib-te', { ...facts, bookLinked: true })).toBe(true);
     expect(canReadStoredFile({ ...manager, perms: { canGpaPack: false } }, 'lib-te', { ...facts, bookLinked: true })).toBe(false);
     expect(canReadStoredFile({ ...teacher, perms: { canGpaPack: true } }, 'lib-te', { ...facts, bookLinked: true })).toBe(false);
+    expect(canReadStoredFile(teacher, 'lib-se', { ...facts, bookLinked: true, bookAssignedTeacher: true })).toBe(true);
+    expect(canReadStoredFile(teacher, 'lib-te', { ...facts, bookLinked: true, bookAssignedTeacher: true })).toBe(true);
+    expect(canReadStoredFile(teacher, 'lib-te', { ...facts, bookAssignedTeacher: true })).toBe(false);
   });
 
   it('영수증은 연결 원장의 요청자 또는 canMoney만, 컨설팅은 업로더 또는 canHide만 연다', () => {
@@ -156,7 +159,7 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
     expect(ref.url).toBe(fileUrlOf(ref.id));
 
     const back = await svc().read(ref.id);
-    expect(back.data.equals(bytes)).toBe(true);
+    expect(back.data?.equals(bytes)).toBe(true);
     const [row] = (await q.query(`SELECT sha256, bytes FROM file WHERE id = $1`, [ref.id])) as { sha256: string; bytes: number }[];
     expect(row.sha256).toBe(createHash('sha256').update(bytes).digest('hex'));
     expect(row.bytes).toBe(bytes.length);
@@ -183,6 +186,51 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
       .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
     await expect(svc().readAuthorized({ id: ME, name: '매니저', role: 'manager' }, ref.id))
       .resolves.toMatchObject({ kind: 'lib-te' });
+  });
+
+  it('강사는 현재 또는 장래 담당 수업의 배부 완료된 판만 읽고 담당·수강 종료나 반환 즉시 권한을 잃는다', async () => {
+    await q.query(`INSERT INTO staff(id,name,email,role) VALUES (72,'담당 강사','file72@t.kr','teacher') ON CONFLICT(id) DO NOTHING`);
+    await q.query(`INSERT INTO staff(id,name,email,role) VALUES (73,'다른 강사','file73@t.kr','teacher') ON CONFLICT(id) DO NOTHING`);
+    await q.query(`INSERT INTO kind(key,name,color,cap,grp) VALUES ('file-kind','파일 시험','#A85764',1,'lesson') ON CONFLICT(key) DO NOTHING`);
+    await q.query(`INSERT INTO sub(key,name,color,kind_key) VALUES ('file-test','파일 테스트','#A85764','file-kind') ON CONFLICT(key) DO NOTHING`);
+    await q.query(`INSERT INTO stu(id,name,grade) VALUES (71,'합성 학생','G9') ON CONFLICT(id) DO NOTHING`);
+    await q.query(`INSERT INTO ser(id,kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date)
+      VALUES (-72001,'file-kind','file-test',72,'offline',900,960,'FREQ=WEEKLY',current_date)`);
+    await q.query(`INSERT INTO ser_stu(ser_id,student_id) VALUES (-72001,71)`);
+    const ref = await svc().upload(ME, { kind: 'lib-se', name: '학생용.pdf', base64: Buffer.from('pdf').toString('base64') });
+    const [lib] = await q.query(`INSERT INTO lib(code,title,sub_key,grade_from,grade_to)
+      VALUES ($1,'배정 교재','file-test',9,9) RETURNING id`, [`ASSIGNED-${ref.id}`]);
+    const [vers] = await q.query(`INSERT INTO vers(lib_id,edition,se_file_id) VALUES ($1,'v1',$2) RETURNING id`, [lib.id, ref.id]);
+    const [issue] = await q.query(
+      `INSERT INTO issue(lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state)
+       VALUES ($1,$2,71,72,'file-test',current_date,'ok') RETURNING id`, [lib.id, vers.id],
+    );
+    await expect(svc().readAuthorized({ id: 72, name: '담당 강사', role: 'teacher' }, ref.id)).resolves.toMatchObject({ name: '학생용.pdf' });
+    await expect(svc().readAuthorized({ id: 73, name: '다른 강사', role: 'teacher' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+
+    // ISSUE의 담당자 스냅샷이 남아 있어도 실제 수업이 재배정되면 옛 담당자는 내려받을 수 없다.
+    await q.query(`UPDATE ser SET teacher_id=73 WHERE id=-72001`);
+    await expect(svc().readAuthorized({ id: 72, name: '옛 담당 강사', role: 'teacher' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+    await q.query(`UPDATE ser SET teacher_id=72,from_date=current_date-1,to_date=current_date-1 WHERE id=-72001`);
+    await expect(svc().readAuthorized({ id: 72, name: '수업 종료 강사', role: 'teacher' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+
+    // 수업이 계속돼도 해당 학생의 수강 기간이 끝나면 같은 파일 ID의 접근을 다시 닫는다.
+    await q.query(`UPDATE ser SET to_date=NULL WHERE id=-72001`);
+    await q.query(`UPDATE ser_stu SET to_date=current_date-1 WHERE ser_id=-72001 AND student_id=71`);
+    await expect(svc().readAuthorized({ id: 72, name: '수강 종료 학생 강사', role: 'teacher' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+
+    // 배정 옵션과 같이 장래 수업은 허용한다. 아직 materialize하지 않은 SER_OCC는 권한 근거가 아니다.
+    await q.query(`UPDATE ser SET from_date=current_date+1 WHERE id=-72001`);
+    await q.query(`UPDATE ser_stu SET from_date=current_date+1,to_date=NULL WHERE ser_id=-72001 AND student_id=71`);
+    await expect(svc().readAuthorized({ id: 72, name: '장래 담당 강사', role: 'teacher' }, ref.id))
+      .resolves.toMatchObject({ name: '학생용.pdf' });
+    await q.query(`UPDATE issue SET state='returned',returned_on=current_date,row_version=row_version+1 WHERE id=$1`, [issue.id]);
+    await expect(svc().readAuthorized({ id: 72, name: '담당 강사', role: 'teacher' }, ref.id))
+      .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
   });
 
   it.each(['private', 'money_only'])('담당·업로더가 바뀐 %s 컨설팅도 최초 등록자는 파일을 계속 읽는다', async (share) => {

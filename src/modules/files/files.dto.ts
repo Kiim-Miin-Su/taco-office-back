@@ -5,7 +5,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsString, MaxLength, Min } from 'class-validator';
+import { IsIn, IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
 
 /**
  * 파일이 어디에 쓰이나 — **열람 권한이 이 낱말로 갈린다** (D6: 담당 강사와 매니저만 열람).
@@ -31,6 +31,25 @@ export type FileKind = (typeof FILE_KINDS)[number];
  * 표의 `file_size_cap`과 **같은 수**여야 한다. 한 판의 SE+TE도 합계가 이 값을 넘지 않는다.
  */
 export const FILE_MAX_BYTES = 3_000_000;
+export const BOOK_PDF_MAX_BYTES = 50_000_000;
+
+/** PDF 파일 본문은 API로 보내지 않고, 서버가 발급한 경로에 직접 올린다. */
+export class BookPdfUploadIntentDto {
+  @ApiProperty({ enum: ['lib-se', 'lib-te'] }) @IsIn(['lib-se', 'lib-te']) kind!: 'lib-se' | 'lib-te';
+  @ApiProperty() @IsString() @MaxLength(200) name!: string;
+  @ApiProperty({ minimum: 1, maximum: BOOK_PDF_MAX_BYTES }) @IsInt() @Min(1) @Max(BOOK_PDF_MAX_BYTES) bytes!: number;
+}
+
+export class BookPdfUploadUrlDto {
+  @ApiProperty() uploadId!: string;
+  @ApiProperty({ description: '10분 안에 application/pdf로 PUT 할 비공개 Blob 서명 URL' }) uploadUrl!: string;
+}
+
+export class FileDownloadTargetDto {
+  @ApiProperty({ enum: ['database', 'blob'] }) storage!: 'database' | 'blob';
+  @ApiPropertyOptional() url?: string;
+  @ApiProperty() name!: string;
+}
 
 /**
  * 업로드 — 본문은 **base64** 로 온다.
@@ -60,7 +79,7 @@ export class FileRefDto {
   @ApiProperty() name!: string;
   @ApiProperty() mime!: string;
   @ApiProperty({ description: '바이트 수 — 표가 실제 길이와 같은지 지킨다' }) bytes!: number;
-  @ApiProperty({ description: '내려받는 자리. `/files/{id}` 면 Neon, `https://` 면 레거시 외부 저장소다' }) url!: string;
+  @ApiProperty({ description: '인증과 권한 확인을 거치는 파일 API 주소. 실제 다운로드 방식은 파일 저장소에 따라 다르다' }) url!: string;
   @ApiPropertyOptional({ type: String, nullable: true }) uploaderName?: string | null;
   @ApiProperty() uploadedAt!: string;
 }

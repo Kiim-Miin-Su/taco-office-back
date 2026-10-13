@@ -93,6 +93,12 @@ export class BookVersionCreateDto {
   @IsOptional() @ValidateNested() @Type(() => FileUploadDto)
   teFile?: FileUploadDto;
 
+  @ApiPropertyOptional({ description: '서버가 발급한 비공개 SE PDF 업로드 ID' })
+  @IsOptional() @IsUUID() seUploadId?: string;
+
+  @ApiPropertyOptional({ description: '서버가 발급한 비공개 TE PDF 업로드 ID' })
+  @IsOptional() @IsUUID() teUploadId?: string;
+
   @ApiPropertyOptional({ ...DATE_SCHEMA, description: '이 판을 언제부터 쓰는가 — 비우면 오늘부터' })
   @IsOptional() @IsCalendarDate()
   fromDate?: string;
@@ -549,6 +555,6 @@ export class BooksDto {
   @ApiProperty({ type: [BookCodeDto], description: '시험 태그 셋 — 편집 창 선택지' }) examTags!: BookCodeDto[];
   @ApiProperty({ type: [BookNoticeDto], description: '더 나중 판이 있는 교재 — 머리 띠의 이름들(서가 전체 기준 · newerCount 와 같은 줄)' }) newerBooks!: BookNoticeDto[];
   @ApiProperty({ type: [BookNoticeDto], description: 'TE 파일이 없는 교재 — 머리 띠의 이름들(서가 전체 기준 · noFileCount 와 같은 줄)' }) noTeBooks!: BookNoticeDto[];
-  @ApiProperty({ description: '새 판 SE+TE 원본 파일 합계 상한. 화면은 이 서버 값을 그대로 쓴다' })
+  @ApiProperty({ description: '새 판 SE+TE 비공개 PDF 합계 상한. 각 PDF는 50MB 이하' })
   versionUploadMaxBytes!: number;
 }

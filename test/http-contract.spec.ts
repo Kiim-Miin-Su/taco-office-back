@@ -119,6 +119,7 @@ describe('HTTP ↔ OpenAPI 형식 (DB/업무 정책 검증과 별도)', () => {
   });
   it('교차 출처 파일 다운로드에 원래 파일명 헤더를 노출한다', () => {
     expect(CORS_EXPOSED_HEADERS).toContain('Content-Disposition');
+    expect(CORS_EXPOSED_HEADERS).toContain('X-Request-Id');
   });
   it('직접 API와 same-origin rewrite 둘 다 개인정보 응답을 캐시하지 않는 공통 헤더를 쓴다', () => {
     expect(API_SECURITY_HEADERS).toMatchObject({

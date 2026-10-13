@@ -1,69 +1,119 @@
 <!-- @file-guide
-목적: taco_office_back (document)
-책임/재사용: 이 문서의 주제만 기록하고 공통 지시는 docs/AGENT.md, 현재 작업은 docs/CLAUDE.md를 연결한다. 과거 수치를 현행 완료로 복제하지 않는다.
+목적: 문서 및 에이전트 작업 안내
+책임/재사용: 이 파일의 범위만 설명한다. 업무 규칙은 docs/AGENT.md, 현재 작업은 docs/CLAUDE.md를 따른다.
 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
 -->
 
 # taco_office_back
 
-TACO ERP API — **NestJS 11 · TypeORM · Neon Postgres · Vercel**
+## 프로젝트 개요
 
-> 문서 정본은 형제 저장소 [`docs/AGENT.md`](../docs/AGENT.md)와 [`DEV-SPEC.md`](../docs/spec/DEV-SPEC.md) (v2 · 실제 UI 61컷)입니다.
-> [`STACK`](../docs/contracts/STACK.md) · [`CONTRACTS`](../docs/contracts/CONTRACTS.md) · [`ERD`](../docs/contracts/db/erd.dbml)
-> 경로는 back/front/docs가 같은 부모 폴더에 있는 로컬 워크스페이스 기준입니다. 단독 clone에서는 docs 저장소도 준비합니다.
+TACO ERP의 **NestJS 11 · TypeScript · TypeORM · PostgreSQL/Neon** API입니다. 프론트엔드와 독립된 저장소이며 DTO/Swagger에서 생성하는 `openapi.json`이 공유 계약입니다.
 
-**프론트와는 독립 레포다** (D-R42). 공유하는 것은 코드가 아니라 `openapi.json` 한 장이다.
+[작업 지침](AGENTS.md) · [업무 정본](../docs/AGENT.md) · [현재 인계](../docs/CLAUDE.md) · [API 계약](../docs/contracts/CONTRACTS.md) · [ERD](../docs/contracts/db/erd.dbml)
 
----
+## 제공 기능
 
-## 시작
+인증·권한, 일정·출결·리포트, 학생·강사, 상담·등록·컨설팅, 교재·안내, 회계·정산·운영, 알림·요청·파일 등의 서버 계약을 소유합니다. 상태 전이·권한별 응답·transaction·DB 제약을 서버에서 검증합니다.
+기능별 구현/검증/운영 적용은 [기능 대조표](../docs/contracts/FEATURE-CRUD-MAP.md)로 확인합니다. 과거 미완 목록을 현재 구현 부재로 해석하지 않습니다.
 
-```bash
-cp .env.local.example .env.local     # 기존 파일이 없을 때만. 로컬 DB/CORS 설정 확인
-npm ci                              # 현재 OS/CPU에서 기존 lockfile로 설치
-npm run dev                          # http://localhost:3001/api/docs
+## 실행환경 구축
+
+Node.js `>=22`, npm, 격리된 PostgreSQL 개발/시험 DB를 준비합니다. 정확한 버전은 package/lockfile이 소유합니다. 개발 컴퓨터의 OS/CPU에서 설치하며 다른 환경의 node_modules를 복사하지 않습니다.
+
+```sh
+npm ci
+test -e .env.local || cp .env.local.example .env.local
+npm run db:doctor
 ```
 
-`.env.local` 의 키가 하나라도 없으면 **부팅이 막힌다** (`app.module.ts` 의 Joi 스키마).
-반쯤 뜬 서버가 가장 고치기 어렵다.
+`db:doctor`는 로컬 바이너리·bcrypt 진단이며 DB 생성/접속 확인이 아닙니다.
+기존 `.env.local`은 원격 DB를 가리킬 수 있습니다. 덮어쓰지 말고 비밀값을 출력하지 않은 채 대상과 용도를 확인합니다.
 
-**기존 `.env.local`은 운영 Neon을 가리킬 수 있습니다.** migration·seed·DB 테스트 전에 대상을 확인합니다.
-전체 검증은 워크스페이스에서 `zsh docs/script/release.zsh --check --sync-contracts`를 권장합니다.
-이 경로가 임시 PostgreSQL의 개발/`_test` DB를 준비합니다. 운영 migration은 preflight·승인·readback을 별도로 거칩니다.
-
-## 이 레포에서 지키는 것
-
-| 규칙 | 어디에 | 어기면 |
-|---|---|---|
-| **권한은 세 줄에서만 판정** (D-R39) | `src/common/perm` | eslint 가 `role ===` 비교를 막는다 |
-| **정산 조건은 「썼는가」 하나** (D-R7) | `src/lib/rules.ts` `countsForSettlement` | 테스트 7개가 빨개진다 |
-| **지각 차감은 수업 종료 시각 기준** (D-R32) | `src/lib/rules.ts` `LATE_REPORT_TIERS` | 경계값 테스트 7개 |
-| **겹침은 DB 가 막는다** (D-R43) | `src/migrations` 의 `EXCLUDE` 제약 | 동시성 테스트 8개 |
-| **DTO 가 단일 출처** | `openapi.json` 생성물 | `npm run openapi:check` 가 CI 에서 막는다 |
-| **스키마는 마이그레이션으로만** | `synchronize: false` | — |
-
-## 명령
-
-| | |
+| 키 | 조건 |
 |---|---|
-| `npm run dev` | 개발 서버 (`/api/docs` 에 Swagger) |
-| `npm test` | `.env.local`도 읽음. DB 테스트는 `DATABASE_URL`/`TEST_DATABASE_URL` 대상 확인 필수; 미설정 skip은 검증 통과가 아님 |
-| `npm run typecheck` · `npm run lint` | 타입 · 린트 |
-| `npm run migration:run` · `migration:revert` | 스키마 |
-| `DATABASE_URL=... npm run openapi:gen` | `openapi.json` 갱신 — **DTO 를 고쳤으면 같은 커밋에**. 명시한 DB 에 연결함 |
-| `DATABASE_URL=... npm run openapi:check` | 생성물이 DTO 와 같은지 (CI). `.env.local` 의 암묵적 DB 대상은 사용하지 않음 |
-| `bash scripts/entities-gen.sh` | 레거시 생성기. 현재 수기 CHECK/타입 보강을 덮을 수 있어 무차별 재생성 금지 |
+| `DATABASE_URL` | 앱 필수. 명시적 격리 개발 DB |
+| `JWT_SECRET`, `JWT_REFRESH_SECRET` | 앱 필수, 서로 구분한 로컬 비밀값. 최소 길이는 Joi 스키마 확인 |
+| `TEST_DATABASE_URL` | DB 시험 시 명시적 폐기 가능한 로컬 시험 DB |
+| `CORS_ORIGIN` | production 필수. 실제 Front origin |
+| `PORT`, `NODE_ENV`, `LOG_LEVEL` | 기존 기본값·허용값은 `src/app.module.ts` 확인 |
+| 쿠키·암호화·발송·파일 키 | `.env.local.example`와 기능별 실제 설정 확인 |
 
-## 생성물과 스키마
+앱은 `.env.local` → `.env`를 읽으며 기존 shell 값이 우선합니다. 모든 키가 필수인 것은 아니고 기능별 추가 조건이 있습니다.
 
-- `src/entities/**`는 ERD에서 시작했지만 현재 수기 제약·타입 보강을 포함한다. entity·ERD·snapshot·forward migration을 같은 청크에서 대조한다.
-- `openapi.json`은 DTO 생성물이며 손으로 고치지 않는다.
+**DB 준비는 별도 데이터 변경입니다.** `npm run db` 기본 경로는 DB 생성·migration·seed reset까지 수행합니다. 이미 있는 데이터를 지워도 되는지 확인하기 전 실행하지 않습니다. `_test` 이름만으로 운영/원격 안전을 증명할 수 없습니다.
 
-## 아직 없는 것
+## 빌드 방법
 
-| | 왜 |
+```sh
+npm run typecheck
+npm run lint
+npm run build
+```
+
+Nest 빌드는 `dist/`를 다시 만듭니다. 컴파일 통과는 실제 DB schema·인증·외부 서비스·배포 검증과 별개입니다.
+
+## 주요 사용 기술
+
+NestJS(Express), TypeORM/pg, class-validator/class-transformer, Swagger, Joi/config, JWT/Passport/bcryptjs, Nest Logger, Jest/ts-jest/Supertest를 사용합니다. 메일은 nodemailer, 일반 파일·기존 교재 본문은 Neon `FILE`이 담당합니다. 신규 교재 SE/TE PDF 본문은 private Vercel Blob에 직접 올리고 Neon에는 파일·권한 메타데이터를 저장합니다. Blob을 쓰는 배포에는 private store의 `BLOB_READ_WRITE_TOKEN`이 필요합니다. 만료된 미사용 교재 업로드는 `DATABASE_URL=<검증한 대상> npm run book-pdf:cleanup`으로 건수를 조회하고, 대상 DB명과 삭제 권한을 확인한 뒤 `-- --run --database=<DB명>`으로 최대 100건씩 정리합니다. 운영 실행 주기와 실제 Blob PUT/GET은 별도 출하 검증 대상입니다.
+
+현행 구현은 TypeORM transaction과 DB 제약을 사용합니다. `nestjs-pino`나 `typeorm-transactional`을 도입된 의존성으로 가정하지 않습니다. 권한 helper는 `src/common/perm`이 소유하며 다른 계층에서 role을 직접 비교하지 않습니다.
+
+## 실행방법
+
+환경과 개발 DB를 준비한 뒤 실행합니다.
+
+```sh
+npm run dev
+```
+
+기본 API는 `http://localhost:3001/api/v1`, health는 `/api/v1/health`, 개발 Swagger는 `/api/docs`입니다.
+운영 Swagger 노출은 `ENABLE_DOCS`와 기존 부팅 설정을 확인합니다. 빌드 결과는 `npm start`로 실행하며 production 환경과 쿠키/CORS 조건을 확인합니다.
+
+## 폴더 구조
+
+```text
+src/
+  app.factory.ts   로컬/서버리스 공통 앱 설정
+  main.ts          로컬 서버
+  serverless.ts    서버리스 진입
+  auth/            인증·쿠키·온보딩
+  common/          validation·권한·오류·진단
+  modules/{도메인}/
+    *.module.ts    의존성 연결
+    *.controller.ts HTTP·DTO·권한 메타데이터
+    *.service.ts   업무 규칙·조회/쓰기
+    *.dto.ts       요청·응답·Swagger/검증
+  lib/             공유 도메인 함수
+  entities/        영속 레코드 매핑
+  migrations/      forward 이행 이력
+  seed/            개발 fixture
+test/              단위·HTTP·DB 회귀
+scripts/           생성·DB·운영 도구
+.agents/skills/    API·DB 작업 스킬
+```
+
+Java 기본 패키지 대신 `src/` 모듈 경계를 유지합니다. 엔티티는 수기 제약·타입 보강을 포함하므로 레거시 생성기로 전체 덮어쓰지 않습니다. `synchronize:false`와 migration 기반 변경을 유지합니다.
+
+## 검증·계약 생성
+
+| 명령 | 조건 |
 |---|---|
-| GPA 4표 | **N-13** 결정 대기 — 별표로 뺄지 `SER(kind='gpa')` 에 얹을지 |
-| `nestjs-pino` | **§11-A** 2026-08-31 승인 완료, 도입 잔여 |
-| `typeorm-transactional` | **§11-B** 승인 완료, 도입 잔여. 현재 QueryRunner transaction·행 lock·DB 제약 사용 |
-| 미완 업무 쓰기 | 컨설팅 항목/단계·상담·회계·운영 등. 최신 목록은 [MVP 잔여](../docs/report/MVP-REMAINING-PLAN-2026-09-04.md) |
+| `npm test -- --runInBand --runTestsByPath test/perm.spec.ts` | DB-free 권한 단위시험 예시 |
+| `npm test -- --runInBand` | 전체 Jest, **두 DB 대상·fixture 삭제 범위·발송 격리 확인 후** |
+| `npm run openapi:gen` / `npm run openapi:check` | 명시적 shell DATABASE_URL 필수. **둘 다 앱 부팅·DB 접속** |
+| Front의 `npm run types:gen` | 검증한 OpenAPI에서 Front schema 재생성 |
+| `npm run schema:check` | 실제 DB 접속 후 entity/DB 대조 |
+
+OpenAPI/schema 생성물은 손편집하지 않습니다. DTO·Swagger·service 동작 → OpenAPI → Front alias/consumer → 테스트를 같은 청크에서 확인합니다.
+DB suite의 미설정 skip은 검증 통과가 아닙니다. 자세한 실행 경계는 [test/AGENTS](test/AGENTS.md)를 따릅니다.
+
+migration/run/revert/deploy, seed/reset, reprice/reconcile/archive는 실제 데이터 영향이 있습니다.
+`migration:dryrun`도 rollback 전 DDL/lock을 실행합니다. 문서 확인이나 일반 개발 시작 명령으로 실행하지 않습니다.
+운영 작업은 대상 identity·백업·승인·호환성·readback·rollback을 별도로 확인합니다.
+
+## 신규 구성·문서화 원칙
+
+모든 새 프레임워크 앱은 공식 CLI/스타터로 구성합니다. NestJS는 [Nest CLI](https://docs.nestjs.com/cli/overview), Next.js는 create-next-app, Spring Boot는 Spring Initializr입니다. 기존 앱을 재생성하거나 최신 생성기의 ESM/runner/linter로 자동 변경하지 않습니다.
+
+구현과 함께 PROMPT·계약·DBML·Figma·portfolio를 기능 ID로 대조합니다. 실행 명령·실패/skip·미검증·운영 미적용을 구분해 보고합니다.

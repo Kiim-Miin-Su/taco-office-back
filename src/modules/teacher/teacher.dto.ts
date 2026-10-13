@@ -349,6 +349,8 @@ export class TeacherGuideLessonDto {
 
 export class TeacherGuideBookDto {
   @ApiProperty() issueId!: number;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '현재 내게 배정·배부 완료된 판의 SE 파일' }) seFileId?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '현재 내게 배정·배부 완료된 판의 TE 파일' }) teFileId?: number | null;
   @ApiProperty() code!: string;
   @ApiProperty() title!: string;
   @ApiPropertyOptional(S) subKey?: string | null;

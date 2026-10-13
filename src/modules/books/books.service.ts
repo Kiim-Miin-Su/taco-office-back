@@ -27,6 +27,7 @@ import type {
 import { latestLeadDiagForStudent } from '../ops/lead-diag.service';
 import { prepareFile, storePreparedFile } from '../files/files.service';
 import { FILE_MAX_BYTES } from '../files/files.dto';
+import { consumeBookPdfIntent } from '../files/book-pdf.storage';
 import { canCeoReceivePack, hasPerm, isRole } from '../../common/perm';
 import { audit } from '../../lib/audit';
 import { projectEducationGrades, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
@@ -215,7 +216,7 @@ export class BooksService {
         count: items.filter((i) => bookGradeCovers(i.gradeFrom, i.gradeTo, grade)).length,
       })),
       examTags: BOOK_EXAM_TAGS.map((key) => ({ key, label: BOOK_EXAM_TAG_LABEL[key] })),
-      versionUploadMaxBytes: FILE_MAX_BYTES,
+      versionUploadMaxBytes: 100_000_000,
     };
   }
 
@@ -388,17 +389,9 @@ export class BooksService {
       if ((dto.seFile && dto.seFile.kind !== 'lib-se') || (dto.teFile && dto.teFile.kind !== 'lib-te')) {
         throw new BadRequestException({ code: 'BOOK_FILE_KIND_MISMATCH', message: 'SE/TE 파일 종류와 연결 위치가 일치하지 않습니다' });
       }
-
-      const sePrepared = dto.seFile ? prepareFile(dto.seFile) : null;
-      const tePrepared = dto.teFile ? prepareFile(dto.teFile) : null;
-      if ((sePrepared?.bytes.length ?? 0) + (tePrepared?.bytes.length ?? 0) > FILE_MAX_BYTES) {
-        throw new PayloadTooLargeException({ code: 'BOOK_FILES_TOO_LARGE', message: '한 판의 SE·TE 파일 합계는 3MB까지 올릴 수 있습니다' });
+      if (dto.seFile && dto.seUploadId || dto.teFile && dto.teUploadId) {
+        throw new BadRequestException({ code: 'BOOK_FILE_SOURCE_DUPLICATE', message: '한 종류의 파일은 한 번만 선택해 주세요' });
       }
-      const seUploaded = dto.seFile && sePrepared ? await storePreparedFile(m, userId, dto.seFile, sePrepared) : null;
-      const teUploaded = dto.teFile && tePrepared ? await storePreparedFile(m, userId, dto.teFile, tePrepared) : null;
-      const seFileId = seUploaded?.id;
-      const teFileId = teUploaded?.id;
-
       const dup = (await m.query(
         `SELECT id FROM vers WHERE lib_id = $1 AND edition = $2`, [libId, dto.edition],
       )) as Array<{ id: string }>;
@@ -408,6 +401,16 @@ export class BooksService {
           message: `이 교재에 「${dto.edition}」 판은 이미 있습니다`,
         });
       }
+
+      const sePrepared = dto.seFile ? prepareFile(dto.seFile) : null;
+      const tePrepared = dto.teFile ? prepareFile(dto.teFile) : null;
+      if ((sePrepared?.bytes.length ?? 0) + (tePrepared?.bytes.length ?? 0) > FILE_MAX_BYTES) {
+        throw new PayloadTooLargeException({ code: 'BOOK_FILES_TOO_LARGE', message: '한 판의 SE·TE 파일 합계는 3MB까지 올릴 수 있습니다' });
+      }
+      const seUploaded = dto.seFile && sePrepared ? await storePreparedFile(m, userId, dto.seFile, sePrepared) : null;
+      const teUploaded = dto.teFile && tePrepared ? await storePreparedFile(m, userId, dto.teFile, tePrepared) : null;
+      const seFileId = seUploaded?.id ?? (dto.seUploadId ? await consumeBookPdfIntent(m, userId, dto.seUploadId, 'lib-se') : null);
+      const teFileId = teUploaded?.id ?? (dto.teUploadId ? await consumeBookPdfIntent(m, userId, dto.teUploadId, 'lib-te') : null);
 
       const [made] = (await m.query(
         `INSERT INTO vers (lib_id, edition, file_url, from_date, se_file_id, te_file_id)

@@ -19,6 +19,7 @@ import { createApp } from './app.factory';
 
 const server = express();
 let booting: Promise<void> | null = null;
+const SAFE_BOOT_CODES = new Set(['28P01', '3D000', 'ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT']);
 
 async function boot(): Promise<void> {
   const app = await createApp(server);
@@ -38,6 +39,14 @@ function fail(res: ServerResponse, code: string, message: string, status = 503):
   res.end(JSON.stringify({ code, message }));
 }
 
+/** 부팅 예외의 message/stack에는 연결 문자열 등이 포함될 수 있다. 검증된 드라이버 코드만 남긴다. */
+export function logBootFailure(error: unknown): void {
+  let raw: unknown;
+  try { raw = (error as { code?: unknown })?.code; } catch { raw = null; }
+  const code = typeof raw === 'string' && SAFE_BOOT_CODES.has(raw) ? raw : 'BOOT_ERROR';
+  console.error('[boot] BOOTING', { code });
+}
+
 export default function handler(req: IncomingMessage, res: ServerResponse): void {
   booting ??= boot();
   booting
@@ -46,7 +55,7 @@ export default function handler(req: IncomingMessage, res: ServerResponse): void
       // 부팅이 실패하면 **다음 요청에서 다시 시도한다** — 한 번 실패한 약속을 계속 붙들면
       // 인스턴스가 살아 있는 동안 영원히 503 이 된다 (DB 가 잠깐 늦게 뜬 경우가 그렇다).
       booting = null;
-      console.error('[boot] 실패:', e);
+      logBootFailure(e);
       fail(res, 'BOOTING', '서버가 준비되지 않았습니다. 잠시 뒤 다시 시도해 주세요.');
     });
 }

@@ -4976,6 +4976,98 @@
         ]
       }
     },
+    "/files/book-pdf-upload": {
+      "post": {
+        "operationId": "FilesController_bookPdfUpload",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BookPdfUploadIntentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookPdfUploadUrlDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "신규 교재 PDF의 비공개 Blob 직접 업로드 URL 발급",
+        "tags": [
+          "files"
+        ]
+      }
+    },
     "/files": {
       "post": {
         "description": "원본 파일 3MB까지. base64 JSON·Vercel 요청 한도 안에서 실제로 통과하는 값이며, 더 크면 FILE_TOO_LARGE로 거절한다.",
@@ -5067,6 +5159,90 @@
           }
         },
         "summary": "파일 올리기 — base64 본문을 Neon 에 넣고 가리킬 주소를 돌려준다",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/files/{id}/download-target": {
+      "get": {
+        "operationId": "FilesController_downloadTarget",
+        "parameters": [
+          {
+            "name": "id",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileDownloadTargetDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "code FILE_FORBIDDEN"
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "현재 권한을 확인해 DB 파일 또는 짧게 유효한 비공개 PDF URL을 돌려준다",
         "tags": [
           "files"
         ]
@@ -15788,7 +15964,7 @@
             "description": "BOOK_CODE_DUPLICATE"
           },
           "413": {
-            "description": "code FILE_TOO_LARGE | BOOK_FILES_TOO_LARGE — 첫 판 SE+TE 합계 3MB"
+            "description": "기존 base64 파일 합계 3MB, 비공개 PDF는 각각 50MB"
           },
           "500": {
             "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
@@ -17220,7 +17396,7 @@
     },
     "/books/{id}/versions": {
       "post": {
-        "description": "SE/TE 파일 본문, 판, 이력(교재 업로드)이 한 트랜잭션에서 함께 저장된다. SE+TE 원본 합계는 3MB까지다.",
+        "description": "기존 base64 본문은 SE+TE 합계 3MB, 신규 비공개 Blob PDF는 업로드 의도 ID와 판을 같은 DB 트랜잭션에 연결한다.",
         "operationId": "BooksController_addVersion",
         "parameters": [
           {
@@ -33265,7 +33441,7 @@
           },
           "url": {
             "type": "string",
-            "description": "내려받는 자리. `/files/{id}` 면 Neon, `https://` 면 레거시 외부 저장소다"
+            "description": "인증과 권한 확인을 거치는 파일 API 주소. 실제 다운로드 방식은 파일 저장소에 따라 다르다"
           },
           "uploaderName": {
             "type": "string",
@@ -33997,6 +34173,47 @@
           "expectedVersion"
         ]
       },
+      "BookPdfUploadIntentDto": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "lib-se",
+              "lib-te"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "bytes": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 50000000
+          }
+        },
+        "required": [
+          "kind",
+          "name",
+          "bytes"
+        ]
+      },
+      "BookPdfUploadUrlDto": {
+        "type": "object",
+        "properties": {
+          "uploadId": {
+            "type": "string"
+          },
+          "uploadUrl": {
+            "type": "string",
+            "description": "10분 안에 application/pdf로 PUT 할 비공개 Blob 서명 URL"
+          }
+        },
+        "required": [
+          "uploadId",
+          "uploadUrl"
+        ]
+      },
       "FileUploadDto": {
         "type": "object",
         "properties": {
@@ -34028,6 +34245,28 @@
           "kind",
           "name",
           "base64"
+        ]
+      },
+      "FileDownloadTargetDto": {
+        "type": "object",
+        "properties": {
+          "storage": {
+            "type": "string",
+            "enum": [
+              "database",
+              "blob"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "storage",
+          "name"
         ]
       },
       "BookSaleFeePolicySnapshotDto": {
@@ -46173,7 +46412,7 @@
           },
           "versionUploadMaxBytes": {
             "type": "number",
-            "description": "새 판 SE+TE 원본 파일 합계 상한. 화면은 이 서버 값을 그대로 쓴다"
+            "description": "새 판 SE+TE 비공개 PDF 합계 상한. 각 PDF는 50MB 이하"
           }
         },
         "required": [
@@ -46216,6 +46455,14 @@
                 "$ref": "#/components/schemas/FileUploadDto"
               }
             ]
+          },
+          "seUploadId": {
+            "type": "string",
+            "description": "서버가 발급한 비공개 SE PDF 업로드 ID"
+          },
+          "teUploadId": {
+            "type": "string",
+            "description": "서버가 발급한 비공개 TE PDF 업로드 ID"
           },
           "fromDate": {
             "type": "string",
@@ -52403,6 +52650,16 @@
         "properties": {
           "issueId": {
             "type": "number"
+          },
+          "seFileId": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 내게 배정·배부 완료된 판의 SE 파일"
+          },
+          "teFileId": {
+            "type": "number",
+            "nullable": true,
+            "description": "현재 내게 배정·배부 완료된 판의 TE 파일"
           },
           "code": {
             "type": "string"
@@ -60465,7 +60722,7 @@
           },
           "url": {
             "type": "string",
-            "description": "내려받는 자리. `/files/{id}` 면 Neon, `https://` 면 레거시 외부 저장소다"
+            "description": "인증과 권한 확인을 거치는 파일 API 주소. 실제 다운로드 방식은 파일 저장소에 따라 다르다"
           },
           "uploaderName": {
             "type": "string",

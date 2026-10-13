@@ -10,7 +10,10 @@ import { createHash } from 'node:crypto';
 import { EntityManager, Repository } from 'typeorm';
 import { FileRow } from '../../entities';
 import { hasPerm, isRole, type RequestUser } from '../../common/perm';
+import { todayKst } from '../../lib/kst';
 import { FILE_MAX_BYTES, type FileKind, type FileRefDto, type FileUploadDto } from './files.dto';
+import { createBookPdfIntent, signedBookPdfDownloadUrl } from './book-pdf.storage';
+import type { BookPdfUploadIntentDto, BookPdfUploadUrlDto, FileDownloadTargetDto } from './files.dto';
 
 /**
  * 확장자로 MIME 을 고른다 — 화면이 보내 준 MIME 을 그대로 믿지 않는다.
@@ -29,7 +32,7 @@ const MIME_BY_EXT: Record<string, string> = {
 export const mimeOf = (name: string): string =>
   MIME_BY_EXT[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
 
-/** 내려받는 자리 — 저장소가 어디인지 **주소 모양으로** 갈린다 (`/files/{id}` = Neon) */
+/** 파일 ID의 안정적인 API 주소. 실제 본문 저장소는 다운로드 경로에서 판별한다. */
 export const fileUrlOf = (id: number): string => `/files/${id}`;
 
 /**
@@ -126,6 +129,7 @@ export async function storeFile(
 interface FileAccessFacts {
   uploadedBy: number | null;
   bookLinked: boolean;
+  bookAssignedTeacher?: boolean;
   expenseLinked: boolean;
   expenseRequester: boolean;
   reportLinked: boolean;
@@ -146,8 +150,8 @@ export function canReadStoredFile(user: RequestUser, kind: FileKind, facts: File
     case 'lib-se':
     case 'lib-te':
       return facts.bookLinked
-        && hasPerm(user.role, 'canAdminPage', user.perms)
-        && hasPerm(user.role, 'canGpaPack', user.perms);
+        && (facts.bookAssignedTeacher === true
+          || hasPerm(user.role, 'canAdminPage', user.perms) && hasPerm(user.role, 'canGpaPack', user.perms));
     case 'expense-receipt':
       return facts.expenseLinked
         && (hasPerm(user.role, 'canMoney', user.perms) || facts.expenseRequester);
@@ -188,20 +192,33 @@ export class FilesService {
     return storeFile(m ?? this.files.manager, userId, dto);
   }
 
+  async bookPdfUploadIntent(userId: number, dto: BookPdfUploadIntentDto): Promise<BookPdfUploadUrlDto> {
+    return createBookPdfIntent(this.files.manager, userId, dto);
+  }
+
   /** 본문을 꺼낸다 — 내부 도메인 service가 이미 권한을 판정한 뒤 쓰는 경로다. */
-  async read(id: number): Promise<{ kind: FileKind; name: string; mime: string; data: Buffer }> {
+  async read(id: number): Promise<{ kind: FileKind; name: string; mime: string; data: Buffer | null; blobPath: string | null }> {
     const [row] = (await this.files.query(
-      `SELECT kind, name, mime, data FROM file WHERE id = $1`, [id],
-    )) as Array<{ kind: FileKind; name: string; mime: string; data: Buffer }>;
+      `SELECT kind, name, mime, data, blob_path AS "blobPath" FROM file WHERE id = $1`, [id],
+    )) as Array<{ kind: FileKind; name: string; mime: string; data: Buffer | null; blobPath: string | null }>;
     if (!row) throw new NotFoundException({ code: 'FILE_NOT_FOUND', message: '파일을 찾을 수 없습니다' });
     return row;
   }
 
   /** raw 바이트 경계. 순차 id를 넣어도 종류와 실제 연결 원장을 모두 통과해야 한다. */
-  async readAuthorized(user: RequestUser, id: number): Promise<{ kind: FileKind; name: string; mime: string; data: Buffer }> {
+  async readAuthorized(user: RequestUser, id: number): Promise<{ kind: FileKind; name: string; mime: string; data: Buffer | null; blobPath: string | null }> {
     const [row] = (await this.files.query(
       `SELECT f.kind,f.uploaded_by,
               EXISTS (SELECT 1 FROM vers v WHERE v.se_file_id=f.id OR v.te_file_id=f.id OR v.file_url=$2) AS book_linked,
+              -- 배정 guard와 같은 현재/장래 수업 문맥을 재검사한다. 배부 원장의 옛 담당자만으로는 열지 않는다.
+              EXISTS (SELECT 1 FROM issue i JOIN vers v ON v.id=i.vers_id AND v.lib_id=i.lib_id
+                         JOIN ser s ON s.teacher_id=i.teacher_id AND s.sub_key=i.sub_key
+                         JOIN kind k ON k.key=s.kind_key AND k.grp='lesson'
+                         JOIN ser_stu ss ON ss.ser_id=s.id AND ss.student_id=i.student_id
+                       WHERE i.teacher_id=$3 AND i.state='ok'
+                         AND GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date),$4::date)
+                             <= LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))
+                         AND (v.se_file_id=f.id OR v.te_file_id=f.id)) AS book_assigned_teacher,
               EXISTS (SELECT 1 FROM expense e WHERE e.receipt_url=$2) AS expense_linked,
               EXISTS (SELECT 1 FROM expense e WHERE e.receipt_url=$2 AND e.requester_id=$3) AS expense_requester,
               EXISTS (SELECT 1 FROM pdflog p WHERE p.kind='report_png' AND p.file_url=$2) AS report_linked,
@@ -235,9 +252,9 @@ export class FilesService {
                    )))
               ) AS consulting_full_access
          FROM file f WHERE f.id=$1`,
-      [id, fileUrlOf(id), user.id],
+      [id, fileUrlOf(id), user.id, todayKst()],
     )) as Array<{
-      kind: FileKind; uploaded_by: string | null; book_linked: boolean; expense_linked: boolean;
+      kind: FileKind; uploaded_by: string | null; book_linked: boolean; book_assigned_teacher: boolean; expense_linked: boolean;
       expense_requester: boolean; report_linked: boolean; report_teacher: boolean;
       material_request_linked: boolean; material_request_teacher: boolean;
       consulting_linked: boolean; consulting_active: boolean; consulting_full_access: boolean;
@@ -246,6 +263,7 @@ export class FilesService {
     if (!canReadStoredFile(user, row.kind, {
       uploadedBy: row.uploaded_by == null ? null : Number(row.uploaded_by),
       bookLinked: row.book_linked,
+      bookAssignedTeacher: row.book_assigned_teacher,
       expenseLinked: row.expense_linked,
       expenseRequester: row.expense_requester,
       reportLinked: row.report_linked,
@@ -259,6 +277,12 @@ export class FilesService {
       throw new ForbiddenException({ code: 'FILE_FORBIDDEN', message: '이 파일을 열 권한이 없습니다' });
     }
     return this.read(id);
+  }
+
+  async downloadTarget(user: RequestUser, id: number): Promise<FileDownloadTargetDto> {
+    const file = await this.readAuthorized(user, id);
+    if (!file.blobPath) return { storage: 'database', name: file.name };
+    return { storage: 'blob', name: file.name, url: await signedBookPdfDownloadUrl(file.blobPath) };
   }
 
   /** 가리키는 행이 사라질 때 함께 지운다 — 같은 트랜잭션에서 부른다 */

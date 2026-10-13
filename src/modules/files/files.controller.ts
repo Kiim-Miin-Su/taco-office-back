@@ -4,16 +4,16 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, Controller, Get, Param, ParseIntPipe, Post, Res, StreamableFile } from '@nestjs/common';
+import { Body, ConflictException, Controller, Get, Param, ParseIntPipe, Post, Res, StreamableFile } from '@nestjs/common';
 import { ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiProduces, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
-import { FileRefDto, FileUploadDto } from './files.dto';
+import { BookPdfUploadIntentDto, BookPdfUploadUrlDto, FileDownloadTargetDto, FileRefDto, FileUploadDto } from './files.dto';
 import { FilesService } from './files.service';
 
 /**
- * 올린 파일 — **Neon 안에** 둔다 (대표 결정 2026-09-12 · D6 · A-D4).
+ * 일반 파일과 기존 교재 본문은 Neon에 두고, 신규 교재 PDF 본문은 비공개 Blob에 둔다.
  *
  * raw id는 종류·연결 원장·업로더를 service에서 함께 판정한다. 로그인만으로는 어떤 종류도 열지 않는다.
  */
@@ -21,6 +21,14 @@ import { FilesService } from './files.service';
 @Controller('files')
 export class FilesController {
   constructor(private readonly svc: FilesService) {}
+
+  @Post('book-pdf-upload')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '신규 교재 PDF의 비공개 Blob 직접 업로드 URL 발급' })
+  @ApiCreatedResponse({ type: BookPdfUploadUrlDto })
+  async bookPdfUpload(@CurrentUser() user: RequestUser, @Body() dto: BookPdfUploadIntentDto): Promise<BookPdfUploadUrlDto> {
+    return this.svc.bookPdfUploadIntent(user.id, dto);
+  }
 
   @Post()
   @Perm('canAdminPage')
@@ -34,6 +42,14 @@ export class FilesController {
     return this.svc.upload(user.id, dto);
   }
 
+  @Get(':id/download-target')
+  @ApiOperation({ summary: '현재 권한을 확인해 DB 파일 또는 짧게 유효한 비공개 PDF URL을 돌려준다' })
+  @ApiOkResponse({ type: FileDownloadTargetDto })
+  @ApiForbiddenResponse({ description: 'code FILE_FORBIDDEN' })
+  async downloadTarget(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number): Promise<FileDownloadTargetDto> {
+    return this.svc.downloadTarget(user, id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '권한이 확인된 파일 내려받기 — 종류와 연결 원장을 서버가 판정한다' })
   @ApiProduces('application/octet-stream')
@@ -41,6 +57,9 @@ export class FilesController {
   @ApiForbiddenResponse({ description: 'code FILE_FORBIDDEN — 종류·소유·업무 권한 불일치' })
   async download(@CurrentUser() user: RequestUser, @Param('id', ParseIntPipe) id: number, @Res({ passthrough: true }) res: Response): Promise<StreamableFile> {
     const file = await this.svc.readAuthorized(user, id);
+    if (!file.data) {
+      throw new ConflictException({ code: 'FILE_DIRECT_DOWNLOAD', message: '이 PDF는 다운로드 URL을 통해 받아야 합니다' });
+    }
     res.set({
       'Content-Type': file.mime,
       // 이름에 한글이 들어가므로 RFC 5987 형식으로도 함께 싣는다

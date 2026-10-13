@@ -1,0 +1,4 @@
+interface:
+  display_name: "TACO NestJS API"
+  short_description: "기존 Nest 모듈의 DTO·권한·서비스와 회귀 테스트를 연결"
+  default_prompt: "$taco-nest-api 스킬로 현재 요청의 범위와 기존 구현을 확인하고 필요한 작업 및 검증 결과를 정리해줘."

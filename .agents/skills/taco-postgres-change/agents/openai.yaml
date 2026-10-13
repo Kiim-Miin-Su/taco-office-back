@@ -1,0 +1,4 @@
+interface:
+  display_name: "TACO PostgreSQL 변경"
+  short_description: "TypeORM·DBML·migration을 대조하고 격리 DB의 변경을 검증"
+  default_prompt: "$taco-postgres-change 스킬로 현재 요청의 범위와 기존 구현을 확인하고 필요한 작업 및 검증 결과를 정리해줘."

@@ -32,11 +32,15 @@ export class FileRow {
   @Column({ type: 'int' })
   bytes: number;
 
-  @Column({ type: 'char', length: 64 })
-  sha256: string;
+  @Column({ type: 'char', length: 64, nullable: true })
+  sha256: string | null;
 
-  @Column({ type: 'bytea' })
-  data: Buffer;
+  @Column({ type: 'bytea', nullable: true })
+  data: Buffer | null;
+
+  /** 신규 교재 PDF만 비공개 Blob에 둔다. 기존 행은 null이다. */
+  @Column({ name: 'blob_path', type: 'varchar', length: 300, nullable: true })
+  blobPath: string | null;
 
   @Column({ type: 'bigint', nullable: true })
   uploadedBy: number | null;
