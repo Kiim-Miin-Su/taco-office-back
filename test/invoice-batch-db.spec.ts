@@ -25,7 +25,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 /** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
 const DUE = '2026-12-31';
@@ -82,6 +82,7 @@ d('청구서 일괄 발행 · 전달 · 취소 (C94-a · H-75 · H-76 · N-139)'
          ($3,'발행매니저','ib-m@t.kr','manager',$4,true,true)`,
       [CEO, TEACHER, MANAGER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER, MANAGER]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B, STU_C]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'발행A','10'), ($2,'발행B','10'), ($3,'발행C','10')`, [STU_A, STU_B, STU_C]);
     await q(`INSERT INTO kind (key,name,color,cap,grp) VALUES ($1,'발행 시험','#333333',4,'lesson') ON CONFLICT (key) DO NOTHING`, [KIND]);

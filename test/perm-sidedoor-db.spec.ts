@@ -28,7 +28,7 @@ import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -134,6 +134,7 @@ d('S4 권한 옆문 넷 — 같은 규칙이 한 곳에만 있던 자리', () =>
          ($7,'비공개없는매니저','sd-nh@t.kr','manager',$6,true,NULL)`,
       [CEO, MGR, NOWAGE, TEACHER, RETIRED, hash, NOHIDE],
     );
+    await markSetupDone(q, [CEO, MGR, NOWAGE, TEACHER, RETIRED, NOHIDE]);
     /* 사람별 예외는 따로 켠다 — 위 INSERT 는 can_wage 한 칸만 든다 */
     await q(`UPDATE staff SET can_hide = false WHERE id = $1`, [NOHIDE]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);

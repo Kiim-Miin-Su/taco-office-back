@@ -25,7 +25,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { INITIAL_PASSWORD, PASSWORD_ISSUE_MESSAGE } from '../src/lib/account-policy';
 import { STAFF_OWN_TABLES, STAFF_SOFT_REFS, staffForeignKeys } from '../src/lib/staff-refs';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -101,6 +101,7 @@ d('W8 · W10 §17 사용자 표 CRUD — 만들기(아이디 · 임시 비밀번
          ($6,'표강사둘','w8b-t2@t.kr',NULL,'teacher',$7,true)`,
       [CEO, ADMIN, MGR, MGR2, TEACHER, TEACHER2, hash],
     );
+    await markSetupDone(q, [CEO, ADMIN, MGR, MGR2, TEACHER, TEACHER2]);
     await q(`INSERT INTO tzg (id, name, tz) VALUES (1,'한국 (KST)','Asia/Seoul'), (2,'미국 동부','America/New_York') ON CONFLICT (id) DO NOTHING`);
     tokens.ceo = await login('w8b-ceo@t.kr');
     tokens.admin = await login('w8b-admin@t.kr');

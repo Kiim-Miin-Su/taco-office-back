@@ -21,7 +21,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 import { opsRangeLabel } from '../src/modules/ops/ops.service';
 import { MT_TYPE_SUB, MT_TYPES } from '../src/lib/meeting-words';
 import { CPL_AREAS } from '../src/lib/complaint-words';
@@ -86,6 +86,7 @@ d('C96 — 회의 잡기 · 기획 올리기 · 기간/갈래 (N-46 ②③ · J-
          ($2,'C96강사','c96-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     // 회의 종류는 시드에 있어야 한다 — 스위트가 제 강의실·줌 계정을 만든다 (C74 의 교훈)
     await q(`DELETE FROM room WHERE id = $1`, [ROOM]);
     await q(`INSERT INTO room (id, branch, name, capacity) VALUES ($1,'본원','C96 회의실',10)`, [ROOM]);

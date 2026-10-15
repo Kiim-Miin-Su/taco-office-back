@@ -54,12 +54,13 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
   const PW = 'Current-pass-1234';
   const NEW_PW = 'Brand-new-pass-77';
   const IDS = { must: 9_000_000_000_961, normal: 9_000_000_000_962, other: 9_000_000_000_963, noEmail: 9_000_000_000_964 } as const;
-  // 앞의 셋은 옮겨 온 옛 계정 모양(아이디 = 그때의 이메일) · 넷째는 W10 에 이메일 없이 만든 계정
+  // 앞의 셋은 옮겨 온 옛 계정 모양(아이디 = 그때의 이메일) · 넷째는 W10 에 이메일 없이 만든 계정.
+  // `done` = 첫 설정을 마친 계정(두 인증 true) — AUTH-INIT-02 판정은 잠금이 꺼져 있어도 두 인증이 없으면 필수 설정 대상이다
   const PEOPLE = [
-    { id: IDS.must, name: '첫설정', loginId: 'w8-must@t.kr', email: 'w8-must@t.kr', role: 'manager', must: true },
-    { id: IDS.normal, name: '보통', loginId: 'W8-Mixed.Case@t.kr', email: 'W8-Mixed.Case@t.kr', role: 'manager', must: false },
-    { id: IDS.other, name: '남의계정', loginId: 'w8-taken@t.kr', email: 'w8-taken@t.kr', role: 'teacher', must: false },
-    { id: IDS.noEmail, name: '이메일없음', loginId: '새강사_01', email: null, role: 'teacher', must: true },
+    { id: IDS.must, name: '첫설정', loginId: 'w8-must@t.kr', email: 'w8-must@t.kr', role: 'manager', must: true, done: false },
+    { id: IDS.normal, name: '보통', loginId: 'W8-Mixed.Case@t.kr', email: 'W8-Mixed.Case@t.kr', role: 'manager', must: false, done: true },
+    { id: IDS.other, name: '남의계정', loginId: 'w8-taken@t.kr', email: 'w8-taken@t.kr', role: 'teacher', must: false, done: true },
+    { id: IDS.noEmail, name: '이메일없음', loginId: '새강사_01', email: null, role: 'teacher', must: true, done: false },
   ];
   const ALL = PEOPLE.map((p) => p.id);
 
@@ -70,9 +71,9 @@ d('계정 첫 설정 · 로그인 아이디 (W8)', () => {
     const hash = await bcrypt.hash(PW, 4);
     for (const p of PEOPLE) {
       await ds.query(
-        `UPDATE staff SET login_id=$2, email=$3, password_hash=$4, phone=NULL, must_change_credentials=$5, email_verified=false,
-                phone_verified=false, credentials_changed_at=NULL, active=true WHERE id=$1`,
-        [p.id, p.loginId, p.email, hash, p.must],
+        `UPDATE staff SET login_id=$2, email=$3, password_hash=$4, phone=NULL, must_change_credentials=$5, email_verified=$6,
+                phone_verified=$6, credentials_changed_at=NULL, active=true WHERE id=$1`,
+        [p.id, p.loginId, p.email, hash, p.must, p.done],
       );
     }
     fake.readyMap = { email: true, sms: true };

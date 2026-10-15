@@ -11,7 +11,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import type { StudentCumulativeDto } from '../src/modules/accounting/accounting.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -63,6 +63,7 @@ d('BO-11AD-02 학생별 누적 원장', () => {
          ($2, '누적강사', 'boc11-cumulative-teacher@t.kr', 'teacher', $3, true)`,
       [CEO, TEACHER, passwordHash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(
       `INSERT INTO stu (id, name, grade, created_at) VALUES
          ($1, '누적학생', '10', $3::date),

@@ -80,7 +80,8 @@ run('초기 계정 provisioning — 전용 migration DB', () => {
     for (const row of rows) {
       expect(await bcrypt.compare(PASSWORD, row.password_hash)).toBe(true);
       expect(row.active).toBe(true);
-      expect(row.must_change_credentials).toBe(false);
+      // AUTH-INIT-02(2026-10-16): 초기 발급(개명 포함)은 공통 초기 비밀번호를 쓰므로 첫 로그인에서 필수 설정을 거친다
+      expect(row.must_change_credentials).toBe(true);
     }
     expect(await receipts()).toBe(1);
   });

@@ -12,7 +12,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { addDays, todayKst } from '../src/lib/kst';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -66,6 +66,7 @@ d('TBO-55 BOC-11E 시간당 단가 HTTP 계약', () => {
       ($1,'시간단가관리자','boc11-hourly-admin@t.kr','admin',$4,true,NULL),
       ($2,'시간단가강사','boc11-hourly-teacher@t.kr','teacher',$4,true,NULL),
       ($3,'시간단가권한회수','boc11-hourly-restricted@t.kr','admin',$4,true,false)`, [ADMIN, TEACHER, RESTRICTED, hash]);
+    await markSetupDone(q, [ADMIN, TEACHER, RESTRICTED]);
     await q(`INSERT INTO stu(id,name,grade,school) VALUES($1,'시간단가학생','G8','정합중')`, [STUDENT]);
 
     const login = async (loginId: string) => (await request(app.getHttpServer())

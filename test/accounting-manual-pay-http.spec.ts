@@ -23,7 +23,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import type { AccountingDto, PaymentDto } from '../src/modules/accounting/accounting.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -65,6 +65,7 @@ d('§55 「+ 결제 등록」 — 청구서 없이 들어온 돈 (A-D1 ② · HT
          ($2,'수기입금강사','manual-pay-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'수기입금학생','10')`, [STU]);
     const login = async (email: string) => (await request(app.getHttpServer())
       .post('/auth/login').send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;

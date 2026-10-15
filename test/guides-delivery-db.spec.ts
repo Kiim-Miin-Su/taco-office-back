@@ -14,7 +14,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { AuthService } from '../src/auth/auth.service';
 import { dataSourceOptions } from '../src/data-source';
-import { assertScratch, TEST_URL } from './db';
+import { assertScratch, TEST_URL, markSetupDone } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -79,6 +79,7 @@ d('S4-a GUIDE 내부 발송·확인 HTTP/DB', () => {
     for (const [id, role] of [[ADMIN, 'admin'], [A, 'teacher'], [B, 'teacher'], [MANAGER, 'manager']] as const) {
       const email = `s4a-${id}@t.invalid`;
       await sql('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES ($1,$2,$3,$4,$5,true)', [id, `S4A ${role} ${id}`, email, role, hash]);
+      await markSetupDone(sql, [id]);
       const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password }).expect(201);
       tokens.set(id, res.body.accessToken as string);
     }

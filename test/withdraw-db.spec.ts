@@ -27,7 +27,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { invoiceLines } from '../src/modules/accounting/invoice-lines';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 /** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
 const DUE = '2026-12-31';
@@ -92,6 +92,7 @@ d('수강 종료 · 중도 환불 (C94-c · H-80 · N-135 · N-136)', () => {
          ($6,'종료금액강사','wd-mt@t.kr','teacher',$4,true,true)`,
       [CEO, TEACHER, MANAGER, hash, MONEY_MGR, MONEY_TEACHER],
     );
+    await markSetupDone(q, [CEO, TEACHER, MANAGER, MONEY_MGR, MONEY_TEACHER]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'종료A','10'), ($2,'종료B','10')`, [STU_A, STU_B]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'종료 시험','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);

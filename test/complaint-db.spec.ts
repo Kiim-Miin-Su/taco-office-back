@@ -28,7 +28,7 @@ import { AppModule } from '../src/app.module';
 import { payoutSheet } from '../src/lib/payout-sheet';
 import { NOTI_TITLE } from '../src/lib/noti';
 import { serStuOn } from '../src/lib/sql';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -107,6 +107,7 @@ d('컴플레인 접수·처리 · 강사 교체 마법사 (C93 · J-96 · J-97 �
          ($4,'교체관리자','cp-adm@t.kr','admin',$5,true,null)`,
       [CEO, T_A, T_B, ADMIN, hash],
     );
+    await markSetupDone(q, [CEO, T_A, T_B, ADMIN]);
     await q(`INSERT INTO stu (id, name, grade, school) VALUES
       ($1,'교체학생1','G10','테스트고'), ($2,'교체학생2','G11','테스트고'), ($3,'과거학생','G9','테스트고')`, [STU1, STU2, STU_OLD]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'교체 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);

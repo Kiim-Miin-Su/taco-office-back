@@ -31,6 +31,35 @@ export interface JwtPayload {
 export const isJwtSubject = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 
+/** 필수 초기설정 판정에 쓰는 STAFF 칸 셋 — 엔티티 · 원시 SQL 행 어느 쪽에서 와도 같은 함수로 본다 */
+export interface CredentialSetupState {
+  mustChangeCredentials: boolean | null | undefined;
+  emailVerified: boolean | null | undefined;
+  phoneVerified: boolean | null | undefined;
+}
+
+/**
+ * AUTH-INIT-02 (사용자 결정 2026-10-16) — 필수 초기설정(휴대폰 인증 · 이메일 인증 · 비밀번호 교체)이 남았는가. **판정은 여기 한 곳**이다.
+ * currentUser(→ OnboardingGuard) · MeDto.mustChangeCredentials · 로그인/첫 설정 결과 · 첫 설정 경로의 must 검사 ·
+ * 구성원 목록 칩이 모두 이 함수(또는 같은 식의 `credentialSetupRequiredSql`)를 쓴다. 역할 · 로그인 ID 로 면제하지 않는다.
+ *
+ * 완료 증거 = 잠금 해제(must=false) **그리고** 두 인증(email_verified · phone_verified). 근거(2026-10-16 writer 전수 대조):
+ *  - 1763600000000 은 기존 행을 보정하지 않았다(email_verified 기본 false) — 옛 계정 · 초기3계정 면제는 증거가 없다.
+ *  - email_verified=true 를 쓰는 곳은 첫 설정 완료(두 코드 + 새 비밀번호 + 잠금 해제를 한 transaction)와,
+ *    이미 완료한 계정만 부를 수 있는 본인 연락처 변경(ProfileService)뿐이다.
+ *  - 남이 비밀번호를 다시 정하는 경로(관리자 초기화 · 운영 전환 · 초기 발급)는 must=true 를 함께 켠다. 관리자의 연락처 수정은
+ *    바뀐 채널의 인증을 끄고 must=true 를 켠다(N-104). 비밀번호 찾기는 두 인증 계정만 쓰고 must 를 건드리지 않는다.
+ *  - 예외: 1769700000000 이전 초기 발급 코드는 개명 시 must=false 로 공통 비밀번호를 덮었다 — 그 뒤에 첫 설정 기록이 없는
+ *    「완료처럼 보이는」 계정은 migration 1769700000000 이 세어서 멈춘다(추정 보정 금지).
+ * 이 판정을 바꾸면 SQL 식 · migration preflight · 계약 문서 · 구성원 칩 · 시험을 같은 청크에서 함께 바꾼다.
+ */
+export const credentialSetupRequired = (s: CredentialSetupState): boolean =>
+  s.mustChangeCredentials === true || s.emailVerified !== true || s.phoneVerified !== true;
+
+/** 같은 판정의 SQL 식 — 원시 SQL 로 STAFF 를 읽는 곳(첫 설정 · 프로필 · 구성원 목록)이 쓴다. alias 는 코드 상수만 넘긴다 */
+export const credentialSetupRequiredSql = (alias: string): string =>
+  `(${alias}.must_change_credentials OR NOT ${alias}.email_verified OR NOT ${alias}.phone_verified)`;
+
 /** jsonwebtoken 의 expiresIn 은 '15m' 같은 문자열 리터럴 타입을 받는다 */
 type Expires = NonNullable<Parameters<JwtService['sign']>[1]>['expiresIn'];
 
@@ -51,7 +80,7 @@ export class AuthService {
       where: { id, active: true },
       select: [
         'id', 'name', 'title', 'role', 'canMoney', 'canWage', 'canApprove', 'canHide', 'canGpaPack',
-        'mustChangeCredentials', 'credentialsChangedAt',
+        'mustChangeCredentials', 'emailVerified', 'phoneVerified', 'credentialsChangedAt',
       ],
     });
     if (!s || !isRole(s.role)) throw new UnauthorizedException('다시 로그인해 주세요');
@@ -100,8 +129,8 @@ export class AuthService {
     this.assertIssuedAfterReset(s, iat, cv);
     return {
       id: Number(s.id), name: s.name, role: s.role, perms: this.overridesOf(s),
-      // 첫 설정 잠금은 토큰이 아니라 현재 STAFF 가 정한다 — OnboardingGuard 가 이 값만 본다
-      mustChange: s.mustChangeCredentials === true,
+      // 첫 설정 잠금은 토큰이 아니라 현재 STAFF 가 정한다 — OnboardingGuard 가 이 값만 본다(AUTH-INIT-02 판정 한 곳)
+      mustChange: credentialSetupRequired(s),
     };
   }
 
@@ -130,8 +159,8 @@ export class AuthService {
       // 서랍 §17 묶음 머리와 **같은 표**에서 꺼낸다 — 두 곳이 다른 낱말을 쓰지 않는다 (D-R18)
       roleLabel: roleLabel(role),
       ...permsOf(role, this.overridesOf(s)),
-      // 화면이 첫 설정으로 보낼지 여기서만 안다 — 늘 채운다(W8)
-      mustChangeCredentials: s.mustChangeCredentials === true,
+      // 화면이 첫 설정으로 보낼지 여기서만 안다 — 늘 채운다(W8). 가드와 같은 판정(AUTH-INIT-02)
+      mustChangeCredentials: credentialSetupRequired(s),
     };
   }
 

@@ -23,7 +23,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -70,6 +70,7 @@ d('C99 — 명단 알림 3건과 삭제 되돌리기 (M-124 · N-138)', () => {
          ($3,'C99매니저','c99-m@t.kr','manager',$4,true)`,
       [CEO, TEACHER, MANAGER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER, MANAGER]);
     await q(`INSERT INTO kind (key, name, color, cap, grp, rep, extra)
              VALUES ($1,'C99 수업','#123456',8,'lesson',false,false)
              ON CONFLICT (key) DO UPDATE SET cap = EXCLUDED.cap, rep = EXCLUDED.rep`, [KIND]);

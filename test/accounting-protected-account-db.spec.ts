@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -82,6 +82,7 @@ d('BOC-11D-01 보호 계좌·강사 지급 snapshot', () => {
       ($3,'계좌강사','boc11-account-teacher@t.kr','teacher',$5,true,NULL),
       ($4,'권한회수','boc11-account-restricted@t.kr','admin',$5,true,false)`,
     [CEO, ADMIN, TEACHER, RESTRICTED, passwordHash]);
+    await markSetupDone(q, [CEO, ADMIN, TEACHER, RESTRICTED]);
     await q(`INSERT INTO stu(id,name,grade,school) VALUES($1,'환불학생','G10','정합고')`, [STUDENT]);
     const [payout] = await q<{ id: string }>(`INSERT INTO payout(
       staff_id,year_month,hours,gross,late_rep_cut,late_cls_cut,income_tax,local_tax,net,state,confirmed_by,confirmed_at)

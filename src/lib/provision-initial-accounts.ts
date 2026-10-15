@@ -33,7 +33,9 @@ interface AccountRow { id: string; login_id: string; role: string; active: boole
 /**
  * R118 권고안: 초기 발급은 자격 복구/재활성화 명령이 아니다. 기존 ID의 역할이 맞으면 암호·활성·
  * 첫 설정·세션 시각을 모두 보존한다. 최초 발급 감사가 있으면 바뀐 ID를 재생성하거나 CEO를 다시 개명하지 않는다.
- * 변경 시 계정 기능 문서·운영 복구 절차와 이 함수의 병렬/실패 원자성 시험을 함께 대조한다.
+ * AUTH-INIT-02(사용자 결정 2026-10-16): 공통 초기 비밀번호를 쓰는 발급(CEO 개명 · 신규 두 계정)은 첫 설정 잠금을 **켠다** —
+ * 역할 · 고정 로그인 ID 로 면제하지 않는다. 이미 있는 계정은 이 함수가 건드리지 않으므로(재실행 no-op) 옛 면제 행의 전환은
+ * 판정 함수(AuthService.credentialSetupRequired)가 맡는다. 변경 시 계정 기능 문서·운영 복구 절차와 이 함수의 병렬/실패 원자성 시험을 함께 대조한다.
  */
 export async function provisionInitialAccounts(
   ds: DataSource,
@@ -89,7 +91,7 @@ export async function provisionInitialAccounts(
     const hash = await bcrypt.hash(requireInitialPassword(options.initialPassword), 12);
     if (result.renamed) {
       await m.query(
-        `UPDATE staff SET login_id=$2,password_hash=$3,must_change_credentials=false,
+        `UPDATE staff SET login_id=$2,password_hash=$3,must_change_credentials=true,
           credentials_changed_at=now() WHERE id=$1`,
         [ceo.id, INITIAL_ACCOUNTS[0].loginId, hash],
       );
@@ -101,7 +103,7 @@ export async function provisionInitialAccounts(
       const account = INITIAL_ACCOUNTS[index];
       await m.query(
         `INSERT INTO staff(name,login_id,role,title,tz,password_hash,active,must_change_credentials,credentials_changed_at)
-          VALUES($1,$2,$3::role_t,$4,'Asia/Seoul',$5,true,false,now())`,
+          VALUES($1,$2,$3::role_t,$4,'Asia/Seoul',$5,true,true,now())`,
         [account.name, account.loginId, account.role, account.title, hash],
       );
     }

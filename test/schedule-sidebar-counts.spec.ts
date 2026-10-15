@@ -22,7 +22,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -72,6 +72,7 @@ d('§07 사이드바 일정 원본 수 · §10 「교재 없음」 (서버가 �
        VALUES ($1,'사이드바대표','sidebar-ceo@t.kr','ceo',$3,true), ($2,'사이드바강사','sidebar-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(`DELETE FROM issue WHERE student_id = $1`, [STU]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1, '교재칩학생', 'K')`, [STU]);

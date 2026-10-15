@@ -160,7 +160,11 @@ describe('STAFF 예외 → MeDto / Access 발급·현재 사용자 투영 (DB·�
     const findOne = jest.fn();
     const sign = jest.fn<string, [JwtPayload]>().mockReturnValue('unit-access-token');
     const auth = new AuthService({ findOne } as unknown as Repository<Staff>, { sign } as unknown as JwtService);
-    const staff = Object.assign(new Staff(), { id: 17, name: '권한 검수', title: null, role, ...noOverrides, ...overrides });
+    // AUTH-INIT-02 — 첫 설정을 마친 계정(잠금 해제 · 두 인증)으로 둔다. 필수 설정 판정 자체는 auth-initial-setup.spec 이 본다
+    const staff = Object.assign(new Staff(), {
+      id: 17, name: '권한 검수', title: null, role, mustChangeCredentials: false, emailVerified: true, phoneVerified: true,
+      ...noOverrides, ...overrides,
+    });
     const me = auth.toMe(staff);
     expect(auth.signAccess(staff)).toBe('unit-access-token');
     expect(sign).toHaveBeenCalledTimes(1);

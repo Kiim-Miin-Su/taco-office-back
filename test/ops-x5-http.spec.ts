@@ -19,7 +19,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 import { randomUUID } from 'node:crypto';
 
 const d = DEV_URL ? describe : describe.skip;
@@ -56,6 +56,7 @@ d('「+ 오늘 한 것」 HTTP (x5 · 59-3)', () => {
          ($2,'X5강사','x5-http-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     const login = async (email: string) => (await request(app.getHttpServer())
       .post('/auth/login').send({ loginId: email, password: PW }).expect(201)).body.accessToken as string;
     token = await login('x5-http-ceo@t.kr');

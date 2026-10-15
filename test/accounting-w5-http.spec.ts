@@ -21,7 +21,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import type { PayoutDetailDto, PayoutSheetDto } from '../src/modules/accounting/accounting.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -82,6 +82,7 @@ d('§56 강사 상세 · 합계 카드 · §55 들어온 돈 HTTP (w5)', () => {
          ($2,'W5정산강사','w5-acct-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(`INSERT INTO wage (staff_id, rate, from_date, reason) VALUES ($1, $2, '2026-01-01', 'w5 테스트')`, [TEACHER, RATE]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'W5정산학생','10')`, [STU]);

@@ -24,7 +24,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -85,6 +85,7 @@ d('회계 청구 W11 — HTTP 계약 (N-75 · N-79 · N-28 ②)', () => {
          ($2,'청구강사','w11h-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'청구A','10'), ($2,'청구B','10')`, [STU_A, STU_B]);
     await q(`INSERT INTO kind (key,name,color,cap,grp) VALUES ($1,'청구 시험','#333333',4,'lesson') ON CONFLICT (key) DO NOTHING`, [KIND]);

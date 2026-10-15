@@ -24,7 +24,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -66,6 +66,7 @@ d('상담 진단 점수 — 점수만 저장 · 레벨·교재는 담당자가 �
          ($1,'진단관리자','ld-a@t.kr','admin',$3,true), ($2,'진단강사','ld-t@t.kr','teacher',$3,true)`,
       [ADMIN, TEACHER, hash],
     );
+    await markSetupDone(q, [ADMIN, TEACHER]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'진단 시험 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
     const libs = await q<{ id: string }>(
       `INSERT INTO lib (code, title, pages) VALUES ('LD-TEST-A','진단 교재 A',100), ('LD-TEST-B','진단 교재 B',120) RETURNING id`,

@@ -15,7 +15,7 @@ import * as bcrypt from 'bcryptjs';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 import { addD } from '../src/lib/recurrence';
 import { todayKst } from '../src/lib/kst';
 import { buildOpenApi } from '../src/openapi';
@@ -150,6 +150,7 @@ d('리포트 쓰기 계약 (D-R7 · D-R15 · D-R40)', () => {
         `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,$4,$5,true)`,
         [person[0], person[1], person[2], person[3], hash],
       );
+      await markSetupDone(q, [person[0]]);
     }
     await q(`UPDATE staff SET can_approve=true WHERE id=$1`, [REVIEWER]);
     await q(

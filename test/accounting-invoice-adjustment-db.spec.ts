@@ -12,7 +12,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import type { InvoiceAdjustmentLedgerDto } from '../src/modules/accounting/accounting.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -76,6 +76,7 @@ d('BO-11BD-01 청구 조정 승인 원장', () => {
         ($3,'조정강사','boc11-adjustment-teacher@t.kr','teacher',$4,true)`,
       [CEO, ADMIN, TEACHER, passwordHash],
     );
+    await markSetupDone(q, [CEO, ADMIN, TEACHER]);
     await q(`INSERT INTO stu(id,name,grade,created_at) VALUES
       ($1,'조정학생','10',current_date),($2,'일반청구학생','10',current_date)`, [STUDENT, PLAIN_STUDENT]);
     const [invoice] = await q<{ id: string }>(`INSERT INTO inv

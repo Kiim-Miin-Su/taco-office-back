@@ -12,7 +12,7 @@ import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { addDays, todayKst } from '../src/lib/kst';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL && /localhost|127\.0\.0\.1/.test(DEV_URL) ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -78,6 +78,7 @@ d('TBO-55 BOC-11F 교재 판매 HTTP 계약', () => {
       ($1,'교재판매관리자','boc11-book-admin@t.kr','admin',$4,true,NULL),
       ($2,'교재판매강사','boc11-book-teacher@t.kr','teacher',$4,true,NULL),
       ($3,'교재판매권한회수','boc11-book-restricted@t.kr','admin',$4,true,false)`, [ADMIN, TEACHER, RESTRICTED, hash]);
+    await markSetupDone(q, [ADMIN, TEACHER, RESTRICTED]);
     await q(`INSERT INTO stu(id,name,grade) VALUES($1,'교재판매학생','G10')`, [STUDENT]);
     await q(`INSERT INTO lib(id,code,title,pages) VALUES($1,'BOC11F-HTTP','Writing Basics',120)`, [BOOK]);
     await q(`INSERT INTO vers(lib_id,edition,from_date) VALUES($1,'v2026.10',CURRENT_DATE)`, [BOOK]);

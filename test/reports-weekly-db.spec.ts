@@ -26,7 +26,7 @@ import { AppModule } from '../src/app.module';
 import { dataSourceOptions } from '../src/data-source';
 import { SENDER } from '../src/modules/notify/sender';
 import { FakeSender } from './fake-sender';
-import { assertScratch, blockedBy, TEST_URL } from './db';
+import { assertScratch, blockedBy, TEST_URL, markSetupDone } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -134,6 +134,7 @@ d('W11 R2 주간 묶음(N-54) · 파일의 리포트 칸 · report.write 감사 
     for (const [id, role, name] of [[ADMIN, 'admin', 'R2 관리자'], [T1, 'teacher', 'R2 강사 가'], [T2, 'teacher', 'R2 강사 나']] as const) {
       const email = `w11-r2-${id}@t.invalid`;
       await sql('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES ($1,$2,$3,$4,$5,true)', [id, name, email, role, hash]);
+      await markSetupDone(sql, [id]);
       const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password }).expect(201);
       tokens.set(id, res.body.accessToken as string);
     }

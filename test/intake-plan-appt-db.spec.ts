@@ -24,7 +24,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -74,6 +74,7 @@ d('상담 배치안 초안 · 보류 연장 · 2차/진단 일정 (23-15 · 23-1
          ($3,'사차퇴사','w3p-gone@t.kr','teacher',$4,false,null)`,
       [CEO, MGR, GONE, hash],
     );
+    await markSetupDone(q, [CEO, MGR, GONE]);
     const [room] = await q<{ id: string }>(`INSERT INTO room (branch, name) VALUES ('테스트', 'W3P 상담실') RETURNING id`);
     ROOM = Number(room.id);
     // 스위트 전용 과목과 단가 셋 — 1인 77,000 · 2인 50,000(구간은 1인만 본다) · 내일부터 99,000(「당시」 단가가 아니다)

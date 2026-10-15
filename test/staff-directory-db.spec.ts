@@ -11,7 +11,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { previousMonthKst, todayKst } from '../src/lib/kst';
-import { assertScratch, DEV_URL, TEST_URL } from './db';
+import { assertScratch, DEV_URL, TEST_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -63,6 +63,8 @@ d('관리자 강사 탭 — HTTP→DTO→DB', () => {
       );
       const id = Number(r.id);
       ids.push(id);
+      // AUTH-INIT-02: 업무 시험의 픽스처는 「첫 설정을 마친 직원」이다 — 필수 설정 판정은 auth-initial-setup.spec 이 본다
+      await markSetupDone(q, [id]);
       return id;
     };
     managerId = await addStaff('manager', 'manager');

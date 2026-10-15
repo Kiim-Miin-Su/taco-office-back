@@ -13,7 +13,7 @@ import * as bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
-import { assertScratch, TEST_URL } from './db';
+import { assertScratch, TEST_URL, markSetupDone } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -84,6 +84,7 @@ d('회차 출결 계약 (D-R35)', () => {
        VALUES ($1,'출결강사',$2,'teacher',$3,true), ($4,'출결매니저',$5,'manager',$3,true)`,
       [TEACHER, TEACHER_EMAIL, hash, MANAGER, MANAGER_EMAIL],
     );
+    await markSetupDone(q, [TEACHER, MANAGER]);
     await q(
       `INSERT INTO stu (id,name,grade) VALUES
        ($1,'지각학생','고2'), ($2,'정시학생','고2'), ($3,'다른반학생','고2')`,

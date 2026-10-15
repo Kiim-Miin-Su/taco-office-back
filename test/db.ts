@@ -102,3 +102,22 @@ export async function blockedBy(
   await q.query('RELEASE SAVEPOINT blocked_probe');
   throw new Error(`막혀야 하는 SQL 이 통과했습니다 — 제약이 빠졌습니다: ${sql.trim().split('\n')[0]}`);
 }
+
+/**
+ * AUTH-INIT-02(2026-10-16) — 시험 픽스처를 **필수 초기설정을 마친 계정**으로 만든다(두 인증 true · 잠금은 그대로).
+ *
+ * 판정(AuthService.credentialSetupRequired)에는 역할 · 아이디 면제가 없어서, INSERT 기본값(두 인증 false)으로 만든 계정은
+ * 로그인 뒤 업무 API 가 403 CREDENTIALS_CHANGE_REQUIRED 다. 업무 기능을 시험하는 스위트는 「이미 첫 설정을 마친 직원」을
+ * 전제로 하므로 이 함수로 그 전제를 **명시**한다. 필수 설정 자체를 시험하는 스위트(auth-initial-setup · onboarding)는 쓰지 않는다.
+ * 자기 픽스처 id 만 넘긴다 — 다른 스위트의 행을 건드리지 않는다.
+ */
+export async function markSetupDone(
+  q: { query(sql: string, params?: unknown[]): Promise<unknown> } | ((sql: string, params?: unknown[]) => Promise<unknown>),
+  ids: ReadonlyArray<number | string>,
+): Promise<void> {
+  const run = typeof q === 'function' ? q : q.query.bind(q);
+  await run(
+    'UPDATE staff SET email_verified = true, phone_verified = true WHERE id = ANY($1::bigint[])',
+    [ids.map((id) => String(id))],
+  );
+}

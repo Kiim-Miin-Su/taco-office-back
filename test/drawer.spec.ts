@@ -31,7 +31,7 @@ import { DrawerController } from '../src/modules/drawer/drawer.controller';
 import type { DrawerService } from '../src/modules/drawer/drawer.service';
 import type { ScheduleService } from '../src/modules/schedule/schedule.service';
 import type { ChangeReqCreateDto } from '../src/modules/drawer/drawer.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(40_000);
@@ -169,6 +169,7 @@ d('우측 서랍 — §14~§21', () => {
         `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,$4,$5,true)`,
         [p.id, p.name, p.email, p.role, hash],
       );
+      await markSetupDone(ds, [p.id]);
     }
     // 본인 회차 성공 검증은 남의 시드 일정을 빌리지 않고 이 강사 전용 원장으로 한다.
     const onDate = addDays(todayKst(), 14);
@@ -662,6 +663,7 @@ d('우측 서랍 — §14~§21', () => {
        VALUES ($1,'새 강사',$2,$2,'teacher',true)`,
       [teacherId, `drawer-retry-${teacherId}@t.kr`],
     );
+    await markSetupDone(ds, [teacherId]);
     try {
       const created = await post().expect(201);
       expect(created.body.id).toEqual(expect.any(Number));

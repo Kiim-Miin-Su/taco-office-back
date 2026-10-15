@@ -35,7 +35,7 @@ import { ZoomService } from '../src/modules/zoom/zoom.service';
 import { ZoomAccountCreateDto, ZoomAccountPatchDto } from '../src/modules/zoom/zoom.dto';
 import * as stateRepo from '../src/modules/schedule/schedule.state.repo';
 import { project } from '../src/modules/schedule/schedule.project';
-import { assertScratch, TEST_URL } from './db';
+import { assertScratch, TEST_URL, markSetupDone } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -112,6 +112,7 @@ d('줌 배정 — 정본은 ZASSIGN, ser_occ 는 투영이다 (C48)', () => {
     await q.query(
       `INSERT INTO staff (id,name,email,role) VALUES ($1,'줌 담당','zoom72@t.kr','admin') ON CONFLICT (id) DO NOTHING`, [ME],
     );
+    await markSetupDone(q, [ME]);
   });
   afterEach(async () => {
     if (q?.isTransactionActive) await q.rollbackTransaction();
@@ -356,6 +357,7 @@ d('S3-a 줌 계정 HTTP 입력·권한·영속화', () => {
     await sql(`INSERT INTO staff(id,name,email,role,password_hash,active) VALUES
       ($1,'S3A 관리자','s3a-admin@t.invalid','admin',$3,true),
       ($2,'S3A 강사','s3a-teacher@t.invalid','teacher',$3,true)`, [ADMIN, TEACHER, hash]);
+    await markSetupDone(sql, [ADMIN, TEACHER]);
     for (const [actor, email] of [[ADMIN, 's3a-admin@t.invalid'], [TEACHER, 's3a-teacher@t.invalid']] as const) {
       const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PASSWORD }).expect(201);
       tokens.set(actor, res.body.accessToken as string);
@@ -628,6 +630,7 @@ d('S3-b 회차 줌 배정 HTTP·월마감·외부 transaction', () => {
     await sql(`INSERT INTO staff(id,name,email,role,password_hash,active) VALUES
       ($1,'S3B 관리자','s3b-admin@t.invalid','admin',$3,true),
       ($2,'S3B 강사','s3b-teacher@t.invalid','teacher',$3,true)`, [ADMIN, TEACHER, await bcrypt.hash(PASSWORD, 4)]);
+    await markSetupDone(sql, [ADMIN, TEACHER]);
     for (const [id, email] of [[ADMIN, 's3b-admin@t.invalid'], [TEACHER, 's3b-teacher@t.invalid']] as const) {
       const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password: PASSWORD }).expect(201);
       tokens.set(id, res.body.accessToken as string);

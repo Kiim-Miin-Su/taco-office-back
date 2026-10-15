@@ -24,7 +24,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 /** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
 const DUE = '2026-12-31';
@@ -87,6 +87,7 @@ d('월 마감 (C92-d · C-39 · L-123 · N-140)', () => {
          ($4,'금액없는매니저','close-nm@t.kr','manager',$5,true,false)`,
       [CEO, TEACHER, MANAGER, NOMONEY, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER, MANAGER, NOMONEY]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU_A]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'마감학생','10')`, [STU_A]);
     const login = async (email: string) => {
