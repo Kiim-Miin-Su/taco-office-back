@@ -1,3 +1,4 @@
+// AUTH-SELF-01/AUTH-INIT-02 (2026-10-16 · S1): STAFF.english_name varchar(40) NULL(staff_english_name_present CHECK — 빈 글자 금지) · AUTH_CODE.purpose 에 contact_change 추가(auth_code_purpose_words CHECK) · migration 1769700000000-auth-self-onboarding(기존 행 보정 0 · 초기 발급 뒤 첫 설정 기록 없이 두 인증·잠금 해제 상태인 계정은 세어서 멈춘다). 필수 초기설정 판정 = must_change_credentials OR NOT email_verified OR NOT phone_verified(AuthService.credentialSetupRequired 한 곳 · 역할/아이디 면제 없음) · 초기 계정 발급도 잠금을 켠다. 표 수 변화 0.
 // TBO55-BOC11F-R108 (2026-10-09): BOC-11F 권고안 채택 — 교재 판매는 기존 LIB/VERS와 invoice 없는 PAY를 원 transaction으로 연결하고, 판매/current·UUID REQUEST·append-only EVENT·결제수단별 수수료 POLICY를 분리한다. 초기 계좌이체·현금 수수료는 각 0원이지만 배포일 효력 policy version과 판매 snapshot을 남긴다. 취소는 원 PAY를 보존하고 현재 열린 월의 음수 보정 PAY를 추가하며 version 경합·증빙 발행·월마감을 검사한다. DB는 기간 비중첩, receipt, 정책·PAY·감사 불변을 방어한다. v4.90/144표, migration1768700000000 로컬 upgrade120·down/up·권한·멱등·동시 생성/취소·직접쓰기 회귀 검증, 운영 미적용. 정책 변경 시 accounting DTO/controller/service·OpenAPI/generated Front A22·migration/두 DBML·P-BOC11F·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11E-R107 (2026-10-09): BOC-11E 권고안 채택 — 기존 RATE/STURATE 회당 이력을 보존하고 일반·Kinder·그룹·학생 예외의 시간당 정책을 POLICY current, UUID REQUEST, append-only EVENT로 분리한다. 학생 예외가 우선하며 actual occurrence date/span, explicit Kinder marker, exact group roster count로 청구한다. identity별 기간 비중첩·version+1·receipt·audit immutable과 superseded/retired terminal 전이를 DB가 방어하고 확정 청구·급여 snapshot은 바꾸지 않는다. v4.89/140표, migration1768600000000 로컬 fresh119·권한·멱등·stale·직접쓰기·terminal 재전이·30/60/90분·급여 불변 회귀 검증, 운영 미적용. 정책 변경 시 invoice-lines·accounting DTO/service·generated Front A26·migration/두 DBML·P-BOC11E·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D2-R106 (2026-10-09): BOC-11D-02 권고안 채택 — 승인 조정의 전후 환불 예정액 증가분을 실제 학생 환불액으로 서버 계산한다. 수납 PAY는 유지하고 STUDENT_REFUND_DISBURSEMENT current, UUID REQUEST, append-only EVENT를 분리하며 지급 당시 source adjustment version·금액·보호 계좌 id/version/last4를 보존한다. 지급 완료 뒤에는 먼저 환불 지급을 취소해야 원천 조정 취소가 가능하다. v4.88/137표, migration1768500000000 로컬 fresh118·repeat0·down/up·권한·멱등·stale·직접쓰기·취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 조정 전이·보호 계좌·accounting DTO/service/Front A24·A27·migration/두 DBML·P-BOC11D2·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
@@ -253,6 +254,7 @@ Table SUB {
 Table STAFF {
   id          bigserial   [pk]
   name        varchar(40) [not null]
+  english_name varchar(40) [note: 'AUTH-SELF-01 (2026-10-16 · 1769700000000) — 영어 이름. 본인이 마이페이지에서 적고 비우면 NULL(staff_english_name_present CHECK — 빈 글자 금지) · 이름과 같은 40자 규칙 · 임의 영문 정규식 없음 · 기존 행 NULL(추정 이관 없음) · 구성원 목록/상세 projection 이 읽는다']
   login_id    varchar(120)[not null, note: 'v4.53 · 로그인 아이디 (W10 · 2026-09-26) — 형식 자유 · 띄어쓰기(보이지 않는 글자 포함) 없음 · 1~120자 · 적은 모양 그대로 저장하고 비교는 lower() · lower(login_id) 유일(staff_login_id_lower_key) · 매니저가 만들 때 정한다 · 옛 행은 email 을 옮겼다']
   email       varchar(120)[unique, note: 'v4.53 뜻 바뀜 — 연락 · 인증용(아이디가 아니다) · NULL 허용(만들 때 선택 · 첫 설정에서 본인이 적고 코드로 확인) · 저장 · 비교는 소문자 정규화 · v4.51 lower(email) 유일(staff_email_lower_key · NULL 은 여럿이어도 된다)']
   phone       varchar(20) [note: 'v4.52 뜻 넓힘 — 한국 번호는 숫자만(01012345678) · 해외 번호는 +국가번호…(E.164 · N-103 · 나라 목록은 lib/phone 한 곳 · SENS 국제 문자)']
@@ -264,8 +266,8 @@ Table STAFF {
   password_hash  varchar(72)  [note: 'bcrypt. 길이 60 이지만 알고리즘이 바뀔 자리를 둔다']
   last_login_at  timestamptz
   phone_verified boolean      [not null, default: false, note: 'SENS 인증 완료 여부 (TBO-15)']
-  must_change_credentials boolean [not null, default: false, note: 'v4.50 · 첫 설정(v4.53 부터 휴대폰 · 이메일 인증 + 새 비밀번호 — 아이디는 바꾸지 않는다)을 끝내야 한다 — 켜져 있으면 첫 설정 경로 밖의 API 는 403 CREDENTIALS_CHANGE_REQUIRED · 켜는 곳은 관리자 계정 만들기 · 비밀번호 초기화(v4.53 · 매니저가 적은 임시 비밀번호) · 이메일/휴대폰 수정(v4.52 · N-104) · 운영 전환 스크립트뿐']
-  email_verified boolean      [not null, default: false, note: 'v4.50 · 이메일 인증 완료 여부 (phone_verified 와 짝)']
+  must_change_credentials boolean [not null, default: false, note: 'v4.50 · 첫 설정(v4.53 부터 휴대폰 · 이메일 인증 + 새 비밀번호 — 아이디는 바꾸지 않는다)을 끝내야 한다 — 켜져 있으면 첫 설정 경로 밖의 API 는 403 CREDENTIALS_CHANGE_REQUIRED · 켜는 곳은 관리자 계정 만들기 · 비밀번호 초기화(v4.53 · 매니저가 적은 임시 비밀번호) · 이메일/휴대폰 수정(v4.52 · N-104) · 운영 전환 스크립트 · 초기 계정 발급(AUTH-INIT-02 · 2026-10-16). 필수 초기설정 판정은 이 칸 OR NOT email_verified OR NOT phone_verified(AuthService.credentialSetupRequired 한 곳 · 역할/아이디 면제 없음) — 참이면 첫 설정 경로 밖의 API 는 403']
+  email_verified boolean      [not null, default: false, note: 'v4.50 · 이메일 인증 완료 여부 (phone_verified 와 짝) · true 를 쓰는 곳은 첫 설정 완료와 본인 연락처 변경(AUTH-SELF-01 · contact_change 코드 + 지금 비밀번호)뿐']
   credentials_changed_at timestamptz [note: 'v4.50 · v4.51 뜻 넓힘 — 마지막으로 이 계정의 아이디·비밀번호가 (다시) 정해진 시각(v4.53 부터 첫 설정은 아이디를 바꾸지 않고, 관리자의 아이디 수정은 찍지 않는다 — 세션을 끊지 않는다). 누가 했든 찍는다: 본인 첫 설정 완료 · 본인 비밀번호 찾기(v4.52 · N-101) · 관리자 비밀번호 초기화 · 운영 전환 스크립트. 이보다 먼저 발급된(iat 초 < 이 시각의 초) Access · Refresh 토큰은 401 · 옛 행 NULL = 끊지 않는다 (N-25)']
 
   // v2 §76 의 권한 5플래그. **평소에는 전부 NULL 이고 role 에서 파생한다** (D-R39).
@@ -299,7 +301,7 @@ Table AUTH_CODE {
   id            bigserial    [pk]
   staff_id      bigint       [not null, ref: > STAFF.id, note: 'ON DELETE CASCADE — 계정이 사라지면 코드도 뜻이 없다']
   channel       varchar(8)   [not null, note: 'email | sms (auth_code_channel_words CHECK) — 보내는 길은 기존 Sender 한 곳(SMTP · Naver SENS · DQ3)']
-  purpose       varchar(16)  [not null, default: 'onboarding', note: 'v4.52 · onboarding | password_reset (auth_code_purpose_words CHECK · N-101) — 확인이 용도를 함께 본다(첫 설정 코드로 비밀번호를 바꾸지 못하게) · 코드 해시 메시지에도 용도가 든다 · 발급 한도는 용도와 무관하게 계정 · 채널마다 센다']
+  purpose       varchar(16)  [not null, default: 'onboarding', note: 'v4.52 · onboarding | password_reset (N-101) | contact_change (AUTH-SELF-01 · 1769700000000) — auth_code_purpose_words CHECK — 확인이 용도를 함께 본다(첫 설정 코드로 비밀번호를 바꾸지 못하게) · 코드 해시 메시지에도 용도가 든다 · 발급 한도는 용도와 무관하게 계정 · 채널마다 센다']
   target_hash   varchar(64)  [not null, note: '받는 곳(정규화)의 HMAC — 원문을 저장하지 않는다']
   target_masked varchar(160) [not null, note: '사람이 읽는 가린 받는 곳 — maskEmail · 휴대폰 가운데 가림']
   code_hash     varchar(64)  [not null, note: '6자리 코드의 HMAC(서버 비밀) — 원문을 저장하지 않는다']
@@ -312,6 +314,7 @@ Table AUTH_CODE {
   Note: '''
   v4.50 · W8 첫 설정 인증 코드. v4.52 · 비밀번호 찾기(N-101)도 같은 원장을 쓴다(purpose 로 가른다).
   쓰는 곳은 POST /auth/onboarding/codes · /auth/onboarding/complete · /auth/password-reset/codes · /auth/password-reset/complete 넷뿐(원장 규칙은 src/auth/auth-code.ts 한 곳).
+  AUTH-SELF-01(2026-10-16) · POST /auth/profile/contact-codes · /auth/profile/contact-change 가 purpose=contact_change 로 같은 원장 · 같은 한도를 쓴다(다른 용도 코드는 통하지 않는다).
   발급 한도 — 60초 간격 · 한 시간 5번 · 하루(24시간) 10번(N-105) · 계정 · 채널마다. 해시 키는 운영에서 AUTH_CODE_SECRET 만(N-105 · 없으면 503).
   시드 --reset 이 비운다(SEEDED_TABLES). 운영 전환 스크립트도 비운다.
   '''

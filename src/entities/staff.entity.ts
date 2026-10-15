@@ -29,6 +29,13 @@ export class Staff {
   name: string;
 
   /**
+   * 영어 이름 (AUTH-SELF-01 · 사용자 결정 2026-10-16 · migration 1769700000000). 본인이 마이페이지에서 적고 비우면 NULL.
+   * 이름과 같은 길이 규칙(40자)이고 임의 영문 정규식은 두지 않는다. 빈 글자는 CHECK staff_english_name_present 가 막는다.
+   */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  englishName: string | null;
+
+  /**
    * 로그인 아이디 (W10 · 대표 지시 2026-09-26 「아이디 형식은 자유」). 매니저가 계정을 만들 때 정한다 — 첫 설정은 바꾸지 않는다.
    * 1~120자 · 띄어쓰기 없음(판정은 lib/account-policy.loginIdIssue 한 곳 · CHECK staff_login_id_shape 가 마지막 방어) ·
    * `lower(login_id)` 유일. 적은 모양 그대로 저장하고 비교만 소문자로 한다. 옛 계정은 이메일이 옮겨 와 있다(1763900000000).
@@ -72,8 +79,9 @@ export class Staff {
 
   /**
    * 첫 설정(휴대폰 · 이메일 인증 · 새 비밀번호)을 끝내야 하는 계정 (W8 · v4.50 · W10 부터 아이디는 바꾸지 않는다).
-   * 켜는 곳은 넷뿐 — 매니저의 계정 만들기(아이디 · 임시 비밀번호) · 비밀번호 초기화(임시 비밀번호) · 이메일/휴대폰 수정(N-104) · 운영 전환 스크립트.
-   * 켜져 있으면 첫 설정 경로 밖의 API 는 403.
+   * 켜는 곳 — 매니저의 계정 만들기(아이디 · 임시 비밀번호) · 비밀번호 초기화(임시 비밀번호) · 이메일/휴대폰 수정(N-104) · 운영 전환 스크립트 ·
+   * 초기 계정 발급(AUTH-INIT-02 · 2026-10-16). 이 칸 하나가 잠금의 전부가 아니다 — 필수 설정 판정은
+   * AuthService.credentialSetupRequired(이 칸 OR 두 인증 중 하나라도 false)이고, 그 판정이 참이면 첫 설정 경로 밖의 API 는 403.
    */
   @Column({ type: 'boolean', default: false })
   mustChangeCredentials: boolean;

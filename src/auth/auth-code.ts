@@ -29,7 +29,11 @@ export const CODE_HOURLY_LIMIT = 5;
 export const CODE_DAILY_LIMIT = 10;
 export const CODE_MAX_ATTEMPTS = 5;
 
-export const AUTH_CODE_PURPOSES = ['onboarding', 'password_reset'] as const;
+/**
+ * 코드 용도 — DB CHECK `auth_code_purpose_words` 와 같은 목록이다(migration 1769700000000 이 `contact_change` 를 더했다).
+ * `contact_change` 는 이미 첫 설정을 마친 계정이 마이페이지에서 새 이메일 · 휴대폰을 인증할 때만 쓴다(AUTH-SELF-01 · 2026-10-16).
+ */
+export const AUTH_CODE_PURPOSES = ['onboarding', 'password_reset', 'contact_change'] as const;
 export type AuthCodePurpose = (typeof AUTH_CODE_PURPOSES)[number];
 
 /**
@@ -172,23 +176,25 @@ export async function verifyCode(
  * 해외 번호(`+…` · N-103)는 SENS 국제 문자 규정의 인증 문장 모양 「[회사명] verification: 숫자」 그대로 보낸다
  * (여러 나라가 이 모양만 받는다 · 영문이라 받는 나라의 글꼴 · 부호화와 무관하다).
  */
+/** 용도별 낱말 — 메일 본문 · 제목 · 국내 문자 본문의 부분. 용도가 늘면 이 표에 한 줄을 더한다(시험이 문자 바이트를 잰다) */
+const CODE_PURPOSE_WORDS: Record<AuthCodePurpose, { what: string; subject: string; sms: string }> = {
+  onboarding: { what: '첫 설정', subject: '[티엔아카데미] 이메일 확인 코드', sms: '휴대폰 확인 코드' },
+  password_reset: { what: '비밀번호 찾기', subject: '[티엔아카데미] 비밀번호 찾기 코드', sms: '비밀번호 찾기 코드' },
+  contact_change: { what: '연락처 변경', subject: '[티엔아카데미] 연락처 변경 확인 코드', sms: '연락처 변경 코드' },
+};
+
 export function codeMessage(channel: SendChannel, purpose: AuthCodePurpose, to: string, code: string): SendRequest {
-  const what = purpose === 'onboarding' ? '첫 설정' : '비밀번호 찾기';
+  const words = CODE_PURPOSE_WORDS[purpose];
   if (channel === 'email') {
     return {
       channel, to,
-      subject: purpose === 'onboarding' ? '[티엔아카데미] 이메일 확인 코드' : '[티엔아카데미] 비밀번호 찾기 코드',
-      body: `티엔아카데미 백오피스 ${what} — 이메일 확인 코드는 ${code} 입니다.\n`
+      subject: words.subject,
+      body: `티엔아카데미 백오피스 ${words.what} — 이메일 확인 코드는 ${code} 입니다.\n`
         + `${CODE_TTL_MINUTES}분 안에 입력해 주세요. 직접 요청하지 않았다면 이 메일은 무시해 주세요.`,
     };
   }
   if (to.trim().startsWith('+')) return { channel, to, body: `[TN Academy] verification: ${code}` };
-  return {
-    channel, to,
-    body: purpose === 'onboarding'
-      ? `[티엔아카데미] 휴대폰 확인 코드 ${code} · ${CODE_TTL_MINUTES}분 안에 입력해 주세요`
-      : `[티엔아카데미] 비밀번호 찾기 코드 ${code} · ${CODE_TTL_MINUTES}분 안에 입력해 주세요`,
-  };
+  return { channel, to, body: `[티엔아카데미] ${words.sms} ${code} · ${CODE_TTL_MINUTES}분 안에 입력해 주세요` };
 }
 
 /** 코드 채널 하나의 준비 여부 — 발송기가 준비됐고(또는 개발용 되돌려 주기) 운영이면 코드 비밀 값이 있어야 한다 */
