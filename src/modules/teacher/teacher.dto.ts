@@ -86,6 +86,14 @@ export class TeacherSettingsDto {
   @ApiPropertyOptional({ type: Number, nullable: true, description: '현재 적용 시급(원/시간) — 본인만 조회' })
   wageRate?: number | null;
   @ApiPropertyOptional({ ...S, description: '그 시급 적용 시작일' }) wageFrom?: string | null;
+  /* AUTH-SELF-01 · 강사 수정사항 p98 마이 페이지 「기본 시급」 줄 — 정산 계산기(lib/payout-sheet.wageRateCard)와 같은 정책 줄에서 파생(저장 없음).
+     서버는 늘 채운다. 계약에서 선택 칸인 것은 바로 위 wageRate · wageFrom 과 같은 모양을 맞춘 것이다(가림은 관리자 허브가 null 로 한다) */
+  @ApiPropertyOptional({ type: Number, nullable: true, description: 'Kinder 1:1 시급(원/시간) = 기본 시급 + Kinder 가산. 기본 시급 · 정책 줄이 없거나 가려지면 null — 서버는 늘 채운다' })
+  kinderHourlyRate?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '진단고사 한 회차 급여(원/건) — 정책 줄이 없거나 가려지면 null · 서버는 늘 채운다' })
+  diagPerSession?: number | null;
+  @ApiPropertyOptional({ type: Number, nullable: true, description: '모의수업 한 회차 급여(원/건) — 정책 줄이 없거나 가려지면 null · 서버는 늘 채운다' })
+  mockPerSession?: number | null;
   @ApiProperty({ type: [TeacherTimezoneDto], description: '고를 수 있는 시간대 — TZG 표가 코드표다' })
   timezones!: TeacherTimezoneDto[];
   @ApiProperty({ type: [TeacherSettingRequestDto], description: '최근 내 설정 요청 (새것 먼저)' })

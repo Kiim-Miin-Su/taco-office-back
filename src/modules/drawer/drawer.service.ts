@@ -46,6 +46,8 @@ import {
 import { PHONE_COUNTRIES } from '../../lib/phone';
 import { staffRecordTables } from '../../lib/staff-refs';
 import { maskEmail, maskPhone } from '../notify/sender';
+// AUTH-INIT-02: 구성원 목록의 「첫 설정 전」 칩도 가드와 같은 판정 한 곳을 쓴다
+import { credentialSetupRequiredSql } from '../../auth/auth.service';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { TeacherService } from '../teacher/teacher.service';
 import type { TeacherGuidesDto, TeacherHomeDto, TeacherSuggestionsDto } from '../teacher/teacher.dto';
@@ -82,7 +84,7 @@ const staffNotFound = () => new NotFoundException({ code: 'STAFF_NOT_FOUND', mes
 
 /** LOG.before/after는 여러 쓰기 경로가 남긴 JSON이다. 조회는 안전한 칸만 허용한다. */
 const STAFF_AUDIT_PUBLIC: Record<string, string> = {
-  name: '이름', role: '역할', title: '직함', tz: '시간대', hiredOn: '입사일', active: '사용 상태',
+  name: '이름', englishName: '영어 이름', role: '역할', title: '직함', tz: '시간대', hiredOn: '입사일', active: '사용 상태',
 };
 const STAFF_AUDIT_PRIVATE: Record<string, string> = {
   email: '이메일', phone: '연락처', loginId: '로그인 아이디',
@@ -90,11 +92,14 @@ const STAFF_AUDIT_PRIVATE: Record<string, string> = {
   mustChangeCredentials: '인증 상태', credentialsChangedAt: '인증 상태',
   canMoney: '권한', canWage: '권한', canApprove: '권한', canHide: '권한', canGpaPack: '권한',
   teacherId: '담당 수업', serIds: '담당 수업', newSerIds: '담당 수업', guideIds: '담당 수업',
+  // AUTH-SELF-01 본인 연락처 변경 줄 — 값은 가린 모양뿐이지만 공개 칸이 아니다
+  channel: '연락처', value: '연락처', verified: '인증 상태', sessionsCut: '인증 상태',
 };
 const STAFF_AUDIT_ACTION: Record<string, string> = {
   create: '등록', update: '정보 수정', activate: '사용 재개', deactivate: '사용 중지',
   password_reset: '비밀번호 초기화', password_recover: '비밀번호 복구', onboarding: '첫 설정',
   perms: '권한 변경', 'teacher-change': '담당 강사 교체', delete: '삭제', golive_reset: '운영 초기화',
+  profile_update: '본인 정보 수정', contact_change: '본인 연락처 변경',
 };
 const staffAuditObject = (value: unknown): Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -282,7 +287,7 @@ export class DrawerService {
     const rows = await this.q(
       `WITH total AS (SELECT count(*)::text AS total FROM staff s WHERE ${where}),
         page_rows AS (
-          SELECT s.id, s.name, s.title, s.active, to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
+          SELECT s.id, s.name, s.english_name, s.title, s.active, to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
                  ${kstAt('s.created_at')} AS created_at, s.created_at AS sort_at
             FROM staff s WHERE ${where}
            ORDER BY s.created_at DESC, s.id DESC LIMIT $3 OFFSET $4
@@ -293,7 +298,8 @@ export class DrawerService {
     );
     return {
       items: rows.filter((r) => r.id !== null).map((r) => ({
-        id: Number(r.id), name: String(r.name), englishName: null, title: str(r.title), active: r.active === true,
+        // AUTH-SELF-01: 본인이 마이페이지에서 적은 STAFF.english_name 그대로(읽기만 · 남이 고치는 경로는 없다)
+        id: Number(r.id), name: String(r.name), englishName: str(r.english_name), title: str(r.title), active: r.active === true,
         hiredOn: str(r.hired_on), createdAt: String(r.created_at),
       })),
       page, pageSize, total: Number(rows[0].total),
@@ -306,7 +312,7 @@ export class DrawerService {
   ): Promise<StaffDirectoryDetailDto> {
     const cursor = parseStaffAuditCursor(cursorRaw);
     const [staff] = await this.q(
-      `SELECT s.id, s.name, s.email, s.phone, s.title, s.tz, s.active,
+      `SELECT s.id, s.name, s.english_name, s.email, s.phone, s.title, s.tz, s.active,
               to_char(s.hired_on,'YYYY-MM-DD') AS hired_on, ${kstAt('s.created_at')} AS created_at
          FROM staff s WHERE s.id = $1
           AND (s.role = 'teacher' OR EXISTS (SELECT 1 FROM ser owned WHERE owned.teacher_id = s.id))`, [id],
@@ -368,7 +374,7 @@ export class DrawerService {
     const audit = auditPage.map(staffAuditRow);
     return {
       profile: {
-        id: Number(staff.id), name: String(staff.name), englishName: null, title: str(staff.title),
+        id: Number(staff.id), name: String(staff.name), englishName: str(staff.english_name), title: str(staff.title),
         active: staff.active === true, hiredOn: str(staff.hired_on), createdAt: String(staff.created_at),
         email: str(staff.email), phone: str(staff.phone), timezone: str(staff.tz),
       },
@@ -427,6 +433,10 @@ export class DrawerService {
         ...home.settings,
         wageRate: showWage ? home.settings.wageRate : null,
         wageFrom: showWage ? home.settings.wageFrom : null,
+        // AUTH-SELF-01 파생 단가도 급여다 — Kinder 시급은 기본 시급을 담고 있어 같은 가림을 따른다(펼친 값이 새지 않게)
+        kinderHourlyRate: showWage ? home.settings.kinderHourlyRate : null,
+        diagPerSession: showWage ? home.settings.diagPerSession : null,
+        mockPerSession: showWage ? home.settings.mockPerSession : null,
         requests: home.settings.requests.map((request) => (
           request.reqType === 'wage_change' && !showWage ? { ...request, asked: null } : request
         )),
@@ -918,7 +928,8 @@ export class DrawerService {
       : false;
     const members = (await this.q(
       `SELECT s.id, s.name, s.login_id, s.email, s.role::text AS role, s.title, s.tz, s.active,
-              CASE WHEN $3::boolean THEN s.phone END AS phone, s.must_change_credentials,
+              CASE WHEN $3::boolean THEN s.phone END AS phone,
+              ${credentialSetupRequiredSql('s')} AS must_change_credentials,
               to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
               (s.role::text = ANY($5::text[])) AS manageable, ${permCols('s')},
               w.rate AS wage_rate, to_char(w.from_date,'YYYY-MM-DD') AS wage_from,
@@ -1161,7 +1172,8 @@ export class DrawerService {
     id: number, canWage: boolean, viewerId: number, canManage: boolean, canSetPerms = false, viewerPerms: PermFlags | null = null,
   ): Promise<MemberDto> {
     const [r] = await this.q(
-      `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active, must_change_credentials,
+      `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active,
+              ${credentialSetupRequiredSql('staff')} AS must_change_credentials,
               to_char(hired_on,'YYYY-MM-DD') AS hired_on, ${permCols()},
               (role = 'teacher' AND active) AS wageable, (role::text = ANY($2::text[])) AS manageable
          FROM staff WHERE id = $1`,

@@ -15,7 +15,7 @@ import {
 import { KST, addDays, isIsoDate, nowMinKst, todayKst } from '../../lib/kst';
 import {
   BONUS_D1_DEFAULTS, BONUS_KIND_HINT, BONUS_KIND_LABEL,
-  loadBonusRules, payoutBreakdown, payoutSettleLabel, payoutSheet,
+  loadBonusRules, payoutBreakdown, payoutSettleLabel, payoutSheet, wageRateCard,
 } from '../../lib/payout-sheet';
 import { drawnDateOf, effectiveModeOf, kstAt, serStuOn, stuPausedOn } from '../../lib/sql';
 import { REQ_TYPE_LABEL, labelOf, reqAsked, reqAskedLine } from '../../lib/approval';
@@ -306,12 +306,18 @@ export class TeacherService {
     const lastWage = requests.find((r) => r.reqType === 'wage_change')?.createdOn ?? null;
     const wageAskableOn = TeacherService.wageAskableOn(lastWage);
     const tzPending = requests.some((r) => r.reqType === 'tz_change' && r.state === 'pending');
+    const wageRate = me?.wage_rate === null || me?.wage_rate === undefined ? null : Number(me.wage_rate);
+    // 마이 페이지 「기본 시급」 줄의 Kinder · 진단/모의 단가(강사 수정사항 p98) — 정산 계산기와 같은 정책 줄에서 파생한다(저장 없음)
+    const card = wageRateCard(await loadBonusRules({ query: (sql, p) => this.q(sql, p) }), today, wageRate);
 
     return {
       name: String(me?.name ?? ''),
       timezone: String(me?.tz ?? 'Asia/Seoul'),
-      wageRate: me?.wage_rate === null || me?.wage_rate === undefined ? null : Number(me.wage_rate),
+      wageRate,
       wageFrom: (me?.wage_from as string) ?? null,
+      kinderHourlyRate: card.kinderHourlyRate,
+      diagPerSession: card.diagPerSession,
+      mockPerSession: card.mockPerSession,
       timezones,
       requests,
       canAskWage: wageAskableOn === null || wageAskableOn <= today,

@@ -291,7 +291,7 @@ export class MemberDto {
   wageable?: boolean;
 
   /* ── W8 사용자 표 CRUD (대표 지시 2026-09-26) — 줄마다 **서버가** 가른다. 화면은 role 을 보지 않는다 (D-R39) ── */
-  @ApiPropertyOptional({ description: '첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩' })
+  @ApiPropertyOptional({ description: '필수 초기설정(휴대폰 · 이메일 인증 · 새 비밀번호)이 남은 계정 — 화면의 「첫 설정 전」 칩. 판정은 로그인 · 가드와 같은 AuthService.credentialSetupRequired(AUTH-INIT-02)' })
   mustChangeCredentials?: boolean;
   @ApiPropertyOptional({ ...S, description: '휴대폰(한국은 숫자만 · 해외는 +국가번호…) — 전체를 다루는 사람(canCrudAll)에게만 싣는다. 그 밖에는 null' })
   phone?: string | null;
@@ -336,7 +336,7 @@ export class StaffDirectoryQueryDto {
 export class StaffDirectoryRowDto {
   @ApiProperty() id!: number;
   @ApiProperty() name!: string;
-  @ApiProperty({ type: String, nullable: true, description: 'STAFF 영문명 컬럼 이관 전까지 null' }) englishName!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '영어 이름 — 본인이 마이페이지에서 적는 STAFF.english_name(AUTH-SELF-01) · 없으면 null' }) englishName!: string | null;
   @ApiProperty({ type: String, nullable: true }) title!: string | null;
   @ApiProperty() active!: boolean;
   @ApiProperty({ type: String, nullable: true }) hiredOn!: string | null;

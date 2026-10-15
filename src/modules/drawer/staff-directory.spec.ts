@@ -55,6 +55,7 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
         todo: { unwrittenReports: 0, waitingApprovals: 0, openChangeRequests: 0, openStaffRequests: 0, openBookChanges: 0 },
         settings: {
           name: '실장 강사', timezone: 'Asia/Seoul', wageRate: 50000, wageFrom: '2026-10-01', timezones: [],
+          kinderHourlyRate: 60000, diagPerSession: 15000, mockPerSession: 15000,
           requests: [{ id: 9, reqType: 'wage_change', label: '시급 변경', asked: '60,000원/시간', state: 'pending', createdOn: '2026-10-09', rejectReason: null }],
           canAskWage: false, wageAskableOn: '2026-11-01', canAskTz: true,
         },
@@ -80,7 +81,10 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
     );
     const home = await svc.staffTeacherHome(42, 2, false, false);
     expect(teacher.home).toHaveBeenCalledWith(42);
-    expect(home.settings).toMatchObject({ wageRate: null, wageFrom: null, requests: [{ asked: null }] });
+    // AUTH-SELF-01 파생 단가(Kinder 시급은 기본 시급을 담는다)도 같은 가림을 따른다
+    expect(home.settings).toMatchObject({
+      wageRate: null, wageFrom: null, kinderHourlyRate: null, diagPerSession: null, mockPerSession: null, requests: [{ asked: null }],
+    });
     await expect(svc.staffTeacherGuides(42, '2026-10-09')).resolves.toMatchObject({ weekFrom: '2026-10-05' });
     await expect(svc.staffTeacherSuggestions(42)).resolves.toMatchObject({ used: 1, remaining: 2 });
     expect(teacher.guides).toHaveBeenCalledWith(42, '2026-10-09');

@@ -141,6 +141,31 @@ d('강사 §8 내 설정 — 올리기만 하고 적용하지 않는다 (C39)', 
     expect(after.settings.wageAskableOn).not.toBeNull();
     expect(after.settings.requests[0]).toMatchObject({ reqType: 'wage_change', state: 'pending' });
   });
+
+  /* AUTH-SELF-01 · 강사 수정사항 p98 마이 페이지 「₩45,000/시간 · Kinder ₩55,000 · 진단 · 모의 ₩15,000/건」 —
+     정산 계산기와 같은 정책 줄에서 파생한다(저장 없음 · D1 미리 채움 값을 데이터로 쓰지 않는다). */
+  it('마이 페이지 시급 줄 — Kinder 시급은 기본 시급 + Kinder 가산, 진단 · 모의는 건당 정책 줄 그대로다', async () => {
+    await q.query(`DELETE FROM payout_bonus_rule`);
+    const none = await svc().home(ME);
+    expect(none.settings).toMatchObject({ wageRate: 42000, kinderHourlyRate: null, diagPerSession: null, mockPerSession: null });
+
+    await q.query(
+      `INSERT INTO payout_bonus_rule (kind, kind_key, amount, from_date, set_by) VALUES
+         ('kinder_hourly', NULL, 10000, '2026-01-01', $1),
+         ('per_session', 'diagx', 15000, '2026-01-01', $1),
+         ('per_session', 'mock', 16000, '2026-01-01', $1),
+         ('kinder_hourly', NULL, 99999, '2999-01-01', $1)`,
+      [ME],
+    );
+    const card = await svc().home(ME);
+    // 앞으로 적용될 줄(2999)은 오늘 값이 아니다 — 적용일 셈은 정산과 같다
+    expect(card.settings).toMatchObject({ wageRate: 42000, kinderHourlyRate: 52000, diagPerSession: 15000, mockPerSession: 16000 });
+
+    await q.query(`DELETE FROM wage WHERE staff_id = $1`, [ME]);
+    const noWage = await svc().home(ME);
+    // 기본 시급이 없으면 Kinder 시급도 지어내지 않는다 — 건당 단가는 시급과 무관하다
+    expect(noWage.settings).toMatchObject({ wageRate: null, kinderHourlyRate: null, diagPerSession: 15000, mockPerSession: 16000 });
+  });
 });
 
 /* ── 정산 확정 판정은 한 곳뿐이다 (N-27 · 대표 결정 2026-09-12) ────────────────────

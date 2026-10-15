@@ -87,6 +87,32 @@ function ruleAt(rules: readonly BonusRuleRow[], kind: BonusKind, kindKey: string
   return best;
 }
 
+/** 강사 마이페이지 「기본 시급」 줄의 파생 단가 — 저장하지 않고 그날 걸린 정책 줄에서 계산한다 */
+export interface WageRateCard {
+  /** Kinder 1:1 시급 = 기본 시급 + `kinder_hourly` 가산(원/시간). 기본 시급이나 정책 줄이 없으면 null */
+  kinderHourlyRate: number | null;
+  /** 진단고사 한 회차 총 급여(`per_session` · diagx). 정책 줄이 없으면 null */
+  diagPerSession: number | null;
+  /** 모의수업 한 회차 총 급여(`per_session` · mock). 정책 줄이 없으면 null */
+  mockPerSession: number | null;
+}
+
+/**
+ * AUTH-SELF-01 · 강사 수정사항 p98 마이 페이지(「₩45,000/시간 · Kinder ₩55,000 · 진단 · 모의 ₩15,000/건」).
+ * 셈은 lessonCompensation 과 **같은 정책 줄 · 같은 적용일 셈(ruleAt)** 이다 — 화면이 숫자를 더하거나 D1 미리 채움 값을
+ * 데이터로 쓰지 않는다(정책 줄이 없으면 null 로 가산 없음을 말한다). 정책을 바꾸면 lessonCompensation 과 함께 바꾼다.
+ */
+export function wageRateCard(rules: readonly BonusRuleRow[], onDate: string, wageRate: number | null): WageRateCard {
+  const kinder = ruleAt(rules, 'kinder_hourly', null, onDate);
+  const diag = ruleAt(rules, 'per_session', 'diagx', onDate);
+  const mock = ruleAt(rules, 'per_session', 'mock', onDate);
+  return {
+    kinderHourlyRate: wageRate !== null && kinder ? wageRate + Math.max(0, kinder.amount) : null,
+    diagPerSession: diag ? Math.max(0, diag.amount) : null,
+    mockPerSession: mock ? Math.max(0, mock.amount) : null,
+  };
+}
+
 export interface LessonCompensationInput {
   kindKey: string;
   /** 가산 규칙의 적용일을 견줄 실제 수업일(옮긴 회차는 옮긴 날). */
