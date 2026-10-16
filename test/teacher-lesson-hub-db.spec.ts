@@ -90,6 +90,9 @@ d('BOC-05D-01 — 강사 수업 허브 exact read contract', () => {
     const exact = await lesson(teacherId, exactDate, exactDate, '선택 수업');
     const older = await lesson(teacherId, addDays(today, -8), addDays(today, -8), '지난 수업');
     const foreign = await lesson(otherTeacherId, addDays(today, -3), addDays(today, -3), '다른 강사 수업');
+    // B1014-04: 최신 학생 프로필(지도 방향·언어)은 끝나지 않은 회차가 남은 현재 담당자에게만 열린다.
+    // 지난 회차만 있는 대역은 그 규칙에 막히므로 다음 주 수업을 하나 둬 계속 맡는 강사로 만든다(S5a 2026-10-16 — 제품 판정은 그대로).
+    await lesson(teacherId, addDays(today, 7), addDays(today, 7), '다음 수업');
 
     const result = await svc().lessonHub(teacherId, exact, exactDate, exactDate);
 

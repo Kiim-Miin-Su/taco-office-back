@@ -105,6 +105,18 @@ d('진단 리포트 작성 (C61)', () => {
   const write = (studentId: number, extra: Record<string, unknown> = {}) =>
     svc().createDiagnostic(MINE, { studentId, levelSummary: 'MAP 220 수준', ...extra });
 
+  /**
+   * B1014-04 안내 reader는 끝나지 않은 회차가 남은 담당자에게만 최신 NOTE·진단·프로필을 연다(upper(span) > now()).
+   * makeSeries의 오늘 10:00–11:00 회차 하나만 두면 11시 이후 실행에서 현재 담당이 아니게 되어 시험이 시각에 따라 갈린다.
+   * 주간 반복이 이어지는 실제 투영처럼 다음 주 회차를 하나 더 둔다(S5a 2026-10-16 — 제품 판정은 그대로).
+   */
+  const continueSeries = (serId: number) => q.query(
+    `INSERT INTO ser_occ (ser_id, on_date, span)
+     VALUES ($1, $2::date, tstzrange(($2::date + time '10:00') AT TIME ZONE 'Asia/Seoul',
+                                     ($2::date + time '11:00') AT TIME ZONE 'Asia/Seoul','[)'))`,
+    [serId, addDays(todayKst(), 7)],
+  );
+
   /* ── ① 내 학생만 ─────────────────────────────────────────────────── */
 
   it('내 학생이면 쓴다 — 원문 04 의 네 칸이 그대로 돌아온다', async () => {
@@ -155,6 +167,7 @@ d('진단 리포트 작성 (C61)', () => {
   it('수업 안내가 읽는 것은 **최신 한 건**이다 — 쌓아도 화면이 안 어지럽다', async () => {
     await write(A, { levelSummary: '첫 진단' });
     await write(A, { levelSummary: '두 번째 진단', curriculum: '주 3회로 올림' });
+    await continueSeries(serMine);
     const { students } = await svc().guides(MINE);
     const s = students.find((x) => x.studentId === A)!;
     expect(s.diag?.levelSummary).toBe('두 번째 진단');
@@ -174,6 +187,7 @@ d('진단 리포트 작성 (C61)', () => {
       span=tstzrange(($2::date + time '10:00') AT TIME ZONE 'Asia/Seoul',
         ($2::date + time '11:00') AT TIME ZONE 'Asia/Seoul','[)') WHERE ser_id=$1`, [serMine, past]);
     await q.query(`INSERT INTO ser_stu(ser_id,student_id) VALUES ($1,$2)`, [serOther, A]);
+    await continueSeries(serOther);
 
     const historical = (await svc().guides(MINE, past)).students.find(student => student.studentId === A);
     expect(historical?.lessons).toHaveLength(1);

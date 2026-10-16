@@ -28,7 +28,8 @@ function setup(row: Record<string, unknown> = target) {
     if (sql.includes('SELECT id FROM staff WHERE lower')) {
       return [];
     }
-    if (sql.includes('FROM staff WHERE id = $1')) {
+    // B1014-05: 저장 뒤 다시 읽기는 강사 프로필 투영 때문에 `FROM staff s WHERE id = $1` 별칭을 쓴다(S5a 2026-10-16 대역 정합)
+    if (sql.includes('FROM staff WHERE id = $1') || sql.includes('FROM staff s WHERE id = $1')) {
       return [{ ...row }];
     }
     return [];

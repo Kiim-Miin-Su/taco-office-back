@@ -184,9 +184,10 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
   it('현재 배정은 KST 오늘 시작 전·종료 후 규칙을 빼고 오늘 명단만 조회한다', async () => {
     const query = jest.fn().mockImplementation((sql: string) => {
       if (sql.includes('FROM staff s WHERE s.id')) return [staff];
+      // B1014-03: 배정 조회는 학생 링크용 students(id·name)를 늘 함께 준다(빈 명단은 '[]') — S5a 2026-10-16 대역 정합
       if (sql.includes('FROM ser s JOIN kind')) return [{
         id: '7', kind_name: '수업', subject_name: '수학', student_names: ['현재 학생'],
-        from_date: '2026-09-01', to_date: null,
+        students: [{ id: '31', name: '현재 학생' }], from_date: '2026-09-01', to_date: null,
       }];
       if (sql.includes('FROM rep r JOIN ser') || sql.includes('FROM log l LEFT JOIN staff')) return [];
       throw new Error(`예상하지 않은 조회: ${sql}`);
@@ -198,7 +199,7 @@ describe('관리자 강사 목록·상세 — 기존 데이터의 안전한 조�
     expect(sql).toContain('AND (s.to_date IS NULL OR s.to_date >= $2::date)');
     expect(sql).toContain(serStuOn('ss', '$2::date'));
     expect(params).toEqual([42, todayKst()]);
-    expect(result.assignments).toMatchObject([{ id: 7, studentNames: ['현재 학생'], toDate: null }]);
+    expect(result.assignments).toMatchObject([{ id: 7, studentNames: ['현재 학생'], students: [{ id: 31, name: '현재 학생' }], toDate: null }]);
   });
 
   it('감사 이력의 at+id 복합 커서는 동일 시각·백필 행의 안정 정렬을 유지한다', async () => {
