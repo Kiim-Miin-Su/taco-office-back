@@ -12,7 +12,7 @@ import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from '../src/app.module';
 import type { PaymentEvidenceLedgerDto } from '../src/modules/accounting/accounting.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -58,6 +58,7 @@ d('BO-11AD-01 입금 증빙 원장', () => {
         ($2,'증빙강사','boc11-evidence-teacher@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, passwordHash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(`INSERT INTO stu (id,name,grade,created_at) VALUES ($1,'증빙학생','10',current_date)`, [STUDENT]);
     const rows = await q<{ id: string }>(
       `INSERT INTO pay (student_id,amount,paid_on,method,reason,entered_by,entered_at,confirmed_by,confirmed_at)

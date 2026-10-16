@@ -12,7 +12,7 @@ import { DataSource } from 'typeorm';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from '../src/app.module';
 import type { PayoutDisbursementLedgerDto } from '../src/modules/accounting/accounting.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -84,6 +84,7 @@ d('BO-11AD-03 실제 강사료 지급 원장', () => {
         ($4,'지급강사C','boc11-payout-teacher3@t.kr','teacher',$5,true)`,
       [CEO, TEACHER, TEACHER_2, TEACHER_3, passwordHash],
     );
+    await markSetupDone(q, [CEO, TEACHER, TEACHER_2, TEACHER_3]);
     const rows = await q<{ id: string }>(
       `INSERT INTO payout(
         staff_id,year_month,hours,gross,late_rep_cut,late_cls_cut,income_tax,local_tax,net,state,confirmed_by,confirmed_at)

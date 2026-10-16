@@ -32,7 +32,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -132,6 +132,7 @@ d('W11 스케줄 — 방식 전환 · 회차 메모 · 학생 겹침 · 빈 자�
          ($3,'W11강사이','w11-t2@t.kr','teacher',$4,true)`,
       [CEO, T1, T2, hash],
     );
+    await markSetupDone(q, [CEO, T1, T2]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'W11학생A','10'), ($2,'W11학생B','11')`, [STU_A, STU_B]);
     await q(
       `INSERT INTO kind (key, name, color, cap, grp, rep, sort) VALUES ($1,'W11수업','#123456',4,'lesson',false,99)
@@ -774,6 +775,7 @@ d('W11 스케줄 — 방식 전환 · 회차 메모 · 학생 겹침 · 빈 자�
     await q(`DELETE FROM staff WHERE id = $1`, [ADMIN2]);
     await q(`INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,'W11관리자','w11-a2@t.kr','admin',$2,true)`,
       [ADMIN2, await bcrypt.hash(PW, 4)]);
+    await markSetupDone(q, [ADMIN2]);
     try {
       const adminToken = (await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })
         .send({ loginId: 'w11-a2@t.kr', password: PW }).expect(201)).body.accessToken as string;

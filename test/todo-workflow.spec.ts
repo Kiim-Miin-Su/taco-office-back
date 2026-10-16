@@ -11,7 +11,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -45,6 +45,7 @@ d('§64 할 일 완료·기한 HTTP/DB 정합성 (S2-b)', () => {
       ($2,'S2동명이인','s2todo-teacher@t.kr','teacher',$5,true),
       ($3,'S2타인','s2todo-other@t.kr','teacher',$5,true),
       ($4,'S2동명이인','s2todo-owner@t.kr','manager',$5,true)`, [...actors, hash]);
+    await markSetupDone(q, [...actors]);
     for (const [actor, email] of [[CEO, 'ceo'], [TEACHER, 'teacher'], [OTHER, 'other'], [OWNER, 'owner']] as const) {
       const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: `s2todo-${email}@t.kr`, password: 'todo-workflow-1234' }).expect(201);
       tokens.set(actor, res.body.accessToken as string);

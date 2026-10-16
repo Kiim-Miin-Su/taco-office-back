@@ -24,7 +24,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -83,6 +83,7 @@ d('강사 참석자의 회의 상세 — 알림 링크는 받는 사람이 열 �
          ($4,'다른강사','mt-t2@t.kr','teacher',$5,true)`,
       [MGR, MGR2, TEACHER, TEACHER2, hash],
     );
+    await markSetupDone(q, [MGR, MGR2, TEACHER, TEACHER2]);
     tokens.mgr = await login('mt-mgr@t.kr');
     tokens.teacher = await login('mt-t@t.kr');
     tokens.teacher2 = await login('mt-t2@t.kr');

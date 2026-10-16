@@ -28,7 +28,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource, QueryRunner } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 import { ATTENDANCE_CANCEL_REASON_LABEL, CANCEL_TREAT_LABEL } from '../src/lib/rules';
 import { TeacherService } from '../src/modules/teacher/teacher.service';
 
@@ -70,6 +70,7 @@ d('휴강 사유·처리 (C92-a · C-30~C-33 · M-125)', () => {
          ($3,'휴강매니저','cancel-m@t.kr','manager',$4,true)`,
       [CEO, TEACHER, MANAGER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER, MANAGER]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'휴강학생A','10'), ($2,'휴강학생B','10')`, [STU_A, STU_B]);
     const login = async (email: string) => {

@@ -27,6 +27,7 @@ import { Staff } from '../src/entities';
 import { ApiErrorFilter } from '../src/common/filters/api-error.filter';
 import { AuthService } from '../src/auth/auth.service';
 import { CurrentUser } from '../src/auth/current-user.decorator';
+import { markSetupDone } from './db';
 
 /** 테스트용 엔드포인트 — 가드가 실제로 무엇을 막는지 보려고 만든다 */
 @Controller('probe')
@@ -117,6 +118,8 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
          ($2, '이메일없음', $4, NULL, 'teacher', $5, true)`,
       [TEST_IDS.freeId, TEST_IDS.noEmail, FREE_ID, 'no-email.teacher', hash],
     );
+    // 이 스위트는 「첫 설정을 마친 직원」의 인증 · 권한을 본다 — 필수 초기설정 판정(AUTH-INIT-02)은 auth-initial-setup.spec 이 본다
+    await markSetupDone(ds, ALL_IDS);
   });
 
   afterAll(async () => {
@@ -402,6 +405,7 @@ d('인증 · 권한 (D-R39 · D-R41)', () => {
         // save()의 신규 generated id 재할당을 피하고 이 테스트가 소유한 고정 fixture를 복원한다.
         await ds.query('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES($1,$2,$3,$4,$5,true)',
           [TEST_IDS.admin, saved.name, saved.email, saved.role, saved.passwordHash]);
+        await markSetupDone(ds, [TEST_IDS.admin]);
       }
     });
 

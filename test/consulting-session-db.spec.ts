@@ -25,7 +25,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -110,6 +110,7 @@ d('컨설팅 회차 기록 · 종료 + GPA 역사 조회 (C95 · I-91 · I-95 ·
          ($3,'회차강사','cs-t@t.kr','teacher',$4,true,null)`,
       [CEO, OWNER, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, OWNER, TEACHER]);
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'회차학생1','11','테스트고'), ($2,'회차학생2','10','테스트고')`, [STU1, STU2]);
     const login = async (email: string) => {
       const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 }).send({ loginId: email, password: PW }).expect(201);

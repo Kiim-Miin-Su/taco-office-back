@@ -25,7 +25,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { issueApprovalUndo } from '../src/modules/drawer/approval-undo';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -72,6 +72,7 @@ d('P1 CROSS-CUT — 결재 권한만으로는 §20 변경 요청을 반영 · �
          ($3,'교차요청강사','xc-req@t.kr','teacher',$4,true,NULL)`,
       [ADMIN, APPROVER, REQUESTER, hash],
     );
+    await markSetupDone(q, [ADMIN, APPROVER, REQUESTER]);
     // 앞으로 올 · 취소되지 않은 회차 하나 — 반영이 실제로 시간표를 바꾸는지 본다
     const [o] = await q<{ ser_id: string; on_date: string }>(
       `SELECT ser_id, to_char(on_date,'YYYY-MM-DD') AS on_date FROM ser_occ

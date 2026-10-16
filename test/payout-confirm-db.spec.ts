@@ -26,7 +26,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import type { PayoutSheetDto, PayoutSheetRowDto } from '../src/modules/accounting/accounting.dto';
 import { withholding } from '../src/lib/rules';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -90,6 +90,7 @@ d('강사료 시트 · 지급 확정 (C94-b · H-82 · O-148 · D-43)', () => {
          ($4,'무시급강사','po-t2@t.kr','teacher',$5,true,null)`,
       [CEO, TEACHER, MANAGER, TEACHER2, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER, MANAGER, TEACHER2]);
     await q(`INSERT INTO wage (staff_id, rate, from_date, reason) VALUES ($1, $2, '2026-01-01', '정산 테스트')`, [TEACHER, RATE]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'정산학생','10')`, [STU]);

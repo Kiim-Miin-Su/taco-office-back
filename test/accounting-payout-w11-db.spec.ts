@@ -31,7 +31,7 @@ import { AppModule } from '../src/app.module';
 import { AccountingService } from '../src/modules/accounting/accounting.service';
 import { TeacherService } from '../src/modules/teacher/teacher.service';
 import type { PayoutDetailDto, PayoutSheetDto, PayoutSheetRowDto } from '../src/modules/accounting/accounting.dto';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -139,6 +139,7 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
          ($5,'옛확정강사','w11po-tb@t.kr','teacher',$6,true,null,null)`,
       [CEO, TEACHER, MGR, TMONEY, TEACHER_B, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER, MGR, TMONEY, TEACHER_B]);
     await q(`INSERT INTO wage (staff_id, rate, from_date, reason) VALUES ($1, $3, '2026-01-01', 'W11 정산'), ($2, $3, '2026-01-01', 'W11 정산')`, [TEACHER, TEACHER_B, RATE]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'정산W11학생','10'), ($2,'정산W11둘째','10')`, [STU, STU_B]);

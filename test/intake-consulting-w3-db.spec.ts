@@ -24,7 +24,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -71,6 +71,7 @@ d('1:1 대조 wave 3 — 상담 §23·§24 · 컨설팅 §27·§30·§31 서버 
          ($2,'삼차담당','w3-own@t.kr','manager',$3,true,null)`,
       [CEO, OWNER, hash],
     );
+    await markSetupDone(q, [CEO, OWNER]);
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'삼차학생','11','테스트고')`, [STU]);
     const [room] = await q<{ id: string }>(`INSERT INTO room (branch, name) VALUES ('테스트', 'W3 4호') RETURNING id`);
     ROOM = Number(room.id);

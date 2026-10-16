@@ -1029,6 +1029,406 @@
         ]
       }
     },
+    "/auth/profile": {
+      "get": {
+        "description": "본인 화면에 필요한 최소 정보만 싣는다(비밀번호 해시 · 권한 예외 · 세션 시각 없음). 권한 판정은 MeDto 플래그다.",
+        "operationId": "ProfileController_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED: 로그인이 필요하다 · 비활성 계정.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CREDENTIALS_CHANGE_REQUIRED — 필수 초기설정(휴대폰 · 이메일 인증 · 비밀번호 교체)이 남은 계정은 이 경로를 쓸 수 없다(AUTH-INIT-02).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "내 프로필 — 아이디 · 이름 · 영어 이름 · 역할 이름 · 직함 · 이메일/휴대폰과 인증 여부 · 입사일 · 연락처 변경 코드 안내",
+        "tags": [
+          "auth"
+        ]
+      },
+      "patch": {
+        "description": "이름은 비울 수 없고 1~40자(앞뒤 공백 제외)다. role · id · 인증 여부 · 이메일 · 휴대폰 같은 칸을 실으면 400 이다 (연락처는 contact-change 로만 바뀐다). 바뀐 칸이 있을 때만 감사 줄을 남긴다.",
+        "operationId": "ProfileController_update",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdateDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST — 이름 비움 · 40자 초과 · 허용하지 않은 칸",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED: 로그인이 필요하다 · 비활성 계정.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CREDENTIALS_CHANGE_REQUIRED — 필수 초기설정(휴대폰 · 이메일 인증 · 비밀번호 교체)이 남은 계정은 이 경로를 쓸 수 없다(AUTH-INIT-02).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "이름 · 영어 이름 고치기 — 생략하면 그대로 · 영어 이름 null/빈 글자는 비운다",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/profile/contact-codes": {
+      "post": {
+        "description": "코드와 받는 곳 원문은 저장하지 않는다(HMAC · 가린 모양만). 같은 채널 60초 간격 · 한 시간 5번 · 하루 10번(계정 · 채널마다 · 첫 설정 · 비밀번호 찾기와 같은 예산). 지금 값과 같은 수신처는 409 CONTACT_UNCHANGED.",
+        "operationId": "ProfileController_codes",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileContactCodeRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingCodeResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST(입력 모양) · INVALID_EMAIL · INVALID_PHONE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED: 로그인이 필요하다 · 비활성 계정.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CREDENTIALS_CHANGE_REQUIRED — 필수 초기설정(휴대폰 · 이메일 인증 · 비밀번호 교체)이 남은 계정은 이 경로를 쓸 수 없다(AUTH-INIT-02).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CONTACT_UNCHANGED · EMAIL_TAKEN(다른 계정의 이메일 · 대소문자 무관)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "CODE_TOO_SOON · CODE_DAILY_LIMIT · CODE_LIMIT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "SEND_FAILED — 공급자가 거절 · 그 코드는 쓸 수 없게 닫는다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "SENDER_NOT_CONFIGURED · AUTH_CODE_SECRET_MISSING — 코드 줄을 만들지 않는다",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "새 이메일 · 휴대폰으로 확인 코드 받기 — 6자리 · 10분",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/profile/contact-change": {
+      "post": {
+        "description": "둘 다 맞으면 한 transaction 으로 그 채널의 값과 인증을 저장하고 남은 코드를 닫고 세션 시각을 바꾼다 — 그 전에 발급된 이 계정의 토큰은 모두 401 이 되고, 응답이 새 세션이다(Access 는 본문 · Refresh 는 httpOnly 쿠키). 실패하면 지금 값 · 인증 상태는 그대로다. 비밀번호 틀림은 그 코드의 틀린 횟수에 센다.",
+        "operationId": "ProfileController_change",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileContactChangeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResultDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "BAD_REQUEST(입력 모양) · INVALID_EMAIL · INVALID_PHONE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHORIZED: 로그인이 필요하다 · 비활성 계정.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CREDENTIALS_CHANGE_REQUIRED — 필수 초기설정(휴대폰 · 이메일 인증 · 비밀번호 교체)이 남은 계정은 이 경로를 쓸 수 없다(AUTH-INIT-02).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CONTACT_UNCHANGED · EMAIL_TAKEN · CODE_NOT_REQUESTED · CODE_EXPIRED · CODE_LOCKED · CODE_MISMATCH · CURRENT_PASSWORD_MISMATCH",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "공용 오류 형식. 해당 endpoint의 입력·권한·자원·DB 검증에 따라 반환될 수 있다.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "AUTH_CODE_SECRET_MISSING — 운영 코드 비밀 값 없음",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorDto"
+                }
+              }
+            }
+          }
+        },
+        "summary": "새 이메일 · 휴대폰 저장 — 그 수신처로 받은 코드와 지금 비밀번호를 한 번에",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/meta": {
       "get": {
         "description": "학생 명단과 줌 회의 번호는 관리 화면(canAdminPage)에만 싣는다 — 강사에게는 students 가 빈 배열, meetingId 가 null 이다 (보안 검수 0925 · D-R39).",
@@ -29646,6 +30046,185 @@
           "password"
         ]
       },
+      "ProfileContactCodesDto": {
+        "type": "object",
+        "properties": {
+          "channels": {
+            "description": "코드를 받을 채널 — 낱말 · 못 보내는 까닭은 서버가 준다",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OnboardingChannelDto"
+            }
+          },
+          "phoneCountries": {
+            "description": "휴대폰 국가번호 목록 — 첫 줄이 대한민국(기본값)",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PhoneCountryDto"
+            }
+          },
+          "codeTtlMinutes": {
+            "type": "number",
+            "description": "코드 유효 시간(분)"
+          },
+          "resendAfterSeconds": {
+            "type": "number",
+            "description": "같은 채널로 다시 받기까지 기다릴 초"
+          }
+        },
+        "required": [
+          "channels",
+          "phoneCountries",
+          "codeTtlMinutes",
+          "resendAfterSeconds"
+        ]
+      },
+      "ProfileDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number"
+          },
+          "loginId": {
+            "type": "string",
+            "description": "로그인 아이디 — 매니저가 정한 그대로(본인 화면에서 바꾸지 않는다)"
+          },
+          "name": {
+            "type": "string",
+            "description": "이름 — 셸 · 구성원 목록과 같은 칸(STAFF.name)"
+          },
+          "englishName": {
+            "type": "string",
+            "nullable": true,
+            "description": "영어 이름 — 비어 있으면 null"
+          },
+          "roleLabel": {
+            "type": "string",
+            "description": "역할의 이름 — 표시용(판정은 MeDto 플래그)"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "직함 — 권한과 무관"
+          },
+          "email": {
+            "type": "string",
+            "nullable": true,
+            "description": "본인 이메일(연락 · 인증용 · 아이디가 아니다)"
+          },
+          "emailVerified": {
+            "type": "boolean",
+            "description": "이메일 인증 완료 여부"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "description": "본인 휴대폰 — 한국은 숫자만 · 해외는 +국가번호…"
+          },
+          "phoneVerified": {
+            "type": "boolean",
+            "description": "휴대폰 인증 완료 여부"
+          },
+          "hiredOn": {
+            "type": "string",
+            "nullable": true,
+            "description": "입사일 YYYY-MM-DD — 옛 계정은 null 일 수 있다"
+          },
+          "contactCodes": {
+            "$ref": "#/components/schemas/ProfileContactCodesDto"
+          }
+        },
+        "required": [
+          "id",
+          "loginId",
+          "name",
+          "englishName",
+          "roleLabel",
+          "title",
+          "email",
+          "emailVerified",
+          "phone",
+          "phoneVerified",
+          "hiredOn",
+          "contactCodes"
+        ]
+      },
+      "ProfileUpdateDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "이름 — 생략하면 그대로 · null/빈 글자는 400"
+          },
+          "englishName": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 40,
+            "description": "영어 이름 — 생략하면 그대로 · null 또는 빈 글자면 비운다"
+          }
+        }
+      },
+      "ProfileContactCodeRequestDto": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ],
+            "description": "email = 확인할 이메일로 · sms = 확인할 휴대폰으로"
+          },
+          "target": {
+            "type": "string",
+            "example": "kim@tnacademy.kr",
+            "maxLength": 160,
+            "description": "받을 이메일 주소 또는 휴대폰 번호"
+          }
+        },
+        "required": [
+          "channel",
+          "target"
+        ]
+      },
+      "ProfileContactChangeDto": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms"
+            ],
+            "description": "email = 이메일 바꾸기 · sms = 휴대폰 바꾸기"
+          },
+          "target": {
+            "type": "string",
+            "example": "kim@tnacademy.kr",
+            "maxLength": 160,
+            "description": "새 이메일 주소 또는 휴대폰 번호 — 코드를 받은 그 수신처"
+          },
+          "code": {
+            "type": "string",
+            "example": "123456",
+            "pattern": "^\\d{6}$",
+            "description": "새 수신처로 받은 코드"
+          },
+          "currentPassword": {
+            "type": "string",
+            "example": "********",
+            "maxLength": 200,
+            "description": "지금 비밀번호 — 다시 확인한다. 응답 · 기록에는 싣지 않는다"
+          }
+        },
+        "required": [
+          "channel",
+          "target",
+          "code",
+          "currentPassword"
+        ]
+      },
       "KindDto": {
         "type": "object",
         "properties": {
@@ -52716,6 +53295,21 @@
             "nullable": true,
             "description": "그 시급 적용 시작일"
           },
+          "kinderHourlyRate": {
+            "type": "number",
+            "nullable": true,
+            "description": "Kinder 1:1 시급(원/시간) = 기본 시급 + Kinder 가산. 기본 시급 · 정책 줄이 없거나 가려지면 null — 서버는 늘 채운다"
+          },
+          "diagPerSession": {
+            "type": "number",
+            "nullable": true,
+            "description": "진단고사 한 회차 급여(원/건) — 정책 줄이 없거나 가려지면 null · 서버는 늘 채운다"
+          },
+          "mockPerSession": {
+            "type": "number",
+            "nullable": true,
+            "description": "모의수업 한 회차 급여(원/건) — 정책 줄이 없거나 가려지면 null · 서버는 늘 채운다"
+          },
           "timezones": {
             "description": "고를 수 있는 시간대 — TZG 표가 코드표다",
             "type": "array",
@@ -56254,7 +56848,7 @@
           },
           "mustChangeCredentials": {
             "type": "boolean",
-            "description": "첫 설정(휴대폰 · 이메일 확인 · 새 비밀번호)을 아직 안 끝낸 계정 — 화면의 「첫 설정 전」 칩"
+            "description": "필수 초기설정(휴대폰 · 이메일 인증 · 새 비밀번호)이 남은 계정 — 화면의 「첫 설정 전」 칩. 판정은 로그인 · 가드와 같은 AuthService.credentialSetupRequired(AUTH-INIT-02)"
           },
           "phone": {
             "type": "string",
@@ -56841,7 +57435,7 @@
           "englishName": {
             "type": "string",
             "nullable": true,
-            "description": "STAFF 영문명 컬럼 이관 전까지 null"
+            "description": "영어 이름 — 본인이 마이페이지에서 적는 STAFF.english_name(AUTH-SELF-01) · 없으면 null"
           },
           "title": {
             "type": "string",
@@ -56922,7 +57516,7 @@
           "englishName": {
             "type": "string",
             "nullable": true,
-            "description": "STAFF 영문명 컬럼 이관 전까지 null"
+            "description": "영어 이름 — 본인이 마이페이지에서 적는 STAFF.english_name(AUTH-SELF-01) · 없으면 null"
           },
           "title": {
             "type": "string",

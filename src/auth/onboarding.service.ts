@@ -32,7 +32,7 @@ import { DataSource, Repository, type EntityManager } from 'typeorm';
 import { randomInt } from 'node:crypto';
 import * as bcrypt from 'bcryptjs';
 import { Staff } from '../entities';
-import { AuthService } from './auth.service';
+import { AuthService, credentialSetupRequiredSql } from './auth.service';
 import {
   PASSWORD_ISSUE_MESSAGE, PASSWORD_RULE_TEXT, normalizeEmail, normalizeMobile, passwordIssue,
 } from '../lib/account-policy';
@@ -55,7 +55,30 @@ const EMAIL_MAX = 120;
 export const INVALID_PHONE_MESSAGE = '휴대폰 번호 형식이 아닙니다 — 국가번호를 고르고 번호를 적어 주세요(한국은 010 으로 시작)';
 
 const notRequired = () => new ConflictException({ code: 'ONBOARDING_NOT_REQUIRED', message: '이미 첫 설정을 마친 계정입니다' });
-const emailTaken = () => new ConflictException({ code: 'EMAIL_TAKEN', message: '이미 다른 계정이 쓰는 이메일입니다 — 다른 주소를 적어 주세요' });
+export const emailTaken = () => new ConflictException({ code: 'EMAIL_TAKEN', message: '이미 다른 계정이 쓰는 이메일입니다 — 다른 주소를 적어 주세요' });
+
+/**
+ * 받는 곳을 저장 · 비교 모양으로 — 이메일은 소문자 · 공백 없음, 휴대폰은 한국 숫자만 · 해외 `+국가번호…`(lib/phone).
+ * 첫 설정과 본인 연락처 변경(AUTH-SELF-01 · ProfileService)이 같은 함수를 쓴다 — 두 길의 저장 모양이 갈리지 않게.
+ */
+export function contactTarget(channel: SendChannel, raw: string): string {
+  if (channel === 'email') {
+    const email = normalizeEmail(raw);
+    if (!isEmail(email) || email.length > EMAIL_MAX) {
+      throw new BadRequestException({ code: 'INVALID_EMAIL', message: '이메일 형식이 아닙니다 — 예: kim@tnacademy.kr' });
+    }
+    return email;
+  }
+  const phone = normalizeMobile(raw);
+  if (!phone) throw new BadRequestException({ code: 'INVALID_PHONE', message: INVALID_PHONE_MESSAGE });
+  return phone;
+}
+
+/** 다른 계정이 이미 쓰는 이메일인가 — 대소문자를 가리지 않는다(비활성 계정 포함 · 유일 색인과 같은 범위) */
+export async function emailTakenByOther(m: EntityManager | DataSource, email: string, staffId: number): Promise<boolean> {
+  const rows = await m.query('SELECT 1 FROM staff WHERE lower(email) = $1 AND id <> $2 LIMIT 1', [email, staffId]);
+  return rows.length > 0;
+}
 
 @Injectable()
 export class OnboardingService {
@@ -68,34 +91,26 @@ export class OnboardingService {
     @Inject(SENDER) private readonly sender: Sender,
   ) {}
 
-  /** 첫 설정 판정에 필요한 칸만 — 비밀번호 해시는 「지금 비밀번호와 같은가」에만 쓰고 밖으로 내보내지 않는다 */
+  /**
+   * 첫 설정 판정에 필요한 칸만 — 비밀번호 해시는 「지금 비밀번호와 같은가」에만 쓰고 밖으로 내보내지 않는다.
+   * `must` 는 AUTH-INIT-02 판정(잠금 · 두 인증) 그대로다 — 증거 없이 면제된 계정도 여기서 마칠 수 있어야 교착이 없다.
+   */
   private async current(staffId: number) {
     const [s] = (await this.ds.query(
-      `SELECT login_id, email, phone, password_hash, must_change_credentials AS must FROM staff WHERE id = $1 AND active`,
+      `SELECT s.login_id, s.email, s.phone, s.password_hash, ${credentialSetupRequiredSql('s')} AS must
+         FROM staff s WHERE s.id = $1 AND s.active`,
       [staffId],
     )) as Array<{ login_id: string; email: string | null; phone: string | null; password_hash: string | null; must: boolean }>;
     if (!s) throw new UnauthorizedException('다시 로그인해 주세요');
     return s;
   }
 
-  /** 받는 곳을 저장 · 비교 모양으로 — 이메일은 소문자 · 공백 없음, 휴대폰은 한국 숫자만 · 해외 `+국가번호…`(lib/phone) */
   private target(channel: SendChannel, raw: string): string {
-    if (channel === 'email') {
-      const email = normalizeEmail(raw);
-      if (!isEmail(email) || email.length > EMAIL_MAX) {
-        throw new BadRequestException({ code: 'INVALID_EMAIL', message: '이메일 형식이 아닙니다 — 예: kim@tnacademy.kr' });
-      }
-      return email;
-    }
-    const phone = normalizeMobile(raw);
-    if (!phone) throw new BadRequestException({ code: 'INVALID_PHONE', message: INVALID_PHONE_MESSAGE });
-    return phone;
+    return contactTarget(channel, raw);
   }
 
-  /** 다른 계정이 이미 쓰는 이메일인가 — 대소문자를 가리지 않는다(비활성 계정 포함 · 유일 색인과 같은 범위) */
-  private async emailTaken(m: EntityManager | DataSource, email: string, staffId: number): Promise<boolean> {
-    const rows = await m.query('SELECT 1 FROM staff WHERE lower(email) = $1 AND id <> $2 LIMIT 1', [email, staffId]);
-    return rows.length > 0;
+  private emailTaken(m: EntityManager | DataSource, email: string, staffId: number): Promise<boolean> {
+    return emailTakenByOther(m, email, staffId);
   }
 
   async info(staffId: number): Promise<OnboardingInfoDto> {
@@ -134,7 +149,7 @@ export class OnboardingService {
     const masked = CHANNEL_SPECS[channel].mask(to);
     const row = await this.ds.transaction(async (m) => {
       const [cur] = await m.query(
-        'SELECT must_change_credentials AS must FROM staff WHERE id = $1 AND active FOR UPDATE', [staffId],
+        `SELECT ${credentialSetupRequiredSql('s')} AS must FROM staff s WHERE s.id = $1 AND s.active FOR UPDATE`, [staffId],
       );
       if (!cur) throw new UnauthorizedException('다시 로그인해 주세요');
       if (!cur.must) throw notRequired();
@@ -194,8 +209,9 @@ export class OnboardingService {
     try {
       outcome = await this.ds.transaction(async (m) => {
         const [cur] = await m.query(
-          `SELECT email, phone, must_change_credentials AS must, email_verified, phone_verified
-             FROM staff WHERE id = $1 AND active FOR UPDATE`,
+          `SELECT s.email, s.phone, s.must_change_credentials AS must_raw, ${credentialSetupRequiredSql('s')} AS must,
+                  s.email_verified, s.phone_verified
+             FROM staff s WHERE s.id = $1 AND s.active FOR UPDATE`,
           [staffId],
         );
         if (!cur) return { error: new UnauthorizedException('다시 로그인해 주세요') };
@@ -224,7 +240,8 @@ export class OnboardingService {
             staffId,
             JSON.stringify({
               email: cur.email ? maskEmail(cur.email) : null, phone: cur.phone ? maskPhone(cur.phone) : null,
-              emailVerified: cur.email_verified, phoneVerified: cur.phone_verified, mustChangeCredentials: true,
+              // 저장돼 있던 잠금 값 그대로 — 증거 없이 면제됐던 계정(false)도 기록에서 구분된다(AUTH-INIT-02)
+              emailVerified: cur.email_verified, phoneVerified: cur.phone_verified, mustChangeCredentials: cur.must_raw === true,
             }),
             JSON.stringify({
               email: maskEmail(email), phone: maskPhone(phone),

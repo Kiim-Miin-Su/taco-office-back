@@ -36,7 +36,7 @@ import { ConsultingSessionService } from '../src/modules/consulting/consulting-s
 import { ConsultingService } from '../src/modules/consulting/consulting.service';
 import { SENDER } from '../src/modules/notify/sender';
 import { FakeSender } from './fake-sender';
-import { blockedBy, DEV_URL } from './db';
+import { blockedBy, DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -168,6 +168,7 @@ d('컨설팅 W11 — 전환 학생 · 받은 돈 · 진행 알림 · 예외 종�
          ($4,'W11강사','c1-w11-t@t.kr','teacher',$5,true)`,
       [CEO, MGR, MGR2, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, MGR, MGR2, TEACHER]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'W11가','G12'), ($2,'W11나','G10'), ($3,'W11다','G9')`, [STU_A, STU_B, STU_C]);
     const login = async (loginId: string) => {
       const res = await request(app.getHttpServer()).post('/auth/login').timeout({ response: 5000, deadline: 10000 })

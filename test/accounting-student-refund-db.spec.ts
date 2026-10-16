@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -99,6 +99,7 @@ d('BOC-11D-02 학생 실제 환불 지급 원장', () => {
       ($3,'환불강사','boc11-refund-teacher@t.kr','teacher',$5,true,NULL),
       ($4,'환불권한회수','boc11-refund-restricted@t.kr','admin',$5,true,false)`,
     [CEO, ADMIN, TEACHER, RESTRICTED, passwordHash]);
+    await markSetupDone(q, [CEO, ADMIN, TEACHER, RESTRICTED]);
     await q(`INSERT INTO stu(id,name,grade,school) VALUES($1,'실제환불학생','G10','정합고')`, [STUDENT]);
     await q(`INSERT INTO inv(id,student_id,year_month,inv_type,title,amount,paid_amount,state,issued_on,due_on,sent_at,paid_at,created_by)
       VALUES($1,$2,$3,'tuition','환불 원천 청구',100000,100000,'paid',$4,$4,now(),now(),$5)`, [

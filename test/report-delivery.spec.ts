@@ -15,7 +15,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { configureApiBodyParser } from '../src/app.factory';
 import { REPORT_FILE_STORE, type ReportFileStore } from '../src/modules/reports/report-file.store';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 import { ReportsService } from '../src/modules/reports/reports.service';
 import type { ReportDeliveryCreateDto } from '../src/modules/reports/reports.dto';
 import { addD } from '../src/lib/recurrence';
@@ -109,6 +109,7 @@ d('리포트 발송 계약 (D-R8 · D-R15 · D-R42)', () => {
        VALUES ($1,'발송매니저',$2,'manager',$3,true), ($4,'발송강사',$5,'teacher',$3,true)`,
       [MANAGER, MANAGER_EMAIL, hash, TEACHER, TEACHER_EMAIL],
     );
+    await markSetupDone(q, [MANAGER, TEACHER]);
     await q(`INSERT INTO stu (id,name,grade) VALUES ($1,'준비학생','고2'), ($2,'차단학생','고1')`,
       [STUDENT_READY, STUDENT_BLOCKED]);
     await q(`INSERT INTO note(student_id,author_id,body) VALUES ($1,$2,$3)`, [STUDENT_READY, MANAGER, HANDOVER_SECRET]);

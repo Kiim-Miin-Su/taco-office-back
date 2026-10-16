@@ -11,7 +11,7 @@ import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -65,6 +65,7 @@ d('문의·컨설팅 핵심정보 수정 — HTTP→DTO→DB→감사', () => {
        ($1,'핵심대표','core-ceo@t.kr','ceo',$3,true),($2,'핵심담당','core-owner@t.kr','manager',$3,true)`,
       [CEO, OWNER, hash],
     );
+    await markSetupDone(q, [CEO, OWNER]);
     await q(`INSERT INTO stu (id,name,grade,school) VALUES ($1,'핵심학생1','G10','전고'),($2,'핵심학생2','G11','후고')`, [STU1, STU2]);
     const login = await request(app.getHttpServer()).post('/auth/login').send({ loginId: 'core-ceo@t.kr', password: PW }).expect(201);
     token = login.body.accessToken as string;

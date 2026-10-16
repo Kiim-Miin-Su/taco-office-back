@@ -18,7 +18,7 @@ import { AppModule } from '../src/app.module';
 import { Lead } from '../src/entities';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { wageRateAt } from '../src/lib/wage';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -95,6 +95,7 @@ d('C97 구성원 추가 · 시급 직접 수정 (D-41 · D-48 · I-8)', () => {
          ($4,'그만둔강사','sw-r@t.kr','teacher',$5,false)`,
       [CEO, MANAGER, TEACHER, RETIRED, hash],
     );
+    await markSetupDone(q, [CEO, MANAGER, TEACHER, RETIRED]);
     await q(`INSERT INTO wage (staff_id, rate, from_date, reason) VALUES ($1, 40000, '2026-01-01', '기준')`, [TEACHER]);
     await q(`DELETE FROM stu WHERE id = $1`, [STU]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'시급학생','10')`, [STU]);

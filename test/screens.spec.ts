@@ -21,7 +21,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 import { buildOpenApi } from '../src/openapi';
 import { ExecService } from '../src/modules/exec/exec.service';
 import { GUIDE_PENDING_DB, needsReportActionDbState } from '../src/lib/rules';
@@ -68,6 +68,7 @@ d('탭 04·05·06·07·11 — 화면이 받는 것', () => {
         `INSERT INTO staff (id, name, email, role, password_hash, active, can_money) VALUES ($1,$2,$3,$4,$5,true,$6)`,
         [p.id, p.name, p.email, p.role, hash, p.canMoney],
       );
+      await markSetupDone(ds, [p.id]);
     }
     await ds.query('DELETE FROM ser_occ WHERE ser_id = ANY($1)', [[ONCE_SER, RECURRING_SER]]);
     await ds.query('DELETE FROM ser WHERE id = ANY($1)', [[ONCE_SER, RECURRING_SER]]);

@@ -180,7 +180,10 @@ export async function runSeed(ds: DataSource, opts: { reset: boolean }): Promise
 
     const hash = await bcrypt.hash(PW, 10);
     // 아이디는 이메일과 같게 둔다 — 운영의 옛 계정이 옮겨 온 모양과 같다(W10 · 아이디 형식은 자유라 이메일 모양도 아이디다)
-    await add('staff', STAFF.map((s) => ({ id: s.id, name: s.name, login_id: s.email, email: s.email, role: s.role, title: s.title, tz: 'Asia/Seoul', password_hash: hash, phone_verified: true, hired_on: s.hiredOn, active: true })));
+    // AUTH-INIT-02(2026-10-16): 개발 시드의 표본 계정은 **필수 초기설정을 마친 계정** 모양으로 둔다 — 합성 휴대폰(010-9000-000N ·
+    // 보호자 시드의 010-0000-000N 과 같은 합성 대역) · 두 인증 true. 판정 함수에는 역할 · 아이디 면제가 없으므로 이 값이 없으면
+    // 모든 시드 계정이 첫 설정으로 잠긴다. 시드는 운영에서 돌지 않는다(assertWritableTarget) — 운영 완료 증거가 아니다.
+    await add('staff', STAFF.map((s) => ({ id: s.id, name: s.name, login_id: s.email, email: s.email, phone: `0109000000${s.id}`, role: s.role, title: s.title, tz: 'Asia/Seoul', password_hash: hash, email_verified: true, phone_verified: true, hired_on: s.hiredOn, active: true })));
     await add('wage', WAGES.map((w) => ({ staff_id: w.staffId, rate: w.rate, from_date: w.fromDate, approved_by: 1 })));
     await add('rate', RATES.map((r) => ({ kind_key: r.kindKey, heads: (r as { heads?: number }).heads ?? 1, sub_key: r.subKey, unit_price: r.unitPrice, from_date: r.fromDate })));
     await add('sturate', STURATES.map((r) => ({ student_id: r.studentId, kind_key: r.kindKey, unit_price: r.unitPrice, from_date: r.fromDate, reason: r.reason, by_id: r.byId })));

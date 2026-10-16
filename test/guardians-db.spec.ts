@@ -32,7 +32,7 @@ import { AppModule } from '../src/app.module';
 import * as contactBridge from '../src/lib/guardian-contact-bridge';
 import { SENDER } from '../src/modules/notify/sender';
 import { FakeSender } from './fake-sender';
-import { blockedBy, DEV_URL } from './db';
+import { blockedBy, DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -81,6 +81,7 @@ d('보호자 · 선택 발송 (DQ3 · N-42)', () => {
          ($2,'보호자강사','guardian-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'보호자학생A','10'), ($2,'보호자학생B','10')`, [STU_A, STU_B]);
     const login = async (email: string) => {
       const res = await request(app.getHttpServer())

@@ -33,7 +33,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { NOTI_TITLE } from '../src/lib/noti';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(120_000);
@@ -112,6 +112,7 @@ d('강사 계보 — 이전 강사 → 교체 강사 · 이전 교재 → 교체
          ($3,'계보B','tl-b@t.kr','teacher',$4,true,null)`,
       [CEO, T_A, T_B, hash],
     );
+    await markSetupDone(q, [CEO, T_A, T_B]);
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'계보학생1','G10','테스트고'), ($2,'계보학생2','G11','테스트고')`, [STU1, STU2]);
     await q(`INSERT INTO kind (key,name,color,cap,grp,rep) VALUES ($1,'계보 수업','#333333',4,'lesson',true) ON CONFLICT (key) DO NOTHING`, [KIND]);
     await q(`INSERT INTO sub (key,name,color,kind_key) VALUES ($1,'계보 과목','#A85764',$2) ON CONFLICT (key) DO NOTHING`, [SUB, KIND]);

@@ -25,7 +25,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { OpsService } from '../src/modules/ops/ops.service';
 import { todayKst } from '../src/lib/kst';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -87,6 +87,7 @@ d('상담 카드 · 컴플레인 카드 (wave 6 · 23-11 · 23-14 · 67-5 · 67-
          ($2,'W6강사','w6-intake-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     await q(`INSERT INTO stu (id, name, grade, school) VALUES ($1,'W6학생','8','테스트중'), ($2,'W6둘째','9','테스트중')`, [STU, STU_OTHER]);
     // 그 학생의 명단 — 지금 다니는 주2 · 끝난 명단 · 격주 · 단발 · 끝난 규칙
     await q(

@@ -23,7 +23,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -86,6 +86,7 @@ d('W11 P — 사람별 권한 예외 · §76 권한 표 · 내 지출 신청 · 
          ($5,'권한관리자','pp-admin@t.kr','admin',$6,true)`,
       [CEO, MGR, MGR2, TEACHER, ADMIN, hash],
     );
+    await markSetupDone(q, [CEO, MGR, MGR2, TEACHER, ADMIN]);
     tokens.ceo = await login('pp-ceo@t.kr');
     tokens.mgr = await login('pp-mgr@t.kr');
     tokens.mgr2 = await login('pp-mgr2@t.kr');

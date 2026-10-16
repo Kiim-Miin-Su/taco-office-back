@@ -24,7 +24,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 import { assertScheduleReferences } from '../src/modules/schedule/schedule.references';
 import { loadState } from '../src/modules/schedule/schedule.state.repo';
 import * as stateRepo from '../src/modules/schedule/schedule.state.repo';
@@ -69,11 +69,13 @@ d('스케줄 쓰기 — 3범위와 겹침 (D-R16 · D-R43)', () => {
       `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,'ceo',$4,true)`,
       [CEO, '쓰기대표', 'sched-ceo@t.kr', await bcrypt.hash(PW, 4)],
     );
+    await markSetupDone(q, [CEO]);
     await q(`DELETE FROM staff WHERE id = $1`, [T2]);
     await q(
       `INSERT INTO staff (id, name, email, role, password_hash, active) VALUES ($1,$2,$3,'teacher',$4,true)`,
       [T2, '쓰기강사', 'sched-t2@t.kr', await bcrypt.hash(PW, 4)],
     );
+    await markSetupDone(q, [T2]);
     await q(`DELETE FROM stu WHERE id = $1`, [ROSTER_STUDENT]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1, $2, '10')`, [ROSTER_STUDENT, ROSTER_STUDENT_NAME]);
     const res = await request(app.getHttpServer())

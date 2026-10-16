@@ -24,7 +24,7 @@ import { AppModule } from '../src/app.module';
 import { dataSourceOptions } from '../src/data-source';
 import { todayKst } from '../src/lib/kst';
 import { GuidesService } from '../src/modules/guides/guides.service';
-import { assertScratch, TEST_URL } from './db';
+import { assertScratch, TEST_URL, markSetupDone } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -85,6 +85,7 @@ d('§43-6 강사 N명 한 번에 — 줌 안내 일괄 발송 HTTP/DB (wave 6)',
     for (const [id, role, name] of [[ADMIN, 'admin', 'W6 관리자'], [A, 'teacher', 'W6 강사 가'], [B, 'teacher', 'W6 강사 나'], [C, 'teacher', 'W6 강사 다']] as const) {
       const email = `w6-zoom-batch-${id}@t.invalid`;
       await sql('INSERT INTO staff(id,name,email,role,password_hash,active) VALUES ($1,$2,$3,$4,$5,true)', [id, name, email, role, hash]);
+      await markSetupDone(sql, [id]);
       const res = await request(app.getHttpServer()).post('/auth/login').send({ loginId: email, password }).expect(201);
       tokens.set(id, res.body.accessToken as string);
     }

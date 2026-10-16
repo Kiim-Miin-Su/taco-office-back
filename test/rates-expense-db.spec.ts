@@ -25,7 +25,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 /** 기한 자체를 보지 않는 시험들이 쓰는 값 — 「기한을 매번 고른다」는 S3 회귀가 따로 본다 (대표 결정 2026-09-20) */
 const DUE = '2026-12-31';
@@ -89,6 +89,7 @@ d('단가표 · 학생별 예외 · 지출 등록 · 추가 수업 (C94-d · H-8
          ($5,'단가대표둘','re-ceo2@t.kr','ceo',$4,true,null)`,
       [CEO, MANAGER, TEACHER, hash, CEO2],
     );
+    await markSetupDone(q, [CEO, MANAGER, TEACHER, CEO2]);
     await q(`DELETE FROM sturate WHERE student_id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`DELETE FROM stu WHERE id = ANY($1)`, [[STU_A, STU_B]]);
     await q(`INSERT INTO stu (id, name, grade) VALUES ($1,'단가A','10'), ($2,'단가B','10')`, [STU_A, STU_B]);

@@ -19,7 +19,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(60_000);
@@ -55,6 +55,7 @@ d('「+ 대표 지시」 HTTP (w5 · 65-4)', () => {
          ($2,'W5강사','w5-http-t@t.kr','teacher',$3,true)`,
       [CEO, TEACHER, hash],
     );
+    await markSetupDone(q, [CEO, TEACHER]);
     const [p] = await q<{ id: string }>(
       `INSERT INTO plan (title, stage, owner_id) VALUES ('W5 HTTP 기획','draft',$1) RETURNING id`, [TEACHER],
     );

@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -87,6 +87,7 @@ d('BOC-11C 연체 수강 정지·해제', () => {
       ($1,'연체대표','boc11c-ceo@t.kr','ceo',$4,true),
       ($2,'연체관리자','boc11c-admin@t.kr','admin',$4,true),
       ($3,'연체강사','boc11c-teacher@t.kr','teacher',$4,true)`, [CEO, ADMIN, TEACHER, hash]);
+    await markSetupDone(q, [CEO, ADMIN, TEACHER]);
     await q(`INSERT INTO stu(id,name,grade,created_at) VALUES
       ($1,'연체학생','10',current_date),($2,'연체학생2','9',current_date)`, [STUDENT, STUDENT2]);
     await q(`INSERT INTO guardian(student_id,name,phone,receive_email,receive_sms,is_primary,is_payer,created_by)
