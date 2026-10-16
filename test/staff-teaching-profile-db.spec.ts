@@ -12,7 +12,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { DrawerService } from '../src/modules/drawer/drawer.service';
 import { todayKst } from '../src/lib/kst';
-import { assertScratch, DEV_URL, TEST_URL } from './db';
+import { assertScratch, DEV_URL, markSetupDone, TEST_URL } from './db';
 
 const d = process.env.BO1014_DB_TEST === '1' ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -75,6 +75,8 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
        VALUES('BO-1014 관리자',$1,'manager',$2,true,false) RETURNING id`, [managerLogin, hash],
     );
     managerId = Number(manager.id);
+    // AUTH-INIT-02(2026-10-16): 필수 초기설정 판정은 잠금 OR 이메일·휴대폰 미인증이다 — 업무 API를 부르는 대역 계정은 완료 모양으로 둔다(S1 규칙)
+    await markSetupDone(q, [managerId]);
     const login = await request(app.getHttpServer()).post('/auth/login').send({ loginId: managerLogin, password }).expect(201);
     managerToken = login.body.accessToken as string;
   });
@@ -262,6 +264,7 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
   it('GET /drawer의 비관리자 구성원 projection에서 생년월일·영어·가능 과목·학력을 서버가 제거한다', async () => {
     expect(teacherId).not.toBeNull();
     await q(`UPDATE staff SET must_change_credentials=false WHERE id=$1`, [teacherId]);
+    await markSetupDone(q, [teacherId as number]);
     const login = await request(app.getHttpServer()).post('/auth/login')
       .send({ loginId: `${teacherLogin}-role`, password }).expect(201);
     const teacherToken = login.body.accessToken as string;
