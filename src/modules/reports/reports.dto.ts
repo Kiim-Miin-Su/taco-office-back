@@ -703,6 +703,11 @@ export class WeeklyBundleDto {
   sentAt!: string | null;
   @ApiProperty({ type: 'integer', description: '보호자 × 채널 시도 수(원장 줄 수)' }) attemptCount!: number;
   @ApiProperty({ type: String, nullable: true }) lastAttemptAt!: string | null;
+  @ApiProperty({
+    type: String, nullable: true, example: '20261012-20261018_권시우_G9_주간리포트.png',
+    description: '학부모 주간 PNG 파일 이름(p7 결정 2026-10-16) — plainText 와 같은 판정이라 보낼 수 있는 묶음에만 싣는다. 화면은 이 이름을 그대로 쓴다',
+  })
+  pngFileName!: string | null;
 }
 
 export class WeeklyBundleListDto {
@@ -712,4 +717,7 @@ export class WeeklyBundleListDto {
   @ApiProperty({ type: 'integer', description: '묶음 수(그 주 리포트가 있는 학생)' }) total!: number;
   @ApiProperty({ type: 'integer', description: '아직 보호자에게 나가지 않은 묶음 수 — 탭 배지' }) remaining!: number;
   @ApiProperty({ type: [WeeklyBundleDto] }) bundles!: WeeklyBundleDto[];
+  @ApiProperty({ type: [ReportFieldDto], description: '주간 PNG의 수업 칸 이름 — 보낼 본문(reportPlainText)과 같은 표(D-R18)' })
+  fields!: ReportFieldDto[];
+  @ApiProperty({ description: '주간 묶음 끝 칸 이름 — 보낼 본문과 PNG가 같은 낱말(「총평」)' }) summaryLabel!: string;
 }

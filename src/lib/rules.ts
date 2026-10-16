@@ -264,6 +264,19 @@ export function reportPngFileName(input: ReportPngFileNameInput): string {
   return `${date}_${name}_${grade}_${subject}_${time}.png`;
 }
 
+/**
+ * 주간 묶음(N-54)의 학부모 PNG 한 장 이름 — 사용자 결정 2026-10-16(p7 「주간 PNG 새로 구현」).
+ * 일별(`reportPngFileName`)과 같은 안전 글자 규칙을 쓰고 날짜를 앞에 둬 정렬이 같다. 보낼 본문과 같은 판정에서만 낸다(weeklyGate).
+ */
+export function weeklyReportPngFileName(input: { weekOf: IsoDate; weekTo: IsoDate; studentName: string; studentGrade?: string | null }): string {
+  const name = reportFilePart(input.studentName, '학생미정');
+  const grade = reportFilePart(input.studentGrade, '학년미정');
+  return `${input.weekOf.replaceAll('-', '')}-${input.weekTo.replaceAll('-', '')}_${name}_${grade}_주간리포트.png`;
+}
+
+/** 주간 묶음 끝 칸 이름 — 보낼 본문(weeklyPlainText)과 PNG가 같은 낱말을 쓴다(D-R18) */
+export const WEEKLY_SUMMARY_LABEL = '총평';
+
 export interface ReportPlainTextInput extends ReportPngFileNameInput {
   endMin: Minutes | null;
   body: ReportBody;

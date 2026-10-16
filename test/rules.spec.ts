@@ -113,6 +113,14 @@ describe('리포트 발송 — 본문·PNG·대상 집합 방어 (D-R8 · D-R15)
     expect(R.reportDeliveryIssue(base)).toBeNull();
   });
 
+  it('주간 묶음 PNG 이름 — 주 시작·끝 · 학생 · 학년 · 「주간리포트」를 일별과 같은 안전 글자로 잇는다(S5a 결정 ③)', () => {
+    expect(R.weeklyReportPngFileName({ weekOf: '2026-10-12', weekTo: '2026-10-18', studentName: '권시우', studentGrade: 'G9' }))
+      .toBe('20261012-20261018_권시우_G9_주간리포트.png');
+    expect(R.weeklyReportPngFileName({ weekOf: '2026-10-12', weekTo: '2026-10-18', studentName: ' A/B:C ', studentGrade: null }))
+      .toBe('20261012-20261018_A-B-C_학년미정_주간리포트.png');
+    expect(R.WEEKLY_SUMMARY_LABEL).toBe('총평');
+  });
+
   it('PNG MIME 문자열뿐 아니라 실제 signature와 크기를 확인한다', () => {
     const png = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), Buffer.from('body')]);
     expect(R.decodeReportPng(`data:image/png;base64,${png.toString('base64')}`).issue).toBeNull();

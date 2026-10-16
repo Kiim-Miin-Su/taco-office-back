@@ -14,7 +14,7 @@ import {
   LATE_REPORT_TIERS, REPORT_ACTION_REQUIRED_CANDIDATE_DB, REPORT_FIELDS,
   canExportReport, decodeReportPng, effectiveRepStateFromEnded, isWrittenDbState, reportBodyIssue,
   needsReportActionDbState, reportDeliveryIssue, reportPlainText, reportPngFileName, reportReminderIssue,
-  reportReviewIssue, reportWriteIssue, tierFor,
+  reportReviewIssue, reportWriteIssue, tierFor, weeklyReportPngFileName, WEEKLY_SUMMARY_LABEL,
   type RepStateDb, type ReportBody, type ReportDeliveryIssue, type ReportPngIssue,
   type ReportReminderIssue, type ReportReviewIssue, type ReportWriteAction, type ReportWriteIssue,
 } from '../../lib/rules';
@@ -1063,7 +1063,7 @@ export class ReportsService {
     return ReportsService.sendGroupLabel('week', weekOf, addDays(weekOf, 6));
   }
 
-  private static toWeekly(bundle: WeeklyBundle, canWrite: boolean, label: string): WeeklyBundleDto {
+  private static toWeekly(bundle: WeeklyBundle, canWrite: boolean, label: string, weekOf: string): WeeklyBundleDto {
     const gate = weeklyGate(bundle, canWrite);
     return {
       studentId: bundle.studentId, studentName: bundle.studentName, grade: bundle.grade,
@@ -1075,6 +1075,10 @@ export class ReportsService {
       // 메일 제목 기본값 — 사실(학생 · 주)만 잇는다. 창에서 고칠 수 있고 본문과 달리 검증하지 않는다
       subject: `${bundle.studentName} 학생 주간 리포트 · ${label}`,
       sentAt: bundle.sentAt, attemptCount: bundle.attemptCount, lastAttemptAt: bundle.lastAttemptAt,
+      // 학부모 주간 PNG 이름(p7 결정 2026-10-16) — 보낼 본문이 서는 묶음에만. 본문과 PNG가 같은 판정을 쓴다(D-R39)
+      pngFileName: gate.plainText === null ? null : weeklyReportPngFileName({
+        weekOf, weekTo: addDays(weekOf, 6), studentName: bundle.studentName, studentGrade: bundle.grade,
+      }),
     };
   }
 
@@ -1083,9 +1087,12 @@ export class ReportsService {
     const weekOf = weekOfMonday(weekOfAny ?? ReportsService.kstYesterday());
     const label = ReportsService.weekLabel(weekOf);
     const bundles = (await loadWeeklyBundles(this.ds, weekOf, null))
-      .map((bundle) => ReportsService.toWeekly(bundle, canWrite, label));
+      .map((bundle) => ReportsService.toWeekly(bundle, canWrite, label, weekOf));
     return {
       weekOf, weekTo: addDays(weekOf, 6), label,
+      // PNG 칸 이름은 보낼 본문(reportPlainText)과 같은 표 — 화면이 낱말을 짓지 않는다(D-R18)
+      fields: REPORT_FIELDS.map((field) => ({ ...field })),
+      summaryLabel: WEEKLY_SUMMARY_LABEL,
       total: bundles.length,
       remaining: bundles.filter((bundle) => bundle.sentAt === null).length,
       bundles,
@@ -1124,7 +1131,7 @@ export class ReportsService {
       );
       const [saved] = await loadWeeklyBundles(q, weekOf, dto.studentId);
       await q.commitTransaction();
-      return ReportsService.toWeekly(saved, canWrite, label);
+      return ReportsService.toWeekly(saved, canWrite, label, weekOf);
     } catch (error) {
       if (q.isTransactionActive) await q.rollbackTransaction();
       throw error;

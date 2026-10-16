@@ -40,9 +40,13 @@ type Bundle = {
   lessonCount: number; approvedCount: number;
   canWriteSummary: boolean; summaryBlockedReason: string | null;
   canSend: boolean; sendBlockedReason: string | null; plainText: string | null; subject: string;
+  pngFileName: string | null;
   sentAt: string | null; attemptCount: number;
 };
-type WeekList = { weekOf: string; weekTo: string; label: string; total: number; remaining: number; bundles: Bundle[] };
+type WeekList = {
+  weekOf: string; weekTo: string; label: string; total: number; remaining: number; bundles: Bundle[];
+  fields: Array<{ key: string; label: string }>; summaryLabel: string;
+};
 
 d('W11 R2 주간 묶음(N-54) · 파일의 리포트 칸 · report.write 감사 — HTTP/DB', () => {
   let app: INestApplication;
@@ -184,9 +188,14 @@ d('W11 R2 주간 묶음(N-54) · 파일의 리포트 칸 · report.write 감사 
     const a = bundleOf(list, S1)!;
     const b = bundleOf(list, S2)!;
     expect(a).toMatchObject({ lessonCount: 2, approvedCount: 1, canWriteSummary: true, canSend: false, plainText: null, wrepId: null });
+    // 주간 PNG 이름은 보낼 본문과 같은 판정이다 — 못 보내는 묶음은 PNG도 없다(S5a 결정 ③)
+    expect(a.pngFileName).toBeNull();
+    expect(list.fields.map((field) => field.label)).toEqual(['③ 수업 내용', '④ 진도 페이지', '⑤ 숙제 페이지']);
+    expect(list.summaryLabel).toBe('총평');
     expect(a.sendBlockedReason).toBe('승인되지 않은 리포트가 1건 있습니다');
     expect(a.lessons.map((l) => l.repId)).toEqual([rep.get(SER1), rep.get(SER2)]);
     expect(b).toMatchObject({ lessonCount: 1, approvedCount: 1, canSend: false, sendBlockedReason: '총평을 먼저 써야 보낼 수 있습니다' });
+    expect(b.pngFileName).toBeNull();
     // 다른 주의 학생은 이 주 묶음에 없다 · 아무것도 저장하지 않았다
     expect(bundleOf(list, S3)).toBeUndefined();
     expect(await sql('SELECT id FROM wrep WHERE student_id = ANY($1::bigint[])', [students])).toEqual([]);
@@ -204,6 +213,7 @@ d('W11 R2 주간 묶음(N-54) · 파일의 리포트 칸 · report.write 감사 
     expect(saved).toMatchObject({ summary: { text: '이번 주 잘했습니다', byId: ADMIN }, canSend: true, sendBlockedReason: null });
     expect(saved.plainText).toContain('③ 수업 내용\n2026-08-04 수업 내용');
     expect(saved.plainText!.endsWith('총평\n이번 주 잘했습니다')).toBe(true);
+    expect(saved.pngFileName).toBe('20260803-20260809_R2 학생 나_G8_주간리포트.png');
     const [row] = await sql<{ week_of: string; body: Record<string, unknown> }>(
       `SELECT to_char(week_of,'YYYY-MM-DD') AS week_of, body FROM wrep WHERE student_id = $1`, [S2]);
     expect(row.week_of).toBe('2026-08-03');

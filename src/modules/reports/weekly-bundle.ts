@@ -8,7 +8,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { addDays, isIsoDate } from '../../lib/kst';
 import {
-  REP_STATE_LABEL_DB, effectiveRepStateFromEnded, isWrittenDbState, reportDeliveryIssue, reportPlainText,
+  REP_STATE_LABEL_DB, WEEKLY_SUMMARY_LABEL, effectiveRepStateFromEnded, isWrittenDbState, reportDeliveryIssue, reportPlainText,
   type RepStateDb, type ReportBody,
 } from '../../lib/rules';
 import { END_MIN, kstAt, START_MIN } from '../../lib/sql';
@@ -190,7 +190,7 @@ export function weeklyPlainText(bundle: WeeklyBundle): string | null {
     date: lesson.date, studentName: bundle.studentName, studentGrade: bundle.grade,
     subjectName: lesson.subjectName, startMin: lesson.startMin, endMin: lesson.endMin, body: lesson.body!,
   }));
-  return [...lessons, `총평\n${bundle.summary.text.trim()}`].join(DIVIDER).trim();
+  return [...lessons, `${WEEKLY_SUMMARY_LABEL}\n${bundle.summary.text.trim()}`].join(DIVIDER).trim();
 }
 
 /** 쓰기 · 보내기가 서는지와 막힌 이유 — 화면과 쓰기 경로가 같은 함수를 부른다(D-R39) */
