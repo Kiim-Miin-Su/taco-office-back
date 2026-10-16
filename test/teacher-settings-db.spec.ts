@@ -146,6 +146,12 @@ d('강사 §8 내 설정 — 올리기만 하고 적용하지 않는다 (C39)', 
      정산 계산기와 같은 정책 줄에서 파생한다(저장 없음 · D1 미리 채움 값을 데이터로 쓰지 않는다). */
   it('마이 페이지 시급 줄 — Kinder 시급은 기본 시급 + Kinder 가산, 진단 · 모의는 건당 정책 줄 그대로다', async () => {
     await q.query(`DELETE FROM payout_bonus_rule`);
+    // 정책 줄의 kind_key 는 KIND FK 다 — 스크래치 DB에서는 다른 스위트가 migration 이 넣은 KIND 행을 지울 수 있으므로
+    // 이 시험이 쓰는 두 종류를 같은 transaction 안에서 직접 보장한다(끝나면 rollback 으로 사라진다)
+    await q.query(
+      `INSERT INTO kind (key,name,color,cap,grp) VALUES ('mock','모의수업','#BC7855',20,'lesson'), ('diagx','진단고사','#4A5461',8,'intake')
+       ON CONFLICT (key) DO NOTHING`,
+    );
     const none = await svc().home(ME);
     expect(none.settings).toMatchObject({ wageRate: 42000, kinderHourlyRate: null, diagPerSession: null, mockPerSession: null });
 
