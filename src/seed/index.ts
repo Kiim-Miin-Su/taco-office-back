@@ -78,6 +78,9 @@ export const SEEDED_TABLES = [
   'guardian_contact',
   // 시드는 안 넣지만 앱이 쓴다 — 넣지 않아도 **비우기는 해야 한다**
   'gtpl', 'vers', 'hist', 'file', 'stu_pause', 'month_close',
+  // PDF-PREREQ-125126 교재 PDF 업로드 의도(migration 1769200000000) — 시드는 안 넣는다. 관리자 서가 전송이 쌓고
+  // 만료분은 정리 스크립트가 지운다. dev --reset 은 FILE 과 함께 비운다(consumed_file_id 가 FILE 을 가리킨다).
+  'book_pdf_upload',
   // W11 M2 — 정산 근거 줄 · 가산 규칙 · 회계 비공개 스위치 · 인수인계 메모 (N-36 · N-93 · N-94) — 시드는 안 넣는다(규칙 · 스위치는 대표가 정한다)
   'payout_line', 'payout_bonus_rule', 'acct_privacy', 'note',
   // TBO-55 신규 writer/current/event. dev --reset은 제품 writer가 만든 회귀 자료를 모두 비운다.
