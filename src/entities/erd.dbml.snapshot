@@ -1,5 +1,7 @@
-// DBML-CATCHUP-20261015: 기존 migration SQL 기준 문서 누락 정정. 물리 표 선언 149개(migration127 강사 프로필 제외; 목표126 Blob1GB). ATT_LATE 및 BO-12C/D 원장은 이미 구현된 raw SQL 소유 표이며 미래 설계가 아니다. migrations 원장1·current view2는 이 선언 수와 분리한다. 운영 DB/전체 컬럼 재조회 검증은 하지 않았고 과거 영수증·버전 이력은 보존한다.
+// DBML-CATCHUP-20261015: 기존 migration SQL 기준 문서 누락 정정. 물리 표 선언 151개(migration127 강사 프로필 포함; 목표126 Blob1GB). ATT_LATE 및 BO-12C/D 원장은 이미 구현된 raw SQL 소유 표이며 미래 설계가 아니다. migrations 원장1·current view2는 이 선언 수와 분리한다. 승인된 localhost:55494/taco_dev_test의 migration127 catalog와 업무151표·1,430컬럼의 이름/타입/null/길이/numeric/PK를 대조해 원본·B1014 네 파일 PASS. default·CHECK·FK·일반/unique index·view와 원격은 미검증이며 과거 영수증·버전 이력은 보존한다. 근거: docs/sprint/evidence/TBO-55/backoffice-1014-2026-10-14/dbml-catalog-comparison-2026-10-15.json.
+// BACKOFFICE-1014-B1014-05 (2026-10-14): 강사 프로필은 STAFF.birth_on/english_only와 가능 수업 유형 staff_teaching_kind(class/mock/study), 학력 요약 staff_education_summary(최대5행)를 사용한다. 기존 과목 SUB·문서 전용 STAFF_TEACHING_GRADE와 분리한다. migration1769600000000은 격리 로컬 DB에만 적용했으며 운영 미적용.
 // BOOK-PDF-1GB-20261013 (2026-10-13): 로컬 목표126·폐기PG 검증 완료. 원본125·bytea3,000,000B 보존, FILE Blob bytes/BOOK_PDF_UPLOAD.expected_bytes CHECK는1,000,000,000B. 새표/컬럼0·50MB 초과행 존재 시 down을DDL 전 거절. 마지막 원격Main124/Preview125는 역사이며 원격126·배포·실제1GB 전송은 미실행.
+// TBO55-BOC12CD-R110 (2026-10-09): BO-12C/D 권고안 채택 — 그룹 강사 교체는 명시 whole_class와 roster identity를 요구하고 preview 대상의 불투명 expectedVersion·UUID requestKey·actual actor·복합 undo payload를 TEACHER_CHANGE_OPERATION에 보존한다. 마케팅 create/patch는 MKT.row_version·MKT_WRITE_REQ 멱등 receipt를 사용하며 최근30일·채널4개·최신4건은 current MKT에서 서버가 계산한다. v4.91/146표, migration1768800000000~1769000000000 로컬 적용·멱등·stale·복합 undo·직접 version/receipt 방어 회귀 검증, 운영 미적용. 정책 변경 시 TeacherChange/Marketing DTO·service·generated Front·migration/DBML·P-BOC12CD·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11F-R108 (2026-10-09): BOC-11F 권고안 채택 — 교재 판매는 기존 LIB/VERS와 invoice 없는 PAY를 원 transaction으로 연결하고, 판매/current·UUID REQUEST·append-only EVENT·결제수단별 수수료 POLICY를 분리한다. 초기 계좌이체·현금 수수료는 각 0원이지만 배포일 효력 policy version과 판매 snapshot을 남긴다. 취소는 원 PAY를 보존하고 현재 열린 월의 음수 보정 PAY를 추가하며 version 경합·증빙 발행·월마감을 검사한다. DB는 기간 비중첩, receipt, 정책·PAY·감사 불변을 방어한다. v4.90/144표, migration1768700000000 로컬 upgrade120·down/up·권한·멱등·동시 생성/취소·직접쓰기 회귀 검증, 운영 미적용. 정책 변경 시 accounting DTO/controller/service·OpenAPI/generated Front A22·migration/두 DBML·P-BOC11F·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11E-R107 (2026-10-09): BOC-11E 권고안 채택 — 기존 RATE/STURATE 회당 이력을 보존하고 일반·Kinder·그룹·학생 예외의 시간당 정책을 POLICY current, UUID REQUEST, append-only EVENT로 분리한다. 학생 예외가 우선하며 actual occurrence date/span, explicit Kinder marker, exact group roster count로 청구한다. identity별 기간 비중첩·version+1·receipt·audit immutable과 superseded/retired terminal 전이를 DB가 방어하고 확정 청구·급여 snapshot은 바꾸지 않는다. v4.89/140표, migration1768600000000 로컬 fresh119·권한·멱등·stale·직접쓰기·terminal 재전이·30/60/90분·급여 불변 회귀 검증, 운영 미적용. 정책 변경 시 invoice-lines·accounting DTO/service·generated Front A26·migration/두 DBML·P-BOC11E·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D2-R106 (2026-10-09): BOC-11D-02 권고안 채택 — 승인 조정의 전후 환불 예정액 증가분을 실제 학생 환불액으로 서버 계산한다. 수납 PAY는 유지하고 STUDENT_REFUND_DISBURSEMENT current, UUID REQUEST, append-only EVENT를 분리하며 지급 당시 source adjustment version·금액·보호 계좌 id/version/last4를 보존한다. 지급 완료 뒤에는 먼저 환불 지급을 취소해야 원천 조정 취소가 가능하다. v4.88/137표, migration1768500000000 로컬 fresh118·repeat0·down/up·권한·멱등·stale·직접쓰기·취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 조정 전이·보호 계좌·accounting DTO/service/Front A24·A27·migration/두 DBML·P-BOC11D2·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
@@ -122,7 +124,7 @@
 // TBO-48F-11M-e2: Figma 입력/메뉴/전송 전 경계 QA 완료. 전용 상태8개는 DB 컬럼이 아니며 실제 저장·월 한도/소유권/경합·FK 검증을 대체하지 않는다. 스키마·migration·live DB 변경0.
 // TBO-48F-11M-d2c 검수 (2026-09-09): WAGE/PAYOUT/PAYOUT_LINE/NOTE/REQ 재사용 후보. Figma24행의 선택값·상태변수6개는 DB 기록/DTO가 아니다. NOTE 회차 onDate·본인/그룹 학생 소유권·취소 회차 작성권한·시급 요청 DTO 및 D-15 세금 절사 갭은 제품 후속. 실제 저장/지급/삭제 없으며 v4.11·64표 형상 변경0.
 // TBO-48F-11M-c 검수 (2026-09-09): 수업 안내는 STU/ISSUE/LIB/VERS/DIAG/NOTE/REQ 재사용 후보 대조. 세부 점수/평가·요청/파일 계약은 후속, Figma 표본은 DB 기록이 아님. v4.11·64표 형상 변경 없음.
-// version : 4.88 (2026-10-09 · TBO-55 BOC-11D-02 권고안 채택 · 학생 실제 환불 current/request/event와 source/account snapshot·운영 미적용) — v4.87 보호 계좌 current/request/event와 지급 snapshot(migration 1768400000000) ← v4.86 연체 정책/current/event와 일정 확대 방어(migration 1768300000000) ← v4.85 청구 조정 base/current/event 원장(migration 1768200000000). 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
+// version : 4.92 (2026-10-14 · BACKOFFICE-1014-B1014-05 · 강사 프로필 2표·STAFF 2칸·로컬 격리 migration127·운영 미적용) — v4.91 BO-12C/D 강사 교체 operation/undo·마케팅 version/receipt ← v4.90 교재 판매 POLICY/CURRENT/REQUEST/EVENT. 이전 버전별 상세 변경 이력은 아래 각 머리 주석과 파일 끝의 전이 기록을 따른다.
 // historical version : 4.59 (2026-09-30) — v4.59 학생 공용 사전4표(ST1-b1 · migration 1765600000000 · 위 머리 주석) ← v4.58 컨설팅 항목 기한(I-94 · CONS_ITEM.due_on · migration 1765500000000 · 머리 주석 「TBO-54 all160 부분 구현 I-94」) ← v4.57 문의 학부모 · 연락처 · 원하는 것(A-01 · LEAD.parent_relation · parent_phone · want · lead_parent_phone_digits · migration 1765400000000 · 머리 주석 「TBO-54 일부 구현 A-01」) ← v4.56 입금 요청 키(N-132 · 머리 주석). v4.48 까지 2026-09-25 일곱 단계 뒤 v4.49 컴플레인 문의자 관계 · 마무리 시각(CPL.requester · CPL.closed_at · wave6 운영) → v4.50 계정 첫 설정(STAFF 칸 셋 · AUTH_CODE · W8) → v4.51 로그인 아이디 대소문자 무관 유일(STAFF lower(email) 색인 · credentials_changed_at 뜻 넓힘 · W8) → v4.52 인증 코드 용도(AUTH_CODE.purpose · 비밀번호 찾기 N-101 · 하루 한도 N-105) → v4.53 로그인 아이디 분리(STAFF.login_id · 형식 자유 · email NULL 허용 · W10) → v4.54 W11 결정 채택(새 표 일곱 INV_INSTALLMENT · BOOK_SUBJECT · BOOK_CATEGORY · PLAN_PICK · EXEC_AREA_OWNER · Phase B M2 의 PAYOUT_BONUS_RULE · ACCT_PRIVACY · 91표 · 기존 표 칸 스물다섯 · migration 열셋). 9-25 단계: v4.42 상담 진단 점수(LEAD_DIAG · DQ1) → v4.43 학생 보호자·보호자 발송 원장(GUARDIAN·GUARDIAN_SEND · PNOTI note 갱신 · DQ3) → v4.44 알림 제목(NOTI.title · g2 16-1) → v4.45 상담·컨설팅 칸 넷(LEAD.grade · LEAD.reason_kind · CONS_SESS.result · CONS_SESS.next_until · wave3 g3) → v4.46 안내 두 상자(GUIDE.direction · GUIDE.admin_note · wave3 g4) → v4.47 상담 배치안·일정(LEAD_PLAN · LEAD_APPT · LEAD.recheck_on · wave3 g3) → v4.48 공휴일 이름표(HOLIDAY · wave5 스케줄). 변경 이력은 파일 끝 「v4.41 → v4.42」·「v4.42 → v4.43」·「v4.43 → v4.44」·「v4.44 → v4.45」·「v4.45 → v4.46」·「v4.46 → v4.47」·「v4.47 → v4.48」·「v4.48 → v4.49」·「v4.49 → v4.50」·「v4.50 → v4.51」·「v4.51 → v4.52」·「v4.52 → v4.53」·「v4.53 → v4.54」·「v4.54 → v4.55」·「v4.55 → v4.56」
 // canon   : docs/spec/DEV-SPEC.md   (관리자 백오피스 개발 명세서 v2 · 96장 · 구현 실물)
 //           docs/spec/V26-SPEC.md   (강사 백오피스 v26 · 고유 영역만)
@@ -279,6 +281,8 @@ Table STAFF {
   can_gpa_pack boolean [note: '자료 요청 접수 — NULL 이면 role!=teacher']
 
   hired_on    date        [note: '불가 시간 2주 회차의 기산점']
+  birth_on    date        [note: 'BACKOFFICE-1014 · 강사 생년월일. 개인정보 투영은 DTO/권한 경계에서 제한한다.']
+  english_only boolean   [note: 'BACKOFFICE-1014 · 100% 영어 수업 가능=true/불가=false/미확인=NULL']
   active      boolean     [not null, default: true]
   created_at  timestamptz [not null, default: `now()`]
 
@@ -295,6 +299,27 @@ Table STAFF {
      canAdminPage = role != teacher · canCrudAll = role != teacher · canSeeProfit = role == ceo
   대표 전용 12가지 중 **지출 · 총수입만** 실제로 대표 전용이고, 나머지는 매니저 이상이 본다.
   '''
+}
+
+Table STAFF_TEACHING_KIND {
+  staff_id bigint [not null, ref: > STAFF.id, note: 'ON DELETE CASCADE']
+  kind_key varchar(16) [not null, ref: > KIND.key, note: 'KIND FK ON DELETE RESTRICT · class/mock/study만 허용. staff_teaching_kind_allowed CHECK, GPA·SUB 제외']
+  indexes {
+    (staff_id, kind_key) [pk]
+    (kind_key) [name: 'staff_teaching_kind_kind_idx']
+  }
+  Note: 'BACKOFFICE-1014-B1014-05 · 가능 수업 유형. 과목 SUB 및 9/30 목표 STAFF_TEACHING_GRADE와 다른 현재 영속 원장.'
+}
+
+Table STAFF_EDUCATION_SUMMARY {
+  staff_id bigint [not null, ref: > STAFF.id, note: 'ON DELETE CASCADE']
+  position smallint [not null, note: '0~4 · staff_education_summary_position CHECK']
+  school varchar(120) [not null, note: 'trim 후 빈 값 금지 · staff_education_summary_school CHECK']
+  major varchar(120)
+  degree varchar(40)
+  status varchar(40)
+  indexes { (staff_id, position) [pk] }
+  Note: 'BACKOFFICE-1014-B1014-05 · 화면 학력 요약 최대5행. 기존 학적/학교 도메인과 독립.'
 }
 
 Table AUTH_CODE {
