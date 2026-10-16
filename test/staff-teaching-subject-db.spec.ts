@@ -10,7 +10,7 @@ import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
-import { DEV_URL } from './db';
+import { DEV_URL, markSetupDone } from './db';
 
 const d = DEV_URL ? describe : describe.skip;
 jest.setTimeout(90_000);
@@ -81,6 +81,8 @@ d('p8 결정 — 가능 과목 SUB 칩 · 학력 코드표 (HTTP/DB)', () => {
       ($1,'과목대표','s5b-subj-ceo','ceo',$4,true,false),
       ($2,'과목매니저','s5b-subj-mgr','manager',$4,true,false),
       ($3,'과목강사','s5b-subj-t','teacher',$4,true,false)`, [CEO, MGR, TEACHER, hash]);
+    // AUTH-INIT-02(2026-10-16): 필수 초기설정 판정은 잠금 OR 이메일·휴대폰 미인증이다 — 업무 API를 부르는 대역 계정은 완료 모양으로 둔다(S1 규칙)
+    await markSetupDone(q, ids);
     await q(`INSERT INTO tzg (id, name, tz) VALUES (1,'한국 (KST)','Asia/Seoul') ON CONFLICT (id) DO NOTHING`);
     tokens.mgr = await login('s5b-subj-mgr');
     tokens.teacher = await login('s5b-subj-t');
