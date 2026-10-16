@@ -7,7 +7,9 @@ import { cleanupOneExpiredBookPdfUpload } from '../src/modules/files/book-pdf.st
 
 async function main(): Promise<void> {
   const raw = process.env.DATABASE_URL;
-  if (!raw) throw new Error('DATABASE_URL을 명시해야 합니다');
+  if (!raw) {
+    throw new Error('DATABASE_URL을 명시해야 합니다');
+  }
   const dbName = new URL(raw).pathname.slice(1);
   const run = process.argv.includes('--run');
   if (run && !process.argv.includes(`--database=${dbName}`)) {
@@ -26,7 +28,9 @@ async function main(): Promise<void> {
       return;
     }
     let removed = 0;
-    while (removed < 100 && await ds.transaction((m) => cleanupOneExpiredBookPdfUpload(m))) removed += 1;
+    while (removed < 100 && await ds.transaction((m) => cleanupOneExpiredBookPdfUpload(m))) {
+      removed += 1;
+    }
     console.log(`만료된 미사용 교재 PDF 업로드 ${removed}건 삭제`);
   } finally {
     await ds.destroy();
