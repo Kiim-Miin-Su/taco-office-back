@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: role-words.ts — ROLE_ORDER, ROLE_LABEL, roleLabel, groupByRole (util)
+ * 목적: role-words.ts — ROLE_ORDER, ROLE_LABEL, roleLabel, assignedStaffRoleLabel, groupByRole (util)
  * 책임/재사용: 현재 lib 계층의 순수 계산/표시 방어를 우선 재사용한다. UI·네트워크·DB 부수효과와 서버 업무 권위를 섞지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -28,6 +28,11 @@ export const ROLE_LABEL: Record<string, string> = {
 
 /** 모르는 코드값이면 코드값을 그대로 보인다 — 비어 보이느니 낯설게 보이는 편이 낫다 */
 export const roleLabel = (role: string): string => ROLE_LABEL[role] ?? role;
+
+/** 학생 담당 칩에는 일반 강사 표기를 덧붙이지 않고, 다른 실제 담당 역할만 표시한다. */
+const ASSIGNED_STAFF_ROLE_LABEL: Record<string, string | null> = { ...ROLE_LABEL, teacher: null };
+export const assignedStaffRoleLabel = (role: string): string | null =>
+  Object.hasOwn(ASSIGNED_STAFF_ROLE_LABEL, role) ? ASSIGNED_STAFF_ROLE_LABEL[role] : roleLabel(role);
 
 /**
  * §17 묶음 — 역할 차례대로, **사람이 없는 역할은 묶음을 만들지 않는다.**

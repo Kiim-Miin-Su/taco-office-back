@@ -19,7 +19,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
 import { Ser } from '../src/entities';
 import { TeacherService } from '../src/modules/teacher/teacher.service';
-import { todayKst } from '../src/lib/kst';
+import { addDays, todayKst } from '../src/lib/kst';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -160,6 +160,66 @@ d('진단 리포트 작성 (C61)', () => {
     expect(s.diag?.levelSummary).toBe('두 번째 진단');
     expect(s.diag?.curriculum).toBe('주 3회로 올림');
     expect(s.diag?.byName).toBe('나 강사');
+  });
+
+  it('과거 주의 전임 강사는 회차만 보며 교체 뒤 NOTE·진단·현재 프로필은 현 담당자에게만 열린다', async () => {
+    await write(A, { levelSummary: '교체 뒤 최신 진단' });
+    const [author] = await q.query(`INSERT INTO staff(name,email,role)
+      VALUES ('인수인계 관리자','diag-note-manager@test.local','manager') RETURNING id`) as Array<{ id: string }>;
+    await q.query(`INSERT INTO note(student_id,author_id,body) VALUES ($1,$2,'교체 뒤 새 인수인계')`, [A, author.id]);
+    await q.query(`UPDATE stu SET guidance='intensive',lang='en',target_exam='TOEFL' WHERE id=$1`, [A]);
+    const past = addDays(todayKst(), -14);
+    await q.query(`UPDATE ser SET from_date=$2::date,to_date=$2::date WHERE id=$1`, [serMine, past]);
+    await q.query(`UPDATE ser_occ SET on_date=$2::date,
+      span=tstzrange(($2::date + time '10:00') AT TIME ZONE 'Asia/Seoul',
+        ($2::date + time '11:00') AT TIME ZONE 'Asia/Seoul','[)') WHERE ser_id=$1`, [serMine, past]);
+    await q.query(`INSERT INTO ser_stu(ser_id,student_id) VALUES ($1,$2)`, [serOther, A]);
+
+    const historical = (await svc().guides(MINE, past)).students.find(student => student.studentId === A);
+    expect(historical?.lessons).toHaveLength(1);
+    expect(historical).toMatchObject({ notes: [], books: [], diag: null, grade: null, school: null,
+      targetExam: null, guidance: null, lang: null });
+
+    const current = (await svc().guides(OTHER, todayKst())).students.find(student => student.studentId === A);
+    expect(current?.notes).toMatchObject([{ body: '교체 뒤 새 인수인계' }]);
+    expect(current?.diag).toMatchObject({ levelSummary: '교체 뒤 최신 진단' });
+    expect(current).toMatchObject({ guidance: 'intensive', lang: 'en', targetExam: 'TOEFL' });
+  });
+
+  it.each([
+    ['그날만 빠짐', 'excluded'],
+    ['휴원', 'paused'],
+  ])('유일한 미래 회차가 %s이면 미래 안내에서 빠지고 과거 안내에 최신 NOTE·진단을 열지 않는다', async (_label, reason) => {
+    await write(A, { levelSummary: '미래 회차 비공개 진단' });
+    const [author] = await q.query(`INSERT INTO staff(name,email,role)
+      VALUES ('메모 관리자','diag-current-note-manager@test.local','manager') RETURNING id`) as Array<{ id: string }>;
+    await q.query(`INSERT INTO note(student_id,author_id,body) VALUES ($1,$2,'미래 회차 비공개 NOTE')`, [A, author.id]);
+
+    const past = addDays(todayKst(), -14);
+    const future = addDays(todayKst(), 7);
+    await q.query(`UPDATE ser SET from_date=$2::date WHERE id=$1`, [serMine, past]);
+    await q.query(`UPDATE ser_occ SET on_date=$2::date,
+      span=tstzrange(($2::date + time '10:00') AT TIME ZONE 'Asia/Seoul',
+        ($2::date + time '11:00') AT TIME ZONE 'Asia/Seoul','[)') WHERE ser_id=$1`, [serMine, past]);
+    await q.query(`INSERT INTO ser_occ(ser_id,on_date,span) VALUES ($1,$2::date,
+      tstzrange(($2::date + time '10:00') AT TIME ZONE 'Asia/Seoul',
+        ($2::date + time '11:00') AT TIME ZONE 'Asia/Seoul','[)'))`, [serMine, future]);
+
+    if (reason === 'excluded') {
+      const [exception] = await q.query(`INSERT INTO exc(ser_id,on_date,by_id)
+        VALUES ($1,$2::date,$3) RETURNING id`, [serMine, future, author.id]) as Array<{ id: string }>;
+      await q.query(`INSERT INTO exc_stu_out(exc_id,student_id) VALUES ($1,$2)`, [exception.id, A]);
+    } else {
+      await q.query(`INSERT INTO stu_pause(student_id,from_date,by_id) VALUES ($1,$2::date,$3)`, [A, future, author.id]);
+    }
+
+    const futureGuide = (await svc().guides(MINE, future)).students.find(student => student.studentId === A);
+    expect(futureGuide).toBeUndefined();
+
+    const historical = (await svc().guides(MINE, past)).students.find(student => student.studentId === A);
+    expect(historical?.lessons).toHaveLength(1);
+    expect(historical).toMatchObject({ notes: [], books: [], diag: null, grade: null, school: null,
+      targetExam: null, guidance: null, lang: null });
   });
 
   /* ── ④ 칸과 거절 ─────────────────────────────────────────────────── */

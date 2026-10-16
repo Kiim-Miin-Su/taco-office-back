@@ -786,6 +786,11 @@ export class TeacherService {
          FROM ser_occ o
          JOIN ser s      ON s.id = o.ser_id
          JOIN ser_stu ss ON ss.ser_id = o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+           AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+           AND NOT EXISTS (
+             SELECT 1 FROM exc e JOIN exc_stu_out x ON x.exc_id=e.id AND x.student_id=ss.student_id
+              WHERE e.ser_id=o.ser_id AND e.on_date=o.on_date
+           )
          JOIN stu st     ON st.id = ss.student_id
          CROSS JOIN wk
         WHERE ${TEACHER_OF} = $1
@@ -826,9 +831,35 @@ export class TeacherService {
     }
 
     const ids = [...byStudent.keys()];
+    // 과거 주의 회차는 보존하되, 최신 학생 정보는 조회하는 지금도 담당 중인 학생에게만 연다.
+    // NOTE는 학생 공통 인수인계라 과거 회차만으로 열면 강사 교체 뒤의 새 본문까지 새게 된다.
+    const currentRows = ids.length ? await this.q(
+      `SELECT DISTINCT ss.student_id FROM ser_occ o JOIN ser s ON s.id=o.ser_id
+        JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+          AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+          AND NOT EXISTS (
+            SELECT 1 FROM exc e JOIN exc_stu_out x ON x.exc_id=e.id AND x.student_id=ss.student_id
+             WHERE e.ser_id=o.ser_id AND e.on_date=o.on_date
+          )
+       WHERE ss.student_id=ANY($2::bigint[]) AND ${TEACHER_OF}=$1 AND NOT o.canceled
+         AND o.on_date BETWEEN s.from_date AND COALESCE(s.to_date,'infinity'::date)
+         AND upper(o.span)>now()`,
+      [teacherId, ids],
+    ) : [];
+    const currentIds = currentRows.map(row => Number(row.student_id));
+    const currentSet = new Set(currentIds);
+    for (const [id, student] of byStudent) {
+      if (currentSet.has(id)) continue;
+      student.grade = null;
+      student.school = null;
+      student.targetExam = null;
+      student.guidance = null;
+      student.lang = null;
+    }
     if (ids.length > 0) {
       /*
        * 학생 교재 — 배부 원장(ISSUE)의 **배부됐거나 배부 예정인** 줄만(취소·반려는 학생 손에 간 적이 없다).
+       * 과거 주의 교재 이력은 보존한다. 최신 NOTE·진단의 currentIds 제한과 파일의 오늘 배정 권한은 별도로 적용한다.
        * 상태는 원장 낱말 그대로 싣고 화면이 「사용 중 · 교재 완료 · 배부 대기」를 그 값으로 가른다 — 전에는 회수일 유무로만 갈라
        * 승인 대기(wait) · 전달 대기(auto)가 「사용 중」으로 서고 배부일이 "null" 로 찍혔다(TEACHER-LINEAGE 2026-09-29).
        * 재배부 계보(`issue.reissued_from` · 1:1)는 양쪽 id 로 싣는다 — 옛 배부 줄은 「→ 재배부」, 새 줄은 「이전 배부에서 재배부」.
@@ -846,7 +877,7 @@ export class TeacherService {
                 (i.state = 'ok') AS in_use
            FROM issue i JOIN lib l ON l.id = i.lib_id
            LEFT JOIN vers v ON v.id=i.vers_id AND v.lib_id=i.lib_id
-           -- 선택한 과거 주의 학생 정보는 유지하되 파일 권한은 다운로드 경로와 같이 오늘 기준으로 다시 판정한다.
+           -- 과거 교재 이력은 유지하되 파일 권한은 다운로드 경로와 같이 오늘 기준으로 다시 판정한다.
            LEFT JOIN LATERAL (
              SELECT i.teacher_id=$2 AND i.state='ok' AND EXISTS (${bookAssignmentContextSql({
                teacherId: 'i.teacher_id', subKey: 'i.sub_key', studentId: 'i.student_id', today: '$3',
@@ -876,7 +907,9 @@ export class TeacherService {
           changeRequestable: b.in_use === true && b.change_pending !== true,
         });
       }
+    }
 
+    if (currentIds.length > 0) {
       const diags = await this.q(
         `SELECT DISTINCT ON (d.student_id)
                 d.student_id, to_char(d.created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD') AS on_date,
@@ -886,7 +919,7 @@ export class TeacherService {
           -- id 로 한 번 더 가른다: created_at 은 기본값이 now() 라 같은 트랜잭션·같은 시각에
           -- 들어온 두 건이 **동점**이 되고, 그때 「최신」이 아무 것이나 된다 (회귀가 잡았다)
           ORDER BY d.student_id, d.created_at DESC, d.id DESC`,
-        [ids],
+        [currentIds],
       );
       for (const d of diags) {
         const s = byStudent.get(Number(d.student_id));
@@ -902,10 +935,7 @@ export class TeacherService {
         }
       }
 
-      /*
-       * 인수인계 메모(N-36 ②) — 관리자 · 매니저가 §79 학생 트래킹에서 적은 줄. **이 강사가 이번 주 맡은 학생 것만**이다
-       * (위 학생 목록이 `TEACHER_OF` 로 이미 좁혔다). 최근 것부터 스무 줄 — 학부모에게 나가는 글(안내 · 리포트)에는 쓰지 않는다.
-       */
+      /* 인수인계 NOTE는 현재 유효 배정으로 다시 좁힌 학생만 읽는다. 과거 주 목록만으로 최신 본문을 열지 않는다. */
       const notes = await this.q(
         `SELECT * FROM (
            SELECT n.id, n.student_id, n.body, w.name AS author_name, ${kstAt('n.created_at')} AS created_at,
@@ -913,7 +943,7 @@ export class TeacherService {
              FROM note n LEFT JOIN staff w ON w.id = n.author_id
             WHERE n.student_id = ANY($1)
          ) x WHERE rn <= 20 ORDER BY student_id, rn`,
-        [ids],
+        [currentIds],
       );
       for (const n of notes) {
         byStudent.get(Number(n.student_id))?.notes.push({

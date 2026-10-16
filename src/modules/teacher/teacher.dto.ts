@@ -434,7 +434,7 @@ export class TeacherGuideStudentDto {
   @ApiProperty({ type: [TeacherGuideBookDto], description: '교재 — 사용 중 먼저, 반환분은 이력' }) books!: TeacherGuideBookDto[];
   @ApiPropertyOptional({ type: TeacherGuideDiagDto, nullable: true, description: '최신 진단 — 없으면 null' })
   diag?: TeacherGuideDiagDto | null;
-  @ApiProperty({ type: [TeacherGuideNoteDto], description: '인수인계 메모 — 관리자 · 매니저가 적은 줄, 최근 것부터 (N-36 ② · 강사 원문 27 · 44 「이전 강사 인수인계」 · 학부모에게 나가지 않는다)' })
+  @ApiProperty({ type: [TeacherGuideNoteDto], description: '인수인계 메모 — 조회 시점에 현재·향후 유효 회차를 맡은 학생만 최근 것부터 제공한다. 과거 주 수업만 맡았던 강사에게는 주지 않는다. 학부모에게 나가지 않는다.' })
   notes!: TeacherGuideNoteDto[];
 }
 
@@ -449,7 +449,7 @@ export class TeacherGuidesQueryDto {
 export class TeacherGuidesDto {
   @ApiProperty({ description: '이번 주 월요일 YYYY-MM-DD (KST)' }) weekFrom!: string;
   @ApiProperty({ description: '이번 주 일요일 YYYY-MM-DD (KST)' }) weekTo!: string;
-  @ApiProperty({ type: [TeacherGuideStudentDto], description: '첫 수업 시각 순' }) students!: TeacherGuideStudentDto[];
+  @ApiProperty({ type: [TeacherGuideStudentDto], description: '첫 수업 시각 순. 과거 주 회차는 유지하되 현재 학생 프로필·교재·진단·NOTE는 조회 시점의 유효 담당 학생에게만 제공한다.' }) students!: TeacherGuideStudentDto[];
 }
 
 /* ══ 회차별 수업 허브 (강사 수정사항 §42·46~48·52~54) ═══════════════ */

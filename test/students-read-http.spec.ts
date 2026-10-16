@@ -47,6 +47,10 @@ describe('학생 목록/상세 HTTP 계약', () => {
     expect(service.detail).toHaveBeenCalledWith({ id: 7 });
     await request(app.getHttpServer()).get('/students/7/hub?limit=5').set('x-fixture-role', role).expect(200);
     expect(service.hub).toHaveBeenCalledWith({ id: 7 }, { limit: 5 }, 1, true, true);
+    await request(app.getHttpServer()).get('/students/7/hub?commentsMonth=2026-10').set('x-fixture-role', role).expect(200);
+    expect(service.hub).toHaveBeenCalledWith({ id: 7 }, { commentsMonth: '2026-10' }, 1, true, true);
+    await request(app.getHttpServer()).get('/students/7/hub?commentsMonth=0001-01').set('x-fixture-role', role).expect(200);
+    expect(service.hub).toHaveBeenCalledWith({ id: 7 }, { commentsMonth: '0001-01' }, 1, true, true);
   });
 
   it.each(['/students', '/students/7', '/students/7/hub'])('강사 및 확인 불가 역할은 %s의 service에 도달하지 않는다', async url => {
@@ -58,7 +62,7 @@ describe('학생 목록/상세 HTTP 계약', () => {
     expect(service.hub).not.toHaveBeenCalled();
   });
 
-  it.each(['/students?page=0', '/students?page=1e2', '/students?page=1&page=2', '/students?status=active', '/students/0', '/students/9007199254740993', '/students/7/hub?limit=51', '/students/7/hub?reportsCursor=bad='])('지원하지 않는 입력 %s는400이다', async url => {
+  it.each(['/students?page=0', '/students?page=1e2', '/students?page=1&page=2', '/students?status=active', '/students/0', '/students/9007199254740993', '/students/7/hub?limit=51', '/students/7/hub?reportsCursor=bad=', '/students/7/hub?commentsMonth=2026-13', '/students/7/hub?commentsMonth=0000-01'])('지원하지 않는 입력 %s는400이다', async url => {
     await request(app.getHttpServer()).get(url).set('x-fixture-role', 'manager').expect(400);
     expect(service.list).not.toHaveBeenCalled();
     expect(service.detail).not.toHaveBeenCalled();
@@ -80,6 +84,13 @@ describe('학생 목록/상세 HTTP 계약', () => {
     expect(doc.components?.schemas?.StudentAuditSummaryDto).not.toHaveProperty('properties.after');
     expect(doc.components?.schemas?.StudentReadDto).not.toHaveProperty('properties.phone');
     expect(doc.components?.schemas?.StudentHubDto).not.toHaveProperty('properties.phone');
+    expect(doc.components?.schemas?.StudentHubDto).toHaveProperty('properties.teachers');
+    expect(doc.components?.schemas?.StudentHubTeacherDto).toHaveProperty('properties.roleLabel');
+    expect(doc.components?.schemas?.StudentHubDto).toHaveProperty('properties.commentLessons');
+    expect(doc.components?.schemas?.StudentHubDto).toHaveProperty('properties.privateNoteCount');
+    expect(doc.components?.schemas?.StudentHubCommentLessonDto).not.toHaveProperty('properties.body');
+    expect(doc.components?.schemas?.StudentHubCommentPageDto).toHaveProperty('properties.months');
+    expect(doc.components?.schemas?.StudentHubCommentPageDto).toHaveProperty('properties.allTotal');
     expect(doc.components?.schemas?.StudentHubReportDto).not.toHaveProperty('properties.body');
     expect(doc.components?.schemas?.StudentHubInvoiceDto).not.toHaveProperty('properties.proofUrl');
     expect(doc.components?.schemas?.StudentHubCommentDto).toMatchObject({

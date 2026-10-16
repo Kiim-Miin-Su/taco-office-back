@@ -10,7 +10,7 @@
  * 화면에서 묶으면 두 가지가 한꺼번에 깨진다: 「강사 13」의 13 을 화면이 세게 되고(D-R37),
  * `m.role === 'teacher'` 라는 **역할 비교가 화면에 생긴다**(D-R39 · eslint 가 막는 바로 그 모양).
  */
-import { ROLE_ORDER, groupByRole, roleLabel } from '../src/lib/role-words';
+import { ROLE_ORDER, assignedStaffRoleLabel, groupByRole, roleLabel } from '../src/lib/role-words';
 
 const who = (id: number, role: string) => ({ id, role });
 
@@ -46,5 +46,12 @@ describe('§17 역할 묶음', () => {
   it('낱말은 여기 한 곳에서만 만든다 — 원문 §17 의 첫 묶음이 「강사」다', () => {
     expect(roleLabel('teacher')).toBe('강사');
     expect(ROLE_ORDER.every((r) => roleLabel(r) !== r)).toBe(true);
+  });
+
+  it('학생 담당 칩은 강사만 역할을 생략하고 실제 비강사 역할을 남긴다', () => {
+    expect(assignedStaffRoleLabel('teacher')).toBeNull();
+    expect(assignedStaffRoleLabel('manager')).toBe('매니저');
+    expect(assignedStaffRoleLabel('admin')).toBe('관리자');
+    expect(assignedStaffRoleLabel('intern')).toBe('intern');
   });
 });

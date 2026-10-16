@@ -90,6 +90,9 @@ export class StudentHubQueryDto {
   @ApiPropertyOptional({ type: String, maxLength: 256, description: '코멘트 다음 페이지 불투명 커서' })
   @IsOptional() @IsString() @MaxLength(256) @Matches(/^[A-Za-z0-9_-]+$/) commentsCursor?: string;
 
+  @ApiPropertyOptional({ type: String, example: '2026-10', description: '코멘트의 KST 작성 월. 생략하면 전체를 읽는다.' })
+  @IsOptional() @IsString() @Matches(/^(?!0000-)\d{4}-(0[1-9]|1[0-2])$/) commentsMonth?: string;
+
   @ApiPropertyOptional({ type: String, maxLength: 256, description: '청구 다음 페이지 불투명 커서' })
   @IsOptional() @IsString() @MaxLength(256) @Matches(/^[A-Za-z0-9_-]+$/) invoicesCursor?: string;
 }
@@ -123,6 +126,43 @@ export class StudentHubCommentDto {
   @ApiProperty() createdAt!: string;
 }
 
+export class StudentHubCommentMonthDto {
+  @ApiProperty({ example: '2026-10' }) month!: string;
+  @ApiProperty() total!: number;
+}
+
+/** 현재·예정 유효 회차의 실제 담당 강사. 반복 기본 강사는 수업별, 대강은 회차별 한 줄이다. */
+export class StudentHubTeacherLessonDto {
+  @ApiProperty(ID_SCHEMA) serId!: number;
+  @ApiProperty() kindName!: string;
+  @ApiProperty({ type: String, nullable: true }) subjectName!: string | null;
+  @ApiProperty({ description: '반복 규칙 또는 대강 회차의 실제 수업일' }) ruleLabel!: string;
+  @ApiProperty() startMin!: number;
+  @ApiProperty() endMin!: number;
+  @ApiProperty({ enum: ['offline', 'online'] }) mode!: 'offline' | 'online';
+  @ApiProperty({ description: '반복 기본 강사는 수업·명단의 시작일, 단발·대강은 실제 회차일' }) fromDate!: string;
+  @ApiProperty({ type: String, nullable: true, description: '반복 기본 강사는 수업·명단 종료일, 단발·대강은 실제 회차일' }) toDate!: string | null;
+}
+
+export class StudentHubTeacherDto {
+  @ApiProperty(ID_SCHEMA) staffId!: number;
+  @ApiProperty() name!: string;
+  @ApiProperty({ type: String, nullable: true, description: '강사는 생략하고, 실제 수업 담당자가 다른 역할이면 서버 공용 역할 낱말을 표시한다.' })
+  roleLabel!: string | null;
+  @ApiProperty({ type: [StudentHubTeacherLessonDto] }) lessons!: StudentHubTeacherLessonDto[];
+}
+
+/** NOTE writer의 ser_stu 검사와 같은 범위: 종료된 명단도 코멘트 연결 대상으로 남긴다. */
+export class StudentHubCommentLessonDto {
+  @ApiProperty(ID_SCHEMA) serId!: number;
+  @ApiProperty() teacherName!: string;
+  @ApiProperty() kindName!: string;
+  @ApiProperty({ type: String, nullable: true }) subjectName!: string | null;
+  @ApiProperty() fromDate!: string;
+  @ApiProperty({ type: String, nullable: true }) toDate!: string | null;
+  @ApiProperty() ended!: boolean;
+}
+
 export class StudentHubInvoiceDto {
   @ApiProperty(ID_SCHEMA) id!: number;
   @ApiProperty() yearMonth!: string;
@@ -145,7 +185,9 @@ export class StudentHubReportPageDto {
 
 export class StudentHubCommentPageDto {
   @ApiProperty({ type: [StudentHubCommentDto] }) items!: StudentHubCommentDto[];
-  @ApiProperty() total!: number;
+  @ApiProperty({ description: '선택한 KST 월의 NOTE 수. 월을 생략하면 전체 NOTE 수' }) total!: number;
+  @ApiProperty({ description: '월 선택과 무관한 전체 NOTE 수' }) allTotal!: number;
+  @ApiProperty({ type: [StudentHubCommentMonthDto], description: '전체 NOTE의 KST 작성 월별 건수' }) months!: StudentHubCommentMonthDto[];
   @ApiProperty({ type: String, nullable: true }) nextCursor!: string | null;
 }
 
@@ -158,6 +200,9 @@ export class StudentHubInvoicePageDto {
 export class StudentHubDto {
   @ApiProperty(ID_SCHEMA) studentId!: number;
   @ApiProperty({ description: '청구 금액 projection 권한' }) canSeeAmounts!: boolean;
+  @ApiProperty({ type: [StudentHubTeacherDto], description: '현재·향후 유효 회차의 실제 담당 강사(대강 포함). 이 관리자 학생 조회에서만 공개한다.' }) teachers!: StudentHubTeacherDto[];
+  @ApiProperty({ type: [StudentHubCommentLessonDto], description: 'NOTE 작성용 학생 수업 명단 전체. 종료된 수강도 포함한다.' }) commentLessons!: StudentHubCommentLessonDto[];
+  @ApiProperty({ description: '관리자 전용 비공개 특이사항의 본문 없는 전체 건수' }) privateNoteCount!: number;
   @ApiProperty({ type: [StudentHubNextActionDto] }) nextActions!: StudentHubNextActionDto[];
   @ApiProperty({ type: StudentHubReportPageDto }) reports!: StudentHubReportPageDto;
   @ApiProperty({ type: StudentHubCommentPageDto }) comments!: StudentHubCommentPageDto;

@@ -277,6 +277,10 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
       VALUES ($1,'v1',$2,$3) RETURNING id`, [lib.id, se.id, te.id]);
     const [issue] = await q.query(`INSERT INTO issue(lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state)
       VALUES ($1,$2,71,72,'file-mask-sub',$3::date,'ok') RETURNING id`, [lib.id, vers.id, today]);
+    // 과거 교재 목록을 복구해도 현재 담당 회차가 없는 강사에게 최신 개인정보를 열어서는 안 된다.
+    await q.query(`INSERT INTO note(student_id,author_id,body) VALUES (71,$1,'CUMULATIVE_NOTE_CANARY')`, [ME]);
+    await q.query(`INSERT INTO diag(student_id,created_by,level_summary)
+      VALUES (71,72,'CUMULATIVE_DIAG_CANARY')`);
 
     if (scenario === 'future') {
       await q.query(`UPDATE ser SET from_date=$1::date WHERE id=-72101`, [futureDay]);
@@ -290,8 +294,11 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
 
     // 과거 학생·배정 내역은 남는다. 파일 ID만 오늘의 수업 문맥에 맞게 제거해야 한다.
     const guide = await new TeacherService(q.manager.getRepository(Ser)).guides(viewerId, historicalDay);
-    const projected = guide.students.find((student) => student.studentId === 71)?.books
-      .find((book) => book.issueId === Number(issue.id));
+    const student = guide.students.find((entry) => entry.studentId === 71);
+    expect(student).toMatchObject({
+      grade: null, school: null, targetExam: null, guidance: null, lang: null, notes: [], diag: null,
+    });
+    const projected = student?.books.find((book) => book.issueId === Number(issue.id));
     expect(projected).toMatchObject({
       issueId: Number(issue.id), state: 'ok', seFileId: allowed ? se.id : null, teFileId: allowed ? te.id : null,
     });

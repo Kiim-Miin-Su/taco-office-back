@@ -452,7 +452,9 @@ d('W11 M2 강사료 정산 · 보정 · 가산 · 비공개 · 인수인계 (N-3
 
   /* ── ⑤ 인수인계 메모 (N-36 ②) ─────────────────────────────────────────── */
   it('⑤ 인수인계 메모 — 관리자 · 매니저가 한 줄 더하고 §79 카드와 그 학생을 맡은 강사의 안내 카드가 읽는다 (학부모 · 남의 강사 X)', async () => {
-    const s = await lesson(TEACHER, 540, M2_MON, [STU]);
+    // seed의 class 행에 기대지 않는다. 종료 수강 NOTE를 현재 담당자가 읽는 계약은 미래 배정도 있어야 한다.
+    const s = await lesson(TEACHER, 540, M2_MON, [STU], KIND);
+    await lesson(TEACHER, 540, plus(kst(), 7), [STU], KIND);
     const note = (body: Record<string, unknown>, t = tokens.mgr) => api('post', '/schedule/tracking/notes', t).send(body);
     const privacyBody = '집중 시간이 짧아 20분마다 쉬게 해 주세요';
     const made1 = (await note({ studentId: STU, serId: s, body: `  ${privacyBody}  ` }).expect(201)).body;

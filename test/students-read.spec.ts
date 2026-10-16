@@ -86,7 +86,14 @@ describe('학생 읽기 — 현재 DB 사실만', () => {
 
   it('학생 허브는 exact student 원장·독립 cursor·금액/컨설팅 공개 범위를 서버에서 적용한다', async () => {
     const { service, query, transaction } = fixture([
-      [{ id: '21', schedule_count: '2', billing_count: '1', book_count: '3', guide_count: '1', lead_count: '1' }],
+      [{ id: '21', schedule_count: '2', billing_count: '1', book_count: '3', guide_count: '1', lead_count: '1', private_note_count: '4' }],
+      [{ staff_id: '8', name: '담당 강사', role: 'teacher', ser_id: '17', kind_name: '수업', subject_name: '영어',
+        rrule: 'WEEKLY:MO', overridden: false, drawn_date: '2026-10-19',
+        start_min: 600, end_min: 660, mode: 'online', from_date: '2026-10-01', to_date: null }],
+      [{ ser_id: '17', teacher_name: '담당 강사', kind_name: '수업', subject_name: '영어',
+        from_date: '2026-10-01', to_date: '2026-10-31', ended: false },
+      { ser_id: '16', teacher_name: '예전 강사', kind_name: '수업', subject_name: '수학',
+        from_date: '2026-09-01', to_date: '2026-09-01', ended: true }],
       [
         { id: '30', share: 'private', owner_id: '9', is_picked: false },
         { id: '31', share: 'money_only', owner_id: '9', is_picked: false },
@@ -96,7 +103,7 @@ describe('학생 읽기 — 현재 DB 사실만', () => {
         { id: '12', on_date: '2026-10-07', cursor_date: '2026-10-07', kind_name: '수업', subject_name: '영어', teacher_name: '강사', stored_state: 'wait', reportable: true, ended: true, submitted_at: '2026-10-07T04:00:00Z', body: 'PRIVATE' },
         { id: '11', on_date: '2026-10-06', cursor_date: '2026-10-06', kind_name: '수업', subject_name: '영어', teacher_name: '강사', stored_state: 'ok', reportable: true, ended: true, submitted_at: '2026-10-06T04:00:00Z' },
       ],
-      [{ total: 2 }],
+      [{ month: '2026-10', total: 2 }],
       [
         { id: '22', ser_id: '5', author_id: '2', author_name: '관리자', body: '인수인계', cursor_date: '2026-10-07T01:02:03.123456Z', created_at: '2026-10-07T01:02:03Z' },
         { id: '21', ser_id: null, author_id: '2', author_name: '관리자', body: '이전 메모', cursor_date: '2026-10-06T01:02:03.123456Z', created_at: '2026-10-06T01:02:03Z' },
@@ -114,17 +121,28 @@ describe('학생 읽기 — 현재 DB 사실만', () => {
     ]);
     expect(result.nextActions.find(item => item.key === 'billing')?.href).toBe('/students/21?tab=billing');
     expect(result.nextActions.find(item => item.key === 'lead')?.href).toBe('/intake');
+    expect(result.teachers).toMatchObject([{ staffId: 8, name: '담당 강사', roleLabel: null, lessons: [{ serId: 17, ruleLabel: '매주 월', mode: 'online' }] }]);
+    expect(result.commentLessons).toMatchObject([{ serId: 17, ended: false }, { serId: 16, ended: true }]);
+    expect(result.privateNoteCount).toBe(4);
     expect(result.reports).toMatchObject({ total: 2, items: [{ id: 12, state: 'wait', stateLabel: '승인 대기' }] });
-    expect(result.comments).toMatchObject({ total: 2, items: [{ id: 22, body: '인수인계' }] });
+    expect(result.comments).toMatchObject({ total: 2, allTotal: 2, months: [{ month: '2026-10', total: 2 }], items: [{ id: 22, body: '인수인계' }] });
     expect(result.invoices).toMatchObject({ total: 2, items: [{ id: 32, amount: null, paidAmount: null, remainingAmount: null }] });
     expect(['reports', 'comments', 'invoices'].map((kind) => {
       const token = result[kind as 'reports'].nextCursor!;
       return JSON.parse(Buffer.from(token, 'base64url').toString('utf8')).k;
     })).toEqual(['reports', 'comments', 'invoices']);
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE|proofUrl|body.*PRIVATE/);
-    expect(query.mock.calls[2][0]).toContain('FROM rep_stu WHERE student_id=$1');
-    expect(query.mock.calls[4][0]).toContain('FROM note WHERE student_id=$1');
-    expect(query.mock.calls[6][0]).toContain('FROM inv WHERE student_id=$1');
+    expect(query.mock.calls[0][0]).toContain('ss.from_date IS NULL');
+    expect(query.mock.calls[0][0]).toContain('stu_pause');
+    expect(query.mock.calls[0][0]).toContain('count(*)::int FROM teacher_private_note p');
+    expect(query.mock.calls[0][0]).not.toContain('p.body');
+    expect(query.mock.calls[1][0]).toContain('FROM ser_occ o JOIN ser s');
+    expect(query.mock.calls[1][0]).toContain('COALESCE(o.teacher_id,s.teacher_id)');
+    expect(query.mock.calls[1][0]).toContain('stu_pause');
+    expect(query.mock.calls[2][0]).toContain('WHERE ss.student_id=$1 ORDER BY s.from_date DESC');
+    expect(query.mock.calls[4][0]).toContain('FROM rep_stu WHERE student_id=$1');
+    expect(query.mock.calls[6][0]).toContain('FROM note WHERE student_id=$1');
+    expect(query.mock.calls[8][0]).toContain('FROM inv WHERE student_id=$1');
     expect(query.mock.calls.every(([sql]) => !/\b(INSERT|UPDATE|DELETE)\b/.test(sql))).toBe(true);
   });
 
@@ -149,7 +167,7 @@ describe('학생 조회 HTTP 입력 계약', () => {
     expect(await validate(plainToInstance(StudentListQueryDto, { q: 'x'.repeat(81), grade: 'x'.repeat(11) }))).toHaveLength(2);
   });
   it('학생 허브 limit과 불투명 cursor 입력을 검증한다', async () => {
-    expect(await validate(plainToInstance(StudentHubQueryDto, { limit: '50', reportsCursor: 'abc_DEF-123' }))).toHaveLength(0);
-    expect(await validate(plainToInstance(StudentHubQueryDto, { limit: '51', commentsCursor: 'bad=' }))).toHaveLength(2);
+    expect(await validate(plainToInstance(StudentHubQueryDto, { limit: '50', reportsCursor: 'abc_DEF-123', commentsMonth: '2026-10' }))).toHaveLength(0);
+    expect(await validate(plainToInstance(StudentHubQueryDto, { limit: '51', commentsCursor: 'bad=', commentsMonth: '2026-13' }))).toHaveLength(3);
   });
 });

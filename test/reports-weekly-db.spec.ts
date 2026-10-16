@@ -21,10 +21,12 @@ import request from 'supertest';
 import cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomUUID } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { dataSourceOptions } from '../src/data-source';
 import { SENDER } from '../src/modules/notify/sender';
+import { PrivateNotesService } from '../src/modules/private-notes/private-notes.service';
 import { FakeSender } from './fake-sender';
 import { assertScratch, blockedBy, TEST_URL } from './db';
 
@@ -81,6 +83,8 @@ d('W11 R2 주간 묶음(N-54) · 파일의 리포트 칸 · report.write 감사 
     await sql('DELETE FROM pdflog WHERE ref_id IN (SELECT id FROM rsend WHERE student_id = ANY($1::bigint[]))', [students]);
     await sql('DELETE FROM rsend WHERE student_id = ANY($1::bigint[])', [students]);
     await sql('DELETE FROM file WHERE id = ANY($1::bigint[])', [files]);
+    await sql('DELETE FROM note WHERE ser_id = ANY($1::bigint[])', [sers]);
+    await sql('DELETE FROM teacher_private_note WHERE ser_id = ANY($1::bigint[])', [sers]);
     await sql('DELETE FROM log WHERE actor_id = ANY($1::bigint[])', [staff]);
     await sql('DELETE FROM noti WHERE to_id = ANY($1::bigint[]) OR from_id = ANY($1::bigint[])', [staff]);
     await sql('DELETE FROM rep_stu WHERE rep_id IN (SELECT id FROM rep WHERE ser_id = ANY($1::bigint[]))', [sers]);
@@ -209,6 +213,84 @@ d('W11 R2 주간 묶음(N-54) · 파일의 리포트 칸 · report.write 감사 
     // 다른 모양은 DB 가 막는다 — 칸이 더 있거나 · 월요일이 아니거나
     expect(await blocked(`UPDATE wrep SET body = body || '{"lessons":[]}'::jsonb WHERE student_id = $1`, [S2])).toContain('wrep_body_summary');
     expect(await blocked(`INSERT INTO wrep (student_id, week_of, body) VALUES ($1, '2026-08-04', NULL)`, [S1])).toContain('wrep_week_monday');
+  });
+
+  it('B1014-04 관리자 NOTE와 강사 특이사항은 학부모 일별·주간 리포트 출력에 섞이지 않는다', async () => {
+    const adminNote = 'B1014 관리자 내부 인수인계만 확인';
+    const privateNote = 'B1014 강사 관리자 전용 특이사항만 확인';
+    await sql(`INSERT INTO note(student_id,ser_id,author_id,body) VALUES ($1,$2,$3,$4)`, [S2, SER1, ADMIN, adminNote]);
+    const receipt = await new PrivateNotesService(ds).write(T1, {
+      studentId: S2, serId: SER1, onDate: '2026-08-04', body: privateNote,
+      expectedVersion: 0, requestKey: randomUUID(),
+    });
+    expect(receipt).not.toHaveProperty('body');
+    const [stored] = await sql<{ body: string }>('SELECT body FROM teacher_private_note WHERE id=$1', [receipt.id]);
+    expect(stored.body).toBe(privateNote);
+    const adminReader = (await http('get', `/students/${S2}/private-notes`).expect(200)).body as {
+      items: Array<{ body: string }>;
+    };
+    expect(adminReader.items[0].body).toBe(privateNote);
+    await http('get', `/students/${S2}/private-notes`, T1).expect(403);
+    const hub = (await http('get', `/students/${S2}/hub`).expect(200)).body as {
+      privateNoteCount: number; comments: { items: Array<{ body: string }> };
+    };
+    expect(hub.privateNoteCount).toBe(1);
+    expect(hub.comments.items[0].body).toBe(adminNote);
+    expect(JSON.stringify(hub)).not.toContain(privateNote);
+
+    const detail = (await http('get', `/reports/${SER1}/2026-08-04`).expect(200)).body as {
+      exportFiles: Array<{ studentId: number; plainText: string }>;
+    };
+    const daily = detail.exportFiles.find((file) => file.studentId === S2)?.plainText;
+    expect(daily).toContain('2026-08-04 수업 내용');
+    expect(daily).not.toContain(adminNote);
+    expect(daily).not.toContain(privateNote);
+    // PNG 미리보기는 이 상세의 structuredBody/fields/body를 사용한다.
+    expect(JSON.stringify(detail)).not.toContain(adminNote);
+    expect(JSON.stringify(detail)).not.toContain(privateNote);
+
+    const queue = (await http('get', '/reports/deliveries?onDate=2026-08-04').expect(200)).body as {
+      students: Array<{ student: { id: number }; reports: Array<{ exportFiles: Array<{ studentId: number; plainText: string }> }> }>;
+    };
+    const queued = queue.students.find((item) => item.student.id === S2)?.reports[0]
+      ?.exportFiles.find((file) => file.studentId === S2)?.plainText;
+    expect(queued).toBe(daily);
+
+    const weekly = (await http('put', '/reports/weekly').send({
+      studentId: S2, weekOf: '2026-08-03', summary: '학부모에게 보낼 총평만',
+    }).expect(200)).body as Bundle;
+    expect(weekly.plainText).toContain('학부모에게 보낼 총평만');
+    expect(weekly.plainText).not.toContain(adminNote);
+    expect(weekly.plainText).not.toContain(privateNote);
+    const reloaded = bundleOf(await week(), S2);
+    expect(reloaded?.plainText).toBe(weekly.plainText);
+
+    const [guardian] = await sql<{ id: string }>(
+      `INSERT INTO guardian(student_id,name,email,receive_email,is_primary,created_by)
+       VALUES ($1,'B1014 보호자','b1014-parent@t.invalid',true,true,$2) RETURNING id`, [S2, ADMIN],
+    );
+    await http('post', '/guardians/send').send({
+      studentId: S2, guardianIds: [Number(guardian.id)], channels: ['email'], requestKey: randomUUID(),
+      wrepId: weekly.wrepId, body: `${weekly.plainText}\n${privateNote}`,
+    }).expect(409).expect(({ body }) => expect(body.code).toBe('WEEKLY_BUNDLE_CHANGED'));
+    expect(fake.calls).toHaveLength(0);
+    expect(await sql('SELECT id FROM guardian_send WHERE student_id=$1', [S2])).toEqual([]);
+
+    // 선택적 브라우저 통합 시험: 실제 DB 읽기·HTTP 상세를 제품 PNG 렌더러에 전달한다.
+    // 기본 Jest 실행에는 형제 Front 저장소나 Chrome 의존성을 추가하지 않는다.
+    if (process.env.B1014_REPORT_HTTP_FIXTURE_FILE) {
+      const [adminStored] = await sql<{ body: string }>(
+        'SELECT body FROM note WHERE student_id=$1 AND ser_id=$2', [S2, SER1]);
+      await writeFile(process.env.B1014_REPORT_HTTP_FIXTURE_FILE, JSON.stringify({
+        source: 'reports-weekly-db.spec.ts: B1014-04 DB+HTTP',
+        studentId: S2,
+        adminNote,
+        privateNote,
+        dbReadback: { adminNote: adminStored.body, privateNote: stored.body },
+        http: { detail, dailyPlainText: daily, queuedPlainText: queued, weeklyPlainText: weekly.plainText },
+        fakeSenderCalls: fake.calls.length,
+      }), { flag: 'wx' });
+    }
   });
 
   it('④⑤ 보내기는 보호자 선택 발송 — 본문이 다르면 409 · 회차 안내와 함께면 400 · 원장에 wrep_id · 나간 뒤 총평은 잠긴다', async () => {

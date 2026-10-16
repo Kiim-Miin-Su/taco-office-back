@@ -11,7 +11,9 @@ import { createHash } from 'node:crypto';
 import { DataSource, EntityManager, type QueryRunner } from 'typeorm';
 import { todayKst } from '../../lib/kst';
 import { sealSecret, secretKeyFrom } from '../../lib/secret-box';
-import { kstAt } from '../../lib/sql';
+import { END_MIN, START_MIN, drawnDateOf, effectiveModeOf, kstAt, serStuOn, stuPausedOn } from '../../lib/sql';
+import { ruleLabel } from '../../lib/recurrence';
+import { assignedStaffRoleLabel } from '../../lib/role-words';
 import { csCan, effectiveRepStateFromEnded, REP_STATE_LABEL_DB, type ConsShare, type ConsViewer, type RepStateDb } from '../../lib/rules';
 import { studentLabel, studentTagSql } from '../../lib/student-label';
 import { educationGradeDisplay, educationGradeSourceCode, projectEducationGrades, type EducationGradeProjection, type EducationGradeSourceRow } from '../../lib/education-grade-projection';
@@ -48,7 +50,7 @@ import {
 } from './student-reactivation.rules';
 import type {
   StudentDirectoryDto, StudentDirectoryRowDto, StudentHubDto, StudentHubInvoiceDto,
-  StudentHubNextActionDto, StudentHubQueryDto, StudentHubReportDto, StudentListQueryDto,
+  StudentHubCommentLessonDto, StudentHubNextActionDto, StudentHubQueryDto, StudentHubReportDto, StudentHubTeacherDto, StudentListQueryDto,
   StudentReadDto, StudentReadParamsDto,
 } from './students.dto';
 
@@ -825,16 +827,21 @@ export class StudentsService {
     return this.ds.transaction('REPEATABLE READ', async manager => {
       const [facts] = await manager.query(`SELECT s.id,
         (SELECT count(*)::int FROM ser_occ o JOIN ser_stu ss ON ss.ser_id=o.ser_id
-          WHERE ss.student_id=s.id AND ss.from_date<=o.on_date AND (ss.to_date IS NULL OR ss.to_date>=o.on_date)
+          WHERE ss.student_id=s.id AND ${serStuOn('ss', 'o.on_date')}
             AND NOT o.canceled AND lower(o.span)>=now()
+            AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
             AND NOT EXISTS (SELECT 1 FROM exc e JOIN exc_stu_out xo ON xo.exc_id=e.id
               WHERE e.ser_id=o.ser_id AND e.on_date=o.on_date AND xo.student_id=s.id)) AS schedule_count,
         (SELECT count(*)::int FROM inv i WHERE i.student_id=s.id AND i.state IN ('draft','sent','unpaid','partial')) AS billing_count,
         (SELECT count(*)::int FROM issue i WHERE i.student_id=s.id AND i.state='ok') AS book_count,
         (SELECT count(*)::int FROM guide g WHERE g.student_id=s.id AND g.state IN ('draft','ready','sent')) AS guide_count,
-        (SELECT count(*)::int FROM lead l WHERE l.student_id=s.id) AS lead_count
+        (SELECT count(*)::int FROM lead l WHERE l.student_id=s.id) AS lead_count,
+        (SELECT count(*)::int FROM teacher_private_note p WHERE p.student_id=s.id) AS private_note_count
         FROM stu s WHERE s.id=$1`, [studentId]) as Row[];
       if (!facts) throw new NotFoundException({ code: 'STUDENT_NOT_FOUND', message: '학생을 찾을 수 없습니다' });
+
+      const teachers = await this.studentHubTeachers(manager, studentId);
+      const commentLessons = await this.studentHubCommentLessons(manager, studentId);
 
       const consultingRows = await manager.query(`SELECT c.id,c.share,c.owner_id,
           EXISTS (SELECT 1 FROM cons_pick p WHERE p.cons_id=c.id AND p.staff_id=$2) AS is_picked
@@ -848,7 +855,7 @@ export class StudentsService {
       } satisfies ConsViewer)).length;
 
       const reports = await this.studentHubReports(manager, studentId, limit, cursors.reports);
-      const comments = await this.studentHubComments(manager, studentId, limit, cursors.comments);
+      const comments = await this.studentHubComments(manager, studentId, limit, cursors.comments, query.commentsMonth);
       const invoices = await this.studentHubInvoices(manager, studentId, limit, cursors.invoices, canSeeAmounts);
       const action = (
         key: StudentHubNextActionDto['key'], label: string, count: number, empty: string, unit: string, href: string,
@@ -861,8 +868,73 @@ export class StudentsService {
         action('guides', '안내', Number(facts.guide_count), '대기 안내 없음', '건 확인 필요', `/guides?tab=students&studentId=${studentId}`),
         action('lead', '상담 카드', Number(facts.lead_count), '연결 상담 없음', '건 연결', '/intake'),
       ];
-      return { studentId, canSeeAmounts, nextActions, reports, comments, invoices };
+      return { studentId, canSeeAmounts, teachers, commentLessons, privateNoteCount: Number(facts.private_note_count), nextActions, reports, comments, invoices };
     });
+  }
+
+  private async studentHubTeachers(manager: EntityManager, studentId: number): Promise<StudentHubTeacherDto[]> {
+    const effectiveTeacher = 'COALESCE(o.teacher_id,s.teacher_id)';
+    const overridden = `(${effectiveTeacher} IS DISTINCT FROM s.teacher_id)`;
+    const singleOccurrence = `(s.rrule='ONCE' OR ${overridden})`;
+    // 회차별 대강은 실제 강사에게만 연결한다. 정규 강사의 반복 수업은 한 줄, 대강은 해당 회차마다 한 줄이다.
+    const rows = await manager.query(`SELECT t.id AS staff_id,t.name,t.role::text AS role,lesson.* FROM (
+      SELECT DISTINCT ON (${effectiveTeacher},s.id,CASE WHEN ${overridden} THEN o.id ELSE NULL END)
+        ${effectiveTeacher} AS teacher_id,s.id AS ser_id,k.name AS kind_name,sb.name AS subject_name,s.rrule,
+        ${overridden} AS overridden,to_char(${drawnDateOf('o')},'YYYY-MM-DD') AS drawn_date,
+        CASE WHEN ${singleOccurrence} THEN ${START_MIN} ELSE s.start_min END AS start_min,
+        CASE WHEN ${singleOccurrence} THEN ${END_MIN} ELSE s.end_min END AS end_min,
+        CASE WHEN ${singleOccurrence} THEN ${effectiveModeOf('e', 's')} ELSE s.mode::text END AS mode,
+        to_char(CASE WHEN ${singleOccurrence} THEN ${drawnDateOf('o')}
+          ELSE GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date)) END,'YYYY-MM-DD') AS from_date,
+        to_char(CASE WHEN ${singleOccurrence} THEN ${drawnDateOf('o')}
+          ELSE NULLIF(LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date)),'infinity'::date) END,'YYYY-MM-DD') AS to_date
+      FROM ser_occ o JOIN ser s ON s.id=o.ser_id
+      JOIN ser_stu ss ON ss.ser_id=o.ser_id AND ${serStuOn('ss', 'o.on_date')}
+      JOIN kind k ON k.key=s.kind_key LEFT JOIN sub sb ON sb.key=s.sub_key
+      LEFT JOIN exc e ON e.ser_id=o.ser_id AND e.on_date=o.on_date
+      WHERE ss.student_id=$1 AND NOT o.canceled AND upper(o.span)>now()
+        AND o.on_date BETWEEN s.from_date AND COALESCE(s.to_date,'infinity'::date)
+        AND NOT ${stuPausedOn('ss.student_id', 'o.on_date')}
+        AND NOT EXISTS (SELECT 1 FROM exc_stu_out xo WHERE xo.exc_id=e.id AND xo.student_id=ss.student_id)
+      ORDER BY ${effectiveTeacher},s.id,CASE WHEN ${overridden} THEN o.id ELSE NULL END,lower(o.span),o.id
+    ) lesson JOIN staff t ON t.id=lesson.teacher_id
+    ORDER BY t.name,t.id,lesson.from_date,lesson.ser_id`, [studentId]) as Row[];
+    const teachers = new Map<number, StudentHubTeacherDto>();
+    for (const row of rows) {
+      const staffId = id(row.staff_id);
+      let teacher = teachers.get(staffId);
+      if (!teacher) {
+        teacher = { staffId, name: String(row.name), roleLabel: assignedStaffRoleLabel(String(row.role)), lessons: [] };
+        teachers.set(staffId, teacher);
+      }
+      teacher.lessons.push({
+        serId: id(row.ser_id), kindName: String(row.kind_name), subjectName: nullableText(row.subject_name),
+        ruleLabel: row.overridden === true ? `${String(row.drawn_date)} 대체 회차` : ruleLabel({ rrule: String(row.rrule) }),
+        startMin: Number(row.start_min), endMin: Number(row.end_min),
+        mode: row.mode === 'online' ? 'online' : 'offline', fromDate: String(row.from_date), toDate: nullableText(row.to_date),
+      });
+    }
+    return [...teachers.values()];
+  }
+
+  private async studentHubCommentLessons(manager: EntityManager, studentId: number): Promise<StudentHubCommentLessonDto[]> {
+    const rows = await manager.query(`SELECT s.id AS ser_id,t.name AS teacher_name,k.name AS kind_name,sb.name AS subject_name,
+        to_char(CASE WHEN s.rrule='ONCE' THEN COALESCE(once_occ.drawn_on,s.from_date)
+          ELSE GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date)) END,'YYYY-MM-DD') AS from_date,
+        to_char(CASE WHEN s.rrule='ONCE' THEN COALESCE(once_occ.drawn_on,s.from_date)
+          ELSE NULLIF(LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date)),'infinity'::date) END,'YYYY-MM-DD') AS to_date,
+        CASE WHEN s.rrule='ONCE' THEN COALESCE(once_occ.drawn_on,s.from_date)<$2::date
+          ELSE LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))<$2::date END AS ended
+      FROM ser_stu ss JOIN ser s ON s.id=ss.ser_id JOIN staff t ON t.id=s.teacher_id
+      JOIN kind k ON k.key=s.kind_key LEFT JOIN sub sb ON sb.key=s.sub_key
+      LEFT JOIN LATERAL (SELECT (lower(o.span) AT TIME ZONE 'Asia/Seoul')::date AS drawn_on
+        FROM ser_occ o WHERE o.ser_id=s.id ORDER BY lower(o.span) DESC LIMIT 1) once_occ ON s.rrule='ONCE'
+      WHERE ss.student_id=$1 ORDER BY s.from_date DESC,s.id DESC`, [studentId, todayKst()]) as Row[];
+    return rows.map(row => ({
+      serId: id(row.ser_id), teacherName: String(row.teacher_name), kindName: String(row.kind_name),
+      subjectName: nullableText(row.subject_name), fromDate: String(row.from_date),
+      toDate: nullableText(row.to_date), ended: row.ended === true,
+    }));
   }
 
   private async studentHubReports(
@@ -898,23 +970,31 @@ export class StudentsService {
   }
 
   private async studentHubComments(
-    manager: EntityManager, studentId: number, limit: number, cursor: StudentHubCursor | null,
+    manager: EntityManager, studentId: number, limit: number, cursor: StudentHubCursor | null, month?: string,
   ): Promise<StudentHubDto['comments']> {
-    const [countRow] = await manager.query(`SELECT count(*)::int AS total FROM note WHERE student_id=$1`, [studentId]) as Row[];
+    const monthRows = await manager.query(`SELECT to_char(created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM') AS month,
+        count(*)::int AS total FROM note WHERE student_id=$1
+      GROUP BY 1 ORDER BY month DESC`, [studentId]) as Row[];
+    const months = monthRows.map(row => ({ month: String(row.month), total: Number(row.total) }));
+    const allTotal = months.reduce((sum, item) => sum + item.total, 0);
+    const total = month ? (months.find(item => item.month === month)?.total ?? 0) : allTotal;
     const rows = await manager.query(`SELECT n.id,n.ser_id,n.author_id,w.name AS author_name,n.body,
         to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_date,
         to_char(n.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
       FROM note n LEFT JOIN staff w ON w.id=n.author_id
-      WHERE n.student_id=$1 AND ($2::timestamptz IS NULL OR (n.created_at,n.id)<($2::timestamptz,$3::bigint))
-      ORDER BY n.created_at DESC,n.id DESC LIMIT $4`,
-    [studentId, cursor?.d ?? null, cursor?.i ?? null, limit + 1]) as Row[];
+      WHERE n.student_id=$1
+        AND ($2::date IS NULL OR (n.created_at >= ($2::date::timestamp AT TIME ZONE 'Asia/Seoul')
+          AND n.created_at < (($2::date + interval '1 month')::timestamp AT TIME ZONE 'Asia/Seoul')))
+        AND ($3::timestamptz IS NULL OR (n.created_at,n.id)<($3::timestamptz,$4::bigint))
+      ORDER BY n.created_at DESC,n.id DESC LIMIT $5`,
+    [studentId, month ? `${month}-01` : null, cursor?.d ?? null, cursor?.i ?? null, limit + 1]) as Row[];
     const hasMore = rows.length > limit;
     const page = rows.slice(0, limit);
     const items = page.map(row => ({
       id: id(row.id), serId: row.ser_id == null ? null : id(row.ser_id), authorId: id(row.author_id),
       authorName: nullableText(row.author_name), body: String(row.body), createdAt: String(row.created_at),
     }));
-    return { items, total: Number(countRow?.total ?? 0), nextCursor: hasMore && page.length ? studentHubCursor('comments', page[page.length - 1]!) : null };
+    return { items, total, allTotal, months, nextCursor: hasMore && page.length ? studentHubCursor('comments', page[page.length - 1]!) : null };
   }
 
   private async studentHubInvoices(
