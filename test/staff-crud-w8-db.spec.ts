@@ -473,6 +473,8 @@ d('W8 · W10 §17 사용자 표 CRUD — 만들기(아이디 · 임시 비밀번
     const have = new Set(cols.map((r) => r.c));
     expect([...soft].filter((s) => !have.has(s))).toEqual([]);
     expect([...soft].filter((s) => fks.has(s))).toEqual([]);
-    expect(STAFF_OWN_TABLES).toEqual(['auth_code']);
+    // B1014-05(migration 127): 강사 가능 수업 유형·학력 요약은 계정 자신만의 표다 — staff FK ON DELETE CASCADE(S5a 2026-10-16 정합)
+    // p8 결정(2026-10-16): 가능 과목(staff_teaching_subject)도 계정과 함께 사라지는 표다
+    expect(STAFF_OWN_TABLES).toEqual(['auth_code', 'staff_teaching_kind', 'staff_education_summary', 'staff_teaching_subject']);
   });
 });

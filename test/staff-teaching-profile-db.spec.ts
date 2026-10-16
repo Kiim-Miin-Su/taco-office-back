@@ -24,6 +24,8 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
   let teacherId: number | null = null;
   let managerToken = '';
   const madeKinds: string[] = [];
+  // p8 결정(2026-10-16): 가능 과목은 실제 과목(SUB) 칩이다 — 이 스위트 전용 과목을 수업·모의수업·자습에 하나씩 만든다
+  const SUBJ = { cls: 'bo1014s-cls', mck: 'bo1014s-mck', std: 'bo1014s-std' } as const;
   let madeTzgId: number | null = null;
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const managerLogin = `bo1014-staff-manager-${stamp}`;
@@ -64,6 +66,9 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
       );
       if (made) madeKinds.push(made.key);
     }
+    await q(`INSERT INTO sub(key,name,color,active,sort,kind_key) VALUES
+      ($1,'BO-1014 수업 과목','#4A7FB5',true,951,'class'),($2,'BO-1014 모의 과목','#4A7FB5',true,952,'mock'),
+      ($3,'BO-1014 자습 과목','#4A7FB5',true,953,'study') ON CONFLICT (key) DO NOTHING`, [SUBJ.cls, SUBJ.mck, SUBJ.std]);
     const hash = await bcrypt.hash(password, 4);
     const [manager] = await q<{ id: string }>(
       `INSERT INTO staff(name,login_id,role,password_hash,active,must_change_credentials)
@@ -88,6 +93,7 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
           await q(`DELETE FROM auth_code WHERE staff_id=$1`, [managerId]);
           await q(`DELETE FROM staff WHERE id=$1`, [managerId]);
         }
+        await q(`DELETE FROM sub WHERE key = ANY($1)`, [Object.values(SUBJ)]);
         for (const key of madeKinds) await q(`DELETE FROM kind WHERE key=$1`, [key]);
         if (madeTzgId !== null) await q(`DELETE FROM tzg WHERE id=$1`, [madeTzgId]);
       }
@@ -99,16 +105,16 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
   it('강사 생성→상세/서랍/DB 재조회→수정→재조회→삭제 시 프로필 자식 행도 삭제한다', async () => {
     const made = await auth('post', '/drawer/staff').send({
       name: 'BO-1014 강사', loginId: teacherLogin, password, role: 'teacher', hiredOn: '2020-01-01',
-      birthOn: '1990-01-02', englishOnly: true, teachingKindKeys: ['class', 'mock'],
+      birthOn: '1990-01-02', englishOnly: true, teachingSubjectKeys: [SUBJ.cls, SUBJ.mck],
       education: [{ school: '첫 학교', major: '수학' }, { school: '둘째 학교', degree: '학사' }],
     }).expect(201);
     teacherId = Number(made.body.id);
     expect(made.body).toMatchObject({ birthOn: '1990-01-02', englishOnly: true,
-      teachingKinds: [{ key: 'class' }, { key: 'mock' }],
+      teachingSubjects: [{ key: SUBJ.cls }, { key: SUBJ.mck }],
       education: [{ school: '첫 학교', major: '수학' }, { school: '둘째 학교', degree: '학사' }] });
 
     const detail = (await auth('get', `/drawer/staff-directory/${teacherId}`).expect(200)).body;
-    expect(detail.profile).toMatchObject({ id: teacherId, birthOn: '1990-01-02', englishOnly: true, teachingKindCount: 2 });
+    expect(detail.profile).toMatchObject({ id: teacherId, birthOn: '1990-01-02', englishOnly: true, teachingSubjectCount: 2 });
     const drawer = (await auth('get', '/drawer').expect(200)).body;
     expect(drawer.members.find((row: { id: number }) => row.id === teacherId)).toMatchObject({
       canViewStaffProfile: true, birthOn: '1990-01-02', englishOnly: true,
@@ -116,24 +122,24 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
     const [stored] = await q<{ birth_on: string; english_only: boolean }>(
       `SELECT to_char(birth_on,'YYYY-MM-DD') AS birth_on, english_only FROM staff WHERE id=$1`, [teacherId]);
     expect(stored).toEqual({ birth_on: '1990-01-02', english_only: true });
-    expect(await q(`SELECT kind_key FROM staff_teaching_kind WHERE staff_id=$1 ORDER BY kind_key`, [teacherId]))
-      .toEqual([{ kind_key: 'class' }, { kind_key: 'mock' }]);
+    expect(await q(`SELECT sub_key FROM staff_teaching_subject WHERE staff_id=$1 ORDER BY sub_key`, [teacherId]))
+      .toEqual([{ sub_key: SUBJ.cls }, { sub_key: SUBJ.mck }].sort((a, b) => a.sub_key.localeCompare(b.sub_key)));
     expect(await q(`SELECT school FROM staff_education_summary WHERE staff_id=$1 ORDER BY position`, [teacherId]))
       .toEqual([{ school: '첫 학교' }, { school: '둘째 학교' }]);
 
     await auth('patch', `/drawer/staff/${teacherId}`).send({
-      birthOn: '1991-03-04', englishOnly: false, teachingKindKeys: ['study'],
+      birthOn: '1991-03-04', englishOnly: false, teachingSubjectKeys: [SUBJ.std],
       education: [{ school: '새 학교', status: '졸업' }],
     }).expect(200);
     const reread = (await auth('get', `/drawer/staff-directory/${teacherId}`).expect(200)).body;
-    expect(reread.profile).toMatchObject({ birthOn: '1991-03-04', englishOnly: false, teachingKindCount: 1,
-      teachingKinds: [{ key: 'study' }], education: [{ school: '새 학교', status: '졸업' }] });
-    expect(await q(`SELECT kind_key FROM staff_teaching_kind WHERE staff_id=$1`, [teacherId])).toEqual([{ kind_key: 'study' }]);
+    expect(reread.profile).toMatchObject({ birthOn: '1991-03-04', englishOnly: false, teachingSubjectCount: 1,
+      teachingSubjects: [{ key: SUBJ.std }], education: [{ school: '새 학교', status: '졸업' }] });
+    expect(await q(`SELECT sub_key FROM staff_teaching_subject WHERE staff_id=$1`, [teacherId])).toEqual([{ sub_key: SUBJ.std }]);
     expect(await q(`SELECT school FROM staff_education_summary WHERE staff_id=$1`, [teacherId])).toEqual([{ school: '새 학교' }]);
 
     await auth('delete', `/drawer/staff/${teacherId}`).expect(200).expect(({ body }) => expect(body).toEqual({ ok: true }));
     expect(await q(`SELECT id FROM staff WHERE id=$1`, [teacherId])).toEqual([]);
-    expect(await q(`SELECT staff_id FROM staff_teaching_kind WHERE staff_id=$1`, [teacherId])).toEqual([]);
+    expect(await q(`SELECT staff_id FROM staff_teaching_subject WHERE staff_id=$1`, [teacherId])).toEqual([]);
     expect(await q(`SELECT staff_id FROM staff_education_summary WHERE staff_id=$1`, [teacherId])).toEqual([]);
     teacherId = null;
   });
@@ -141,29 +147,29 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
   it('PATCH에서 생략한 프로필은 유지하고 null·빈 배열은 HTTP와 DB에서 비운다', async () => {
     const made = await auth('post', '/drawer/staff').send({
       name: '부분 수정 검증', loginId: `${teacherLogin}-patch`, password, role: 'teacher', hiredOn: '2020-01-01',
-      birthOn: '1990-01-02', englishOnly: true, teachingKindKeys: ['class', 'mock'],
+      birthOn: '1990-01-02', englishOnly: true, teachingSubjectKeys: [SUBJ.cls, SUBJ.mck],
       education: [{ school: '보존 학교', major: '수학' }],
     }).expect(201);
     teacherId = Number(made.body.id);
     await auth('patch', `/drawer/staff/${teacherId}`).send({ title: '프로필 유지' }).expect(200);
     const retained = (await auth('get', `/drawer/staff-directory/${teacherId}`).expect(200)).body.profile;
     expect(retained).toMatchObject({ birthOn: '1990-01-02', englishOnly: true,
-      teachingKinds: [{ key: 'class' }, { key: 'mock' }], education: [{ school: '보존 학교', major: '수학' }] });
+      teachingSubjects: [{ key: SUBJ.cls }, { key: SUBJ.mck }], education: [{ school: '보존 학교', major: '수학' }] });
     expect(await q(`SELECT to_char(birth_on,'YYYY-MM-DD') AS birth_on, english_only FROM staff WHERE id=$1`, [teacherId]))
       .toEqual([{ birth_on: '1990-01-02', english_only: true }]);
-    expect(await q(`SELECT kind_key FROM staff_teaching_kind WHERE staff_id=$1 ORDER BY kind_key`, [teacherId]))
-      .toEqual([{ kind_key: 'class' }, { kind_key: 'mock' }]);
+    expect(await q(`SELECT sub_key FROM staff_teaching_subject WHERE staff_id=$1 ORDER BY sub_key`, [teacherId]))
+      .toEqual([{ sub_key: SUBJ.cls }, { sub_key: SUBJ.mck }].sort((a, b) => a.sub_key.localeCompare(b.sub_key)));
     expect(await q(`SELECT school,major FROM staff_education_summary WHERE staff_id=$1`, [teacherId]))
       .toEqual([{ school: '보존 학교', major: '수학' }]);
 
     await auth('patch', `/drawer/staff/${teacherId}`).send({
-      birthOn: null, englishOnly: null, teachingKindKeys: [], education: [],
+      birthOn: null, englishOnly: null, teachingSubjectKeys: [], education: [],
     }).expect(200);
     const cleared = (await auth('get', `/drawer/staff-directory/${teacherId}`).expect(200)).body.profile;
-    expect(cleared).toMatchObject({ birthOn: null, englishOnly: null, teachingKinds: [], education: [] });
+    expect(cleared).toMatchObject({ birthOn: null, englishOnly: null, teachingKinds: [], teachingSubjects: [], education: [] });
     expect(await q(`SELECT birth_on,english_only FROM staff WHERE id=$1`, [teacherId]))
       .toEqual([{ birth_on: null, english_only: null }]);
-    expect(await q(`SELECT staff_id FROM staff_teaching_kind WHERE staff_id=$1`, [teacherId])).toEqual([]);
+    expect(await q(`SELECT staff_id FROM staff_teaching_subject WHERE staff_id=$1`, [teacherId])).toEqual([]);
     expect(await q(`SELECT staff_id FROM staff_education_summary WHERE staff_id=$1`, [teacherId])).toEqual([]);
     await auth('delete', `/drawer/staff/${teacherId}`).expect(200);
     teacherId = null;
@@ -172,19 +178,19 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
   it('매니저에서 강사로 전환하며 명시한 빈 배열은 숨겨 두었던 프로필 관계도 비운다', async () => {
     const made = await auth('post', '/drawer/staff').send({
       name: '재전환 비움 검증', loginId: `${teacherLogin}-restore`, password, role: 'teacher',
-      teachingKindKeys: ['class'], education: [{ school: '이전 학교' }],
+      teachingSubjectKeys: [SUBJ.cls], education: [{ school: '이전 학교' }],
     }).expect(201);
     teacherId = Number(made.body.id);
     await auth('patch', `/drawer/staff/${teacherId}`).send({ role: 'manager' }).expect(200);
     // 비강사 응답에서 숨기는 것과 저장값을 지우는 것은 다르다. 재전환의 명시적 []는 실제 관계를 비워야 한다.
-    expect(await q(`SELECT kind_key FROM staff_teaching_kind WHERE staff_id=$1`, [teacherId]))
-      .toEqual([{ kind_key: 'class' }]);
+    expect(await q(`SELECT sub_key FROM staff_teaching_subject WHERE staff_id=$1`, [teacherId]))
+      .toEqual([{ sub_key: SUBJ.cls }]);
     expect(await q(`SELECT school FROM staff_education_summary WHERE staff_id=$1`, [teacherId]))
       .toEqual([{ school: '이전 학교' }]);
-    await auth('patch', `/drawer/staff/${teacherId}`).send({ role: 'teacher', teachingKindKeys: [], education: [] }).expect(200);
+    await auth('patch', `/drawer/staff/${teacherId}`).send({ role: 'teacher', teachingSubjectKeys: [], education: [] }).expect(200);
     const restored = (await auth('get', `/drawer/staff-directory/${teacherId}`).expect(200)).body.profile;
-    expect(restored).toMatchObject({ teachingKinds: [], education: [] });
-    expect(await q(`SELECT staff_id FROM staff_teaching_kind WHERE staff_id=$1`, [teacherId])).toEqual([]);
+    expect(restored).toMatchObject({ teachingKinds: [], teachingSubjects: [], education: [] });
+    expect(await q(`SELECT staff_id FROM staff_teaching_subject WHERE staff_id=$1`, [teacherId])).toEqual([]);
     expect(await q(`SELECT staff_id FROM staff_education_summary WHERE staff_id=$1`, [teacherId])).toEqual([]);
     await auth('delete', `/drawer/staff/${teacherId}`).expect(200);
     teacherId = null;
@@ -193,7 +199,7 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
   it('비강사 생성·역할 변경의 강사 프로필 입력을 400으로 막는다', async () => {
     for (const role of ['manager', 'admin'] as const) {
       const res = await auth('post', '/drawer/staff').send({
-        name: '프로필 거절', loginId: `${teacherLogin}-${role}`, password, role, teachingKindKeys: [],
+        name: '프로필 거절', loginId: `${teacherLogin}-${role}`, password, role, teachingSubjectKeys: [],
       }).expect(400);
       expect(res.body.code).toBe('STAFF_TEACHING_ROLE');
       expect(await q(`SELECT id FROM staff WHERE login_id=$1`, [`${teacherLogin}-${role}`])).toEqual([]);
@@ -239,9 +245,9 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
     }
   });
 
-  it('가능 수업 유형·학력 배열의 명시적 null은 생성과 수정에서 400이며 행을 바꾸지 않는다', async () => {
+  it('가능 과목·학력 배열의 명시적 null은 생성과 수정에서 400이며 행을 바꾸지 않는다', async () => {
     expect(teacherId).not.toBeNull();
-    for (const field of ['teachingKindKeys', 'education'] as const) {
+    for (const field of ['teachingSubjectKeys', 'education'] as const) {
       const loginId = `${teacherLogin}-null-${field}`;
       await auth('post', '/drawer/staff').send({
         name: '배열 null 거절', loginId, password, role: 'teacher', [field]: null,
@@ -253,7 +259,7 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
       .toEqual([{ birth_on: '1990-01-01' }]);
   });
 
-  it('GET /drawer의 비관리자 구성원 projection에서 생년월일·영어·수업 유형·학력을 서버가 제거한다', async () => {
+  it('GET /drawer의 비관리자 구성원 projection에서 생년월일·영어·가능 과목·학력을 서버가 제거한다', async () => {
     expect(teacherId).not.toBeNull();
     await q(`UPDATE staff SET must_change_credentials=false WHERE id=$1`, [teacherId]);
     const login = await request(app.getHttpServer()).post('/auth/login')
@@ -262,13 +268,13 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
     const own = (await auth('get', '/drawer', teacherToken).expect(200)).body.members;
     expect(own).toHaveLength(1);
     expect(own[0]).toMatchObject({ id: teacherId, canViewStaffProfile: false,
-      birthOn: null, englishOnly: null, teachingKinds: [], education: [] });
+      birthOn: null, englishOnly: null, teachingKinds: [], teachingSubjects: [], education: [] });
 
     // canCrudAll=true, canAdminPage=false 조합이 생겨도 SELECT 단계에서 민감 필드가 빠져야 한다.
     const broadRead = await app.get(DrawerService).all(managerId!, false, true, false, 'none', false, false);
     const row = broadRead.members.find((member) => member.id === teacherId);
     expect(row).toMatchObject({ canViewStaffProfile: false, birthOn: null, englishOnly: null,
-      teachingKinds: [], education: [] });
+      teachingKinds: [], teachingSubjects: [], education: [] });
   });
 
   it('강사를 매니저로 변경하면 보존된 프로필을 관리자 서랍에도 표시하지 않는다', async () => {
@@ -277,7 +283,7 @@ d('BO-1014-STAFF · 격리 DB 수업 프로필', () => {
     const members = (await auth('get', '/drawer').expect(200)).body.members;
     expect(members.find((row: { id: number }) => row.id === teacherId)).toMatchObject({
       role: 'manager', canViewStaffProfile: false, birthOn: null, englishOnly: null,
-      teachingKinds: [], education: [],
+      teachingKinds: [], teachingSubjects: [], education: [],
     });
   });
 });

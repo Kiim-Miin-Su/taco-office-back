@@ -95,6 +95,7 @@ export * from './ser-occ.entity';
 export * from './ser-stu.entity';
 export * from './staff.entity';
 export * from './staff-teaching-kind.entity';
+export * from './staff-teaching-subject.entity';
 export * from './staff-education-summary.entity';
 export * from './stu.entity';
 export * from './stu-contact.entity';
@@ -222,6 +223,7 @@ import {
   SerStu,
   Staff,
   StaffTeachingKind,
+  StaffTeachingSubject,
   StaffEducationSummary,
   Stu,
   StuContact,
@@ -304,6 +306,7 @@ export const ENTITIES = [
   Issue,
   Kind,
   StaffTeachingKind,
+  StaffTeachingSubject,
   StaffEducationSummary,
   Lead,
   LeadStageLog,

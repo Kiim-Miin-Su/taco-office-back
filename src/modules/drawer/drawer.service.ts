@@ -45,6 +45,7 @@ import {
 } from '../../lib/account-policy';
 import { PHONE_COUNTRIES } from '../../lib/phone';
 import { staffRecordTables } from '../../lib/staff-refs';
+import { STAFF_EDUCATION_DEGREES, STAFF_EDUCATION_STATUSES, educationCodeIssues } from '../../lib/staff-education';
 import { maskEmail, maskPhone } from '../notify/sender';
 import { ScheduleWriteService } from '../schedule/schedule.write.service';
 import { TeacherService } from '../teacher/teacher.service';
@@ -60,7 +61,7 @@ import type {
   StaffDirectoryQueryDto, StaffDirectoryReportDto, StaffDirectoryWageDto,
   StaffTeacherHistoryDto, StaffTeacherInboxCategory, StaffTeacherInboxDto, StaffTeacherInboxItemDto,
   StaffCreateDto, StaffPatchDto, TodoCreateDto, TodoPatchDto,
-  StaffEducationSummaryDto, StaffEducationSummaryInputDto, StaffTeachingKindDto,
+  StaffEducationSummaryDto, StaffEducationSummaryInputDto, StaffTeachingKindDto, StaffTeachingSubjectDto, StaffTeachingSubjectGroupDto,
 } from './drawer.dto';
 import { STAFF_TEACHER_INBOX_CATEGORIES } from './drawer.dto';
 import type { ConflictRowDto } from '../schedule/schedule.dto';
@@ -81,11 +82,17 @@ const staffTeachingColumns = (alias: string, visible = 'true') => `
   CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN ${alias}.english_only END AS english_only,
   CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object('key',k.key,'name',k.name) ORDER BY k.sort,k.key)
     FROM staff_teaching_kind tk JOIN kind k ON k.key=tk.kind_key WHERE tk.staff_id=${alias}.id),'[]'::jsonb) ELSE '[]'::jsonb END AS teaching_kinds,
+  CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object('key',sb.key,'name',sb.name,'kindKey',k.key,'kindName',k.name) ORDER BY k.sort,sb.sort NULLS LAST,sb.key)
+    FROM staff_teaching_subject ts JOIN sub sb ON sb.key=ts.sub_key JOIN kind k ON k.key=sb.kind_key WHERE ts.staff_id=${alias}.id),'[]'::jsonb) ELSE '[]'::jsonb END AS teaching_subjects,
   CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object('school',e.school,'major',e.major,'degree',e.degree,'status',e.status) ORDER BY e.position)
     FROM staff_education_summary e WHERE e.staff_id=${alias}.id),'[]'::jsonb) ELSE '[]'::jsonb END AS education`;
-const staffTeachingOf = (r: R): { birthOn: string | null; englishOnly: boolean | null; teachingKinds: StaffTeachingKindDto[]; education: StaffEducationSummaryDto[] } => ({
+const staffTeachingOf = (r: R): {
+  birthOn: string | null; englishOnly: boolean | null; teachingKinds: StaffTeachingKindDto[];
+  teachingSubjects: StaffTeachingSubjectDto[]; education: StaffEducationSummaryDto[];
+} => ({
   birthOn: str(r.birth_on), englishOnly: r.english_only === true ? true : r.english_only === false ? false : null,
   teachingKinds: Array.isArray(r.teaching_kinds) ? r.teaching_kinds as StaffTeachingKindDto[] : [],
+  teachingSubjects: Array.isArray(r.teaching_subjects) ? r.teaching_subjects as StaffTeachingSubjectDto[] : [],
   education: Array.isArray(r.education) ? r.education as StaffEducationSummaryDto[] : [],
 });
 const normalizedEducation = (rows: StaffEducationSummaryInputDto[]): StaffEducationSummaryDto[] => rows.map((row) => ({
@@ -96,26 +103,54 @@ const checkedBirthOn = (birthOn: string | null | undefined, hiredOn: string | nu
     throw new BadRequestException({ code: 'STAFF_BIRTH_DATE', message: '생년월일은 오늘과 입사일 이전이어야 합니다' });
   }
 };
-const checkedTeachingLists = (keys: string[] | undefined, education: StaffEducationSummaryInputDto[] | undefined): void => {
-  if (keys && (new Set(keys).size !== keys.length || keys.some((key) => !STAFF_TEACHING_KIND_KEYS.includes(key as typeof STAFF_TEACHING_KIND_KEYS[number])))) {
-    throw new BadRequestException({ code: 'STAFF_TEACHING_KIND', message: '가능 수업 유형은 수업·모의수업·자습 중에서 선택하세요' });
-  }
+/** p8 결정(2026-10-16) 판정에 쓰는 최소 질의 표면 — repository 와 트랜잭션 EntityManager 둘 다 된다 */
+type Queryable = { query: (sql: string, params?: unknown[]) => Promise<unknown> };
+const checkedTeachingLists = (education: StaffEducationSummaryInputDto[] | undefined): void => {
   if (education && (education.length > 5 || education.some((row) => !row.school?.trim()))) {
     throw new BadRequestException({ code: 'STAFF_EDUCATION', message: '학력은 최대 5개이며 학교를 적어야 합니다' });
+  }
+};
+/**
+ * 가능 과목(p8 결정 2026-10-16) — 수업·모의수업·자습(KIND class/mock/study)의 **사용 중** 과목만 새로 고를 수 있다.
+ * 꺼 둔 과목은 이미 가진 강사만 그대로 다시 보낼 수 있다(목록 전체 대체라 다른 칸만 고쳐도 함께 온다). DB 트리거가 마지막 방어다.
+ */
+async function assertTeachingSubjects(q: Queryable, keys: string[] | undefined, staffId: number | null): Promise<void> {
+  if (!keys || keys.length === 0) return;
+  const rows = await q.query(
+    `SELECT s.key, s.active, s.kind_key,
+            EXISTS(SELECT 1 FROM staff_teaching_subject h WHERE h.staff_id = $2 AND h.sub_key = s.key) AS held
+       FROM sub s WHERE s.key = ANY($1::text[])`, [keys, staffId ?? 0],
+  ) as Array<{ key: string; active: boolean; kind_key: string | null; held: boolean }>;
+  const byKey = new Map(rows.map((row) => [row.key, row]));
+  const eligible = (key: string) => {
+    const row = byKey.get(key);
+    return !!row && STAFF_TEACHING_KIND_KEYS.includes(row.kind_key as typeof STAFF_TEACHING_KIND_KEYS[number]) && (row.active || row.held);
+  };
+  if (new Set(keys).size !== keys.length || !keys.every(eligible)) {
+    throw new BadRequestException({ code: 'STAFF_TEACHING_SUBJECT', message: '가능 과목은 수업·모의수업·자습의 사용 중인 과목에서 고르세요' });
+  }
+}
+/** 학력 학위·상태 코드표(p8 결정) — 이미 저장된 옛 자유 입력 값만 다시 보낼 수 있다(lib/staff-education) */
+const checkedEducationCodes = (education: StaffEducationSummaryInputDto[] | undefined, kept: StaffEducationSummaryDto[] = []): void => {
+  if (!education) return;
+  const issues = educationCodeIssues(normalizedEducation(education), kept);
+  if (issues.length > 0) {
+    throw new BadRequestException({ code: 'STAFF_EDUCATION_CODE', message: '학위는 전문학사·학사·석사·박사·기타, 상태는 재학·휴학·수료·졸업·중퇴 중에서 고르세요' });
   }
 };
 const checkedTeachingRole = (role: string | null, dto: StaffCreateDto | StaffPatchDto): void => {
   // 강사 전용 입력은 빈 배열·null이라도 비강사에게 보내지 않는다. 역할 변경 뒤 남은 폼 초안을 차단한다.
   if (role !== 'teacher' && (dto.birthOn !== undefined || dto.englishOnly !== undefined
-    || dto.teachingKindKeys !== undefined || dto.education !== undefined)) {
+    || dto.teachingSubjectKeys !== undefined || dto.education !== undefined)) {
     throw new BadRequestException({ code: 'STAFF_TEACHING_ROLE', message: '강사 프로필은 강사 역할에만 입력할 수 있습니다' });
   }
 };
-async function replaceTeachingLists(m: EntityManager, staffId: number, keys?: string[], education?: StaffEducationSummaryInputDto[]): Promise<void> {
-  if (keys !== undefined) {
-    await m.query(`DELETE FROM staff_teaching_kind WHERE staff_id=$1`, [staffId]);
-    for (const key of keys) {
-      await m.query(`INSERT INTO staff_teaching_kind(staff_id,kind_key) VALUES($1,$2)`, [staffId, key]);
+/** 가능 과목·학력 전체 대체. migration 127 수업 유형(staff_teaching_kind)은 쓰지 않는다 — 읽기 전용 이전 입력(N-25) */
+async function replaceTeachingLists(m: EntityManager, staffId: number, subjectKeys?: string[], education?: StaffEducationSummaryInputDto[]): Promise<void> {
+  if (subjectKeys !== undefined) {
+    await m.query(`DELETE FROM staff_teaching_subject WHERE staff_id=$1`, [staffId]);
+    for (const key of subjectKeys) {
+      await m.query(`INSERT INTO staff_teaching_subject(staff_id,sub_key) VALUES($1,$2)`, [staffId, key]);
     }
   }
   if (education !== undefined) {
@@ -145,7 +180,7 @@ const STAFF_AUDIT_PRIVATE: Record<string, string> = {
   mustChangeCredentials: '인증 상태', credentialsChangedAt: '인증 상태',
   canMoney: '권한', canWage: '권한', canApprove: '권한', canHide: '권한', canGpaPack: '권한',
   teacherId: '담당 수업', serIds: '담당 수업', newSerIds: '담당 수업', guideIds: '담당 수업',
-  birthOn: '생년월일', englishOnly: '영어 전용 수업 가능 여부', teachingKindKeys: '가능 수업 유형', education: '학력 요약',
+  birthOn: '생년월일', englishOnly: '영어 전용 수업 가능 여부', teachingKindKeys: '가능 수업 유형', teachingSubjectKeys: '가능 과목', education: '학력 요약',
 };
 const STAFF_AUDIT_ACTION: Record<string, string> = {
   create: '등록', update: '정보 수정', activate: '사용 재개', deactivate: '사용 중지',
@@ -341,6 +376,7 @@ export class DrawerService {
           SELECT s.id, s.name, s.title, s.active, to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
                  CASE WHEN s.role='teacher' THEN s.english_only END AS english_only,
                  CASE WHEN s.role='teacher' THEN (SELECT count(*)::int FROM staff_teaching_kind tk WHERE tk.staff_id=s.id) ELSE 0 END AS teaching_kind_count,
+                 CASE WHEN s.role='teacher' THEN (SELECT count(*)::int FROM staff_teaching_subject ts WHERE ts.staff_id=s.id) ELSE 0 END AS teaching_subject_count,
                  ${kstAt('s.created_at')} AS created_at, s.created_at AS sort_at
             FROM staff s WHERE ${where}
            ORDER BY s.created_at DESC, s.id DESC LIMIT $3 OFFSET $4
@@ -353,7 +389,8 @@ export class DrawerService {
       items: rows.filter((r) => r.id !== null).map((r) => ({
         id: Number(r.id), name: String(r.name), englishName: null, title: str(r.title), active: r.active === true,
         hiredOn: str(r.hired_on), englishOnly: r.english_only === true ? true : r.english_only === false ? false : null,
-        teachingKindCount: Number(r.teaching_kind_count), createdAt: String(r.created_at),
+        teachingKindCount: Number(r.teaching_kind_count), teachingSubjectCount: Number(r.teaching_subject_count),
+        createdAt: String(r.created_at),
       })),
       page, pageSize, total: Number(rows[0].total),
     };
@@ -433,6 +470,7 @@ export class DrawerService {
         id: Number(staff.id), name: String(staff.name), englishName: null, title: str(staff.title),
         active: staff.active === true, hiredOn: str(staff.hired_on), createdAt: String(staff.created_at),
         teachingKindCount: staffTeachingOf(staff).teachingKinds.length,
+        teachingSubjectCount: staffTeachingOf(staff).teachingSubjects.length,
         email: str(staff.email), phone: str(staff.phone), timezone: str(staff.tz),
         ...staffTeachingOf(staff),
       },
@@ -1104,6 +1142,22 @@ export class DrawerService {
          FROM expense WHERE requester_id = $1`,
       [viewerId],
     );
+    // 구성원 창 「가능 과목」 선택지(p8 결정 2026-10-16) — 수업·모의수업·자습의 사용 중 과목, 묶음 차례. 낱말은 서버가 준다(D-R18)
+    const subjectRows = await this.q<{ kind_key: string; kind_name: string; key: string; name: string }>(
+      `SELECT k.key AS kind_key, k.name AS kind_name, s.key, s.name
+         FROM sub s JOIN kind k ON k.key = s.kind_key
+        WHERE s.active AND k.key = ANY($1::text[])
+        ORDER BY k.sort, s.sort NULLS LAST, s.key`, [[...STAFF_TEACHING_KIND_KEYS]],
+    );
+    const teachingSubjectGroups: StaffTeachingSubjectGroupDto[] = [];
+    for (const row of subjectRows) {
+      let group = teachingSubjectGroups.find((item) => item.kindKey === row.kind_key);
+      if (!group) {
+        group = { kindKey: row.kind_key, kindName: row.kind_name, subjects: [] };
+        teachingSubjectGroups.push(group);
+      }
+      group.subjects.push({ key: row.key, name: row.name });
+    }
     const workTotal = workItems.reduce((sum, item) => sum + item.count, 0);
     const workSummary = {
       total: workTotal,
@@ -1123,6 +1177,9 @@ export class DrawerService {
       // 규칙 문장도 서버가 준다 — 화면이 규칙을 따로 적지 않는다 (W10 · D-R18)
       loginIdRule: LOGIN_ID_RULE_TEXT,
       tempPasswordRule: TEMP_PASSWORD_RULE_TEXT,
+      teachingSubjectGroups,
+      educationDegrees: [...STAFF_EDUCATION_DEGREES],
+      educationStatuses: [...STAFF_EDUCATION_STATUSES],
       canWage,
       myExpenses: { total: Number(mine?.total ?? 0), pending: Number(mine?.pending ?? 0), rejected: Number(mine?.rejected ?? 0) },
     };
@@ -1189,7 +1246,9 @@ export class DrawerService {
     }
     const hiredOn = dto.hiredOn ?? today;
     checkedBirthOn(dto.birthOn, hiredOn);
-    checkedTeachingLists(dto.teachingKindKeys, dto.education);
+    checkedTeachingLists(dto.education);
+    checkedEducationCodes(dto.education);
+    await assertTeachingSubjects(this.anyRepo, dto.teachingSubjectKeys, null);
     /*
      * 비밀번호는 **매니저가 적은 임시 비밀번호**다 (W10 · 답변 2026-09-26) — 만든 사람도 아는 값이므로 첫 설정을 걸어 둔다.
      * 첫 로그인 때 본인이 휴대폰 · 이메일을 코드로 확인하고 새 비밀번호로 바꾼다(지금 비밀번호와 같으면 막힌다).
@@ -1209,7 +1268,7 @@ export class DrawerService {
         throw e;
       }
       const staffId = Number(made.id);
-      await replaceTeachingLists(m, staffId, dto.teachingKindKeys, dto.education);
+      await replaceTeachingLists(m, staffId, dto.teachingSubjectKeys, dto.education);
       let wage: { fromDate: string } | null = null;
       if (dto.wageRate != null) {
         // 입사일이 오늘보다 앞이면 오늘부터 — 지난 날짜로는 못 적는다(소급 없음)
@@ -1219,7 +1278,7 @@ export class DrawerService {
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'create','{}'::jsonb,$3::jsonb)`,
         [viewerId, staffId, JSON.stringify({ name: dto.name, role: dto.role, title: dto.title?.trim() || null, tz, hiredOn,
           birthOn: dto.birthOn == null ? undefined : '설정', englishOnly: dto.englishOnly == null ? undefined : '설정',
-          teachingKindKeys: dto.teachingKindKeys?.length ? '설정' : undefined, education: dto.education?.length ? '설정' : undefined,
+          teachingSubjectKeys: dto.teachingSubjectKeys?.length ? '설정' : undefined, education: dto.education?.length ? '설정' : undefined,
           wageRate: dto.wageRate ?? null, wageFrom: wage?.fromDate ?? null })],
       );
       return staffId;
@@ -1341,7 +1400,7 @@ export class DrawerService {
       if (targetRole === 'teacher') {
         checkedBirthOn(dto.birthOn === undefined ? cur.birthOn : dto.birthOn, dto.hiredOn ?? cur.hiredOn ?? todayKst());
       }
-      checkedTeachingLists(dto.teachingKindKeys, dto.education);
+      checkedTeachingLists(dto.education);
       // 보낸 값 중 **지금과 다른 것만** 바꾼다 — 같은 값을 다시 보낸 칸은 바뀐 것이 아니다
       const changed: Record<string, string | null> = {};
       for (const key of Object.keys(next)) {
@@ -1361,23 +1420,26 @@ export class DrawerService {
       }
       const permKeys = Object.keys(permChanged) as PermOverrideKey[];
       const englishOnlyChanged = dto.englishOnly !== undefined && dto.englishOnly !== row.english_only;
-      let teachingKindsChanged = false;
+      let teachingSubjectsChanged = false;
       let educationChanged = false;
       // 변경 비교는 역할별 응답 projection이 아니라 저장된 관계를 읽는다.
       // 매니저→강사 전환 때 숨겨 둔 값도 명시적 []로 비울 수 있어야 한다.
-      if (dto.teachingKindKeys !== undefined) {
+      if (dto.teachingSubjectKeys !== undefined) {
+        await assertTeachingSubjects(m, dto.teachingSubjectKeys, id);
         const rows = await m.query(
-          `SELECT kind_key FROM staff_teaching_kind WHERE staff_id=$1 ORDER BY kind_key`, [id],
-        ) as Array<{ kind_key: string }>;
-        teachingKindsChanged = JSON.stringify([...dto.teachingKindKeys].sort()) !== JSON.stringify(rows.map((row) => row.kind_key));
+          `SELECT sub_key FROM staff_teaching_subject WHERE staff_id=$1 ORDER BY sub_key`, [id],
+        ) as Array<{ sub_key: string }>;
+        teachingSubjectsChanged = JSON.stringify([...dto.teachingSubjectKeys].sort()) !== JSON.stringify(rows.map((row) => row.sub_key));
       }
       if (dto.education !== undefined) {
         const rows = await m.query(
           `SELECT school,major,degree,status FROM staff_education_summary WHERE staff_id=$1 ORDER BY position`, [id],
         ) as StaffEducationSummaryDto[];
+        // 이 사람에게 이미 저장된 옛 자유 입력 값만 다시 보낼 수 있다(p8 결정 · N-25)
+        checkedEducationCodes(dto.education, rows);
         educationChanged = JSON.stringify(normalizedEducation(dto.education)) !== JSON.stringify(rows);
       }
-      if (Object.keys(changed).length === 0 && permKeys.length === 0 && !englishOnlyChanged && !teachingKindsChanged && !educationChanged) {
+      if (Object.keys(changed).length === 0 && permKeys.length === 0 && !englishOnlyChanged && !teachingSubjectsChanged && !educationChanged) {
         throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 항목이 없습니다' });
       }
       if (['loginId', 'email', 'phone'].some((key) => key in changed)) {
@@ -1463,7 +1525,7 @@ export class DrawerService {
           throw e;
         }
       }
-      await replaceTeachingLists(m, id, teachingKindsChanged ? dto.teachingKindKeys : undefined, educationChanged ? dto.education : undefined);
+      await replaceTeachingLists(m, id, teachingSubjectsChanged ? dto.teachingSubjectKeys : undefined, educationChanged ? dto.education : undefined);
       // 이메일 모양의 아이디도 연락처다(옛 계정은 이메일이 아이디로 옮겨 와 있다) — 가린 모양으로 적는다
       const shown = (key: string, value: string | null) =>
         key === 'birthOn' ? (value === null ? null : '설정')
@@ -1477,14 +1539,14 @@ export class DrawerService {
         after[key] = shown(key, value);
       }
       if (englishOnlyChanged) { before.englishOnly = row.english_only == null ? null : '설정'; after.englishOnly = dto.englishOnly == null ? null : '설정'; }
-      if (teachingKindsChanged) { before.teachingKindKeys = '변경'; after.teachingKindKeys = '변경'; }
+      if (teachingSubjectsChanged) { before.teachingSubjectKeys = '변경'; after.teachingSubjectKeys = '변경'; }
       if (educationChanged) { before.education = '변경'; after.education = '변경'; }
       const log: { before: Record<string, unknown>; after: Record<string, unknown> } = { before, after };
       if (contactChanged) {
         log.before = { ...before, mustChangeCredentials: row.must_change_credentials === true };
         log.after = { ...after, mustChangeCredentials: true };
       }
-      if (Object.keys(changed).length > 0 || englishOnlyChanged || teachingKindsChanged || educationChanged) {
+      if (Object.keys(changed).length > 0 || englishOnlyChanged || teachingSubjectsChanged || educationChanged) {
         await m.query(
           `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'update',$3::jsonb,$4::jsonb)`,
           [viewerId, id, JSON.stringify(log.before), JSON.stringify(log.after)],

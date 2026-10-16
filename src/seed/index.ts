@@ -98,6 +98,10 @@ export const SEEDED_TABLES = [
   'guardian_send',
   // W8 첫 설정 인증 코드 — 시드는 안 넣는다(보낸 적 없는 코드를 지어내지 않는다)
   'auth_code',
+  // B1014-05 강사 가능 수업 유형·학력 요약 — 시드는 안 넣는다. 구성원 「수정」으로만 쌓이므로 reset 범위에 명시한다(S5a 2026-10-16)
+  'staff_teaching_kind', 'staff_education_summary',
+  // p8 결정(2026-10-16) 가능 과목 — 시드는 안 넣는다. 구성원 만들기·수정으로만 쌓인다
+  'staff_teaching_subject',
 ] as const;
 
 const PW = 'taco1234!';
