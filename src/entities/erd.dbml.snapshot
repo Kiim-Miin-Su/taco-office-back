@@ -308,7 +308,17 @@ Table STAFF_TEACHING_KIND {
     (staff_id, kind_key) [pk]
     (kind_key) [name: 'staff_teaching_kind_kind_idx']
   }
-  Note: 'BACKOFFICE-1014-B1014-05 · 가능 수업 유형. 과목 SUB 및 9/30 목표 STAFF_TEACHING_GRADE와 다른 현재 영속 원장.'
+  Note: 'BACKOFFICE-1014-B1014-05 · 가능 수업 유형. 과목 SUB 및 9/30 목표 STAFF_TEACHING_GRADE와 다른 영속 원장. 2026-10-16 p8 결정 뒤 새 입력은 STAFF_TEACHING_SUBJECT — 이 표는 migration 127 시절 입력의 읽기 전용 보존(과목 추정 변환 없음 · N-25).'
+}
+
+Table STAFF_TEACHING_SUBJECT {
+  staff_id bigint [not null, ref: > STAFF.id, note: 'ON DELETE CASCADE']
+  sub_key varchar(20) [not null, ref: > SUB.key, note: 'SUB FK ON DELETE RESTRICT · 수업·모의수업·자습(KIND class/mock/study) 과목만. staff_teaching_subject_guard 트리거(23514 staff_teaching_subject_kind)']
+  indexes {
+    (staff_id, sub_key) [pk]
+    (sub_key) [name: 'staff_teaching_subject_sub_idx']
+  }
+  Note: '10/14 PPTX p8 결정(2026-10-16) · migration 1769800000000 · 가능 과목 칩(GPA 제외). 서버가 400 STAFF_TEACHING_SUBJECT로 먼저 막는다.'
 }
 
 Table STAFF_EDUCATION_SUMMARY {
@@ -316,8 +326,8 @@ Table STAFF_EDUCATION_SUMMARY {
   position smallint [not null, note: '0~4 · staff_education_summary_position CHECK']
   school varchar(120) [not null, note: 'trim 후 빈 값 금지 · staff_education_summary_school CHECK']
   major varchar(120)
-  degree varchar(40)
-  status varchar(40)
+  degree varchar(40) [note: '2026-10-16 p8 결정 · 새 입력은 서버 코드표 전문학사·학사·석사·박사·기타(STAFF_EDUCATION_CODE). DB CHECK 없음 — 127 시절 자유 입력 값을 그대로 읽고 다시 저장할 수 있게']
+  status varchar(40) [note: '2026-10-16 p8 결정 · 새 입력은 서버 코드표 재학·휴학·수료·졸업·중퇴. 기존 자유 입력 값은 보존']
   indexes { (staff_id, position) [pk] }
   Note: 'BACKOFFICE-1014-B1014-05 · 화면 학력 요약 최대5행. 기존 학적/학교 도메인과 독립.'
 }
