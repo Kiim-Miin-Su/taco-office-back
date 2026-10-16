@@ -297,6 +297,14 @@ export class MemberDto {
   phone?: string | null;
   @ApiPropertyOptional({ ...S, description: '입사일 YYYY-MM-DD — 「수정」 창의 처음 값. 옛 계정은 null 일 수 있다' })
   hiredOn?: string | null;
+  @ApiPropertyOptional({ description: '생년월일·수업 프로필을 관리자로 볼 수 있는가. canAdminPage + canCrudAll' })
+  canViewStaffProfile?: boolean;
+  @ApiPropertyOptional({ ...S, description: '생년월일 YYYY-MM-DD. 등록·수정 시 오늘과 입사일 이전이어야 한다' })
+  birthOn?: string | null;
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '영어 전용 수업 가능: true/false/null(미확인)' })
+  englishOnly?: boolean | null;
+  @ApiPropertyOptional({ type: () => [StaffTeachingKindDto] }) teachingKinds?: StaffTeachingKindDto[];
+  @ApiPropertyOptional({ type: () => [StaffEducationSummaryDto] }) education?: StaffEducationSummaryDto[];
   @ApiPropertyOptional({ description: '「수정」 — 보는 이가 매니저 이상이고 이 줄이 강사·매니저일 때만 (대표·관리자 줄은 이 길로 못 고친다)' })
   canEdit?: boolean;
   @ApiPropertyOptional({ description: '수정 창에서 역할을 바꿀 수 있는가 — canEdit 이고 **자기 줄이 아닐 때만** (자기 역할은 못 바꾼다)' })
@@ -340,6 +348,8 @@ export class StaffDirectoryRowDto {
   @ApiProperty({ type: String, nullable: true }) title!: string | null;
   @ApiProperty() active!: boolean;
   @ApiProperty({ type: String, nullable: true }) hiredOn!: string | null;
+  @ApiProperty({ type: Boolean, nullable: true }) englishOnly!: boolean | null;
+  @ApiProperty({ description: '가능 수업 유형 수. SUBJECT 과목과 별개이며 GPA는 제외한다' }) teachingKindCount!: number;
   @ApiProperty({ description: 'KST ISO timestamp. 최신 등록 순 정렬 기준은 DB created_at DESC, id DESC' }) createdAt!: string;
 }
 
@@ -360,7 +370,39 @@ export class StaffDirectoryProfileDto extends StaffDirectoryRowDto {
   @ApiProperty({ type: String, nullable: true }) email!: string | null;
   @ApiProperty({ type: String, nullable: true }) phone!: string | null;
   @ApiProperty({ type: String, nullable: true }) timezone!: string | null;
+  @ApiProperty({ type: String, nullable: true }) birthOn!: string | null;
+  @ApiProperty({ type: () => [StaffTeachingKindDto] }) teachingKinds!: StaffTeachingKindDto[];
+  @ApiProperty({ type: () => [StaffEducationSummaryDto] }) education!: StaffEducationSummaryDto[];
 }
+
+export class StaffTeachingKindDto {
+  @ApiProperty({ enum: ['class', 'mock', 'study'] }) key!: string;
+  @ApiProperty() name!: string;
+}
+
+export class StaffEducationSummaryDto {
+  @ApiProperty() school!: string;
+  @ApiProperty({ type: String, nullable: true }) major!: string | null;
+  @ApiProperty({ type: String, nullable: true }) degree!: string | null;
+  @ApiProperty({ type: String, nullable: true }) status!: string | null;
+}
+
+export class StaffEducationSummaryInputDto {
+  @ApiProperty({ maxLength: 120 })
+  @IsString() @MinLength(1) @MaxLength(120)
+  school!: string;
+  @ApiPropertyOptional({ ...S, maxLength: 120 })
+  @IsOptional() @IsString() @MaxLength(120)
+  major?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 40 })
+  @IsOptional() @IsString() @MaxLength(40)
+  degree?: string | null;
+  @ApiPropertyOptional({ ...S, maxLength: 40 })
+  @IsOptional() @IsString() @MaxLength(40)
+  status?: string | null;
+}
+
+export const STAFF_TEACHING_KIND_KEYS = ['class', 'mock', 'study'] as const;
 
 export class StaffDirectoryWageDto {
   @ApiProperty() id!: number;
@@ -385,6 +427,7 @@ export class StaffDirectoryAssignmentDto {
   @ApiProperty() kindName!: string;
   @ApiProperty({ type: String, nullable: true }) subjectName!: string | null;
   @ApiProperty({ type: [String], description: '현재 수업 규칙 명단. 과거 교체 전 명단을 뜻하지 않는다' }) studentNames!: string[];
+  @ApiProperty({ type: () => [StaffDirectoryStudentDto], description: '학생 상세 링크용 실제 학생 ID와 이름' }) students!: StaffDirectoryStudentDto[];
   @ApiProperty() fromDate!: string;
   @ApiProperty({ type: String, nullable: true }) toDate!: string | null;
 }
@@ -395,6 +438,12 @@ export class StaffDirectoryReportDto {
   @ApiProperty() kindName!: string;
   @ApiProperty({ type: String, nullable: true }) subjectName!: string | null;
   @ApiProperty({ type: [String] }) studentNames!: string[];
+  @ApiProperty({ type: () => [StaffDirectoryStudentDto] }) students!: StaffDirectoryStudentDto[];
+}
+
+export class StaffDirectoryStudentDto {
+  @ApiProperty() id!: number;
+  @ApiProperty() name!: string;
 }
 
 export class StaffDirectoryAuditChangeDto {
@@ -549,9 +598,25 @@ export class StaffCreateDto {
   @IsOptional() @IsString() @MaxLength(32)
   phone?: string | null;
 
-  @ApiPropertyOptional({ ...S, description: '입사일 YYYY-MM-DD — 비우면 오늘. 불가 시간 2주 회차의 기산점' })
-  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: '입사일은 YYYY-MM-DD 입니다' })
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '입사일 YYYY-MM-DD — 비우면 오늘. 불가 시간 2주 회차의 기산점' })
+  @IsOptional() @IsCalendarDate()
   hiredOn?: string | null;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, description: '생년월일. 오늘 또는 입사일과 같거나 늦으면 400' })
+  @IsOptional() @IsCalendarDate()
+  birthOn?: string | null;
+
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '영어 전용 수업 가능: true/false/null(미확인)' })
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsBoolean()
+  englishOnly?: boolean | null;
+
+  @ApiPropertyOptional({ type: [String], enum: STAFF_TEACHING_KIND_KEYS, description: '가능 수업 유형. KIND의 class/mock/study만 허용, GPA와 SUBJECT는 제외' })
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @ArrayUnique() @IsIn(STAFF_TEACHING_KIND_KEYS, { each: true })
+  teachingKindKeys?: string[];
+
+  @ApiPropertyOptional({ type: [StaffEducationSummaryInputDto], maxItems: 5, description: '학력 요약 최대 5행. 보낸 배열 전체가 저장된다' })
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @ArrayMaxSize(5) @ValidateNested({ each: true }) @Type(() => StaffEducationSummaryInputDto)
+  education?: StaffEducationSummaryInputDto[];
 
   @ApiPropertyOptional({ type: Number, nullable: true, minimum: 1000, description: '기본 시급(원/시간) — 적으면 입사일(또는 오늘)부터의 WAGE 한 줄이 같은 트랜잭션에 선다 · 소급 없음' })
   @IsOptional() @IsInt() @Min(1000) @Max(10_000_000)
@@ -623,6 +688,22 @@ export class StaffPatchDto {
   @ApiPropertyOptional({ ...DATE_SCHEMA, description: '입사일 YYYY-MM-DD' })
   @ValidateIf((_o, v) => v !== undefined) @IsCalendarDate()
   hiredOn?: string;
+
+  @ApiPropertyOptional({ ...DATE_SCHEMA, nullable: true, description: '생년월일. null이면 비운다. 오늘 또는 입사일과 같거나 늦으면 400' })
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsCalendarDate()
+  birthOn?: string | null;
+
+  @ApiPropertyOptional({ type: Boolean, nullable: true, description: '영어 전용 수업 가능: true/false/null(미확인)' })
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsBoolean()
+  englishOnly?: boolean | null;
+
+  @ApiPropertyOptional({ type: [String], enum: STAFF_TEACHING_KIND_KEYS, description: '가능 수업 유형 전체 대체. class/mock/study만 허용' })
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @ArrayUnique() @IsIn(STAFF_TEACHING_KIND_KEYS, { each: true })
+  teachingKindKeys?: string[];
+
+  @ApiPropertyOptional({ type: [StaffEducationSummaryInputDto], maxItems: 5, description: '학력 요약 전체 대체. 최대 5행' })
+  @ValidateIf((_o, v) => v !== undefined) @IsArray() @ArrayMaxSize(5) @ValidateNested({ each: true }) @Type(() => StaffEducationSummaryInputDto)
+  education?: StaffEducationSummaryInputDto[];
 
   @ApiPropertyOptional({
     type: () => StaffPermsPatchDto,

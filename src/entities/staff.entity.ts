@@ -114,6 +114,14 @@ export class Staff {
   @Column({ type: 'date', nullable: true })
   hiredOn: string | null;
 
+  /** BO-1014-STAFF — 프로필의 생년월일. 관리자 이외 응답에 노출하지 않는다. */
+  @Column({ type: 'date', nullable: true })
+  birthOn: string | null;
+
+  /** 영어 전용 수업 가능 여부. null은 아직 확인하지 않은 상태다. */
+  @Column({ type: 'boolean', nullable: true })
+  englishOnly: boolean | null;
+
   @Column({ type: 'boolean', default: true })
   active: boolean;
 

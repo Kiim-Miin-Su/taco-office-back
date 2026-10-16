@@ -52,7 +52,7 @@ export const STAFF_SOFT_REFS: ReadonlyArray<readonly [table: string, column: str
  * 계정 **자신만의** 것 — 계정과 함께 사라져도 되는 표(FK ON DELETE CASCADE).
  * 인증 코드는 그 계정의 첫 설정 · 확인에만 쓰이고 다른 업무가 읽지 않는다.
  */
-export const STAFF_OWN_TABLES: readonly string[] = ['auth_code'];
+export const STAFF_OWN_TABLES: readonly string[] = ['auth_code', 'staff_teaching_kind', 'staff_education_summary'];
 
 /** pg_constraint 의 confdeltype — a: NO ACTION · r: RESTRICT · c: CASCADE · n: SET NULL · d: SET DEFAULT */
 export type FkDeleteRule = 'a' | 'r' | 'c' | 'n' | 'd';

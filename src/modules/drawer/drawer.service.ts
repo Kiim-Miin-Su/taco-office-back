@@ -52,7 +52,7 @@ import type { TeacherGuidesDto, TeacherHomeDto, TeacherSuggestionsDto } from '..
 import { loadState } from '../schedule/schedule.state.repo';
 import { issueScheduleUndoStep } from '../schedule/schedule.undo';
 import { EXPENSE_CATEGORY_LABEL } from '../accounting/accounting.dto';
-import { STAFF_MANAGEABLE_ROLES } from './drawer.dto';
+import { STAFF_MANAGEABLE_ROLES, STAFF_TEACHING_KIND_KEYS } from './drawer.dto';
 import { MATERIAL_REQUEST_KIND_LABEL } from '../material-requests/material-requests.dto';
 import type {
   ApprovalUndoResultDto, ChangeReqResultDto, ChreqReviewDto, DrawerDto, MemberDto, MemberPermDto, ReqReviewDto, ScheduleHistoryDto,
@@ -60,6 +60,7 @@ import type {
   StaffDirectoryQueryDto, StaffDirectoryReportDto, StaffDirectoryWageDto,
   StaffTeacherHistoryDto, StaffTeacherInboxCategory, StaffTeacherInboxDto, StaffTeacherInboxItemDto,
   StaffCreateDto, StaffPatchDto, TodoCreateDto, TodoPatchDto,
+  StaffEducationSummaryDto, StaffEducationSummaryInputDto, StaffTeachingKindDto,
 } from './drawer.dto';
 import { STAFF_TEACHER_INBOX_CATEGORIES } from './drawer.dto';
 import type { ConflictRowDto } from '../schedule/schedule.dto';
@@ -71,6 +72,60 @@ type R = Record<string, unknown>;
 
 const str = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+// 로그인 권한이 아닌 저장할 프로필의 대상 유형 판정이다.
+const isTeacherProfileRole = (role: unknown): boolean => role === 'teacher';
+
+/** 목록·상세·서랍 구성원은 동일한 가능 수업 유형과 학력 요약 원장을 읽는다. */
+const staffTeachingColumns = (alias: string, visible = 'true') => `
+  CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN to_char(${alias}.birth_on,'YYYY-MM-DD') END AS birth_on,
+  CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN ${alias}.english_only END AS english_only,
+  CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object('key',k.key,'name',k.name) ORDER BY k.sort,k.key)
+    FROM staff_teaching_kind tk JOIN kind k ON k.key=tk.kind_key WHERE tk.staff_id=${alias}.id),'[]'::jsonb) ELSE '[]'::jsonb END AS teaching_kinds,
+  CASE WHEN ${visible} AND ${alias}.role = 'teacher' THEN COALESCE((SELECT jsonb_agg(jsonb_build_object('school',e.school,'major',e.major,'degree',e.degree,'status',e.status) ORDER BY e.position)
+    FROM staff_education_summary e WHERE e.staff_id=${alias}.id),'[]'::jsonb) ELSE '[]'::jsonb END AS education`;
+const staffTeachingOf = (r: R): { birthOn: string | null; englishOnly: boolean | null; teachingKinds: StaffTeachingKindDto[]; education: StaffEducationSummaryDto[] } => ({
+  birthOn: str(r.birth_on), englishOnly: r.english_only === true ? true : r.english_only === false ? false : null,
+  teachingKinds: Array.isArray(r.teaching_kinds) ? r.teaching_kinds as StaffTeachingKindDto[] : [],
+  education: Array.isArray(r.education) ? r.education as StaffEducationSummaryDto[] : [],
+});
+const normalizedEducation = (rows: StaffEducationSummaryInputDto[]): StaffEducationSummaryDto[] => rows.map((row) => ({
+  school: row.school.trim(), major: row.major?.trim() || null, degree: row.degree?.trim() || null, status: row.status?.trim() || null,
+}));
+const checkedBirthOn = (birthOn: string | null | undefined, hiredOn: string | null | undefined): void => {
+  if (birthOn && (birthOn >= todayKst() || (hiredOn && birthOn >= hiredOn))) {
+    throw new BadRequestException({ code: 'STAFF_BIRTH_DATE', message: '생년월일은 오늘과 입사일 이전이어야 합니다' });
+  }
+};
+const checkedTeachingLists = (keys: string[] | undefined, education: StaffEducationSummaryInputDto[] | undefined): void => {
+  if (keys && (new Set(keys).size !== keys.length || keys.some((key) => !STAFF_TEACHING_KIND_KEYS.includes(key as typeof STAFF_TEACHING_KIND_KEYS[number])))) {
+    throw new BadRequestException({ code: 'STAFF_TEACHING_KIND', message: '가능 수업 유형은 수업·모의수업·자습 중에서 선택하세요' });
+  }
+  if (education && (education.length > 5 || education.some((row) => !row.school?.trim()))) {
+    throw new BadRequestException({ code: 'STAFF_EDUCATION', message: '학력은 최대 5개이며 학교를 적어야 합니다' });
+  }
+};
+const checkedTeachingRole = (role: string | null, dto: StaffCreateDto | StaffPatchDto): void => {
+  // 강사 전용 입력은 빈 배열·null이라도 비강사에게 보내지 않는다. 역할 변경 뒤 남은 폼 초안을 차단한다.
+  if (role !== 'teacher' && (dto.birthOn !== undefined || dto.englishOnly !== undefined
+    || dto.teachingKindKeys !== undefined || dto.education !== undefined)) {
+    throw new BadRequestException({ code: 'STAFF_TEACHING_ROLE', message: '강사 프로필은 강사 역할에만 입력할 수 있습니다' });
+  }
+};
+async function replaceTeachingLists(m: EntityManager, staffId: number, keys?: string[], education?: StaffEducationSummaryInputDto[]): Promise<void> {
+  if (keys !== undefined) {
+    await m.query(`DELETE FROM staff_teaching_kind WHERE staff_id=$1`, [staffId]);
+    for (const key of keys) {
+      await m.query(`INSERT INTO staff_teaching_kind(staff_id,kind_key) VALUES($1,$2)`, [staffId, key]);
+    }
+  }
+  if (education !== undefined) {
+    await m.query(`DELETE FROM staff_education_summary WHERE staff_id=$1`, [staffId]);
+    for (const [position, row] of normalizedEducation(education).entries()) {
+      await m.query(`INSERT INTO staff_education_summary(staff_id,position,school,major,degree,status) VALUES($1,$2,$3,$4,$5,$6)`,
+        [staffId, position, row.school, row.major, row.degree, row.status]);
+    }
+  }
+}
 const clock = (min: number) => `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
 
 const STAFF_TEACHER_INBOX_LABEL: Record<StaffTeacherInboxCategory, string> = {
@@ -90,6 +145,7 @@ const STAFF_AUDIT_PRIVATE: Record<string, string> = {
   mustChangeCredentials: '인증 상태', credentialsChangedAt: '인증 상태',
   canMoney: '권한', canWage: '권한', canApprove: '권한', canHide: '권한', canGpaPack: '권한',
   teacherId: '담당 수업', serIds: '담당 수업', newSerIds: '담당 수업', guideIds: '담당 수업',
+  birthOn: '생년월일', englishOnly: '영어 전용 수업 가능 여부', teachingKindKeys: '가능 수업 유형', education: '학력 요약',
 };
 const STAFF_AUDIT_ACTION: Record<string, string> = {
   create: '등록', update: '정보 수정', activate: '사용 재개', deactivate: '사용 중지',
@@ -283,6 +339,8 @@ export class DrawerService {
       `WITH total AS (SELECT count(*)::text AS total FROM staff s WHERE ${where}),
         page_rows AS (
           SELECT s.id, s.name, s.title, s.active, to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
+                 CASE WHEN s.role='teacher' THEN s.english_only END AS english_only,
+                 CASE WHEN s.role='teacher' THEN (SELECT count(*)::int FROM staff_teaching_kind tk WHERE tk.staff_id=s.id) ELSE 0 END AS teaching_kind_count,
                  ${kstAt('s.created_at')} AS created_at, s.created_at AS sort_at
             FROM staff s WHERE ${where}
            ORDER BY s.created_at DESC, s.id DESC LIMIT $3 OFFSET $4
@@ -294,7 +352,8 @@ export class DrawerService {
     return {
       items: rows.filter((r) => r.id !== null).map((r) => ({
         id: Number(r.id), name: String(r.name), englishName: null, title: str(r.title), active: r.active === true,
-        hiredOn: str(r.hired_on), createdAt: String(r.created_at),
+        hiredOn: str(r.hired_on), englishOnly: r.english_only === true ? true : r.english_only === false ? false : null,
+        teachingKindCount: Number(r.teaching_kind_count), createdAt: String(r.created_at),
       })),
       page, pageSize, total: Number(rows[0].total),
     };
@@ -307,7 +366,8 @@ export class DrawerService {
     const cursor = parseStaffAuditCursor(cursorRaw);
     const [staff] = await this.q(
       `SELECT s.id, s.name, s.email, s.phone, s.title, s.tz, s.active,
-              to_char(s.hired_on,'YYYY-MM-DD') AS hired_on, ${kstAt('s.created_at')} AS created_at
+              to_char(s.hired_on,'YYYY-MM-DD') AS hired_on, ${staffTeachingColumns('s')},
+              ${kstAt('s.created_at')} AS created_at
          FROM staff s WHERE s.id = $1
           AND (s.role = 'teacher' OR EXISTS (SELECT 1 FROM ser owned WHERE owned.teacher_id = s.id))`, [id],
     );
@@ -333,6 +393,7 @@ export class DrawerService {
     const assignments = await this.q(
       `SELECT s.id, k.name AS kind_name, sb.name AS subject_name,
               COALESCE(array_agg(DISTINCT st.name) FILTER (WHERE st.id IS NOT NULL), ARRAY[]::varchar[]) AS student_names,
+              COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id',st.id,'name',st.name)) FILTER (WHERE st.id IS NOT NULL),'[]'::jsonb) AS students,
               to_char(s.from_date,'YYYY-MM-DD') AS from_date, to_char(s.to_date,'YYYY-MM-DD') AS to_date
          FROM ser s JOIN kind k ON k.key = s.kind_key
          LEFT JOIN sub sb ON sb.key = s.sub_key
@@ -347,7 +408,8 @@ export class DrawerService {
     const reports = await this.q(
       `SELECT r.id, to_char(r.on_date,'YYYY-MM-DD') AS on_date,
               COALESCE(k.name, '기타') AS kind_name, sb.name AS subject_name,
-              COALESCE(array_agg(DISTINCT st.name) FILTER (WHERE st.id IS NOT NULL), ARRAY[]::varchar[]) AS student_names
+              COALESCE(array_agg(DISTINCT st.name) FILTER (WHERE st.id IS NOT NULL), ARRAY[]::varchar[]) AS student_names,
+              COALESCE(jsonb_agg(DISTINCT jsonb_build_object('id',st.id,'name',st.name)) FILTER (WHERE st.id IS NOT NULL),'[]'::jsonb) AS students
          FROM rep r JOIN ser s ON s.id = r.ser_id
          LEFT JOIN kind k ON k.key = COALESCE(r.kind_key, s.kind_key)
          LEFT JOIN sub sb ON sb.key = s.sub_key
@@ -370,7 +432,9 @@ export class DrawerService {
       profile: {
         id: Number(staff.id), name: String(staff.name), englishName: null, title: str(staff.title),
         active: staff.active === true, hiredOn: str(staff.hired_on), createdAt: String(staff.created_at),
+        teachingKindCount: staffTeachingOf(staff).teachingKinds.length,
         email: str(staff.email), phone: str(staff.phone), timezone: str(staff.tz),
+        ...staffTeachingOf(staff),
       },
       wageAccess: canWage,
       wages: wageRows.map((r): StaffDirectoryWageDto => ({
@@ -383,11 +447,14 @@ export class DrawerService {
       })),
       assignments: assignments.map((r): StaffDirectoryAssignmentDto => ({
         id: Number(r.id), kindName: String(r.kind_name), subjectName: str(r.subject_name),
-        studentNames: r.student_names as string[], fromDate: String(r.from_date), toDate: str(r.to_date),
+        studentNames: r.student_names as string[], students: (r.students as Array<{ id: number | string; name: string }>).map((student) => ({
+          id: Number(student.id), name: student.name,
+        })), fromDate: String(r.from_date), toDate: str(r.to_date),
       })),
       reports: reports.map((r): StaffDirectoryReportDto => ({
         id: Number(r.id), onDate: String(r.on_date), kindName: String(r.kind_name),
         subjectName: str(r.subject_name), studentNames: r.student_names as string[],
+        students: (r.students as Array<{ id: number | string; name: string }>).map((student) => ({ id: Number(student.id), name: student.name })),
       })),
       audit, nextCursor: hasMore && auditPage.length > 0 ? staffAuditCursor(auditPage[auditPage.length - 1]) : null,
     };
@@ -919,7 +986,7 @@ export class DrawerService {
     const members = (await this.q(
       `SELECT s.id, s.name, s.login_id, s.email, s.role::text AS role, s.title, s.tz, s.active,
               CASE WHEN $3::boolean THEN s.phone END AS phone, s.must_change_credentials,
-              to_char(s.hired_on,'YYYY-MM-DD') AS hired_on,
+              to_char(s.hired_on,'YYYY-MM-DD') AS hired_on, ${staffTeachingColumns('s', '$6::boolean')},
               (s.role::text = ANY($5::text[])) AS manageable, ${permCols('s')},
               w.rate AS wage_rate, to_char(w.from_date,'YYYY-MM-DD') AS wage_from,
               (s.role = 'teacher' AND s.active) AS wageable
@@ -931,7 +998,7 @@ export class DrawerService {
          ) w ON true
         WHERE $3::boolean OR s.id = $4
         ORDER BY s.active DESC, s.id`,
-      [todayKst(), canWage, canSeeAll, viewerId, [...STAFF_MANAGEABLE_ROLES]],
+      [todayKst(), canWage, canSeeAll, viewerId, [...STAFF_MANAGEABLE_ROLES], canManageStaff],
     )).map((r) => ({
       id: Number(r.id), name: String(r.name), loginId: String(r.login_id), email: str(r.email),
       role: String(r.role), title: str(r.title), tz: str(r.tz), active: r.active === true,
@@ -943,6 +1010,8 @@ export class DrawerService {
       mustChangeCredentials: r.must_change_credentials === true,
       phone: str(r.phone),
       hiredOn: str(r.hired_on),
+      canViewStaffProfile: canManageStaff && isTeacherProfileRole(r.role),
+      ...staffTeachingOf(r),
       // 「수정」·「비밀번호 초기화」·「사용 중지」·「삭제」가 서는 줄도 표가 가른다(강사·매니저 · 자기 줄 제외) — W8
       ...staffRowFlags(
         canManageStaff, r.manageable === true, Number(r.id) === viewerId, this.credentialControlIssue(r, viewerPerms) === null,
@@ -1081,6 +1150,7 @@ export class DrawerService {
     viewerPerms: PermFlags | null = null,
   ): Promise<MemberDto> {
     const today = todayKst();
+    checkedTeachingRole(dto.role, dto);
     /*
      * 권한 한도 (W11 A' 후속 · 리드 결정) — 새 계정이 받게 될 권한(역할 기본값) 중 **내게 없는 것**이 있으면 만들지 않는다.
      * 사람별 예외로 좁혀진 매니저가 임시 비밀번호로 새 매니저 계정을 만들어 스스로 쓰는 우회가 여기서 닫힌다.
@@ -1118,6 +1188,8 @@ export class DrawerService {
       if (taken) throw staffEmailTaken();
     }
     const hiredOn = dto.hiredOn ?? today;
+    checkedBirthOn(dto.birthOn, hiredOn);
+    checkedTeachingLists(dto.teachingKindKeys, dto.education);
     /*
      * 비밀번호는 **매니저가 적은 임시 비밀번호**다 (W10 · 답변 2026-09-26) — 만든 사람도 아는 값이므로 첫 설정을 걸어 둔다.
      * 첫 로그인 때 본인이 휴대폰 · 이메일을 코드로 확인하고 새 비밀번호로 바꾼다(지금 비밀번호와 같으면 막힌다).
@@ -1127,9 +1199,9 @@ export class DrawerService {
       let made: { id: string };
       try {
         [made] = (await m.query(
-          `INSERT INTO staff (name, login_id, email, phone, role, title, tz, password_hash, hired_on, active, must_change_credentials)
-           VALUES ($1, $2, $3, $4, $5::role_t, $6, $7, $8, $9::date, true, true) RETURNING id`,
-          [dto.name, loginId, email, phone, dto.role, dto.title?.trim() || null, tz, hash, hiredOn],
+          `INSERT INTO staff (name, login_id, email, phone, role, title, tz, password_hash, hired_on, birth_on, english_only, active, must_change_credentials)
+           VALUES ($1, $2, $3, $4, $5::role_t, $6, $7, $8, $9::date, $10::date, $11::boolean, true, true) RETURNING id`,
+          [dto.name, loginId, email, phone, dto.role, dto.title?.trim() || null, tz, hash, hiredOn, dto.birthOn ?? null, dto.englishOnly ?? null],
         )) as Array<{ id: string }>;
       } catch (e) {
         // 동시에 같은 아이디 · 이메일로 만든 사람이 있으면 표의 유일 색인이 마지막에 막는다 — 오류 원문(값이 든다) 대신 같은 409 문장
@@ -1137,6 +1209,7 @@ export class DrawerService {
         throw e;
       }
       const staffId = Number(made.id);
+      await replaceTeachingLists(m, staffId, dto.teachingKindKeys, dto.education);
       let wage: { fromDate: string } | null = null;
       if (dto.wageRate != null) {
         // 입사일이 오늘보다 앞이면 오늘부터 — 지난 날짜로는 못 적는다(소급 없음)
@@ -1144,7 +1217,10 @@ export class DrawerService {
       }
       await m.query(
         `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'create','{}'::jsonb,$3::jsonb)`,
-        [viewerId, staffId, JSON.stringify({ name: dto.name, role: dto.role, title: dto.title?.trim() || null, tz, hiredOn, wageRate: dto.wageRate ?? null, wageFrom: wage?.fromDate ?? null })],
+        [viewerId, staffId, JSON.stringify({ name: dto.name, role: dto.role, title: dto.title?.trim() || null, tz, hiredOn,
+          birthOn: dto.birthOn == null ? undefined : '설정', englishOnly: dto.englishOnly == null ? undefined : '설정',
+          teachingKindKeys: dto.teachingKindKeys?.length ? '설정' : undefined, education: dto.education?.length ? '설정' : undefined,
+          wageRate: dto.wageRate ?? null, wageFrom: wage?.fromDate ?? null })],
       );
       return staffId;
     });
@@ -1162,9 +1238,9 @@ export class DrawerService {
   ): Promise<MemberDto> {
     const [r] = await this.q(
       `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active, must_change_credentials,
-              to_char(hired_on,'YYYY-MM-DD') AS hired_on, ${permCols()},
+              to_char(hired_on,'YYYY-MM-DD') AS hired_on, ${staffTeachingColumns('s')}, ${permCols()},
               (role = 'teacher' AND active) AS wageable, (role::text = ANY($2::text[])) AS manageable
-         FROM staff WHERE id = $1`,
+         FROM staff s WHERE id = $1`,
       [id, [...STAFF_MANAGEABLE_ROLES]],
     );
     if (!r) throw staffNotFound();
@@ -1180,6 +1256,8 @@ export class DrawerService {
       mustChangeCredentials: r.must_change_credentials === true,
       phone: canManage ? str(r.phone) : null,
       hiredOn: str(r.hired_on),
+      canViewStaffProfile: canManage && isTeacherProfileRole(r.role),
+      ...staffTeachingOf(r),
       ...staffRowFlags(
         canManage, r.manageable === true, Number(r.id) === viewerId, this.credentialControlIssue(r, viewerPerms) === null,
       ),
@@ -1197,7 +1275,8 @@ export class DrawerService {
   private async lockManageable(m: EntityManager, id: number): Promise<Record<string, unknown>> {
     const [row] = (await m.query(
       `SELECT id, name, login_id, email, phone, role::text AS role, title, tz, active, must_change_credentials,
-              to_char(hired_on,'YYYY-MM-DD') AS hired_on, (role::text = ANY($2::text[])) AS manageable, ${permCols()}
+              to_char(hired_on,'YYYY-MM-DD') AS hired_on, to_char(birth_on,'YYYY-MM-DD') AS birth_on, english_only,
+              (role::text = ANY($2::text[])) AS manageable, ${permCols()}
          FROM staff WHERE id = $1 FOR UPDATE`,
       [id, [...STAFF_MANAGEABLE_ROLES]],
     )) as Array<Record<string, unknown>>;
@@ -1248,14 +1327,21 @@ export class DrawerService {
       const row = await this.lockManageable(m, id);
       const cur: Record<string, string | null> = {
         name: str(row.name), loginId: str(row.login_id), email: str(row.email), phone: str(row.phone), title: str(row.title),
-        tz: str(row.tz), role: str(row.role), hiredOn: str(row.hired_on),
+        tz: str(row.tz), role: str(row.role), hiredOn: str(row.hired_on), birthOn: str(row.birth_on),
       };
       const next: Record<string, string | null | undefined> = {
         name: dto.name, loginId,
         email: dto.email === undefined ? undefined : (dto.email ? normalizeEmail(dto.email) : null), phone,
         title: dto.title === undefined ? undefined : (dto.title?.trim() || null),
-        tz: dto.tz?.trim(), role: dto.role, hiredOn: dto.hiredOn,
+        tz: dto.tz?.trim(), role: dto.role, hiredOn: dto.hiredOn, birthOn: dto.birthOn,
       };
+      const targetRole = dto.role ?? cur.role;
+      checkedTeachingRole(targetRole, dto);
+      // 비강사로 전환한 뒤 보존된 비공개 생년월일이 일반 입사일 수정을 막지 않게 한다.
+      if (targetRole === 'teacher') {
+        checkedBirthOn(dto.birthOn === undefined ? cur.birthOn : dto.birthOn, dto.hiredOn ?? cur.hiredOn ?? todayKst());
+      }
+      checkedTeachingLists(dto.teachingKindKeys, dto.education);
       // 보낸 값 중 **지금과 다른 것만** 바꾼다 — 같은 값을 다시 보낸 칸은 바뀐 것이 아니다
       const changed: Record<string, string | null> = {};
       for (const key of Object.keys(next)) {
@@ -1274,7 +1360,24 @@ export class DrawerService {
         if (value !== undefined && value !== curPerms[key]) permChanged[key] = value;
       }
       const permKeys = Object.keys(permChanged) as PermOverrideKey[];
-      if (Object.keys(changed).length === 0 && permKeys.length === 0) {
+      const englishOnlyChanged = dto.englishOnly !== undefined && dto.englishOnly !== row.english_only;
+      let teachingKindsChanged = false;
+      let educationChanged = false;
+      // 변경 비교는 역할별 응답 projection이 아니라 저장된 관계를 읽는다.
+      // 매니저→강사 전환 때 숨겨 둔 값도 명시적 []로 비울 수 있어야 한다.
+      if (dto.teachingKindKeys !== undefined) {
+        const rows = await m.query(
+          `SELECT kind_key FROM staff_teaching_kind WHERE staff_id=$1 ORDER BY kind_key`, [id],
+        ) as Array<{ kind_key: string }>;
+        teachingKindsChanged = JSON.stringify([...dto.teachingKindKeys].sort()) !== JSON.stringify(rows.map((row) => row.kind_key));
+      }
+      if (dto.education !== undefined) {
+        const rows = await m.query(
+          `SELECT school,major,degree,status FROM staff_education_summary WHERE staff_id=$1 ORDER BY position`, [id],
+        ) as StaffEducationSummaryDto[];
+        educationChanged = JSON.stringify(normalizedEducation(dto.education)) !== JSON.stringify(rows);
+      }
+      if (Object.keys(changed).length === 0 && permKeys.length === 0 && !englishOnlyChanged && !teachingKindsChanged && !educationChanged) {
         throw new ConflictException({ code: 'EMPTY_PATCH', message: '바꿀 항목이 없습니다' });
       }
       if (['loginId', 'email', 'phone'].some((key) => key in changed)) {
@@ -1327,14 +1430,18 @@ export class DrawerService {
       }
       // 칸 이름은 이 표에서만 온다 — 보낸 글이 SQL 이 되지 않는다(값은 전부 $n)
       const COLUMN: Record<string, string> = {
-        name: 'name', loginId: 'login_id', email: 'email', phone: 'phone', title: 'title', tz: 'tz', role: 'role', hiredOn: 'hired_on',
+        name: 'name', loginId: 'login_id', email: 'email', phone: 'phone', title: 'title', tz: 'tz', role: 'role', hiredOn: 'hired_on', birthOn: 'birth_on',
       };
       const sets: string[] = [];
       const params: unknown[] = [id];
       for (const [key, value] of Object.entries(changed)) {
         params.push(value);
-        const cast = key === 'role' ? '::role_t' : key === 'hiredOn' ? '::date' : '';
+        const cast = key === 'role' ? '::role_t' : key === 'hiredOn' || key === 'birthOn' ? '::date' : '';
         sets.push(`${COLUMN[key]} = $${params.length}${cast}`);
+      }
+      if (englishOnlyChanged) {
+        params.push(dto.englishOnly ?? null);
+        sets.push(`english_only = $${params.length}::boolean`);
       }
       // 권한 예외 칸 — 칸 이름은 `PERM_OVERRIDE_COLUMN` 표에서만 온다
       for (const key of permKeys) {
@@ -1347,16 +1454,20 @@ export class DrawerService {
       // 아이디는 연락처가 아니라서 여기에 들지 않는다(W10)
       const contactChanged = 'email' in changed || 'phone' in changed;
       if (contactChanged) sets.push('must_change_credentials = true');
-      try {
-        await m.query(`UPDATE staff SET ${sets.join(', ')} WHERE id = $1`, params);
-      } catch (e) {
-        // 동시에 같은 아이디 · 이메일로 바꾼 사람이 있으면 표의 유일 색인이 마지막에 막는다
-        if ((e as { code?: string }).code === '23505') throw staffUniqueTaken(e);
-        throw e;
+      if (sets.length > 0) {
+        try {
+          await m.query(`UPDATE staff SET ${sets.join(', ')} WHERE id = $1`, params);
+        } catch (e) {
+          // 동시에 같은 아이디 · 이메일로 바꾼 사람이 있으면 표의 유일 색인이 마지막에 막는다
+          if ((e as { code?: string }).code === '23505') throw staffUniqueTaken(e);
+          throw e;
+        }
       }
+      await replaceTeachingLists(m, id, teachingKindsChanged ? dto.teachingKindKeys : undefined, educationChanged ? dto.education : undefined);
       // 이메일 모양의 아이디도 연락처다(옛 계정은 이메일이 아이디로 옮겨 와 있다) — 가린 모양으로 적는다
       const shown = (key: string, value: string | null) =>
-        value === null ? null
+        key === 'birthOn' ? (value === null ? null : '설정')
+          : value === null ? null
           : key === 'email' || (key === 'loginId' && value.includes('@')) ? maskEmail(value)
             : key === 'phone' ? maskPhone(value) : value;
       const before: Record<string, string | null> = {};
@@ -1365,12 +1476,15 @@ export class DrawerService {
         before[key] = shown(key, cur[key] ?? null);
         after[key] = shown(key, value);
       }
+      if (englishOnlyChanged) { before.englishOnly = row.english_only == null ? null : '설정'; after.englishOnly = dto.englishOnly == null ? null : '설정'; }
+      if (teachingKindsChanged) { before.teachingKindKeys = '변경'; after.teachingKindKeys = '변경'; }
+      if (educationChanged) { before.education = '변경'; after.education = '변경'; }
       const log: { before: Record<string, unknown>; after: Record<string, unknown> } = { before, after };
       if (contactChanged) {
         log.before = { ...before, mustChangeCredentials: row.must_change_credentials === true };
         log.after = { ...after, mustChangeCredentials: true };
       }
-      if (Object.keys(changed).length > 0) {
+      if (Object.keys(changed).length > 0 || englishOnlyChanged || teachingKindsChanged || educationChanged) {
         await m.query(
           `INSERT INTO log (actor_id, entity, entity_id, action, before, after) VALUES ($1,'STAFF',$2,'update',$3::jsonb,$4::jsonb)`,
           [viewerId, id, JSON.stringify(log.before), JSON.stringify(log.after)],

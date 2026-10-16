@@ -94,6 +94,8 @@ export * from './ser.entity';
 export * from './ser-occ.entity';
 export * from './ser-stu.entity';
 export * from './staff.entity';
+export * from './staff-teaching-kind.entity';
+export * from './staff-education-summary.entity';
 export * from './stu.entity';
 export * from './stu-contact.entity';
 export * from './stu-staff.entity';
@@ -219,6 +221,8 @@ import {
   SerOcc,
   SerStu,
   Staff,
+  StaffTeachingKind,
+  StaffEducationSummary,
   Stu,
   StuContact,
   StuStaff,
@@ -240,7 +244,7 @@ import {
   Zlog,
 } from './index';
 
-/** DataSource 에 넘길 목록. 현행 ORM 113표, 기존 GPA 4표와 MATREQ 3표 포함. */
+/** DataSource 에 넘길 목록. 현행 ORM 표와 기존 GPA·MATREQ, BO-1014-STAFF 프로필 2표를 포함한다. */
 export const ENTITIES = [
   // ST1-b1 공유 사전4표. 현행 ERD→생성기 출력과 대조했고 나머지 엔티티의 수동 metadata는 유지한다.
   Country,
@@ -299,6 +303,8 @@ export const ENTITIES = [
   InvInstallment,
   Issue,
   Kind,
+  StaffTeachingKind,
+  StaffEducationSummary,
   Lead,
   LeadStageLog,
   LeadTouch,
