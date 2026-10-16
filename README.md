@@ -55,7 +55,7 @@ Nest 빌드는 `dist/`를 다시 만듭니다. 컴파일 통과는 실제 DB sch
 
 ## 주요 사용 기술
 
-NestJS(Express), TypeORM/pg, class-validator/class-transformer, Swagger, Joi/config, JWT/Passport/bcryptjs, Nest Logger, Jest/ts-jest/Supertest를 사용합니다. 메일은 nodemailer, 일반 파일·기존 교재 본문은 Neon `FILE`이 담당합니다. 신규 교재 SE/TE PDF 본문은 private Vercel Blob에 직접 올리고 Neon에는 파일·권한 메타데이터를 저장합니다. Blob을 쓰는 배포에는 private store의 `BLOB_READ_WRITE_TOKEN`이 필요합니다. 만료된 미사용 교재 업로드는 `DATABASE_URL=<검증한 대상> npm run book-pdf:cleanup`으로 건수를 조회하고, 대상 DB명과 삭제 권한을 확인한 뒤 `-- --run --database=<DB명>`으로 최대 100건씩 정리합니다. 운영 실행 주기와 실제 Blob PUT/GET은 별도 출하 검증 대상입니다.
+NestJS(Express), TypeORM/pg, class-validator/class-transformer, Swagger, Joi/config, JWT/Passport/bcryptjs, Nest Logger, Jest/ts-jest/Supertest를 사용합니다. 메일은 nodemailer, 일반 파일·기존 교재 본문은 Neon `FILE`이 담당합니다. 신규 교재 SE/TE PDF 본문은 private Vercel Blob에 직접 올리고 Neon에는 파일·권한 메타데이터를 저장합니다. 파일당 1GB, 한 판 합계 2GB이며 일반 DB 파일의 3MB 제한은 유지합니다. 기존 업로드 의도에 대해 `POST /files/book-pdf-presigned`가 소유자·만료·정확한 경로·bytes를 다시 검사하여 SDK multipart 권한을 발급합니다. Blob 배포에는 해당 private store의 `BLOB_READ_WRITE_TOKEN`과 `BLOB_WEBHOOK_PUBLIC_KEY`가 필요하며 공개 키 누락은 안전한 503으로 거절합니다. 전진 migration126은 로컬 폐기 DB에서 검증했으며 원격 DB에는 아직 적용하지 않았습니다. [1GB 기능 원장](../docs/sprint/TBO-55/features/BOOK-PDF-1GB-2026-10-13.md)을 확인합니다. 만료된 미사용 교재 업로드는 `DATABASE_URL=<검증한 대상> npm run book-pdf:cleanup`으로 건수를 조회하고, 대상 DB명과 삭제 권한을 확인한 뒤 `-- --run --database=<DB명>`으로 최대 100건씩 정리합니다. 운영 실행 주기와 실제 Blob PUT/GET은 별도 출하 검증 대상입니다.
 
 현행 구현은 TypeORM transaction과 DB 제약을 사용합니다. `nestjs-pino`나 `typeorm-transactional`을 도입된 의존성으로 가정하지 않습니다. 권한 helper는 `src/common/perm`이 소유하며 다른 계층에서 role을 직접 비교하지 않습니다.
 

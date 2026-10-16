@@ -4,12 +4,12 @@
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
 
-import { Body, ConflictException, Controller, Get, Param, ParseIntPipe, Post, Res, StreamableFile } from '@nestjs/common';
-import { ApiCreatedResponse, ApiForbiddenResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiProduces, ApiTags } from '@nestjs/swagger';
-import type { Response } from 'express';
+import { Body, ConflictException, Controller, Get, Param, ParseIntPipe, Post, Req, Res, StreamableFile } from '@nestjs/common';
+import { ApiBadRequestResponse, ApiConflictResponse, ApiCreatedResponse, ApiForbiddenResponse, ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiPayloadTooLargeResponse, ApiProduces, ApiServiceUnavailableResponse, ApiTags } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { Perm, type RequestUser } from '../../common/perm';
-import { BookPdfUploadIntentDto, BookPdfUploadUrlDto, FileDownloadTargetDto, FileRefDto, FileUploadDto } from './files.dto';
+import { BookPdfPresignedRequestDto, BookPdfPresignedResultDto, BookPdfUploadIntentDto, BookPdfUploadUrlDto, FileDownloadTargetDto, FileRefDto, FileUploadDto } from './files.dto';
 import { FilesService } from './files.service';
 
 /**
@@ -24,10 +24,26 @@ export class FilesController {
 
   @Post('book-pdf-upload')
   @Perm('canAdminPage', 'canCrudAll')
-  @ApiOperation({ summary: '신규 교재 PDF의 비공개 Blob 직접 업로드 URL 발급' })
+  @ApiOperation({ summary: '신규 교재 PDF의 비공개 Blob 업로드 의도·경로 발급', description: '파일당 1GB. 본문은 API를 거치지 않으며 대용량은 정식 SDK의 multipart 발급 경로를 사용한다.' })
   @ApiCreatedResponse({ type: BookPdfUploadUrlDto })
   async bookPdfUpload(@CurrentUser() user: RequestUser, @Body() dto: BookPdfUploadIntentDto): Promise<BookPdfUploadUrlDto> {
     return this.svc.bookPdfUploadIntent(user.id, dto);
+  }
+
+  @Post('book-pdf-presigned')
+  @Perm('canAdminPage', 'canCrudAll')
+  @ApiOperation({ summary: '현재 사용자의 미사용 PDF 의도에 정식 SDK multipart 서명 발급', description: 'Bearer 인증·현재 권한과 의도 소유자·유효기간·정확한 경로·최대 bytes를 확인한다. 완료 여부는 기존 판 저장에서 HEAD·PDF 서명을 다시 검사한다.' })
+  @ApiCreatedResponse({ type: BookPdfPresignedResultDto })
+  @ApiBadRequestResponse({ description: 'BOOK_PDF_MISMATCH | BOOK_PDF_UPLOAD_REQUEST_INVALID' })
+  @ApiNotFoundResponse({ description: 'BOOK_PDF_UPLOAD_NOT_FOUND — 소유자 또는 경로 불일치' })
+  @ApiConflictResponse({ description: 'BOOK_PDF_UPLOAD_EXPIRED — 소비 완료 또는 만료' })
+  @ApiServiceUnavailableResponse({ description: 'BOOK_PDF_MULTIPART_NOT_CONFIGURED — 발급 설정 누락' })
+  async bookPdfPresigned(
+    @CurrentUser() user: RequestUser,
+    @Body() dto: BookPdfPresignedRequestDto,
+    @Req() request: Request,
+  ): Promise<BookPdfPresignedResultDto> {
+    return this.svc.bookPdfPresignedUpload(user.id, dto, request);
   }
 
   @Post()

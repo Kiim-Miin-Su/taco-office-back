@@ -18,6 +18,7 @@
     "openapi:check": "npm run openapi:gen -- --check",
     "book-pdf:cleanup": "ts-node -P tsconfig.json scripts/cleanup-book-pdf-uploads.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/data-source.ts",
+    "migration:pdf-prereq": "ts-node -P tsconfig.json scripts/pdf-prerequisite-migration.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/data-source.ts",
     "migration:dryrun": "ts-node -P tsconfig.json scripts/migration-dryrun.ts",
     "seed": "ts-node -P tsconfig.json scripts/seed.ts",

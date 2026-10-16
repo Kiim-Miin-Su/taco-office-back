@@ -36,7 +36,7 @@ export class BooksController {
   @ApiOperation({ summary: '교재 등록 (§39)' })
   @ApiCreatedResponse({ type: BookWriteResultDto, description: '등록된 교재 식별자·코드·이름' })
   @ApiBadRequestResponse({ description: '필드 형식 · 과목 참조 · 분류(BOOK_TAXONOMY_NOT_FOUND | BOOK_CATEGORY_MISMATCH | BOOK_CATEGORY_NEEDS_SUBJECT | BOOK_GRADE_RANGE) · 첫 판 파일(BOOK_FILE_KIND_MISMATCH) 오류' })
-  @ApiPayloadTooLargeResponse({ description: '기존 base64 파일 합계 3MB, 비공개 PDF는 각각 50MB' })
+  @ApiPayloadTooLargeResponse({ description: '기존 base64 파일 합계 3MB, 비공개 PDF는 각각 1GB·SE+TE 합계 2GB' })
   @ApiConflictResponse({ description: 'BOOK_CODE_DUPLICATE' })
   async create(@CurrentUser() user: RequestUser, @Body() dto: BookWriteDto): Promise<BookWriteResultDto> {
     return this.svc.createBook(user.id, dto);
@@ -175,7 +175,7 @@ export class BooksController {
   @Perm('canAdminPage')
   @ApiOperation({
     summary: '새 판 올리기 (§39)',
-    description: '기존 base64 본문은 SE+TE 합계 3MB, 신규 비공개 Blob PDF는 업로드 의도 ID와 판을 같은 DB 트랜잭션에 연결한다.',
+    description: '기존 base64 본문은 SE+TE 합계 3MB, 신규 비공개 Blob PDF는 각각 1GB·합계 2GB 이내의 업로드 의도 ID와 판을 같은 DB 트랜잭션에 연결한다.',
   })
   @ApiCreatedResponse({ type: BookVersionDto })
   @ApiPayloadTooLargeResponse({ description: 'code FILE_TOO_LARGE | BOOK_FILES_TOO_LARGE' })

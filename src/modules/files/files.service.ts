@@ -7,13 +7,15 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, PayloadTooLargeException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash } from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 import { EntityManager, Repository } from 'typeorm';
 import { FileRow } from '../../entities';
 import { hasPerm, isRole, type RequestUser } from '../../common/perm';
 import { todayKst } from '../../lib/kst';
+import { bookAssignmentContextSql } from '../../lib/book-assignment-context';
 import { FILE_MAX_BYTES, type FileKind, type FileRefDto, type FileUploadDto } from './files.dto';
-import { createBookPdfIntent, signedBookPdfDownloadUrl } from './book-pdf.storage';
-import type { BookPdfUploadIntentDto, BookPdfUploadUrlDto, FileDownloadTargetDto } from './files.dto';
+import { createBookPdfIntent, createBookPdfPresignedUpload, signedBookPdfDownloadUrl } from './book-pdf.storage';
+import type { BookPdfPresignedRequestDto, BookPdfPresignedResultDto, BookPdfUploadIntentDto, BookPdfUploadUrlDto, FileDownloadTargetDto } from './files.dto';
 
 /**
  * 확장자로 MIME 을 고른다 — 화면이 보내 준 MIME 을 그대로 믿지 않는다.
@@ -196,6 +198,10 @@ export class FilesService {
     return createBookPdfIntent(this.files.manager, userId, dto);
   }
 
+  async bookPdfPresignedUpload(userId: number, dto: BookPdfPresignedRequestDto, request: IncomingMessage): Promise<BookPdfPresignedResultDto> {
+    return createBookPdfPresignedUpload(this.files.manager, userId, dto, request);
+  }
+
   /** 본문을 꺼낸다 — 내부 도메인 service가 이미 권한을 판정한 뒤 쓰는 경로다. */
   async read(id: number): Promise<{ kind: FileKind; name: string; mime: string; data: Buffer | null; blobPath: string | null }> {
     const [row] = (await this.files.query(
@@ -212,12 +218,10 @@ export class FilesService {
               EXISTS (SELECT 1 FROM vers v WHERE v.se_file_id=f.id OR v.te_file_id=f.id OR v.file_url=$2) AS book_linked,
               -- 배정 guard와 같은 현재/장래 수업 문맥을 재검사한다. 배부 원장의 옛 담당자만으로는 열지 않는다.
               EXISTS (SELECT 1 FROM issue i JOIN vers v ON v.id=i.vers_id AND v.lib_id=i.lib_id
-                         JOIN ser s ON s.teacher_id=i.teacher_id AND s.sub_key=i.sub_key
-                         JOIN kind k ON k.key=s.kind_key AND k.grp='lesson'
-                         JOIN ser_stu ss ON ss.ser_id=s.id AND ss.student_id=i.student_id
                        WHERE i.teacher_id=$3 AND i.state='ok'
-                         AND GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date),$4::date)
-                             <= LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))
+                         AND EXISTS (${bookAssignmentContextSql({
+                           teacherId: 'i.teacher_id', subKey: 'i.sub_key', studentId: 'i.student_id', today: '$4',
+                         })})
                          AND (v.se_file_id=f.id OR v.te_file_id=f.id)) AS book_assigned_teacher,
               EXISTS (SELECT 1 FROM expense e WHERE e.receipt_url=$2) AS expense_linked,
               EXISTS (SELECT 1 FROM expense e WHERE e.receipt_url=$2 AND e.requester_id=$3) AS expense_requester,

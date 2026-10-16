@@ -13,6 +13,7 @@ import { HIST_ACTIONS, histLabel, histSql } from '../../lib/history';
 import { todayKst } from '../../lib/kst';
 import { NOTI_TITLE } from '../../lib/noti';
 import { kstAt, serStuOn, writtenRows } from '../../lib/sql';
+import { bookAssignmentContextSql, bookAssignmentPeriodSql } from '../../lib/book-assignment-context';
 import {
   BOOK_EXAM_TAG_LABEL, BOOK_EXAM_TAGS, BOOK_GRADES, BOOK_LEVELS, BOOK_UNCLASSIFIED,
   ISSUE_FORM_LABEL, ISSUE_FORMS, ISSUE_STATE_LABEL, issueFormLabel, PACK_STATE_LABEL, PACK_TYPE_LABEL, bookExamTagLabel, bookGradeCovers, bookGradeFromKey, bookGradeKey,
@@ -26,7 +27,7 @@ import type {
 } from './books.dto';
 import { latestLeadDiagForStudent } from '../ops/lead-diag.service';
 import { prepareFile, storePreparedFile } from '../files/files.service';
-import { FILE_MAX_BYTES } from '../files/files.dto';
+import { BOOK_PDF_EDITION_MAX_BYTES, BOOK_PDF_MAX_BYTES, FILE_MAX_BYTES } from '../files/files.dto';
 import { consumeBookPdfIntent } from '../files/book-pdf.storage';
 import { canCeoReceivePack, hasPerm, isRole } from '../../common/perm';
 import { audit } from '../../lib/audit';
@@ -216,7 +217,8 @@ export class BooksService {
         count: items.filter((i) => bookGradeCovers(i.gradeFrom, i.gradeTo, grade)).length,
       })),
       examTags: BOOK_EXAM_TAGS.map((key) => ({ key, label: BOOK_EXAM_TAG_LABEL[key] })),
-      versionUploadMaxBytes: 100_000_000,
+      versionFileMaxBytes: BOOK_PDF_MAX_BYTES,
+      versionUploadMaxBytes: BOOK_PDF_EDITION_MAX_BYTES,
     };
   }
 
@@ -868,8 +870,7 @@ export class BooksService {
          JOIN sub sb ON sb.key=s.sub_key AND sb.active
          JOIN ser_stu ss ON ss.ser_id=s.id
          JOIN stu st ON st.id=ss.student_id
-        WHERE GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date),$1::date)
-              <= LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))
+        WHERE ${bookAssignmentPeriodSql('s', 'ss', '$1')}
         ORDER BY t.name,sb.name,st.name,ss.student_id`,
       [todayKst()],
     );
@@ -981,12 +982,7 @@ export class BooksService {
           throw new ConflictException({ code: 'BOOK_ASSIGNMENT_SUBJECT_MISMATCH', message: '수업 과목과 교재 연결 과목이 다릅니다' });
         }
         const [context] = await m.query(
-          `SELECT s.id FROM ser s JOIN kind k ON k.key=s.kind_key AND k.grp='lesson'
-             JOIN ser_stu ss ON ss.ser_id=s.id
-            WHERE s.teacher_id=$1 AND s.sub_key=$2 AND ss.student_id=$3
-              AND GREATEST(s.from_date,COALESCE(ss.from_date,s.from_date),$4::date)
-                  <= LEAST(COALESCE(s.to_date,'infinity'::date),COALESCE(ss.to_date,'infinity'::date))
-            ORDER BY s.id LIMIT 1 FOR KEY SHARE OF s,ss`,
+          bookAssignmentContextSql({ teacherId: '$1', subKey: '$2', studentId: '$3', today: '$4', lock: true }),
           [assignment.teacherId, assignment.subKey, dto.studentId, todayKst()],
         ) as R[];
         if (!context) {

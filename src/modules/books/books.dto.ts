@@ -555,6 +555,8 @@ export class BooksDto {
   @ApiProperty({ type: [BookCodeDto], description: '시험 태그 셋 — 편집 창 선택지' }) examTags!: BookCodeDto[];
   @ApiProperty({ type: [BookNoticeDto], description: '더 나중 판이 있는 교재 — 머리 띠의 이름들(서가 전체 기준 · newerCount 와 같은 줄)' }) newerBooks!: BookNoticeDto[];
   @ApiProperty({ type: [BookNoticeDto], description: 'TE 파일이 없는 교재 — 머리 띠의 이름들(서가 전체 기준 · noFileCount 와 같은 줄)' }) noTeBooks!: BookNoticeDto[];
-  @ApiProperty({ description: '새 판 SE+TE 비공개 PDF 합계 상한. 각 PDF는 50MB 이하' })
+  @ApiPropertyOptional({ description: '새 판 비공개 PDF 한 파일의 상한. 1GB = 1,000,000,000 bytes. 구형 서버에는 이 필드가 없다.' })
+  versionFileMaxBytes?: number;
+  @ApiProperty({ description: '새 판 SE+TE 비공개 PDF 합계 상한. 각 PDF는 1GB 이하이며 판 합계는 2GB다.' })
   versionUploadMaxBytes!: number;
 }

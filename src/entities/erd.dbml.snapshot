@@ -1,3 +1,5 @@
+// DBML-CATCHUP-20261015: 기존 migration SQL 기준 문서 누락 정정. 물리 표 선언 149개(migration127 강사 프로필 제외; 목표126 Blob1GB). ATT_LATE 및 BO-12C/D 원장은 이미 구현된 raw SQL 소유 표이며 미래 설계가 아니다. migrations 원장1·current view2는 이 선언 수와 분리한다. 운영 DB/전체 컬럼 재조회 검증은 하지 않았고 과거 영수증·버전 이력은 보존한다.
+// BOOK-PDF-1GB-20261013 (2026-10-13): 로컬 목표126·폐기PG 검증 완료. 원본125·bytea3,000,000B 보존, FILE Blob bytes/BOOK_PDF_UPLOAD.expected_bytes CHECK는1,000,000,000B. 새표/컬럼0·50MB 초과행 존재 시 down을DDL 전 거절. 마지막 원격Main124/Preview125는 역사이며 원격126·배포·실제1GB 전송은 미실행.
 // TBO55-BOC11F-R108 (2026-10-09): BOC-11F 권고안 채택 — 교재 판매는 기존 LIB/VERS와 invoice 없는 PAY를 원 transaction으로 연결하고, 판매/current·UUID REQUEST·append-only EVENT·결제수단별 수수료 POLICY를 분리한다. 초기 계좌이체·현금 수수료는 각 0원이지만 배포일 효력 policy version과 판매 snapshot을 남긴다. 취소는 원 PAY를 보존하고 현재 열린 월의 음수 보정 PAY를 추가하며 version 경합·증빙 발행·월마감을 검사한다. DB는 기간 비중첩, receipt, 정책·PAY·감사 불변을 방어한다. v4.90/144표, migration1768700000000 로컬 upgrade120·down/up·권한·멱등·동시 생성/취소·직접쓰기 회귀 검증, 운영 미적용. 정책 변경 시 accounting DTO/controller/service·OpenAPI/generated Front A22·migration/두 DBML·P-BOC11F·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11E-R107 (2026-10-09): BOC-11E 권고안 채택 — 기존 RATE/STURATE 회당 이력을 보존하고 일반·Kinder·그룹·학생 예외의 시간당 정책을 POLICY current, UUID REQUEST, append-only EVENT로 분리한다. 학생 예외가 우선하며 actual occurrence date/span, explicit Kinder marker, exact group roster count로 청구한다. identity별 기간 비중첩·version+1·receipt·audit immutable과 superseded/retired terminal 전이를 DB가 방어하고 확정 청구·급여 snapshot은 바꾸지 않는다. v4.89/140표, migration1768600000000 로컬 fresh119·권한·멱등·stale·직접쓰기·terminal 재전이·30/60/90분·급여 불변 회귀 검증, 운영 미적용. 정책 변경 시 invoice-lines·accounting DTO/service·generated Front A26·migration/두 DBML·P-BOC11E·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
 // TBO55-BOC11D2-R106 (2026-10-09): BOC-11D-02 권고안 채택 — 승인 조정의 전후 환불 예정액 증가분을 실제 학생 환불액으로 서버 계산한다. 수납 PAY는 유지하고 STUDENT_REFUND_DISBURSEMENT current, UUID REQUEST, append-only EVENT를 분리하며 지급 당시 source adjustment version·금액·보호 계좌 id/version/last4를 보존한다. 지급 완료 뒤에는 먼저 환불 지급을 취소해야 원천 조정 취소가 가능하다. v4.88/137표, migration1768500000000 로컬 fresh118·repeat0·down/up·권한·멱등·stale·직접쓰기·취소/재지급 회귀 검증, 운영 미적용. 정책 변경 시 조정 전이·보호 계좌·accounting DTO/service/Front A24·A27·migration/두 DBML·P-BOC11D2·두 수정사항 대조표·scenario·portfolio를 함께 수정한다.
@@ -1052,6 +1054,24 @@ Table ATT {
   '''
 }
 
+Table ATT_LATE {
+  id bigserial [pk]
+  att_id bigint [not null]
+  student_id bigint [not null]
+  confirmed_by bigint [not null]
+  confirmed_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (att_id, student_id) [unique, name: 'att_late_att_student_uniq']
+    (student_id, confirmed_at) [name: 'att_late_student_at_idx']
+  }
+  Note: '기존 migration1765000000000의 학생별 지각 확인 물리 원장. 출결 서비스와 리포트 reader가 raw SQL로 사용하며 별도 TypeORM entity는 없다. 실제 조회 index는 (student_id, confirmed_at DESC)이고 DBML의 정렬 생략을 SQL 대체로 쓰지 않는다. 2026-10-15 문서 누락 정정이며 새 DDL이 아니다.'
+}
+
+Ref: ATT_LATE.att_id > ATT.id [delete: cascade, update: no action]
+Ref: ATT_LATE.student_id > STU.id [delete: no action, update: no action]
+Ref: ATT_LATE.confirmed_by > STAFF.id [delete: no action, update: no action]
+
 Table UNAV {
   id          bigserial   [pk]
   staff_id    bigint      [not null, ref: > STAFF.id]
@@ -1401,13 +1421,13 @@ Table FILE {
   kind        varchar(24) [not null, note: '8개 파일 도메인 CHECK. raw 다운로드 권한 판정의 입력']
   name        varchar(200)[not null]
   mime        varchar(100)[not null, note: '클라이언트 입력이 아니라 서버가 파일 이름으로 판정']
-  bytes       int         [not null]
+  bytes       int         [not null, note: '로컬 목표126: bytea3,000,000B·Blob PDF1,000,000,000B. 원격126 미적용']
   sha256      char(64)    [note: 'DB 본문일 때 필수. Blob PDF는 서버가 전체 해시를 계산하지 않아 NULL']
   data        bytea       [note: '기존 파일 본문. Blob 교재 PDF에서는 NULL']
   blob_path   varchar(300)[unique, note: '신규 교재 PDF 전용 private Vercel Blob 경로. 원본 URL/서명 URL 아님']
   uploaded_by bigint      [ref: > STAFF.id]
   uploaded_at timestamptz [not null, default: `now()`]
-  Note: '기존 Neon bytea 파일은 보존. 신규 교재 PDF만 private Blob에 두고 메타데이터를 저장한다. DB 본문 3MB, Blob PDF 파일당 50MB. file_storage_shape/file_size_cap/file_bytes_match 검사.'
+  Note: '기존 Neon bytea 파일은 보존. 신규 교재 PDF만 private Blob에 두고 메타데이터를 저장한다. DB 본문3MB, 원본125 Blob50MB. BOOK-PDF-1GB-20261013의 로컬 목표126은 Blob1GB CHECK를 준비하며 원격 적용은 미실행. file_storage_shape/file_size_cap/file_bytes_match 검사.'
 }
 
 Table BOOK_PDF_UPLOAD {
@@ -1415,12 +1435,12 @@ Table BOOK_PDF_UPLOAD {
   actor_id         bigint      [not null, ref: > STAFF.id]
   kind             varchar(6)  [not null, note: 'lib-se 또는 lib-te']
   original_name    varchar(200)[not null]
-  expected_bytes   int         [not null]
+  expected_bytes   int         [not null, note: '원본125 상한50MB. 로컬 목표126 CHECK는1,000,000,000B; 원격 미적용']
   blob_path        varchar(300)[not null, unique]
   expires_at       timestamptz [not null]
   consumed_file_id bigint      [unique, ref: > FILE.id]
   created_at       timestamptz [not null, default: `now()`]
-  Note: '서버가 발급한 일회용 업로드 의도. 완료 확인 후 VERS와 같은 트랜잭션에서 FILE 메타데이터로 바꾸고 소비한다. consumed_file_id FK는 FILE 삭제 시 ON DELETE CASCADE.'
+  Note: '서버가 발급한 일회용 업로드 의도. 완료 확인 후 VERS와 같은 트랜잭션에서 FILE 메타데이터로 바꾸고 소비한다. consumed_file_id FK는 FILE 삭제 시 ON DELETE CASCADE. 로컬1GB 소스는 의도4시간·PUT/SDK2시간. migration126 down은50MB 초과 FILE/의도 존재 시 DDL 전 거절하며 파일을 삭제하지 않는다.'
 }
 
 Table VERS {
@@ -2082,7 +2102,11 @@ Table MKT {
   title       varchar(120) [note: '「오늘 한 것」 활동 이름(C53 · migration 1758900000000) — v4.54 에 W11 대조로 보탬(이전 판에 칸이 빠져 있었다)']
   by_id       bigint      [note: '활동을 적은 사람(C53). DB 에 FK 없음 — W11 대조로 보탬']
   memo        varchar(120) [note: 'v4.54 · W11 N-29 ② — 카드 제목 아래 메모 한 줄(MMEMO = MKT 의 한 칸 · D-R22) · 옛 행 NULL · migration 1764600000000']
-  Note: '시드 4건.'
+  row_version integer      [not null, default: 1, note: 'v4.91 · BO-12D 권고안 — create=1, patch마다 정확히 +1. API expectedVersion 409와 DB trigger가 함께 방어한다.']
+  indexes {
+    (on_date, channel, id) [name: 'mkt_recent_channel_idx', note: 'on_date DESC, channel, id DESC — 최근 30일·채널별 최신 4건 projection']
+  }
+  Note: '시드 4건. v4.91 BO-12D: 집계는 저장하지 않고 MKT current에서 서버가 계산하며, 쓰기는 requestKey receipt와 row_version을 사용한다.'
 }
 
 Table MFB {
@@ -3632,3 +3656,47 @@ Ref: BOOK_SALE_EVENT.actor_id > STAFF.id [delete: restrict]
 Ref: BOOK_SALE_EVENT.request_key > BOOK_SALE_REQUEST.request_key [delete: restrict]
 Ref: BOOK_SALE_EVENT.pay_id > PAY.id [delete: restrict]
 Ref: BOOK_SALE_EVENT.correction_pay_id > PAY.id [delete: restrict]
+
+// v4.90 → v4.91 (2026-10-09 · TBO-55 BO-12C/D 권고안 채택) — 강사 교체 복합 undo와 마케팅 쓰기 영수증.
+//   + TEACHER_CHANGE_OPERATION — whole-class preview/apply의 requestKey·expectedVersion·actual actor·복합 undo payload.
+//   + MKT_WRITE_REQ — 마케팅 create/patch UUID 멱등 receipt. MKT.row_version 정확히 +1과 receipt 불변 trigger.
+//   + 표 +2(144 → 146) · migration 3(1768800000000~1769000000000) · 로컬 적용/회귀 검증 · 운영 미적용.
+
+Table TEACHER_CHANGE_OPERATION {
+  request_key uuid [pk]
+  actor_id bigint [not null]
+  command_fingerprint char(64) [not null, note: '요청 내용 SHA-256. 같은 키·같은 명령만 replay']
+  expected_version char(64) [not null, note: 'preview 대상 회차·명단·교재·컴플레인의 불투명 SHA-256 version']
+  state varchar(12) [not null, default: 'applied', note: 'applied | undone']
+  row_version integer [not null, default: 1, note: 'applied=1, undone=2']
+  result jsonb [not null, note: 'apply 당시 범위·자산·actor·version 결과 snapshot']
+  undo_payload jsonb [not null, note: 'schedule undo token·GUIDE/PNOTI/NOTI id·ISSUE/CPL before/after guard']
+  created_at timestamptz [not null, default: `now()`]
+  undone_by bigint
+  undone_at timestamptz
+
+  indexes {
+    (actor_id, created_at) [name: 'teacher_change_operation_actor_created_idx']
+  }
+  Note: 'BO-12C 권고안. 같은 actor의 복합 교체만 되돌리며, 각 자산의 현재 상태가 apply 결과와 일치할 때만 전부 또는 0으로 undo한다.'
+}
+
+Table MKT_WRITE_REQ {
+  request_key uuid [pk]
+  mkt_id bigint [not null]
+  action varchar(12) [not null, note: 'create | patch']
+  command_fingerprint char(64) [not null, note: '같은 키·같은 명령 replay 판정 SHA-256']
+  result_version integer [not null]
+  actor_id bigint [not null]
+  created_at timestamptz [not null, default: `now()`]
+
+  indexes {
+    (mkt_id, created_at) [name: 'mkt_write_req_mkt_idx']
+  }
+  Note: 'BO-12D 권고안. immutable request receipt이며 집계값은 저장하지 않는다.'
+}
+
+Ref: TEACHER_CHANGE_OPERATION.actor_id > STAFF.id [delete: no action]
+Ref: TEACHER_CHANGE_OPERATION.undone_by > STAFF.id [delete: no action]
+Ref: MKT_WRITE_REQ.mkt_id > MKT.id [delete: cascade]
+Ref: MKT_WRITE_REQ.actor_id > STAFF.id [delete: no action]

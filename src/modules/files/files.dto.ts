@@ -5,7 +5,8 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsBoolean, IsDefined, IsIn, IsInt, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 
 /**
  * 파일이 어디에 쓰이나 — **열람 권한이 이 낱말로 갈린다** (D6: 담당 강사와 매니저만 열람).
@@ -31,7 +32,9 @@ export type FileKind = (typeof FILE_KINDS)[number];
  * 표의 `file_size_cap`과 **같은 수**여야 한다. 한 판의 SE+TE도 합계가 이 값을 넘지 않는다.
  */
 export const FILE_MAX_BYTES = 3_000_000;
-export const BOOK_PDF_MAX_BYTES = 50_000_000;
+/** 대용량 교재는 API JSON이 아닌 private Blob 직접 업로드로 보낸다. 1GB는 decimal bytes다. */
+export const BOOK_PDF_MAX_BYTES = 1_000_000_000;
+export const BOOK_PDF_EDITION_MAX_BYTES = BOOK_PDF_MAX_BYTES * 2;
 
 /** PDF 파일 본문은 API로 보내지 않고, 서버가 발급한 경로에 직접 올린다. */
 export class BookPdfUploadIntentDto {
@@ -42,7 +45,32 @@ export class BookPdfUploadIntentDto {
 
 export class BookPdfUploadUrlDto {
   @ApiProperty() uploadId!: string;
-  @ApiProperty({ description: '10분 안에 application/pdf로 PUT 할 비공개 Blob 서명 URL' }) uploadUrl!: string;
+  @ApiProperty({ description: '서버가 선택한 정확한 Blob 경로. SDK 업로드에서도 이 경로를 그대로 사용한다.' }) pathname!: string;
+  @ApiProperty({ description: '구형 클라이언트 호환용 단일 PUT URL. 2시간 유효하며 대용량은 multipart를 사용한다.' }) uploadUrl!: string;
+}
+
+/** 정식 Blob SDK가 보내는 발급 요청. clientPayload는 서버가 발급한 업로드 의도 ID다. */
+export class BookPdfPresignedPayloadDto {
+  @ApiProperty() @IsString() @MaxLength(300) pathname!: string;
+  @ApiProperty({ format: 'uuid', description: '현재 사용자의 미사용 PDF uploadId' }) @IsUUID() clientPayload!: string;
+  @ApiProperty({ description: '정식 SDK의 multipart 선택' }) @IsBoolean() multipart!: boolean;
+}
+
+export class BookPdfPresignedRequestDto {
+  @ApiProperty({ enum: ['blob.generate-presigned-url'] }) @IsIn(['blob.generate-presigned-url']) type!: 'blob.generate-presigned-url';
+  @ApiProperty({ type: BookPdfPresignedPayloadDto }) @IsDefined() @ValidateNested() @Type(() => BookPdfPresignedPayloadDto)
+  payload!: BookPdfPresignedPayloadDto;
+}
+
+export class BookPdfPresignedUrlPayloadDto {
+  @ApiProperty() delegationToken!: string;
+  @ApiProperty() signature!: string;
+  @ApiProperty({ type: 'object', additionalProperties: { type: 'string' } }) params!: Record<string, string>;
+}
+
+export class BookPdfPresignedResultDto {
+  @ApiProperty({ enum: ['blob.generate-presigned-url'] }) type!: 'blob.generate-presigned-url';
+  @ApiProperty({ type: BookPdfPresignedUrlPayloadDto }) presignedUrlPayload!: BookPdfPresignedUrlPayloadDto;
 }
 
 export class FileDownloadTargetDto {

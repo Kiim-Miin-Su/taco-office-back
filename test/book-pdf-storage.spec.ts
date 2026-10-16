@@ -9,7 +9,15 @@ import { dataSourceOptions } from '../src/data-source';
 import { cleanupOneExpiredBookPdfUpload, createBookPdfIntent, consumeBookPdfIntent, signedBookPdfDownloadUrl } from '../src/modules/files/book-pdf.storage';
 import { assertScratch, TEST_URL } from './db';
 
-jest.mock('@vercel/blob', () => ({ del: jest.fn(), get: jest.fn(), head: jest.fn(), issueSignedToken: jest.fn(), presignUrl: jest.fn() }));
+jest.mock('@vercel/blob', () => ({
+  del: jest.fn(), get: jest.fn(), head: jest.fn(), issueSignedToken: jest.fn(), presignUrl: jest.fn(),
+  getDownloadUrl: (value: string) => {
+    const url = new URL(value);
+    url.searchParams.set('download', '1');
+    return url.toString();
+  },
+}));
+jest.mock('@vercel/blob/client', () => ({ handleUploadPresigned: jest.fn() }));
 
 const d = TEST_URL ? describe : describe.skip;
 const signed = jest.mocked(issueSignedToken);
@@ -82,7 +90,7 @@ d('비공개 교재 PDF 업로드 원장', () => {
 
   it('권한을 통과한 정확한 경로에만 짧은 private GET을 서명한다', async () => {
     const url = await signedBookPdfDownloadUrl('books/72901/example.pdf');
-    expect(url).toBe('https://blob.example/private-signed');
+    expect(url).toBe('https://blob.example/private-signed?download=1');
     expect(signed).toHaveBeenCalledWith(expect.objectContaining({ pathname: 'books/72901/example.pdf', operations: ['get'] }));
     expect(presign).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ operation: 'get', access: 'private', pathname: 'books/72901/example.pdf' }));
   });

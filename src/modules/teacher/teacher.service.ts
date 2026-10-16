@@ -18,6 +18,7 @@ import {
   loadBonusRules, payoutBreakdown, payoutSettleLabel, payoutSheet,
 } from '../../lib/payout-sheet';
 import { drawnDateOf, effectiveModeOf, kstAt, serStuOn, stuPausedOn } from '../../lib/sql';
+import { bookAssignmentContextSql } from '../../lib/book-assignment-context';
 import { REQ_TYPE_LABEL, labelOf, reqAsked, reqAskedLine } from '../../lib/approval';
 import { NOTI_CATEGORY_LABEL, NOTI_WINDOW_DAYS, notiCategory } from '../../lib/noti';
 import { wageRateAt } from '../../lib/wage';
@@ -834,8 +835,8 @@ export class TeacherService {
        */
       const books = await this.q(
         `SELECT i.id AS issue_id, i.student_id, i.state, l.code, l.title, l.sub_key, l.level, l.book_level, l.se_te,
-                CASE WHEN i.teacher_id=$2 AND i.state='ok' THEN v.se_file_id END AS se_file_id,
-                CASE WHEN i.teacher_id=$2 AND i.state='ok' THEN v.te_file_id END AS te_file_id,
+                CASE WHEN book_access.can_download THEN v.se_file_id END AS se_file_id,
+                CASE WHEN book_access.can_download THEN v.te_file_id END AS te_file_id,
                 to_char(i.issued_on,'YYYY-MM-DD') AS issued_on,
                 to_char(i.returned_on,'YYYY-MM-DD') AS returned_on,
                 i.reissued_from,
@@ -845,9 +846,15 @@ export class TeacherService {
                 (i.state = 'ok') AS in_use
            FROM issue i JOIN lib l ON l.id = i.lib_id
            LEFT JOIN vers v ON v.id=i.vers_id AND v.lib_id=i.lib_id
+           -- 선택한 과거 주의 학생 정보는 유지하되 파일 권한은 다운로드 경로와 같이 오늘 기준으로 다시 판정한다.
+           LEFT JOIN LATERAL (
+             SELECT i.teacher_id=$2 AND i.state='ok' AND EXISTS (${bookAssignmentContextSql({
+               teacherId: 'i.teacher_id', subKey: 'i.sub_key', studentId: 'i.student_id', today: '$3',
+             })}) AS can_download
+           ) book_access ON true
           WHERE i.student_id = ANY($1) AND i.state IN ('wait','auto','ok','returned')
           ORDER BY (i.returned_on IS NOT NULL), i.issued_on DESC NULLS FIRST, i.id DESC`,
-        [ids, teacherId],
+        [ids, teacherId, todayKst()],
       );
       for (const b of books) {
         const state = String(b.state) as IssueState;

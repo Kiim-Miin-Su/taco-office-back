@@ -16,9 +16,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { DataSource, QueryRunner } from 'typeorm';
 import { dataSourceOptions } from '../src/data-source';
-import { FileRow } from '../src/entities';
+import { FileRow, Ser } from '../src/entities';
+import { addDays, todayKst } from '../src/lib/kst';
 import { FILE_KINDS, FILE_MAX_BYTES } from '../src/modules/files/files.dto';
 import { canReadStoredFile, decodeBase64, FilesService, fileUrlOf, mimeOf } from '../src/modules/files/files.service';
+import { TeacherService } from '../src/modules/teacher/teacher.service';
 import { assertScratch, TEST_URL } from './db';
 
 const d = TEST_URL ? describe : describe.skip;
@@ -231,6 +233,76 @@ d('FILE — 올린 파일이 Neon 안에 그대로 있다 (C48)', () => {
     await q.query(`UPDATE issue SET state='returned',returned_on=current_date,row_version=row_version+1 WHERE id=$1`, [issue.id]);
     await expect(svc().readAuthorized({ id: 72, name: '담당 강사', role: 'teacher' }, ref.id))
       .rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+  });
+
+  it.each([
+    ['현재 담당 수업', 'current', true, 72],
+    ['회차 생성 전 장래 담당 수업', 'future', true, 72],
+    ['끝난 담당 수업', 'class-ended', false, 72],
+    ['끝난 학생 수강 기간', 'roster-ended', false, 72],
+    ['담당자가 교체된 수업', 'reassigned', false, 72],
+    ['같은 학생을 가르치는 다른 담당자', 'other', false, 73],
+  ] as const)('과거 주 안내를 열어도 %s의 SE/TE 표시와 raw 파일 권한이 일치한다', async (
+    _label, scenario, allowed, viewerId,
+  ) => {
+    const today = todayKst();
+    const historicalDay = addDays(today, -14);
+    const futureDay = addDays(today, 14);
+    await q.query(`INSERT INTO staff(id,name,email,role) VALUES
+      (72,'담당 강사','file72@t.kr','teacher'),(73,'다른 강사','file73@t.kr','teacher') ON CONFLICT(id) DO NOTHING`);
+    await q.query(`INSERT INTO kind(key,name,color,cap,grp) VALUES
+      ('file-mask-kind','파일 표시 시험','#A85764',1,'lesson') ON CONFLICT(key) DO NOTHING`);
+    await q.query(`INSERT INTO sub(key,name,color,kind_key) VALUES
+      ('file-mask-sub','파일 표시 과목','#A85764','file-mask-kind') ON CONFLICT(key) DO NOTHING`);
+    await q.query(`INSERT INTO stu(id,name,grade) VALUES (71,'파일 표시 합성 학생','G9') ON CONFLICT(id) DO NOTHING`);
+    for (const [serId, teacherId, start] of [[-72101, 72, '15:00'], [-72102, 73, '17:00']] as const) {
+      await q.query(`INSERT INTO ser(id,kind_key,sub_key,teacher_id,mode,start_min,end_min,rrule,from_date)
+        VALUES ($1,'file-mask-kind','file-mask-sub',$2,'offline',900,960,'FREQ=WEEKLY',$3::date)`,
+      [serId, teacherId, historicalDay]);
+      await q.query(`INSERT INTO ser_stu(ser_id,student_id,from_date) VALUES ($1,71,$2::date)`, [serId, historicalDay]);
+      await q.query(`INSERT INTO ser_occ(ser_id,on_date,teacher_id,canceled,span)
+        VALUES ($1,$2::date,$3,false,tstzrange(($2::date+$4::time) AT TIME ZONE 'Asia/Seoul',
+          (($2::date+$4::time)+interval '1 hour') AT TIME ZONE 'Asia/Seoul','[)'))`,
+      [serId, historicalDay, teacherId, start]);
+    }
+    const se = await svc().upload(ME, {
+      kind: 'lib-se', name: '표시-SE.pdf', base64: Buffer.from('se').toString('base64'),
+    });
+    const te = await svc().upload(ME, {
+      kind: 'lib-te', name: '표시-TE.pdf', base64: Buffer.from('te').toString('base64'),
+    });
+    const [lib] = await q.query(`INSERT INTO lib(code,title,sub_key,grade_from,grade_to)
+      VALUES ($1,'파일 표시 교재','file-mask-sub',9,9) RETURNING id`, [`MASK-${se.id}`]);
+    const [vers] = await q.query(`INSERT INTO vers(lib_id,edition,se_file_id,te_file_id)
+      VALUES ($1,'v1',$2,$3) RETURNING id`, [lib.id, se.id, te.id]);
+    const [issue] = await q.query(`INSERT INTO issue(lib_id,vers_id,student_id,teacher_id,sub_key,issued_on,state)
+      VALUES ($1,$2,71,72,'file-mask-sub',$3::date,'ok') RETURNING id`, [lib.id, vers.id, today]);
+
+    if (scenario === 'future') {
+      await q.query(`UPDATE ser SET from_date=$1::date WHERE id=-72101`, [futureDay]);
+    } else if (scenario === 'class-ended') {
+      await q.query(`UPDATE ser SET to_date=$1::date WHERE id=-72101`, [addDays(today, -1)]);
+    } else if (scenario === 'roster-ended') {
+      await q.query(`UPDATE ser_stu SET to_date=$1::date WHERE ser_id=-72101 AND student_id=71`, [addDays(today, -1)]);
+    } else if (scenario === 'reassigned') {
+      await q.query(`UPDATE ser SET teacher_id=73 WHERE id=-72101`);
+    }
+
+    // 과거 학생·배정 내역은 남는다. 파일 ID만 오늘의 수업 문맥에 맞게 제거해야 한다.
+    const guide = await new TeacherService(q.manager.getRepository(Ser)).guides(viewerId, historicalDay);
+    const projected = guide.students.find((student) => student.studentId === 71)?.books
+      .find((book) => book.issueId === Number(issue.id));
+    expect(projected).toMatchObject({
+      issueId: Number(issue.id), state: 'ok', seFileId: allowed ? se.id : null, teFileId: allowed ? te.id : null,
+    });
+    for (const ref of [se, te]) {
+      const read = svc().readAuthorized({ id: viewerId, name: '파일 표시 시험 강사', role: 'teacher' }, ref.id);
+      if (allowed) {
+        await expect(read).resolves.toMatchObject({ name: ref.name });
+      } else {
+        await expect(read).rejects.toMatchObject({ response: { code: 'FILE_FORBIDDEN' } });
+      }
+    }
   });
 
   it.each(['private', 'money_only'])('담당·업로더가 바뀐 %s 컨설팅도 최초 등록자는 파일을 계속 읽는다', async (share) => {
