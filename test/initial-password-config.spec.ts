@@ -103,10 +103,8 @@ describe('서버 전용 초기 비밀번호 설정', () => {
     }, permsOf('manager'))).rejects.toMatchObject(failure);
     await expect(drawer.resetStaffPassword(1, true, 2, 'new-fixture-1234!', permsOf('manager')))
       .rejects.toMatchObject(failure);
-    await expect(onboarding.complete(2, {
-      email: 'audit@example.test', phone: '01012345678', password: 'new-fixture-1234!',
-      emailCode: '123456', phoneCode: '123456',
-    })).rejects.toMatchObject(failure);
+    // 첫 설정 마치기는 새 비밀번호만 받는다(2026-10-19 · 이메일 · 휴대폰은 「인증하기」가 먼저 증명한다)
+    await expect(onboarding.complete(2, { password: 'new-fixture-1234!' })).rejects.toMatchObject(failure);
     await expect(reset.complete({
       loginId: 'audit.teacher', password: 'new-fixture-1234!', emailCode: '123456', phoneCode: '123456',
     })).rejects.toMatchObject(failure);

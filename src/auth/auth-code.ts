@@ -16,7 +16,7 @@
  * (해시 메시지에도 용도가 들어간다). 발급 한도는 용도와 무관하게 **계정 · 채널**마다 센다 — 문자 요금은 용도를 가리지 않는다.
  */
 import { ConflictException, ServiceUnavailableException, type HttpException } from '@nestjs/common';
-import type { EntityManager } from 'typeorm';
+import type { DataSource, EntityManager } from 'typeorm';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { writtenRows } from '../lib/sql';
 import { CHANNEL_SPECS, SEND_CHANNELS, type SendChannel, type SendRequest, type Sender } from '../modules/notify/sender';
@@ -91,7 +91,12 @@ export async function codeLimitIssue(m: EntityManager, staffId: number, channel:
     [staffId, channel, CODE_RESEND_SECONDS],
   );
   if (last && last.wait > 0) {
-    return { code: 'CODE_TOO_SOON', message: `코드를 방금 보냈습니다 — ${last.wait}초 뒤에 다시 받을 수 있습니다` };
+    // 보내지 못한 요청도 간격에 센다(공급자 연타 방지) — 그래서 「방금 보냈다」가 아니라 「직전 요청」이라 말한다(2026-10-19:
+    // 발송 실패 뒤의 429 가 「코드를 방금 보냈습니다」라 적혀 받지도 않은 코드를 기다리게 했다)
+    return {
+      code: 'CODE_TOO_SOON',
+      message: `직전 코드 요청 뒤 ${CODE_RESEND_SECONDS}초가 지나야 다시 받을 수 있습니다 — ${last.wait}초 뒤에 다시 받아 주세요`,
+    };
   }
   const [{ day, hour }] = await m.query(
     `SELECT count(*) FILTER (WHERE created_at > now() - interval '24 hours')::int AS day,
@@ -169,6 +174,41 @@ export async function verifyCode(
   return conflict('CODE_MISMATCH', left > 0
     ? `${field} 코드가 맞지 않습니다 — ${left}번 더 시도할 수 있습니다`
     : `${field} 코드가 맞지 않습니다 — 더 시도할 수 없으니 코드를 다시 받아 주세요`);
+}
+
+/** 첫 설정 채널별 인증 증거 — 가린 받는 곳과 그 줄 id */
+export type OnboardingProof = { id: string; masked: string };
+
+/**
+ * 첫 설정 채널별 인증 증거 (사용자 지시 2026-10-19 「이메일 인증하기와 휴대폰 번호 인증하기 버튼이 있어야 함」).
+ * 「인증하기」가 맞게 적은 첫 설정 코드는 닫지 않고 verified_at 을 찍어 이번 차례의 증거로 남는다(migration 1769900000000).
+ * 증거로 세는 줄 — ① 아직 닫히지 않았고 ② 받는 곳이 **지금 계정에 적힌** 이메일 · 휴대폰이며
+ * ③ 마지막 자격 변경(credentials_changed_at) **뒤에** 인증됐다. STAFF.email_verified · phone_verified 칸으로 대신하지 않는다 —
+ * 관리자 초기화로 다시 잠긴 계정은 두 칸이 이미 true 라, 칸만 보면 초기 비밀번호를 아는 사람이 다시 증명하지 않고 마친다.
+ * 첫 설정 안내(가린 받는 곳 · 마치기를 못 하는 까닭)와 「설정 마치기」의 판정이 이 한 함수를 쓴다.
+ * 코드 비밀 값이 없으면(운영 N-105) 해시를 만들 수 없으니 증거도 없다 — 안내는 503 대신 「아직」으로 답한다.
+ */
+export async function onboardingProofs(
+  m: EntityManager | DataSource,
+  q: { staffId: number; email: string | null; phone: string | null; since: Date | null },
+): Promise<Record<SendChannel, OnboardingProof | null>> {
+  const none: Record<SendChannel, OnboardingProof | null> = { email: null, sms: null };
+  if (!authCodeSecret()) return none;
+  const rows = (await m.query(
+    `SELECT DISTINCT ON (channel) id, channel, target_masked
+       FROM auth_code
+      WHERE staff_id = $1 AND purpose = 'onboarding' AND consumed_at IS NULL AND verified_at IS NOT NULL
+        AND verified_at > COALESCE($2::timestamptz, '-infinity'::timestamptz)
+        AND ((channel = 'email' AND target_hash = $3) OR (channel = 'sms' AND target_hash = $4))
+      ORDER BY channel, verified_at DESC, id DESC`,
+    [
+      q.staffId, q.since,
+      q.email ? targetHash('email', q.email) : null,
+      q.phone ? targetHash('sms', q.phone) : null,
+    ],
+  )) as Array<{ id: string; channel: SendChannel; target_masked: string }>;
+  for (const r of rows) none[r.channel] = { id: r.id, masked: r.target_masked };
+  return none;
 }
 
 /**

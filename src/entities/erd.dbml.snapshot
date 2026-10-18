@@ -1,3 +1,4 @@
+// AUTH-INIT-03 (2026-10-19 · 사용자 지시 「이메일 인증하기와 휴대폰 번호 인증하기 버튼이 있어야 함」): AUTH_CODE.verified_at timestamptz NULL — 첫 설정 「인증하기」로 맞게 적은 코드는 닫지 않고 인증 시각을 찍어 이번 차례의 증거로 남긴다(auth_code_verified_onboarding CHECK — 첫 설정 코드만 · auth_code_verified_after_create CHECK). POST /auth/onboarding/verify 가 증거를 남기고 그 주소 · 번호를 STAFF.email/phone 에 적는다(두 인증 칸 · 잠금은 그대로). POST /auth/onboarding/complete 는 새 비밀번호만 받고 이번 차례 증거(미소비 · 받는 곳 = 지금 계정 값 · 마지막 credentials_changed_at 뒤)를 다시 세어 두 인증 칸 · 잠금 해제 · 새 비밀번호를 한 transaction 으로 저장한다. STAFF 칸만으로 대신하지 않는 이유: 관리자 초기화로 다시 잠긴 계정은 두 칸이 이미 true 다. migration 1769900000000-auth-code-verified(기존 행 보정 0 · down 은 인증된 줄이 있으면 멈춤). 표 수 변화 0.
 // BACKOFFICE-1014-B1014-05 p8 결정 (2026-10-16): 가능 과목은 실제 과목 SUB 칩 — STAFF_TEACHING_SUBJECT(staff FK CASCADE · sub FK RESTRICT · staff_teaching_subject_guard 트리거로 KIND class/mock/study 과목만) · migration 1769800000000-staff-teaching-subject. STAFF_TEACHING_KIND 는 127 시절 입력의 읽기 전용 보존(과목 추정 변환 없음 · N-25). STAFF_EDUCATION_SUMMARY 학위·상태는 서버 코드표(DB CHECK 없음). 물리 표 선언 152개(151 + 1). 격리 로컬 DB에서만 적용 · 운영 미적용.
 // AUTH-SELF-01/AUTH-INIT-02 (2026-10-16 · S1): STAFF.english_name varchar(40) NULL(staff_english_name_present CHECK — 빈 글자 금지) · AUTH_CODE.purpose 에 contact_change 추가(auth_code_purpose_words CHECK) · migration 1769700000000-auth-self-onboarding(기존 행 보정 0 · 초기 발급 뒤 첫 설정 기록 없이 두 인증·잠금 해제 상태인 계정은 세어서 멈춘다). 필수 초기설정 판정 = must_change_credentials OR NOT email_verified OR NOT phone_verified(AuthService.credentialSetupRequired 한 곳 · 역할/아이디 면제 없음) · 초기 계정 발급도 잠금을 켠다. 표 수 변화 0.
 // DBML-CATCHUP-20261015: 기존 migration SQL 기준 문서 누락 정정. 물리 표 선언 151개(migration127 강사 프로필 포함; 목표126 Blob1GB). ATT_LATE 및 BO-12C/D 원장은 이미 구현된 raw SQL 소유 표이며 미래 설계가 아니다. migrations 원장1·current view2는 이 선언 수와 분리한다. 승인된 localhost:55494/taco_dev_test의 migration127 catalog와 업무151표·1,430컬럼의 이름/타입/null/길이/numeric/PK를 대조해 원본·B1014 네 파일 PASS. default·CHECK·FK·일반/unique index·view와 원격은 미검증이며 과거 영수증·버전 이력은 보존한다. 근거: docs/sprint/evidence/TBO-55/backoffice-1014-2026-10-14/dbml-catalog-comparison-2026-10-15.json.
@@ -347,12 +348,13 @@ Table AUTH_CODE {
   expires_at    timestamptz  [not null, note: '보낸 뒤 10분 (auth_code_expiry_after_create CHECK)']
   attempts      int          [not null, default: 0, note: '틀린 횟수 — 다섯 번이면 그 코드는 끝난다 (auth_code_attempts_range CHECK >= 0)']
   consumed_at   timestamptz  [note: '맞게 쓴 시각 — 한 번 쓴 코드는 다시 못 쓴다']
+  verified_at   timestamptz  [note: 'AUTH-INIT-03 (2026-10-19) · 첫 설정 「인증하기」로 맞게 적은 시각 — 닫지 않고 이번 차례의 증거로 남았다가 마치기가 닫는다 (auth_code_verified_onboarding CHECK: purpose=onboarding 만 · auth_code_verified_after_create CHECK)']
   created_at    timestamptz  [not null, default: `now()`]
 
   indexes { (staff_id, channel, created_at) [name: 'auth_code_staff_channel_idx'] }
   Note: '''
   v4.50 · W8 첫 설정 인증 코드. v4.52 · 비밀번호 찾기(N-101)도 같은 원장을 쓴다(purpose 로 가른다).
-  쓰는 곳은 POST /auth/onboarding/codes · /auth/onboarding/complete · /auth/password-reset/codes · /auth/password-reset/complete 넷뿐(원장 규칙은 src/auth/auth-code.ts 한 곳).
+  쓰는 곳은 POST /auth/onboarding/codes · /auth/onboarding/verify(AUTH-INIT-03 · 2026-10-19 — 증거 verified_at) · /auth/onboarding/complete · /auth/password-reset/codes · /auth/password-reset/complete 다섯뿐(원장 규칙은 src/auth/auth-code.ts 한 곳).
   AUTH-SELF-01(2026-10-16) · POST /auth/profile/contact-codes · /auth/profile/contact-change 가 purpose=contact_change 로 같은 원장 · 같은 한도를 쓴다(다른 용도 코드는 통하지 않는다).
   발급 한도 — 60초 간격 · 한 시간 5번 · 하루(24시간) 10번(N-105) · 계정 · 채널마다. 해시 키는 운영에서 AUTH_CODE_SECRET 만(N-105 · 없으면 503).
   시드 --reset 이 비운다(SEEDED_TABLES). 운영 전환 스크립트도 비운다.

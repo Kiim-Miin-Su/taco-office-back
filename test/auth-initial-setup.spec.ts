@@ -141,16 +141,22 @@ d('AUTH-INIT-02 필수 초기설정 판정', () => {
   });
 
   describe('면제돼 있던 계정도 첫 설정 경로로 실제로 마친다 — 교착이 없다', () => {
-    it('코드 두 개 · 새 비밀번호로 마치면 새 세션은 업무 200 이고 DB 는 두 인증 true · 잠금 false', async () => {
+    it('채널마다 인증하기 · 새 비밀번호로 마치면 새 세션은 업무 200 이고 DB 는 두 인증 true · 잠금 false', async () => {
       const { access } = await login('auth-init-legacy');
       await request(server()).post('/auth/onboarding/codes').set(bearer(access))
         .send({ channel: 'email', target: 'auth-init-legacy@t.kr' }).expect(201);
       await request(server()).post('/auth/onboarding/codes').set(bearer(access))
         .send({ channel: 'sms', target: '010-7777-0001' }).expect(201);
-      const done = await request(server()).post('/auth/onboarding/complete').set(bearer(access)).send({
-        email: 'auth-init-legacy@t.kr', password: NEW_PW, phone: '010-7777-0001',
-        emailCode: lastCode('email'), phoneCode: lastCode('sms'),
-      }).expect(201);
+      // 2026-10-19 — 채널마다 「인증하기」(증거) 뒤 마치기는 새 비밀번호만 받는다
+      await request(server()).post('/auth/onboarding/verify').set(bearer(access))
+        .send({ channel: 'email', target: 'auth-init-legacy@t.kr', code: lastCode('email') }).expect(201);
+      const both = await request(server()).post('/auth/onboarding/verify').set(bearer(access))
+        .send({ channel: 'sms', target: '010-7777-0001', code: lastCode('sms') }).expect(201);
+      // 면제돼 있던 계정(잠금 false)도 두 채널 인증만으로는 풀리지 않는다 — 새 비밀번호가 남아 있다
+      expect(both.body).toMatchObject({ required: true, completeBlockedReason: null });
+      await request(server()).get('/probe-initial-setup/any').set(bearer(access)).expect(403);
+      const done = await request(server()).post('/auth/onboarding/complete').set(bearer(access))
+        .send({ password: NEW_PW }).expect(201);
       expect(done.body.user.mustChangeCredentials).toBe(false);
       await request(server()).get('/probe-initial-setup/any').set(bearer(done.body.accessToken)).expect(200);
       // 마치기 전에 받은 토큰은 끊긴다(credentials_changed_at)

@@ -1,5 +1,5 @@
 /** @file-guide
- * 목적: onboarding.dto.ts — PhoneCountryDto, OnboardingChannelDto, OnboardingInfoDto, OnboardingCodeRequestDto, OnboardingCodeResultDto, OnboardingCompleteDto (dto)
+ * 목적: onboarding.dto.ts — PhoneCountryDto, OnboardingChannelDto, OnboardingInfoDto, OnboardingCodeRequestDto, OnboardingCodeResultDto, OnboardingVerifyDto, OnboardingCompleteDto (dto)
  * 책임/재사용: 프론트 CRUD 입력/응답을 Swagger와 validator로 명시한다. DB entity를 직접 반환하거나 UI 임시 상태를 영속 필드로 만들지 않는다.
  * 검증/작업 지침: docs/contracts/FILE-GUIDE.md · docs/AGENT.md · docs/CLAUDE.md
  */
@@ -47,6 +47,19 @@ export class OnboardingInfoDto {
   @ApiProperty({ type: [OnboardingChannelDto] }) channels!: OnboardingChannelDto[];
   @ApiProperty({ type: [PhoneCountryDto], description: '휴대폰 국가번호 목록 — 첫 줄이 대한민국(기본값)' })
   phoneCountries!: PhoneCountryDto[];
+  /*
+   * 채널별 인증 (사용자 지시 2026-10-19 「이메일 인증하기와 휴대폰 번호 인증하기 버튼」) — 판정은 서버 한 곳(auth-code.onboardingProofs).
+   * 이번 첫 설정에서 「인증하기」를 마친 받는 곳만 싣는다 — 관리자 초기화 전의 인증 · STAFF.email_verified 칸은 세지 않는다.
+   */
+  @ApiProperty({ type: String, nullable: true, description: '이번 첫 설정에서 인증을 마친 이메일(가린 모양) — 「이메일 인증하기」 전이면 null' })
+  emailVerifiedMasked!: string | null;
+  @ApiProperty({ type: String, nullable: true, description: '이번 첫 설정에서 인증을 마친 휴대폰(가린 모양) — 「휴대폰 번호 인증하기」 전이면 null' })
+  phoneVerifiedMasked!: string | null;
+  @ApiProperty({
+    type: String, nullable: true,
+    description: '「설정 마치기」를 아직 못 하는 까닭(남은 인증) — 없으면 null. 마치기의 409 CONTACT_NOT_VERIFIED 와 같은 문장이다',
+  })
+  completeBlockedReason!: string | null;
 }
 
 export class OnboardingCodeRequestDto {
@@ -73,32 +86,36 @@ export class OnboardingCodeResultDto {
 
 const CODE = /^\d{6}$/;
 
-export class OnboardingCompleteDto {
-  @ApiProperty({ example: 'kim@tnacademy.kr', maxLength: 160, description: '확인한 이메일 — 코드를 받은 주소. 연락 · 비밀번호 찾기에 쓴다(아이디가 아니다 · W10)' })
-  @IsString({ message: '이메일을 적어 주세요' })
-  @MaxLength(160, { message: '이메일이 너무 깁니다' })
-  email!: string;
+/**
+ * 채널 하나 인증하기 (사용자 지시 2026-10-19) — 코드를 받은 곳과 그 코드를 함께 보낸다. 맞으면 그 주소 · 번호가 계정에 적히고
+ * 이번 첫 설정의 증거로 남는다(STAFF 의 두 인증 칸 · 잠금은 「설정 마치기」가 새 비밀번호와 함께 바꾼다).
+ */
+export class OnboardingVerifyDto {
+  @ApiProperty({ enum: SEND_CHANNELS, description: 'email = 이메일 인증 · sms = 휴대폰 번호 인증' })
+  @IsIn(SEND_CHANNELS as unknown as string[], { message: '인증할 곳은 이메일 또는 휴대폰입니다' })
+  channel!: SendChannel;
 
+  @ApiProperty({
+    example: 'kim@tnacademy.kr', maxLength: 160,
+    description: '코드를 받은 이메일 주소 또는 휴대폰 번호 — 해외 번호는 `+국가번호 번호`(N-103)',
+  })
+  @IsString({ message: '코드를 받은 이메일 주소나 휴대폰 번호를 적어 주세요' })
+  @MaxLength(160, { message: '받은 곳이 너무 깁니다' })
+  target!: string;
+
+  @ApiProperty({ example: '123456', pattern: '^\\d{6}$', description: '받은 코드 여섯 자리' })
+  @IsString({ message: '인증 코드를 적어 주세요' })
+  @Matches(CODE, { message: '인증 코드는 숫자 6자리입니다' })
+  code!: string;
+}
+
+/**
+ * 첫 설정 마치기 — 새 비밀번호만 보낸다(2026-10-19). 이메일 · 휴대폰은 「인증하기」가 이미 증명해 계정에 적었다 —
+ * 서버가 이번 차례의 두 증거를 다시 확인한 뒤 두 인증 칸 · 잠금 해제 · 새 비밀번호를 한 transaction 으로 저장한다.
+ */
+export class OnboardingCompleteDto {
   @ApiProperty({ example: '********', maxLength: 200, description: '새 비밀번호 — 규칙은 GET /auth/onboarding 의 passwordRule' })
   @IsString({ message: '새 비밀번호를 적어 주세요' })
   @MaxLength(200, { message: '비밀번호가 너무 깁니다' })
   password!: string;
-
-  @ApiProperty({
-    example: '010-1234-5678', maxLength: 32,
-    description: '휴대폰 번호 — 코드를 받은 번호. 해외 번호는 `+국가번호 번호`(N-103 · 나라는 phoneCountries)',
-  })
-  @IsString({ message: '휴대폰 번호를 적어 주세요' })
-  @MaxLength(32, { message: '휴대폰 번호가 너무 깁니다' })
-  phone!: string;
-
-  @ApiProperty({ example: '123456', pattern: '^\\d{6}$', description: '이메일로 받은 코드' })
-  @IsString({ message: '이메일 인증 코드를 적어 주세요' })
-  @Matches(CODE, { message: '이메일 인증 코드는 숫자 6자리입니다' })
-  emailCode!: string;
-
-  @ApiProperty({ example: '123456', pattern: '^\\d{6}$', description: '휴대폰으로 받은 코드' })
-  @IsString({ message: '휴대폰 인증 코드를 적어 주세요' })
-  @Matches(CODE, { message: '휴대폰 인증 코드는 숫자 6자리입니다' })
-  phoneCode!: string;
 }

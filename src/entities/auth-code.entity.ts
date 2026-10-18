@@ -51,6 +51,13 @@ export class AuthCode {
   @Column({ type: 'timestamptz', nullable: true })
   consumedAt: Date | null;
 
+  /**
+   * 첫 설정 「인증하기」로 맞게 적은 시각(migration 1769900000000 · 2026-10-19). 닫지 않고 이번 차례의 확인 증거로 남았다가
+   * 「설정 마치기」가 닫는다. 첫 설정 코드에만 쓴다(auth_code_verified_onboarding CHECK).
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  verifiedAt: Date | null;
+
   @Column({ type: 'timestamptz', default: () => 'now()' })
   createdAt: Date;
 }

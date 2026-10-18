@@ -346,10 +346,15 @@ d('비밀번호 찾기 (N-101)', () => {
       await ds.query('UPDATE staff SET must_change_credentials = true WHERE id=$1', [IDS.ready]);
       const codes = await prepared();
       const { access } = await login('n101-ready@t.kr', PW);
-      const res = await request(server()).post('/auth/onboarding/complete').set('Authorization', `Bearer ${access}`).send({
-        email: 'n101-ready@t.kr', password: NEW_PW, phone: '01055556666', emailCode: codes.emailCode, phoneCode: codes.phoneCode,
+      // 2026-10-19 — 첫 설정은 채널마다 「인증하기」로 증명한다. 비밀번호 찾기 코드는 그 인증도 통과하지 못한다
+      const res = await request(server()).post('/auth/onboarding/verify').set('Authorization', `Bearer ${access}`).send({
+        channel: 'email', target: 'n101-ready@t.kr', code: codes.emailCode,
       }).expect(409);
       expect(res.body.code).toBe('CODE_NOT_REQUESTED');
+      // 증거가 없으니 마치기도 막힌다 — 두 인증 칸이 true 인 계정이라도
+      const done = await request(server()).post('/auth/onboarding/complete').set('Authorization', `Bearer ${access}`)
+        .send({ password: NEW_PW }).expect(409);
+      expect(done.body.code).toBe('CONTACT_NOT_VERIFIED');
     });
 
     it('「지금 비밀번호와 같다」는 두 코드를 확인한 뒤에만 말한다 — 코드 없이 비밀번호를 떠볼 수 없다', async () => {
