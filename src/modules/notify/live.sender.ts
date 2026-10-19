@@ -162,7 +162,11 @@ export class LiveSender implements Sender {
       });
       const text = await res.text();
       if (!res.ok) {
-        return { configured: true, ok: false, providerId: null, error: scrubContact(`SENS ${res.status} ${text.slice(0, 200)}`, 'sms', req.to) };
+        // 공급자 거절은 예외가 아니라 응답으로 온다 — 이 갈래도 경고를 남긴다(2026-10-19 운영: 502 만 보이고 까닭이 로그에 없었다).
+        // 거절 문장에 받는 번호가 되돌아올 수 있어 가린 뒤 남긴다(메일 · 네트워크 예외 갈래와 같은 규칙)
+        const error = scrubContact(`SENS ${res.status} ${text.slice(0, 200)}`, 'sms', req.to);
+        this.log.warn(`문자 발송 실패: ${error}`);
+        return { configured: true, ok: false, providerId: null, error };
       }
       const parsed = JSON.parse(text) as { requestId?: string };
       return { configured: true, ok: true, providerId: parsed.requestId ?? null, error: null };

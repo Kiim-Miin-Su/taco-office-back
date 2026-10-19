@@ -16,6 +16,7 @@ import * as dotenv from 'dotenv';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Logger } from '@nestjs/common';
 import { LiveSender } from '../src/modules/notify/live.sender';
 import * as nodemailer from 'nodemailer';
 import {
@@ -133,6 +134,29 @@ describe('문자 길이는 바이트로 잰다 · 제한 시간을 건다 (보�
     expect(res).toMatchObject({ configured: true, ok: false, providerId: null });
     expect(res.error).toContain('2,000바이트');
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  /*
+   * 2026-10-19 운영 — 첫 설정 문자가 502 로만 실패하고 로그에는 까닭이 한 줄도 없었다. SENS 가 거절(2xx 아님)하면
+   * 예외가 아니라 응답으로 돌아오는데 그 갈래가 경고를 남기지 않았다(메일 갈래 · 네트워크 예외 갈래는 남긴다).
+   * 거절 상태와 공급자 문장을 경고로 남기되 받는 번호는 가린다.
+   */
+  it('SENS 가 거절하면 상태와 공급자 문장을 경고로 남긴다 — 받는 번호는 가린다', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      fetchSpy.mockImplementationOnce(() => Promise.resolve(new Response(
+        JSON.stringify({ status: '401', errorMessage: 'Authentication Failed', to: '01052940939' }), { status: 401 },
+      )));
+      const out = await cfg(FULL).send({ channel: 'sms', to: '010-5294-0939', body: 'x' });
+      expect(out).toMatchObject({ configured: true, ok: false });
+      const logged = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('문자 발송 실패: SENS 401');
+      expect(logged).toContain('Authentication Failed');
+      expect(logged).not.toContain('01052940939');
+      expect(logged).not.toContain('5294');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   // N-103 (대표 결정 2026-09-26) — 해외 번호는 SENS 국제 문자로 · 한국 번호 요청은 지금과 한 글자도 다르지 않다
